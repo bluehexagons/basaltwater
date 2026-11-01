@@ -66,8 +66,8 @@ controller sends these resolved sources to the target; this does not infer the
 controller's LAN as a substitute for a remote target's network.
 
 ```bash
-basaltw setup server_web 192.168.0.52 deploy --cloudflare --lan-access \
-  --deploy hexagonalhomelab.com https://github.com/example/site.git
+basaltw setup server_web 10.23.0.30 deploy --cloudflare --lan-access \
+  --deploy site.example.com https://github.com/example/site.git
 ```
 
 For a specific LAN, VPN, or client, use repeatable `--access-source IP_OR_CIDR`
@@ -81,9 +81,9 @@ through a patch. Include these options in your full setup command, or patch an
 already saved host:
 
 ```bash
-basaltw patch 192.168.0.52 deploy --lan-access
-basaltw patch 192.168.0.52 deploy --cloudflare-allow-direct
-basaltw patch 192.168.0.52 deploy --no-cloudflare-allow-direct --no-lan-access --no-access-source
+basaltw patch 10.23.0.30 deploy --lan-access
+basaltw patch 10.23.0.30 deploy --cloudflare-allow-direct
+basaltw patch 10.23.0.30 deploy --no-cloudflare-allow-direct --no-lan-access --no-access-source
 ```
 
 LAN clients reach Nginx directly alongside the public tunnel. Keep hosts-file
@@ -97,7 +97,7 @@ change it locally without an initial authentication wizard:
 
 ```bash
 sudo setup-cloudflare-tunnel --non-interactive --allow-direct
-sudo setup-cloudflare-tunnel --non-interactive --no-allow-direct --access-source 192.168.0.0/24
+sudo setup-cloudflare-tunnel --non-interactive --no-allow-direct --access-source 10.23.0.0/24
 sudo setup-cloudflare-tunnel --non-interactive --no-allow-direct --clear-access-sources
 ```
 

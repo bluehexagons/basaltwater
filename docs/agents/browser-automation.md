@@ -11,19 +11,20 @@ terminal browser with a separate profile and interaction workflow.
 Select at least one compatible agent and request the provider explicitly:
 
 ```bash
-basaltw setup workstation_dev 192.168.0.41 agent \
-  --provision-on ts1 --name agent-1 \
-  --image-storage ts1-storage \
-  --memory 4G --balloon-min 1G --storage root ts1-storage 32G \
+basaltw setup workstation_dev 10.23.0.50 agent \
+  --provision-on pve1 --name agent-1 \
+  --image-storage local \
+  --memory 4G --balloon-min 1G --storage root local-lvm 32G \
   --agent-tool opencode,gh,codex \
   --browser-automation playwright \
   --node --go --rdp --password "$RDP_PASSWORD" \
-  --rdp-source 192.168.0.0/24 --rdp-source 10.0.0.0/8
+  --rdp-source 10.23.0.0/24 --rdp-source 10.24.0.0/24
 ```
 
-The `--password` option passes its value in a command-line argument. A shell
-variable keeps the literal value out of shell history, but process inspectors
-may still see the expanded argument. Run setup from a trusted controller and
+The address, registered Proxmox host and storage names are fictional examples;
+replace them for your environment. The `--password` option passes its value in
+a command-line argument. A shell variable keeps the literal value out of shell
+history, but process inspectors may still see the expanded argument. Run setup from a trusted controller and
 never put literal credentials in a saved or committed command.
 
 `--browser-automation playwright` currently requires `--agent-tool codex`

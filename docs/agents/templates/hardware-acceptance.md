@@ -13,6 +13,11 @@
 - Unverified cases and other platforms (with reason; do not infer a pass):
 - Running or uncertain jobs, owning status/cleanup command and checkpoint:
 
+Keep the full operational record and raw diagnostics in private state outside
+Git. Tracked acceptance summaries retain relevant platform characteristics and
+results, using repository-relative paths and omitting personal host identities,
+endpoints, account paths and job handles. Sanitize selected evidence before inclusion.
+
 Use the [platform routes](../../workstations/workflows.md) and its linked native
 guidance. Keep game frame timing separate from streaming/encoding/client latency.
 Record software-reference and representative target-hardware results separately;

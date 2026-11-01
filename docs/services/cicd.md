@@ -81,16 +81,16 @@ basaltw setup server_web 192.168.1.60 deploy \
   --memory 16G --cores 8 \
   --storage root local-lvm 96G \
   --disk-ssd root --disk-discard root --disk-backup root \
-  --storage cicd-data ts1-storage 3500G \
+  --storage cicd-data bulk-lvm 3500G \
   --storage-mount cicd-data /var/lib/basaltwater/cicd ext4 empty \
   --no-disk-ssd cicd-data --disk-discard cicd-data --disk-backup cicd-data \
   --build-server --node --python --go
 ```
 
 Replace the address, Proxmox host, memory, and CPU values for the environment.
-Run the same command with `--dry-run` first. The `ts1-storage` pool must support
-Proxmox VM disk images and report at least the requested free capacity. The
-mount is fail-closed: setup prepares only the newly attached blank disk and
+Run the same command with `--dry-run` first. The example `bulk-lvm` pool must
+support Proxmox VM disk images and report at least the requested free capacity.
+The mount is fail-closed: setup prepares only the newly attached blank disk and
 will not fall back to putting builds on the root volume. `--build-server`
 already includes the webhook receiver and executor, so adding `--cicd` is
 supported but redundant. The explicit per-device flags let reruns retain SSD

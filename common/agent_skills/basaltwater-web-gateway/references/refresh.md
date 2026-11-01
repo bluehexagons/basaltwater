@@ -19,8 +19,9 @@ database, and other runtime data. Follow the project's development instructions:
 - For a forward whose process belongs to an existing user service, inspect
   `systemctl --user show UNIT -p WorkingDirectory -p ExecStart -p Environment`
   locally to confirm it runs this project, then restart that service yourself.
-  For example, GoClick's `go run ./cmd/server` service needs
-  `systemctl --user restart goclick-dev` after Go or embedded frontend edits.
+  For example, a verified `go run ./cmd/server` service needs its own user
+  unit restarted after Go or embedded frontend edits; substitute the observed
+  unit name rather than assuming one from another installation.
   Keep environment output private. Do not restart the gateway, T3 Code, or
   another project's service to refresh this application.
 - For a copied static publication, rebuild and publish the same site after

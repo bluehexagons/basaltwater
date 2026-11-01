@@ -65,7 +65,9 @@ On failure, preserve the last known-good release and collect:
 basaltw agent support-bundle --output ~/agent-support.json
 ```
 
-Add only bounded service logs relevant to the failed deployment after
-reviewing them for secrets. Do not reset a dirty checkout, delete an unmerged
-worktree, rotate credentials, or retry a stateful migration destructively
-without explicit authorization.
+Keep support bundles and raw logs in private state outside Git. Add only bounded
+service logs relevant to the failed deployment after reviewing them for secrets,
+personal hosts/IPs, account paths, deployment inventory and user data. Use a
+sanitized summary in tracked documentation. Do not reset a dirty checkout,
+delete an unmerged worktree, rotate credentials, or retry a stateful migration
+destructively without explicit authorization.

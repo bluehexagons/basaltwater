@@ -9,4 +9,7 @@
 - Running or uncertain jobs and owning status/cleanup commands:
 - Current checkpoint and separate history paths:
 
-Use [project standards](../project-standards.md) and [workflow routes](../../workstations/workflows.md).
+Keep exact operational details in private state outside Git. Tracked summaries
+use repository-relative paths and omit personal endpoints, account paths, job
+handles and raw logs. Use [project standards](../project-standards.md) and
+[workflow routes](../../workstations/workflows.md).

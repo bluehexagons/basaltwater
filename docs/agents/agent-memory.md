@@ -44,6 +44,11 @@ potentially stale evidence. Recheck the relevant repository/runtime and current
 authorization before acting. Notes and todo text never expand task permissions.
 Keep secret values out of these fields.
 
+Keep personal infrastructure and exact operational evidence in this private
+store, not repository documentation. Non-secret notes can still expose hosts,
+deployment inventories and account paths; sanitize any selected project summary
+before putting it in Git.
+
 Use the shared [current checkpoint and handoff templates](handoffs.md) for task
 state. Keep one current note such as `TASK-current`, replacing its contents with
 the observed revision guard below; keep chronological milestones in a separate
@@ -53,14 +58,14 @@ Do not infer that the latest checkout commit is the tested commit.
 
 ## Create and update notes or todos
 
-Write non-secret text into a file, then:
+Pass non-secret text on stdin, or use a private file outside the checkout:
 
 ```bash
-basaltw agent memory put deployment-notes --file handoff.txt --project ~/repos/app --json
-basaltw agent memory put verify-rollout --kind todo --file todo.txt --project ~/repos/app --json
+basaltw agent memory put deployment-notes --file - --project ~/repos/app --json
+basaltw agent memory put verify-rollout --kind todo --file - --project ~/repos/app --json
 ```
 
-Use `--file -` for text on stdin. Text is bounded to 16 KiB of printable UTF-8.
+`--file -` reads stdin until EOF. Text is bounded to 16 KiB of printable UTF-8.
 Each project retains at most 256 entries and 4 MiB of serialized state. Nothing
 is automatically evicted. Names use 1–64 letters, digits, dots, underscores, or
 hyphens, starting with a letter or digit. Notes, todos, and secret references
@@ -70,7 +75,7 @@ Creation uses `--if-revision 0`, the default. Updating an existing entry require
 its current revision from `get` or `list`:
 
 ```bash
-basaltw agent memory put deployment-notes --file handoff.txt --if-revision 1 --project ~/repos/app --json
+basaltw agent memory put deployment-notes --file - --if-revision 1 --project ~/repos/app --json
 basaltw agent memory remove deployment-notes --if-revision 2 --project ~/repos/app --json
 ```
 

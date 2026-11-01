@@ -45,9 +45,13 @@ for the division between shared environment support and project-owned behavior.
 - Document native prerequisites and commands once, then reference the shared
   Basaltwater skills for environment setup, browser/deployment support, cleanup
   and agent coordination. Keep project-specific adapters; avoid copying shared
-  infrastructure into every repository. Offer a manual or additional-setup route
-  when a shared helper is unavailable. Record actual platform verification;
-  a Linux export targeting Windows does not establish Windows runtime testing.
+  infrastructure into every repository. Keep personal endpoints, host/storage
+  inventories, account paths and operational notes in private state outside Git;
+  use fictional examples unless the user explicitly requests publishing details.
+  Retain intentionally public project/upstream references. Offer a manual or
+  additional-setup route when a shared helper is unavailable. Record actual
+  platform verification; a Linux export targeting Windows does not establish
+  Windows runtime testing.
 - Verify each relevant build, test, lint, or check command after changes. If a
   check is too costly or unavailable, state that and give the exact command for
   the project owner to run. Report what changed and any remaining conversion
@@ -76,11 +80,12 @@ for the division between shared environment support and project-owned behavior.
   requested cleanup run.
 - If the project has no suitable artifact layout or cleanup convention, use
   `artifacts/generated` for reproducible outputs,
-  `artifacts/review` for uncurated captures and logs, and
-  `artifacts/archive/YYYY-MM-DD--milestone` for curated evidence, with a small
-  index and provenance. Protect curated archives. Preserve source, media,
-  sessions, and worktree evidence by default; never bulk-read private sessions
-  or logs just to classify them.
+  private storage outside Git for raw captures/logs, or an explicitly ignored
+  `artifacts/review` directory. Use `artifacts/archive/YYYY-MM-DD--milestone`
+  only for selected evidence reviewed for secrets, personal infrastructure and
+  user data, with a sanitized index and provenance. Protect curated archives.
+  Preserve source, media, sessions, and worktree evidence by default; never
+  bulk-read private sessions or logs just to classify them.
 - See the [Basaltwater project cleanup guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/project-cleanup.md)
   when defining or reviewing a cleanup adapter.
 

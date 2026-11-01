@@ -303,7 +303,7 @@ basaltw setup server_dev 192.168.1.41 agent \
 
 Add `--git-ca-certificate ORIGIN SOURCE` when the Gogs certificate is signed by
 a private CA or is the hostless self-signed certificate. A source such as
-`ssh://gitadmin@192.168.0.51/etc/nginx/ssl/192.168.0.51.crt` retrieves the
+`ssh://gitadmin@192.168.1.10/etc/nginx/ssl/192.168.1.10.crt` retrieves the
 certificate through the verified SSH connection and avoids a manual controller
 copy. `--git-credential`
 resolves the matching workspace password and configures both ordinary HTTPS Git
@@ -329,9 +329,13 @@ basaltw gogs repo-configure ~/repos/project \
 
 The command installs the repository-local Git LFS hook, keeps GitHub as the
 `origin` fetch URL, adds the `gogs` remote, gives `origin` both GitHub and Gogs
-push URLs, and writes a `.lfsconfig` intended to be committed whose endpoint is
-the Gogs repository. One subsequent `git push origin` therefore uploads LFS
-objects to Gogs and sends Git refs and LFS pointer files to both GitHub and
+push URLs, and writes a `.lfsconfig` whose endpoint is the Gogs repository.
+Committing that file publishes the mirror hostname and repository path. For a
+personal/private mirror, keep it out of Git with local exclude rules, or use
+local Git LFS configuration for each clone. Commit `.lfsconfig` only for an
+intentionally public project endpoint or an explicit user request.
+One subsequent `git push origin` therefore uploads LFS objects to Gogs and
+sends Git refs and LFS pointer files to both GitHub and
 Gogs. Use `--no-combined-push` when Git refs should be pushed to the `gogs` remote
 separately. In either mode, the selected mirror remote's explicit push URL is
 reset in the repository's local config to its Gogs URL, including when using a
@@ -387,17 +391,19 @@ but skips commands that change repository configuration or tracking. It avoids
 the status output is not used. The utility rejects embedded credentials,
 non-HTTPS repository URLs, unsafe `.lfsconfig` or `.gitattributes` targets,
 Git LFS endpoint conflicts, and CIFS, SSHFS, NFS, or other known remote worktree
-filesystems. Review and commit `.lfsconfig` and `.gitattributes` before the first
-push. Every clone that needs asset contents must be able to reach and
-authenticate to Gogs; an off-network clone can use `GIT_LFS_SKIP_SMUDGE=1` until
+filesystems. Review `.lfsconfig` against the privacy boundary above and commit
+the intended `.gitattributes` before the first push. Every clone that needs
+asset contents must be able to reach and authenticate to Gogs; an off-network
+clone can use `GIT_LFS_SKIP_SMUDGE=1` until
 the endpoint becomes reachable.
 
 ## Dedicated mixed-media VM
 
 For a modest internal Git and file server, keep the operating system on the
 SSD and give Gogs, cluster storage, and user storage separate HDD-backed data
-disks. Save the placeholder Samba credentials without putting passwords in the
-setup command or shell history:
+disks. Addresses, host/storage names and accounts below are fictional; size the
+disks for your workload. Save the placeholder Samba credentials without putting
+passwords in the setup command or shell history:
 
 ```bash
 basaltw credentials set gitadmin
@@ -405,27 +411,27 @@ basaltw credentials set cluster
 basaltw credentials set alice
 basaltw credentials set bob
 
-basaltw setup server_web 192.168.0.50 gitadmin \
-  --provision-on ts1 --name git-1 --image-storage local \
+basaltw setup server_web 10.23.0.40 gitadmin \
+  --provision-on pve1 --name git-1 --image-storage local \
   --memory 2G --balloon-min 1536M --cores 2 \
   --storage root local-lvm 32G \
   --disk-ssd root --disk-discard root --disk-backup root \
-  --storage git-data ts1-storage 256G \
+  --storage git-data bulk-lvm 256G \
   --storage-mount git-data /srv/gogs ext4 empty \
   --no-disk-ssd git-data --disk-discard git-data --disk-backup git-data \
-  --storage cluster-data ts1-storage 256G \
+  --storage cluster-data bulk-lvm 256G \
   --storage-mount cluster-data /srv/cluster ext4 empty \
   --no-disk-ssd cluster-data --disk-discard cluster-data --disk-backup cluster-data \
-  --storage user-data ts1-storage 512G \
+  --storage user-data bulk-lvm 512G \
   --storage-mount user-data /srv/shares ext4 empty \
   --no-disk-ssd user-data --disk-discard user-data --disk-backup user-data \
   --swap-mode auto \
   --swap-zram fast 512M priority=200 algorithm=zstd \
   --swap-file root /swapfile 2G priority=50 \
   --swappiness 20 \
-  --access-source 192.168.0.0/24 \
-  --gogs :3000 /srv/gogs --gogs-source 192.168.0.0/24 \
-  --samba --samba-source 192.168.0.0/24 \
+  --access-source 10.23.0.0/24 \
+  --gogs :3000 /srv/gogs --gogs-source 10.23.0.0/24 \
+  --samba --samba-source 10.23.0.0/24 \
   --share write cluster /srv/cluster cluster \
   --share write users /srv/shares alice,bob
 ```
@@ -437,12 +443,13 @@ serves plaintext HTTP only to the source-restricted private network. Use an
 internal hostname with `--ssl` instead when traffic crosses an untrusted
 network.
 
-The three data disks total 1 TiB, leaving most of a nominal shared 4 TB HDD
-unallocated for other guests and later planning. Two vCPUs and a 2 GiB maximum
+The three example data disks total 1 TiB; retain pool headroom for other guests
+and later planning. Two vCPUs and a 2 GiB maximum
 with a 1.5 GiB balloon floor are a reasonable starting point for a lightly used
-Gogs/SQLite and Samba server on an 8 GiB host. A small high-priority zram area
-absorbs short pressure spikes; the lower-priority SSD-root swap file provides
-an emergency backstop. Omit `--balloon-min` for a fixed 2 GiB allocation.
+Gogs/SQLite and Samba server; reserve additional memory for its host. A small
+high-priority zram area absorbs short pressure spikes; the lower-priority
+SSD-root swap file provides an emergency backstop. Omit `--balloon-min` for a
+fixed 2 GiB allocation.
 
 The per-device SSD, discard, and backup flags are deliberately explicit, so a
 rerun reconciles an existing VM to the intended policy. Discard is useful when
@@ -453,8 +460,8 @@ application-consistent. If cluster data is independently replicated and
 rebuildable, `--no-disk-backup cluster-data` can avoid duplicating it in every
 VM backup. Keep `git-data` backed up as one coordinated Gogs recovery set.
 
-No SSD cache is allocated in this low-traffic example: a 128 GiB cache would
-consume one quarter of a shared 512 GB SSD and add recovery complexity without
+No SSD cache is allocated in this low-traffic example: a cache would
+consume shared SSD capacity and add recovery complexity without
 a demonstrated need. Samba's small disposable TDB metadata cache stays at
 `/var/cache/samba` on the root SSD. `--samba-metadata-cache PATH` can place it
 on another already mounted SSD filesystem, but it is not a file-data cache and

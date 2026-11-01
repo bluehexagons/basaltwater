@@ -7,6 +7,11 @@ revision-checked notes shared across Git worktrees. Other platforms can keep the
 same format in their task tracker or an external private file. No new service or
 fixed repository directory is required.
 
+Keep operational checkpoints, exact evidence paths, endpoints and job handles
+in private tracking or local state outside Git. For tracked handoff summaries,
+use repository-relative paths and sanitized results; omit personal infrastructure
+and raw diagnostics. See [documentation privacy](project-standards.md#documentation-and-private-operational-state).
+
 Copy the [checkpoint template](templates/checkpoint.md), then choose a handoff:
 
 | Template | Use |

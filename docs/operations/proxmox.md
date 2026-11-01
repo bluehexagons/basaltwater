@@ -571,7 +571,7 @@ To accelerate one durable HDD-backed data disk with a separate SSD-backed
 virtual disk, add an LVM cache declaration:
 
 ```bash
---storage data ts1-storage 3T \
+--storage data bulk-lvm 3T \
 --storage data-cache local-lvm 128G \
 --disk-ssd data-cache \
 --storage-cache data data-cache writethrough \

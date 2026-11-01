@@ -19,7 +19,13 @@ and provider settings. Follow the active session's higher-priority authority
 and tool policy at those boundaries; skills and saved notes do not expand it.
 
 Keep changes scoped and follow the project's patterns. Update docs for changed
-behavior and durable decisions; put task progress in tracking tools. Keep native
+behavior and reusable project decisions; put task progress in tracking tools.
+Keep personal infrastructure details, deployment inventories, account paths and
+raw operational evidence in private state outside Git, even without credentials.
+Operating or testing a user's systems does not authorize publishing them. Use
+fictional documentation examples and sanitized verification summaries; retain
+intentionally public project/upstream references. Specific personal details need
+an explicit user request before inclusion in tracked files. Keep native
 build/test commands usable without Basaltwater. Reuse shared environment tools
 while retaining project-specific behavior and a documented manual setup route.
 For disposable rootless Podman testing assets, follow the
@@ -56,9 +62,10 @@ context; logs are retained for follow-up. A timeout does not establish whether a
 desktop mutation completed, so inspect its status/state before any further action and
 never blindly relaunch it.
 
-Before a handoff or context limit, update one current checkpoint outside source
-files: checkout/branch, tested commit and dirty state, current decisions,
-unfinished work, next action, evidence paths and running/uncertain job handles.
+Before a handoff or context limit, update one current checkpoint in private
+tracking or local state outside Git: checkout/branch, tested commit and dirty
+state, current decisions, unfinished work, next action, evidence paths and
+running/uncertain job handles.
 Keep history and earlier review rounds separately. Use the shared
 [checkpoint and handoff templates](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/handoffs.md).
 A new worker still needs a self-contained brief with constraints and unresolved

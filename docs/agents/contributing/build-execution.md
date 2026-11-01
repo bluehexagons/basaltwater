@@ -90,7 +90,7 @@ Corepack network activation is disabled. Missing versions or exact package
 managers must be provisioned explicitly by the operator before retrying. The
 broker never installs tools to satisfy a repository. Go commands retain
 `/usr/local/go/bin` on PATH.
-Native Debian checks cover the homelab's pinned Node 24 and Node 26 builds,
+Native Debian checks cover pinned Node 24 and Node 26 builds,
 including npm commands and the scratch-backed temporary mount.
 Its unit tests mock systemd and process boundaries; selected Debian execution
 also has bounded native coverage. See the [coverage map](../../plans/testing-coverage.md)

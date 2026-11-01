@@ -171,7 +171,11 @@ that WSLg is available or that a graphical session is attached. Use the project'
 isolated test display or intended WSLg session deliberately; Linux GUI results
 do not qualify a native Windows build.
 
-Projects can commit an optional `basaltwater-agent.json` at their Git root.
+Projects can commit an optional `basaltwater-agent.json` at their Git root for
+reusable project discovery. Commit deployment mappings only for intentionally
+public, project-owned destinations. Keep personal/private deployment inventory
+in existing private configuration or [local project memory](agent-memory.md);
+omit undeclared mappings and optional fields rather than publishing that state.
 This discovery file is separate from the `basaltwater.json` build/deployment and
 publishing manifest and does not change CI or deployment behavior. For example:
 
@@ -207,7 +211,8 @@ publishing manifest and does not change CI or deployment behavior. For example:
 Use the project's verified mappings rather than assuming what a branch name
 means. Each exact branch key requires `environment`; `provider`, `region`, and
 `url` are optional. URLs use HTTPS without credentials, query strings, or
-fragments. Omit credentials and environment-variable values. Unknown fields,
+fragments. Omit credentials, environment-variable values and private infrastructure
+details; credential-free URLs are not automatically safe to publish. Unknown fields,
 invalid Git branch names, malformed JSON, unsupported versions, symlinked or
 non-regular files, and files larger than 64 KiB fail the command.
 

@@ -12,9 +12,9 @@ Run this operator utility from a repository checkout with Python 3.11 or newer:
 python3 scripts/prepare_build_policies.py \
   --builder-key ~/.ssh/build_deploy.pub \
   --target-key ~/.ssh/target_deploy.pub \
-  --output-dir ./private-build-drafts \
+  --output-dir ~/.local/state/basaltwater/build-drafts \
   --deploy example.com https://github.com/owner/site.git \
-  --deploy food.example.com/foodguide https://github.com/owner/foodguide.git
+  --deploy docs.example.com/docs https://github.com/owner/docs.git
 ```
 
 Repeat `--deploy DOMAIN[/PATH] HTTPS_URL` for up to sixteen destinations. Explicit
@@ -42,6 +42,10 @@ Both complete documents and shared delivery plans are validated before files
 are created. Runtime tool versions are not probed by this utility; actual
 delivery still checks authenticated builder readiness.
 
+Keep drafts outside the checkout: public-key enrollment files still contain
+deployment inventory and runtime details that are not automatically safe to
+publish. Use fictional values for examples copied into repository documentation.
+
 Project and application names are readable domain/path slugs with a stable
 digest suffix (maximum 64 characters), independent of deployment order and
 repository name. Duplicate destinations, name collisions, overlapping roots,
@@ -51,11 +55,11 @@ inferred from the pinned source by shared preparation.
 
 Target grants include the complete component route map and exact supported
 service runtime settings. Manifest paths remain literal: a destination ending
-in `/foodguide` does not prefix component paths. A manifest's `/foodguide` route
-stays `/foodguide`. Release roots use ordinary deployment's `/var/www` helper:
-`food.example.com/foodguide` becomes `/var/www/food_example_com__foodguide`.
+in `/docs` does not prefix component paths. A manifest's `/docs` route
+stays `/docs`. Release roots use ordinary deployment's `/var/www` helper:
+`docs.example.com/docs` becomes `/var/www/docs_example_com__docs`.
 This preserves generated service identities and the corresponding
-`/var/www/.basaltwater_shared/food_example_com__foodguide` persistent data tree
+`/var/www/.basaltwater_shared/docs_example_com__docs` persistent data tree
 when migrating ordinary deployments with that default base. Arbitrary deployment
 roots and custom ordinary deployment bases are outside this utility's scope.
 

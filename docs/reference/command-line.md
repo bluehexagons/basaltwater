@@ -1206,8 +1206,10 @@ basaltw agent support-bundle --output ~/agent-support.json
 
 `agent manifest` lists active tools, desktop application workflows, workspace
 conventions and explicit branch-to-deployment mappings. It does not launch
-applications or check authentication. Commit optional project declarations in
-`basaltwater-agent.json`; undeclared mappings remain unknown. See
+applications or check authentication. Optional committed declarations in
+`basaltwater-agent.json` contain reusable project information and intentionally
+public deployment mappings; keep personal/private inventory outside Git.
+Undeclared mappings remain unknown. See
 [environment manifests](../agents/agent-environment.md) and
 [desktop development](../workstations/desktop-development.md), including Blender instructions.
 
@@ -1515,7 +1517,7 @@ uses each vendor's supported path: OpenAI's standalone installer for Codex,
 `claude update`, and `opencode upgrade`. It refuses executables resolved
 outside the current user's home so package-manager installations remain under
 their package manager. It must be run as the account that owns that home and
-reports the exact executable path being updated; `/home/loren/.local/bin/codex` and
+reports the exact executable path being updated; `/home/developer/.local/bin/codex` and
 `/home/agent/.local/bin/codex` are separate installations.
 Before changing a tool it checks `--version` and `--help`, retains the previous
 executable, writes an atomic `in_progress` record, and repeats both checks after
@@ -1819,8 +1821,7 @@ for setup, patch, helper, and local hostname examples.
 Repos can also ship `basaltwater.json` manifests for multi-component deploys; see
 [Deployments and manifests](../services/deployments.md) for the schema and examples.
 Ruby/Rails deployment support has been discontinued. Their repositories are
-rejected before remote setup begins. Current Basaltwater machines have no
-Rails services, and Ruby applications are outside Basaltwater's
+rejected before remote setup begins. Ruby applications are outside Basaltwater's
 deployment workflows.
 
 ## CI/CD and Build / App Servers
@@ -2212,9 +2213,9 @@ and `--dry-run` never changes files.
 ### GitHub Maintenance
 
 ```bash
-basaltw maintenance github --root /home/loren/repos audit
-basaltw maintenance github --root /home/loren/repos prune --yes
-basaltw maintenance github --root /home/loren/repos prune --delete-caches --yes
+basaltw maintenance github --root ~/repos audit
+basaltw maintenance github --root ~/repos prune --yes
+basaltw maintenance github --root ~/repos prune --delete-caches --yes
 ```
 
 Defaults: keep 2 releases, delete expired artifacts, prune caches only when

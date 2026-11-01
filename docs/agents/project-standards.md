@@ -27,6 +27,26 @@ limits; do not maintain a second implementation solely to hide the absence of
 Basaltwater. Keep ordinary CI and native build/test commands independent of
 optional panel, gateway, broker or agent services.
 
+## Documentation and private operational state
+
+Repository documentation contains reusable procedures, project contracts and
+sanitized verification summaries. Use fictional hosts, storage names, accounts
+and repository URLs, with reserved example domains. Keep intentionally public
+project and upstream URLs when they identify the software being documented.
+
+Personal infrastructure is private even when it contains no credentials. Keep
+actual host/IP mappings, deployment inventories, storage layouts, account paths,
+raw logs and captures in private state outside Git, such as
+[local project memory](agent-memory.md). A request to operate or test a user's
+infrastructure does not authorize publishing its details. Include specific
+personal details in tracked files only when the user explicitly requests it.
+
+Apply this boundary to examples, manifests, plans, handoffs and evidence archives.
+Summarize tested behavior and limits without identifying the operator's systems;
+retain exact endpoints, paths and job handles in the private evidence record.
+Review selected evidence for infrastructure details and user data before moving
+it into Git. Redacting passwords or labeling an artifact curated is insufficient.
+
 ## Platforms and verification
 
 Name each project's intended development and runtime targets. Document meaningful
