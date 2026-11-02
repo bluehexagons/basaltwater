@@ -40,6 +40,7 @@ function Window-Action([string]$Generation, [string]$Identity = '42:birth:class:
 }
 New-NativeDesktopPrivateDirectory $temporary
 try {
+    & (Join-Path $PSScriptRoot 'Run-EnvironmentTests.ps1')
     & {
         # Identity comes from the token's AuthenticationId, never group-list
         # heuristics. A new boot must invalidate stale observation identities.

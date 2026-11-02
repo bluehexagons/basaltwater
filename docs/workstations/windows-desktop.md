@@ -69,6 +69,7 @@ task receipts/logs remain authoritative.
 basaltw desktop doctor
 basaltw desktop status
 basaltw desktop windows
+basaltw desktop environment --json
 basaltw desktop inspect --pid 1234
 ```
 
@@ -86,6 +87,12 @@ If an element disappears while its window is being inspected, the observed
 prefix is returned with `truncated: true`. This is incomplete evidence; observe
 again when needed. Explicit stale root references and other provider errors
 still fail, and actions always revalidate their target immediately before use.
+
+`desktop environment` returns a bounded, read-only [host environment report](windows-environment.md)
+with GPU/driver and display geometry, desktop-mode refresh and API scaling.
+It captures no pixels and leaves control state and observation references
+untouched. Test sessions retain the same report automatically; unknown sections,
+per-window DPI and HDR remain explicit rather than implying qualification.
 
 For an explicit capture, substitute a freshly observed window identity and
 generation and choose a new PNG path in an existing directory:

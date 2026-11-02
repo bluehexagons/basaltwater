@@ -92,7 +92,13 @@ live readiness: exit 0 ready, 1 ended/attention, 124 caller timeout. It does not
 replace `wait` for confirmed terminal cleanup. Conflicting supervised work for
 the same project is refused until the session settles; uncertain cleanup retains
 the reservation and profile. See the [session contract](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/windows-test-sessions.md)
-before adapting a project. GPU/display metadata and recording remain separate.
+before adapting a project. Sessions retain a bounded host GPU/driver/display
+snapshot. `desktop environment --json` collects the same read-only inventory
+independently, without pixels or input/control-state changes. Partial/unavailable
+sections remain explicit; mode refresh and scale do not establish per-window
+DPI, HDR, renderer GPU selection or actual frame pacing. See the
+[environment report](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/windows-environment.md).
+Recording remains separate.
 
 Status includes UTC execution boundaries and monotonic elapsed seconds from gate
 release preparation through confirmed cleanup, excluding queue time. Unknown or

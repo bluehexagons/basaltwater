@@ -5,6 +5,7 @@ function Assert-True([bool]$Condition, [string]$Message) { if (-not $Condition) 
 $windows = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 . (Join-Path $windows 'PowerShell.Common.ps1')
 . (Join-Path $windows 'Development.Common.ps1')
+function Get-DevelopmentEnvironment { return [pscustomobject]@{ State = 'unavailable'; Graphics = $null; Displays = $null; Errors = @('fixture: no hardware probes') } }
 $shell = Get-NativePowerShell7
 if (-not $shell) { throw 'Process qualification requires PowerShell 7; run native setup first' }
 $python = Get-Command python.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1

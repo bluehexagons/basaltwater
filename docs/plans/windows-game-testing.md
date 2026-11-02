@@ -40,7 +40,9 @@ logs and artifacts to supervised exec/node/run tasks. `develop ready` waits for
 live readiness; normal wait/cancel confirm completion. Cleanup uncertainty keeps
 the reservation and remaining profile. Revision/dirty state, Windows version and
 selected executable/file versions are recorded without environment/arguments.
-GPU/display metadata and automatic captures/recordings remain deferred. Project
+The bounded [environment report](../workstations/windows-environment.md) records
+GPU/driver and display geometry, mode refresh and API scaling. DPI/HDR and
+automatic captures/recordings remain deferred. Project
 adapters must prove profile use and perform their own readiness assertions.
 
 The broader session design and acceptance targets remain:

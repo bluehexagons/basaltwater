@@ -126,7 +126,7 @@ function Invoke-NativeCli([string[]]$Arguments) {
         if (-not $options.Count -or $options[0] -in @('--help','help','-h')) {
             Write-Host @'
 Native desktop commands (explicit actions use the current account's session):
-  status|doctor|windows [--json]
+  status|doctor|windows|environment [--json]
   inspect --pid PID [--name NAME] [--role ROLE] [--json]
   screenshot --window HWND --identity TOKEN --generation GEN --output NEW.png
   window focus|move|resize|maximize|minimize|restore|close --window HWND --identity TOKEN --generation GEN

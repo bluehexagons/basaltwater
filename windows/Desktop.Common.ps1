@@ -128,6 +128,10 @@ function Initialize-NativeDesktopTypes {
 }
 
 function Invoke-NativeDesktopWorkerBody($Request) {
+    if ($Request.command -eq 'environment') {
+        . (Join-Path $PSScriptRoot 'Environment.Common.ps1')
+        return Invoke-NativeEnvironmentWorkerBody
+    }
     Initialize-NativeDesktopTypes
     [Basaltwater.Desktop.Native]::Ready()
     if ($Request.command -eq 'ready') { return @{ healthy = $true; interactive = $true; capture_performed = $false; backend = 'win32-uia'; worker = 'WindowsPowerShell-5.1'; timeout_seconds = 8 } }
@@ -206,7 +210,7 @@ function ConvertTo-NativeDesktopRequest([string[]]$Arguments) {
     if (-not $Arguments.Count) { throw 'Expected desktop command' }
     $request = @{ command = $Arguments[0] }; $index = 1
     $allowed = @{
-        status = @(); doctor = @(); windows = @();
+        status = @(); doctor = @(); windows = @(); environment = @();
         control = @('human-approved','seconds','indefinite'); inspect = @('pid','root','generation','name','role');
         screenshot = @('window','identity','generation','output','monitor');
         window = @('window','identity','generation','x','y','width','height');
@@ -253,6 +257,11 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
             return @{ ok = $true; help = 'input key --key KEY | input chord --key CTRL+A (one/two distinct CTRL/SHIFT modifiers). input sequence --keys HOME,SHIFT+END: at most 32 chords and 1024 characters. Keys: A-Z 0-9 F1-F12 ENTER ESC TAB SPACE LEFT UP RIGHT DOWN BACKSPACE DELETE HOME END PAGEUP PAGEDOWN INSERT. input text --text TEXT: at most 1024 UTF-16 code units. input click --x X --y Y. All require --window --identity --generation --width --height from fresh windows. Queue acceptance only; inspect application afterward.' }
         }
         $request = ConvertTo-NativeDesktopRequest $Arguments
+        if ($request.command -eq 'environment') {
+            . (Join-Path $PSScriptRoot 'Environment.Common.ps1')
+            $report = Get-NativeEnvironmentReport
+            return @{ ok = ($report.State -ne 'unavailable'); result = $report }
+        }
         if ($request.command -eq 'doctor') { return Get-NativeDesktopReadiness }
         $context = Get-NativeDesktopContext; $lock = Enter-NativeDesktopLock $context
         $state = Read-NativeDesktopState $context

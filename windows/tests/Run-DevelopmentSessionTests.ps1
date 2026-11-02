@@ -19,6 +19,7 @@ try {
     function Get-NativePowerShell7 { return $shell }
     function Get-DevelopmentBoot { return '639200000000000000' }
     function Get-DevelopmentTrustedGit { return '' }
+    function Get-DevelopmentEnvironment { return [pscustomobject]@{ State = 'partial'; Graphics = @(@{ Name = 'Fixture GPU'; DriverVersion = '1.2' }); Displays = $null } }
     function Get-DevelopmentCheckout($Project, $Git) { return [pscustomobject]@{ State = 'available'; Revision = ('a' * 40); Dirty = $false } }
     function Get-ScheduledTask($TaskPath) { }
     function Start-DevelopmentScheduledTask($Record, $PowerShell) { $script:Dispatched = $Record.Id }
@@ -40,6 +41,8 @@ try {
         $request.Environment.BASALTWATER_TEST_READY_TOKEN -ceq $record.TestSession.ReadyToken -and
         -not $env:BASALTWATER_TEST_PROFILE) 'Session paths/token lost or leaked into caller'
     $evidence = Read-DevelopmentJson (Join-Path $directory 'session-evidence.json')
+    Assert-True ($evidence.HostEnvironment.State -eq 'partial' -and $evidence.Graphics[0].Name -eq 'Fixture GPU' -and
+        $null -eq $evidence.Display) 'Session lost available hardware metadata or hid partial collection'
     Assert-True ($evidence.Checkout.Revision -eq ('a' * 40) -and $evidence.Receipt -eq 'receipt.json' -and
         -not $evidence.PSObject.Properties['Environment'] -and -not $evidence.PSObject.Properties['Argv']) 'Evidence omitted provenance or retained environment/arguments'
     Assert-Throws { Invoke-NativeDevelopmentCli $arguments } 'Project reserved'
@@ -108,6 +111,14 @@ try {
         $failed = @(Get-ChildItem -LiteralPath (Get-DevelopmentRoot) -Directory | ForEach-Object { Get-DevelopmentRecord $_.Name } | Where-Object Message -like '*fixture evidence failure*')
         Assert-True ($failed.Count -eq 1 -and $failed[0].State -eq 'failed' -and $failed[0].CompletedUtc -and
             -not (Test-Path -LiteralPath $failed[0].TestSession.ProfilePath)) 'Preparation failure leaked an untracked profile/reservation'
+    }
+    & {
+        function Get-DevelopmentEnvironment { return [pscustomobject]@{ State = 'unavailable'; Graphics = $null; Displays = $null; Errors = @('fixture worker timed out') } }
+        $withoutHardware = Invoke-NativeDevelopmentCli $arguments
+        $index = Read-DevelopmentJson (Join-Path (Get-DevelopmentDirectory $withoutHardware.Id) 'session-evidence.json')
+        Assert-True ($script:Dispatched -eq $withoutHardware.Id -and $index.HostEnvironment.State -eq 'unavailable' -and
+            $index.HostEnvironment.Errors[0] -match 'timed out' -and $null -eq $index.Graphics) 'Unavailable optional hardware probe blocked launch or hid its error'
+        $null = Invoke-NativeDevelopmentCli @('cancel',$withoutHardware.Id)
     }
     Write-Host 'Development session offline contracts passed.'
 } finally {

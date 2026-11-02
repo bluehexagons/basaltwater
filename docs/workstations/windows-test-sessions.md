@@ -95,9 +95,10 @@ and the authoritative `receipt.json`. The receipt records readiness UTC and
 monotonic elapsed time, final execution/stream accounting and profile cleanup.
 The evidence index records project and worker-source revision/dirty state,
 selected executable/PowerShell/Node paths, available file versions and Windows
-version. Missing checkout/version information stays unknown. GPU/driver and
-display metadata are explicitly not collected in this first version; collect
-them through the [qualification procedure](windows-qualification.md) when needed.
+version. Missing checkout/version information stays unknown. A bounded
+[host environment report](windows-environment.md) now records GPU/driver and
+display geometry, mode refresh and scaling where available. Failed sections
+remain unknown without blocking dispatch; per-window DPI and HDR are uncollected.
 Captured metadata describes submission time, not a pinned source snapshot.
 
 The evidence index omits executable arguments and environment snapshots, which

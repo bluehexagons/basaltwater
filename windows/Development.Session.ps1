@@ -38,6 +38,15 @@ function Get-DevelopmentFileVersion([string]$Path) {
     }
     catch { return $null }
 }
+function Get-DevelopmentEnvironment {
+    try {
+        . (Join-Path $PSScriptRoot 'Desktop.Common.ps1')
+        . (Join-Path $PSScriptRoot 'Environment.Common.ps1')
+        return Get-NativeEnvironmentReport
+    } catch {
+        return [pscustomobject]@{ State = 'unavailable'; Graphics = $null; Displays = $null; Errors = @($_.Exception.Message) }
+    }
+}
 function Initialize-DevelopmentSession($Record, $Request) {
     $session = $Record.TestSession
     Initialize-DevelopmentDirectory $session.ProfilePath
@@ -47,6 +56,7 @@ function Initialize-DevelopmentSession($Record, $Request) {
     $Request.Environment['BASALTWATER_TEST_READY_FILE'] = $session.ReadyFile
     $Request.Environment['BASALTWATER_TEST_READY_TOKEN'] = $session.ReadyToken
     $git = Get-DevelopmentTrustedGit
+    $environment = Get-DevelopmentEnvironment
     $evidence = [pscustomobject]@{
         SchemaVersion = 1; Id = $Record.Id; CapturedUtc = [DateTime]::UtcNow.ToString('o');
         Project = $Request.Project; Checkout = (Get-DevelopmentCheckout $Request.Project $git);
@@ -55,7 +65,8 @@ function Initialize-DevelopmentSession($Record, $Request) {
         ExecutableFileVersion = (Get-DevelopmentFileVersion $Request.Executable);
         PowerShellFileVersion = (Get-DevelopmentFileVersion $Request.PowerShell);
         WindowsVersion = [Environment]::OSVersion.VersionString;
-        Graphics = $null; Display = $null; HardwareMetadata = 'Not collected by this session version';
+        Graphics = $environment.Graphics; Display = $environment.Displays; HardwareMetadata = $environment.State;
+        HostEnvironment = $environment;
         Receipt = 'receipt.json'; Stdout = 'stdout.log'; Stderr = 'stderr.log'; Artifacts = 'artifacts';
         Isolation = 'Project must honor BASALTWATER_TEST_PROFILE; this is not an OS sandbox';
         ArgumentCapture = 'Arguments and environment are omitted to avoid retaining credentials'
