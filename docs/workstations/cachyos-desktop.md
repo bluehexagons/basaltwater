@@ -14,6 +14,9 @@ For manual game tests, use the [playtest procedure](game-testing.md) for fresh
 worker qualification, scene verification, game-specific waits and bounded briefs.
 Use [native input QA](native-input-qa.md) for multilingual IME, clipboard,
 physical controller checks, environment records and evidence closeout.
+`basaltw local cachyos-doctor --json` includes read-only `input_environment`
+metadata for KDE layouts and already-running input frameworks, with explicit
+unknowns; it does not start an IME or qualify application text delivery.
 
 ## Agent permission and portal access
 

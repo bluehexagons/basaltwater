@@ -8,6 +8,23 @@ Keep raw evidence outside Git. See [CachyOS desktop](cachyos-desktop.md) and
 
 ## Record the input environment
 
+`basaltw local cachyos-doctor --json` includes `input_environment`: KDE's
+observed layout list/active index and Fcitx 5 current engine/group/enabled engines
+in that group. The report uses bounded local-bus queries with activation disabled;
+it neither starts a framework nor reads personal configuration files. It also
+reports whether the standard IBus bus name is already owned; IBus engine details
+and frameworks using other buses remain unknown. A false owner observation is
+not proof that no IME is installed or operating through another route.
+
+Null fields mean unknown. Malformed/oversized replies, unavailable services and
+changing layout lists/groups do not produce invented defaults. An empty engine
+list means the observed Fcitx group returned no entries. The layout is a
+compositor snapshot, not a guarantee about a particular application's next key;
+composition and physical delivery still require the tests below. Text output
+includes the same bounded metadata, and `--attention` retains it.
+The queries follow [KDE's layout interface](https://github.com/KDE/kwin/blob/master/src/keyboard_layout.h)
+and [Fcitx's controller interface](https://github.com/fcitx/fcitx5/blob/master/src/modules/dbus/dbusmodule.cpp).
+
 On KDE, record the session from `printenv XDG_SESSION_TYPE XDG_CURRENT_DESKTOP`,
 configured layouts in System Settings → Keyboard, and the currently selected
 layout from its indicator. `localectl status` reports system defaults, not the

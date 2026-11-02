@@ -1,5 +1,12 @@
 # Windows desktop and development integration
 
+The 2026-11-02 CachyOS feedback pass initially included Windows feedback in error.
+Windows follow-up is owned by a separate workstream. Commit `d6f3f191` already
+added scan-code keys/chords and offline test cases, but those cases and live
+SDL/WinForms delivery were not run on CachyOS. The Windows owner should review
+and qualify that change; it is not a native Windows pass or an installed refresh.
+The task/Ninja guidance from `ae5fe136` also awaits native recipe validation.
+
 The native `agent_windows` setup installs stable PowerShell 7 when missing and
 continues the pinned installation in it before applying development tools.
 Windows PowerShell 5.1 remains the initial bootstrap and the bounded UI Automation
