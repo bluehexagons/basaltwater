@@ -5,6 +5,7 @@ function Assert-True([bool]$Condition, [string]$Message) { if (-not $Condition) 
 $windows = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 . (Join-Path $windows 'PowerShell.Common.ps1')
 . (Join-Path $windows 'Development.Common.ps1')
+. (Join-Path $windows 'Development.Diagnostics.ps1')
 function Get-DevelopmentEnvironment { return [pscustomobject]@{ State = 'unavailable'; Graphics = $null; Displays = $null; Errors = @('fixture: no hardware probes') } }
 $shell = Get-NativePowerShell7
 if (-not $shell) { throw 'Process qualification requires PowerShell 7; run native setup first' }
@@ -149,6 +150,21 @@ function Remove-Item {
                 $null = $descendant.Handle
                 $active = Get-DevelopmentStatus $id
                 Assert-True ($active.State -eq 'running') 'A live PS7 guardian was misidentified as interrupted'
+                if ($mode -eq 'cancel') {
+                    $diagnostic = Invoke-NativeDevelopmentCli @('diagnose',$id)
+                    Assert-True ($diagnostic.ok -and $diagnostic.State -eq 'live' -and
+                        $diagnostic.Target.ProcessId -ne $active.ChildPid -and $diagnostic.Resources.ProcessId -eq $diagnostic.Target.ProcessId -and
+                        $diagnostic.Resources.WorkingSetBytes -gt 0 -and $diagnostic.Resources.ThreadCount -gt 0 -and
+                        (Test-Path -LiteralPath $diagnostic.SnapshotPath)) "Native diagnostics failed: $($diagnostic | ConvertTo-Json -Depth 5 -Compress)"
+                    $stale = $diagnostic.Target.PSObject.Copy(); $stale.CreatedFileTimeUtc = ([long]$stale.CreatedFileTimeUtc + 1).ToString()
+                    $caught = $null
+                    try { Invoke-DevelopmentDiagnosticsWorker $active $stale | Out-Null } catch { $caught = $_ }
+                    Assert-True ($null -ne $caught -and $caught.Exception.Message -match 'Stale native target') 'Diagnostics accepted a stale process identity'
+                    $foreign = [pscustomobject]@{ ProcessId = $unrelated.Id; CreatedFileTimeUtc = $unrelated.StartTime.ToUniversalTime().ToFileTimeUtc().ToString() }
+                    $caught = $null
+                    try { Invoke-DevelopmentDiagnosticsWorker $active $foreign | Out-Null } catch { $caught = $_ }
+                    Assert-True ($null -ne $caught -and $caught.Exception.Message -match 'outside the task Job') 'Diagnostics accepted an unrelated process'
+                }
                 if ($mode -in @('cancel','session-cancel')) { [IO.File]::WriteAllText((Join-Path $directory 'cancel'), 'cancel') }
                 if ($mode -eq 'crash') { $guardian.Kill() }
             }
@@ -182,6 +198,8 @@ function Remove-Item {
             continue
         }
         $result = Get-DevelopmentRecord $id
+        $target = Read-DevelopmentTarget $directory
+        Assert-True ($null -ne $target -and $target.ProcessId -ne $result.ChildPid) 'Native root identity missing or confused with the PowerShell launcher'
         if ($mode -like 'session-*') {
             $expected = switch ($mode) { session-ready { 'complete' }; session-early { 'failed' }; session-timeout { 'failed' }; session-cancel { 'cancelled' } }
             Assert-True ($result.State -eq $expected -and $result.CompletedUtc -and $result.TestSession.ProfileCleanup -eq 'removed' -and
@@ -229,6 +247,10 @@ function Remove-Item {
             } finally { if (-not $replay.HasExited) { $replay.Kill(); $replay.WaitForExit() }; $replay.Dispose() }
         }
         if ($mode -in @('success','fail')) {
+            $postmortem = Invoke-NativeDevelopmentCli @('diagnose',$id)
+            $expectedExit = if ($mode -eq 'fail') { 23 } else { 0 }
+            Assert-True ($postmortem.ok -and $postmortem.State -eq 'settled' -and $null -eq $postmortem.Resources -and
+                $postmortem.Target.State -eq 'exited' -and $postmortem.Target.ExitCode -eq $expectedExit) 'Postmortem diagnostics lost native exit evidence or queried a recycled PID'
             Assert-True (-not $result.Streams.Stdout.Truncated -and $result.Streams.Stdout.DiscardedBytes -eq 0 -and
                 $result.Streams.Stderr.RetainedBytes -eq 0) 'Clean stream reported loss'
             $tail = Invoke-NativeDevelopmentCli @('logs',$id)

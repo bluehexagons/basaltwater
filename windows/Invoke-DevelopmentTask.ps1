@@ -37,7 +37,9 @@ if ($Child) {
     Import-DevelopmentProcessType
     try {
         $executable = Resolve-DevelopmentExecutable $request.Executable
-        exit [Basaltwater.DevelopmentProcess]::Run($JobName, $executable, [string[]]$request.Argv, $request.Project)
+        $targetPath = Join-Path $directory 'target.json'
+        Assert-DevelopmentPath $targetPath
+        exit [Basaltwater.DevelopmentProcess]::Run($JobName, $executable, [string[]]$request.Argv, $request.Project, $targetPath)
     } catch {
         if ($_.Exception.ToString().Contains('BASALTWATER_CLEANUP_UNCERTAIN')) {
             [IO.File]::WriteAllText((Join-Path $directory 'child-cleanup-uncertain'), 'Native cleanup requires inspection')
@@ -75,6 +77,7 @@ try {
     if (Test-Path -LiteralPath (Join-Path $directory 'cancel')) { $desired = 'cancelled'; return }
     $gateName = 'Local\BasaltwaterDevelopment-' + [guid]::NewGuid().ToString('N')
     $jobName = $gateName + '-job'
+    $record | Add-Member NoteProperty JobName $jobName -Force
     $gateHandle = [Threading.EventWaitHandle]::new($false, 'ManualReset', $gateName)
     $info = [Diagnostics.ProcessStartInfo]::new()
     $info.FileName = $request.PowerShell

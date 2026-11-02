@@ -137,7 +137,7 @@ Native desktop commands (explicit actions use the current account's session):
   control enabled|human-override|disabled --human-approved [--seconds N|--indefinite]
   open PATH [--reveal] | terminal --project PATH [--msvc]
   notify --title TEXT --message TEXT
-  develop doctor|exec|node|editor|run|import|status|logs|cancel|wait|ready ...
+  develop doctor|exec|node|editor|run|import|status|logs|cancel|wait|ready|diagnose ...
   develop --help  Task options, npm-script examples and bounded waiting
 Observe windows/inspect before actions. Pixel capture does not prove rendered content or input outcome.
 '@

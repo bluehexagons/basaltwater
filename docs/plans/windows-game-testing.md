@@ -77,6 +77,11 @@ an unrelated client surviving. Prove the consuming game's saves stay untouched.
 
 ## Subsequent increments
 
+Native [task diagnostics](../workstations/windows-diagnostics.md) now retain
+actual executable identity/exit evidence and offer bounded owned-root resource
+snapshots before cancellation. This does not yet provide crash dumps or hang
+stack traces.
+
 - **GPU-window capture:** add an explicit Windows Graphics Capture backend,
   preserving PrintWindow as a named alternative. Record client-area geometry,
   frame timestamp, pixel/color format, dimensions and dropped-frame accounting.

@@ -175,6 +175,7 @@ Usage: basaltw desktop develop COMMAND [OPTIONS]
   status|logs|cancel TASK_ID               Inspect output or request cancellation
   wait TASK_ID [--timeout SECONDS]         Wait up to 60 seconds by default (1-86400)
   ready TASK_ID [--timeout SECONDS]        Wait for a live test session's readiness
+  diagnose TASK_ID                        Retain native root identity/resource evidence
 
 Task options: --timeout SECONDS, --env NAME=VALUE, --msvc, --dry-run.
 Test sessions (exec/node/run): --test-session [--ready-timeout SECONDS (1-300)].
@@ -435,9 +436,14 @@ function Start-DevelopmentScheduledTask($Record, [string]$PowerShell) {
 }
 function Invoke-NativeDevelopmentCli([string[]]$Arguments) {
     if (-not $Arguments.Count -or ($Arguments.Count -eq 1 -and $Arguments[0] -in @('--help','-h','help')) -or
-        ($Arguments.Count -eq 2 -and $Arguments[0] -in @('doctor','exec','node','editor','run','import','status','logs','cancel','wait','ready') -and $Arguments[1] -in @('--help','-h'))) {
+        ($Arguments.Count -eq 2 -and $Arguments[0] -in @('doctor','exec','node','editor','run','import','status','logs','cancel','wait','ready','diagnose') -and $Arguments[1] -in @('--help','-h'))) {
         Show-NativeDevelopmentHelp
         return
+    }
+    if ($Arguments[0] -eq 'diagnose') {
+        if ($Arguments.Count -ne 2) { throw 'Usage: develop diagnose TASK_ID' }
+        . (Join-Path $PSScriptRoot 'Development.Diagnostics.ps1')
+        return Get-DevelopmentDiagnostics $Arguments[1]
     }
     if ($Arguments[0] -in @('wait','ready')) {
         if ($Arguments.Count -notin @(2,4) -or ($Arguments.Count -eq 4 -and

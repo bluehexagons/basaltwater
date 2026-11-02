@@ -101,6 +101,10 @@ display geometry, mode refresh and scaling where available. Failed sections
 remain unknown without blocking dispatch; per-window DPI and HDR are uncollected.
 Captured metadata describes submission time, not a pinned source snapshot.
 
+New runs retain `target.json` for the actual native executable identity/observed
+exit code. Use [`develop diagnose`](windows-diagnostics.md) for bounded native
+root resource snapshots; its `diagnostics` folder also survives profile cleanup.
+
 The evidence index omits executable arguments and environment snapshots, which
 can contain credentials. The private launch request is removed on settled
 cleanup. Project logs/artifacts can still contain sensitive information; review

@@ -36,6 +36,7 @@ namespace Basaltwater {
         [DllImport("kernel32.dll", SetLastError=true)] static extern uint ResumeThread(IntPtr thread);
         [DllImport("kernel32.dll", SetLastError=true)] static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
         [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetExitCodeProcess(IntPtr process, out uint code);
+        [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetProcessTimes(IntPtr process, out long created, out long exited, out long kernel, out long user);
         [DllImport("kernel32.dll", SetLastError=true)] static extern bool TerminateProcess(IntPtr process, uint code);
         [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
         [DllImport("kernel32.dll")] static extern IntPtr GetStdHandle(int kind);
@@ -61,7 +62,29 @@ namespace Basaltwater {
             if (!DuplicateHandle(GetCurrentProcess(), GetStdHandle(kind), GetCurrentProcess(), out result, 0, true, 2)) throw Error();
             return result;
         }
-        public static int Run(string jobName, string exe, string[] args, string directory) {
+        static void WriteTarget(string path,uint pid,long created,uint? code) {
+            var culture=System.Globalization.CultureInfo.InvariantCulture;
+            string json="{\"ProcessId\":"+pid.ToString(culture)+",\"CreatedFileTimeUtc\":\""+created.ToString(culture)+
+                "\",\"State\":\""+(code.HasValue ? "exited" : "created")+"\",\"ExitCode\":"+
+                (code.HasValue ? code.Value.ToString(culture) : "null")+"}";
+            string temporary=path+"."+Guid.NewGuid().ToString("N")+".tmp";
+            string key;
+            using(var hash=System.Security.Cryptography.SHA256.Create())
+                key=BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(Path.GetFullPath(path).ToUpperInvariant()))).Replace("-", "");
+            using(var lease=new System.Threading.Mutex(false,"Global\\Basaltwater.DevelopmentState."+key)) {
+            bool acquired;
+            try { acquired=lease.WaitOne(5000); } catch(System.Threading.AbandonedMutexException) { acquired=true; }
+            if(!acquired) throw new Exception("Native target evidence is busy");
+            try {
+                using(var file=new FileStream(temporary,FileMode.CreateNew,FileAccess.Write,FileShare.None)) {
+                    byte[] bytes=new UTF8Encoding(false).GetBytes(json); file.Write(bytes,0,bytes.Length);
+                }
+                if(code.HasValue) File.Replace(temporary,path,null);
+                else File.Move(temporary,path); // Initial identity must never overwrite an existing file.
+            } finally { try { if(File.Exists(temporary)) File.Delete(temporary); } finally { lease.ReleaseMutex(); } }
+            }
+        }
+        public static int Run(string jobName, string exe, string[] args, string directory,string targetPath) {
             IntPtr job = IntPtr.Zero, list = IntPtr.Zero, values = IntPtr.Zero;
             IntPtr input = IntPtr.Zero, output = IntPtr.Zero, error = IntPtr.Zero;
             var process = new ProcessInfo(); bool initialized = false, exited = false;
@@ -95,11 +118,16 @@ namespace Basaltwater {
                 // our temporary job handle is closed, leaving lifetime with the guardian.
                 if (!CreateProcess(exe, command, IntPtr.Zero, IntPtr.Zero, true, 0x08080004,
                     IntPtr.Zero, directory, ref startup, out process)) throw Error();
+                long created,exitTime,kernel,user;
+                if(!GetProcessTimes(process.Process,out created,out exitTime,out kernel,out user)) throw Error();
+                WriteTarget(targetPath,process.Id,created,null);
                 CloseHandle(job); job = IntPtr.Zero;
                 if (ResumeThread(process.Thread) == uint.MaxValue) throw Error();
                 if (WaitForSingleObject(process.Process, uint.MaxValue) != 0) throw Error();
                 exited = true; uint code;
                 if (!GetExitCodeProcess(process.Process, out code)) throw Error();
+                try { WriteTarget(targetPath,process.Id,created,code); }
+                catch(Exception failure) { Console.Error.WriteLine("Native target exit evidence unavailable: "+failure.Message); }
                 return unchecked((int)code);
             } finally {
                 bool uncertain = false;

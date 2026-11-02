@@ -128,6 +128,12 @@ function Initialize-NativeDesktopTypes {
 }
 
 function Invoke-NativeDesktopWorkerBody($Request) {
+    if ($Request.command -eq 'diagnostics') {
+        if (-not ('Basaltwater.Diagnostics.Native' -as [type])) {
+            Add-Type -Path (Join-Path $PSScriptRoot 'Diagnostics.Native.cs') -ErrorAction Stop
+        }
+        return [Basaltwater.Diagnostics.Native]::Capture([int]$Request.pid,[long]$Request.created,$Request.job,$Request.sid,[int]$Request.session)
+    }
     if ($Request.command -eq 'environment') {
         . (Join-Path $PSScriptRoot 'Environment.Common.ps1')
         return Invoke-NativeEnvironmentWorkerBody
