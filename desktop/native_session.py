@@ -24,6 +24,7 @@ from lib.validation import validate_filesystem_path
 MAX_MESSAGE = 65536
 SESSION_SECONDS = 0
 MAX_SESSION_SECONDS = 28800
+CAPTURE_MAX_AGE_SECONDS = 60
 
 # These describe only our own pending injections, never the user's keyboard.
 KEYSYM_MODIFIERS = {0xffe1: "shift", 0xffe2: "shift", 0xffe3: "ctrl", 0xffe4: "ctrl",
@@ -84,6 +85,14 @@ def _request_status():
             time.sleep(.05)
 
 
+def _capture_freshness(captured=0):
+    """Describe the existing capture guard without renewing its clock."""
+    age = max(0, time.monotonic() - captured) if captured else None
+    return {"age_seconds": age, "max_age_seconds": CAPTURE_MAX_AGE_SECONDS,
+            "remaining_seconds": max(0, CAPTURE_MAX_AGE_SECONDS - age) if age is not None else 0,
+            "fresh": age is not None and age <= CAPTURE_MAX_AGE_SECONDS}
+
+
 def status():
     try:
         return _request_status()
@@ -103,6 +112,7 @@ def status():
         return {**receipt, **grant, "last_state": receipt.get("state"), "state": "stopped",
                 "desktop": "kde-wayland", "backend": "portal", "helper_running": False,
                 **control_state.status(), "control_active": False, "expires_in": 0,
+                "capture_freshness": _capture_freshness(),
                 "consent_expires_in": None,
                 "interactive_required": None if grant["grant_saved"] else True,
                 "detail": receipt.get("detail") if receipt.get("last_failure") else "Run desktop start; KDE may request selected-monitor/input approval"}
@@ -338,6 +348,8 @@ class NativeSession:
                 "restore_attempted": self.restore_attempted, "session_seconds": self.session_seconds,
                 "max_session_seconds": MAX_SESSION_SECONDS,
                 "geometry": self.geometry,
+                "capture_freshness": _capture_freshness(self.captured if self.state == "running"
+                                                       and time.monotonic() < self.until else 0),
                 "evidence": str(self.evidence.path) if self.evidence else self.last_evidence,
                 "evidence_recording": self.evidence is not None,
                 "evidence_error": self.evidence_error,
@@ -681,8 +693,13 @@ class NativeSession:
         codes = client.validate_keycodes(payload)
         hold_ms = client.validate_hold(payload)
         drag_ms = client.validate_drag(payload)
-        if self.geometry is None or payload.get("geometry") != self.geometry or time.monotonic() - self.captured > 60:
-            raise ValueError("Capture the selected monitor again before input; geometry must match a recent screenshot")
+        freshness = _capture_freshness(self.captured)
+        if self.geometry is None or payload.get("geometry") != self.geometry or not freshness["fresh"]:
+            age = freshness["age_seconds"]
+            detail = ("no current capture" if age is None else
+                      f"capture age {age:.1f}s, limit {CAPTURE_MAX_AGE_SECONDS}s")
+            raise ValueError("Capture the selected monitor again before input; geometry must match a recent screenshot "
+                             f"({detail}). Recapture and re-plan before retrying")
         kind = payload.get("kind")
         if kind in ("click", "move", "drag"):
             x, y = payload.get("x"), payload.get("y")

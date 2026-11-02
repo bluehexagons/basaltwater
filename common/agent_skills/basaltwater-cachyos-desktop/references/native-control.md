@@ -88,6 +88,15 @@ size. Recapture after layout changes. Stop/start with fresh consent after
 monitor, scaling or resolution changes to refresh portal coordinates. Input
 rejects snapshots older than 60 seconds or mismatched geometry/generation.
 
+Native `status` and screenshots (including `--compact`) report
+`capture_freshness`: age, remaining seconds, the 60-second maximum and `fresh`.
+This is a response-time snapshot for the helper's latest successful capture;
+status queries and coordinate mapping never renew it. After long reasoning or
+waiting for advice, recapture and inspect the scene/target before input if the
+window expired or little time remains. Null age means no current capture.
+Freshness does not establish focus, scene correctness or target stability.
+See the [capture-window procedure](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/game-testing.md#keep-decisions-inside-the-capture-window).
+
 Use `screenshot --crop X Y WIDTH HEIGHT` to inspect a bounded rectangle of that
 same selected monitor. `geometry` remains the full-monitor pixel dimensions;
 `image_geometry` describes the PNG and `image_origin` gives its monitor-pixel

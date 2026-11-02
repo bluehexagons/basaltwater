@@ -114,11 +114,13 @@ class DesktopOutputTests(unittest.TestCase):
     def test_compact_screenshot_keeps_timing_and_error_status(self) -> None:
         result = {"generation": "g", "geometry": [10, 20], "output": "/tmp/new.png",
                   "captured_at": "now", "changed": False, "frame_received_at": "earlier",
+                  "capture_freshness": {"fresh": True, "age_seconds": 0, "remaining_seconds": 60, "max_age_seconds": 60},
                   "state": "running", "portal_stage": "ready", "error": "capture failed"}
         code, output, _ = self.run_cli(result, "screenshot", "--output", "/tmp/new.png", "--compact")
         self.assertEqual(code, 1)
         self.assertEqual(output["changed"], False)
         self.assertEqual(output["frame_received_at"], "earlier")
+        self.assertEqual(output["capture_freshness"], result["capture_freshness"])
         self.assertNotIn("portal_stage", output)
 
     def test_selected_backend_screenshot_help(self) -> None:
@@ -195,6 +197,8 @@ class NativeObservationTests(unittest.TestCase):
                 observed = self.session.handle({**self.context, "action": "screenshot",
                     "output": str(self.home / f"capture-{index}.png"), "next_frame": True})
                 self.assertIs(observed["changed"], changed)
+                self.assertTrue(observed["capture_freshness"]["fresh"])
+                self.assertGreater(observed["capture_freshness"]["remaining_seconds"], 59)
                 self.assertEqual(observed["artifact_sha256"], hashlib.sha256(Path(observed["output"]).read_bytes()).hexdigest())
                 self.assertEqual(observed["last_input"]["input_completed_at"], result["input_completed_at"])
                 self.assertGreater(observed["frame_received_monotonic_ns"], result["input_completed_monotonic_ns"])
@@ -203,6 +207,82 @@ class NativeObservationTests(unittest.TestCase):
         report = verify(finished["artifact"])
         self.assertTrue(report["healthy"])
         self.assertEqual(report["counts"]["verified"], 3)
+        data = json.loads(Path(finished["artifact"]).read_text())
+        captures = [row["result"] for row in data["events"] if row["action"] == "screenshot"]
+        self.assertTrue(all(row["capture_freshness"]["fresh"] for row in captures))
+
+    def test_status_reports_capture_expiry_without_refreshing_or_delivering_input(self):
+        self.session.captured = 100
+        with patch.object(native_session.time, "monotonic", return_value=159) as clock, \
+                patch.object(native_session.subprocess, "run") as capture:
+            for now, remaining, fresh in ((159, 1, True), (160, 0, True), (160.001, 0, False), (175, 0, False)):
+                clock.return_value = now
+                result = self.session.handle({"action": "status"})["capture_freshness"]
+                self.assertEqual(result, {"age_seconds": now - 100, "max_age_seconds": 60,
+                                          "remaining_seconds": remaining, "fresh": fresh})
+                self.assertEqual(self.session.captured, 100)
+            with self.assertRaisesRegex(ValueError, "capture age 75.0s, limit 60s.*Recapture and re-plan"):
+                self.session.handle({**self.context, "action": "input", "kind": "click", "x": 1, "y": 2})
+            capture.assert_not_called()
+        self.session.portal.notify.assert_not_called()
+
+    def test_input_boundary_agrees_with_reported_capture_window(self):
+        self.session.captured = 100
+        with patch.object(native_session.time, "monotonic", return_value=160):
+            self.assertTrue(self.session.handle({"action": "status"})["capture_freshness"]["fresh"])
+            self.session.handle({**self.context, "action": "input", "kind": "move", "x": 1, "y": 2})
+        self.session.portal.notify.assert_called_once()
+
+    def test_failed_recapture_does_not_extend_the_existing_window(self):
+        self.session.captured = 100
+        output = self.home / "failed.png"
+        with patch.object(native_session.time, "monotonic", return_value=175), \
+                patch.object(native_session.subprocess, "run", side_effect=subprocess.TimeoutExpired("capture", 12)), \
+                self.assertRaises(subprocess.TimeoutExpired):
+            self.session.handle({**self.context, "action": "screenshot", "output": str(output)})
+        with patch.object(native_session.time, "monotonic", return_value=176):
+            freshness = self.session.handle({"action": "status"})["capture_freshness"]
+        self.assertFalse(freshness["fresh"])
+        self.assertEqual(freshness["age_seconds"], 76)
+        self.assertFalse(output.exists())
+
+    def test_no_capture_or_changed_control_cannot_advertise_or_deliver_fresh_input(self):
+        # Even early in system uptime, zero means no valid capture, not a recent one.
+        with patch.object(native_session.time, "monotonic", return_value=30):
+            self.session.captured = 0
+            result = self.session.handle({"action": "status"})["capture_freshness"]
+            self.assertEqual(result, {"age_seconds": None, "max_age_seconds": 60,
+                                      "remaining_seconds": 0, "fresh": False})
+            with self.assertRaisesRegex(ValueError, "no current capture"):
+                self.session.handle({**self.context, "action": "input", "kind": "move", "x": 1, "y": 2})
+            self.session.captured = 25
+            control_state.change("human-override", human_approved=True)
+            result = self.session.handle({"action": "status"})
+            self.assertEqual(result["agent_control"], "human-override")
+            self.assertFalse(result["capture_freshness"]["fresh"])
+            self.assertIsNone(result["capture_freshness"]["age_seconds"])
+        self.session.portal.notify.assert_not_called()
+
+    def test_inactive_or_expired_helper_does_not_advertise_fresh_capture(self):
+        with patch.object(native_session.time, "monotonic", return_value=110):
+            self.session.captured = 100
+            for state in ("initializing", "failed", "stopped"):
+                self.session.state = state
+                self.assertFalse(self.session.snapshot_status()["capture_freshness"]["fresh"])
+            self.session.state = "running"
+            self.session.until = 109
+            self.assertFalse(self.session.snapshot_status()["capture_freshness"]["fresh"])
+
+    def test_offline_receipt_discards_historical_freshness(self):
+        receipt = self.home / "status.json"
+        receipt.write_text(json.dumps({"state": "running", "capture_freshness": {"fresh": True}}))
+        receipt.chmod(0o600)
+        with patch.object(native_session, "runtime_directory", return_value=self.home), \
+                patch.object(native_session, "request", side_effect=FileNotFoundError):
+            result = native_session.status()
+        self.assertEqual(result["state"], "stopped")
+        self.assertFalse(result["capture_freshness"]["fresh"])
+        self.assertIsNone(result["capture_freshness"]["age_seconds"])
 
     def test_capture_helper_skips_initial_frame_and_hashes_visible_pixels(self):
         buffer = Mock(pts=123)

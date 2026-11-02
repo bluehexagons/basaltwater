@@ -139,11 +139,38 @@ changed generations. Recapture and re-plan after rejection. When input completed
 but its follow-up capture failed, retain the completion result and capture again;
 never replay an uncertain purchase or placement blindly.
 
+### Keep decisions inside the capture window
+
+Native `status --json` and full/compact screenshots include `capture_freshness`:
+`age_seconds`, `remaining_seconds`, `max_age_seconds` (60), and `fresh`.
+These describe the helper's most recent successful capture, timed from PNG
+completion with its monotonic clock. No current capture gives null age, zero
+remaining time and false freshness. Stopped/expired helpers and observations
+invalidated by a control change cannot advertise a fresh capture.
+
+Values are snapshots at response time, not a countdown in a saved packet.
+`status` and `map-point` do not renew the capture. After long reasoning, an
+observer response or a handoff, check status; when the window has expired or
+little time remains, recapture, inspect and confirm the intended target before
+input. A stable shop and unchanged generation do not extend the window. A
+failed recapture also leaves the old window unchanged. Older helpers may omit
+the field; update/restart at a safe checkpoint rather than assuming freshness.
+
+Do longer strategic reasoning first, then take a fresh observation and check
+the plan's conditions immediately before acting. Freshness is an input safety
+check, not proof of focus, scene, target identity or animation completion; a
+purchase or transition can invalidate a target within the 60-second window.
+The backend still checks age and geometry at delivery and never automatically
+refreshes a capture or replays a rejected action.
+
 At a handoff, stop issuing actions and record the current match ID, objective,
 last verified scene/resources/board, learned strategy, pending/uncertain inputs,
 helper generation, evidence path and budget remaining. The receiver takes a
 fresh capture and qualifies before acting. Historical status is context,
 not live desktop authority. Use the [shared handoff conventions](../agents/handoffs.md).
+Bound worker phases by a progress checkpoint and time allowance as well as
+turn count. If reasoning or tool overhead consumes that allowance, hand back
+the verified partial state and remaining budget under the same match ID.
 
 ## Give observers immutable packets
 
@@ -170,6 +197,13 @@ the reply to identify the packet, observations, uncertainty, coordinate space,
 conditional recommendation and expiry. The controller rechecks current scene
 and target after any reorder, purchase or transition; old advice can be stale
 before the backend's 60-second limit. Disregard late optional advice.
+
+For document reviewers, give an explicit repository root and exact paths
+relative to it, or private absolute paths. Resolve links to required inputs
+before assigning the review, including any separate protocol or comparison
+matrix. Require the worker to list what it read and any unread inputs. Missing
+or ambiguous paths mean partial review; the coordinator must cover that gap
+before treating the material as reviewed.
 
 Record material assistance, corrections and advice used/rejected in the private
 session record linked to the recorder artifact. The recorder does not infer
