@@ -1,6 +1,6 @@
 # Dated testing evidence summaries
 
-Reconciled 2026-11-01 from retained private reports, the owner's stack setup
+Reconciled 2026-11-02 UTC from retained private reports, the owner's stack setup
 rerun report, subsequent native CachyOS T3 and SDL/OpenGL application observations,
 installed native Windows checks, current Shares & Data qualification,
 package-changing Admin and Proxmox inventory qualification, and automated checks.
@@ -156,6 +156,13 @@ or complete current-profile qualification is claimed.
 No Basaltwater defect was confirmed in this batch. Keep the controller transfer
 failure visible and diagnose it before extending the HTTP/browser acceptance;
 successful host-local and later controller probes do not erase that boundary.
+Further bounded captures on 2026-11-02 UTC retained 24 successful persistent
+responses and another partial-body timeout. In that failed connection-close
+probe, the final 306 encrypted bytes and FIN were repeatedly retransmitted while
+the client acknowledgement stayed immediately before them. A server-only capture
+cannot identify the dropping endpoint/intermediary; no network configuration or
+application fix was applied. All owned capture processes/directories were removed
+after private archival. Complete controller/browser acceptance remains open.
 
 ## USB storage
 
@@ -186,7 +193,8 @@ stable test runtime and isolated CA trust; it does not fix shared preview trust
 or qualify native ESR. Initial setup, harness and insufficient-parity failures
 remain in private evidence; no uncertain request was replayed and no server
 rate/quota policy was relaxed. No host reboot, formatting or disk stress was
-performed. Full-profile refresh and interruption/power-loss remain separate checks.
+performed. The selected full-profile follow-up is recorded below;
+interruption/power-loss remain separate checks.
 
 Follow-up cleanup used a ninth separately approved request to remove its routine,
 retaining all new data/parity/recovery evidence and restoring the prior declarations,
@@ -195,6 +203,28 @@ pending approvals, setup/unit recovery guards or staged passwords. The owned gue
 was stopped with private evidence, an online broker backup and an offline local
 snapshot retained. Host configuration/boot and other guest configurations/states/PIDs
 matched the fresh baseline; a same-node snapshot does not qualify off-host recovery.
+
+### Shares and Data full-profile refresh
+
+**2026-11-02 UTC; fresh disposable Debian 13 guest, selected `agent_vm` profile.**
+Normal public setup configured a non-root operator, independently authenticated
+HTTPS approval service and real root workers. Provider tools/authentication and
+browser automation were explicitly excluded; no provider task or external-account
+test ran. These are actual HTTP/CLI checks, without a new interactive browser run.
+
+| Source / check level | Observed result | Qualification boundary |
+| --- | --- | --- |
+| Initial `13b7cf3f`, fix installed `a94119e7` | Full setup reproduced a lost `--no-browser-automation` flag during controller-to-target serialization. The fix retains the explicit opt-out in remote arguments and saved target state; normal full-profile installation omits browser reconciliation | The initial `server_lite` dry run correctly refused the approval service before mutation; the supported `agent_vm` profile was used. Initial first-observation security-retention gaps and missing test-client preparation were inspected before continuation |
+| Installed `a94119e7` | Two separately approved real workers changed a writable share to read-only and created a paused daily mirror. Encrypted SMB writes worked before the change; reads passed and writes were denied afterward. Approved target declarations were explicitly reconciled into the separate controller cache before setup reruns | Disposable local data; no hard-mounted CIFS, other client OS, provider login or public TLS/DNS qualification |
+| Fix installed `0ca6ddff` | Public refresh at `a94119e7` refused saved shares because plaintext passwords are intentionally absent. The fix requires matching existing Unix/Samba accounts and preserves their passwords/login flags. Actual queued refresh completed through its independent root worker. All 574 runtime files matched source; approved declarations, pause controls, identities, credentials/PKI and exact bytes survived | Fresh setup still requires credentials; automated refusal checks reject missing accounts before source changes. The original failed dry runs are retained. This qualifies the selected profile/configuration, not all profiles or interrupted source activation |
+| Installed `0ca6ddff` | A populated public controller rerun and an owned-guest reboot preserved approved read-only access, empty paused mirror destination, user IDs/groups, password hashes/login flags, panel/approval credentials, certificates and file hashes. Verified HTTPS and encrypted SMB checks passed after each phase | Ordinary setup can update Samba password-set timestamps when replaying controller credentials; refresh and reboot retained the complete account listing. Same-node retention is not off-host recovery |
+| Installed `0ca6ddff` | After reboot, a normal unattended audit run published a newer valid storage snapshot and retained a future deadline, verified through native D-Bus. Cleanup retained both terminal broker records, worker logs, an integrity-checked online broker backup and an offline snapshot, then left the owned guest stopped with autostart disabled | No manual export or schedule override during observation. Other guest configurations/states/PIDs and host boot/setup/storage/mounts matched baseline; no active hypervisor tasks, guest locks, failed host units or owned capture remnants remained |
+
+Automated validation for `a94119e7` passed 2,120 agent tests, 185 additional
+configuration/refresh tests, compilation, documentation and metadata checks.
+For `0ca6ddff`, the core/storage selection passed 1,896 tests with one skip and
+the same static checks. Focused regressions reproduced both defects before their
+fixes. These checks do not constitute a new full CI or release-candidate pass.
 
 Use [Continue testing on Proxmox](continuing.md) for subsequent bounded batches.
 The Proxmox root panel is not the non-root guest approval environment required

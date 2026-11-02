@@ -1,7 +1,7 @@
 # Testing status
 
-**Snapshot: 2026-11-01.** Includes the owner's newly reported stack setup rerun
-and retained live-test evidence through 2026-11-01. The rerun indicates **basic
+**Snapshot: 2026-11-02 UTC.** Includes the owner's newly reported stack setup rerun
+and retained live-test evidence through 2026-11-02. The rerun indicates **basic
 setup functionality only: not all features were tested**. It covers selected
 Debian/Proxmox server and coding-VM commands, a partial CachyOS refresh and basic
 native Windows setup with Godot and T3 Code. Exact tested revisions were not
@@ -87,9 +87,15 @@ Shares & Data's current per-task UI and recovery guards now have installed
 HTTPS/approval/worker coverage, including missing-file repair with adequate parity,
 accepted content with independent verification, race refusal and owned-guest reboot
 persistence. Selected installed Chromium/Firefox interactions also pass with
-isolated CA trust, including a fixed Unicode search bug. Shared preview trust,
-native ESR and full-profile refresh remain open; see the
+isolated CA trust, including a fixed Unicode search bug. Shared preview trust and
+native ESR remain open; see the
 [dated scope and limits](evidence.md#shares-and-data).
+The [full-profile follow-up](evidence.md#shares-and-data-full-profile-refresh)
+qualifies selected `agent_vm` setup, actual public refresh, reconciled populated
+controller rerun and guest reboot, preserving independently approved read-only
+shares, paused routines, identities, credentials and exact bytes. It fixes lost
+browser opt-outs and refresh's incorrect requirement for saved Samba passwords;
+other profiles and interruption/power-loss cases remain separate.
 
 A separate fresh Debian guest at `176caeff62ad` also passed a real approved
 leaf-package upgrade, separately approved no-op, native APT index failure and

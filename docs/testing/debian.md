@@ -1,6 +1,6 @@
 # Debian and Proxmox testing status
 
-**Evidence reconciled through 2026-11-01.** Selected live workflows cover Debian
+**Evidence reconciled through 2026-11-02 UTC.** Selected live workflows cover Debian
 12/13 guests and a physical Proxmox host; they do not establish a pass on every
 machine type. Status applies only to the workflow described in each row; see
 the [legend](README.md#status-legend).
@@ -42,7 +42,7 @@ from test status.
 | Sync and PAR2 | 🟢 **Labbed** | Selected mirror, mount guards and repair; controlled failures | Hard-mounted network storage and power loss |
 | Btrfs | 🟢 **Labbed** | Single-device setup, rerun, reboot and read-only native scrub | Diagnostic integration and scheduled native scrub; multi-device/subvolume support needs design, and single-copy data cannot self-repair |
 | Samba and Syncthing | 🟢 **Labbed** | SMB3 access/reconnect and two-peer synchronization | Other client OSs, hard mounts and relay/discovery |
-| Shares & Data management | 🟢 **Labbed** | 2026-11-01: installed HTTPS, independent approvals and root workers; account/share and mirror lifecycles, catalog scope/pagination/drafts, verify/restore, successful missing-file repair with adequate parity, acceptance and independent scan, race refusal, setup exclusion and guest reboot persistence. Selected installed Chromium/Firefox navigation/forms/layout pass with isolated CA trust; Unicode search truncation fixed. See [revision boundaries](evidence.md#shares-and-data) | Shared preview trust, native Firefox ESR, full-profile refresh and interruption/power-loss boundaries remain open |
+| Shares & Data management | 🟢 **Labbed** | 2026-11-01: installed HTTPS, independent approvals and root workers; account/share and mirror lifecycles, catalog scope/pagination/drafts, verify/restore, successful missing-file repair with adequate parity, acceptance and independent scan, race refusal, setup exclusion and guest reboot persistence. Selected installed Chromium/Firefox navigation/forms/layout pass with isolated CA trust; Unicode search truncation fixed. 2026-11-02 UTC: selected full `agent_vm` setup, public refresh, reconciled populated controller rerun and reboot preserve approved declarations, controls, identities, auth and bytes. See [revision boundaries](evidence.md#shares-and-data) | Shared preview trust, native Firefox ESR, other full-profile combinations and interruption/power-loss boundaries remain open |
 | Gogs and mirrors | 🟢 **Labbed** | Git/LFS, rerun, reboot and same-host restore | GitHub transport and off-host recovery |
 | HomeBox | 🟢 **Labbed** | Loopback API, upgrade, restore, reboot and re-enable | Browser, public TLS, replacement host and rollback |
 | Web deployment | 🟢 **Labbed** | Selected Go, Node and SPA/API workflows, rollback and same-host recovery | Public tunnel/ACME, off-host restore and power loss |
@@ -83,7 +83,7 @@ detailed host checks cover one physical node; the owner also reports two basic
   Data HTTP/worker, recovery and installed-browser checks are recorded. A real
   leaf-package Admin update and separately approved no-op now pass
   on another disposable target. Keep remaining client, package breadth,
-  full-profile and interruption boundaries separate.
+  other profile combinations and interruption boundaries separate.
 - On disposable targets, qualify off-host restore and interrupted setup/recovery;
   repeat relevant cases on the exact release candidate.
 - Exercise registered GitHub runner jobs and cancellation, then implement and

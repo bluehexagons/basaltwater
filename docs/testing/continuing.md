@@ -1,7 +1,7 @@
 # Continue testing on Proxmox
 
-Updated 2026-11-01 after the selected Shares & Data, Admin and Proxmox inventory
-batches. The
+Updated 2026-11-02 UTC after the selected Shares & Data full-profile, Admin and
+Proxmox inventory batches. The
 [dated results](evidence.md#shares-and-data) record installed HTTP/worker,
 repair/acceptance, selected Chromium/Firefox, exclusion and reboot checks and
 remaining client/setup limits. This procedure is not blanket permission to modify
@@ -20,6 +20,8 @@ The [Proxmox inventory batch](evidence.md#proxmox-inventory-and-exporter) adds
 native inventory, unattended exports, host-local HTTPS and owned component
 interruption/recovery/removal. Controller partial-body timeouts remain unresolved;
 inspect the private transport evidence before extending that HTTP/browser scope.
+Later bounded captures narrow a reproduced stall to an unacknowledged final
+TLS segment and FIN; they do not establish the dropping endpoint or a fix.
 
 ## Establish a baseline
 
@@ -40,8 +42,11 @@ guard retained; it has no endurance qualification. Preserve existing data.
 The selected run closed the installed per-task UI and setup-recovery revision
 gap without public DNS or external accounts. Follow-up checks qualify successful
 targeted repair with adequate parity, acceptance and selected installed browsers.
-Repeat this procedure when affected behavior changes. Shared preview certificate
-trust, native Firefox ESR and full-profile refresh remain separate boundaries. Read the
+The [full-profile follow-up](evidence.md#shares-and-data-full-profile-refresh)
+also qualifies selected `agent_vm` public refresh, reconciled populated rerun
+and reboot with approved declarations preserved. Repeat affected cases after
+changes. Shared preview certificate trust, native Firefox ESR, other profile
+combinations and interruption/power-loss remain separate boundaries. Read the
 [service procedure](../services/shares-data.md) and
 [transaction recovery](../operations/transaction-recovery.md) before testing.
 
