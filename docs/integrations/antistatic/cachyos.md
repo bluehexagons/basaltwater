@@ -96,9 +96,24 @@ then run `basaltw agent visuals check RECIPE --repository . --settings FILE`.
 Its adapter reads native capture options from `{"args":["--software-gl"]}`
 and places captures/metadata under the check's evidence directory. Follow the
 project's [recipe contract](https://github.com/bluehexagons/antistatic/blob/main/docs/development/captures.md#optional-basaltwater-recipes)
-for selections and a native invocation without Basaltwater. These recipes retain
-runtime observations but do not yet emit the optional strict build receipt;
-isolate build outputs and review original metadata before comparing captures.
+for selections and a native invocation without Basaltwater. Updated adapters
+also produce the optional strict receipt from successful native/TypeScript
+build records, tracked asset inventories and complete runtime observations:
+
+```fish
+basaltw agent visuals check capture-lighting --repository . --settings FILE \
+  --verify-evidence --require-artifact-kind native \
+  --require-artifact-kind typescript --require-artifact-kind asset --json
+```
+
+This requires a clean checkout at the intended full revision. Dirty runs retain
+ordinary captures without a receipt; the strict gate still refuses them. The
+adapter's optional `expect` settings assert observed frame, graphics and GL
+identity across every capture. Literal `args` record capture-command options;
+they do not substitute for renderer observations. See the project's
+[build-origin receipt contract](https://github.com/bluehexagons/antistatic/blob/main/docs/development/captures.md#build-origin-receipts)
+for artifact scope, native Windows invocation and limits. Isolate build outputs,
+prevent concurrent writers and review original metadata before comparison.
 
 For before/after effects, use the deterministic showcase fixtures and pin the
 same frame, camera, graphics, data state and actual renderer. Some effect
