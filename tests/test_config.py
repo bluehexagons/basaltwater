@@ -803,7 +803,7 @@ class TestSetupConfigToRemoteArgs(unittest.TestCase):
         ):
             with self.subTest(host=host, override=override):
                 args = controller_parser.parse_args([
-                    'setup', 'agent_vm', host, 'testuser', '--privilege-broker', '9445',
+                    'setup', 'agent_vm', host, 'testuser', '--approval-panel', '9445',
                     '--timezone', 'UTC',
                 ])
                 controller = SetupConfig.from_args(args, 'agent_vm')

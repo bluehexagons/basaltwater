@@ -8,7 +8,7 @@ import secrets
 import threading
 import time
 
-from common.service_tools.web_panel_admin import _https_url, _timestamp
+from common.service_tools.web_panel_admin import _review_url, _timestamp
 from common.service_tools.web_panel_templates import render_heading
 from common.service_tools import web_panel_storage as storage
 from lib.privilege_client import PrivilegeBrokerUnavailable, PrivilegeRequestRejected, exchange
@@ -34,7 +34,7 @@ class PanelSamba:
 
     def snapshot(self) -> dict:
         if not self.admin.approval_url:
-            return {"error": "Account changes require the optional privilege approval service. Configure it for a supported non-root VM operator, or use the controller."}
+            return {"error": "Account approvals are disabled. Re-enable the panel approval service with --privilege-broker, or use the controller."}
         try:
             value = exchange({"action": "samba-status"})
             if type(value.get("available")) is not bool or not isinstance(value.get("requests"), list):
@@ -195,7 +195,7 @@ def render_saved_review(ticket: str, value: dict, csrf: str) -> str:
 <p id="samba-password-help">Use 12–128 characters. The password is never included in the approval record or returned by this page. Store it securely before submitting; it cannot be retrieved later.</p>''' if reset else "")
     return f'''<section class="event data-review" aria-labelledby="samba-review">{render_heading("Review: " + label, "security", heading_id="samba-review")}
 <p>{label} for <strong>{username}</strong>. {explanation} Existing SMB sessions may continue.</p>
-<p>A changed account or Samba configuration is rejected. After submitting, approve or deny this exact operation on the separate approval page.</p>
+<p>A changed account or Samba configuration is rejected. After submitting, open its approval review to approve or deny this exact operation.</p>
 <form method="post" action="/actions/samba/submit" class="data-recovery-form">{csrf}
 <input type="hidden" name="ticket" value="{html.escape(ticket, quote=True)}">{password_fields}<label for="samba-confirm">Type <code>{username}</code> to confirm</label>
 <input id="samba-confirm" name="confirmation" required autocomplete="off"><button>Create Samba approval request</button></form>
@@ -226,7 +226,7 @@ def render_status(status: dict, csrf: str) -> str:
             body += '<p>The account change was verified. The account list updates on the next five-minute export.</p>'
         elif state in {"failed", "uncertain", "invalidated"}:
             body += '<p>The change was not confirmed. Refresh after the next account export and inspect the account before reviewing it again. Stale reviews are rejected.</p>'
-        if url := _https_url(row.get("review_url")):
+        if url := _review_url(row.get("review_url")):
             body += f'<a class="refresh-link" href="{html.escape(url, quote=True)}" target="_blank" rel="noopener noreferrer">Open Samba approval ↗</a>'
         if state in {"pending", "approved"}:
             body += f'<p class="event-meta">Approval expires: {_timestamp(row.get("expires"))}</p><form method="post" action="/actions/samba/cancel">{csrf}<input type="hidden" name="id" value="{identifier}"><button>Cancel Samba request</button></form>'

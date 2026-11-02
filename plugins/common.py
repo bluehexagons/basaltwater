@@ -400,7 +400,9 @@ def extend_web_panel_steps(
 
     validate_guacamole_settings(config)
 
-    if config.privilege_broker_port is not None or config.disable_privilege_broker:
+    from lib.privilege_setup import broker_enabled
+
+    if broker_enabled(config) or config.disable_privilege_broker or config.disable_approval_panel or config.disable_web_panel:
         from common.privilege_broker_steps import configure_privilege_broker
 
         steps.append(("Configuring privilege approval broker", configure_privilege_broker))

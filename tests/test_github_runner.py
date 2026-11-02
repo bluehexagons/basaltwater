@@ -373,7 +373,8 @@ class ConfigurationTests(unittest.TestCase):
         runner = config(web_panel_port=8080, enable_ssl=True, ssl_email="operator@example.test")
         functions = [function.__name__ for _, function in
                      get_steps_for_system_type(runner) + build_post_setup_steps(runner, lambda *_: ("", ""))]
-        self.assertEqual(functions, ["check_runner_platform", "setup_user", "setup_github_runner", "configure_web_panel"])
+        self.assertEqual(functions, ["check_runner_platform", "setup_user", "setup_github_runner",
+                                     "configure_privilege_broker", "configure_web_panel"])
         other = SetupConfig(host="localhost", username="operator", system_type="server_lite", web_panel_port=8080)
         self.assertIn("configure_maintenance_agent", [function.__name__ for _, function in
                       build_post_setup_steps(other, lambda *_: ("", ""))])

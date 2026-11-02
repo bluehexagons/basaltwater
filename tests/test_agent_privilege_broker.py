@@ -352,12 +352,18 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(validate_policy(policy()), policy())
         for key, value in (("version", True), ("requester_uid", 0), ("ttl_seconds", MAX_REQUEST_TTL_SECONDS + 1),
                            ("ttl_seconds", True), ("ttl_seconds", 29),
-                           ("origin", "http://vm.example:9444"), ("origin", "https://vm.example:9444/path"),
+                           ("origin", "ftp://vm.example:9444"), ("origin", "https://vm.example:9444/path"),
                            ("services", {"*.service": "allow"}), ("reboot", "allow")):
             candidate = policy()
             candidate[key] = value
             with self.subTest(key=key, value=value), self.assertRaises(ValueError):
                 validate_policy(candidate)
+
+    def test_panel_origins_and_dedicated_service_accounts_are_supported(self):
+        for origin in ("http://vm.example:80", "https://vm.example:443", "https://[2001:db8::1]:443"):
+            with self.subTest(origin=origin):
+                candidate = {**policy(), "origin": origin, "requester_uid": 997}
+                self.assertEqual(validate_policy(candidate), candidate)
 
     def test_administrator_can_select_the_full_supported_review_window(self):
         for ttl in (30, 300, 3600, MAX_REQUEST_TTL_SECONDS):

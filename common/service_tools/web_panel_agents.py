@@ -555,7 +555,7 @@ def _available_templates(manifest: dict[str, Any], home: str, selected: PanelFea
                 "Gogs command detected" if installed("gogs") else "",
         "antistatic": "Antistatic configured" if services & {"Antistatic lobby", "Antistatic DB"} else "",
         "notifications": "Notification ingest enabled" if features.get("notification_ingest") is True else "",
-        "privilege": "Privilege approvals configured" if "Privilege approvals" in services else "",
+        "privilege": "Privilege approvals configured" if features.get("approvals") is True or "Privilege approvals" in services else "",
     }
     available = {key: {**template, "availability": capabilities.get(template.get("requires", ""), "")}
                  for key, template in PROMPT_TEMPLATES.items()
@@ -744,7 +744,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
             approve_label = "Check approval and launch"
             service_approval += '<p class="agent-help">Submitted service units cannot be removed here. Block the source proposal to cancel unclaimed requests before preparing a revised task.</p>'
         service_approval += ('<p class="agent-help">Approve once requests any missing service approvals. '
-            'Open the approval link with your separate approval password, then return here and select '
+            'Open the approval link and approve or deny the exact action, then return here and select '
             'Check approval and launch. Status is checked when you submit; this page does not poll.</p>'
             '<button class="agent-secondary" name="submit" value="privilege"' + save_disabled
             + '>Request or refresh service approval</button>')
@@ -1061,11 +1061,11 @@ def _follow_up_status(manager: AgentTasks, run: dict[str, Any]) -> dict[str, Any
 
 
 def _render_service_requests(status: dict[str, Any]) -> str:
-    from common.service_tools.web_panel_admin import _https_url
+    from common.service_tools.web_panel_admin import _review_url
 
     rows = []
     for unit, request in status.get('requests', {}).items():
-        url = _https_url(request.get('review_url'))
+        url = _review_url(request.get('review_url'))
         rows.append('<p class="agent-help">' + _escape(unit) + ': ' + _escape(request.get('state', 'unknown'))
             + (' · one-time exact command approval' if request.get('operation') == 'command.run' else '')
             + (f' · <a href="{_escape(url)}" target="_blank" rel="noopener noreferrer">Open service approval ↗</a>' if url else '') + '</p>')
@@ -1107,15 +1107,15 @@ def _render_follow_up(run: dict[str, Any], manager: AgentTasks, csrf: str) -> st
         if follow_up_has_retryable_cancellations(status):
             actions += button('follow-up-block', 'Retry service cancellation')
             actions += ('<p class="agent-help">This retries cancellation only for saved request IDs with unresolved states; '
-                        'it cannot queue a task. Check the separate privilege portal if cancellation remains unconfirmed.</p>')
+                        'it cannot queue a task. Check the privilege approval page if cancellation remains unconfirmed.</p>')
         requests_state = status.get('requests', {})
         if any(not isinstance(request, dict) or not request.get('id') for request in requests_state.values()):
             actions += ('<p class="agent-help">A service request has no recorded ID, so its outcome is unknown and it '
-                        'cannot be cancelled here. Check the existing request in the separate privilege portal before retrying.</p>')
+                        'cannot be cancelled here. Check the existing request on the privilege approval page before retrying.</p>')
         has_saved_id = any(isinstance(request, dict) and request.get('id') for request in requests_state.values())
         if has_saved_id and not follow_up_has_retryable_cancellations(status):
             actions += ('<p class="agent-help">The saved broker states are terminal or already claimed. '
-                        'Cancellation cannot undo an action the broker has claimed; review the request in the separate privilege portal.</p>')
+                        'Cancellation cannot undo an action the broker has claimed; review the request on the privilege approval page.</p>')
     else:
         actions = '<p class="agent-help">Follow-up ' + _escape(status['status']) + '.</p>'
     requests = _render_service_requests(status)
@@ -1130,7 +1130,7 @@ def _render_follow_up(run: dict[str, Any], manager: AgentTasks, csrf: str) -> st
 {_render_storage_operation(proposal.get('storage_operation', 'none'), approval=pending)}
 {''.join(access_details)}{requests}<div class="agent-buttons">{actions}</div>
 <details><summary>Proposed actions and verification</summary><pre>{_escape(_redact_log_message(proposal.get('prompt', '')))}</pre></details>
-<p class="agent-help">Approval queues one attempt. Service requests use the separate privilege portal and must succeed before launch. Blocking stops this proposal; it cannot cancel a request without its recorded ID or undo an action already claimed.</p></aside>'''
+<p class="agent-help">Approval queues one attempt. Service requests need their own privilege review and must succeed before launch. Blocking stops this proposal; it cannot cancel a request without its recorded ID or undo an action already claimed.</p></aside>'''
 
 
 def _render_diagnostics(snapshot: dict[str, Any], csrf: str) -> str:

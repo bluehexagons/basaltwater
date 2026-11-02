@@ -9,7 +9,7 @@ import time
 from urllib.parse import urlencode
 
 from common.service_tools import web_panel_storage as storage
-from common.service_tools.web_panel_admin import _https_url, _timestamp
+from common.service_tools.web_panel_admin import _review_url, _timestamp
 from common.service_tools.web_panel_templates import render_heading
 from lib.privilege_client import exchange
 from lib.samba_accounts import HEX_ID, HEX_REVISION
@@ -106,7 +106,7 @@ class PanelRoutines:
 
     def snapshot(self) -> dict:
         if not self.admin.approval_url:
-            return {"error": "Routine controls require the optional privilege approval service for a supported non-root VM operator."}
+            return {"error": "Routine approvals are disabled. Re-enable the panel approval service with --privilege-broker."}
         try:
             value = exchange({"action": "routine-status"})
             if (any(type(value.get(key)) is not bool for key in ("available", "blocked", "outstanding", "other_active"))
@@ -265,7 +265,7 @@ def render_saved_review(ticket: str, value: dict, csrf: str) -> str:
             body += f'<div><h3>{title}</h3>' + (row_facts(selected) if selected else '<p>Not configured</p>') + '</div>'
         body += '</div>'
     confirmation = confirmation_for(value)
-    body += f'''<p>{escape(routine_effect(value))}</p><p>A changed configuration is rejected. The worker has a six-hour limit. Submitting creates a request for the separate approval page; approval and worker completion are separate steps. Reviews expire after five minutes.</p>
+    body += f'''<p>{escape(routine_effect(value))}</p><p>A changed configuration is rejected. The worker has a six-hour limit. After submitting, open its approval review to approve or deny the exact action. Approval and worker completion are separate steps. Reviews expire after five minutes.</p>
 <form method="post" action="/actions/routines/submit" class="data-recovery-form">{csrf}<input type="hidden" name="ticket" value="{escape(ticket, quote=True)}"><input type="hidden" name="view" value="{view}">
 <label for="routine-confirm">Type <code>{confirmation}</code> to confirm</label><input id="routine-confirm" name="confirmation" required autocomplete="off"><button>Create routine approval request</button></form>
 <a href="/shares-data?view={view}">Cancel review</a></section>'''
@@ -345,7 +345,7 @@ def render_status(status: dict, csrf: str) -> str:
             body += '<p>Completion is not established by the current worker record. Inspect the approval, logs and actual routine state before preparing another request.</p>'
         if state in {"dispatched", "failed", "uncertain", "invalidated"}:
             body += '<details><summary>Inspect routine execution over SSH</summary><p>On this host, inspect the shared operation log. The scheduled service journal does not include this selected worker’s output. Correlate entries with this request’s times and paths.</p><pre><code>sudo tail -n 100 /var/log/basaltwater/operations/storage-ops.log</code></pre></details>'
-        if url := _https_url(request.get("review_url")):
+        if url := _review_url(request.get("review_url")):
             body += f'<a class="refresh-link" href="{escape(url, quote=True)}" target="_blank" rel="noopener noreferrer">Open routine approval ↗</a>'
         if state in {"pending", "approved"}:
             body += f'<p class="event-meta">Approval expires: {_timestamp(request.get("expires"))}</p><form method="post" action="/actions/routines/cancel" class="data-recovery-form">{csrf}<input type="hidden" name="id" value="{identifier}"><input type="hidden" name="view" value="{view_for(row["kind"])}"><button>Cancel routine request</button></form>'

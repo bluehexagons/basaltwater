@@ -29,6 +29,7 @@ from lib.auth_failure_bans import (
 )
 from lib.config import SetupConfig, WEB_PANEL_CA_HTTP_PORT
 from lib.github_runner_config import PROFILE as GITHUB_RUNNER_PROFILE
+from lib.privilege_setup import integrated_approvals
 from lib.remote_utils import install_package, is_dry_run, is_service_active, run
 from lib.unit_transaction import UnitOwnership, replace_units, unit_ownership
 from lib.validation import validate_filesystem_path
@@ -240,6 +241,7 @@ def build_web_panel_manifest(
         "services": services,
         "access": access,
         "features": {
+            "approvals": integrated_approvals(config),
             "agent_tools": config.selected_agent_tools(),
             "git": bool(config.has_agent_features() or config.git_credentials
                         or config.git_ca_pems or config.clear_git_credentials),
@@ -266,6 +268,7 @@ def render_web_panel_nginx(
     guacamole: bool = False,
     github_runner_registration: bool = False,
     ca_https_download: bool = False,
+    approvals: bool = False,
 ) -> str:
     """Render the Basic-Auth reverse proxy for the Unix-socket app."""
 
@@ -396,6 +399,26 @@ server {{
         proxy_send_timeout 10s;
     }}
 """
+    approval_location = ""
+    if approvals:
+        from lib.privilege_policy import PANEL_APPROVAL_SOCKET
+
+        approval_location = f"""
+    # The coding-user application cannot make decisions on these routes.
+    location ~ "^/(approvals$|requests/[a-f0-9]{{32}}$)" {{
+        limit_req zone=basaltwater_web_panel_auth burst=5 nodelay;
+        limit_req_status 429;
+        client_max_body_size 2k;
+        proxy_pass http://unix:{PANEL_APPROVAL_SOCKET};
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Basaltwater-User $remote_user;
+        proxy_set_header Authorization "";
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 10s;
+        proxy_send_timeout 10s;
+    }}
+"""
     return f"""{_NGINX_MARKER}
 limit_req_zone $binary_remote_addr zone=basaltwater_web_panel_auth:10m rate=120r/m;
 {ingest_zone}
@@ -421,6 +444,7 @@ server {{
 {ingest_location}
 {desktop_location}
 {registration_location}
+{approval_location}
 {ca_tls_location}
 
     location / {{
@@ -1266,6 +1290,7 @@ def configure_web_panel(config: SetupConfig) -> None:
                 guacamole=config.guacamole is True,
                 github_runner_registration=runner_registration_enabled,
                 ca_https_download=config.system_type == "server_proxmox",
+                approvals=integrated_approvals(config),
             )
         )
         if not ingest_enabled:

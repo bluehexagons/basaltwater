@@ -52,12 +52,27 @@ Never allowlist the broker or approval service themselves.
 
 ## Trust boundaries
 
-The coding account has no sudoers grants, privileged supplementary groups, or
-polkit authorization. The root broker accepts requests only from that account's
+In standalone approval-panel mode, the coding account has no sudoers grants,
+privileged supplementary groups, or polkit authorization. Integrated main-panel
+approvals preserve the setup account's existing sudo policy. Root-profile
+panels use their dedicated non-root service UID as requester.
+The root broker accepts requests only from the configured requester's
 kernel-authenticated Unix-socket identity. The locked `basaltwater-approval` service
-identity alone can use the separate decision socket. The approval page uses its
-own HTTPS origin and Basic Auth record, has no cookies, and does not share the
-web-panel credential.
+identity alone can use the separate decision socket. The standalone approval
+panel uses its own HTTPS origin and Basic Auth record, has no cookies, and does
+not share the web-panel credential.
+
+Main-panel approvals are enabled by default. Nginx authenticates the ordinary
+panel login and routes `/approvals` and exact `/requests/ID` paths to an HTTP
+Unix socket owned by the isolated approval identity and proxy group. The
+approval service checks the kernel peer UID against `www-data`, the single
+forwarded login, and the configured panel Host/Origin. The requester account
+has no decision-socket access and cannot authenticate a direct connection to
+the review socket. Credentials are stripped before proxying. The main-panel
+login, proxy and browser origin are trusted to authorize approvals: compromised
+content on that origin could act through the signed-in browser. Deploy only
+the standalone panel when an independent credential and origin are needed.
+Integrated approvals follow panel transport; HTTPS is recommended.
 
 Both sockets accept bounded messages with strict action fields. Execution uses
 the reviewed exact argv (fixed `systemctl` argv for structured service/reboot
@@ -86,10 +101,9 @@ execution column without losing requests or events.
 The approval page checks the configured Host and Origin, uses per-request CSRF
 tokens, escapes agent-supplied text, disables caching and framing, and has no
 unauthenticated request feed. Login failures are globally limited to 20 per
-minute. Keep access source-restricted: flooding can affect availability.
-Approval origins currently support DNS names and IPv4 literals. Literal IPv6
-origins are not supported by host validation; bracket formatting alone does not
-qualify that transport contract.
+minute on the standalone listener; integrated routes use the panel's Nginx
+login throttling and fail2ban policy. Keep access source-restricted: flooding can affect availability.
+Approval origins support DNS names, IPv4 literals, and bracketed IPv6 literals.
 Controller-to-target arguments carry the effective approval hostname, including
 an explicit override. IPv4 CIDR setup targets such as `10.0.0.20/16` use the
 address `10.0.0.20` for approvals; the prefix remains part of setup metadata.
@@ -116,7 +130,8 @@ services stopped if storage fills.
 
 The managed units are `basaltwater-privilege-broker.service` (root) and
 `basaltwater-privilege-approval.service` (locked `basaltwater-approval` account).
-The web service receives its credentials through systemd `LoadCredential`.
+The web service receives standalone credentials through systemd `LoadCredential`.
+An integrated-only service has no standalone credential or TCP listener.
 Root SSH remains the setup and recovery path. The first version has no
 passkeys, multi-user roles, push notifications, or browser password recovery.
 
@@ -134,8 +149,8 @@ The policy's machine identity and administrator choices, audit database, and
 terminal decisions are retained. Rollback never restores a database snapshot or
 replays an approval.
 
-Broker setup owns a transaction through activation and the HTTPS authentication
-challenge check. Before mutation it privately snapshots policy, authentication,
+Broker setup owns a transaction through activation and the selected review
+listeners' readiness checks. Before mutation it privately snapshots policy, authentication,
 certificate/key, polkit rule, unit files, their modes and ownership, directory
 metadata, and each unit's activation and persistent/runtime enablement. Failure
 or a catchable interruption quiesces the replacement, restores those files and
@@ -157,13 +172,13 @@ the recorded activation/enablement and HTTPS endpoint. Resolve the marker only
 after recovery is verified; never delete the stable lock to bypass it.
 
 This rollback covers broker-owned files and service state. Account creation or
-locking and shared internal-web-host effects (packages, CA/utility/static-site
-publication, and gateway configuration) remain outside this boundary and may
+locking and shared certificate prerequisites (OpenSSL and CA/certificate files)
+remain outside this boundary and may
 persist after failure. They run before broker quiescence so a failure there
 leaves the previous broker endpoint running. The transaction validates directory
 safety before prerequisites and refreshes its directory snapshot afterward,
 before broker mutations. Rollback preserves a shared `/etc/basaltwater` parent
-created by the gateway and its `internal-web` subtree, while removing directories
+created by prerequisites and its existing subtrees, while removing directories
 created by the broker. A safely rolled-back first installation permits a retry.
 
 ## Panel administration operations
@@ -235,11 +250,9 @@ exact restart argv through the existing `command.run` contract; their receipt
 must match that exact operation and argument vector before launch. This does
 not add a service rule or relax broker policy. `requests` retains
 administration-only metadata for job gating and can also be trimmed to fit.
-An older broker omits the new field; the panel links to the standalone portal
-and reports the listing as unavailable. Neither panel installation nor these
-read-only metadata fields change the standalone portal or approval identity.
-The separate approval interface and existing request
-quotas remain in force. A lost dispatch response remains uncertain, and a
+An older broker omits the new field; the panel links to the configured review
+queue and reports the listing as unavailable. Both review surfaces retain the
+isolated approval identity and existing request quotas. A lost dispatch response remains uncertain, and a
 broker restart never retries it. Root refresh additionally checks all installed
 code and Git metadata for root ownership, symlinks, and writable permissions.
 

@@ -351,15 +351,16 @@ exact requested ID. Missing, malformed, or mismatched IDs leave the result
 unconfirmed, so the follow-up is not queued. **Approve once** creates any
 missing service requests and opens their review without queuing the task or
 reporting a submission error.
-Open **Open service approval** in its separate tab, approve with the broker
-password, then return and select **Check approval and launch**. The review form
+Open **Open service approval** in its separate tab, approve using the main
+panel login or standalone approval password, then return and select
+**Check approval and launch**. The review form
 keeps edited settings and offers **Request or refresh service approval** for
 explicit retries of failed or expired actions. Repeated approval clicks reuse
 existing requests; uncertain submissions are never automatically replayed. A
 generic or malformed broker error, including an older broker response, leaves
 submission status unknown. Check the privilege portal before retrying; a local
 Block cannot cancel a request without its broker ID.
-The operator approves in the separate privilege portal; before a follow-up can
+The operator approves in the linked privilege review; before a follow-up can
 launch or be saved as a draft, the panel verifies that each exact restart
 succeeded. The task agent then verifies the results without repeating the
 restart. These are prelaunch prerequisites: if a file repair must happen before

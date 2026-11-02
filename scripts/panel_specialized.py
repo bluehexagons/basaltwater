@@ -254,6 +254,7 @@ def create_app(directory: Path, settings: dict, stack: ExitStack) -> web.Applica
             backend.pairing_state = pairing.PairingState(scenario.providers())
         else:
             backend = http_backend(approval.ApprovalHandler, stack, sequential=True)
+            backend.integrated = False
             backend.auth, backend.origin = password_record(settings["username"], settings["password"]), settings["url"]
             backend.secret, backend.failures, backend.exchange = secrets.token_bytes(32), deque(maxlen=20), scenario.exchange
 

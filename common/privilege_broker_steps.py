@@ -1,4 +1,4 @@
-"""Install the opt-in broker and its independent HTTPS approval service."""
+"""Install the local approval engine and independently selected review surfaces."""
 
 from __future__ import annotations
 
@@ -22,9 +22,9 @@ from lib.machine_state import can_manage_system_services, is_vm
 from lib.operation_state import OperationStateStore
 from lib.privilege_auth import validate_auth
 from lib.privilege_policy import (
-    CONFIG_DIR, DEFAULT_REQUEST_TTL_SECONDS, POLICY_PATH, WEB_USER, load_policy, protected_path, validate_policy,
+    CONFIG_DIR, DEFAULT_REQUEST_TTL_SECONDS, PANEL_APPROVAL_SOCKET, POLICY_PATH, WEB_USER, load_policy, protected_path, validate_policy,
 )
-from lib.privilege_setup import privilege_broker_origin, validate_broker_settings
+from lib.privilege_setup import approval_origin, broker_enabled, integrated_approvals, privilege_broker_origin, validate_broker_settings
 from lib.remote_utils import is_dry_run, is_service_active, run
 from lib.setup_directories import directory_fd
 from lib.unit_transaction import inspect_unit_state, snapshot_unit_file
@@ -74,7 +74,21 @@ def _approval_account():
     return account
 
 
-def render_units() -> dict[str, str]:
+def render_units(*, panel_origin: str | None = None, standalone: bool = True,
+                 standalone_origin: str | None = None, username: str = "",
+                 panel_origins: tuple[str, ...] = ()) -> dict[str, str]:
+    panel = ""
+    if panel_origin:
+        panel = (f"RuntimeDirectory={WEB}\nRuntimeDirectoryMode=0711\n"
+                 "SupplementaryGroups=www-data\n"
+                 f"Environment=BASALTWATER_PANEL_ORIGIN={panel_origin}\n"
+                 f"Environment=BASALTWATER_PANEL_ORIGINS={','.join(panel_origins or (panel_origin,))}\n"
+                 f"Environment=BASALTWATER_PANEL_USER={username}\n")
+    credentials = (f"LoadCredential=auth:{AUTH_PATH}\n"
+                   f"LoadCredential=cert:{CONFIG_DIR}/server.crt\n"
+                   f"LoadCredential=key:{CONFIG_DIR}/server.key\n") if standalone else ""
+    if standalone and standalone_origin:
+        panel += f"Environment=BASALTWATER_STANDALONE_ORIGIN={standalone_origin}\n"
     common = """NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
@@ -110,15 +124,13 @@ WantedBy=multi-user.target
 """,
         WEB: f"""{MARKER}
 [Unit]
-Description=basaltwater independent privilege approval page
+Description=basaltwater privilege approval service
 Requires={BROKER}.service
 After={BROKER}.service network.target
 [Service]
 User={WEB_USER}
 Group={WEB_USER}
-LoadCredential=auth:{AUTH_PATH}
-LoadCredential=cert:{CONFIG_DIR}/server.crt
-LoadCredential=key:{CONFIG_DIR}/server.key
+{panel}{credentials}Environment=BASALTWATER_STANDALONE={'1' if standalone else '0'}
 ExecStart=/usr/bin/python3 -I /opt/basaltwater/common/service_tools/privilege_approval.py
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 CapabilityBoundingSet=
@@ -216,7 +228,7 @@ def _broker_transaction():
                         write_text_atomic(path, content, mode=0o644)
                         candidates.append(path)
                     run(["systemd-analyze", "verify", *candidates])
-                # Prerequisites retain their shared gateway effects. Capture
+                # Prerequisites retain their shared certificate effects. Capture
                 # directory metadata after those effects, before broker changes,
                 # so rollback removes only directories created by the broker.
                 directories = _snapshot_configuration_directories()
@@ -281,7 +293,13 @@ def _broker_transaction():
                                 previous_policy = files[POLICY_PATH]
                                 if previous_policy is None:
                                     raise RuntimeError("Previous approval policy is unavailable")
-                                _wait_ready(json.loads(previous_policy["content"])["origin"])
+                                previous_unit = files[f"{UNIT_ROOT}/{WEB}.service"]
+                                content = previous_unit["content"] if previous_unit else ""
+                                standalone = re.search(r"^Environment=BASALTWATER_STANDALONE_ORIGIN=(.+)$", content, re.M)
+                                origin = standalone[1] if standalone else json.loads(previous_policy["content"])["origin"]
+                                _wait_ready(origin, panel="Environment=BASALTWATER_STANDALONE=0" in content)
+                                if standalone and "Environment=BASALTWATER_PANEL_ORIGIN=" in content:
+                                    _wait_ready(origin, panel=True)
                             attempt(ready)
             if errors:
                 store.transition(record.operation_id, "rollback-failed", status="recovery_required",
@@ -296,12 +314,25 @@ def _broker_transaction():
             shutil.rmtree(backup_dir)
 
 
-def _wait_ready(origin: str) -> None:
+def _wait_ready(origin: str, *, panel: bool = False) -> None:
     for _ in range(10):
-        if is_service_active(BROKER) and is_service_active(WEB) and _https_ready(origin, CONFIG_DIR + "/server.crt"):
+        ready = _panel_ready() if panel else _https_ready(origin, CONFIG_DIR + "/server.crt")
+        if is_service_active(BROKER) and is_service_active(WEB) and ready:
             return
         time.sleep(0.2)
     raise RuntimeError("Privilege approval services did not become active")
+
+
+def _panel_ready() -> bool:
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            connection.settimeout(1)
+            connection.connect(PANEL_APPROVAL_SOCKET)
+            # Root is deliberately not a trusted HTTP proxy peer.
+            connection.sendall(b"GET /approvals HTTP/1.0\r\n\r\n")
+            return connection.recv(1024).startswith(b"HTTP/1.0 403 ")
+    except OSError:
+        return False
 
 
 def _https_ready(origin: str, certificate: str) -> bool:
@@ -332,23 +363,24 @@ def _requester_has_sudo_grants(username: str) -> bool:
 
 def configure_privilege_broker(config) -> None:
     validate_broker_settings(config)
-    if config.privilege_broker_port is None and not config.disable_privilege_broker:
+    if not broker_enabled(config) and not (config.disable_privilege_broker or config.disable_approval_panel or config.disable_web_panel):
         return
     if is_dry_run():
-        print("  [DRY-RUN] Would reconcile independent HTTPS privilege approvals")
+        print("  [DRY-RUN] Would reconcile the approval engine and selected approval panels")
         return
     if not can_manage_system_services(config.machine_type):
         raise ValueError("Privilege approvals require a system service manager")
     with _broker_transaction() as begin_changes:
         _configure_privilege_broker(config, begin_changes)
-    if config.disable_privilege_broker:
+    if not broker_enabled(config):
         print("  ✓ Privilege approvals disabled; policy and audit history retained")
     else:
-        print("  ✓ Privilege approvals: " + privilege_broker_origin(config) + "/")
+        path = "/approvals" if integrated_approvals(config) else "/"
+        print("  ✓ Privilege approvals: " + approval_origin(config) + path)
 
 
 def _configure_privilege_broker(config, begin_changes) -> None:
-    if config.disable_privilege_broker:
+    if not broker_enabled(config):
         begin_changes()
         _stop()
         for path in (f"{UNIT_ROOT}/{WEB}.service", f"{UNIT_ROOT}/{BROKER}.service", POLKIT_PATH):
@@ -358,44 +390,53 @@ def _configure_privilege_broker(config, begin_changes) -> None:
                     if not source.read().startswith(_marker(path) + "\n"):
                         raise ValueError(f"Refusing to remove unmanaged file: {path}")
                 remove_file_durable(path)
-        if os.path.lexists(AUTH_PATH):
-            protected_path(AUTH_PATH)
-            remove_file_durable(AUTH_PATH)
+        for path in (AUTH_PATH, CONFIG_DIR + "/server.crt", CONFIG_DIR + "/server.key"):
+            if os.path.lexists(path):
+                protected_path(path)
+                remove_file_durable(path)
         run(["systemctl", "daemon-reload"])
         _stop()
         return
-    if not is_vm():
+    standalone = config.privilege_broker_port is not None
+    if standalone and not is_vm():
         raise ValueError("Privilege approvals are supported on VMs only")
-    account = pwd.getpwnam(config.username)
-    if account.pw_uid < 1000:
+    if config.username == "root":
+        from common.web_panel_steps import _ensure_web_panel_service_account
+
+        account = _ensure_web_panel_service_account(config)
+    else:
+        account = pwd.getpwnam(config.username)
+    if (account.pw_name in {WEB_USER, "www-data"} or account.pw_uid == 0
+            or standalone and account.pw_uid < 1000):
         raise ValueError("Privilege requester must be a non-system account")
     from common.agent_security_steps import _AGENT_DENIED_GROUPS, _account_groups
 
-    if _AGENT_DENIED_GROUPS & _account_groups(account.pw_name, account.pw_gid):
+    if standalone and _AGENT_DENIED_GROUPS & _account_groups(account.pw_name, account.pw_gid):
         raise ValueError("Remove requester privileged groups before installing the broker")
     # Named-user sudoers entries can bypass the group-based posture.
-    if _requester_has_sudo_grants(account.pw_name):
+    if standalone and _requester_has_sudo_grants(account.pw_name):
         raise ValueError("Brokered account must have no sudoers grants; remove per-user rules through the administrator channel")
     _approval_account()
     for path in (POLICY_PATH, AUTH_PATH, CONFIG_DIR + "/server.crt", CONFIG_DIR + "/server.key"):
         if os.path.lexists(path):
             protected_path(path)
-    if config.privilege_broker_auth:
+    auth = None
+    if standalone and config.privilege_broker_auth:
         auth = validate_auth(json.loads(config.privilege_broker_auth))
-    elif os.path.exists(AUTH_PATH):
+    elif standalone and os.path.exists(AUTH_PATH):
         with open(AUTH_PATH, encoding="utf-8") as source:
             auth = validate_auth(json.load(source))
-    else:
-        raise ValueError("First installation requires --privilege-broker-password")
-    if auth["username"] != config.username:
-        raise ValueError("Supply --privilege-broker-password to update the approval login after a user rename")
+    elif standalone:
+        raise ValueError("First installation requires --approval-panel-password")
+    if auth and auth["username"] != config.username:
+        raise ValueError("Supply --approval-panel-password to update the approval login after a user rename")
     if os.path.exists(POLICY_PATH):
         policy = load_policy()
         if policy["requester_uid"] != account.pw_uid:
             raise ValueError("Existing broker policy belongs to a different UID; review it as administrator")
-        policy["origin"] = privilege_broker_origin(config)
+        policy["origin"] = approval_origin(config)
     else:
-        policy = {"version": 1, "machine": secrets.token_hex(16), "origin": privilege_broker_origin(config),
+        policy = {"version": 1, "machine": secrets.token_hex(16), "origin": approval_origin(config),
                   "requester_uid": account.pw_uid, "ttl_seconds": DEFAULT_REQUEST_TTL_SECONDS,
                   "services": {}, "reboot": "approve", "commands": "approve"}
     validate_policy(policy)
@@ -408,15 +449,25 @@ def _configure_privilege_broker(config, begin_changes) -> None:
                 protected_path(os.path.join(root, name), directory=True)
             for name in files:
                 protected_path(os.path.join(root, name))
-    from common.godot_web_steps import configure_internal_web_host, identities_for_config
+    if standalone:
+        from common.godot_web_steps import configure_internal_certificate, identities_for_config
 
-    origin = urlsplit(privilege_broker_origin(config))
-    identities = identities_for_config(origin.hostname, config.system_hostname)
-    _url, _ca, cert, key, _changed = configure_internal_web_host(
-        identities, [config.username], config.effective_access_sources(),
-        configure_static_site=True, install_utility=True,
-    )
-    units = render_units()
+        origin = urlsplit(privilege_broker_origin(config))
+        identities = identities_for_config(origin.hostname, config.system_hostname)
+        cert, key, _ca, _changed = configure_internal_certificate(identities)
+    panel_origins = ()
+    if integrated_approvals(config):
+        from common.godot_web_steps import discover_local_web_identities, identities_for_config, validate_web_identities
+
+        origin = urlsplit(approval_origin(config))
+        identities = validate_web_identities([
+            *identities_for_config(origin.hostname, config.system_hostname), *discover_local_web_identities(),
+        ])
+        panel_origins = tuple(f"{origin.scheme}://{'[' + host + ']' if ':' in host else host}:{origin.port}"
+                              for host in identities)
+    units = render_units(panel_origin=approval_origin(config) if integrated_approvals(config) else None,
+                         standalone=standalone, standalone_origin=privilege_broker_origin(config) if standalone else None,
+                         username=config.username, panel_origins=panel_origins)
     begin_changes(units)
     _stop()
     for directory in _configuration_directories():
@@ -435,15 +486,24 @@ def _configure_privilege_broker(config, begin_changes) -> None:
                 os.fchmod(descriptor, 0o755)
                 os.fsync(descriptor)
     write_json_atomic(POLICY_PATH, policy, mode=0o644, sort_keys=True)
-    write_json_atomic(AUTH_PATH, auth, mode=0o600)
-    for source, destination in ((cert, "server.crt"), (key, "server.key")):
-        protected_path(os.path.realpath(source))
-        with open(source, encoding="utf-8") as file_obj:
-            write_text_atomic(CONFIG_DIR + "/" + destination, file_obj.read(), mode=0o600)
-    _managed_write(POLKIT_PATH, _marker(POLKIT_PATH) + "\n" +
+    if standalone:
+        write_json_atomic(AUTH_PATH, auth, mode=0o600)
+        for source, destination in ((cert, "server.crt"), (key, "server.key")):
+            protected_path(os.path.realpath(source))
+            with open(source, encoding="utf-8") as file_obj:
+                write_text_atomic(CONFIG_DIR + "/" + destination, file_obj.read(), mode=0o600)
+    else:
+        for path in (AUTH_PATH, CONFIG_DIR + "/server.crt", CONFIG_DIR + "/server.key"):
+            if os.path.lexists(path):
+                protected_path(path)
+                remove_file_durable(path)
+    if standalone:
+        _managed_write(POLKIT_PATH, _marker(POLKIT_PATH) + "\n" +
                    'polkit.addRule(function(action, subject) {\n'
                    f'    if (subject.user === "{config.username}") return polkit.Result.NO;\n'
                    '});\n')
+    elif os.path.lexists(POLKIT_PATH):
+        remove_file_durable(POLKIT_PATH)
     for name, unit in units.items():
         _managed_write(f"{UNIT_ROOT}/{name}.service", unit)
     run(["systemctl", "daemon-reload"])
@@ -454,5 +514,7 @@ def _configure_privilege_broker(config, begin_changes) -> None:
         state = inspect_unit_state(name + ".service")
         if state["ActiveState"] != "active" or state["UnitFileState"] != "enabled":
             raise RuntimeError("Privilege approval service activation did not verify: " + name)
-    approval_origin = privilege_broker_origin(config)
-    _wait_ready(approval_origin)
+    if standalone:
+        _wait_ready(privilege_broker_origin(config))
+    if integrated_approvals(config):
+        _wait_ready(approval_origin(config), panel=True)

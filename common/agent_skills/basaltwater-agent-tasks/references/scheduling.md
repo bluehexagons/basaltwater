@@ -129,7 +129,7 @@ preparation belongs in operator requirements. Put evidence, exact actions,
 verification, and rollback in the proposal; request the minimum access needed.
 Use `null` when unnecessary.
 This records evidence only. The operator can approve once, review, or block.
-Service prerequisites require separate portal approval and successful execution
+Service prerequisites require individual privilege approval in the main or standalone panel and successful execution
 before the follow-up is saved or launched. Never ask another unattended agent
 to configure its own permissions or grant approval. Do not repeat an unchanged
 blocked request; describe the difficulty in `environment_feedback` instead.

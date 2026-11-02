@@ -5,14 +5,16 @@ from __future__ import annotations
 import base64
 import copy
 import http.client
+import os
 import re
+import socket
 import tempfile
 import threading
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from urllib.parse import urlencode
 
-from common.service_tools.privilege_approval import ApprovalServer
+from common.service_tools.privilege_approval import ApprovalServer, PanelApprovalServer
 from common.service_tools.privilege_broker import Broker
 from lib.privilege_auth import authenticate, password_record
 from lib.privilege_execution import ExecutionResult
@@ -155,3 +157,81 @@ class ApprovalTests(unittest.TestCase):
         self.server.auth = password_record("operator", "a different test-only password")
         self.assertEqual(self.call()[0], 401)
         self.assertFalse(authenticate("Basic " + base64.b64encode("é:wrong".encode()).decode(), self.auth))
+
+
+class IntegratedApprovalTests(ApprovalTests):
+    """Exercise the same approval invariants through the authenticated Unix proxy."""
+
+    def setUp(self):
+        super().setUp()
+        self.close_server()
+        self.origin = "https://vm.example"
+        with patch("common.service_tools.privilege_approval.os.chown"):
+            self.server = PanelApprovalServer(self.directory.name + "/review.sock",
+                ["https://vm.example:443", "https://alias.example:443"], "operator", os.getuid(), os.getgid(),
+                lambda message: self.broker.dispatch(message, 999, approval=True))
+        self.thread = threading.Thread(target=self.server.serve_forever,
+                                       kwargs={"poll_interval": 0.01}, daemon=True)
+        self.thread.start()
+
+    def call(self, method="GET", path=None, body=None, headers=None, *, login=True):
+        combined = {"Host": "vm.example"}
+        if login:
+            combined["X-Basaltwater-User"] = "operator"
+        combined.update(headers or {})
+        connection = http.client.HTTPConnection("localhost", timeout=5)
+        self.addCleanup(connection.close)
+        connection.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        connection.sock.settimeout(5)
+        connection.sock.connect(self.server.server_address)
+        connection.request(method, path or self.path, body, combined)
+        response = connection.getresponse()
+        return response.status, dict(response.getheaders()), response.read().decode()
+
+    def test_authentication_required_and_plain_text_explanation(self):
+        self.assertEqual(self.call(login=False)[0], 403)
+        content = self.call()[2]
+        self.assertIn("&lt;script&gt;", content)
+        self.assertIn('href="/admin"', content)
+        self.assertIn('href="/approvals"', content)
+        self.server.proxy_uid = os.getuid() + 1
+        self.assertEqual(self.call()[0], 403)
+
+    def test_login_throttling_and_invalid_host(self):
+        self.assertEqual(self.call(headers={"Host": "evil.example"})[0], 400)
+        self.assertEqual(self.call(headers={"X-Basaltwater-User": "another-user"})[0], 403)
+        form = self.form()
+        self.assertEqual(self.call("POST", body=urlencode(form), headers={
+            "Host": "alias.example", "Origin": "https://alias.example",
+            "Content-Type": "application/x-www-form-urlencoded"})[0], 303)
+
+    def test_unconfirmed_decision_links_to_status_without_replaying(self):
+        form = self.form()
+        self.assertEqual(self.post(form)[0], 303)
+        status, _, content = self.post(form)
+        self.assertEqual(status, 409)
+        self.assertIn(f'<a href="{self.path}">Check request status</a>', content)
+        self.assertIn('<a href="/approvals">All requests</a>', content)
+
+    def test_invalid_request_path_has_only_safe_recovery_link(self):
+        status, _, content = self.call("POST", path='//evil.example/<script>', body="", headers={
+            "Origin": self.origin, "Content-Type": "application/x-www-form-urlencoded"})
+        self.assertEqual(status, 409)
+        self.assertNotIn("Check request status", content)
+        self.assertNotIn("evil.example", content)
+        self.runner.assert_not_called()
+
+    def test_denial_and_queue(self):
+        self.assertIn(self.request["id"], self.call(path="/approvals")[2])
+        self.assertEqual(self.post(self.form("deny"))[0], 303)
+        self.assertFalse(self.broker.execute_next())
+        self.assertIn("denied", self.call()[2])
+
+    def test_password_rotation_takes_effect_independently(self):
+        # The standalone password never authorizes the integrated listener.
+        self.assertEqual(self.call(login=False, headers={"Authorization": "Basic invalid"})[0], 403)
+
+    def test_default_http_port_matches_the_browser_origin(self):
+        self.server.origins = {"http://vm.example"}
+        self.origin = "http://vm.example"
+        self.assertEqual(self.post(self.form())[0], 303)

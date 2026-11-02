@@ -236,7 +236,7 @@ class SambaPanelTests(unittest.TestCase):
             self.assertEqual(handler._send.call_args.args[0], 200)
             document = handler._send.call_args.args[1]
             ticket = re.search(r'name="ticket" value="([^"]+)"', document).group(1)
-            self.assertIn("separate approval page", document)
+            self.assertIn("approval review", document)
             self.assertTrue(all(call.args[0] == {"action": "samba-status"} for call in exchange.call_args_list))
             handler = self.handler("/actions/samba/submit", {"csrf": "csrf", "ticket": ticket, "confirmation": "alice"})
             handler.do_POST()

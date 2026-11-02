@@ -205,7 +205,7 @@ def _request_services(state: dict[str, Any], path: str, units: list[str], title:
         previous = state["requests"].get(unit)
         if previous:
             if not previous.get("id"):
-                raise ServiceApprovalPending("Service submission outcome is unknown. Review existing requests in the separate privilege portal before requesting again: " + unit)
+                raise ServiceApprovalPending("Service submission outcome is unknown. Review existing requests on the privilege approval page before requesting again: " + unit)
             reply = _service_status(previous["id"])
             previous["state"] = reply.get("state", "unknown")
             write_json_atomic(path, state)
@@ -255,7 +255,7 @@ def decide_follow_up(manager: AgentTasks, identifier: str, run_id: str, decision
                      settings: dict[str, Any] | None = None, run_now: bool = True, draft: bool = False) -> str | None:
     """Approval authorizes one task and confirms its displayed operator checklist.
 
-    Service prerequisites execute via the separately authenticated broker before
+    Service prerequisites execute via the isolated approval broker before
     provider launch; policy and write grants are still validated. Drafts retain
     unresolved requirements. An interrupted task submission resumes its saved
     intent or reconciles the exact idempotent child without replaying broker actions.

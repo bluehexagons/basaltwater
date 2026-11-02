@@ -35,8 +35,8 @@ Related pages:
   Codex session policy, hardened mode, and accepted security boundaries
 - [`agentic-vms.md`](../agents/agentic-vms.md) for headless, full-capability,
   approval-panel, unrestricted, and hardened coding-VM examples
-- [`privilege-approvals.md`](../agents/privilege-approvals.md) for the separate HTTPS
-  approval page and administrator allowlists
+- [`privilege-approvals.md`](../agents/privilege-approvals.md) for main-panel approvals,
+  the optional standalone HTTPS panel, and administrator allowlists
 - [`README.md`](../README.md) for the full documentation map
 
 ## Commands
@@ -381,8 +381,9 @@ contract, unattended job ownership, exact-text review, recovery and limits.
 | `-k, --key PATH` | SSH private key |
 | `-p, --password PASS` | Target Unix account password, also used for RDP when enabled. A command-line value may appear in shell history and process arguments. |
 | `--nopasswd` / `--no-nopasswd` | Retain or remove the VM setup user's unrestricted passwordless sudo capability rule; disabled by default |
-| `--privilege-broker [PORT]` / `--no-privilege-broker` | Install or remove the separate HTTPS approval page and one-shot privilege broker; defaults to port 9444, requires a non-root operator on an agent or GitHub runner VM, and conflicts with `--nopasswd` and hardened modes |
-| `--privilege-broker-password [PASSWORD]` | Set the independent approval-page password; omit `PASSWORD` to prompt securely, and omit the flag on a patch to retain the existing password. A command-line value may appear in shell history and process arguments. |
+| `--privilege-broker` / `--no-privilege-broker` | Re-enable or disable the approval engine included by default with the web panel; disabling removes approval listeners and retains audit history |
+| `--approval-panel [PORT]` / `--no-approval-panel` | Install or remove the standalone HTTPS approval panel (default port 9444), independently of main-panel approvals; requires a non-root operator on an agent or GitHub runner VM and conflicts with `--nopasswd` and hardened modes |
+| `--approval-panel-password [PASSWORD]` | Set the standalone panel's independent password; omit `PASSWORD` to prompt securely, and omit the flag on a patch to retain the existing password. Legacy alias: `--privilege-broker-password`. A command-line value may appear in shell history and process arguments. |
 | `--harden-agent` / `--no-harden-agent` | Apply or remove administrator/root-equivalent group restrictions and the hardened coding-agent policy; mutually exclusive with `--nopasswd` when enabled |
 | `--harden-user` / `--no-harden-user` | Also apply or remove password locking, mode-`0700` home, sensitive system-data/device-group restrictions, SSH forwarding/user-rc restrictions, and disabled systemd lingering; enabling implies `--harden-agent` and rejects RDP |
 | `-t, --timezone TZ` | Timezone |
@@ -915,14 +916,19 @@ remote control, and unmanaged hooks. See [Agentic coding
 security](../agents/agent-security.md) for the exact boundaries and supply-chain
 guidance.
 
-`--privilege-broker [PORT]` provides a separate option for an agent that needs
+`--approval-panel [PORT]` provides a standalone option for an agent that needs
 occasional, user-approved privileged work without a reusable sudo grant. It
 uses the managed host at HTTPS port 9444 unless a port is specified.
 It removes the coding account's privileged groups and rejects remaining
 sudoers grants, then installs an independent HTTPS approval service with its
-own password. The main web panel links to that service when both are selected,
-but cannot approve requests. The initial broker supports VM reboot and exact
-administrator-registered service restarts. See [Privilege approvals](../agents/privilege-approvals.md)
+own password, without installing the main web panel or Nginx. The main web
+panel includes approvals by default using its existing login, with a request
+queue, exact command review, approve/deny decisions, and execution status.
+Use `--no-privilege-broker` to disable the engine and `--privilege-broker` to
+re-enable it. Main-panel installation preserves the selected account posture.
+The standalone flag replaces the former `--privilege-broker [PORT]` syntax;
+saved standalone configurations retain their listener.
+See [Privilege approvals](../agents/privilege-approvals.md)
 and the complete [Agentic VM examples](../agents/agentic-vms.md).
 The shared CLI baseline includes small coding and inspection tools such as
 `ripgrep` (`rg`), `jq`, SQLite, `file`, `tree`, `make`, and `patch`. The
@@ -990,8 +996,9 @@ sudo basaltw setup workstation_dev localhost "$USER" \
 |------|-------------|
 | `--t3code-ready` | Add the headless T3 Code-ready profile: GitHub CLI, Codex, read-write Git, T3 web service, and protected pairing |
 | `--nopasswd` / `--no-nopasswd` | Retain or remove unrestricted passwordless sudo for the VM setup identity; capability opt-in |
-| `--privilege-broker [PORT]` / `--no-privilege-broker` | Enable or disable a separately authenticated HTTPS page at the managed host (port 9444 by default) for one-shot approved reboot and registered service-restart requests; see [Privilege approvals](../agents/privilege-approvals.md) |
-| `--privilege-broker-password [PASSWORD]` | Assign or rotate the approval-page password; omitting the value prompts privately and the stored setup command excludes the password hash. A command-line value may appear in shell history and process arguments. |
+| `--privilege-broker` / `--no-privilege-broker` | Re-enable or disable the web panel's default approval engine; see [Privilege approvals](../agents/privilege-approvals.md) |
+| `--approval-panel [PORT]` / `--no-approval-panel` | Enable or remove a separately authenticated standalone HTTPS panel at the managed host (port 9444 by default); main-panel approvals remain available when only this listener is removed |
+| `--approval-panel-password [PASSWORD]` | Assign or rotate the standalone panel password; omitting the value prompts privately and the stored setup command excludes the password hash. Alias: `--privilege-broker-password`. A command-line value may appear in shell history and process arguments. |
 | `--harden-agent` / `--no-harden-agent` | Apply or remove administrator/root-equivalent supplementary-group restrictions and the stricter agent policy |
 | `--harden-user` / `--no-harden-user` | Apply or remove the password lock, private home, sensitive system-data/device-group restrictions, SSH forwarding/user-rc restrictions, and disabled lingering; enabling implies agent hardening and is incompatible with RDP |
 | `--agent-tool TOOL[,TOOL...]` | Add one or more provider tools (`gh`, `codex`, `claude`, or `opencode`) to profile defaults |

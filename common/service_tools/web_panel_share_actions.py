@@ -8,7 +8,7 @@ import threading
 import time
 from urllib.parse import urlencode
 
-from common.service_tools.web_panel_admin import _https_url, _timestamp
+from common.service_tools.web_panel_admin import _review_url, _timestamp
 from common.service_tools import web_panel_storage as storage
 from common.service_tools.web_panel_templates import render_heading
 from lib.privilege_client import exchange
@@ -38,7 +38,7 @@ class PanelShares:
 
     def snapshot(self) -> dict:
         if not self.admin.approval_url:
-            return {"error": "Share editing requires the optional privilege approval service for a supported non-root VM operator."}
+            return {"error": "Share approvals are disabled. Re-enable the panel approval service with --privilege-broker."}
         try:
             value = exchange({"action": "share-status"})
             if (type(value.get("available")) is not bool or type(value.get("blocked")) is not bool
@@ -187,7 +187,7 @@ def render_saved_review(ticket: str, value: dict, csrf: str) -> str:
                 ("Access", "Read only" if share["access"] == "read" else "Read & write"), ("Users", ", ".join(share["users"])))) + '</dl>'
         body += '</div>'
     body += f'''</div><p>Reconciliation reapplies group membership and recursive permissions for all saved managed shares, validates and reloads Samba, then saves the share selection. It preserves passwords, login flags, files and accounts. Other services and manually configured shares are retained.</p>
-<p>A changed configuration is rejected. The supervised job has a one-hour limit. A failure can leave partial permissions and a setup recovery guard requiring administrator inspection. Submitting creates a request for the separate approval page.</p>
+<p>A changed configuration is rejected. The supervised job has a one-hour limit. A failure can leave partial permissions and a setup recovery guard requiring administrator inspection. After submitting, open its approval review to approve or deny the exact change.</p>
 <form method="post" action="/actions/shares/submit" class="data-recovery-form">{csrf}<input type="hidden" name="ticket" value="{escape(ticket, quote=True)}">
 <label for="share-confirm">Type <code>{escape(name)}</code> to confirm</label><input id="share-confirm" name="confirmation" required autocomplete="off"><button>Create share approval request</button></form>
 <a href="/shares-data?view=shares">Cancel review</a></section>'''
@@ -222,7 +222,7 @@ def render_status(status: dict, csrf: str) -> str:
                 body += '<p>Inspect live Samba configuration, permissions, saved setup and any recovery guard before retrying.</p>'
         elif state in {"dispatched", "failed", "uncertain", "invalidated"}:
             body += '<p>Completion is not established by the current worker record. Inspect the approval and actual share state before trying again.</p>'
-        if url := _https_url(row.get("review_url")):
+        if url := _review_url(row.get("review_url")):
             body += f'<a class="refresh-link" href="{escape(url, quote=True)}" target="_blank" rel="noopener noreferrer">Open share approval ↗</a>'
         if state in {"pending", "approved"}:
             body += f'<p class="event-meta">Approval expires: {_timestamp(row.get("expires"))}</p><form method="post" action="/actions/shares/cancel">{csrf}<input type="hidden" name="id" value="{identifier}"><button>Cancel share request</button></form>'

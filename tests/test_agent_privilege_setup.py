@@ -16,12 +16,12 @@ import unittest
 from unittest.mock import Mock, patch
 
 from common.privilege_broker_steps import _requester_has_sudo_grants, render_units
-from common.web_panel_steps import build_web_panel_manifest
+from common.web_panel_steps import build_web_panel_manifest, render_web_panel_nginx
 from basaltwater import _patch_preserve_keys, create_basaltwater_parser, run_patch_command
 from lib.arg_parser import add_setup_arguments
 from lib.cache import merge_setup_configs
 from lib.config import SetupConfig
-from lib.privilege_setup import DEFAULT_PRIVILEGE_BROKER_PORT, privilege_broker_origin
+from lib.privilege_setup import DEFAULT_PRIVILEGE_BROKER_PORT, approval_origin, broker_enabled, privilege_broker_origin
 from lib.privilege_policy import DEFAULT_REQUEST_TTL_SECONDS
 from plugins.common import extend_web_panel_steps
 
@@ -36,8 +36,8 @@ class SetupTests(unittest.TestCase):
         return SetupConfig(host="vm.example", username="agent", system_type="agent_vm", **kwargs)
 
     def test_default_port_is_private_transient_and_survives_remote_parsing(self):
-        args = self.parser.parse_args(["setup", "agent_vm", "vm.example", "agent", "--privilege-broker",
-                                  "--privilege-broker-password", "test-only independent password"])
+        args = self.parser.parse_args(["setup", "agent_vm", "vm.example", "agent", "--approval-panel",
+                                  "--approval-panel-password", "test-only independent password"])
         config = SetupConfig.from_args(args, "agent_vm")
         self.assertNotIn("test-only independent password", repr(config))
         self.assertNotIn("privilege_broker_auth", config.to_dict())
@@ -45,7 +45,7 @@ class SetupTests(unittest.TestCase):
         self.assertNotIn("--privilege-broker-auth", " ".join(config.to_setup_command()))
         self.assertEqual(config.privilege_broker_port, DEFAULT_PRIVILEGE_BROKER_PORT)
         self.assertEqual(privilege_broker_origin(config), "https://vm.example:9444")
-        self.assertIn("--privilege-broker", config.to_setup_command())
+        self.assertIn("--approval-panel", config.to_setup_command())
         remote = argparse.ArgumentParser()
         add_setup_arguments(remote, for_remote=True)
         args = remote.parse_args(shlex.split(" ".join(config.to_remote_args())))
@@ -56,14 +56,19 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(privilege_broker_origin(received), "https://vm.example:9444")
 
     def test_custom_port_is_accepted_and_url_is_rejected(self):
-        args = self.parser.parse_args(["setup", "agent_vm", "vm.example", "agent", "--privilege-broker", "9445"])
+        args = self.parser.parse_args(["setup", "agent_vm", "vm.example", "agent", "--approval-panel", "9445"])
         config = SetupConfig.from_args(args, "agent_vm")
         self.assertEqual(config.privilege_broker_port, 9445)
         self.assertEqual(privilege_broker_origin(config), "https://vm.example:9445")
-        self.assertIn("--privilege-broker 9445", config.to_setup_command())
+        self.assertIn("--approval-panel 9445", config.to_setup_command())
         with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
-            self.parser.parse_args(["setup", "agent_vm", "vm.example", "agent", "--privilege-broker",
+            self.parser.parse_args(["setup", "agent_vm", "vm.example", "agent", "--approval-panel",
                                "https://vm.example:9444"])
+
+    def test_standalone_port_cannot_use_the_internal_reenable_sentinel(self):
+        for port in ("0", "-1", "1023", "65536"):
+            with self.subTest(port=port), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                self.parser.parse_args(["setup", "agent_vm", "vm.example", "agent", "--approval-panel", port])
 
     def test_ipv4_cidr_host_uses_address_for_approval_origin(self):
         config = SetupConfig(host="10.100.0.106/16", username="agent", system_type="agent_vm",
@@ -127,7 +132,7 @@ class SetupTests(unittest.TestCase):
 
         args = self.parser.parse_args(["setup", "server_github_runner", "vm.example", "operator",
                                  "--ci-repository", "owner/project", "--ci-allowed-user", "owner",
-                                 "--web-panel", "--ssl", "--privilege-broker"])
+                                 "--web-panel", "--ssl", "--approval-panel"])
         config = SetupConfig.from_args(args, "server_github_runner")
         self.assertFalse(config.has_agent_features())
         self.assertEqual(config.selected_agent_tools(), [])
@@ -160,7 +165,7 @@ class SetupTests(unittest.TestCase):
                              {"ci_organization": "owner", "ci_runner_group": "Private CI"}):
             cached = SetupConfig(host="vm.example", username="operator", system_type="server_github_runner",
                                  ci_allowed_users=["alice"], ci_labels=["ci"], **cached_scope)
-            for flags in (["--privilege-broker"], ["--ci-repository", "owner/three"],
+            for flags in (["--approval-panel"], ["--ci-repository", "owner/three"],
                           ["--ci-organization", "other"], ["--ci-repository", "owner/one", "--ci-repository", "owner/two"]):
                 with self.subTest(cached=cached_scope, flags=flags):
                     args = self.parser.parse_args(["patch", "vm.example", "operator", *flags])
@@ -169,7 +174,7 @@ class SetupTests(unittest.TestCase):
                     updated = execute.call_args.args[0]
                     self.assertEqual(updated.ci_allowed_users, ["alice"])
                     self.assertEqual(updated.ci_labels, ["ci"])
-                    if flags[0] == "--privilege-broker":
+                    if flags[0] == "--approval-panel":
                         self.assertEqual(runner_repositories(updated), runner_repositories(cached))
                         self.assertEqual(updated.ci_organization, cached.ci_organization)
                         self.assertEqual(updated.ci_runner_group, cached.ci_runner_group)
@@ -205,6 +210,92 @@ class SetupTests(unittest.TestCase):
         self.assertIn("ProtectSystem=strict", broker)
         self.assertNotIn("ReadWritePaths=/", broker)
         self.assertIn("ProtectSystem=strict", web)
+
+    def test_panel_defaults_opt_out_and_reenable_survive_patch_and_transport(self):
+        cached = self.config(web_panel_port=80)
+        self.assertTrue(broker_enabled(cached))
+        self.assertIsNone(cached.privilege_broker_port)
+        self.assertIsNone(cached.privilege_broker_auth)
+        self.assertEqual(approval_origin(cached), "http://vm.example:80")
+        self.assertTrue(build_web_panel_manifest(cached, ["vm.example"])["features"]["approvals"])
+        for flags, enabled in ((["--no-privilege-broker"], False), ([], False), (["--privilege-broker"], True)):
+            args = self.parser.parse_args(["patch", "vm.example", "agent", *flags])
+            cached = merge_setup_configs(cached, SetupConfig.from_args(args, "agent_vm"),
+                                         preserve_keys=_patch_preserve_keys(args))
+            self.assertEqual(broker_enabled(cached), enabled)
+            remote = argparse.ArgumentParser()
+            add_setup_arguments(remote, for_remote=True)
+            parsed = remote.parse_args(shlex.split(" ".join(cached.to_remote_args())))
+            parsed.host = "localhost"
+            received = SetupConfig.from_args(parsed, "agent_vm")
+            self.assertEqual(broker_enabled(received), enabled)
+            if enabled:
+                self.assertEqual(approval_origin(received), "http://vm.example:80")
+
+    def test_remove_standalone_retains_default_panel_approvals(self):
+        cached = self.config(web_panel_port=443, enable_ssl=True, privilege_broker_port=9444)
+        args = self.parser.parse_args(["patch", "vm.example", "agent", "--no-approval-panel"])
+        updated = merge_setup_configs(cached, SetupConfig.from_args(args, "agent_vm"),
+                                      preserve_keys=_patch_preserve_keys(args))
+        self.assertTrue(broker_enabled(updated))
+        self.assertIsNone(updated.privilege_broker_port)
+        self.assertIn("--no-approval-panel", updated.to_setup_command())
+
+    def test_disabling_engine_after_removing_standalone_serializes_one_selection(self):
+        config = self.config(web_panel_port=80, disable_approval_panel=True, disable_privilege_broker=True)
+        remote = argparse.ArgumentParser()
+        add_setup_arguments(remote, for_remote=True)
+        args = remote.parse_args(shlex.split(" ".join(config.to_remote_args())))
+        args.host = "localhost"
+        self.assertFalse(broker_enabled(SetupConfig.from_args(args, "agent_vm")))
+        self.assertNotIn("--no-approval-panel", config.to_setup_command())
+
+    def test_refresh_recovers_panel_origin_with_or_without_existing_policy(self):
+        from lib import refresh
+
+        for existing_policy in (False, True):
+            with self.subTest(existing_policy=existing_policy), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                saved, manifest, policy_path = (root / name for name in ("setup.json", "panel.json", "policy.json"))
+                config = self.config(web_panel_port=443, enable_ssl=True)
+                saved.write_text(json.dumps({**config.to_dict(), "system_type": "agent_vm"}))
+                saved.chmod(0o600)
+                manifest.write_text(json.dumps({"panel_url": "https://vm.example/"}))
+                if existing_policy:
+                    policy_path.write_text("{}")
+                with (patch.object(refresh, "SETUP_CONFIG_FILE", str(saved)),
+                      patch.object(refresh, "_validate_setup_config", return_value=None),
+                      patch("lib.privilege_policy.POLICY_PATH", str(policy_path)),
+                      patch("lib.privilege_policy.protected_path") as protect,
+                      patch("lib.privilege_policy.load_policy", return_value={
+                          "origin": "https://vm.example:443", "requester_uid": 1000}),
+                      patch.object(refresh.pwd, "getpwnam", return_value=SimpleNamespace(pw_uid=1000)),
+                      patch("common.web_panel_steps.WEB_PANEL_MANIFEST", str(manifest))):
+                    restored = refresh._debian_setup()
+                self.assertEqual(approval_origin(restored), "https://vm.example:443")
+                protect.assert_any_call(str(manifest))
+
+    def test_integrated_units_have_no_standalone_credential_or_listener(self):
+        web = render_units(panel_origin="https://vm.example:443", standalone=False,
+                           username="agent")["basaltwater-privilege-approval"]
+        self.assertIn("User=basaltwater-approval", web)
+        self.assertIn("SupplementaryGroups=www-data", web)
+        self.assertIn("RuntimeDirectoryMode=0711", web)
+        self.assertIn("BASALTWATER_STANDALONE=0", web)
+        self.assertNotIn("LoadCredential", web)
+
+    def test_nginx_approval_routes_require_panel_auth_and_use_the_isolated_socket(self):
+        from lib.privilege_policy import PANEL_APPROVAL_SOCKET
+
+        document = render_web_panel_nginx(["vm.example"], 443, approvals=True)
+        self.assertIn('auth_basic_user_file ', document)
+        self.assertIn('location ~ "^/(approvals$|requests/[a-f0-9]{32}$)"', document)
+        route = document.split('location ~ "^/(approvals$', 1)[1].split('\n    }', 1)[0]
+        self.assertIn('proxy_pass http://unix:' + PANEL_APPROVAL_SOCKET, route)
+        self.assertIn('proxy_set_header X-Basaltwater-User $remote_user;', route)
+        self.assertIn('proxy_set_header Authorization "";', route)
+        self.assertNotIn('auth_basic off', route)
+        self.assertNotIn(PANEL_APPROVAL_SOCKET, render_web_panel_nginx(["vm.example"], 443))
 
     @patch("common.privilege_broker_steps.run")
     def test_sudo_denial_output_is_authoritative(self, run):
@@ -301,8 +392,10 @@ class LifecycleTests(unittest.TestCase):
         cert.write_text("test certificate fixture")
         key = self.root / "key"
         key.write_text("test key fixture")
-        self.gateway = self.stack.enter_context(patch("common.godot_web_steps.configure_internal_web_host",
-            return_value=("", "", str(cert), str(key), False)))
+        self.gateway = self.stack.enter_context(patch("common.godot_web_steps.configure_internal_certificate",
+            return_value=(str(cert), str(key), False, False)))
+        self.stack.enter_context(patch.object(steps, "_panel_ready", return_value=True))
+        self.stack.enter_context(patch("common.godot_web_steps.discover_local_web_identities", return_value=[]))
 
     def system_command(self, command, **_kwargs):
         failure = self.command_failure(command)
@@ -364,6 +457,49 @@ class LifecycleTests(unittest.TestCase):
         self.steps.configure_privilege_broker(self.config)
         self.assertEqual(json.loads(self.auth_path.read_text()), changed)
         self.assertTrue(self.polkit_path.read_text().startswith("// Managed"))
+
+    def test_integrated_install_needs_no_independent_password_vm_or_gateway(self):
+        self.config = SetupConfig(host="vm.example", username="agent", system_type="server_lite",
+                                  machine_type="hardware", web_panel_port=80)
+        with patch.object(self.steps, "is_vm", return_value=False):
+            self.steps.configure_privilege_broker(self.config)
+        self.gateway.assert_not_called()
+        self.assertFalse(self.auth_path.exists())
+        self.assertFalse(self.polkit_path.exists())
+        self.assertFalse(any(call.args[0][0] == "sudo" for call in self.run.call_args_list))
+        self.assertEqual(json.loads(self.policy_path.read_text())["origin"], "http://vm.example:80")
+        self.assertIn("BASALTWATER_STANDALONE=0", (self.units / (self.steps.WEB + ".service")).read_text())
+
+    def test_removing_standalone_preserves_engine_and_removes_private_credentials(self):
+        self.steps.configure_privilege_broker(self.config)
+        self.config.web_panel_port = 443
+        self.config.enable_ssl = True
+        self.config.privilege_broker_auth = None
+        self.config.disable_approval_panel = True
+        self.steps.configure_privilege_broker(self.config)
+        self.assertTrue(all(state["ActiveState"] == "active" for state in self.states.values()))
+        for path in (self.auth_path, self.directory / "server.crt", self.directory / "server.key", self.polkit_path):
+            self.assertFalse(path.exists())
+        self.assertEqual(json.loads(self.policy_path.read_text())["origin"], "https://vm.example:443")
+
+    def test_root_panel_uses_a_dedicated_non_root_requester(self):
+        self.config = SetupConfig(host="vm.example", username="root", system_type="server_proxmox",
+                                  web_panel_port=443, enable_ssl=True)
+        account = SimpleNamespace(pw_name="basaltwater-web-panel", pw_uid=997, pw_gid=997)
+        with patch("common.web_panel_steps._ensure_web_panel_service_account", return_value=account):
+            self.steps.configure_privilege_broker(self.config)
+        self.assertEqual(json.loads(self.policy_path.read_text())["requester_uid"], 997)
+        self.assertFalse(self.auth_path.exists())
+        self.assertIn("BASALTWATER_PANEL_USER=root", (self.units / (self.steps.WEB + ".service")).read_text())
+
+    def test_failed_transition_to_main_panel_restores_standalone_authority(self):
+        self.steps.configure_privilege_broker(self.config)
+        original = self.broker_snapshot()
+        self.config = SetupConfig(host="vm.example", username="agent", system_type="agent_vm", web_panel_port=80)
+        with patch.object(self.steps, "_panel_ready", return_value=False), self.assertRaises(RuntimeError):
+            self.steps.configure_privilege_broker(self.config)
+        self.assertEqual(self.broker_snapshot(), original)
+        self.assertTrue(all(state["ActiveState"] == "active" for state in self.states.values()))
 
     def test_runner_policy_grants_only_the_operator_requester_access(self):
         self.config.system_type = "server_github_runner"
@@ -577,7 +713,7 @@ class LifecycleTests(unittest.TestCase):
             with self.subTest(stage=stage), ExitStack() as patches:
                 self.run.reset_mock()
                 if stage == "gateway":
-                    patches.enter_context(patch("common.godot_web_steps.configure_internal_web_host",
+                    patches.enter_context(patch("common.godot_web_steps.configure_internal_certificate",
                                                 side_effect=RuntimeError("gateway failed")))
                 else:
                     self.command_failure = lambda command: RuntimeError("validation failed") if command[0] == "systemd-analyze" else None

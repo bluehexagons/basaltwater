@@ -1,23 +1,36 @@
 # Privilege approvals
 
-Use this feature when an agentic VM needs an occasional privileged action but
-must not hold reusable sudo access. The agent requests an action; you review it
-on a separate HTTPS page and approve it once. The coding account never receives
-the approval password or a sudo session.
+The web panel installs the approval service by default. Open **Admin controls →
+Privilege approvals → Review all requests** to review, approve or deny exact
+actions using the panel login. Host administration, agent service prerequisites,
+Samba changes and storage operations share this queue. Nothing runs just because
+you open a review.
+
+Use `--no-privilege-broker` to disable approvals, or `--privilege-broker` to
+re-enable them on a panel installation. An omitted option preserves an explicit
+opt-out on patches. Existing panels gain approvals on their next setup or refresh;
+no additional password or public port is needed. Integrated approvals follow the
+panel's HTTP/HTTPS configuration; use `--ssl` to protect the login and decisions.
+
+For a lighter agent VM without the web panel, install the standalone HTTPS panel
+below. It has its own password and service identity and requires neither Nginx
+nor dashboard/agent-browser components. This mode removes reusable sudo access
+from the coding account. Installing integrated approvals alone preserves the
+account's existing sudo posture.
 
 The agent can request an exact command and argument vector for one-time root
 execution. The approval page shows every argument; shell strings, environment
 assignments, stdin, and command prefixes are not accepted. VM reboot and exact
 administrator-registered service restarts remain available as structured actions.
 
-## Set up the approval page
+## Set up the standalone approval panel
 
 Run this from the trusted controller:
 
 ```bash
 basaltw patch 192.168.1.50 agent \
-  --privilege-broker \
-  --privilege-broker-password
+  --approval-panel \
+  --approval-panel-password
 ```
 
 The password flag prompts privately. Pick a 16–256 character password that is
@@ -27,12 +40,12 @@ is uploaded; saved configuration and reconstructed setup commands omit it.
 The approval page uses the managed VM host and HTTPS port 9444. If setup uses an
 IPv4 address with a CIDR prefix, the approval origin uses that address and drops
 the prefix. Use
-`--privilege-broker PORT` to choose another port above 1023, outside the shared
+`--approval-panel PORT` to choose another port above 1023, outside the shared
 gateway's 8443–8999 range. Restrict the VM with `--lan-access` or
 `--access-source`, and enroll the VM CA on the device that will approve
 requests; see [Client CA trust](../services/client-ca-trust.md).
 
-The broker is available on VM `agent_vm`, `agent_code_vm`, `agent_workstation`
+The standalone panel is available on VM `agent_vm`, `agent_code_vm`, `agent_workstation`
 and `server_github_runner` setups. Runner hosts grant request access to the
 non-root setup/panel operator, never the dedicated build account. It cannot coexist with `--nopasswd`,
 `--harden-agent`, or `--harden-user`. On an existing VM, end old coding-user
@@ -57,7 +70,7 @@ basaltw agent privilege request command.run \
 ```
 
 The request returns a `review_url`. Open it on your own device, sign in with
-the separate approval password, check the machine identity, requester UID,
+the main panel login or the standalone panel's separate password, check the machine identity, requester UID,
 parameters, effects, and expiry, then choose **Approve once** or **Deny**.
 Treat the agent's explanation as untrusted. The root broker performs one
 approved attempt automatically.
@@ -113,21 +126,23 @@ unsuccessfully for a cancelled action, while `cancel` succeeds for a cancelled
 or already closed, unexecuted request. Setup must refresh both the CLI and the
 broker before using this command on an existing VM.
 
-When the optional [web panel](../services/web-panel.md) is installed, **Admin
+When the [web panel](../services/web-panel.md) is installed, **Admin
 controls → Privilege approvals** lists this account's recent requests from task
 follow-ups, terminal agents and Admin controls. It shows status, approval expiry,
 safe execution results, cancellation for unclaimed work, and links to review
 the exact actions. Use **Refresh status** after an action finishes. Command
-arguments and agent explanations stay on the approval portal.
+arguments and agent explanations appear on the exact-action review page.
 Follow-up restart prerequisites use registered service rules when available.
 Otherwise they request one-time command approval for the exact `systemctl`
 restart arguments; the portal still requires your decision and no service
 allowlist entry is created. The panel verifies the successful receipt's exact
 operation and arguments before launching the task.
-The panel has a different password and cannot read approval credentials or
-approve requests. The standalone HTTPS approval portal remains available on
-minimal installations without the web panel; installing the broker does not
-require or enable the broader dashboard.
+Main-panel decisions pass through an isolated approval service; the ordinary
+panel process has no decision-socket access. The panel login and browser origin
+are trusted to approve actions. Keep that login out of agent-controlled browsers
+and tools. The standalone panel retains its independent credential and origin,
+including when both panels are installed. Request links prefer the main panel
+when it is present; either review surface can decide the same pending request.
 
 The panel’s [Shares & Data page](../services/shares-data.md) also requests
 individually approved `data.run` operations for single-file verification,
@@ -142,13 +157,20 @@ editing or automatic remediation.
 
 ```bash
 # Prompt for and set a new approval password.
-basaltw patch 192.168.1.50 agent --privilege-broker-password
+basaltw patch 192.168.1.50 agent --approval-panel-password
+
+# Remove only the standalone listener and its credential.
+basaltw patch 192.168.1.50 agent --no-approval-panel
 
 # Stop the services and remove approval authority.
 basaltw patch 192.168.1.50 agent --no-privilege-broker
 ```
 
-Omitting these flags preserves the feature and current password. Rotation
+Omitting these flags preserves the feature and current standalone password.
+`--privilege-broker-password` remains an alias for `--approval-panel-password`.
+Removing the standalone panel retains integrated approvals when the main panel
+is installed; removing the main panel retains an explicitly selected standalone
+panel. Removing the last surface stops the approval engine. Rotation
 expires outstanding approvals. Disabling removes the managed services,
 credentials, and polkit rule but retains policy and audit history for review.
 

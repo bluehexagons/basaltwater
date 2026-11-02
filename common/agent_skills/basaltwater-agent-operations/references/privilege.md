@@ -1,6 +1,6 @@
 # One-time privileged actions
 
-On a VM configured with `--privilege-broker`, request a supported root action
+On a machine with web-panel approvals enabled, or a VM with `--approval-panel`, request a supported root action
 through `basaltw agent privilege request` instead of trying `sudo`:
 
 ```bash
@@ -9,10 +9,12 @@ basaltw agent privilege request command.run \
 basaltw agent privilege wait REQUEST_ID --timeout 300 --json
 ```
 
-The request returns a `review_url` for the separate HTTPS approval portal,
-normally on the VM's port 9444. Give that URL to the operator; the coding
-account cannot approve the request or receive the approval password. The
-portal displays the exact arguments and allows one approved attempt. Do not
+The request returns a `review_url` in the main web panel, or the standalone
+HTTPS approval panel (normally port 9444) on a minimal VM. Give that URL to the
+operator. The coding account cannot decide through the request socket; never
+obtain or use either panel's login to approve your own request. The main panel
+uses its existing login; the standalone panel has an independent password.
+Both display the exact arguments and allow one approved attempt. Do not
 put a shell, `sudo`, environment assignments, or secrets in `--command`.
 Managed `basaltwater-web` publication and owner-scoped live gateway actions
 already work without this approval flow. See

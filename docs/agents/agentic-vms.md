@@ -43,8 +43,8 @@ basaltw setup agent_vm 192.168.1.50 agent \
   --git-access read \
   --repo https://github.com/example/project.git \
   --access-source 192.168.1.0/24 \
-  --privilege-broker \
-  --privilege-broker-password
+  --approval-panel \
+  --approval-panel-password
 ```
 
 The final flag prompts for an independent approval-page password. Do not use
@@ -66,8 +66,8 @@ for the supported actions, service allowlists, recovery path, and policy rules.
 `agent_code_vm` is the complete graphical profile: it includes T3 Code, Geany,
 RDP, protected T3 pairing, read-write Git, active GitHub auth, target-owned Codex login, and
 the GitHub CLI and Codex defaults. Add OpenCode and Playwright when the project
-needs those tools. This example provides the web panel as a convenient launch
-point for the separate approval page.
+needs those tools. This example includes approvals in the web panel and also
+installs the standalone approval page with its independent password.
 Set `RDP_PASSWORD` through your secure secret source for the desktop account;
 it is separate from the panel and approval passwords. Set
 `PANEL_PASSWORD` through the same approved secret source for the panel.
@@ -82,8 +82,8 @@ basaltw setup agent_code_vm 192.168.1.60 agent \
   --lan-access \
   --web-panel 9443 --ssl \
   --web-panel-password "$PANEL_PASSWORD" \
-  --privilege-broker \
-  --privilege-broker-password
+  --approval-panel \
+  --approval-panel-password
 ```
 
 The `--password` and `--web-panel-password` options pass values in command-line
@@ -92,10 +92,13 @@ process inspectors may still see the expanded argument. Run setup from a
 trusted controller and never put literal credentials in a saved or committed
 command. The approval password flag prompts without displaying the secret.
 Keep the panel password separate from the approval-page password. The web
-panel at its
-managed HTTPS URL lists **Privilege approvals**. That link opens a different
-HTTPS origin with its own password and service identity: signing into the web
-panel never grants approval authority.
+panel's **Admin controls** page includes an integrated review queue using the panel
+login. Its **Privilege approvals** service link opens the standalone HTTPS
+origin using its own password and service identity. Keep both
+passwords out of agent-controlled browsers. Omit the two `--approval-panel`
+options when integrated approvals alone are sufficient; that retains the
+account's normal sudo posture. Selecting the standalone panel also applies
+the stricter coding-account posture described below.
 
 This is a fully capable development machine, not an unrestricted root machine.
 Codex/OpenCode can use the normal standard capabilities, T3 Code and browser
@@ -126,7 +129,7 @@ basaltw setup agent_code_vm 192.168.1.70 maintainer \
   --nopasswd
 ```
 
-Do not combine `--nopasswd` with `--privilege-broker`, `--harden-agent`, or
+Do not combine `--nopasswd` with `--approval-panel`, `--harden-agent`, or
 `--harden-user`. Keep it off machines that hold personal credentials, trusted
 network access, or data you cannot readily replace. A VM snapshot before work
 and a short-lived project-specific credential set make this mode more practical
@@ -192,8 +195,8 @@ existing compatible agent VM, run:
 
 ```bash
 basaltw patch 192.168.1.60 agent \
-  --privilege-broker \
-  --privilege-broker-password
+  --approval-panel \
+  --approval-panel-password
 ```
 
 Changing from `--nopasswd` or a hardened posture requires explicitly removing

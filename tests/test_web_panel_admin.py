@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import Mock, patch
 from urllib.parse import urlencode
 
-from common.service_tools.web_panel_admin import PanelAdmin, parse_admin_query, render_admin
+from common.service_tools.web_panel_admin import PanelAdmin, _review_url, parse_admin_query, render_admin
 from common.service_tools.web_panel_service import WebPanelHandler, _PAGE_STYLE
 from common.service_tools.web_panel_templates import panel_navigation
 from common.service_tools.web_panel_features import PanelFeatures
@@ -57,9 +57,31 @@ class AdminScreenTests(unittest.TestCase):
         with patch("common.service_tools.web_panel_admin.exchange") as exchange:
             document = render_admin(self.state, _PAGE_STYLE, {})
             exchange.assert_not_called()
-        self.assertIn("optional privilege approval service", document)
+        self.assertIn("included with the web panel", document)
         self.assertIn('href="/logs"', document)
         self.assertNotIn('href="/admin?action=', document)
+
+    def test_integrated_queue_uses_panel_login_and_local_request_links(self):
+        self.state.admin = PanelAdmin({"host": "vm.example", "features": {"approvals": True}})
+        request = {"id": "a" * 32, "operation": "command.run", "state": "pending",
+                   "created": 0, "expires": 3600, "review_url": "https://vm.example/requests/" + "a" * 32}
+        with patch("common.service_tools.web_panel_admin.exchange", return_value={
+                **status(), "privilege_requests": [request]}):
+            document = render_admin(self.state, _PAGE_STYLE, {})
+        self.assertIn('href="/approvals"', document)
+        self.assertIn('href="/requests/' + "a" * 32 + '"', document)
+        self.assertIn("Uses your web panel sign-in", document)
+        self.assertNotIn("separate approval password", document)
+
+    def test_review_links_support_panel_http_ipv6_and_strict_local_paths(self):
+        for url in ("http://vm.example/requests/" + "a" * 32,
+                    "https://[2001:db8::1]/requests/" + "a" * 32, "/approvals", "/requests/" + "a" * 32):
+            with self.subTest(url=url):
+                self.assertEqual(_review_url(url), url)
+        for url in ("//evil.example/requests/" + "a" * 32, "/requests/invalid", "javascript:alert(1)",
+                    "https://user:password@vm.example/requests/" + "a" * 32):
+            with self.subTest(url=url):
+                self.assertIsNone(_review_url(url))
 
     def test_admin_does_not_render_or_query_agent_controls(self):
         self.state.t3_update_available.return_value = True

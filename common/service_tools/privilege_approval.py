@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent HTTPS approval page, running as a dedicated non-root identity."""
+"""Isolated approval reviews for the main panel and optional standalone HTTPS UI."""
 
 from __future__ import annotations
 
@@ -11,11 +11,15 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import html
 import json
 import os
+import pwd
 import secrets
 import socket
+import socketserver
 import ssl
+import struct
 import sys
 import time
+import threading
 from urllib.parse import parse_qs, urlsplit
 
 if __name__ == "__main__" and not __package__:
@@ -23,7 +27,7 @@ if __name__ == "__main__" and not __package__:
 
 from lib.privilege_auth import authenticate, validate_auth
 from lib.privilege_client import exchange
-from lib.privilege_policy import APPROVAL_SOCKET, ID_PATTERN, canonical, load_policy
+from lib.privilege_policy import APPROVAL_SOCKET, ID_PATTERN, PANEL_APPROVAL_SOCKET, canonical, load_policy
 from common.service_tools.web_panel_templates import render_favicon
 
 STYLE = """
@@ -50,7 +54,7 @@ def csrf(secret: bytes, request: dict, username: str) -> str:
     return hmac.new(secret, canonical([request["id"], request["digest"], username]).encode(), hashlib.sha256).hexdigest()
 
 
-def render_request(request: dict, token: str) -> str:
+def render_request(request: dict, token: str, *, integrated: bool = False) -> str:
     escape = lambda value: html.escape(str(value), quote=True)
     plan = request["plan"]
     expires = datetime.fromtimestamp(request["expires"], timezone.utc).isoformat()
@@ -63,7 +67,8 @@ def render_request(request: dict, token: str) -> str:
     if request.get("execution"):
         execution = request["execution"]
         fields.extend([("Exit code", execution["exit_code"]), ("Execution detail", execution["failure"] or "Completed")])
-    content = '<p><a href="/">All requests</a></p><dl>'
+    listing = "/approvals" if integrated else "/"
+    content = f'<p><a href="{listing}">All requests</a></p><dl>'
     content += ''.join(f'<dt>{escape(label)}</dt><dd>{escape(value)}</dd>' for label, value in fields)
     content += '</dl><p class="notice">Agent-provided explanation (untrusted): ' + escape(request["reason"]) + '</p>'
     if request["state"] == "pending":
@@ -74,7 +79,23 @@ def render_request(request: dict, token: str) -> str:
                     '<button name="decision" value="deny">Deny</button></form>')
     else:
         content += '<p>This request cannot be approved again. Refresh to see the latest execution status.</p>'
+    return approval_page(content, integrated=integrated)
+
+
+def approval_page(content: str, *, integrated: bool = False) -> str:
+    if integrated:
+        from common.service_tools.web_panel_approval import render_approval_page
+
+        return render_approval_page(content)
     return page(content)
+
+
+def browser_origin(origin: str) -> str:
+    """Use the origin serialization browsers send, including default ports."""
+    parsed = urlsplit(origin)
+    default = 443 if parsed.scheme == "https" else 80
+    host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+    return f"{parsed.scheme}://{host}" + (f":{parsed.port}" if parsed.port != default else "")
 
 
 class ApprovalHandler(BaseHTTPRequestHandler):
@@ -112,6 +133,19 @@ class ApprovalHandler(BaseHTTPRequestHandler):
         self.close_connection = True
 
     def authorized(self) -> bool:
+        self.approval_origin = self.server.origin
+        if self.server.integrated:
+            _pid, uid, _gid = struct.unpack("3i", self.request.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+            if uid != self.server.proxy_uid or self.headers.get_all("X-Basaltwater-User") != [self.server.auth["username"]]:
+                self.respond(403, self.page("<p>Authenticated panel proxy required.</p>"))
+                return False
+            hosts = self.headers.get_all("Host") or []
+            origin = next((value for value in self.server.origins if hosts == [urlsplit(value).netloc]), None)
+            if origin is None:
+                self.respond(400, self.page("<p>Incorrect approval host.</p>"))
+                return False
+            self.approval_origin = origin
+            return True
         if self.headers.get_all("Host") != [urlsplit(self.server.origin).netloc]:
             self.respond(400, page("<p>Incorrect approval host.</p>"))
             return False
@@ -129,6 +163,9 @@ class ApprovalHandler(BaseHTTPRequestHandler):
             return False
         return True
 
+    def page(self, content: str) -> str:
+        return approval_page(content, integrated=self.server.integrated)
+
     def request_id(self) -> str:
         prefix = "/requests/"
         value = self.path[len(prefix):] if self.path.startswith(prefix) else ""
@@ -143,17 +180,20 @@ class ApprovalHandler(BaseHTTPRequestHandler):
             self.respond(200, render_favicon(), content_type="image/svg+xml")
             return
         try:
-            if self.path == "/":
+            if self.path == ("/approvals" if self.server.integrated else "/"):
                 records = self.server.exchange({"action": "list"})["requests"]
                 items = ''.join(f'<li><a href="/requests/{row["id"]}">{html.escape(row["operation"])}</a> · '
                                 f'{html.escape(row["state"])} · UID {row["uid"]}</li>' for row in records)
-                content = page('<p>' + html.escape(self.server.origin) + '</p><p>Recent agent requests. Select a request to review its effects.</p><ul>' + items + '</ul>')
+                content = self.page('<p>Review the exact action, effects and expiry before deciding. '
+                                    'Approval permits one execution attempt.</p>'
+                                    + ('<ul>' + items + '</ul>' if items else '<p>No recent approval requests.</p>'))
             else:
                 request = self.server.exchange({"action": "status", "id": self.request_id()})
-                content = render_request(request, csrf(self.server.secret, request, self.server.auth["username"]))
+                content = render_request(request, csrf(self.server.secret, request, self.server.auth["username"]),
+                                         integrated=self.server.integrated)
             self.respond(200, content)
         except (OSError, ValueError):
-            self.respond(503, page("<p>Request unavailable. No approval was submitted.</p>"))
+            self.respond(503, self.page("<p>Request unavailable. No approval was submitted.</p>"))
 
     def do_POST(self):
         if not self.authorized():
@@ -161,7 +201,7 @@ class ApprovalHandler(BaseHTTPRequestHandler):
         request_id = None
         try:
             request_id = self.request_id()
-            if self.headers.get_all("Origin") != [self.server.origin]:
+            if self.headers.get_all("Origin") != [self.approval_origin]:
                 raise ValueError("Cross-origin approval rejected")
             if (self.headers.get("Content-Type") != "application/x-www-form-urlencoded"
                 or self.headers.get("Transfer-Encoding") or len(self.headers.get_all("Content-Length") or []) != 1):
@@ -182,14 +222,16 @@ class ApprovalHandler(BaseHTTPRequestHandler):
         except (OSError, ValueError):
             recovery = (f'<p><a href="/requests/{request_id}">Check request status</a></p>'
                         if request_id else "")
-            self.respond(409, page("<p>Approval was not confirmed. Check its status before taking further action.</p>"
-                                   + recovery + '<p><a href="/">All requests</a></p>'))
+            listing = "/approvals" if self.server.integrated else "/"
+            self.respond(409, self.page("<p>Approval was not confirmed. Check its status before taking further action.</p>"
+                                   + recovery + f'<p><a href="{listing}">All requests</a></p>'))
 
 
 class ApprovalServer(HTTPServer):
     """Bounded sequential server: one password verification or broker call at a time."""
-    def __init__(self, address, auth, origin, exchange_function=None):
-        self.auth = validate_auth(auth)
+    def __init__(self, address, auth, origin, exchange_function=None, *, integrated=False):
+        self.integrated = integrated
+        self.auth = auth if integrated else validate_auth(auth)
         self.origin = origin
         self.secret = secrets.token_bytes(32)
         self.failures = deque(maxlen=20)
@@ -211,14 +253,42 @@ class ApprovalServer(HTTPServer):
         print("Approval connection failed", file=sys.stderr)
 
 
+class PanelApprovalServer(ApprovalServer):
+    """Only Nginx's UID may forward authenticated panel requests here."""
+    address_family = socket.AF_UNIX
+
+    def __init__(self, path, origins, username, proxy_uid, proxy_gid, exchange_function=None):
+        self.proxy_uid = proxy_uid
+        self.origins = tuple(browser_origin(value) for value in origins)
+        super().__init__(path, {"username": username}, self.origins[0], exchange_function, integrated=True)
+        os.chown(path, -1, proxy_gid)
+        os.chmod(path, 0o660)
+
+    def server_bind(self):
+        socketserver.UnixStreamServer.server_bind(self)
+
+
 def main():
     if os.geteuid() == 0:
         raise SystemExit("Approval web service must not run as root")
     policy = load_policy()
+    panel_origin = os.environ.get("BASALTWATER_PANEL_ORIGIN")
+    if panel_origin:
+        proxy = pwd.getpwnam("www-data")
+        if os.path.lexists(PANEL_APPROVAL_SOCKET):
+            os.unlink(PANEL_APPROVAL_SOCKET)
+        panel = PanelApprovalServer(PANEL_APPROVAL_SOCKET,
+                                    os.environ.get("BASALTWATER_PANEL_ORIGINS", panel_origin).split(","),
+                                    os.environ["BASALTWATER_PANEL_USER"], proxy.pw_uid, proxy.pw_gid)
+        if os.environ.get("BASALTWATER_STANDALONE", "1") == "0":
+            panel.serve_forever()
+            return
+        threading.Thread(target=panel.serve_forever, daemon=True).start()
     credentials = os.environ["CREDENTIALS_DIRECTORY"]
     with open(os.path.join(credentials, "auth"), encoding="utf-8") as source:
         auth = json.load(source)
-    origin = urlsplit(policy["origin"])
+    standalone_origin = os.environ.get("BASALTWATER_STANDALONE_ORIGIN", policy["origin"])
+    origin = urlsplit(standalone_origin)
     # Bind IPv6 dual-stack where supported so IPv4 and IPv6 origins both work.
     class DualStackServer(ApprovalServer):
         address_family = socket.AF_INET6
@@ -228,9 +298,9 @@ def main():
             super().server_bind()
 
     if socket.has_dualstack_ipv6():
-        server = DualStackServer(("::", origin.port), auth, policy["origin"])
+        server = DualStackServer(("::", origin.port), auth, standalone_origin)
     else:
-        server = ApprovalServer(("0.0.0.0", origin.port), auth, policy["origin"])
+        server = ApprovalServer(("0.0.0.0", origin.port), auth, standalone_origin)
     server.tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     server.tls.minimum_version = ssl.TLSVersion.TLSv1_2
     server.tls.load_cert_chain(os.path.join(credentials, "cert"), os.path.join(credentials, "key"))

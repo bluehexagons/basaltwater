@@ -116,19 +116,22 @@ first. **Recovery required** needs the
 
 ## Host administration
 
-**Admin controls** is always visible in the Linux panel. To enable package
-updates, Basaltwater refresh and power actions on a VM, run from an updated controller:
+**Admin controls** includes the approval engine by default with the Linux panel.
+Review package updates, Basaltwater refresh and power actions through the
+panel's **Privilege approvals** queue using the existing panel login. To
+upgrade an older installation or re-enable approvals, run from an updated controller:
 
 ```bash
-basaltw patch ci.example.net operator --privilege-broker --privilege-broker-password
+basaltw patch ci.example.net operator --privilege-broker
 ```
 
-Choose a separate approval password at the hidden prompt. This preserves saved
-runner settings and gives only the non-root operator account access to request
-approvals; the build account remains separate. The broker removes the operator's
-sudo/group privileges; finish old operator sessions afterward. Keep root SSH for
-recovery. See [privilege approvals](../agents/privilege-approvals.md) for access
-restrictions and incompatible sudo/hardening options. Drain jobs before maintenance.
+This preserves saved runner settings and the operator's account posture; the
+build account remains separate. Use `--no-privilege-broker` to disable approvals.
+For a lighter VM without the main panel, select `--approval-panel` and
+`--approval-panel-password` instead. That standalone mode has its own login and
+removes the operator's sudo/group privileges; finish old operator sessions
+afterward. Keep root SSH for recovery. See [privilege approvals](../agents/privilege-approvals.md)
+for access restrictions and trust boundaries. Drain jobs before maintenance.
 
 ## Check and use it
 

@@ -920,6 +920,16 @@ def configure_godot_web_host(
     return changed
 
 
+def configure_internal_certificate(identities: list[str]) -> tuple[str, str, bool, bool]:
+    """Issue or reuse a certificate without installing a web server or gateway."""
+    normalized = validate_web_identities(identities)
+    if not is_package_installed("openssl") and not install_package(
+        "OpenSSL", "openssl", "apt-get -o DPkg::Lock::Timeout=60 install -y -qq openssl",
+    ):
+        raise RuntimeError("Failed to install OpenSSL for internal HTTPS")
+    return _certificate_for_identities(normalized)
+
+
 def configure_internal_web_tls(identities: list[str]) -> tuple[str, str, bool, bool]:
     """Prepare a certificate and public CA download without publishing sites.
 
@@ -1000,6 +1010,7 @@ __all__ = [
     "INTERNAL_WEB_SITES_ROOT",
     "configure_godot_agent_skills",
     "configure_internal_web_host",
+    "configure_internal_certificate",
     "configure_internal_web_tls",
     "configure_godot_web_host",
     "discover_local_web_identities",

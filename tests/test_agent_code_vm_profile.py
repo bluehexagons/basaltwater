@@ -29,7 +29,7 @@ PROFILE = [
     "--provision-on", "192.168.0.2", "--name", "agent",
     "--password", "test-only user password",
     "--device-pairing-password", "test-only pairing password",
-    "--privilege-broker", "--privilege-broker-password", "test-only broker password",
+    "--approval-panel", "--approval-panel-password", "test-only broker password",
     "--web-panel", "--ssl", "--web-panel-password", "test-only panel password",
     "--notify", "webhook", "https://logging.example.invalid/events",
     "--notify", "webhook", f"https://panel.example.invalid/api/v1/notifications#{TOKEN}",

@@ -28,13 +28,14 @@ inventory catches up.
 
 ## Review, approve and check the result
 
-Browser changes require the separate [privilege approval service](../agents/privilege-approvals.md)
-on a supported non-root VM operator installation. Account creation and password
+Browser changes require the [privilege approval service](../agents/privilege-approvals.md),
+installed with the main web panel by default. `--no-privilege-broker` disables it.
+Account creation and password
 entry also require the configured HTTPS panel.
 
 1. Choose an action and review its exact target and effects.
 2. Enter the displayed confirmation and create an approval request.
-3. Open that request's separate approval page and approve or deny it.
+3. Open that request's approval review and approve or deny it using the panel login.
 4. Return to **Activity & approvals**, refresh and check the worker result.
 
 A panel review does not grant approval. **Dispatched** means a worker was

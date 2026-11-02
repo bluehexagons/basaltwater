@@ -300,7 +300,7 @@ class PanelFeatureTest(unittest.TestCase):
         self.assertEqual(status, panel.HTTPStatus.OK)
         self.assertEqual(content_type, "text/html")
         self.assertIn('href="/admin" aria-current="page"', page)
-        self.assertIn("--privilege-broker --privilege-broker-password", page)
+        self.assertIn("--privilege-broker", page)
         self.assertNotIn('href="/admin?action=', page)
         self.assertNotIn('href="/agents"', page)
         self.assertFalse(handler._feature_available("/actions/admin"))

@@ -20,6 +20,11 @@ from lib.homebox_config import DEFAULT_VERSION as HOMEBOX_DEFAULT_VERSION
 from lib.kiosk_config import parse_kiosk_destination
 from lib.notifications import NOTIFICATION_LEVELS
 from lib.publishing_config import PUBLISHING_TOOLS
+from lib.validation import validate_network_port
+
+
+def _approval_panel_port(value: str) -> int:
+    return validate_network_port(int(value), "Approval panel port", minimum=1024)
 
 
 class CommaSeparatedChoicesAction(argparse.Action):
@@ -1108,16 +1113,20 @@ def add_setup_arguments(
     add_policy_arguments(parser)
     broker_group = parser.add_mutually_exclusive_group()
     from lib.privilege_setup import DEFAULT_PRIVILEGE_BROKER_PORT
-    broker_group.add_argument("--privilege-broker", nargs="?", const=DEFAULT_PRIVILEGE_BROKER_PORT,
-                              type=int, metavar="PORT",
-                              help="Enable browser-approved privileged operations; port defaults to 9444")
+    broker_group.add_argument("--approval-panel", dest="privilege_broker", nargs="?", const=DEFAULT_PRIVILEGE_BROKER_PORT,
+                              type=_approval_panel_port, metavar="PORT",
+                              help="Install the standalone HTTPS approval panel with its own password (default port: 9444); the main web panel includes approvals by default")
+    broker_group.add_argument("--privilege-broker", dest="privilege_broker", action="store_const", const=0,
+                              help="Re-enable the main web panel's default approval service")
     broker_group.add_argument("--no-privilege-broker", dest="disable_privilege_broker", action="store_true",
                               help="Disable privileged requests and remove the approval listener; retain audit history")
+    broker_group.add_argument("--no-approval-panel", dest="disable_approval_panel", action="store_true",
+                              help="Remove the standalone approval listener and password; retain approvals in the main web panel")
     if for_remote:
         parser.add_argument("--privilege-broker-auth", help=argparse.SUPPRESS)
         parser.add_argument("--privilege-broker-host", help=argparse.SUPPRESS)
     else:
-        parser.add_argument("--privilege-broker-password", nargs="?", const="", metavar="PASSWORD",
+        parser.add_argument("--approval-panel-password", "--privilege-broker-password", dest="privilege_broker_password", nargs="?", const="", metavar="PASSWORD",
                             help=(
                                 "Set a separate approval password; omit the value to prompt "
                                 "securely. A command-line value may appear in shell history "

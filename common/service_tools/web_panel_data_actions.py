@@ -7,7 +7,7 @@ import secrets
 import threading
 import time
 
-from common.service_tools.web_panel_admin import _https_url, _timestamp
+from common.service_tools.web_panel_admin import _review_url, _timestamp
 from common.service_tools.web_panel_templates import render_heading
 from lib.data_actions import DATA_ACTIONS, HEX_ID, validate_data_action
 from lib.privilege_client import exchange
@@ -38,7 +38,7 @@ class PanelData:
 
     def snapshot(self) -> dict:
         if not self.admin.approval_url:
-            return {"error": "Recovery controls require the optional privilege approval service. Configure it for a supported non-root VM operator, or use the controller commands below."}
+            return {"error": "Recovery approvals are disabled. Re-enable the panel approval service with --privilege-broker, or use the controller commands below."}
         try:
             result = exchange({"action": "data-status"})
             if (any(type(result.get(key)) is not bool for key in ("available", "blocked")) or not isinstance(result.get("requests"), list)
@@ -144,7 +144,7 @@ def render_saved_review(ticket: str, parameters: dict, csrf: str) -> str:
                     if parameters[key])
     return f'''<section class="event data-review" aria-labelledby="recovery-review">{render_heading("Review: " + label, "security", heading_id="recovery-review")}
 <p>{html.escape(effect)}</p><dl class="job-facts">{facts}</dl>
-<p>This creates a single-use request for the separate approval page. The worker rejects a changed finding or file and shares the storage operation lock. Jobs have a six-hour limit; dispatch is separate from completion.</p>
+<p>This creates a single-use request. Open its approval review to approve or deny the exact action. The worker rejects a changed finding or file and shares the storage operation lock. Jobs have a six-hour limit; dispatch is separate from completion.</p>
 <form method="post" action="/actions/data/submit" class="data-recovery-form">{csrf}<input type="hidden" name="ticket" value="{html.escape(ticket, quote=True)}">{confirmation}<button>Create recovery approval request</button></form>
 <a href="/shares-data?view=scrubs">Cancel review</a></section>'''
 
@@ -188,7 +188,7 @@ def render_status(status: dict, csrf: str) -> str:
             body += f'<p>Worker result for this request: <strong>{escape(latest.get("status", "unavailable"))}</strong></p>'
         elif state == "dispatched":
             body += '<p>This request was dispatched. Its completion is not established by the latest worker record above; inspect the scrub report before retrying.</p>'
-        if url := _https_url(row.get("review_url")):
+        if url := _review_url(row.get("review_url")):
             body += f'<a class="refresh-link" href="{escape(url, quote=True)}" target="_blank" rel="noopener noreferrer">Open recovery approval ↗</a>'
         if state in {"pending", "approved"}:
             body += f'<form method="post" action="/actions/data/cancel">{csrf}<input type="hidden" name="id" value="{identifier}"><button>Cancel recovery request</button></form>'

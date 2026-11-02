@@ -10,7 +10,7 @@ import re
 import stat
 from urllib.parse import urlsplit
 
-from lib.validation import validate_filesystem_path, validate_no_control_characters
+from lib.validation import validate_filesystem_path, validate_network_ip, validate_no_control_characters
 from lib.validators import validate_host
 from lib.admin_actions import action_spec, dispatch_argv
 from lib.data_actions import DATA_ACTIONS, data_dispatch_argv, validate_data_action
@@ -22,6 +22,7 @@ CONFIG_DIR = "/etc/basaltwater/privilege-broker"
 POLICY_PATH = CONFIG_DIR + "/policy.json"
 REQUEST_SOCKET = "/run/basaltwater-privilege-broker/request.sock"
 APPROVAL_SOCKET = "/run/basaltwater-privilege-broker/approval.sock"
+PANEL_APPROVAL_SOCKET = "/run/basaltwater-privilege-approval/http.sock"
 DATABASE_PATH = "/var/lib/basaltwater-privilege-broker/requests.sqlite3"
 WEB_USER = "basaltwater-approval"
 MAX_MESSAGE = 16384
@@ -65,22 +66,27 @@ def validate_policy(value: object) -> dict:
         raise ValueError("Unsupported broker policy version")
     if not isinstance(value["machine"], str) or not ID_PATTERN.fullmatch(value["machine"]):
         raise ValueError("machine must be a unique 32-character hexadecimal installation ID")
-    if type(value["requester_uid"]) is not int or value["requester_uid"] < 1000:
-        raise ValueError("requester_uid must identify a non-system account")
+    if type(value["requester_uid"]) is not int or value["requester_uid"] <= 0:
+        raise ValueError("requester_uid must identify a non-root account")
     if type(value["ttl_seconds"]) is not int or not 30 <= value["ttl_seconds"] <= MAX_REQUEST_TTL_SECONDS:
         raise ValueError(f"ttl_seconds must be between 30 and {MAX_REQUEST_TTL_SECONDS}")
     origin = value["origin"]
     if not isinstance(origin, str):
-        raise ValueError("origin must be HTTPS")
+        raise ValueError("origin must be an HTTP or HTTPS origin")
     validate_no_control_characters(origin, "origin")
     parsed = urlsplit(origin)
-    if (parsed.scheme != "https" or not parsed.hostname or not validate_host(parsed.hostname)
+    if parsed.hostname and ":" in parsed.hostname:
+        validate_network_ip(parsed.hostname, "approval origin address")
+        valid_host = True
+    else:
+        valid_host = bool(parsed.hostname and validate_host(parsed.hostname))
+    if (parsed.scheme not in {"http", "https"} or not valid_host
         or parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment
-        or parsed.port is None or not 1024 <= parsed.port <= 65535
-        or not re.fullmatch(r"https://[A-Za-z0-9.\[\]:-]+", origin)):
-        raise ValueError("origin must be a dedicated HTTPS origin with an explicit unprivileged port")
+        or parsed.port is None or not 1 <= parsed.port <= 65535
+        or not re.fullmatch(r"https?://[A-Za-z0-9.\[\]:-]+", origin)):
+        raise ValueError("origin must be an HTTP or HTTPS origin with an explicit port")
     hostname = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
-    if origin != f"https://{hostname}:{parsed.port}":
+    if origin != f"{parsed.scheme}://{hostname}:{parsed.port}":
         raise ValueError("origin must use a lowercase hostname and canonical port")
     services = value["services"]
     if not isinstance(services, dict) or len(services) > 32:

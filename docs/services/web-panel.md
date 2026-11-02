@@ -203,8 +203,9 @@ basaltw patch 192.168.1.50 agent \
 Setup prints the panel URL. The Basic Auth username is the setup username. The
 password is hashed before upload and is not saved or reconstructed. Repeat
 `--web-panel-password` to rotate it; omit the flag on a later patch to retain
-it. If the setup username changes, supply a new password. Use a separate
-password for [privilege approvals](../agents/privilege-approvals.md).
+it. If the setup username changes, supply a new password. This login also
+authorizes integrated [privilege approvals](../agents/privilege-approvals.md).
+Keep it out of agent-controlled browsers and tools.
 
 With `--ssl`, the panel uses a suitable existing certificate or the managed VM
 CA. Enroll that CA on your client when required; see [Client CA trust](client-ca-trust.md).
@@ -292,26 +293,34 @@ their dedicated service account has no user home. Agent subscription sign-in
 continues through the existing target-owned device login flow, linked from this
 page and documented in [Agent authentication](../agents/agent-authentication.md).
 
-## Agent VM approvals
+## Privilege approvals
 
-An agent VM configured with `--privilege-broker [PORT]` receives a
-**Privilege approvals** service link. It opens a separate HTTPS page with its
-own password and service identity. **Admin controls → Privilege approvals**
+Installing the web panel includes the approval engine by default, with no
+additional password or public listener. **Admin controls → Privilege approvals**
 also lists this account's recent broker requests, including agent follow-ups,
 service restarts and commands. Review status, expiry and safe execution results,
-cancel unclaimed requests, or open the exact action in the approval portal.
-The standalone portal works on minimal installations without the web panel.
-The panel cannot approve actions or read the
-approval credential. Use [Privilege approvals](../agents/privilege-approvals.md) for the
+cancel unclaimed requests, or open the exact action to approve or deny it using
+the panel login. **Review all requests** opens the full queue.
+Use `--no-privilege-broker` to disable the engine and `--privilege-broker` to
+re-enable it. Patches preserve an explicit opt-out. Existing installations gain
+the default on setup or refresh. This preserves the setup account's sudo policy.
+
+For a minimal VM, `--approval-panel [PORT] --approval-panel-password` installs
+an independent HTTPS panel without the dashboard or Nginx. Its password remains
+separate even when both surfaces are installed. `--no-approval-panel` removes
+only that listener and credential. Use [Privilege approvals](../agents/privilege-approvals.md) for the
 agent and user workflow.
 
 ## Admin controls
 
 Open **Admin controls** for host updates and power actions. Host actions require
-the optional [privilege approval service](../agents/privilege-approvals.md), supported
-for non-root operators on agent and GitHub runner VMs. Without it, Admin controls
-shows setup guidance and inspection links. The panel does not gain root privileges
-or access to the approval password. Agent tools, tasks, maintenance policy and
+the [privilege approval service](../agents/privilege-approvals.md), included by
+default on supported panel installations, including root-profile panels using
+their dedicated non-root service account. With approvals disabled, Admin controls
+shows setup guidance and inspection links. Decisions run through the isolated
+approval service; the ordinary panel process has no decision-socket access.
+The panel login and browser origin are trusted to approve actions.
+Agent tools, tasks, maintenance policy and
 T3 Code updates live under **Agents**.
 
 | Action | Behavior |
@@ -327,7 +336,7 @@ T3 Code updates live under **Agents**.
 
 Choose **Review action**, read its effects, and select **Create approval request**.
 Power actions also require the exact displayed host name. Open the request's
-**Open approval review** link and approve or deny it with your separate password.
+**Open approval review** link and approve or deny it within the panel.
 Use **Cancel request** to withdraw an unclaimed request; cancellation cannot undo
 an action already started. Approval expiry follows the installed broker policy.
 Cancelling a scheduled power action is a new approval request: allow time to
@@ -597,7 +606,7 @@ creates or runs work, changes the original task, or approves privileged actions.
 Requests remain available in retained receipts after recent history is evicted.
 For a service prerequisite, **Approve once** creates the missing broker request
 and shows **Open service approval** in the form. Approve the exact operation
-with the separate portal password, return, then **Check approval and launch**.
+on the linked approval page, return, then **Check approval and launch**.
 The panel preserves reviewed settings and checks status only on submission.
 Restarts run before the task starts: a repair that must precede a restart needs
 separate preparation and restart-verification proposals.
@@ -818,7 +827,8 @@ This exclusion does not make all teardown one rollback transaction: a later
 optional component failure can leave earlier services stopped or a route removed.
 Inspect the failure and any retained component recovery marker before retrying.
 
-Successful removal retains shared packages and independent agent tasks. Pause
+Successful removal stops the approval engine unless a standalone approval panel
+is selected. Policy and audit history are retained. Shared packages and independent agent tasks remain. Pause
 those tasks separately if they should stop. Managed audit and storage snapshots
 are removed; unrecognized files and their containing directories are preserved.
 

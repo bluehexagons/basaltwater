@@ -618,6 +618,7 @@ class SetupConfig:
     privilege_broker_host: MaybeStr = None
     privilege_broker_auth: MaybeStr = None
     disable_privilege_broker: bool = False
+    disable_approval_panel: Optional[bool] = None
     browser_automation: MaybeStr = None
     disable_browser_automation: bool = False
     copy_agent_keys: bool = False
@@ -1119,7 +1120,7 @@ class SetupConfig:
         if self.web_panel_port is not None and self.enable_ssl:
             listeners = {
                 "--web-panel": self.web_panel_port,
-                "--privilege-broker": self.privilege_broker_port,
+                "--approval-panel": self.privilege_broker_port,
                 "--web-interface-port": self.web_interface_port if self.web_interfaces else None,
                 "--device-pairing-port": self.device_pairing_port if self.device_pairing_providers else None,
                 "--homebox-port": self.homebox_port,
@@ -1219,7 +1220,7 @@ class SetupConfig:
         if self.enable_webhook_builds:
             ports.extend((80, 443))
         if self.privilege_broker_port is not None:
-            ports.extend((self.privilege_broker_port, GODOT_WEB_HTTPS_PORT))
+            ports.append(self.privilege_broker_port)
         if self.homebox:
             from lib.homebox_config import parse_homebox_spec
 
@@ -1366,14 +1367,21 @@ class SetupConfig:
         args.extend(setup_policy_args(self))
         if self.disable_privilege_broker:
             args.append("--no-privilege-broker")
+        elif self.disable_approval_panel:
+            args.append("--no-approval-panel")
         elif self.privilege_broker_port is not None:
             from lib.privilege_setup import privilege_broker_origin
 
             approval_host = cast(str, urlsplit(privilege_broker_origin(self)).hostname)
-            args.append(f"--privilege-broker {self.privilege_broker_port}")
+            args.append(f"--approval-panel {self.privilege_broker_port}")
             args.append(f"--privilege-broker-host {shlex.quote(approval_host)}")
             if self.privilege_broker_auth:
                 args.append(f"--privilege-broker-auth {shlex.quote(self.privilege_broker_auth)}")
+        if self.web_panel_port is not None and not self.privilege_broker_port:
+            from lib.privilege_setup import approval_origin
+
+            approval_host = cast(str, urlsplit(approval_origin(self)).hostname)
+            args.append(f"--privilege-broker-host {shlex.quote(approval_host)}")
 
         if self.t3code_ready:
             args.append("--t3code-ready")
@@ -1868,13 +1876,15 @@ class SetupConfig:
         cmd_parts.extend(setup_policy_args(self))
         if self.disable_privilege_broker:
             cmd_parts.append("--no-privilege-broker")
+        elif self.disable_approval_panel:
+            cmd_parts.append("--no-approval-panel")
         elif self.privilege_broker_port is not None:
             from lib.privilege_setup import DEFAULT_PRIVILEGE_BROKER_PORT
 
             if self.privilege_broker_port == DEFAULT_PRIVILEGE_BROKER_PORT:
-                cmd_parts.append("--privilege-broker")
+                cmd_parts.append("--approval-panel")
             else:
-                cmd_parts.append(f"--privilege-broker {self.privilege_broker_port}")
+                cmd_parts.append(f"--approval-panel {self.privilege_broker_port}")
         
         # SSH key
         if self.ssh_key:
@@ -3274,7 +3284,9 @@ class SetupConfig:
             maintenance_agent_daily_calls=_optional_int_arg(args, 'maintenance_agent_daily_calls'),
             maintenance_agent_daily_escalations=_optional_int_arg(args, 'maintenance_agent_daily_escalations'),
             maintenance_agent_timeout=_optional_int_arg(args, 'maintenance_agent_timeout'),
-            privilege_broker_port=_optional_int_arg(args, 'privilege_broker'),
+            privilege_broker_port=_optional_int_arg(args, 'privilege_broker') or None,
+            disable_approval_panel=(True if getattr(args, 'disable_approval_panel', False)
+                                    else False if _optional_int_arg(args, 'privilege_broker') is not None else None),
             privilege_broker_host=_optional_str_arg(args, 'privilege_broker_host'),
             privilege_broker_auth=auth_from_args(args, username),
             disable_privilege_broker=_optional_bool_arg(args, 'disable_privilege_broker') is True,

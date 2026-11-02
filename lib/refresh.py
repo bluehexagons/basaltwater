@@ -345,17 +345,34 @@ def _debian_setup() -> SetupConfig:
         raise ValueError("refresh requires a completed full Debian setup")
     if config.enable_rdp:
         config.rdp_existing_password = True
-    if config.privilege_broker_port is not None and not config.disable_privilege_broker:
+    from lib.privilege_setup import broker_enabled, integrated_approvals
+
+    if broker_enabled(config):
         # The remote transport host is intentionally absent from saved setup.
         # Restore the reviewed origin from protected policy instead of changing
         # the live approval endpoint to localhost during a target-side replay.
-        from lib.privilege_policy import load_policy
+        from lib.privilege_policy import POLICY_PATH, load_policy, protected_path
 
-        policy = load_policy()
-        origin = urlsplit(policy["origin"])
-        if (not origin.hostname or origin.port != config.privilege_broker_port
-                or pwd.getpwnam(config.username).pw_uid != policy["requester_uid"]):
-            raise ValueError("Saved setup and privilege policy have different port or requester identity")
+        origin = None
+        if config.privilege_broker_port is not None or os.path.lexists(POLICY_PATH):
+            policy = load_policy()
+            origin = urlsplit(policy["origin"])
+            requester = "basaltwater-web-panel" if config.username == "root" else config.username
+            if (not origin.hostname or origin.port not in {config.privilege_broker_port, config.web_panel_port}
+                    or pwd.getpwnam(requester).pw_uid != policy["requester_uid"]):
+                raise ValueError("Saved setup and privilege policy have different port or requester identity")
+        if integrated_approvals(config):
+            from common.web_panel_steps import WEB_PANEL_MANIFEST
+
+            # Older panels have no broker policy yet. Their protected manifest
+            # retains the externally reachable panel identity for this upgrade.
+            protected_path(WEB_PANEL_MANIFEST)
+            panel = urlsplit(read_json_file(WEB_PANEL_MANIFEST)["panel_url"])
+            expected_scheme = "https" if config.enable_ssl else "http"
+            if (not panel.hostname or panel.scheme != expected_scheme
+                    or (panel.port or (443 if panel.scheme == "https" else 80)) != config.web_panel_port):
+                raise ValueError("Saved setup and web panel manifest have different origins")
+            origin = panel
         # to_remote_args carries the approval host from its transport-host field.
         config.host = origin.hostname
         config.privilege_broker_host = origin.hostname

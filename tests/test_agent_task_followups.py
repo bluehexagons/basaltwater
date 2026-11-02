@@ -692,7 +692,7 @@ class TaskFollowUpTests(unittest.TestCase):
 
             page = agents.render_agents(self.state, panel._PAGE_STYLE, {"view": "history", "run": run_id})
             self.assertIn("outcome is unknown", page)
-            self.assertIn("separate privilege portal", page)
+            self.assertIn("privilege approval page", page)
             self.assertNotIn('value="follow-up-block">Retry service cancellation', page)
             self.assertNotIn('value="follow-up-approve"', page)
             self.assertNotIn('value="follow-up-privilege"', page)
@@ -731,7 +731,7 @@ class TaskFollowUpTests(unittest.TestCase):
         page = agents.render_agents(self.state, panel._PAGE_STYLE, {"view": "history", "run": run_id})
         self.assertIn('value="follow-up-block">Retry service cancellation</button>', page)
         self.assertIn("cannot queue a task", page)
-        self.assertIn("separate privilege portal", page)
+        self.assertIn("privilege approval page", page)
         self.assertNotIn('value="follow-up-approve"', page)
         self.assertNotIn('value="follow-up-privilege"', page)
 
