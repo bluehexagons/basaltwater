@@ -61,6 +61,11 @@ policies do not block the shared-host work.
 
 ## Later scope
 
+- [Basaltide](basaltide.md) is a planned, completely free and open-source
+  Debian-based developer and agent workstation distribution with bundled
+  Basaltwater tooling. The first proposed result is one usable VM desktop with
+  reviewed components, explicit package/update ownership and tested recovery.
+  It is outside the current Basaltwater release gate.
 - [Native Windows builds](windows-support.md), broader non-Debian support and
   the [mobile proposal](mobile-agent-support.md) follow the Debian host.
 - [Game publishing](game-publishing.md) needs live provider/rendering checks;
