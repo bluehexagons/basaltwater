@@ -39,6 +39,11 @@ Stale or unrelated identities fail closed. No live process is queried when the
 receipt is terminal or reports uncertain/interrupted work. A process that exits
 during collection produces an unavailable report rather than a live sample.
 
+The launcher releases its temporary Job handle before publishing target evidence;
+the diagnostic worker releases its query handle immediately after membership
+verification. Neither keeps the Job alive during slower evidence/counter work:
+[Windows terminates members when the last kill-on-close Job handle closes](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects#managing-job-objects).
+
 ## Report and limits
 
 `State: live` contains cumulative kernel/user CPU seconds, current working-set

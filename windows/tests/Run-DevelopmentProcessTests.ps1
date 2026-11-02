@@ -15,6 +15,9 @@ $temporary = Join-Path ([IO.Path]::GetTempPath()) ('basaltwater-process-' + [gui
 $savedLocal = $env:LOCALAPPDATA
 $guardian = $null
 $unrelated = $null
+$diagnosticProbe = $null
+$publicationRelease = $null
+$diagnosticRelease = $null
 $passed = $false
 New-Item -ItemType Directory -Path $temporary | Out-Null
 try {
@@ -31,7 +34,30 @@ try {
     $processTypes = Join-Path $fixtureSource 'Development.Process.ps1'
     $types = Get-Content -LiteralPath $processTypes -Raw
     $types = [regex]::Replace($types, '(?s)public static void Awake\(bool active\) \{.*?\n        \}', 'public static void Awake(bool active) { }')
+    # Delay only private copied fixtures at the potentially blocking operations.
+    # Killing the guardian must still kill native members while these gates stay shut.
+    $publicationGate = @'
+            if(!code.HasValue && File.Exists(path+".pause")) {
+                File.WriteAllText(path+".entered",pid.ToString());
+                var deadline=DateTime.UtcNow.AddSeconds(20);
+                while(!File.Exists(path+".release") && DateTime.UtcNow<deadline) System.Threading.Thread.Sleep(10);
+            }
+'@
+    $types = $types.Replace('static void WriteTarget(string path,uint pid,long created,uint? code) {',
+        ('static void WriteTarget(string path,uint pid,long created,uint? code) {' + "`n" + $publicationGate))
     Set-Content -LiteralPath $processTypes -Value $types -Encoding UTF8
+    $diagnosticSource = Join-Path $fixtureSource 'Diagnostics.Native.cs'
+    $diagnosticEntered = Join-Path $fixtureSource 'diagnostic.entered'
+    $diagnosticRelease = Join-Path $fixtureSource 'diagnostic.release'
+    $diagnosticGate = @'
+            System.IO.File.WriteAllText(@"ENTERED_PATH","entered");
+            var deadline=DateTime.UtcNow.AddSeconds(20);
+            while(!System.IO.File.Exists(@"RELEASE_PATH") && DateTime.UtcNow<deadline) System.Threading.Thread.Sleep(10);
+'@
+    $diagnosticGate = $diagnosticGate.Replace('ENTERED_PATH',$diagnosticEntered.Replace('"','""')).Replace('RELEASE_PATH',$diagnosticRelease.Replace('"','""'))
+    $diagnosticTypes = (Get-Content -LiteralPath (Join-Path $windows 'Diagnostics.Native.cs') -Raw).Replace(
+        'if(!OpenProcessToken(process,8,out token))', ($diagnosticGate + "`n            if(!OpenProcessToken(process,8,out token))"))
+    Set-Content -LiteralPath $diagnosticSource -Value $diagnosticTypes -Encoding UTF8
     $project = Join-Path $temporary ('project ' + [char]0x03bb)
     New-Item -ItemType Directory -Path $project | Out-Null
     $fixture = Join-Path $project 'task.py'
@@ -62,7 +88,7 @@ if mode in ('flood', 'failed-flood', 'paused-flood'):
         while not pathlib.Path(child_path + '.release').exists():
             time.sleep(0.01)
     sys.exit(23 if mode == 'failed-flood' else 0)
-if mode in ('cancel', 'timeout', 'orphan', 'crash', 'session-timeout', 'session-cancel'):
+if mode in ('cancel', 'timeout', 'orphan', 'crash', 'diagnostic-crash', 'session-timeout', 'session-cancel'):
     child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
     marker = pathlib.Path(child_path + '.tmp')
     marker.write_text(str(child.pid), encoding='utf-8')
@@ -71,12 +97,16 @@ if mode in ('cancel', 'timeout', 'orphan', 'crash', 'session-timeout', 'session-
 print(json.dumps({'argv': sys.argv[3:], 'date': os.environ.get('TASK_LITERAL_DATE')}))
 sys.exit(23 if mode == 'fail' else 0)
 '@
-    foreach ($mode in @('success','fail','flood','failed-flood','paused-flood','timeout','cancel','orphan','cleanup-fail','scheduler-cleanup-fail','crash',
+    foreach ($mode in @('success','fail','flood','failed-flood','paused-flood','timeout','cancel','orphan','cleanup-fail','scheduler-cleanup-fail','crash','publication-crash','diagnostic-crash',
         'session-ready','session-early','session-timeout','session-cancel','session-scheduler-cleanup-fail')) {
         $id = [guid]::NewGuid().ToString('N')
         $directory = Get-DevelopmentDirectory $id
         Initialize-DevelopmentDirectory $directory
         $childFile = Join-Path $directory 'child.pid'
+        if ($mode -eq 'publication-crash') {
+            $publicationRelease = Join-Path $directory 'target.json.release'
+            [IO.File]::WriteAllText((Join-Path $directory 'target.json.pause'), 'pause')
+        }
         $literal = @('two words', '', 'quote"here', "lambda $([char]0x03bb)", 'trailing\', '$literal & ;')
         $environment = @{}
         foreach ($name in @('SystemRoot','SystemDrive','ComSpec','PATH','PATHEXT','TEMP','TMP','USERPROFILE')) { $environment[$name] = [Environment]::GetEnvironmentVariable($name) }
@@ -138,6 +168,13 @@ function Remove-Item {
         $liveTailSeen = $false
         while (-not $guardian.WaitForExit(100)) {
             if ($timer.Elapsed.TotalSeconds -gt 45) { throw "Owned $mode guardian exceeded qualification deadline" }
+            if ($mode -eq 'publication-crash' -and -not $descendant -and (Test-Path -LiteralPath (Join-Path $directory 'target.json.entered'))) {
+                $descendant = Get-Process -Id ([int](Get-Content -LiteralPath (Join-Path $directory 'target.json.entered')))
+                $null = $descendant.Handle
+                $guardian.Kill()
+                Assert-True ($descendant.WaitForExit(2000)) 'Blocked target publication prolonged Job lifetime after guardian loss'
+                Assert-True (-not (Test-Path -LiteralPath $publicationRelease)) 'Publication gate released before cleanup observation'
+            }
             if ($mode -eq 'paused-flood' -and -not $liveTailSeen -and (Test-Path -LiteralPath (Join-Path $directory 'stderr.log'))) {
                 $live = Invoke-NativeDevelopmentCli @('logs',$id)
                 if ($live.Stdout.EndsWith("`nEND-OF-PROBE`n") -and $live.Stderr.EndsWith("`nEND-OF-PROBE`n")) {
@@ -145,7 +182,7 @@ function Remove-Item {
                     [IO.File]::WriteAllText($childFile + '.release', 'release')
                 }
             }
-            if ($mode -in @('timeout','cancel','orphan','crash','session-timeout','session-cancel') -and -not $descendant -and (Test-Path -LiteralPath $childFile)) {
+            if ($mode -in @('timeout','cancel','orphan','crash','diagnostic-crash','session-timeout','session-cancel') -and -not $descendant -and (Test-Path -LiteralPath $childFile)) {
                 $descendant = Get-Process -Id ([int](Get-Content -LiteralPath $childFile)) -ErrorAction Stop
                 $null = $descendant.Handle
                 $active = Get-DevelopmentStatus $id
@@ -167,6 +204,24 @@ function Remove-Item {
                 }
                 if ($mode -in @('cancel','session-cancel')) { [IO.File]::WriteAllText((Join-Path $directory 'cancel'), 'cancel') }
                 if ($mode -eq 'crash') { $guardian.Kill() }
+                if ($mode -eq 'diagnostic-crash') {
+                    $target = Read-DevelopmentTarget $directory
+                    $probeCode = "Add-Type -Path '" + $diagnosticSource.Replace("'","''") + "'; try { [Basaltwater.Diagnostics.Native]::Capture(" +
+                        $target.ProcessId + ',[long]' + $target.CreatedFileTimeUtc + ",'" + $active.JobName + "','" + $active.OwnerSid + "'," + $active.SessionId + ') | Out-Null } catch { }'
+                    $probeStart = [Diagnostics.ProcessStartInfo]::new()
+                    $probeStart.FileName = $shell; $probeStart.UseShellExecute = $false; $probeStart.CreateNoWindow = $true
+                    $probeStart.Arguments = '-NoProfile -EncodedCommand ' + [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($probeCode))
+                    $diagnosticProbe = [Diagnostics.Process]::Start($probeStart)
+                    $probeClock = [Diagnostics.Stopwatch]::StartNew()
+                    while (-not (Test-Path -LiteralPath $diagnosticEntered) -and -not $diagnosticProbe.HasExited -and $probeClock.Elapsed.TotalSeconds -lt 10) { Start-Sleep -Milliseconds 25 }
+                    Assert-True ((Test-Path -LiteralPath $diagnosticEntered) -and -not $diagnosticProbe.HasExited) 'Diagnostic fixture did not reach its counter-query gate'
+                    $guardian.Kill()
+                    Assert-True ($descendant.WaitForExit(2000)) 'Blocked diagnostic query prolonged Job lifetime after guardian loss'
+                    Assert-True (-not $diagnosticProbe.HasExited) 'Diagnostic gate released before cleanup observation'
+                    [IO.File]::WriteAllText($diagnosticRelease, 'release')
+                    Assert-True ($diagnosticProbe.WaitForExit(10000)) 'Diagnostic fixture did not settle after gate release'
+                    $diagnosticProbe.Dispose(); $diagnosticProbe = $null
+                }
             }
         }
         $guardian.Dispose(); $guardian = $null
@@ -186,7 +241,7 @@ function Remove-Item {
             if ($mode -like 'session-*') { Assert-True (Test-Path -LiteralPath $uncertain.TestSession.ProfilePath) 'Uncertain Scheduler cleanup removed the session profile' }
             continue
         }
-        if ($mode -eq 'crash') {
+        if ($mode -in @('crash','publication-crash','diagnostic-crash')) {
             Assert-True ($null -ne $descendant -and $descendant.WaitForExit(10000)) 'Guardian crash leaked a native descendant'
             $descendant.Dispose()
             $interrupted = Get-DevelopmentStatus $id
@@ -266,7 +321,10 @@ function Remove-Item {
     $passed = $true
     Write-Host 'PowerShell 7 owned development process tests passed.'
 } finally {
+    if ($publicationRelease) { [IO.File]::WriteAllText($publicationRelease, 'release') }
+    if ($diagnosticRelease) { [IO.File]::WriteAllText($diagnosticRelease, 'release') }
     if ($guardian) { if (-not $guardian.HasExited) { $guardian.Kill(); $guardian.WaitForExit(10000) | Out-Null }; $guardian.Dispose() }
+    if ($diagnosticProbe) { if (-not $diagnosticProbe.WaitForExit(2000)) { $diagnosticProbe.Kill(); $diagnosticProbe.WaitForExit(10000) | Out-Null }; $diagnosticProbe.Dispose() }
     if ($unrelated) { if (-not $unrelated.HasExited) { $unrelated.Kill(); $null = $unrelated.WaitForExit(10000) }; $unrelated.Dispose() }
     $env:LOCALAPPDATA = $savedLocal
     $resolved = [IO.Path]::GetFullPath($temporary)

@@ -118,10 +118,10 @@ namespace Basaltwater {
                 // our temporary job handle is closed, leaving lifetime with the guardian.
                 if (!CreateProcess(exe, command, IntPtr.Zero, IntPtr.Zero, true, 0x08080004,
                     IntPtr.Zero, directory, ref startup, out process)) throw Error();
+                CloseHandle(job); job = IntPtr.Zero;
                 long created,exitTime,kernel,user;
                 if(!GetProcessTimes(process.Process,out created,out exitTime,out kernel,out user)) throw Error();
                 WriteTarget(targetPath,process.Id,created,null);
-                CloseHandle(job); job = IntPtr.Zero;
                 if (ResumeThread(process.Thread) == uint.MaxValue) throw Error();
                 if (WaitForSingleObject(process.Process, uint.MaxValue) != 0) throw Error();
                 exited = true; uint code;

@@ -39,6 +39,9 @@ public static class Native {
             job=OpenJobObject(4,false,jobName); if(job==IntPtr.Zero) throw Error();
             bool member; if(!IsProcessInJob(process,job,out member)) throw Error();
             if(!member) throw new Exception("Target is outside the task Job Object");
+            // Never keep the guardian's kill-on-close Job alive during slower
+            // token, memory or thread queries. Membership cannot be removed.
+            CloseHandle(job); job=IntPtr.Zero;
             if(!OpenProcessToken(process,8,out token)) throw Error();
             using(var identity=new WindowsIdentity(token)) if(identity.User.Value!=sid) throw new Exception("Native target owner changed");
             var memory=new Memory {Size=(uint)Marshal.SizeOf(typeof(Memory))}; uint handles;
