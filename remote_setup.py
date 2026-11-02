@@ -426,7 +426,9 @@ def _save_setup_state(config: SetupConfig) -> None:
     _complete_setup_operation()
 
 
-def config_from_remote_args(args: argparse.Namespace) -> SetupConfig:
+def config_from_remote_args(
+    args: argparse.Namespace, *, preserve_samba_accounts: bool = False,
+) -> SetupConfig:
     if args.custom_steps:
         system_type = "custom_steps"
     elif args.system_type:
@@ -444,8 +446,15 @@ def config_from_remote_args(args: argparse.Namespace) -> SetupConfig:
     validate_browser_automation_settings(config)
     validate_backup_specs(config.backup_specs)
     validate_web_interface_settings(config)
-    validate_samba_share_specs(config.samba_shares, config.share_credentials)
-    validate_samba_share_credentials(config)
+    if preserve_samba_accounts:
+        validate_samba_share_specs(config.samba_shares, config.share_credentials, require_passwords=False)
+        if config.samba_shares:
+            from smb.samba_steps import preflight_samba_shares
+
+            preflight_samba_shares(config, preserve_accounts=True)
+    else:
+        validate_samba_share_specs(config.samba_shares, config.share_credentials)
+        validate_samba_share_credentials(config)
     validate_smb_mount_specs(config.smb_mounts)
     validate_gogs_settings(config)
     validate_homebox_settings(config)
@@ -497,7 +506,9 @@ def _run_main() -> int:
         print("=" * 60)
     
     try:
-        config = config_from_remote_args(args)
+        config = config_from_remote_args(
+            args, preserve_samba_accounts=getattr(args, "expected_setup_revision", None) is not None,
+        )
         if (expected_revision := getattr(args, "expected_setup_revision", None)) is not None and (
             config.custom_steps or not re.fullmatch(r"[a-f0-9]{64}", expected_revision)
         ):
@@ -593,7 +604,10 @@ def _run_configured_setup_locked(config: SetupConfig, args: argparse.Namespace) 
         steps = get_steps_for_system_type(config)
     from plugins.post_setup import build_post_setup_steps
 
-    steps.extend(build_post_setup_steps(config, get_repository_source_path))
+    steps.extend(build_post_setup_steps(
+        config, get_repository_source_path,
+        preserve_samba_accounts=getattr(args, "expected_setup_revision", None) is not None,
+    ))
     steps.append(("Saving machine state and setup configuration", _save_setup_state))
 
     if args.dry_run:

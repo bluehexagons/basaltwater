@@ -209,6 +209,9 @@ for evidence, staged repair and recovery decisions.
 Approved share and routine changes survive panel/host restarts in the target's
 private saved setup. Target-side `sudo basaltw refresh` replays it and rejects
 configuration changes during source activation/handoff; rerun after such a refusal.
+Refresh requires every referenced Samba account to exist and preserves its
+password and login flags. It does not require saved plaintext share credentials;
+use explicit setup or account management to provision a missing login.
 
 Panel edits do **not** update a controller's cached configuration. Before applying
 controller setup, patch, deployment or shares commands, reconcile their desired

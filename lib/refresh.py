@@ -388,14 +388,19 @@ def run_refresh_command(args: argparse.Namespace) -> int:
         from lib.system_types import get_steps_for_system_type
 
         parser = create_setup_argument_parser("Saved Debian setup", for_remote=True, allow_steps=True)
-        config = config_from_remote_args(parser.parse_args(arguments))
+        config = config_from_remote_args(parser.parse_args(arguments), preserve_samba_accounts=True)
         repository = managed_repository_path()
         info = get_channel_info(repository)
         channel = _refresh_channel(info)
         if args.dry_run:
             print(f"[DRY-RUN] Would upgrade Basaltwater on channel {channel}; no fetch or checkout")
             print(f"Saved local setup: {config.system_type} for {config.username}")
-            _print_dry_run_plan(get_steps_for_system_type(config))
+            from plugins.post_setup import build_post_setup_steps
+            from remote_setup import get_repository_source_path
+
+            steps = get_steps_for_system_type(config)
+            steps.extend(build_post_setup_steps(config, get_repository_source_path, preserve_samba_accounts=True))
+            _print_dry_run_plan(steps)
             return 0
         from lib.refresh_job import WORKER_ENV, queue_refresh
 
