@@ -12,6 +12,8 @@ or SSH, use the [remote development guide](cachyos-development.md).
 screen/input access, while honoring the persistent agent control state.
 For manual game tests, use the [playtest procedure](game-testing.md) for fresh
 worker qualification, scene verification, game-specific waits and bounded briefs.
+Use [native input QA](native-input-qa.md) for multilingual IME, clipboard,
+physical controller checks, environment records and evidence closeout.
 
 ## Agent permission and portal access
 

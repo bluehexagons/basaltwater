@@ -30,6 +30,10 @@ window geometry actions verify their outcomes, while invoke/raw input require
 task-specific reinspection. Raw input uses observed window width/height and
 window-relative coordinates and requires that window to remain foreground.
 Do not blindly repeat an action after timeout or an uncertain outcome.
+Use `desktop input key --help` for scan-code editing keys and text limits.
+`input chord --key CTRL+A` or `SHIFT+LEFT` submits bounded CTRL/SHIFT chords;
+partial failure attempts reverse-order key release. Queue acceptance does not
+verify application state; failed release requires inspection before continuing.
 
 Human override/disabled control blocks mutations and artifact/terminal handoff.
 Observation remains available. Only an explicit human decision authorizes a
@@ -67,6 +71,11 @@ need an explicit executable wrapper. Scheduled guardians survive T3 closing,
 contain child processes and settle cleanup before recording completion. Private
 environment snapshots are removed afterward. Logs are bounded and require review
 before sharing. No upload/signing credentials are implied by local tasks.
+Save the ID, initial receipt, selected executable/runtime and worker source
+revision in private notes before waiting. Reattach to that same ID after a
+terminal/turn interruption; do not launch a replacement because a handle was
+lost. Record installed setup, selected checkout and delivered skill provenance
+separately; the session-loaded skill revision can remain unknown.
 
 `develop wait ID [--timeout SECONDS]` waits for confirmed completion (default 60,
 range 1–86400), returning JSON with `WaitState`, `TimedOut` and `Receipt`.

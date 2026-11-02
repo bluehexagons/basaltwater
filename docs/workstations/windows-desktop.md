@@ -102,8 +102,11 @@ to that window; multi-monitor origins and DPI scaling are handled by the worker.
 Input supports scan-code keys, atomic Ctrl/Shift chords, Unicode text and clicks.
 Named keys include ENTER, ESC, TAB, SPACE, arrows, BACKSPACE, DELETE, HOME, END,
 PAGEUP, PAGEDOWN, INSERT and F1–F12, plus A–Z and 0–9. For example, use
-`--key CTRL+SHIFT+HOME` with `input key`. Scan codes use the target thread's
-keyboard layout and extended-key flags; Unicode `input text` remains separate
+`--key CTRL+SHIFT+HOME` with `input key` or `input chord`.
+`desktop input key --help` lists keys and limits without desktop calls.
+Unicode text is limited to 1024 UTF-16 code units and does not exercise an IME.
+Scan codes use the target thread's keyboard layout and extended-key flags;
+Unicode `input text` remains separate
 from physical game bindings. See Microsoft's [keyboard event contract](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-keybdinput).
 
 `input sequence` uses the same window selectors and `--keys 'HOME,SHIFT+END,F11'`.
@@ -113,7 +116,8 @@ Each chord releases keys in reverse order. No delays or held keys are supported;
 games polling keyboard state per frame may miss a tap. Use separate observed
 steps when application transitions require waiting. Queue acceptance does not
 prove application delivery. Partial delivery fails without replay and attempts
-key releases; inspect before retrying. Existing human-control, physical-modifier,
+key releases. Worker termination or OS rejection cannot guarantee release;
+inspect application and key state before retrying. Existing human-control, physical-modifier,
 foreground, identity and geometry guards apply. Input does not bypass UAC or a
 locked desktop.
 
@@ -145,6 +149,19 @@ this backend does not grant permission to substitute another browser.
 The [game-testing facilities plan](../plans/windows-game-testing.md) records
 native input acceptance and the proposed isolated-session, GPU capture, pacing,
 device recovery and process-audio increments.
+
+For a long T3 workload, submit once without waiting. Save its ID and initial
+receipt in private task notes before calling `wait`. Record the executable/runtime
+from its dry-run plan, worker source path/revision/dirty state and project revision.
+Keep `basaltw info --json` (saved installation), `basaltw doctor --skills --json`
+(bundle comparison against saved source) and selected checkout revision separate;
+checkout success does not install it. Session-loaded skill revision can remain
+unknown. Do not update the worker checkout while its task is active.
+
+After interruption, inspect that same ID with `status`, `logs` and `wait`. Retain
+the final receipt with exit/cleanup/timing/truncation and its task/log directory
+under `%LOCALAPPDATA%\Basaltwater\development`. Caller wait timeout does not
+authorize duplicate work. Project runners may need a verbose option for live detail.
 
 ```powershell
 basaltw desktop develop --help
@@ -261,6 +278,30 @@ scope. Package-manager version compatibility remains task-plan validation.
 Use workstation doctor separately for host version health and project commands
 for build/render qualification. The recipe adapter remains deferred pending a
 reviewed consuming workflow.
+
+### Optional Ninja analysis build
+
+For a project supporting Ninja, use a separate build directory and a project-owned
+PowerShell script submitted through `develop exec --msvc -- pwsh.exe -NoProfile
+-File analysis.ps1`. Inside that task-local MSVC environment:
+
+```powershell
+$ErrorActionPreference = 'Stop'
+cmake.exe -S . -B build-analysis -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+cmake.exe --build build-analysis --verbose
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+if (-not (Test-Path build-analysis/compile_commands.json)) { throw 'Compile database missing' }
+```
+
+Select/install Ninja explicitly if absent, apply normal project CMake options and
+use a new directory rather than changing the regular generator. Validate SDK
+headers/libraries with a disposable executable including `windows.h`, calling a
+Win32 function and linking/running successfully; finding `cl.exe` is insufficient.
+Point the project analyzer at the generated database. This recipe awaits native
+qualification; MSBuild success does not establish a Ninja/analyzer pass. Global
+shell changes are unnecessary. See [native input QA](native-input-qa.md) for
+manual device checks.
 
 ## Maintenance and qualification
 

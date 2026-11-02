@@ -279,8 +279,9 @@ public static class Native {
         } else if(kind=="text") {
             if(text==null || text.Length>1024) throw new Exception("Input text limit is 1024");
             foreach(char c in text) { Check(id,identity); if(GetForegroundWindow()!=new IntPtr(id)) throw new Exception("Foreground changed"); Send(new [] {Key(0,c,4),Key(0,c,6)}); }
-        } else if(kind=="key" || kind=="sequence") {
+        } else if(kind=="key" || kind=="chord" || kind=="sequence") {
             int pid; uint thread=GetWindowThreadProcessId(new IntPtr(id),out pid); var layout=GetKeyboardLayout(thread);
+            if(kind=="chord" && (text==null || text.IndexOf('+')<0)) throw new Exception("Chord requires CTRL/SHIFT modifiers");
             var items=KeyInputs(text,kind=="sequence",delegate(ushort vk) { return MapVirtualKeyEx(vk,4,layout); });
             w=Check(id,identity);
             if(!w.active || w.minimized || w.width!=width || w.height!=height) throw new Exception("Foreground or geometry changed");

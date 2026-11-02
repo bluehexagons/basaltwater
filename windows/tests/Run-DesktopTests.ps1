@@ -62,8 +62,18 @@ try {
     # Pure event construction with a synthetic keyboard map. No user32 calls.
     $builder = [Basaltwater.Desktop.Native].GetMethod('KeyInputs', [Reflection.BindingFlags]'Static,NonPublic')
     $map = [Func[uint16,uint32]]{ param($vk)
-        switch ($vk) { 162 { return 0x1d }; 160 { return 0x2a }; 36 { return 0xe047 }; 35 { return 0xe04f }; 122 { return 0x57 }; default { return 0x1e } }
+        switch ($vk) { 162 { return 0x1d }; 160 { return 0x2a }; 37 { return 0xe04b }; 36 { return 0xe047 }; 35 { return 0xe04f }; 122 { return 0x57 }; default { return 0x1e } }
     }
+    foreach ($name in @('LEFT','HOME','END','PAGEUP','PAGEDOWN','F11')) {
+        $single = $builder.Invoke($null, @($name,$false,$map))
+        Assert-True ($single.Length -eq 2 -and $single[0].data.key.vk -eq 0 -and $single[0].data.key.scan -ne 0 -and
+            ($single[0].data.key.flags -band 8) -ne 0 -and ($single[1].data.key.flags -band 2) -ne 0) 'Raw key omitted scan code or key up'
+        if ($name -in @('LEFT','HOME')) { Assert-True ($single[0].data.key.flags -eq 9 -and $single[1].data.key.flags -eq 11) 'Extended key prefix lost' }
+    }
+    $single = $builder.Invoke($null, @('CTRL+A',$false,$map))
+    Assert-True ($single.Length -eq 4 -and $single[1].data.key.flags -eq 8 -and $single[2].data.key.flags -eq 10) 'Nonextended chord gained extended-key flags'
+    $maximum = $builder.Invoke($null, @(('A,' * 31 + 'A'),$true,$map))
+    Assert-True ($maximum.Length -eq 64) 'Maximum bounded sequence rejected'
     $events = $builder.Invoke($null, @('ctrl+shift+HOME,END,F11', $true, $map))
     Assert-True ($events.Count -eq 10) 'Chord sequence event count changed'
     Assert-True ($events[0].data.key.scan -eq 0x1d -and $events[0].data.key.flags -eq 8 -and
@@ -72,7 +82,7 @@ try {
         $events[3].data.key.flags -eq 11 -and $events[4].data.key.scan -eq 0x2a -and
         $events[5].data.key.scan -eq 0x1d -and $events[6].data.key.scan -eq 0x4f -and
         $events[8].data.key.scan -eq 0x57) 'Scan codes, extended flags or reverse releases incorrect'
-    foreach ($invalid in @('CTRL+CTRL+A','ALT+A','CTRL','A,,B', ('A,' * 32 + 'A'), 'F13', 'SHIFT+')) {
+    foreach ($invalid in @('CTRL+CTRL+A','ALT+A','CTRL+SHIFT+CTRL+A','CTRL+','+A','CTRL','A,,B', ('A,' * 32 + 'A'), 'F13', 'SHIFT+')) {
         $caught = $null
         try { $null = $builder.Invoke($null, @($invalid, $true, $map)) } catch { $caught = $_ }
         Assert-True ($null -ne $caught) "Invalid chord/sequence accepted: $invalid"
@@ -113,6 +123,8 @@ try {
     Assert-True ($null -ne $caught -and $caught.Exception.Message -match 'release unconfirmed' -and
         $script:SentBatches.Count -eq 2 -and $script:SentBatches[1].Length -eq 1 -and
         $script:SentBatches[1][0].data.key.scan -eq 0x4f) 'Cleanup failure hidden or already released chord cleaned again'
+    $help = Invoke-NativeDesktopCli @('input','sequence','--help')
+    Assert-True ($help.ok -and $help.help -match '32 chords' -and $help.help -match 'HOME') 'Leaf input help missing keys/limits'
     $dto = [Basaltwater.Desktop.Element]([pscustomobject]@{ reference = 'r'; window = 123L; pid = 42; path = @(0,1); identity = 'i'; runtime = 'r'; name = 'n'; role = 'ControlType.Edit' })
     Assert-True ($dto.path.Length -eq 2 -and $dto.window -eq 123) 'Worker cannot deserialize UIA DTO'
     # Exercise the native outcome rule without calling Win32: SW_RESTORE can
