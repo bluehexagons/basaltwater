@@ -2,6 +2,7 @@
    Get-NativePowerShell7 is supplied by the native host and returns a verified executable.
    Receipts are deliberately conservative: interrupted guardians require inspection.
 #>
+. (Join-Path $PSScriptRoot 'Development.Session.ps1')
 function Get-DevelopmentRoot { Join-Path $env:LOCALAPPDATA 'Basaltwater\development' }
 function Assert-DevelopmentPath([string]$Path) {
     $cursor = [IO.Path]::GetFullPath($Path)
@@ -126,6 +127,7 @@ function Complete-AbandonedDevelopmentTask([string]$Id, [IO.FileStream]$Guardian
         $record.CompletedUtc = [DateTime]::UtcNow.ToString('o')
         $record.Message = 'Registration retired without replaying project code.'
         Remove-DevelopmentRequest $directory
+        Remove-DevelopmentSessionProfile $record
         Write-DevelopmentJson (Join-Path $directory 'receipt.json') $record
         return $record
     } finally { if (-not $GuardianLease) { $lease.Dispose() } }
@@ -145,12 +147,14 @@ function Get-DevelopmentStatus([string]$Id) {
     }
     return $record
 }
-function Wait-DevelopmentTask([string]$Id, [ValidateRange(1,86400)][int]$TimeoutSeconds = 60) {
+function Wait-DevelopmentTask([string]$Id, [ValidateRange(1,86400)][int]$TimeoutSeconds = 60, [switch]$UntilReady) {
     $clock = [Diagnostics.Stopwatch]::StartNew()
     while ($true) {
         $record = Get-DevelopmentStatus $Id
+        if ($UntilReady -and -not (Test-DevelopmentSession $record)) { throw 'Readiness waiting requires a --test-session task' }
         $state = if ($record.CompletedUtc) { 'completed' }
             elseif ($record.State -in @('cleanup-uncertain','launch-uncertain','interrupted')) { 'attention-required' }
+            elseif ($UntilReady -and $record.TestSession.ReadyState -eq 'ready' -and $record.State -eq 'running') { 'ready' }
             elseif ($clock.Elapsed.TotalSeconds -ge $TimeoutSeconds) { 'timed-out' } else { '' }
         if ($state) {
             return [pscustomobject]@{ Id = $Id; WaitState = $state; TimedOut = ($state -eq 'timed-out');
@@ -170,8 +174,14 @@ Usage: basaltw desktop develop COMMAND [OPTIONS]
   editor|run|import --project PATH [OPTIONS]  Use the selected Godot executable
   status|logs|cancel TASK_ID               Inspect output or request cancellation
   wait TASK_ID [--timeout SECONDS]         Wait up to 60 seconds by default (1-86400)
+  ready TASK_ID [--timeout SECONDS]        Wait for a live test session's readiness
 
 Task options: --timeout SECONDS, --env NAME=VALUE, --msvc, --dry-run.
+Test sessions (exec/node/run): --test-session [--ready-timeout SECONDS (1-300)].
+Project must use BASALTWATER_TEST_PROFILE and atomically write a JSON Token from
+BASALTWATER_TEST_READY_TOKEN to BASALTWATER_TEST_READY_FILE after readiness.
+Evidence/logs remain in the task directory. Conflicting supervised project tasks
+are blocked until cleanup settles. Use status/logs/wait/cancel with the same ID.
 Node also accepts --runtime VERSION; otherwise .node-version/.nvmrc selects an
 already installed fnm runtime and its npm. NPM_SCRIPT names package.json scripts,
 not a JavaScript file. exec uses its requested executable without selecting Node.
@@ -329,23 +339,30 @@ function New-DevelopmentPlan([string[]]$Arguments) {
     $verb = $Arguments[0]
     if ($verb -notin @('doctor','exec','node','editor','run','import')) { throw "Unknown development command '$verb'. Run basaltw desktop develop --help." }
     $project = ''; $runtime = ''; $msvc = $false; $plan = $false; $timeout = 3600
+    $testSession = $false; $readyTimeout = 30; $readySelected = $false
     $environment = @{}; $literal = @(); $scriptName = ''
     for ($i = 1; $i -lt $Arguments.Count; $i++) {
         $arg = $Arguments[$i]
         if ($arg -eq '--') { $literal = @($Arguments | Select-Object -Skip ($i + 1)); break }
         switch ($arg) {
             '--msvc' { $msvc = $true }
+            '--test-session' { $testSession = $true }
             { $_ -in @('--dry-run','--plan') } { $plan = $true }
-            { $_ -in @('--project','--runtime','--timeout','--env') } {
+            { $_ -in @('--project','--runtime','--timeout','--env','--ready-timeout') } {
                 if (++$i -ge $Arguments.Count) { throw "Missing value for $arg" }
                 $value = $Arguments[$i]
                 switch ($arg) {
                     '--project' { $project = $value }
                     '--runtime' { $runtime = $value }
+                    '--ready-timeout' {
+                        if ($value -notmatch '\A\d{1,3}\z' -or [int]$value -lt 1 -or [int]$value -gt 300) { throw 'Readiness timeout must be 1-300 seconds.' }
+                        $readyTimeout = [int]$value; $readySelected = $true
+                    }
                     '--timeout' { if ($value -notmatch '^\d+$' -or [long]$value -lt 1 -or [long]$value -gt 86400) { throw 'Timeout must be 1-86400 seconds.' }; $timeout = [int]$value }
                     '--env' {
                         if ($value -notmatch '^([A-Za-z_][A-Za-z0-9_]*)=(.*)$') { throw 'Use --env NAME=VALUE.' }
                         if ($Matches[1] -eq 'LOCALAPPDATA') { throw 'LOCALAPPDATA identifies the task store and cannot be overridden.' }
+                        if ($Matches[1] -like 'BASALTWATER_TEST_*') { throw 'BASALTWATER_TEST_* names are reserved for test sessions.' }
                         $environment[$Matches[1]] = $Matches[2]
                     }
                 }
@@ -353,9 +370,13 @@ function New-DevelopmentPlan([string[]]$Arguments) {
             default { if ($verb -eq 'node' -and -not $scriptName -and $arg -notlike '--*') { $scriptName = $arg } else { throw "Unexpected option '$arg'; put literal arguments after --." } }
         }
     }
+    if (($testSession -and $verb -notin @('exec','node','run')) -or ($readySelected -and -not $testSession)) {
+        throw 'Use --test-session with exec/node/run; --ready-timeout requires --test-session.'
+    }
     if (-not $project -or -not (Test-Path -LiteralPath $project -PathType Container)) { throw 'Supply --project PATH naming an existing local project directory.' }
     $project = (Resolve-Path -LiteralPath $project).ProviderPath
     if ($project.StartsWith('\\')) { throw 'Use a local Windows project path, not a network share.' }
+    Assert-DevelopmentPath $project
     $exe = ''; $argv = @(); $node = ''
     switch ($verb) {
         'exec' {
@@ -390,7 +411,7 @@ function New-DevelopmentPlan([string[]]$Arguments) {
         }
     }
     [pscustomobject]@{ Verb = $verb; Project = $project; Executable = $exe; Argv = @($argv); Environment = $environment;
-        Msvc = $msvc; TimeoutSeconds = $timeout; Plan = $plan; Node = $node }
+        Msvc = $msvc; TimeoutSeconds = $timeout; Plan = $plan; Node = $node; TestSession = $testSession; ReadyTimeoutSeconds = $readyTimeout }
 }
 function Initialize-DevelopmentDirectory([string]$Directory) {
     Assert-DevelopmentPath $Directory
@@ -414,18 +435,18 @@ function Start-DevelopmentScheduledTask($Record, [string]$PowerShell) {
 }
 function Invoke-NativeDevelopmentCli([string[]]$Arguments) {
     if (-not $Arguments.Count -or ($Arguments.Count -eq 1 -and $Arguments[0] -in @('--help','-h','help')) -or
-        ($Arguments.Count -eq 2 -and $Arguments[0] -in @('doctor','exec','node','editor','run','import','status','logs','cancel','wait') -and $Arguments[1] -in @('--help','-h'))) {
+        ($Arguments.Count -eq 2 -and $Arguments[0] -in @('doctor','exec','node','editor','run','import','status','logs','cancel','wait','ready') -and $Arguments[1] -in @('--help','-h'))) {
         Show-NativeDevelopmentHelp
         return
     }
-    if ($Arguments[0] -eq 'wait') {
+    if ($Arguments[0] -in @('wait','ready')) {
         if ($Arguments.Count -notin @(2,4) -or ($Arguments.Count -eq 4 -and
             ($Arguments[2] -ne '--timeout' -or $Arguments[3] -notmatch '\A\d{1,5}\z' -or
              [int]$Arguments[3] -lt 1 -or [int]$Arguments[3] -gt 86400))) {
-            throw 'Usage: develop wait TASK_ID [--timeout SECONDS (1-86400)]'
+            throw 'Usage: develop wait|ready TASK_ID [--timeout SECONDS (1-86400)]'
         }
         $timeout = if ($Arguments.Count -eq 4) { [int]$Arguments[3] } else { 60 }
-        return Wait-DevelopmentTask $Arguments[1] $timeout
+        return Wait-DevelopmentTask $Arguments[1] $timeout -UntilReady:($Arguments[0] -eq 'ready')
     }
     if ($Arguments.Count -and $Arguments[0] -in @('status','logs','cancel')) {
         if ($Arguments.Count -ne 2) { throw 'Usage: develop status|logs|cancel TASKID. Logs return the last 64 KiB of each stream.' }
@@ -497,6 +518,7 @@ function Invoke-NativeDevelopmentCli([string[]]$Arguments) {
     try { $admission = [IO.File]::Open((Join-Path $setupDirectory 'setup.lock'), 'OpenOrCreate', 'ReadWrite', 'None') }
     catch [IO.IOException] { throw 'Windows setup/reboot is active; wait for it before starting a development task' }
     try {
+    Assert-DevelopmentProjectAdmission $request.Project $request.TestSession
     $id = [guid]::NewGuid().ToString('N'); $directory = Get-DevelopmentDirectory $id
     Initialize-DevelopmentDirectory $directory
     $provider = Get-Process -Id $PID
@@ -505,14 +527,37 @@ function Invoke-NativeDevelopmentCli([string[]]$Arguments) {
         WorkerPid = 0; WorkerStartedUtc = ''; ChildPid = 0; ChildStartedUtc = '';
         CreatedUtc = [DateTime]::UtcNow.ToString('o'); Boot = (Get-DevelopmentBoot); CompletedUtc = $null; State = 'queued'; ExitCode = $null;
         ExecutionStartedUtc = $null; ExecutionEndedUtc = $null; ElapsedSeconds = $null; Streams = $null; StreamLimitBytes = 4MB;
+        Project = $request.Project; TestSession = $null;
         TaskName = ('Basaltwater Development ' + $id); Message = 'Use develop status/logs/cancel TASKID.' }
     $provider.Dispose()
-    $snapshot = @{}; foreach ($entry in [Environment]::GetEnvironmentVariables('Process').GetEnumerator()) { $snapshot[$entry.Key] = $entry.Value }
+    $snapshot = @{}
+    foreach ($entry in [Environment]::GetEnvironmentVariables('Process').GetEnumerator()) {
+        if ($entry.Key -notlike 'BASALTWATER_TEST_*') { $snapshot[$entry.Key] = $entry.Value }
+    }
     foreach ($key in $request.Environment.Keys) { $snapshot[$key] = $request.Environment[$key] }
     $request.Environment = $snapshot
     $request | Add-Member NoteProperty PowerShell $powershell
-    Write-DevelopmentJson (Join-Path $directory 'request.json') $request
-    Write-DevelopmentJson (Join-Path $directory 'receipt.json') $record
+    if ($request.TestSession) {
+        $record.TestSession = New-DevelopmentSession $id $request.ReadyTimeoutSeconds
+        Write-DevelopmentJson (Join-Path $directory 'receipt.json') $record
+        try {
+            Initialize-DevelopmentSession $record $request
+            Write-DevelopmentJson (Join-Path $directory 'request.json') $request
+            Write-DevelopmentJson (Join-Path $directory 'receipt.json') $record
+        }
+        catch {
+            $record.Message = 'Test session preparation failed: ' + $_.Exception.Message
+            $record.State = 'failed'
+            try { Remove-DevelopmentRequest $directory; Remove-DevelopmentSessionProfile $record; $record.CompletedUtc = [DateTime]::UtcNow.ToString('o') }
+            catch { $record.State = 'cleanup-uncertain'; $record.Message += '; profile cleanup unconfirmed: ' + $_.Exception.Message }
+            Write-DevelopmentJson (Join-Path $directory 'receipt.json') $record
+            throw "Test session preparation failed. Inspect status/logs $id before retrying."
+        }
+    }
+    else {
+        Write-DevelopmentJson (Join-Path $directory 'request.json') $request
+        Write-DevelopmentJson (Join-Path $directory 'receipt.json') $record
+    }
     try { Start-DevelopmentScheduledTask $record $powershell }
     catch {
         # The guardian may already own or have completed the receipt. A stale

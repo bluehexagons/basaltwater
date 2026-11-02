@@ -1,7 +1,7 @@
 # Windows game testing facilities
 
-Status: input fidelity implemented for qualification; remaining facilities are
-planned. Basaltwater owns OS facilities and lifecycle/evidence collection.
+Status: input fidelity and an initial opt-in test-session facility are implemented;
+remaining facilities are planned. Basaltwater owns OS facilities and lifecycle/evidence collection.
 Projects own readiness signals, assertions, deterministic replays and capture
 recipes. This plan does not introduce commands for unimplemented features.
 
@@ -32,7 +32,18 @@ acceptance check after refresh:
 5. Distinguish key-event delivery from frame-polled game state: immediate
    down/up taps need not span a game frame. Held input remains out of scope.
 
-## Next increment: isolated sessions
+## Isolated sessions: initial implementation
+
+[`--test-session`](../workstations/windows-test-sessions.md) now adds disposable
+profiles, token-based readiness, exact-project admission and retained provenance,
+logs and artifacts to supervised exec/node/run tasks. `develop ready` waits for
+live readiness; normal wait/cancel confirm completion. Cleanup uncertainty keeps
+the reservation and remaining profile. Revision/dirty state, Windows version and
+selected executable/file versions are recorded without environment/arguments.
+GPU/display metadata and automatic captures/recordings remain deferred. Project
+adapters must prove profile use and perform their own readiness assertions.
+
+The broader session design and acceptance targets remain:
 
 Build on the existing guardian, Job Object and terminal cleanup receipt rather
 than creating a second process supervisor. A session should reserve its project
