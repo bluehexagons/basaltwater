@@ -214,5 +214,7 @@ __marimo__/
 .basaltwater-refresh.json
 # The default installed source prefix also contains native T3 user state.
 /cachyos-t3/
+# Managed worktrees also live below the default installed source prefix.
+/worktrees/
 /state
 artifacts/

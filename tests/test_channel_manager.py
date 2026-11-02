@@ -145,6 +145,33 @@ class TestChannelManager(unittest.TestCase):
         with self.assertRaises(ChannelError):
             switch_channel(self.repo, "dev")
 
+    def test_managed_worktrees_are_ignored_while_source_edits_still_block_upgrade(self) -> None:
+        ignore_path = os.path.join(os.path.dirname(__file__), "..", ".gitignore")
+        with open(ignore_path, encoding="utf-8") as source:
+            rules = source.read()
+        with open(os.path.join(self.seed, ".gitignore"), "w", encoding="utf-8") as target:
+            target.write(rules)
+        _git(self.seed, "add", ".gitignore")
+        _git(self.seed, "commit", "-m", "installation ignore rules")
+        _git(self.seed, "push", "origin", "main")
+        switch_channel(self.repo, "dev")
+
+        workspace = os.path.join(self.repo, "worktrees", "project", "task")
+        _git(self.repo, "worktree", "add", "--detach", workspace, "HEAD")
+        previous = _git(workspace, "rev-parse", "HEAD")
+        self.assertEqual(_git(self.repo, "status", "--porcelain"), "")
+        upgrade_channel(self.repo)
+        self.assertEqual(_git(workspace, "rev-parse", "HEAD"), previous)
+
+        source_path = os.path.join(self.repo, "version.txt")
+        with open(source_path, "w", encoding="utf-8") as source:
+            source.write("local source edit\n")
+        with self.assertRaises(ChannelError) as raised:
+            upgrade_channel(self.repo)
+        self.assertIn(self.repo, str(raised.exception))
+        with open(source_path, encoding="utf-8") as source:
+            self.assertEqual(source.read(), "local source edit\n")
+
 
 if __name__ == "__main__":
     unittest.main()

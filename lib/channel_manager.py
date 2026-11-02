@@ -268,7 +268,8 @@ def _require_clean_worktree(repo_path: str) -> None:
         raise _git_failure("inspect worktree", result)
     if result.stdout.strip():
         raise ChannelError(
-            "Refusing to change a worktree with local changes; commit or stash them first"
+            f"Refusing to change a worktree with local changes at {repo_path}; "
+            "commit or stash them first"
         )
 
 
