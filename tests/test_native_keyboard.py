@@ -109,8 +109,10 @@ class NativeKeyboardTests(unittest.TestCase):
 
     def test_symbol_input_tracks_modifiers_without_exposing_symbols(self) -> None:
         observed = []
-        with patch.object(self.session, "hold", side_effect=lambda *args: observed.append(self.session.snapshot_status())):
+        with patch.object(native, "keysyms", return_value=[0xffe3, 0x61]) as keysyms, \
+                patch.object(self.session, "hold", side_effect=lambda *args: observed.append(self.session.snapshot_status())):
             self.session.handle({**self.payload, "kind": "key", "codes": None, "key": "ctrl+a"})
+        keysyms.assert_called_once_with("ctrl+a")
         self.assertEqual(observed[0]["input_state"]["modifiers"], ["ctrl"])
         self.assertEqual(observed[0]["input_state"]["keysym_presses"], 2)
         self.assertEqual(self.session.snapshot_status()["input_state"]["keysym_presses"], 0)
