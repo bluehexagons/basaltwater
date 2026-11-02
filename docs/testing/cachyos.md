@@ -241,6 +241,44 @@ Useful additions would be app-scoped loopback capture for audio acceptance and
 paginated or time-scoped evidence task discovery for long sessions. Neither is
 claimed as an available, qualified capability here.
 
+### Native translated menus and input limits, 2026-11-02
+
+Further native Godot checks used Simplified Chinese at 150% menu text in a
+1280×720 application window. Pointer and keyboard input covered all five
+Options tabs, the video section picker, save creation/rename/load/deletion,
+statistics details, credits/licenses, pause/resume and a completed hand with
+translated summaries. A normal restart retained the locale, scale and saved
+counters. Read-only application observations verified exact-hand continuity
+through pause/resume. These are application checks, not a translation-quality
+review or native IME qualification. Steam/cloud stayed disabled, game account
+writes were blocked and no export was attempted.
+
+Input inspection exposed boundaries that a successful submission receipt alone
+does not resolve. `bracketright` arrived with logical key 93 and physical key
+125, so it did not exercise the game's physical-key-93 tab shortcut. An extra
+Shift modifier was also observed on otherwise unmodified input; cycling Shift
+cleared it, after which Escape cancelled a dialog, Ctrl+A selected text and
+Return confirmed normally. The source of that modifier state was not established.
+A mixed Chinese/ASCII text submission delivered only the ASCII portion to the
+inspected field. This does not establish a game text-entry defect or successful
+Unicode/IME input through the helper.
+
+Useful additions are physical-key/scancode injection alongside keysym input,
+modifier-state diagnostics and a verified Unicode/IME committed-text path.
+Qualification should compare requested input with events delivered to the
+application and the resulting field contents. Existing keysym input remains
+useful for the individually observed flows; it is not equivalent to physical
+keyboard coverage across layouts.
+
+The two native processes exited with status zero and no runtime errors, apart
+from the application's separately documented shutdown warnings. Their records
+retained 120 and 66 events without event truncation. Both global task inventories
+were truncated; owned process completion was checked directly. The first record
+ended before the final window-close action, so its journal alone does not prove
+that close. Raw records, captures, synthetic profiles and event diagnostics
+remain private. The manifest still reported running source `5184cef0` with a
+dirty flag; this does not qualify a clean Basaltwater release.
+
 ## Native SDL/OpenGL application follow-up, 2026-11-01
 
 Antistatic source checks and screenshot smoke passed through `af23811f2`.
