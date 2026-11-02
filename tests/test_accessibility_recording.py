@@ -21,6 +21,7 @@ IDENTITY = {"pid": 42, "start_ticks": 123, "uid": 1000,
 class RecordingTests(unittest.TestCase):
     def setUp(self):
         self.home = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.enterContext(patch.object(recording.native_session, "check_session"))
         self.real_identity = recording.process_identity
         self.identity = self.enterContext(patch.object(recording, "process_identity", return_value=IDENTITY))
         parser = argparse.ArgumentParser()

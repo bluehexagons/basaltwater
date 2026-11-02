@@ -18,10 +18,11 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from desktop.accessibility import STATES
+from desktop import native_session
+from desktop.qa_artifacts import new_bundle
 from lib.atomic_io import write_json_atomic
 from lib.remote_utils import CommandTimeoutError
 from lib.streamed_process import run_streamed
-from lib.validation import validate_filesystem_path
 
 EVENT_TYPES = (
     "object:property-change:accessible-name", "object:property-change:accessible-value",
@@ -94,19 +95,12 @@ def run_recording_command(args: argparse.Namespace) -> dict[str, Any]:
     options = {key: getattr(args, key) for key in
                ("pid", "seconds", "max_events", "max_output_bytes", "max_label_chars")}
     validate_options(options)
+    native_session.check_session()
     identity = process_identity(options["pid"])
     expected = getattr(args, "process_start", None)
     if expected is not None and (type(expected) is not int or expected != identity["start_ticks"]):
         raise ValueError("Target process start identity changed")
-    output = Path(args.output).absolute()
-    validate_filesystem_path(str(output))
-    # Resolve the existing parent once; mkdir refuses files, symlinks and reuse.
-    output = output.parent.resolve(strict=True) / output.name
-    parent = output.parent.stat()
-    if parent.st_uid != os.getuid() or parent.st_mode & 0o022:
-        raise ValueError("Output parent must be owned by the current user and not writable by others")
-    output.mkdir(mode=0o700)
-    os.chmod(output, 0o700)
+    output = new_bundle(args.output)
     artifact = output / "manifest.json"
     start = stamp()
     data: dict[str, Any] = {
@@ -151,10 +145,15 @@ def run_recording_command(args: argparse.Namespace) -> dict[str, Any]:
         data["events"].append(row)
 
     try:
+        environment = dict(os.environ)
+        for key in ("AT_SPI_BUS_ADDRESS", "GI_TYPELIB_PATH", "PYTHONPATH", "PYTHONHOME"):
+            environment.pop(key, None)
+        environment.update(DBUS_SESSION_BUS_ADDRESS=f"unix:path=/run/user/{os.getuid()}/bus", NO_AT_BRIDGE="0")
         code = run_streamed(
             ["/usr/bin/python3", str(Path(__file__).resolve())], timeout=options["seconds"] + 3,
             input_data=json.dumps({**options, "identity": identity}).encode(),
             on_output=receive, discard_stderr=True,
+            env=environment,
         )
         if code or not terminal:
             data["errors"].append("AT-SPI worker exited without successful completion")

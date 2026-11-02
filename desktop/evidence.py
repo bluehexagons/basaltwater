@@ -12,6 +12,7 @@ import stat
 import subprocess
 
 from desktop.observations import compact_capture
+from desktop.qa_artifacts import clock, stamp
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.streamed_process import run_captured
 from lib.validation import validate_filesystem_path, validate_no_control_characters
@@ -86,6 +87,7 @@ class Recorder:
         self.launch_baseline = set(launches or {})
         self.data = {"schema_version": 1, "project": str(path.resolve()), "generation": generation,
                      "started_at": _now(), "finished_at": None, "finalized": False,
+                     "clock": clock(), "started_monotonic_ns": stamp()["monotonic_ns"],
                      "revision_start": revision(str(path)), "revision_end": None,
                      "events": [], "events_truncated": False, "renderer": None,
                      "tasks": [], "task_inventory_truncated": False}
@@ -101,7 +103,7 @@ class Recorder:
         if len(self.data["events"]) >= EVENT_LIMIT:
             self.data["events_truncated"] = True
         else:
-            row = {"action": action, "at": _now(), "outcome": "returned" if result is not None else "uncertain"}
+            row = {"action": action, **stamp(), "outcome": "returned" if result is not None else "uncertain"}
             # Never record text, key values, argv, element content or portal tokens.
             for key in ("kind", "x", "y", "to_x", "to_y", "duration_ms", "button", "hold_ms", "operation"):
                 if key in payload:
@@ -117,6 +119,7 @@ class Recorder:
 
     def finish(self, launches: dict, *, reason: str = "finished") -> dict:
         self.data["finished_at"] = _now()
+        self.data["finished_monotonic_ns"] = stamp()["monotonic_ns"]
         self.data["recording_end_reason"] = reason
         self.data["native_launches"] = [{"launch": token, "pid": process.pid, "returncode": process.poll()}
                                         for token, process in launches.items() if token not in self.launch_baseline]

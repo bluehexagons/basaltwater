@@ -31,6 +31,10 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     add_development_parser(commands)
     evidence = commands.add_parser("evidence", help="Native: record manual launches, inputs and captures with project/task provenance")
     evidence_commands = evidence.add_subparsers(dest="evidence_command", required=True)
+    from desktop.qa_cli import add_qa_parser
+    add_qa_parser(commands, evidence_commands)
+    from desktop.accessibility_recording import add_recording_parser
+    add_recording_parser(commands)
     recording = evidence_commands.add_parser("start")
     recording.add_argument("--project", required=True)
     finishing = evidence_commands.add_parser("finish")
@@ -177,7 +181,15 @@ def run_desktop_command(args: argparse.Namespace) -> int:
     try:
         command = args.desktop_command
         control_command = "basaltw desktop --native" if backend is not runtime else "basaltw desktop"
-        if command == "map-point":
+        if command == "accessibility-record":
+            from desktop.accessibility_recording import run_recording_command
+            result = run_recording_command(args)
+        elif command == "audio" or (command == "evidence" and args.evidence_command in ("crop", "excerpt", "export", "timeline")):
+            if backend is runtime:
+                raise ValueError("Native QA tools require --native")
+            from desktop.qa_cli import run_qa_command
+            result = run_qa_command(args)
+        elif command == "map-point":
             if backend is runtime:
                 raise ValueError("Selected-monitor coordinate mapping requires --native")
             from desktop.coordinates import map_capture_points

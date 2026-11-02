@@ -17,8 +17,9 @@ start ticks. `--process-start TICKS` additionally rejects a selection whose star
 identity changed before invocation. It never follows a reused PID or silently
 switches to another application. Missing or unresponsive applications fail.
 
-The output parent must exist, belong to the invoking user and prohibit writes
-by other users/groups. The new bundle directory is mode 0700;
+The output parent must exist, belong to the invoking user and be private
+(mode 0700). Output paths must remain outside Git and not traverse symlinks.
+The new bundle directory is mode 0700;
 `manifest.json` is mode 0600. Existing files/directories/symlinks are refused.
 Keep bundles outside Git: accessible names and announcements can contain private
 document information even without text-interface reads. Only share reviewed,
@@ -80,7 +81,7 @@ reader; never use `--replace` in this workflow.
    unrelated application just to obtain dependencies. Existing setup has no
    dedicated Orca testing-profile flag: do not invent `--orca`, pass pacman
    packages through `--apt-install`, or claim setup installed a speech backend.
-   If Orca is missing, obtain separate install opt-in and use the distro's
+   If Orca is missing, explicitly select installation and use the distro's
    supported package path (`sudo pacman -S --needed orca speech-dispatcher
    espeak-ng` when those match the reviewed backend). Never perform a partial
    upgrade with `pacman -Sy`. No install is performed by the recorder.
@@ -129,8 +130,14 @@ reader; never use `--replace` in this workflow.
    after verifying no owned process uses it. Report uncertain cleanup rather
    than killing unrelated readers. Close the disposable session.
 
+See [audio capture and shared timelines](native-qa-evidence.md) for bounded
+native-PipeWire audio evidence and offline analysis. The local native check
+recorded six name-change events from a disposable GTK application and confirmed
+its process exited. This qualifies that narrow event route, not screen-reader
+speech, all toolkits, or every event type.
+
 No automatic Orca runner is supplied: preference isolation does not establish
 safe session/audio isolation or reader exclusivity. Offline mocked tests cover
-the recorder's filtering, bounds and subprocess contracts. Native CachyOS
-GI signatures, toolkit event delivery, target-exit behavior under load, real
-speech routing and cleanup still require this separate live qualification.
+the recorder's filtering, bounds and subprocess contracts. Other toolkit event
+delivery, target-exit behavior under load, real speech routing and reader cleanup
+still require this separate live qualification.
