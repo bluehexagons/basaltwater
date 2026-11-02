@@ -566,6 +566,7 @@ class NativeSession:
             raise ValueError("This operation is unavailable on KDE Wayland; use observed accessible controls or portal input")
 
     def capture(self, payload):
+        from desktop.evidence import capture_digest
         from desktop.portal_capture import validate_crop
 
         if payload.get("window") or payload.get("active_window"):
@@ -617,12 +618,14 @@ class NativeSession:
                 raise RuntimeError("Invalid capture pixel digest")
             changed = (None if digest is None or self.pixel_digest is None else
                        digest != self.pixel_digest or geometry != self.geometry or expected != self.capture_region)
+            artifact_digest = capture_digest(fd)
             self.pixel_digest = digest
             self.capture_region = expected
             self.geometry = geometry
             self.captured = time.monotonic()
             return {**self.snapshot_status(), "output": output, "image_geometry": image_geometry, "image_origin": origin,
                     "captured_at": datetime.now(timezone.utc).isoformat(), "changed": changed,
+                    "artifact_sha256": artifact_digest,
                     **{key: result.get(key) for key in ("pixel_sha256", "frame_received_at",
                        "frame_received_monotonic_ns", "frame_pts_ns", "initial_frame_skipped")},
                     "last_input": self.last_input}

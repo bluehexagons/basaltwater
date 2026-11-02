@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -18,7 +19,7 @@ from unittest.mock import Mock, patch
 from desktop.observations import save_observation
 from desktop import client, control_state, native_session, portal_capture
 from desktop.display_power import display_power
-from desktop.evidence import Recorder, finalize
+from desktop.evidence import Recorder, capture_digest, finalize, verify
 from lib.desktop_cli import add_desktop_subparser, run_desktop_command
 
 
@@ -180,6 +181,8 @@ class NativeObservationTests(unittest.TestCase):
         self.session.portal.notify.side_effect = lambda *args: released.append(time.monotonic_ns())
         result = self.session.handle({**self.context, "action": "input", "kind": "click", "x": 1, "y": 2})
         self.assertGreaterEqual(result["input_completed_monotonic_ns"], released[-1])
+        with patch("desktop.evidence.revision", return_value={"commit": None, "dirty": None}):
+            self.session.evidence = Recorder(str(self.home), self.session.generation)
         digests = iter(["a" * 64, "a" * 64, "b" * 64])
         def capture(argv, **kwargs):
             os.write(kwargs["pass_fds"][-1], b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + struct.pack(">II", 10, 20))
@@ -192,9 +195,14 @@ class NativeObservationTests(unittest.TestCase):
                 observed = self.session.handle({**self.context, "action": "screenshot",
                     "output": str(self.home / f"capture-{index}.png"), "next_frame": True})
                 self.assertIs(observed["changed"], changed)
+                self.assertEqual(observed["artifact_sha256"], hashlib.sha256(Path(observed["output"]).read_bytes()).hexdigest())
                 self.assertEqual(observed["last_input"]["input_completed_at"], result["input_completed_at"])
                 self.assertGreater(observed["frame_received_monotonic_ns"], result["input_completed_monotonic_ns"])
             self.assertEqual(run.call_args.args[0][-1], "1")
+        finished = self.session.handle({**self.context, "action": "evidence", "operation": "finish"})
+        report = verify(finished["artifact"])
+        self.assertTrue(report["healthy"])
+        self.assertEqual(report["counts"]["verified"], 3)
 
     def test_capture_helper_skips_initial_frame_and_hashes_visible_pixels(self):
         buffer = Mock(pts=123)
@@ -314,6 +322,92 @@ class NativeObservationTests(unittest.TestCase):
         (self.home / ".local/state/basaltwater/desktop-evidence").symlink_to(target)
         with patch("desktop.evidence.revision"), self.assertRaisesRegex(RuntimeError, "Unsafe"):
             Recorder(str(self.home), "generation")
+
+    def recorded_capture(self):
+        with patch("desktop.evidence.revision", return_value={"commit": None, "dirty": None}):
+            recorder = Recorder(str(self.home), "generation")
+        capture = self.home / "capture.png"
+        capture.write_bytes(b"fixture original PNG bytes")
+        capture.chmod(0o600)
+        recorder.event({"action": "screenshot"}, {"output": str(capture),
+                       "artifact_sha256": hashlib.sha256(capture.read_bytes()).hexdigest()})
+        recorder.finish({})
+        return recorder, capture
+
+    def test_evidence_verification_is_read_only_and_detects_changed_and_missing_files(self):
+        recorder, capture = self.recorded_capture()
+        record_bytes = recorder.path.read_bytes()
+        self.assertTrue(verify(str(recorder.path))["healthy"])
+        self.assertFalse(verify(str(recorder.path))["finalized"])
+        capture.write_bytes(b"different")
+        report = verify(str(recorder.path))
+        self.assertFalse(report["healthy"])
+        self.assertEqual(report["counts"]["mismatched"], 1)
+        self.assertEqual(capture.read_bytes(), b"different")
+        capture.unlink()
+        self.assertEqual(verify(str(recorder.path))["counts"]["missing"], 1)
+        self.assertEqual(recorder.path.read_bytes(), record_bytes)
+
+    def test_evidence_verification_rejects_unsafe_files_and_bounds_diagnostics(self):
+        recorder, capture = self.recorded_capture()
+        original = capture.read_bytes()
+        capture.unlink()
+        target = self.home / "original.png"
+        target.write_bytes(original)
+        target.chmod(0o600)
+        capture.symlink_to(target)
+        self.assertEqual(verify(str(recorder.path))["counts"]["unverified"], 1)
+        capture.unlink()
+        os.mkfifo(capture, 0o600)
+        self.assertEqual(verify(str(recorder.path))["counts"]["unverified"], 1)
+        capture.unlink()
+        capture.write_bytes(original)
+        capture.chmod(0o644)
+        self.assertEqual(verify(str(recorder.path))["counts"]["unverified"], 1)
+        capture.chmod(0o600)
+        with patch("desktop.evidence.CAPTURE_BYTES_LIMIT", 1):
+            self.assertEqual(verify(str(recorder.path))["counts"]["unverified"], 1)
+        # Legacy pixel hashes describe RGBA pixels, not PNG file bytes.
+        recorder.data["events"] = [{"action": "screenshot", "result": {"output": str(capture),
+                                            "pixel_sha256": "a" * 64}} for _ in range(12)]
+        recorder.save()
+        report = verify(str(recorder.path))
+        self.assertFalse(report["healthy"])
+        self.assertEqual(report["counts"]["unverified"], 12)
+        self.assertEqual(len(report["problems"]), 10)
+        self.assertTrue(report["problems_truncated"])
+
+    def test_evidence_verification_does_not_certify_empty_or_truncated_records(self):
+        recorder, capture = self.recorded_capture()
+        recorder.data["events_truncated"] = True
+        recorder.save()
+        report = verify(str(recorder.path))
+        self.assertFalse(report["healthy"])
+        self.assertEqual(report["counts"]["verified"], 1)
+        recorder.data["events"] = []
+        recorder.data["events_truncated"] = False
+        recorder.save()
+        self.assertFalse(verify(str(recorder.path))["healthy"])
+
+    def test_capture_digest_detects_a_concurrent_file_change(self):
+        _, capture = self.recorded_capture()
+        with capture.open("rb") as stream, patch("desktop.evidence.os.pread", return_value=b""):
+            with self.assertRaisesRegex(ValueError, "changed"):
+                capture_digest(stream.fileno())
+
+    def test_evidence_verify_cli_works_without_live_backend_and_preserves_failures(self):
+        recorder, capture = self.recorded_capture()
+        parser = argparse.ArgumentParser()
+        add_desktop_subparser(parser.add_subparsers())
+        with patch.object(native_session, "status") as status, patch.object(native_session, "request") as request:
+            for expected_code in (0, 1):
+                args = parser.parse_args(["desktop", "--native", "evidence", "verify", str(recorder.path), "--json"])
+                with patch("sys.stdout", new_callable=io.StringIO) as output:
+                    self.assertEqual(run_desktop_command(args), expected_code)
+                self.assertEqual(json.loads(output.getvalue())["healthy"], expected_code == 0)
+                capture.unlink(missing_ok=True)
+            status.assert_not_called()
+            request.assert_not_called()
 
 
 if __name__ == "__main__":

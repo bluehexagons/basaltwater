@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import os
 from pathlib import Path
 import secrets
@@ -16,6 +17,27 @@ from lib.streamed_process import run_captured
 from lib.validation import validate_filesystem_path, validate_no_control_characters
 
 EVENT_LIMIT = 500
+CAPTURE_BYTES_LIMIT = 64 * 1024 * 1024 + 1024
+
+
+def capture_digest(fd: int) -> str:
+    """Hash bounded, stable PNG file bytes without moving the descriptor offset."""
+    before = os.fstat(fd)
+    if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.getuid()
+            or before.st_mode & 0o077 or not 0 < before.st_size <= CAPTURE_BYTES_LIMIT):
+        raise ValueError("Capture must be a private owned regular file within the PNG size limit")
+    digest = hashlib.sha256()
+    offset = 0
+    while offset < before.st_size:
+        block = os.pread(fd, min(1024 * 1024, before.st_size - offset), offset)
+        if not block:
+            raise ValueError("Capture changed while hashing")
+        digest.update(block)
+        offset += len(block)
+    after = os.fstat(fd)
+    if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+        raise ValueError("Capture changed while hashing")
+    return digest.hexdigest()
 
 
 def _now() -> str:
@@ -103,9 +125,8 @@ class Recorder:
                 "events_truncated": self.data["events_truncated"], "finalized": False}
 
 
-def finalize(path: str, *, tasks: list[str], renderer: str | None) -> dict:
-    """Collect supervised task status outside the portal's short request budget."""
-    from desktop.development import TASK_ID, list_tasks, task_status
+def _load_record(path: str) -> dict:
+    from desktop.development import TASK_ID
     validate_filesystem_path(path, must_exist=True)
     artifact = Path(path)
     if artifact.parent != _directory() or not TASK_ID.fullmatch(artifact.stem) or artifact.suffix != ".json":
@@ -117,10 +138,61 @@ def finalize(path: str, *, tasks: list[str], renderer: str | None) -> dict:
     if (not isinstance(data, dict) or type(data.get("schema_version")) is not int or data["schema_version"] != 1
             or not all(key in data for key in ("project", "started_at", "finished_at", "events", "events_truncated", "tasks", "renderer"))
             or not isinstance(data["events"], list) or len(data["events"]) > EVENT_LIMIT
+            or any(not isinstance(row, dict) for row in data["events"])
+            or type(data["events_truncated"]) is not bool
             or not isinstance(data["tasks"], list) or len(data["tasks"]) > 50
             or any(not isinstance(row, dict) or not isinstance(row.get("task"), str)
                    or not TASK_ID.fullmatch(row["task"]) for row in data["tasks"])):
         raise ValueError("Invalid or unsupported desktop evidence record")
+    return data
+
+
+def verify(path: str) -> dict:
+    """Check recorded capture file bytes without input, finalization or repairs."""
+    data = _load_record(path)
+    counts = {"verified": 0, "missing": 0, "mismatched": 0, "unverified": 0}
+    problems = []
+    for index, row in enumerate(data["events"]):
+        if row.get("action") != "screenshot":
+            continue
+        result = row.get("result")
+        result = result if isinstance(result, dict) else {}
+        output, expected = result.get("output"), result.get("artifact_sha256")
+        state, detail = "unverified", "Capture has no valid PNG file hash or path (older or uncertain recording)"
+        if (isinstance(output, str) and isinstance(expected, str)
+                and re.fullmatch(r"[0-9a-f]{64}", expected)):
+            try:
+                validate_filesystem_path(output)
+                if not Path(output).is_absolute() or Path(output).suffix.lower() != ".png":
+                    raise ValueError("Expected an absolute PNG path")
+                fd = os.open(output, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                try:
+                    actual = capture_digest(fd)
+                finally:
+                    os.close(fd)
+                state = "verified" if actual == expected else "mismatched"
+                detail = "PNG file bytes differ from the recorded hash"
+            except FileNotFoundError:
+                state, detail = "missing", "Recorded capture is unavailable"
+            except (OSError, ValueError) as exc:
+                detail = str(exc)[:256]
+        counts[state] += 1
+        if state != "verified" and len(problems) < 10:
+            problems.append({"event_index": index, "output": output if isinstance(output, str) else None,
+                             "state": state, "detail": detail})
+    checked = sum(counts.values())
+    failures = checked - counts["verified"]
+    return {"artifact": path, "checked": checked, "counts": counts,
+            "healthy": checked > 0 and failures == 0 and not data["events_truncated"],
+            "events_truncated": data["events_truncated"], "finalized": data.get("finalized") is True,
+            "problems": problems, "problems_truncated": failures > len(problems),
+            "scope": "Recorded PNG file bytes only; no game outcome, pixel decoding, task logs or omitted events verified"}
+
+
+def finalize(path: str, *, tasks: list[str], renderer: str | None) -> dict:
+    """Collect supervised task status outside the portal's short request budget."""
+    from desktop.development import TASK_ID, list_tasks, task_status
+    data = _load_record(path)
     for timestamp in (data["started_at"], data["finished_at"]):
         if not isinstance(timestamp, str) or len(timestamp) > 40 or datetime.fromisoformat(timestamp).tzinfo is None:
             raise ValueError("Finish recording before finalizing evidence; timestamps must include timezones")

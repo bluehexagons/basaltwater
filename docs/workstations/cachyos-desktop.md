@@ -116,6 +116,10 @@ or unrelated desktop content. Debian compact results retain available metadata,
 without inventing native timing or change detection. Native screenshot help
 hides window-capture switches; attempts still fail explicitly.
 
+Native captures also include `artifact_sha256`, a SHA-256 of the PNG file bytes,
+distinct from the visible-pixel digest. Compact output and evidence journals
+retain it. This supports integrity checks without decoding or editing the image.
+
 ## Manual testing evidence
 
 Start recording before the supervised launch and interaction loop, then finish
@@ -157,6 +161,15 @@ the renderer annotation unless replaced explicitly. Disk failures are reported
 as `evidence_error` without disguising completed input as a retryable failure.
 Evidence finish/finalize never stops a process or closes the desktop. Review
 captures and logs before sharing; records have no automatic cleanup timer.
+
+Use `basaltw desktop --native evidence verify /absolute/record.json --json` to
+check recorded capture files without a running helper or changing the record.
+The result reports file-hash matches, missing/mismatched/unverified references,
+truncation and finalization separately. Missing hashes on older captures remain
+unverified; pixel hashes cannot substitute for PNG file hashes. Unsafe files,
+empty capture inventories or truncated journals cannot report full success.
+Only the first ten problems are printed, with an omission flag. See
+[retention and verification limits](game-testing.md#retain-and-verify-evidence).
 
 ## Installation and verification
 

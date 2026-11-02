@@ -36,6 +36,9 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     finishing = evidence_commands.add_parser("finish")
     finalizing = evidence_commands.add_parser("finalize", help="Finalize a saved recording after helper exit or interrupted collection")
     finalizing.add_argument("artifact")
+    verifying = evidence_commands.add_parser("verify", help="Check recorded capture files without contacting the desktop or modifying evidence")
+    verifying.add_argument("artifact")
+    verifying.add_argument("--json", action="store_true")
     for command in (finishing, finalizing):
         command.add_argument("--task", action="append", default=[], help="Also attach a pre-existing development task; repeat as needed")
         command.add_argument("--renderer", help="Renderer/device observed in the application's log; recorded as operator-observed")
@@ -182,9 +185,11 @@ def run_desktop_command(args: argparse.Namespace) -> int:
         elif command == "evidence":
             if backend is runtime:
                 raise ValueError("Manual desktop evidence requires --native")
-            from desktop.evidence import finalize
+            from desktop.evidence import finalize, verify
             operation = args.evidence_command
-            if operation == "finalize":
+            if operation == "verify":
+                result = verify(args.artifact)
+            elif operation == "finalize":
                 result = finalize(args.artifact, tasks=args.task, renderer=args.renderer)
             else:
                 current = backend.status()

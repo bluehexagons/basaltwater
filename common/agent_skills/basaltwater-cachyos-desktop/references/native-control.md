@@ -164,6 +164,18 @@ Renderer text is operator-observed; the project owns assertions. After helper
 exit or interrupted collection use `evidence finalize ARTIFACT --json`.
 See [evidence contracts and limits](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos-desktop.md#manual-testing-evidence).
 
+Native captures carry `artifact_sha256` for PNG file bytes, separate from
+`pixel_sha256` for visible pixels. Use `evidence verify /absolute/record.json
+--json` to check retained capture references without live desktop access or
+modifying the record. Missing/mismatched/unsafe files, old captures without file
+hashes, empty capture inventories and truncated journals do not pass. This
+verifies file integrity only; reopen images to verify their meaning. Keep needed
+media and temporary JSON observations in durable private storage with the
+project's run/phase/assistance record. See the
+[playtest guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/game-testing.md)
+for immutable observer packets, update retests, long-run recording segments,
+cleanup inventories and capability boundaries.
+
 For semantic controls use `inspect --pid PID --name NAME --role ROLE` with
 exact selectors; scope repeated reads to an observed `--root` where possible.
 Use `--save-output` for a broad `inspect`, `windows`, `wait` or `wait-element`:

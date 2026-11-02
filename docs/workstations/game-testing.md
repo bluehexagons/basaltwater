@@ -27,6 +27,26 @@ generic pilot cap is not a substitute for a completion unit. At a hard cap,
 save the current state and report unfinished unless an authorized extension
 arrives. An extension continues the same match ID and history.
 
+## Refresh the baseline after changes
+
+Begin a new game with discovery questions about its controls, configuration,
+natural completion unit and timing. Mark estimates provisional; choose the next
+bounded experiment from observations rather than requiring a win or full match
+before the analysis is useful.
+
+Before later runs, compare the recorded baseline with the current game build,
+Basaltwater/backend, OS/display/input setup, model/effort/team and procedure.
+Refresh affected assumptions only. For each changed premise, record old/new
+versions or unknown, the source, checks needed and their state: reviewed,
+live check pending, verified, or blocked. A documentation update is no live retest.
+
+Retest a known finding under its original trigger when safe, then check nearby
+normal behavior. Declare repetition/time limits first and report reproduction
+as X/Y. If the trigger is unreachable, conditions differ or visual media is
+missing, keep the result inconclusive. One quiet attempt does not establish an
+intermittent fix. Preserve the original history; do not reset saves, downgrade
+builds or mix changed conditions into an unlabeled comparison.
+
 ## Qualify the controller on fresh state
 
 Check `basaltw desktop --native status --json` for the current helper and agent
@@ -125,6 +145,74 @@ helper generation, evidence path and budget remaining. The receiver takes a
 fresh capture and qualifies before acting. Historical status is context,
 not live desktop authority. Use the [shared handoff conventions](../agents/handoffs.md).
 
+## Give observers immutable packets
+
+Use a sole controller plus a bounded observer/advisor when useful. The controller
+alone captures and acts; helpers read saved artifacts and return conditional
+advice. Follow active orchestration instructions for models, deadlines,
+completion and cancellation. Separate simultaneous live matches need separate
+qualified desktop resources.
+
+Keep each packet outside Git with these fields:
+
+```text
+packet ID; private run/phase/match/session record; recorder artifact
+capture path, UTC, artifact_sha256; scene/turn; recent action and observed result
+monitor geometry; PNG size/origin; presentation size; coordinate convention
+one question; expected deliverable; validity conditions; decision deadline
+remaining shared budget; requested/actual model and effort; advice access policy
+```
+
+Verify that the actual worker can open the image and has visual input. An
+absolute local path does not establish access from another environment. Preserve
+originals and packet IDs; use separate crops/redactions as derivatives. Require
+the reply to identify the packet, observations, uncertainty, coordinate space,
+conditional recommendation and expiry. The controller rechecks current scene
+and target after any reorder, purchase or transition; old advice can be stale
+before the backend's 60-second limit. Disregard late optional advice.
+
+Record material assistance, corrections and advice used/rejected in the private
+session record linked to the recorder artifact. The recorder does not infer
+run IDs, model settings or strategy assistance. Freeze these conditions for
+team comparisons; quarantine optional advice until the outcome for solo tests.
+All workers share the original clocks and attempt limits. Report elapsed wall
+time once and aggregate worker time separately when available.
+
+## Retain and verify evidence
+
+Choose durable private storage outside Git for each run, with enough space and
+a declared retention window. Record actual locations privately. `--save-output`
+observations use temporary storage; copy needed JSON/media to durable storage,
+verify bytes/hashes, reopen important captures and update the private index
+before retiring scratch files. A temporary path is no durability guarantee.
+
+New native captures include `artifact_sha256` for PNG file bytes as well as
+`pixel_sha256` for visible RGBA pixels. Compact responses and the evidence
+journal retain both. Check referenced originals before citing them and after
+any reviewed storage consolidation:
+
+```fish
+basaltw desktop --native evidence verify /absolute/private/record.json --json
+```
+
+This command reads the existing journal and capture files without contacting
+the desktop, finalizing, moving, deleting or repairing evidence. It reports
+verified, missing, mismatched and unverified counts, with up to ten problem
+details and an explicit flag when further problems are omitted. Unsafe or
+oversized files, absent file hashes on older records, and uncertain captures
+remain unverified. Truncated journals and records with no captures cannot return
+a successful verification. A nonzero status calls for investigation, never
+blind input replay. An active record can be checked; finalization is reported
+separately. File equality does not verify image meaning, outcome, task logs,
+omitted events or video/audio. Reopen images to check the claim they support.
+
+Keep original paths usable when retaining recorder references. If evidence must
+move, keep the original until a verified private relocation index explains the
+new location; this verifier does not rewrite journals or follow a relocation
+index. Hard-linked retained copies are immutable: crops and annotations must
+be new files. Age alone is not disposal authority, and referenced media stays
+retained while an unresolved finding needs it.
+
 ## Close out and report limits
 
 Inspect the result screen or other declared terminal state independently of
@@ -137,6 +225,23 @@ Leave helper/agent control in the owner's existing state and record any active
 task or pending input. Remove only disposable, unreferenced artifacts under the
 project's retention policy; keep evidence needed to reproduce findings. Share
 sanitized findings only.
+
+Use a private closeout inventory for each owned launch, supervised task, helper
+job, recorder, temporary setting/device and artifact group. Mark each as exited,
+finalized, restored, retained with reason, or unresolved, with current evidence.
+Recorder finalization snapshots are historical; recheck live handles when
+closing processes. A launcher exiting does not prove its game child exited,
+and an absent accessibility window does not prove process exit. Preserve shared
+launchers and desktop services. Never use broad process-name kills for cleanup.
+Record reviewed artifact dispositions, retained-copy verification and measured
+storage reclaimed. If a close action may lose progress, preserve state and
+report partial cleanup rather than silently force termination.
+
+The journal caps events at 500 and task attachments at 50. Plan recording
+boundaries at safe checkpoints for long sessions: finish and inspect the
+existing recording, then start the next and link both to the same run/match
+without resetting clocks. Retain any truncation as a coverage gap. Recording
+boundaries do not close the game or authorize another attempt.
 
 Separate intended action, observed input delivery, verified game effect,
 targeting/scene mistakes, rejected calls and unresolved platform questions.
@@ -153,6 +258,16 @@ scene errors or unequal handoff assistance confound play quality: report the
 run as exploratory and repeat qualification before drawing model rankings.
 This procedure and the coordinate aid do not themselves qualify a game, a fresh
 worker, another platform route, or any unmeasured telemetry.
+
+## Controller capability boundaries
+
+The native CLI currently provides keyboard, text, pointer and drag input.
+Gamepad events are not implemented. Package/device presence, keyboard remapping
+and a physical pad are separate conditions and do not qualify a virtual-pad
+route. Record Steam Input or other remapping separately from game-native input.
+The [game-testing capability plan](../plans/game-testing.md) defines the remaining
+adapter, failure-path and game-recognition acceptance work. Do not use an
+independent input script to bypass human override or disabled control.
 
 ## Coordinate aid verification scope
 
