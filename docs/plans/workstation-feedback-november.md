@@ -55,3 +55,10 @@ PowerShell/.NET Framework test runtime. The desktop Python suite passed 675
 tests; that is Linux/offline evidence, not an SDL or WinForms pass.
 Refresh/reboot, restored desktop grants, physical input/audio, IME composition,
 clean-target packages and streaming remain separate acceptance work.
+
+The subsequent CachyOS input-report change passed 48 focused tests and a live
+read-only KDE layout query. The wider agent/desktop run initially exposed two
+fixtures inheriting the host's `XDG_CONFIG_HOME`; those fixtures now use temporary
+configuration roots. The corrected combined run passed all 2,808 tests. Fcitx
+engine/group responses have mocked contract coverage; no framework was started
+to claim a live IME pass.

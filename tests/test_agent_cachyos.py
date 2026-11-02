@@ -549,7 +549,8 @@ class CachyOSSetupTests(unittest.TestCase):
                 (skill_root / name).mkdir(parents=True)
                 (skill_root / name / "SKILL.md").write_text(content)
             with patch("common.agent_steps.pwd.getpwnam", return_value=account), \
-                 patch("common.agent_steps.os.chown"):
+                 patch("common.agent_steps.os.chown"), \
+                 patch.dict(os.environ, {"XDG_CONFIG_HOME": str(Path(home) / ".config")}):
                 steps.install_cachyos_skills(self.config())
             self.assertFalse((skill_root / "basaltwater-desktop/SKILL.md").exists())
             self.assertEqual((skill_root / "basaltwater-vm-triage/SKILL.md").read_text(), "personal content\n")

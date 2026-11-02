@@ -111,6 +111,8 @@ class DesktopRefreshTests(unittest.TestCase):
         self.addCleanup(stack.close)
         self.stack = stack
         self.home = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+        # Queue/discovery fixtures must not inherit the workstation's unit root.
+        stack.enter_context(patch.dict(os.environ, {"XDG_CONFIG_HOME": str(self.home / ".config")}))
         self.proc = self.home / "proc"
         self.proc.mkdir()
         stack.enter_context(patch.object(refresh, "PROC", self.proc))
