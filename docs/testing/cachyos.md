@@ -18,7 +18,7 @@ CachyOS VM/container provisioning are outside its scope. See the
 | T3 Code desktop session with Codex | 🟢 **Labbed** | Owner's manual reopen after waiting succeeded; subsequent live Codex conversation, shell-tool execution, repository edits, tests, commit and push worked through T3 | Other providers, T3's interactive terminal UI, pairing/Connect and broader GUI workflows |
 | T3 Code desktop refresh/relaunch | 🟡 **Partial** | Native logs confirmed the old backend still owned the T3 home during premature reopen. Fix `bf0eb670` passed automated shutdown/timeout regressions; read-only native discovery captured the live embedded server | Corrected worker has not been exercised through a live shutdown/relaunch; repeat refresh, slow-backend exit, timeout, reboot and interruption remain open |
 | Graphics discovery and reference contexts | 🟡 **Partial** | Accelerated GLX and isolated llvmpipe contexts | Other devices/backends; these probes alone do not qualify application rendering |
-| Native Godot rendering and gameplay | 🟢 **Labbed** | Godot 4.7.2 on KDE Wayland with NVIDIA hardware: Vulkan Forward+ and explicit OpenGL Compatibility launches, gameplay and renderer settings on 2026-10-31; extended menu audit on 2026-11-01; weather/time/idle, fixed section navigation, binding chords/mouse input and settings/audio controls with focused GPU regressions on 2026-11-02 | Other GPU vendors, HDR, performance acceptance, exported-game renderer restart and target devices |
+| Native Godot rendering and gameplay | 🟢 **Labbed** | Godot 4.7.2 on KDE Wayland with NVIDIA hardware: Vulkan Forward+, explicit OpenGL Compatibility and Vulkan Mobile source launches; extended menus, weather/time/idle, binding chords/mouse input, settings/audio controls and focused GPU regressions through 2026-11-02 | Other GPU vendors, HDR, performance acceptance, exported-game renderer restart and target devices; desktop Mobile does not qualify a mobile device |
 | Native SDL/OpenGL rendering and scripted UI | 🟢 **Labbed** | Antistatic on KDE Wayland with Mesa Intel Arc OpenGL 4.6: controls-menu scrolling, pause preference toggle, reviewed application/monitor captures and clean shutdown on 2026-11-01; four fixed-frame llvmpipe effect comparisons also matched | Physical controllers, audible output, HDR, display scaling/pacing, other devices and package qualification; software comparisons do not qualify hardware rendering |
 | Blender and visual workflows | 🟡 **Partial** | Small native Blender CPU render | Full project scenes, image fidelity and hardware rendering |
 | Supervised development tasks | 🟡 **Partial** | Native game and GPU-recipe completion through `develop wait`; a wait timeout left the game running, intentional exit 7 remained a failure, stop preview preserved a running task and scoped stop reached `stopped` on 2026-11-01. Application regression failures and an engine abort also surfaced as failed tasks with retained logs | Interruption/disconnection, long-running descendants, unavailable user manager and logout/reboot recovery |
@@ -278,6 +278,37 @@ ended before the final window-close action, so its journal alone does not prove
 that close. Raw records, captures, synthetic profiles and event diagnostics
 remain private. The manifest still reported running source `5184cef0` with a
 dirty flag; this does not qualify a clean Basaltwater release.
+
+### Native renderer and guarded-menu follow-up, 2026-11-02
+
+Supervised source launches explicitly selected OpenGL Compatibility, Vulkan
+Mobile and Vulkan Forward+ on the same NVIDIA workstation. Application logs
+and a private read-only observer confirmed the actual renderer separately from
+saved graphics preferences. This exposed application ocean/lamp material issues
+in Compatibility and desktop Mobile runtime-effect policy; scoped game fixes
+were retaken through native menus and complete hands. Mobile's effective
+unsupported effects were disabled while the saved preferences remained identical.
+These are desktop renderer observations, not Android/iOS or Steam Deck acceptance.
+
+Native Chinese menus at 150% text exercised search filtering/clearing, paused
+save-management explanations, visible Back focus, Return/Escape paths and
+adjacent-tab navigation. Exact board/card identities, shoe, discards, split state
+and counters survived the menu trips. Normal Stand input settled once and full
+deck accounting held. A naturally rainy midnight sample from the production
+weather cycle added real input and readability checks, separate from the earlier
+controlled weather captures. Synthetic player data, disabled Steam/cloud and the
+application's write guard avoided game account writes; no export was attempted.
+
+The final focused application checks passed 559 gameplay and 2,529 main-menu
+assertions, each with 75 display/renderer preflight assertions. The delivery
+gate passed 4,017 assertions across 77 headless suites and selected tooling.
+These counts belong to the application. Short native evidence journals retained
+complete events, including a 51-event six-minute menu/night pass; historical task
+discovery was truncated, and each owned task's successful exit was checked
+directly. Normal exits retained known application/engine shutdown warnings
+without runtime errors. Raw records, monitor captures and observer state stay
+private. Running Basaltwater still reported dirty source `5184cef0`, so this
+does not qualify a clean toolkit release, performance, audible output or HDR.
 
 ## Native SDL/OpenGL application follow-up, 2026-11-01
 
