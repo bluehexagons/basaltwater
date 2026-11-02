@@ -131,7 +131,8 @@ Native desktop commands (explicit actions use the current account's session):
   screenshot --window HWND --identity TOKEN --generation GEN --output NEW.png
   window focus|move|resize|maximize|minimize|restore|close --window HWND --identity TOKEN --generation GEN
   element invoke|set-text|focus --ref REF --generation GEN [--text TEXT]
-  input key|text|click --window HWND --identity TOKEN --generation GEN --width W --height H
+  input key|chord|text|click --window HWND --identity TOKEN --generation GEN --width W --height H
+  input key --help  Supported editing keys, chords and text limits
   control enabled|human-override|disabled --human-approved [--seconds N|--indefinite]
   open PATH [--reveal] | terminal --project PATH [--msvc]
   notify --title TEXT --message TEXT

@@ -99,8 +99,16 @@ Window actions verify their observed outcome; `invoke` and raw input explicitly
 require application-specific verification. Raw input requires the window to
 remain foreground with the observed geometry. Click coordinates are relative
 to that window; multi-monitor origins and DPI scaling are handled by the worker.
-The first input slice supports individual keys, Unicode text and clicks, without
-key chords or held gamepad/key input. It does not bypass UAC or a locked desktop.
+Raw keys use scan-code injection, including extended navigation keys. Supported
+keys are A–Z, 0–9, Enter, Esc, Tab, Space, arrows, Backspace, Delete, Home, End,
+PageUp, PageDown and F11. `input chord --key CTRL+A` or `--key SHIFT+LEFT`
+uses one batch with one or two distinct CTRL/SHIFT modifiers and reverse-order
+release. Partial submission attempts release of every owned key; a failed release
+is reported as unconfirmed. Worker termination or OS rejection cannot guarantee
+release. Inspect application and key state before continuing after uncertainty.
+`desktop input key --help` lists keys and limits without touching desktop state.
+Unicode text is limited to 1024 UTF-16 code units; it does not exercise an IME.
+Held input and gamepads remain unsupported. Input does not bypass UAC or a locked desktop.
 
 Restoring a minimized window resumes its previous presentation, which can be
 maximized. Restoring an already maximized, non-minimized window returns it to

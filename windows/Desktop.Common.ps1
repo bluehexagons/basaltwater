@@ -8,7 +8,7 @@ All OS desktop calls are behind Invoke-NativeDesktopWorker for offline mocks.
 Desktop APIs run in an owned Windows PowerShell 5.1 8s worker: it provides the
 installed .NET Framework UIAutomation assemblies without another runtime/package.
 The public CLI wrapper also uses 5.1; development shells/task guardians use 7.
-No start/stop, launch, lease, elevation, clipboard, key chords, or held input.
+No start/stop, launch, lease, elevation, clipboard, or held input.
 #>
 $script:NativeDesktopSource = $PSScriptRoot
 
@@ -249,6 +249,9 @@ function Assert-NativeDesktopRequired($Request, [string[]]$Keys) {
 function Invoke-NativeDesktopCli([string[]]$Arguments) {
     $lock = $null
     try {
+        if ($Arguments.Count -eq 3 -and $Arguments[0] -eq 'input' -and $Arguments[1] -in @('key','chord','text','click') -and $Arguments[2] -eq '--help') {
+            return @{ ok = $true; help = 'input key --key KEY | input chord --key CTRL+A (one/two distinct CTRL/SHIFT modifiers). Keys: A-Z 0-9 ENTER ESC TAB SPACE LEFT UP RIGHT DOWN BACKSPACE DELETE HOME END PAGEUP PAGEDOWN F11. input text --text TEXT: at most 1024 UTF-16 code units. input click --x X --y Y. All require --window --identity --generation --width --height from fresh windows. Queue acceptance only; inspect application afterward.' }
+        }
         $request = ConvertTo-NativeDesktopRequest $Arguments
         if ($request.command -eq 'doctor') { return Get-NativeDesktopReadiness }
         $context = Get-NativeDesktopContext; $lock = Enter-NativeDesktopLock $context
@@ -285,10 +288,10 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
             }
             if ($request.command -eq 'input') {
                 Assert-NativeDesktopRequired $request @('width','height')
-                if ($request.operation -notin @('key','text','click')) { throw 'Unsupported input operation' }
+                if ($request.operation -notin @('key','chord','text','click')) { throw 'Unsupported input operation' }
                 if ($request.operation -eq 'click') { Assert-NativeDesktopRequired $request @('x','y') }
                 if ($request.operation -eq 'text') { Assert-NativeDesktopRequired $request @('text'); if ($request.text.Length -gt 1024) { throw 'Text limit is 1024' } }
-                if ($request.operation -eq 'key') { Assert-NativeDesktopRequired $request @('key'); $request.text = $request.key }
+                if ($request.operation -in @('key','chord')) { Assert-NativeDesktopRequired $request @('key'); $request.text = $request.key }
             }
             $request.record = $null
             if ($request.command -eq 'element' -or $request.ContainsKey('root')) {

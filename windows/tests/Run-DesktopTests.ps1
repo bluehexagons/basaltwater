@@ -59,6 +59,38 @@ try {
     }
     # Parse/compile only: not a single user32, capture, UIA or input call.
     Initialize-NativeDesktopTypes
+    $keys = [Basaltwater.Desktop.Native].GetMethod('EditingKeys', [Reflection.BindingFlags]'Static,NonPublic')
+    $map = [Func[ushort,uint]]{ param($vk) switch ($vk) { 37 { return 0xe04b }; 36 { return 0xe047 }; 162 { return 0x1d }; 160 { return 0x2a }; default { return 0x1e } } }
+    foreach ($name in @('LEFT','HOME','END','PAGEUP','PAGEDOWN','F11')) {
+        $sequence = $keys.Invoke($null, @($name,$false,$map))
+        Assert-True ($sequence.Length -eq 2 -and $sequence[0].data.key.vk -eq 0 -and $sequence[0].data.key.scan -ne 0 -and
+            ($sequence[0].data.key.flags -band 8) -ne 0 -and ($sequence[1].data.key.flags -band 2) -ne 0) 'Raw key omitted scan code or key up'
+        if ($name -in @('LEFT','HOME')) { Assert-True ($sequence[0].data.key.flags -eq 9 -and $sequence[1].data.key.flags -eq 11) 'Extended key prefix lost' }
+    }
+    $sequence = $keys.Invoke($null, @('CTRL+SHIFT+LEFT',$true,$map))
+    Assert-True ($sequence.Length -eq 6 -and $sequence[0].data.key.scan -eq 0x1d -and $sequence[1].data.key.scan -eq 0x2a -and
+        $sequence[3].data.key.scan -eq 0x4b -and $sequence[4].data.key.scan -eq 0x2a -and $sequence[5].data.key.scan -eq 0x1d) 'Chord release order changed'
+    $sequence = $keys.Invoke($null, @('CTRL+A',$true,$map))
+    Assert-True ($sequence.Length -eq 4 -and $sequence[1].data.key.flags -eq 8 -and $sequence[2].data.key.flags -eq 10) 'Nonextended chord gained extended-key flags'
+    $caught = $null
+    try { $null = $keys.Invoke($null, @('A',$false,[Func[ushort,uint]]{ return 0 })) } catch { $caught = $_ }
+    Assert-True ($null -ne $caught) 'Unmapped key silently fell back to virtual-key input'
+    foreach ($name in @('CTRL+CTRL+A','ALT+A','CTRL+SHIFT+CTRL+A','CTRL+','+A')) {
+        $caught = $null
+        try { $null = $keys.Invoke($null, @($name,$true,$map)) } catch { $caught = $_ }
+        Assert-True ($null -ne $caught) "Invalid chord accepted: $name"
+    }
+    $releaseMethod = [Basaltwater.Desktop.Native].GetMethod('WithKeyRelease', [Reflection.BindingFlags]'Static,NonPublic')
+    $release = $releaseMethod.CreateDelegate([Action[Action,Action]])
+    $script:ReleaseCalls = 0
+    $caught = $null
+    try { $release.Invoke([Action]{ throw 'partial input fixture' },[Action]{ $script:ReleaseCalls++ }) } catch { $caught = $_ }
+    Assert-True ($null -ne $caught -and $script:ReleaseCalls -eq 1) 'Partial input did not release owned keys or hid failure'
+    $caught = $null
+    try { $release.Invoke([Action]{ throw 'partial input fixture' },[Action]{ throw 'release fixture' }) } catch { $caught = $_ }
+    Assert-True ($null -ne $caught -and $caught.Exception.Message -match 'release unconfirmed') 'Release failure was hidden'
+    $help = Invoke-NativeDesktopCli @('input','key','--help')
+    Assert-True ($help.ok -and $help.help -match '1024' -and $help.help -match 'HOME') 'Leaf input help missing keys/limits'
     $dto = [Basaltwater.Desktop.Element]([pscustomobject]@{ reference = 'r'; window = 123L; pid = 42; path = @(0,1); identity = 'i'; runtime = 'r'; name = 'n'; role = 'ControlType.Edit' })
     Assert-True ($dto.path.Length -eq 2 -and $dto.window -eq 123) 'Worker cannot deserialize UIA DTO'
     # Exercise the native outcome rule without calling Win32: SW_RESTORE can
