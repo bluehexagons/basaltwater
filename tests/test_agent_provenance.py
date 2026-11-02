@@ -159,6 +159,11 @@ class ProvenanceTests(unittest.TestCase):
             manifest = agent_environment.inspect_environment(str(self.root))
             support = agent_support.build_agent_support_bundle(str(self.root))
         self.assertEqual(manifest["basaltwater"], support["basaltwater"])
+        self.assertEqual(manifest["provenance"]["source_revisions"],
+                         {"invoked": "b" * 40, "managed": None, "native_worker": None})
+        self.assertIsNone(manifest["provenance"]["session_loaded_skill_revision"])
+        self.assertEqual(agent_environment.scoped_environment(manifest, ["installation"])["provenance"],
+                         manifest["provenance"])
         self.assertEqual(support["basaltwater"]["evidence_source"], "running-git")
         self.assertIsNone(support["basaltwater"]["setup_snapshot"])
         self.assertNotIn("private-file", json.dumps(support))
@@ -175,13 +180,18 @@ class ProvenanceTests(unittest.TestCase):
         with patch.object(installation_info, "inspect_installation_provenance", side_effect=[invoked, managed]), \
                 patch("lib.cachyos.is_cachyos", return_value=True), \
                 patch("lib.cachyos_refresh.inspect_successful_setup_source", return_value={"commit": "e" * 40}), \
+                patch.object(installation_info, "_cachyos_native_worker_context", return_value={"source": {"commit": "f" * 40, "dirty": False}}), \
                 patch.object(installation_info, "_cachyos_service_context", return_value={"state": "active", "source": None}):
             result = inspect_installation_context(str(self.root), managed_root=str(managed_root))
         self.assertEqual(result["invoked"], invoked)
         self.assertEqual(result["managed"], managed)
         self.assertEqual(result["managed_source_selection"], "explicit")
         self.assertEqual(result["same_revision"], {"invoked_managed": False, "managed_activation": False,
-            "managed_snapshot": False, "managed_last_setup": False, "managed_service": None})
+            "managed_snapshot": False, "managed_last_setup": False, "managed_service": None,
+            "managed_native_worker": False, "invoked_native_worker": False})
+        self.assertEqual(result["source_revisions"], {"invoked": "a" * 40, "managed": "b" * 40,
+                                                     "native_worker": "f" * 40})
+        self.assertTrue(all(result["drift"].values()))
         self.assertEqual(entry.read_text(), "preserve this source")
         self.assertNotIn(str(self.root), json.dumps(result))
 
@@ -276,3 +286,60 @@ class ProvenanceTests(unittest.TestCase):
                     os.mkfifo(metadata)
                 with patch.object(installation_info.importlib_metadata, "version", return_value="1.0.0"):
                     self.assertEqual(installation_info._project_version(str(self.root)), "1.0.0")
+
+    def test_native_startup_identity_is_retained_across_disk_changes_and_receipts(self) -> None:
+        from desktop import native_session
+
+        source = {"version": "2.0.0", "commit": "a" * 40, "dirty": False,
+                  "evidence_source": "running-git"}
+        receipt = self.root / "status.json"
+        with patch.object(installation_info, "inspect_installation_provenance", return_value=source) as inspect, \
+                patch.object(native_session.control_state, "status", return_value={"control_revision": 1}):
+            startup = native_session.capture_worker_provenance()
+            session = native_session.NativeSession(None, receipt=receipt, worker_provenance=startup)
+            source["commit"] = "b" * 40  # The disk may now describe a newer checkout.
+            session.record()
+            self.assertEqual(session.snapshot_status()["worker_provenance"]["source"]["commit"], "a" * 40)
+            session.close()
+        inspect.assert_called_once()
+        self.assertEqual(json.loads(receipt.read_text())["worker_provenance"], startup)
+        with patch.object(native_session, "_request_status", side_effect=FileNotFoundError), \
+                patch.object(native_session, "runtime_directory", return_value=self.root), \
+                patch.object(native_session.native_grants, "metadata", return_value={"grant_saved": False}), \
+                patch.object(native_session.control_state, "status", return_value={}):
+            stopped = native_session.status()
+        self.assertFalse(stopped["helper_running"])
+        self.assertEqual(stopped["worker_provenance"], startup)
+
+    def test_native_context_rejects_legacy_invalid_and_stopped_loaded_source_claims(self) -> None:
+        from desktop import native_session
+
+        startup = {"schema_version": 1, "source": {"version": "2.0.0", "commit": "a" * 40, "dirty": False},
+                   "evidence_source": "running-git", "private": "must-not-leak"}
+        for state, running, metadata, expected in (
+            ("running", True, startup, "a" * 40),
+            ("stopped", False, startup, None),
+            ("running", True, None, None),
+            ("running", True, {**startup, "schema_version": True}, None),
+            ("running", True, {**startup, "source": {"commit": "short"}}, None),
+            ("running", True, {**startup, "evidence_source": []}, None),
+            ([], True, startup, None),
+        ):
+            with self.subTest(state=state, metadata=metadata), patch.object(native_session, "status", return_value={
+                "state": state, "helper_running": running, "worker_provenance": metadata,
+            }), patch.object(installation_info, "inspect_installation_provenance", side_effect=AssertionError("Disk inspected")):
+                result = installation_info._cachyos_native_worker_context()
+            self.assertEqual(result["source"]["commit"] if result["source"] else None, expected)
+            self.assertNotIn("must-not-leak", json.dumps(result))
+        with patch.object(native_session, "_request_status", return_value={"state": "running"}):
+            self.assertIsNone(native_session.status()["worker_provenance"])
+        with patch.object(native_session, "status", side_effect=RuntimeError("unavailable")):
+            self.assertIsNone(installation_info._cachyos_native_worker_context()["source"])
+
+    def test_same_dirty_revision_does_not_claim_no_source_drift(self) -> None:
+        clean = {"commit": "a" * 40, "dirty": False}
+        for other, expected in ((clean, False), ({**clean, "dirty": True}, None),
+                                ({**clean, "dirty": None}, None), (None, None),
+                                ({**clean, "commit": "b" * 40}, True)):
+            with self.subTest(other=other):
+                self.assertIs(installation_info._source_drift(clean, other), expected)

@@ -95,7 +95,9 @@ def _capture_freshness(captured=0):
 
 def status():
     try:
-        return _request_status()
+        result = _request_status()
+        result.setdefault("worker_provenance", None)  # Legacy workers cannot attest to startup source.
+        return result
     except (FileNotFoundError, ConnectionRefusedError):
         path = runtime_directory() / "status.json"
         receipt = {}
@@ -110,6 +112,7 @@ def status():
             pass
         grant = native_grants.metadata()
         return {**receipt, **grant, "last_state": receipt.get("state"), "state": "stopped",
+                "worker_provenance": receipt.get("worker_provenance"),
                 "desktop": "kde-wayland", "backend": "portal", "helper_running": False,
                 **control_state.status(), "control_active": False, "expires_in": 0,
                 "capture_freshness": _capture_freshness(),
@@ -300,10 +303,22 @@ def keysyms(chord):
     return keys
 
 
+def capture_worker_provenance():
+    """Observe source once at worker startup, never when a client asks for status."""
+    from lib.installation_info import inspect_installation_provenance
+
+    observed = inspect_installation_provenance(str(Path(__file__).resolve().parents[1]))
+    return {"schema_version": 1, "captured_at": datetime.now(timezone.utc).isoformat(),
+            "evidence_source": observed["evidence_source"],
+            "source": {key: observed[key] for key in ("version", "commit", "dirty")}}
+
+
 class NativeSession:
-    def __init__(self, portal, *, receipt=None, remember=False, session_seconds=SESSION_SECONDS):
+    def __init__(self, portal, *, receipt=None, remember=False, session_seconds=SESSION_SECONDS,
+                 worker_provenance=None):
         validate_session_seconds(session_seconds)
         self.portal = portal
+        self.worker_provenance = worker_provenance
         self.generation = secrets.token_hex(16)
         self.state = "initializing"
         self.portal_stage = "connecting"
@@ -340,6 +355,7 @@ class NativeSession:
     def snapshot_status(self):
         permission = self.sync_control()
         return {"state": self.state, "generation": self.generation, "desktop": "kde-wayland",
+                "worker_provenance": self.worker_provenance,
                 "backend": "portal", "origin": "portal", **permission,
                 "helper_running": True, "portal_stage": self.portal_stage, "last_failure": self.last_failure,
                 "consent_expires_in": (max(0, int(self.consent_until - time.monotonic()))
@@ -790,7 +806,7 @@ def serve(*, remember=False, session_seconds=SESSION_SECONDS):
     if remember:
         native_grants.enable()
     session = NativeSession(None, receipt=folder / "status.json", remember=remember,
-                            session_seconds=session_seconds)
+                            session_seconds=session_seconds, worker_provenance=capture_worker_provenance())
     session.initialization_done.clear()
     session.record()
     try:

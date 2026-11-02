@@ -416,6 +416,18 @@ def inspect_environment(repository: str, *, project_runtime: bool = False,
         installation = context["invoked"]
     else:
         installation = inspect_installation_provenance(source_root)
+    provenance = {
+        "source_revisions": context.get("source_revisions") if context else {
+            "invoked": installation.get("commit"), "managed": None, "native_worker": None},
+        "drift": context.get("drift") if context else None,
+        "skill_comparison_source": {key: installation.get(key) for key in ("commit", "dirty", "evidence_source")},
+        "delivered_skills": [
+            {"name": entry["name"], "providers": catalog["providers"], "status": entry["status"],
+             **entry.get("provenance", {})}
+            for catalog in skills["catalogs"] for entry in catalog["skills"]
+        ],
+        "session_loaded_skill_revision": None,
+    }
     runtime = None
     if project_runtime:
         from lib.node_toolchain import inspect_project_node_context
@@ -425,6 +437,7 @@ def inspect_environment(repository: str, *, project_runtime: bool = False,
         "schema_version": 1,
         "basaltwater": installation,
         "installation_context": context,
+        "provenance": provenance,
         "host_profile": "ubuntu-wsl" if wsl else "cachyos-workstation" if native_desktop else "debian-managed",
         "tools": tools,
         "skills": skills,
@@ -477,7 +490,7 @@ def scoped_environment(result: dict[str, object], capabilities: list[str]) -> di
     scopes = set(capabilities)
     if "web" in scopes:
         scopes.update(("workspace", "browser", "development"))
-    fields = {"schema_version", "host_profile", "basaltwater", "health_command", "project_runtime", "installation_context"}
+    fields = {"schema_version", "host_profile", "basaltwater", "health_command", "project_runtime", "installation_context", "provenance"}
     tools = set()
     if "workspace" in scopes:
         fields.update(("workspace", "project_source", "deployments", "current_deployment", "undeclared_branches"))
@@ -555,6 +568,20 @@ def run_manifest_command(args: argparse.Namespace) -> int:
         print("Source revisions: " + ", ".join(
             name + "=" + ("unknown" if same is None else "same" if same else "different")
             for name, same in context["same_revision"].items()))
+    if provenance := result.get("provenance"):
+        revisions = provenance["source_revisions"] or {}
+        print("Source provenance: " + ", ".join(
+            f"{name}={revisions.get(name) or 'unknown'}" for name in ("invoked", "managed", "native_worker")))
+        if drift := provenance.get("drift"):
+            print("Source drift: " + ", ".join(
+                f"{name}=" + ("unknown" if value is None else "yes" if value else "no")
+                for name, value in drift.items()))
+        print("Session-loaded skill revision: unknown")
+        for skill in provenance["delivered_skills"]:
+            print(f"Delivered skill: {skill['name']} ({', '.join(skill['providers'])}; {skill['status']}); "
+                  f"bundle={skill.get('bundle_sha256') or 'unknown'}; "
+                  f"delivery revision={skill.get('delivered_revision') or 'unknown'}; "
+                  f"metadata={skill.get('delivery_metadata') or 'unknown'}")
     print(f"Repository: {workspace['repository']} ({workspace['branch'] or 'detached'}, {workspace['commit'][:12]})")
     print("Available tools: " + ", ".join(name for name, path in result["tools"].items() if path))
     if runtime := result.get("project_runtime"):

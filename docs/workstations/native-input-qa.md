@@ -64,8 +64,9 @@ need separate runs because logical symbols and physical positions can differ.
    WinForms and SDL; verify Ctrl+A, Shift+Arrow and release after failed submission.
 6. Qualify audio backend open/close, bus meters, captured samples and human
    listening separately. Silent open/close does not establish audible quality,
-   routing or other devices. Application-scoped audio capture is not currently
-   supplied by the native desktop adapter.
+   routing or other devices. The [native QA audio tools](native-qa-evidence.md)
+   provide a scoped native-PipeWire stereo route and offline analysis;
+   bridge routes, real game output and physical listening need qualification.
 
 Preserve physical takeover and disabled states. CachyOS guards capture generation,
 geometry and age, but has no authoritative compositor focus identity guard.
@@ -85,8 +86,11 @@ Require a list of inputs actually read and any missing/unread files.
 Keep originals immutable. For derivatives record source path/hash, crop rectangle
 in source pixels or clip time interval, tool/command, output hash, caption and
 reviewer. Link sources and derivatives in private Markdown; review pixels and
-private content before sharing a portable bundle. The current verifier checks
-original captures, not derivative manifests; no crop/report exporter is claimed.
+private content before sharing a portable bundle. The [crop/excerpt/export tools](native-qa-evidence.md)
+retain immutable source copies and verify derivative hashes before reviewed export.
+Use [application-scoped accessibility recording](accessibility-testing.md) and the
+shared QA timeline to correlate observed names, focus and announcements with
+actions/audio. AT-SPI events alone do not establish screen-reader speech.
 Record phase/tool elapsed times where available. Keep reasoning, tool/transport
 latency and orchestration overhead distinct; unavailable model/effort/usage stays
 unknown. A long turn alone does not identify its bottleneck.

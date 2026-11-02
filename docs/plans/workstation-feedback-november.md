@@ -39,13 +39,14 @@ workstream's remaining implementation scope.
 | Priority | Work remaining | Acceptance before advertising support |
 | --- | --- | --- |
 | First | Native Windows scan-code qualification | Run offline desktop/CLI contracts and full native suite; disposable SDL and WinForms fixtures verify navigation, selection, F11, modifier release, partial-send/release failure, foreground change and physical takeover. Include ordinary and non-BMP/spaced paths; test long paths without changing policy. |
-| First | Consolidated installed/worker/source/skill provenance | Report installed CLI revision, actual selected worker source revision/dirty state, delivered skill revision and explicitly unknown session-loaded revision together. Legacy metadata stays unknown; important drift must be visible without implying installation. Current commands provide separate evidence, not a consolidated report. |
+| Implemented, scoped | Consolidated installed/worker/source/skill provenance | [Manifest context](../workstations/cachyos-provenance.md) compares invoked/managed source and worker startup evidence with conservative drift flags and delivered skill bundle digests. Existing delivery inventories do not record commit revisions; those and session-loaded revisions explicitly remain unknown. |
 | Implemented, scoped | Read-only input environment report | Doctor includes KDE layout snapshots and already-running Fcitx current-group metadata without service activation. IBus ownership is discovery only; other engine/framework routes remain unknown. Physical composition still needs manual qualification. |
 | Next | Expected native foreground identity | Use a trustworthy compositor/backend identity immediately before injection; reject changed focus. AT-SPI inventory alone is insufficient on Wayland. Preserve generation/age/control guards. |
-| Next | Evidence crop/clip/report exporter | New private derivatives only, immutable originals, source/hash/rectangle/time provenance, reviewed captions and portable-path validation; verify crops against originals and reject unsafe/oversized media. |
+| Implemented, scoped | Evidence crop/excerpt/report exporter | [Private QA tools](../workstations/native-qa-evidence.md) supply literal PNG crops, bounded WAV excerpts, captioned Markdown, source hashes and explicit reviewed portable export. Video clip trimming remains future work. |
 | Later | Tool/model/phase telemetry and specialist packets | Monotonic tool durations and captured timestamps; distinguish handoff overhead; actual model/effort/usage only when exposed. Absolute paths, read acknowledgements, immutable inputs, advice deadlines and exclusive controller ownership. |
 | Later | Virtual gamepad adapter | Opt-in owned device, bounded buttons/axes, control-state integration, neutralization/watchdog recovery and verified removal. Qualify in an event inspector before a game. Prerequisite discovery is not qualification. |
-| Later | Application audio and capability probes | Opt-in OpenGL context/vendor/version and silent audio open/close; isolated app-scoped capture without routing changes. No claims about audible quality, scanout or other devices. |
+| Implemented, scoped | Application audio and analysis | Protocol-verified native PipeWire stereo capture adds only owned recording links, checks existing playback, and records bounded format/timing/cleanup receipts. Offline FFmpeg analysis supplies peaks/loudness/silence, level windows and suspect excerpts. PulseAudio bridges, actual game capture and physical audibility remain unqualified. OpenGL probes remain future work. |
+| Implemented, scoped | Accessibility events and shared timeline | PID/start-identity scoped AT-SPI recording, common Linux boot/monotonic clocks, conservative timeline joins, and an optional isolated Orca qualification recipe. No automatic speech success or sample-accurate audio alignment claim. |
 | Later | Automated run closeout | Track owned tasks/launches/recorders/workers and retained artifacts; report verified exits and uncertain resources, preserving shared services and indexed evidence. Manual procedure is available now. |
 
 The Windows changes have added offline test cases for scan/extended flags,
@@ -62,3 +63,15 @@ fixtures inheriting the host's `XDG_CONFIG_HOME`; those fixtures now use tempora
 configuration roots. The corrected combined run passed all 2,808 tests. Fcitx
 engine/group responses have mocked contract coverage; no framework was started
 to claim a live IME pass.
+
+The subsequent QA batch passed 2,998 agent/desktop and related CLI/configuration
+tests plus the static checks. Synthetic clean/clipped/silent WAV analysis,
+two-second native PipeWire capture to an owned receiver, exact PNG crop bytes,
+reviewed portable export, and a six-event GTK name-change recording passed
+locally. The capture retained existing playback links and confirmed owned-node
+removal. A joined audio/accessibility timeline retained nine observed events;
+audio sample-zero alignment remained explicitly unknown. Review regressions
+cover failed partial accessibility timelines and recorder teardown reconciliation.
+Orca, Speech Dispatcher and the speech engine were absent; no packages, reader,
+desktop preferences, normal routing or refresh were changed. The optional Orca
+recipe is a qualification workflow, not installed or spoken-output support.
