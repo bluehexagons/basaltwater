@@ -1,8 +1,9 @@
 # CachyOS testing status
 
-**Evidence includes native T3 and SDL/OpenGL application checks, Godot
-menu/workflow audits and automated validation on 2026-11-01, an owner report
-received that day, and native Godot playtesting on 2026-10-31.**
+**Evidence includes native Godot environment/menu checks on 2026-11-02,
+native T3 and SDL/OpenGL checks, menu/workflow audits and automated validation
+on 2026-11-01, an owner report received that day, and native Godot playtesting
+on 2026-10-31.**
 Exact execution dates and revisions for the earlier setup report and other
 earlier native checks were not supplied in the public summary.
 The experimental `agent_cachyos` profile adds tools to an existing, updated
@@ -17,7 +18,7 @@ CachyOS VM/container provisioning are outside its scope. See the
 | T3 Code desktop session with Codex | 🟢 **Labbed** | Owner's manual reopen after waiting succeeded; subsequent live Codex conversation, shell-tool execution, repository edits, tests, commit and push worked through T3 | Other providers, T3's interactive terminal UI, pairing/Connect and broader GUI workflows |
 | T3 Code desktop refresh/relaunch | 🟡 **Partial** | Native logs confirmed the old backend still owned the T3 home during premature reopen. Fix `bf0eb670` passed automated shutdown/timeout regressions; read-only native discovery captured the live embedded server | Corrected worker has not been exercised through a live shutdown/relaunch; repeat refresh, slow-backend exit, timeout, reboot and interruption remain open |
 | Graphics discovery and reference contexts | 🟡 **Partial** | Accelerated GLX and isolated llvmpipe contexts | Other devices/backends; these probes alone do not qualify application rendering |
-| Native Godot rendering and gameplay | 🟢 **Labbed** | Godot 4.7.2 on KDE Wayland with NVIDIA hardware: Vulkan Forward+ and explicit OpenGL Compatibility launches, visible card scenes, gameplay and renderer settings exercised on 2026-10-31; extended Vulkan menu audit and focused graphical regressions on 2026-11-01 | Other GPU vendors, HDR, performance acceptance, exported-game renderer restart and target devices |
+| Native Godot rendering and gameplay | 🟢 **Labbed** | Godot 4.7.2 on KDE Wayland with NVIDIA hardware: Vulkan Forward+ and explicit OpenGL Compatibility launches, gameplay and renderer settings on 2026-10-31; extended menu audit on 2026-11-01; native weather/time/idle and fixed section navigation with focused GPU regressions on 2026-11-02 | Other GPU vendors, HDR, performance acceptance, exported-game renderer restart and target devices |
 | Native SDL/OpenGL rendering and scripted UI | 🟢 **Labbed** | Antistatic on KDE Wayland with Mesa Intel Arc OpenGL 4.6: controls-menu scrolling, pause preference toggle, reviewed application/monitor captures and clean shutdown on 2026-11-01; four fixed-frame llvmpipe effect comparisons also matched | Physical controllers, audible output, HDR, display scaling/pacing, other devices and package qualification; software comparisons do not qualify hardware rendering |
 | Blender and visual workflows | 🟡 **Partial** | Small native Blender CPU render | Full project scenes, image fidelity and hardware rendering |
 | Supervised development tasks | 🟡 **Partial** | Native game and GPU-recipe completion through `develop wait`; a wait timeout left the game running, intentional exit 7 remained a failure, stop preview preserved a running task and scoped stop reached `stopped` on 2026-11-01. Application regression failures and an engine abort also surfaced as failed tasks with retained logs | Interruption/disconnection, long-running descendants, unavailable user manager and logout/reboot recovery |
@@ -156,6 +157,48 @@ repeat OpenGL qualification. Player data was isolated and Steam/cloud disabled
 for normal audit runs. Physical controllers, audible output, a live screen
 reader, HDR, streaming, export and reboot/recovery remain unverified. All owned
 tasks ended, and the existing desktop control grant was left enabled.
+
+### Native environment and navigation follow-up, 2026-11-02
+
+Continued Godot QA through the existing approved KDE Wayland helper, using
+supervised launches, project GPU recipes, fresh monitor captures and held
+pointer/keyboard input. One worker owned desktop input and GPU checks. The
+launcher manifest reported running source `5184cef0` with a dirty flag; these
+observations do not qualify a clean Basaltwater revision or a fresh setup.
+
+Native interaction checked an outdoor table correction, rainy noon, clear
+midnight, haze, disabling weather dependencies, a fast day/night cycle,
+pause/resume, normal restart and idle-camera return. A private read-only
+application observer compared the exact hand/shoe and counters before and
+after the menu and camera flows. It did not select weather or play the hands.
+Night visibility was inspected, but the sampled night was naturally clear;
+it does not establish rainy-night coverage or moving-effect performance.
+
+Fixed section navigation was exercised from both the main menu and a paused
+hand. The selector stayed available, Brightness exposed its monitor reference,
+and tab switching preserved focus and reading position. Native rebind
+cancellation revealed a further application focus issue. Project GPU checks
+covered four window sizes, all seven locales and 150% text. Preliminary
+assertion failures remained failed supervised tasks with retained logs;
+corrected checks passed 2,162 UI assertions and 75 display/renderer assertions.
+The table's graphical owner passed 553 assertions, and the delivery quick gate
+passed 3,975 assertions across 75 suites plus translation/tooling checks.
+These are application results, not Basaltwater unit tests or general hardware
+certification. Source fixes were committed and pushed without an export.
+
+Three focused native evidence records finalized with 215, 47 and 79 events,
+without event or task-inventory truncation. Each attached its successful game
+task and retained renderer annotations; private observer states, captures,
+profiles and raw identifiers remain outside Git. Bounded wait timeouts were
+followed on the same task handle rather than launching another instance.
+Application shutdown retained its documented resource warnings, separate from
+script/runtime errors. No new Basaltwater runtime defect was confirmed.
+
+Steam integration/cloud were disabled and application account writes blocked.
+Physical controllers, audible output, HDR, target-platform exports, latency,
+Sunshine, setup/reboot and interruption/recovery boundaries remain unverified.
+The helper stayed enabled; no desktop permission or display-layout change was
+needed. Application-only window-size tests do not qualify KDE scaling changes.
 
 ## Native SDL/OpenGL application follow-up, 2026-11-01
 
