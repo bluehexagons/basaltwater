@@ -176,6 +176,8 @@ acceleration, which depends on the virtual hardware and graphics driver.
 Use `--git-lfs` when repositories contain LFS assets, and `--mount-smb` when
 agents need source assets from an existing share. Browser automation and T3
 Code should follow the chosen profile and browser guide.
+An explicit `--no-browser-automation` is retained by remote setup and saved
+refresh, suppressing both browser installation and existing-browser reconciliation.
 
 After setup, verify the agent environment from the controller:
 
