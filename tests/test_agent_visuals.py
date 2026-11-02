@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 from contextlib import redirect_stdout
 from io import StringIO
 import json
@@ -17,6 +18,7 @@ import zlib
 
 from lib import agent_cli, agent_visuals, agent_workspace
 from lib.remote_utils import CommandTimeoutError
+from lib.visual_evidence import verify_receipt
 
 
 def png_bytes(width: int = 2, height: int = 2, color: tuple = (20, 80, 120, 255)) -> bytes:
@@ -153,6 +155,36 @@ class TestAgentVisuals(unittest.TestCase):
         self.assertEqual(create.call_count, 1)
         self.assertTrue((self.root / "capture/capture.json").is_file())
         self.assertFalse((self.root / "capture/index.html").exists())
+
+    def test_strict_capture_requires_receipt_before_second_capture(self) -> None:
+        _, create, _ = self.mock_capture_system()
+        result = agent_visuals.capture_revisions(self.capture_args("--verify-evidence"))
+        self.assertFalse(result["ok"])
+        self.assertEqual(create.call_count, 1)
+        self.assertFalse((self.root / "capture/index.html").exists())
+
+    def test_runtime_receipt_rejects_stale_builds_and_unapplied_settings(self) -> None:
+        artifact = self.root / "game.node"
+        artifact.write_bytes(b"compiled checkpoint")
+        path = self.root / "receipt.json"
+        receipt = {"version": 1, "revision": "a" * 40, "effective_settings": {"quality": 1},
+                   "artifacts": [{"path": "game.node", "kind": "native", "revision": "a" * 40,
+                                  "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()}]}
+        path.write_text(json.dumps(receipt))
+        result = verify_receipt(str(path), str(self.root), "a" * 40, {"quality": 1}, ["native"])
+        self.assertEqual(result["status"], "verified")
+        for settings, revision, kinds, message in (({"quality": True}, "a" * 40, [], "did not take effect"),
+                                                  ({}, "b" * 40, [], "revision"),
+                                                  ({}, "a" * 40, ["asset"], "Missing required")):
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                verify_receipt(str(path), str(self.root), revision, settings, kinds)
+        artifact.write_bytes(b"concurrent font build")
+        with self.assertRaisesRegex(ValueError, "differs from its build receipt"):
+            verify_receipt(str(path), str(self.root), "a" * 40, {}, [])
+        receipt["artifacts"][0]["path"] = "../game.node"
+        path.write_text(json.dumps(receipt))
+        with self.assertRaisesRegex(ValueError, "repository-relative"):
+            verify_receipt(str(path), str(self.root), "a" * 40, {}, [])
 
     def test_timeout_is_recorded_without_a_successful_viewer(self) -> None:
         _, _, execute = self.mock_capture_system()

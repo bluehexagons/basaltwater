@@ -47,6 +47,10 @@ def add_visuals_parser(commands: argparse._SubParsersAction) -> None:
     check.add_argument("--repository", default=".")
     check.add_argument("--settings", help="Non-secret JSON capture settings to retain with the check")
     check.add_argument("--timeout", type=validate_positive_integer, default=600)
+    for action in (capture, check):
+        action.add_argument("--verify-evidence", action="store_true", help="Require a runtime settings and build artifact receipt")
+        action.add_argument("--require-artifact-kind", action="append", default=[],
+                            choices=("native", "typescript", "asset"), help="Require this artifact kind in the receipt; implies --verify-evidence")
     for action in (compare, batch, capture, check):
         action.add_argument("--output", help="New artifact directory; default: private managed state")
         action.add_argument("--json", action="store_true")
@@ -169,10 +173,16 @@ def capture_revisions(args: argparse.Namespace) -> dict:
                 repository, f"{run_id}-{side}", base=commits[side],
             )
             record = {"revision": commits[side], "requested_revision": getattr(args, side),
-                      "worktree": worktree["path"], "settings": settings, "status": "running"}
+                      "worktree": worktree["path"], "settings": settings, "status": "running",
+                      "verification": {"status": "unverified"}}
             result["captures"][side] = record
             write_json_atomic(manifest_path, result)
             output = os.path.join(directory, side + ".png")
+            receipt_path = os.path.join(directory, side + ".receipt.json")
+            environment = {**os.environ, "BASALTWATER_VISUAL_EVIDENCE": directory,
+                           "BASALTWATER_VISUAL_SETTINGS": settings_path,
+                           "BASALTWATER_VISUAL_REVISION": commits[side],
+                           "BASALTWATER_VISUAL_RECEIPT": receipt_path}
             argv = [arg.replace("{output}", output).replace("{settings}", settings_path) for arg in command]
             started = time.monotonic()
             log_path = os.path.join(directory, side + ".log")
@@ -181,7 +191,7 @@ def capture_revisions(args: argparse.Namespace) -> dict:
                 descriptor = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                 with os.fdopen(descriptor, "w", encoding="utf-8") as log:
                     completed = run(
-                        argv, cwd=str(worktree["path"]), timeout=args.timeout, check=False,
+                        argv, cwd=str(worktree["path"]), env=environment, timeout=args.timeout, check=False,
                         stdout=log, stderr=subprocess.STDOUT, input_data="",
                     )
                 record["exit_status"] = completed.returncode
@@ -189,6 +199,10 @@ def capture_revisions(args: argparse.Namespace) -> dict:
                     raise RuntimeError(f"{side} capture failed; inspect {log_path}")
                 if not _settings_unchanged(settings_path, settings):
                     raise RuntimeError(f"{side} capture changed the shared settings; refusing an inconsistent comparison")
+                if args.verify_evidence or args.require_artifact_kind:
+                    from lib.visual_evidence import verify_receipt
+
+                    record["verification"] = verify_receipt(receipt_path, str(worktree["path"]), commits[side], settings, args.require_artifact_kind)
                 images[side] = _image(output, record)
                 record.update(status="captured", duration_seconds=round(time.monotonic() - started, 3))
                 images[side]["metadata"].update(record)

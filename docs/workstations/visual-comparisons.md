@@ -88,6 +88,52 @@ below. Use `--output` for the active ignored project artifact directory. Neither
 setup, refresh, doctor nor manifest automatically runs these checks. For native
 capture backend selection, see [CachyOS game development](cachyos-game-development.md#capture-backends-and-post-refresh-checks).
 
+## Gate captures on runtime and build evidence
+
+Both `visuals check` and `visuals capture` accept `--verify-evidence`.
+Add `--require-artifact-kind native --require-artifact-kind typescript
+--require-artifact-kind asset` for a game using all three build inputs; each
+selector implies verification. Missing receipts, unapplied requested settings,
+wrong revisions, missing kinds or changed artifact bytes fail before creating
+a revision comparison. Without these options, verification is explicitly
+`unverified`; ordinary recipe exit-status checks remain available.
+
+The harness receives the same environment contract in both commands:
+`BASALTWATER_VISUAL_SETTINGS`, `BASALTWATER_VISUAL_EVIDENCE`,
+`BASALTWATER_VISUAL_REVISION` and `BASALTWATER_VISUAL_RECEIPT`. The last path is
+new for each run (and each side of a revision capture). Write this receipt there
+after rendering, using actual renderer observations and retained build records:
+
+```json
+{
+  "version": 1,
+  "revision": "0123456789abcdef0123456789abcdef01234567",
+  "effective_settings": {"quality": "high", "frame": 120},
+  "artifacts": [{
+    "path": "build/game.node",
+    "kind": "native",
+    "revision": "0123456789abcdef0123456789abcdef01234567",
+    "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  }]
+}
+```
+
+Every requested top-level setting must match in value and JSON type; effective
+settings may include additional observations. Each artifact must name the
+intended revision and a unique file below the repository. Digests are checked
+against current regular files, limited to 4096 files, 512 MiB each and 2 GiB
+total. Include all consumed outputs and asset companions, not just a sample.
+Custom lowercase artifact kinds are supported in receipts.
+
+The project owns build-time revision stamping and runtime resource identity.
+Do not relabel stale outputs with the current Git HEAD or hash arbitrary files
+after capture as a substitute for a build record. This gate checks project
+attestations and file bytes; it cannot prove compilation history or which bytes
+an arbitrary process loaded. Use isolated output/cache directories and prevent
+concurrent writes for the entire build and capture. The receipt and verified
+observations are retained with the report. A headless pass still leaves Wayland
+capture, input, GPU and UI readiness unverified.
+
 ## Compare existing captures
 
 `basaltw agent visuals compare` turns two PNG captures into a standalone HTML
