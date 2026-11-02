@@ -1,7 +1,7 @@
 # Testing status
 
-**Snapshot: 2026-11-01.** Includes the owner's newly reported stack setup rerun
-and retained live-test evidence through 2026-11-01. The rerun indicates **basic
+**Snapshot: 2026-11-02 UTC.** Includes the owner's newly reported stack setup rerun
+and retained live-test evidence through 2026-11-02. The rerun indicates **basic
 setup functionality only: not all features were tested**. It covers selected
 Debian/Proxmox server and coding-VM commands, a partial CachyOS refresh and basic
 native Windows setup with Godot and T3 Code. Exact tested revisions were not
@@ -14,6 +14,9 @@ Native Windows checks on 2026-11-01 additionally confirm installed diagnostics,
 skill freshness and real supervised task behavior at `5f549204`; see the
 [Windows evidence](evidence.md#native-windows-workstation-and-tasks). Historical
 project builds/exports retain their original dates and do not qualify fresh setup.
+The [Windows follow-up](windows.md#follow-up-native-qualification-2026-11-01)
+adds disposable desktop control, supervised npm/MSVC/Godot workloads and real
+timeout/cancel cleanup, including reproduced restore and completion-order fixes.
 Native CachyOS SDL/OpenGL application checks on the same date also qualify
 selected Intel Arc Wayland rendering, scripted UI interaction, software capture
 comparisons and display-wake recovery; see the
@@ -24,7 +27,7 @@ comparisons and display-wake recovery; see the
 | Owner-reported stack setup rerun | 🟡 **Partial** — basic setup success reported; selected options are not individual feature passes |
 | [Debian and Proxmox](debian.md) | 🟢 **Labbed** — selected server and host workflows passed; options and recovery gaps remain |
 | [CachyOS](cachyos.md) | 🟡 **Partial** overall; 🟢 selected T3/Codex, Godot and SDL/OpenGL application workflows and display-wake recovery labbed; corrected T3 refresh relaunch awaits a live check |
-| [Windows and WSL](windows.md) | 🟡 **Partial** overall; 🟢 selected installed diagnostics/tasks, T3/Codex session and historical native builds/exports labbed; fresh installation, physical QA and WSL integration remain open |
+| [Windows and WSL](windows.md) | 🟡 **Partial** overall; 🟢 selected diagnostics/tasks, scoped desktop control, native toolchain workloads and T3/Codex session labbed; fresh installation, physical QA and WSL integration remain open |
 | Combined build/CI host | 🔵 **In progress** — separate roles exist; composition is not implemented or qualified |
 | LXC suspend | 🔴 **Failed** — the recorded live attempt failed |
 | Production use and broad human QA | 🟣 **Deployed** / ✅ **Verified** — no status claimed without the relevant evidence |
@@ -81,9 +84,34 @@ Earlier full validation of the Proxmox fixes passed 9,243 tests with six skips
 and 82% branch-aware aggregate coverage. That is automated evidence for its
 revision, separate from the live host checks and the later documentation work.
 Shares & Data's current per-task UI and recovery guards now have installed
-HTTPS/approval/worker coverage, including a fixed missing-finding identity bug
-and owned-guest reboot persistence. Installed interactive browser coverage remains
-open because preview certificate trust failed; see the [dated scope and limits](evidence.md#shares-and-data).
+HTTPS/approval/worker coverage, including missing-file repair with adequate parity,
+accepted content with independent verification, race refusal and owned-guest reboot
+persistence. Selected installed Chromium/Firefox interactions also pass with
+isolated CA trust, including a fixed Unicode search bug. Shared preview trust and
+native ESR remain open; see the
+[dated scope and limits](evidence.md#shares-and-data).
+The [full-profile follow-up](evidence.md#shares-and-data-full-profile-refresh)
+qualifies selected `agent_vm` setup, actual public refresh, reconciled populated
+controller rerun and guest reboot, preserving independently approved read-only
+shares, paused routines, identities, credentials and exact bytes. It fixes lost
+browser opt-outs and refresh's incorrect requirement for saved Samba passwords;
+other profiles and interruption/power-loss cases remain separate.
+
+A separate fresh Debian guest at `176caeff62ad` also passed a real approved
+leaf-package upgrade, separately approved no-op, native APT index failure and
+lock waiting, with exact task, service-identity, credential and data preservation.
+See the [Admin evidence](evidence.md#package-changing-admin-update).
+The [owned-package follow-up](evidence.md#admin-service-restart-and-conffile-conflict)
+also passes modified-conffile preservation and an actual daemon restart, followed
+by a separately approved no-op without another restart. Distribution service
+packages, kernel updates, failing hooks and interruption/power-loss remain open.
+
+The [Proxmox inventory batch](evidence.md#proxmox-inventory-and-exporter) adds
+native inventory comparison, unattended timer refresh, verified host-local HTTPS
+and worker isolation. Separately owned component units passed interruption,
+snapshot preservation, recovery and removal. Intermittent controller partial-page
+timeouts reproduced with server TCP retransmissions and remain unresolved; this
+does not qualify the full controller/browser or production teardown lifecycle.
 
 Update the affected status and its evidence date when new checks complete;
 preserve older dates for areas not retested. Keep raw logs, personal addresses,

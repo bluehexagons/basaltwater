@@ -1,9 +1,9 @@
 # Dated testing evidence summaries
 
-Reconciled 2026-11-01 from retained private reports, the owner's stack setup
+Reconciled 2026-11-02 UTC from retained private reports, the owner's stack setup
 rerun report, subsequent native CachyOS T3 and SDL/OpenGL application observations,
-installed native Windows checks, current Shares & Data qualification and
-automated checks.
+installed native Windows checks, current Shares & Data qualification,
+package-changing Admin and Proxmox inventory qualification, and automated checks.
 These sanitized summaries supplement the
 [platform status](debian.md) and [coverage map](../plans/testing-coverage.md);
 they are not a complete run archive or exact-candidate release qualification.
@@ -139,6 +139,31 @@ afterward. Preservation claims compare each operation with its own baseline;
 they do not imply unchanged PIDs or all-guest service health across that reboot.
 No Admin power-action path was exercised by that user action.
 
+## Proxmox inventory and exporter
+
+**2026-11-01; existing single-node host.** The overall installation receipt remains
+`1aa7a632`; the five qualified collector/renderer modules and five supporting
+transaction helpers match `ece5e5bc` byte for byte. No host source redeployment
+or complete current-profile qualification is claimed.
+
+| Check level | Observed result | Qualification boundary |
+| --- | --- | --- |
+| **Installed inventory and scheduling** | Native guest identities, states, types and template flags matched the cached inventory. Two unattended root exports published distinct snapshots, exited successfully and left a future timer deadline. Actual panel and Nginx worker mount namespaces denied access to pmxcfs and its backing database; the unprivileged panel could read, but not write, its root-owned cache | Existing standalone node; no multi-node, HA/Ceph or native console qualification. Observation did not manually start or restart the production collector/timer |
+| **Installed host-local HTTPS** | CA/hostname verification, public CA identity, correct/incorrect/anonymous authentication, twelve inventory/filter/sort views, malformed query rejection and absent management routes passed. Reported guest/storage rows matched native or cached references | Full acceptance ran from the host. Controller-origin requests intermittently timed out after partial bodies, with and without compression. Four bounded TCP-observed GETs passed; a further paced probe reproduced the stall with repeated server TCP retransmissions and a stopped client receive counter. Cause remains unresolved, so complete controller transport and interactive browser behavior remain unqualified |
+| **Native owned component lifecycle** | Separately named units used the current setup/transaction code with only names and snapshot/wrapper paths overridden in memory. Real read-only Proxmox collection, busy-removal refusal, explicit collector interruption and native-child termination, byte-identical last-readable publication, reconfiguration/recovery and removal passed. Actual unprivileged panel namespace reads covered valid/stale/corrupt copies; managed removal preserved an owned unknown file | Component fixture, not public full-host setup or production panel/Nginx teardown. SIGTERM produced the expected failed oneshot state before recovery; no host failure was injected. Initial harness state, syntax and filename assertions were inspected and corrected; an overly fast HTTP probe hit the unchanged request limit |
+| **Preservation and cleanup** | Component evidence was privately archived before enumerated fixture cleanup. All pre-existing guest configurations/states/PIDs, host boot/setup/configuration, storage policy and mounts matched baseline. Production panel/Nginx identities and credentials were preserved; no failed units, active Proxmox tasks or owned lifecycle units remained | No guest allocation/start, host reboot, password replacement, formatting, stress or server limit change. Production teardown, setup interruption/power loss and off-host recovery remain separate |
+
+No Basaltwater defect was confirmed in this batch. Keep the controller transfer
+failure visible and diagnose it before extending the HTTP/browser acceptance;
+successful host-local and later controller probes do not erase that boundary.
+Further bounded captures on 2026-11-02 UTC retained 24 successful persistent
+responses and another partial-body timeout. In that failed connection-close
+probe, the final 306 encrypted bytes and FIN were repeatedly retransmitted while
+the client acknowledgement stayed immediately before them. A server-only capture
+cannot identify the dropping endpoint/intermediary; no network configuration or
+application fix was applied. All owned capture processes/directories were removed
+after private archival. Complete controller/browser acceptance remains open.
+
 ## USB storage
 
 | Date / source | Check level and observed result | Qualification boundary |
@@ -158,18 +183,105 @@ That earlier guest reboot does not qualify the later host mount declaration.
 | 2026-11-01 / clean installed `5184cef0` | **Installed workflow:** fresh disposable Debian guest, non-root operator, independently authenticated approvals and real root workers. Denial/cancellation and one-use submission, Samba account/share lifecycle, encrypted SMB read/write and access rejection, mirror create/edit/pause/resume/run/remove, literal paths and deletion, PAR2 scans and approved verify/restore passed. Actual HTTPS catalog checks covered 22 tasks, 26 findings, pagination, exact case-sensitive root/parity selection, independent filter/clear links, Unicode queries, unavailable selection and stale copyable drafts | Normal custom-step service setup, not a full-profile installation. Initial missing firewall prerequisites and harness failures were retained and inspected before continuation. Fresh missing-file repair exposed absent identity metadata; fixed below. Acceptance was not repeated in this run |
 | 2026-11-01 / fix installed `ed2fa820` | **Installed recovery:** normal source deployment retained saved declarations, pause controls and fixture bytes; all 579 runtime files matched the controller. A fresh missing finding recorded explicit absent identity and separately approved repair reached real PAR2. **Automated:** 608 storage/recovery tests plus compilation, documentation and package checks passed for the fix | PAR2 correctly reported insufficient recovery data for an entirely missing file protected by 10% parity. The source remained absent and its finding open. This qualifies the identity fix and insufficient-parity result, not successful targeted repair |
 | 2026-11-01 / installed `ed2fa820` | **Installed exclusion/persistence:** a retained synthetic setup guard blocked controls, approved dispatch and root execution; a live canonical setup owner excluded a real worker. Guarded refresh refused before source activation. Approved task removal retained parity and showed an unavailable selection. Panel restart and an owned-guest reboot preserved approved account/share settings, 21 paused scrub tasks, identities/groups, TLS/auth and exact data/parity bytes; catalog pagination/selection and encrypted SMB writes passed after boot. All 30 real requests retained the normal rate/quota policy | Refresh was an installed component probe; this custom-step fixture does not qualify public full-profile refresh. Only the owned synthetic guard was reconciled. Scheduled storage also refused that guard and resumed afterward. The fixture was stopped with evidence, data and a local snapshot retained; existing guests and host configuration were preserved |
+| 2026-11-01 / clean installed `974a1652` | **Installed recovery follow-up:** normal current-source setup preserved prior declarations, pause controls and bytes, with all 574 runtime files matching. A separate paused 100%-parity fixture exercised independently approved real workers: missing-file repair reproduced the exact original, an intervening-file race failed safely with `file_changed` while preserving the new file, and deliberate replacement was accepted with old parity/originals retained. A subsequent separately approved full scan reported healthy with no open finding | Adequate recovery data qualifies this successful repair; the earlier 10%-parity failure remains valid. This is selected service setup on the owned guest, not full-profile refresh or interruption/power-loss qualification |
+| 2026-11-01 / fix installed `986d3061` | **Installed browser:** Chromium 156 and Firefox 157 exercised real authenticated navigation, retained share/account display, independent filters, task/finding pagination, exact root/parity selection, keyboard disclosure and recovery review/cancel. Wide light/JavaScript and 320px dark/no-JavaScript/200% text passed. Both engines reproduced valid 200-character supplementary Unicode searches truncating to 100; corrected controls retain and submit all 200 while rejecting overlong input. Normal deployment matched all 574 runtime files and retained both fixtures | Isolated profiles trusted only the public guest CA verified through pinned SSH; TLS verification stayed enabled. Browser recovery checks stopped at review/cancel; approval/worker results are the separate real HTTPS flow above. Shared preview trust and native Firefox ESR remain open. Initial rate-limit, navigation-wait and oversized Firefox screenshot failures were harness issues, inspected before paced/viewport continuations |
+| 2026-11-01 / fix installed `7ba41724` | **Installed audit scheduling:** ordinary setup exposed an active but elapsed audit timer with no future deadline. Adding a five-minute deadline relative to timer activation restored scheduling; normal installation retained declarations/controls/bytes and matched all 574 runtime files. An actual unattended export published a newer valid snapshot after about five minutes and rearmed another future deadline. Final Firefox checks also passed at this revision | Observation used the normal timer without manual export/restart or schedule overrides. This covers the selected guest exporter, not the Proxmox inventory timer or interrupted setup |
 
 The configured interactive preview failed twice with `ERR_CERT_AUTHORITY_INVALID`;
-its tab was closed. HTTPS assertions used the guest CA with hostname verification,
-but installed interactive browser behavior remains unqualified. Initial setup,
-harness and insufficient-parity failures remain in private evidence; no uncertain
-request was replayed. No host reboot, formatting or disk stress was performed.
-Successful targeted repair with adequate recovery data, current-run acceptance,
-full-profile refresh and interruption/power-loss cases remain separate checks.
+its tab was closed. The later permitted fallback used the repository's existing
+stable test runtime and isolated CA trust; it does not fix shared preview trust
+or qualify native ESR. Initial setup, harness and insufficient-parity failures
+remain in private evidence; no uncertain request was replayed and no server
+rate/quota policy was relaxed. No host reboot, formatting or disk stress was
+performed. The selected full-profile follow-up is recorded below;
+interruption/power-loss remain separate checks.
+
+Follow-up cleanup used a ninth separately approved request to remove its routine,
+retaining all new data/parity/recovery evidence and restoring the prior declarations,
+pause controls and fixture bytes. All 39 request records were retained, with no
+pending approvals, setup/unit recovery guards or staged passwords. The owned guest
+was stopped with private evidence, an online broker backup and an offline local
+snapshot retained. Host configuration/boot and other guest configurations/states/PIDs
+matched the fresh baseline; a same-node snapshot does not qualify off-host recovery.
+
+### Shares and Data full-profile refresh
+
+**2026-11-02 UTC; fresh disposable Debian 13 guest, selected `agent_vm` profile.**
+Normal public setup configured a non-root operator, independently authenticated
+HTTPS approval service and real root workers. Provider tools/authentication and
+browser automation were explicitly excluded; no provider task or external-account
+test ran. These are actual HTTP/CLI checks, without a new interactive browser run.
+
+| Source / check level | Observed result | Qualification boundary |
+| --- | --- | --- |
+| Initial `13b7cf3f`, fix installed `a94119e7` | Full setup reproduced a lost `--no-browser-automation` flag during controller-to-target serialization. The fix retains the explicit opt-out in remote arguments and saved target state; normal full-profile installation omits browser reconciliation | The initial `server_lite` dry run correctly refused the approval service before mutation; the supported `agent_vm` profile was used. Initial first-observation security-retention gaps and missing test-client preparation were inspected before continuation |
+| Installed `a94119e7` | Two separately approved real workers changed a writable share to read-only and created a paused daily mirror. Encrypted SMB writes worked before the change; reads passed and writes were denied afterward. Approved target declarations were explicitly reconciled into the separate controller cache before setup reruns | Disposable local data; no hard-mounted CIFS, other client OS, provider login or public TLS/DNS qualification |
+| Fix installed `0ca6ddff` | Public refresh at `a94119e7` refused saved shares because plaintext passwords are intentionally absent. The fix requires matching existing Unix/Samba accounts and preserves their passwords/login flags. Actual queued refresh completed through its independent root worker. All 573 runtime files matched source; approved declarations, pause controls, identities, credentials/PKI and exact bytes survived | Fresh setup still requires credentials; automated refusal checks reject missing accounts before source changes. The original failed dry runs are retained. This qualifies the selected profile/configuration, not all profiles or interrupted source activation |
+| Installed `0ca6ddff` | A populated public controller rerun and an owned-guest reboot preserved approved read-only access, empty paused mirror destination, user IDs/groups, password hashes/login flags, panel/approval credentials, certificates and file hashes. Verified HTTPS and encrypted SMB checks passed after each phase | Ordinary setup can update Samba password-set timestamps when replaying controller credentials; refresh and reboot retained the complete account listing. Same-node retention is not off-host recovery |
+| Installed `0ca6ddff` | After reboot, a normal unattended audit run published a newer valid storage snapshot and retained a future deadline, verified through native D-Bus. Cleanup retained both terminal broker records, worker logs, an integrity-checked online broker backup and an offline snapshot, then left the owned guest stopped with autostart disabled | No manual export or schedule override during observation. Other guest configurations/states/PIDs and host boot/setup/storage/mounts matched baseline; no active hypervisor tasks, guest locks, failed host units or owned capture remnants remained |
+
+Automated validation for `a94119e7` passed 2,120 agent tests, 185 additional
+configuration/refresh tests, compilation, documentation and metadata checks.
+For `0ca6ddff`, the core/storage selection passed 1,896 tests with one skip and
+the same static checks. Focused regressions reproduced both defects before their
+fixes. These checks do not constitute a new full CI or release-candidate pass.
 
 Use [Continue testing on Proxmox](continuing.md) for subsequent bounded batches.
 The Proxmox root panel is not the non-root guest approval environment required
 by [Shares & Data](../services/shares-data.md).
+
+## Package-changing Admin update
+
+**2026-11-01; clean installed `176caeff62ad` on a fresh disposable Debian 13
+guest.** Normal custom-step setup configured a non-root panel operator, separate
+HTTPS approval identity and real task/broker workers. All 574 runtime files
+matched source before and after qualification. Base OS updates and task-tool
+installation were fixture preparation, separate from the approved transactions.
+
+| Check level | Observed result | Qualification boundary |
+| --- | --- | --- |
+| **Installed HTTPS and approval guards** | Controller-origin CA/hostname-verified panel and approval responses passed, as did direct panel Unix-socket HTTP. Anonymous and cross-password access, invalid CSRF, reused submission and reused approval were rejected. Cancellation and denial left packages, tasks and services unchanged | Actual HTTP forms and separate credentials, without a new interactive browser pass. Initial missing task-tool and private fixture-directory permission failures were inspected and corrected before the transaction baseline |
+| **Installed failed update** | An owned unreachable repository produced a separately approved real worker failure at index refresh, command 1, exit 100. Upgrade did not run; the older package, task records, service identities, credentials and data remained unchanged. The temporary source was removed after the terminal outcome | Controlled localhost index failure, not an interrupted download, package-hook failure or power-loss test |
+| **Installed package change and rerun** | Normal repositories offered only GNU Hello `2.10-3` → `2.10-5`, after authenticated retrieval of the older Debian package through an isolated index. The approved root worker waited for a real APT frontend lock; active-job controls withheld another submission form. Package version, changed binary and dpkg history proved the upgrade. A new separately approved worker then completed without package or dpkg-log changes | A small leaf-package upgrade, not kernel/service-restarting packages, conffile conflicts, distribution upgrade, host maintenance or interruption recovery. Broker `dispatched` was correlated with distinct worker IDs, serialized request events, action/times and observed outcomes; it was not treated as completion |
+| **Installed preservation and cleanup** | The draft, active future schedule and task-state bytes survived both workers, as did all other package versions, task/fixture/panel/broker/approval/Nginx PIDs and activation times, setup/auth/PKI and fixture bytes. The heartbeat continued. Cleanup paused only the owned future schedule and retained all five broker records, three worker outcomes, an online database backup and private evidence | No provider task executed. The owned guest was gracefully stopped with an offline local snapshot; existing guest configurations/states/PIDs and host configuration/boot matched baseline. Same-node retention does not qualify off-host recovery |
+
+No Basaltwater defect was reproduced in this batch. The expected failed worker
+and fixture-preparation failures remain in private evidence. No host reboot,
+formatting, disk stress, server quota relaxation or uncertain-request replay
+occurred. Repeat affected checks when the Admin implementation changes; wider
+package and interruption boundaries remain open.
+
+## Admin service restart and conffile conflict
+
+**2026-11-02 UTC; clean installed `3c6fd7fa`, fresh disposable Debian 13 guest.**
+Normal public custom-step setup configured a non-root panel operator, independent
+HTTPS approval service and actual root Admin worker. All 573 runtime files matched
+source. An owned signed guest-local APT repository offered exactly one tiny native
+Debian package upgrade; its conffile, daemon and data were isolated fixtures.
+No provider credentials or tasks were used. This is real APT/dpkg execution with
+a controlled package, not qualification of distribution maintainer scripts.
+
+| Check level | Observed result | Qualification boundary |
+| --- | --- | --- |
+| **Installed HTTPS/worker** | Controller and guest HTTPS passed CA/hostname verification; anonymous and cross-password access were rejected. Two one-use submissions received separate approvals and completed through distinct actual root workers. Serialized request events, action/times and terminal worker outcomes were correlated | Actual HTTP, without a new browser pass. Broker dispatch alone was not completion |
+| **Installed conffile conflict/restart** | Package `1.0` → `2.0` retained the operator-modified conffile and saved the changed packaged default as `.dpkg-dist`. Its real post-install hook restarted the owned daemon: PID/start record changed once, v2 loaded the retained config, and exact data bytes survived. All other package versions, panel/broker/approval/Nginx identities, user IDs/groups, setup/auth/PKI and boot identity stayed exact | The hook briefly waited on an owned bounded fixture signal so the real root worker could be inspected before restart. No distribution service, kernel, failed hook, interruption or power-loss qualification |
+| **Installed separately approved no-op** | Another actual worker completed with no package, conffile, dpkg/APT history, data or service-identity changes; the daemon did not restart again | Available upgrade plan was empty; this qualifies repeat behavior after the preceding package change |
+
+Cleanup removed the owned APT source and trust entry, stopped its daemon, and
+retained the package, config variants, exact data, two terminal broker records,
+worker/APT logs and an integrity-checked online broker backup. The guest is
+stopped with autostart disabled and an offline local snapshot retained. Existing
+guest configurations/states/PIDs and host boot/setup/storage/mounts matched baseline;
+no active hypervisor tasks, guest locks or failed host units remained. Same-node
+retention does not qualify off-host recovery.
+
+No product defect was reproduced. All 32 existing Admin job tests passed; final
+documentation checks also passed. Base OS/tool installation was preparation.
+Its original SSH wrapper ended while the guest's APT process continued; the
+original upgrade was inspected to completion, with a clean dpkg audit and empty
+upgrade plan. Remaining fixture preparation then ran in an owned independent
+unit without replaying that upgrade. This retained preparation failure is
+separate from the two successful approved transactions.
 
 ## Automated validation
 
@@ -177,6 +289,7 @@ by [Shares & Data](../services/shares-data.md).
 | --- | --- | --- |
 | 2026-10-31 / Proxmox fixes at `a4400a78` | Full `make -j2 check-ci`: 9,243 tests, six skips, 82% branch-aware aggregate coverage; static/docs/brand/metadata/wheel checks passed. [Hosted CI](https://github.com/bluehexagons/basaltwater/actions/runs/41253522451) passed full Debian/Node 24 and Node 26 compatibility jobs | Historical source revision; mocked system calls and fixture coverage do not establish live behavior of all profiles/options |
 | 2026-10-31 / Shares & Data UI at `bca3b72e` | Full `check-ci`: 9,190 tests, six skips, 82% aggregate coverage; all six local Chromium/Firefox Shares cases passed | Separate historical revision and browser run, not an installed-system refresh |
+| 2026-11-01 / Unicode fix `986d3061`, timer fix `7ba41724` | Each fix passed `make check-fast SUITE=web`: 1,289 tests run, one skipped, plus compilation, docs and package metadata. All eight focused local Chromium/Firefox Shares cases passed at `986d3061`; the new Unicode regression failed in both engines before the fix | Focused checks, not a new full CI or release-candidate pass. Local browser services use simulated host actions; installed-service results are recorded separately above |
 
 Failures remain in private evidence alongside successful continuations. The
 Proxmox suite initially exposed two corrected test-fixture issues; the Shares

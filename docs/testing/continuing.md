@@ -1,13 +1,30 @@
 # Continue testing on Proxmox
 
-Updated 2026-11-01 after the selected Shares & Data batch. The
+Updated 2026-11-02 UTC after the selected Shares & Data full-profile, Admin and
+Proxmox inventory batches. The
 [dated results](evidence.md#shares-and-data) record installed HTTP/worker,
-exclusion and reboot checks, the missing-finding fix and remaining browser/recovery
-limits. This procedure is not blanket permission to modify retained fixtures. Read the
+repair/acceptance, selected Chromium/Firefox, exclusion and reboot checks and
+remaining client/setup limits. This procedure is not blanket permission to modify
+retained fixtures. Read the
 [status overview](README.md), [dated evidence](evidence.md),
 [coverage map](../plans/testing-coverage.md) and local private operational handoff.
 The handoff owns connection details, credentials, fixture constraints and exact
 evidence paths; keep those out of Git. Follow repository and session instructions.
+
+The subsequent [Admin package batch](evidence.md#package-changing-admin-update)
+qualifies a real leaf-package upgrade, separately approved no-op, native index
+failure/lock waiting and task/service preservation on another disposable guest.
+The [owned-package follow-up](evidence.md#admin-service-restart-and-conffile-conflict)
+adds a real APT/dpkg conffile conflict and daemon restart, plus a no-op without
+another restart. Distribution service packages, kernel updates and interrupted
+upgrades remain separate.
+
+The [Proxmox inventory batch](evidence.md#proxmox-inventory-and-exporter) adds
+native inventory, unattended exports, host-local HTTPS and owned component
+interruption/recovery/removal. Controller partial-body timeouts remain unresolved;
+inspect the private transport evidence before extending that HTTP/browser scope.
+Later bounded captures narrow a reproduced stall to an unacknowledged final
+TLS segment and FIN; they do not establish the dropping endpoint or a fix.
 
 ## Establish a baseline
 
@@ -26,10 +43,13 @@ guard retained; it has no endurance qualification. Preserve existing data.
 ## First batch: current Shares & Data
 
 The selected run closed the installed per-task UI and setup-recovery revision
-gap without public DNS or external accounts. Repeat this procedure when affected
-behavior changes. Interactive preview certificate trust, successful targeted
-repair with adequate parity, current-run acceptance and full-profile refresh
-remain separate qualification boundaries. Read the
+gap without public DNS or external accounts. Follow-up checks qualify successful
+targeted repair with adequate parity, acceptance and selected installed browsers.
+The [full-profile follow-up](evidence.md#shares-and-data-full-profile-refresh)
+also qualifies selected `agent_vm` public refresh, reconciled populated rerun
+and reboot with approved declarations preserved. Repeat affected cases after
+changes. Shared preview certificate trust, native Firefox ESR, other profile
+combinations and interruption/power-loss remain separate boundaries. Read the
 [service procedure](../services/shares-data.md) and
 [transaction recovery](../operations/transaction-recovery.md) before testing.
 
@@ -49,11 +69,14 @@ remain separate qualification boundaries. Read the
 4. Repeat one SMB permission/account lifecycle and one mirror/PAR2 finding
    workflow, verifying resulting bytes and retained identities/parity. Read the
    saved target declarations before controller reruns: panel edits do not update
-   controller desired state.
+   controller desired state. Use adequate parity for a successful missing-file
+   repair; separately check an intervening-file race, deliberate acceptance and
+   a fresh independent verification. Retain old parity and recovery evidence.
 5. On disposable state only, verify setup/refresh ownership and retained recovery
    guards block conflicting controls/dispatch/execution without clearing the guard
    or causing effects. Inspect uncertain outcomes before considering any retry.
 6. Check persistence after a panel restart and an authorized owned-guest reboot.
+   Check that normal setup rearms the audit timer and observe an unattended export.
    Record cleanup, preserved data, remaining guards and final guest state.
 
 Pass evidence must identify the actual installed revision, real approval/worker
@@ -66,8 +89,8 @@ as untested rather than substituting HTTP or another browser silently.
 
 | Batch | Acceptance boundary / prerequisites |
 | --- | --- |
-| Package-changing Admin update | Separate disposable Debian target with a deliberately available safe package upgrade; actual approval, changed package version, correlated job outcome, rerun/no-op and task/service preservation. An empty upgrade plan does not qualify it |
-| Proxmox panel/exporter | Inspect read-only inventory/HTTPS first; plan ownership before timer/removal/interruption tests. Existing patch/auth checks do not qualify the full inventory timer/HTTP lifecycle, console, native password replacement or teardown |
+| Package-changing Admin update | Leaf-package case passed at `176caeff62ad`; owned signed native package at `3c6fd7fa` adds modified-conffile preservation, daemon restart and separately approved no-op. Repeat affected cases after changes. Use an isolated disposable target, real approvals/workers and observable package/service/data outcomes. Extend to distribution service packages, kernel updates and maintainer-hook failures separately. An empty upgrade plan does not qualify a package change |
+| Proxmox panel/exporter | Selected installed inventory, unattended scheduling, host-local HTTPS and owned component lifecycle passed with collector/renderer bytes matching `ece5e5bc`. Diagnose intermittent controller partial-body timeouts first. Keep console, multi-node, native password replacement and public full-host setup/production teardown separate; plan ownership before further fault tests |
 | Native storage diagnostics/scrub | Use disposable guest data; target missing integration/scheduling. Keep mount guards. Hard-mounted CIFS can leave uninterruptible I/O, so isolation and a bounded containment plan must precede fault injection |
 | Registered runner and GitHub mirrors | Authorized test account/repository and privately supplied credentials; actual registration/events/jobs/cancellation or transport permissions. Pending tokenless setup is already covered |
 | Off-host recovery / physical clients | Another physical recovery destination, or the required graphics/input/client hardware. A second VM on the same node does not close the off-host case |

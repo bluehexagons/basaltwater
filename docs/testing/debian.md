@@ -1,6 +1,6 @@
 # Debian and Proxmox testing status
 
-**Evidence reconciled through 2026-11-01.** Selected live workflows cover Debian
+**Evidence reconciled through 2026-11-02 UTC.** Selected live workflows cover Debian
 12/13 guests and a physical Proxmox host; they do not establish a pass on every
 machine type. Status applies only to the workflow described in each row; see
 the [legend](README.md#status-legend).
@@ -37,12 +37,12 @@ from test status.
 | Compressed swap | 🟡 **Partial** | Real zram devices and component failure/recovery | Native zswap controls, reboot and pressure |
 | Security event retention | 🟡 **Partial** | Logs, rotation, gaps and live monitor components | Continuous daemon behavior and power loss |
 | Agent tools and tasks | 🟢 **Labbed** | Selected enrollment, managed skills, task/goal flows | Other providers and longer interrupted runs |
-| Approval and admin jobs | 🟢 **Labbed** | Selected approval/refresh; controlled failure and browser fixtures | Package-changing upgrades and uncertain/power-loss boundaries |
+| Approval and admin jobs | 🟢 **Labbed** | Selected approval/refresh; real leaf-package upgrade, separately approved no-op, native index failure/lock wait and task/service preservation. 2026-11-02 owned signed package adds real APT/dpkg conffile conflict, daemon restart and no-op without another restart; see [scope](evidence.md#admin-service-restart-and-conffile-conflict) | Distribution service packages, kernel updates, failing maintainer hooks and uncertain/power-loss boundaries |
 | mDNS and automatic updates | 🟡 **Partial** | Packaged services and timer handoff failure/retry components | Full setup, remote discovery and scheduled upgrades |
 | Sync and PAR2 | 🟢 **Labbed** | Selected mirror, mount guards and repair; controlled failures | Hard-mounted network storage and power loss |
 | Btrfs | 🟢 **Labbed** | Single-device setup, rerun, reboot and read-only native scrub | Diagnostic integration and scheduled native scrub; multi-device/subvolume support needs design, and single-copy data cannot self-repair |
 | Samba and Syncthing | 🟢 **Labbed** | SMB3 access/reconnect and two-peer synchronization | Other client OSs, hard mounts and relay/discovery |
-| Shares & Data management | 🟢 **Labbed** | 2026-11-01: current installed HTTPS, independent approvals and root workers; account/share and mirror lifecycles, catalog scope/pagination/drafts, verify/restore, fixed missing-file identity, setup exclusion and guest reboot persistence; [revision boundaries](evidence.md#shares-and-data) | Installed interactive browser blocked by certificate trust. Successful targeted repair with adequate parity, current-run acceptance, full-profile refresh and power-loss boundaries remain open |
+| Shares & Data management | 🟢 **Labbed** | 2026-11-01: installed HTTPS, independent approvals and root workers; account/share and mirror lifecycles, catalog scope/pagination/drafts, verify/restore, successful missing-file repair with adequate parity, acceptance and independent scan, race refusal, setup exclusion and guest reboot persistence. Selected installed Chromium/Firefox navigation/forms/layout pass with isolated CA trust; Unicode search truncation fixed. 2026-11-02 UTC: selected full `agent_vm` setup, public refresh, reconciled populated controller rerun and reboot preserve approved declarations, controls, identities, auth and bytes. See [revision boundaries](evidence.md#shares-and-data) | Shared preview trust, native Firefox ESR, other full-profile combinations and interruption/power-loss boundaries remain open |
 | Gogs and mirrors | 🟢 **Labbed** | Git/LFS, rerun, reboot and same-host restore | GitHub transport and off-host recovery |
 | HomeBox | 🟢 **Labbed** | Loopback API, upgrade, restore, reboot and re-enable | Browser, public TLS, replacement host and rollback |
 | Web deployment | 🟢 **Labbed** | Selected Go, Node and SPA/API workflows, rollback and same-host recovery | Public tunnel/ACME, off-host restore and power loss |
@@ -69,6 +69,7 @@ detailed host checks cover one physical node; the owner also reports two basic
 | Owner-reported host setup reruns | 🟡 **Partial** | Two commands with LAN allowlists and restart/wait selections, including panel/TLS and webhook variants | Basic setup only; panel features, actual restart occurrence, preservation and failure recovery were not separately reported |
 | Setup repair and management CLI | 🟢 **Labbed** | Saved public patch completed 21 steps and recovered an interrupted panel operation; installed `basaltw --help`, update preview and busy-lock refusal passed | Fresh complete host installation, package-changing upgrade and interrupted host upgrade remain unqualified |
 | Proxmox panel identity and authentication | 🟢 **Labbed** | Automated root payload regression; native isolated Nginx accepted generated root auth and rejected another user/anonymous access; actual panel accepted the operator credential over verified TLS on 2026-11-01 | Isolated auth is component evidence; public password-replacement flow and interrupted auth replacement still need native qualification |
+| Proxmox cached inventory and exporter | 🟢 **Labbed** | 2026-11-01: native inventory comparison, two unattended exports with future rearm, host-local verified HTTPS/filter/auth checks and actual worker namespace isolation. Owned current-component units qualify interruption, retained snapshot, recovery and removal; see [scope](evidence.md#proxmox-inventory-and-exporter) | Intermittent controller partial-body timeouts reproduced with TCP retransmissions remain unresolved; interactive browser/native console, multi-node and public full-host setup/teardown remain unqualified |
 | Guarded host maintenance | 🟡 **Partial** | Installed updater and cleanup succeeded with no package upgrades available; update preview and maintenance-lock exclusion passed | No package-changing transaction or Admin-triggered power action was exercised |
 | VM lifecycle | 🟢 **Labbed** | Provision, clone, snapshot, backup and same-host restore | Off-host recovery, multi-node and EFI/TPM variants |
 | LXC suspend | 🔴 **Failed** | Live CRIU attempt failed | Suspend remains unqualified |
@@ -78,10 +79,11 @@ detailed host checks cover one physical node; the owner also reports two basic
 
 ## Next checks
 
-- Follow the [bounded continuation procedure](continuing.md). Current Shares &
-  Data HTTP/worker qualification is recorded; close its browser and recovery
-  limits separately, then exercise a package-changing Admin update on another
-  disposable target.
+- Follow the [bounded continuation procedure](continuing.md). Selected Shares &
+  Data HTTP/worker, recovery and installed-browser checks are recorded. A real
+  leaf-package Admin update and separately approved no-op now pass
+  on another disposable target. Keep remaining client, package breadth,
+  other profile combinations and interruption boundaries separate.
 - On disposable targets, qualify off-host restore and interrupted setup/recovery;
   repeat relevant cases on the exact release candidate.
 - Exercise registered GitHub runner jobs and cancellation, then implement and

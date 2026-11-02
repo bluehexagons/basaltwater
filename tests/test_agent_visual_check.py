@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 from contextlib import redirect_stdout
 from io import StringIO
 import json
@@ -83,6 +84,25 @@ class TestAgentVisualCheck(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertIn("renderer could not initialize", (self.output / "check.log").read_text())
         self.assertTrue((self.output / "environment.json").is_file())
+
+    def test_strict_check_verifies_runtime_and_build_evidence(self) -> None:
+        artifact = self.project / "asset.bin"
+        artifact.write_bytes(b"asset export")
+
+        def checked(argv, **kwargs):
+            env = kwargs["env"]
+            receipt = {"version": 1, "revision": env["BASALTWATER_VISUAL_REVISION"],
+                       "effective_settings": json.loads(self.settings.read_text()),
+                       "artifacts": [{"path": "asset.bin", "kind": "asset", "revision": "a" * 40,
+                                      "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()}]}
+            Path(env["BASALTWATER_VISUAL_RECEIPT"]).write_text(json.dumps(receipt))
+            return 0
+
+        self.execute.side_effect = checked
+        result = agent_visual_check.check_recipe(self.args("--require-artifact-kind", "asset"))
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["verification"]["status"], "verified")
+        self.assertEqual(result["verification_scope"], "project-recipe-and-checked-receipt")
 
     def test_log_quota_keeps_draining_and_preserves_failure(self) -> None:
         def flood(argv, **kwargs):

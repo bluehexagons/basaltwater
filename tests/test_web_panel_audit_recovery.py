@@ -50,6 +50,8 @@ class AuditRecoveryTest(unittest.TestCase):
         commands = self.systemd.commands
         self.assertLess(commands.index(["systemctl", "start", "audit.service"]),
                         commands.index(["systemctl", "restart", "audit.timer"]))
+        # Warm setup must rearm even without a retained oneshot activation time.
+        self.assertIn("\nOnActiveSec=5min\n", self.timer.read_text())
         self.assertFalse(self.configure())
         self.assertEqual(commands.count(["systemctl", "start", "audit.service"]), 2)
         self.assertFalse(self.marker.exists())

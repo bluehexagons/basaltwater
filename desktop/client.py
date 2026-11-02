@@ -241,16 +241,58 @@ def validate_hold(payload: dict[str, Any]) -> int:
     return hold
 
 
+def validate_drag(payload: dict[str, Any]) -> int:
+    """Validate an entire bounded straight-line gesture before any pointer event."""
+    if payload.get("kind") != "drag":
+        if any(payload.get(key) is not None for key in ("to_x", "to_y", "duration_ms")):
+            raise ValueError("Drag endpoints/duration apply only to drag input")
+        return 0
+    if payload.get("action") != "input":
+        raise ValueError("Drag requires an input action")
+    duration = payload.get("duration_ms")
+    duration = 300 if duration is None else duration
+    if type(duration) is not int or not 1 <= duration <= 5000:
+        raise ValueError("Drag duration must be an integer from 1 to 5000 milliseconds")
+    button = payload.get("button", 1)
+    if type(button) is not int or button not in (1, 2, 3):
+        raise ValueError("Drag button must be 1–3")
+    geometry = payload.get("geometry")
+    if not isinstance(geometry, list) or len(geometry) != 2 or any(type(n) is not int or not 1 <= n <= 16384 for n in geometry):
+        raise ValueError("Drag requires observed full-monitor geometry")
+    for x_key, y_key in (("x", "y"), ("to_x", "to_y")):
+        x, y = payload.get(x_key), payload.get(y_key)
+        if type(x) is not int or type(y) is not int or not (0 <= x < geometry[0] and 0 <= y < geometry[1]):
+            raise ValueError("Drag endpoints must lie inside the selected monitor")
+    return duration
+
+
+def validate_capture_crop(payload: dict[str, Any], *, backend=runtime) -> list | None:
+    crop = payload.get("crop")
+    if crop is not None:
+        if backend is runtime or payload.get("action") != "screenshot":
+            raise ValueError("Cropped capture requires a native screenshot action")
+        from desktop.portal_capture import validate_crop
+        validate_crop(crop)
+    return crop
+
+
 def send_action(payload: dict[str, Any], *, deadline: float | None = None, backend=runtime) -> dict[str, Any]:
     """Pace text with short revocable requests, including on existing supervisors."""
     validate_text_delay(payload)
     validate_hold(payload)
+    validate_drag(payload)
+    crop = validate_capture_crop(payload, backend=backend)
+    if payload.get("kind") == "drag" and backend is runtime:
+        raise ValueError("Drag requires the native desktop backend")
     if payload.get("hold_ms") is not None and backend is runtime:
         raise ValueError("Hold duration requires the native desktop backend")
     delay = payload.get("delay_ms")
     request = {name: value for name, value in payload.items() if name != "delay_ms"}
     if delay is None:
-        return backend.request(request)
+        result = backend.request(request)
+        if crop is not None and (result.get("image_origin") != crop[:2] or result.get("image_geometry") != crop[2:]):
+            return {**result, "error": "Backend did not confirm requested crop mapping; restart the native helper and recapture"}
+        return result
     deadline = time.monotonic() + 20 if deadline is None else deadline
     submitted = 0
     result: dict[str, Any] = {"generation": payload["generation"], "geometry": payload["geometry"]}
@@ -300,6 +342,10 @@ def run_sequence(path: str, generation: str, *, backend=runtime) -> dict[str, An
             raise ValueError("Sequences accept input, window, screenshot, and windows actions without embedded control metadata")
         validate_text_delay(step)
         validate_hold(step)
+        validate_drag(step)
+        validate_capture_crop(step, backend=backend)
+        if step.get("kind") == "drag" and backend is runtime:
+            raise ValueError("Drag requires the native desktop backend")
         if step.get("hold_ms") is not None and backend is runtime:
             raise ValueError("Hold duration requires the native desktop backend")
     current = backend.status()

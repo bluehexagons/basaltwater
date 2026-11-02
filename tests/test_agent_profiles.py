@@ -144,6 +144,26 @@ class TestAgentProfiles(unittest.TestCase):
         self.assertIn("Installing agent browser automation", step_names)
         self.assertIn("--browser-automation playwright", config.to_setup_command())
 
+    def test_browser_opt_out_survives_remote_setup_and_saved_refresh(self) -> None:
+        from plugins.common import extend_agent_steps
+
+        parser = create_setup_argument_parser("test", for_remote=True)
+        for profile in ("agent_vm", "agent_code_vm"):
+            config = SetupConfig.from_args(
+                _setup_args(disable_browser_automation=True), profile,
+            )
+            saved = SetupConfig.from_dict(config.host, profile, config.to_dict())
+            for phase, selected in (("setup", config), ("refresh", saved)):
+                with self.subTest(profile=profile, phase=phase):
+                    args = parser.parse_args(shlex.split(" ".join(selected.to_remote_args())))
+                    args.host = selected.host
+                    remote = SetupConfig.from_args(args, args.system_type)
+                    self.assertTrue(remote.disable_browser_automation)
+                    self.assertIsNone(remote.browser_automation)
+                    steps = []
+                    extend_agent_steps(remote, steps)
+                    self.assertFalse(any("browser automation" in name for name, _ in steps))
+
     def test_agent_code_vm_accepts_optional_go_runtime(self) -> None:
         config = SetupConfig.from_args(
             _setup_args(install_go=True),

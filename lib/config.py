@@ -1629,7 +1629,9 @@ class SetupConfig:
         if self.guacamole is not None:
             args.append("--guacamole" if self.guacamole else "--no-guacamole")
 
-        if self.browser_automation:
+        if self.disable_browser_automation:
+            args.append("--no-browser-automation")
+        elif self.browser_automation:
             args.append(
                 f"--browser-automation {shlex.quote(self.browser_automation)}"
             )

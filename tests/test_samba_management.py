@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import argparse
+from contextlib import redirect_stdout
+from io import StringIO
 import json
 from pathlib import Path
 import tempfile
@@ -13,6 +16,66 @@ import remote_setup
 from lib.config import SetupConfig
 from lib.operation_state import OperationStateError, OperationStateStore
 from smb import share_management as management
+
+
+class SambaRefreshTests(unittest.TestCase):
+    def test_saved_refresh_preflights_existing_accounts_before_source_changes(self):
+        from lib import refresh
+
+        config = SetupConfig(host="localhost", username="operator", system_type="server_lite",
+                             machine_type="vm", enable_samba=True,
+                             samba_shares=[["read", "docs", "/srv/docs", "alice"]])
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory) / "setup.json"
+            state.write_text("{}")
+            state.chmod(0o600)
+            with patch.object(refresh, "SETUP_CONFIG_FILE", str(state)), \
+                    patch.object(refresh, "saved_setup_revision", return_value="a" * 64), \
+                    patch.object(refresh, "_debian_setup", return_value=config), \
+                    patch.object(refresh, "is_cachyos", return_value=False), \
+                    patch.object(refresh, "read_os_release", return_value={"ID": "debian"}), \
+                    patch.object(refresh.os, "geteuid", return_value=0), \
+                    patch.object(refresh, "managed_repository_path", return_value=directory), \
+                    patch.object(refresh, "get_channel_info", return_value={"channel": "dev"}), \
+                    patch.object(refresh, "_apply_refresh") as apply, \
+                    patch("lib.refresh_job.queue_refresh") as queue, \
+                    patch("smb.samba_steps.preflight_samba_shares") as preflight, \
+                    redirect_stdout(StringIO()) as output:
+                self.assertEqual(refresh.run_refresh_command(argparse.Namespace(dry_run=True)), 0)
+                preflight.assert_called_once()
+                self.assertTrue(preflight.call_args.kwargs["preserve_accounts"])
+                self.assertIsNone(preflight.call_args.args[0].share_credentials)
+                self.assertIn("Configuring Samba and reconciling shares", output.getvalue())
+                preflight.side_effect = ValueError("Share user has no matching Samba account")
+                self.assertEqual(refresh.run_refresh_command(argparse.Namespace(dry_run=False)), 1)
+                apply.assert_not_called()
+                queue.assert_not_called()
+
+    def test_fresh_runner_preserves_accounts_only_for_saved_refresh(self):
+        from lib.arg_parser import create_setup_argument_parser
+        from plugins.post_setup import build_post_setup_steps
+
+        parser = create_setup_argument_parser("test", for_remote=True)
+        argv = ["--system-type", "server_lite", "--username", "operator", "--machine", "vm",
+                "--samba", "--share", "read", "docs", "/srv/docs", "alice"]
+        with self.assertRaisesRegex(ValueError, "Missing credential"):
+            remote_setup.config_from_remote_args(parser.parse_args(argv))
+        with patch("smb.samba_steps.preflight_samba_shares"):
+            config = remote_setup.config_from_remote_args(parser.parse_args(argv), preserve_samba_accounts=True)
+        with self.assertRaisesRegex(ValueError, "without passwords"):
+            remote_setup.config_from_remote_args(
+                parser.parse_args([*argv[:-1], "alice:secret"]), preserve_samba_accounts=True,
+            )
+        with patch("smb.samba_steps.install_samba"), \
+                patch("smb.samba_steps.configure_samba_global_settings"), \
+                patch("smb.samba_steps.configure_samba_firewall"), \
+                patch("smb.samba_steps.configure_samba_fail2ban"), \
+                patch("smb.samba_steps.reconcile_samba_shares") as reconcile:
+            for preserve in (False, True):
+                steps = build_post_setup_steps(config, lambda *_: ("", ""),
+                                               preserve_samba_accounts=preserve)
+                next(function for name, function in steps if name == "Configuring Samba and reconciling shares")(config)
+                reconcile.assert_called_with(config, preserve_accounts=preserve)
 
 
 class ShareManagementTests(unittest.TestCase):

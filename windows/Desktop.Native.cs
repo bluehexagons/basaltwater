@@ -98,6 +98,16 @@ public static class Native {
             // which can be maximized. A non-minimized maximize/restore toggles normal.
             (operation=="restore" && !after.minimized && (before.minimized || !after.maximized));
     }
+    static void WaitForClose(Func<bool> exists,Func<bool> visible,Action verifyIdentity) {
+        for(int i=0;i<20;i++) {
+            Thread.Sleep(50);
+            if(!exists()) return;
+            // SDL and other applications can hide their window before destroying it.
+            // Hidden is still pending, never proof that close has completed.
+            if(visible()) verifyIdentity();
+        }
+        throw new Exception("Window outcome not observed; inspect before retrying");
+    }
     public static Window Change(long id,string identity,string operation,int x,int y,int width,int height) {
         var before=Check(id,identity); var w=before; var h=new IntPtr(id); bool requested=true;
         switch(operation) {
@@ -111,10 +121,13 @@ public static class Native {
             default: throw new Exception("Unsupported window operation");
         }
         if(!requested) throw new Exception("Window manager rejected request");
+        if(operation=="close") {
+            WaitForClose(delegate { return IsWindow(h); },delegate { return IsWindowVisible(h); },delegate { Check(id,identity); });
+            return null;
+        }
         for(int i=0;i<20;i++) {
             Thread.Sleep(50);
-            if(operation=="close" && !IsWindow(h)) return null;
-            w=Check(id,identity); // close may show a save dialog: do not claim success
+            w=Check(id,identity);
             if(WindowOutcomeMatches(operation,before,w,x,y,width,height)) return w;
         }
         throw new Exception("Window outcome not observed; inspect before retrying");
@@ -130,13 +143,28 @@ public static class Native {
     public static Scan Inspect(int pid,Element root,string name,string role) {
         if(String.IsNullOrEmpty(name)) name=null; if(String.IsNullOrEmpty(role)) role=null;
         var scan=new Scan(); var clock=Stopwatch.StartNew();
-        if(root!=null) { if(root.pid!=pid) throw new Exception("Root PID mismatch"); Walk(Resolve(root),root.window,root.identity,root.path,scan,clock,name,role); }
+        if(root!=null) {
+            if(root.pid!=pid) throw new Exception("Root PID mismatch");
+            var element=Resolve(root); // Explicit stale references still fail closed.
+            InspectAvailable(scan,delegate { Walk(element,root.window,root.identity,root.path,scan,clock,name,role); });
+        }
         else {
             bool found=false;
-            foreach(var w in Windows()) if(w.pid==pid) { found=true; Walk(AutomationElement.FromHandle(new IntPtr(w.id)),w.id,w.identity,new int[0],scan,clock,name,role); }
+            foreach(var w in Windows()) if(w.pid==pid) {
+                found=true;
+                InspectAvailable(scan,delegate { Walk(AutomationElement.FromHandle(new IntPtr(w.id)),w.id,w.identity,new int[0],scan,clock,name,role); });
+            }
             if(!found) throw new Exception("No accessible current-account/session window for PID");
         }
         return scan;
+    }
+    static void InspectAvailable(Scan scan,Action inspect) {
+        try { inspect(); }
+        catch(ElementNotAvailableException) {
+            // Providers can disappear between enumeration and property reads.
+            // Keep the observed prefix but never present it as a complete tree.
+            scan.truncated=true;
+        }
     }
     static void Walk(AutomationElement e,long window,string identity,int[] path,Scan scan,Stopwatch clock,string name,string role) {
         if(scan.visited>=512 || scan.elements.Count>=128 || path.Length>20 || clock.ElapsedMilliseconds>2500) { scan.truncated=true; return; }

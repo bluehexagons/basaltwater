@@ -119,6 +119,10 @@ def check_recipe(args: argparse.Namespace) -> dict:
     # Project scripts may use these paths; literal recipe argv is never expanded.
     environment["BASALTWATER_VISUAL_EVIDENCE"] = directory
     environment["BASALTWATER_VISUAL_SETTINGS"] = settings_path
+    receipt_path = os.path.join(directory, "receipt.json")
+    revision = manifest["workspace"].get("commit")
+    environment["BASALTWATER_VISUAL_REVISION"] = revision or ""
+    environment["BASALTWATER_VISUAL_RECEIPT"] = receipt_path
     write_json_atomic(settings_path, settings, mode=0o400, indent=None)
     report = {
         "schema_version": 1, "ok": False, "status": "running", "recipe": args.recipe,
@@ -128,6 +132,7 @@ def check_recipe(args: argparse.Namespace) -> dict:
         "started_at": datetime.now(timezone.utc).isoformat(), "timeout": args.timeout,
         "returncode": None, "verification_scope": "project-recipe-exit-status",
         "gpu_readiness": "unverified", "ui_readiness": "unverified",
+        "verification": {"status": "unverified"},
         "log_limit_bytes": LOG_LIMIT, "log_truncated": False,
     }
     write_json_atomic(report_path, report)
@@ -157,6 +162,11 @@ def check_recipe(args: argparse.Namespace) -> dict:
             raise RuntimeError(f"Project recipe exited with status {returncode}; inspect {log_path}")
         if not _settings_unchanged(settings_path, settings):
             raise RuntimeError("Project recipe changed the recorded settings; refusing inconsistent evidence")
+        if args.verify_evidence or args.require_artifact_kind:
+            from lib.visual_evidence import verify_receipt
+
+            report["verification"] = verify_receipt(receipt_path, manifest["workspace"]["repository"], revision, settings, args.require_artifact_kind)
+            report["verification_scope"] = "project-recipe-and-checked-receipt"
         report.update(ok=True, status="passed")
     except TimeoutError:
         report.update(status="timed-out", error=f"Project recipe timed out after {args.timeout} seconds; inspect {log_path}")

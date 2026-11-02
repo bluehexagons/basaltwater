@@ -55,7 +55,7 @@ if mode in ('cancel', 'timeout', 'orphan', 'crash'):
 print(json.dumps({'argv': sys.argv[3:], 'date': os.environ.get('TASK_LITERAL_DATE')}))
 sys.exit(23 if mode == 'fail' else 0)
 '@
-    foreach ($mode in @('success','fail','flood','failed-flood','paused-flood','timeout','cancel','orphan','cleanup-fail','crash')) {
+    foreach ($mode in @('success','fail','flood','failed-flood','paused-flood','timeout','cancel','orphan','cleanup-fail','scheduler-cleanup-fail','crash')) {
         $id = [guid]::NewGuid().ToString('N')
         $directory = Get-DevelopmentDirectory $id
         Initialize-DevelopmentDirectory $directory
@@ -80,7 +80,25 @@ sys.exit(23 if mode == 'fail' else 0)
         Write-DevelopmentJson (Join-Path $directory 'request.json') $request
         Write-DevelopmentJson (Join-Path $directory 'receipt.json') $record
         $workerPath = (Join-Path $fixtureSource 'Invoke-DevelopmentTask.ps1').Replace("'", "''")
-        $code = "function Unregister-ScheduledTask { }; function Show-NativeDesktopNotification { }; & '$workerPath' -TaskId '$id'"
+        $schedulerFixture = @'
+$global:FixtureRegistration = $true
+function Get-ScheduledTask {
+    [CmdletBinding()] param([string]$TaskPath)
+    if ($global:FixtureRegistration) { [pscustomobject]@{ TaskName = 'Basaltwater Development FIXTURE_ID' } }
+}
+function Unregister-ScheduledTask {
+    [CmdletBinding()] param([string]$TaskName, [string]$TaskPath, [switch]$Confirm)
+    $directory = Get-DevelopmentDirectory 'FIXTURE_ID'
+    $published = Get-DevelopmentRecord 'FIXTURE_ID'
+    [IO.File]::WriteAllText((Join-Path $directory 'scheduler-cleanup-observed.json'),
+        (@{ TerminalPublished = [bool]$published.CompletedUtc } | ConvertTo-Json))
+    if ('FIXTURE_MODE' -eq 'scheduler-cleanup-fail') { throw 'fixture Scheduler retirement failure' }
+    $global:FixtureRegistration = $false
+}
+function Show-NativeDesktopNotification { }
+'@
+        $code = $schedulerFixture.Replace('FIXTURE_ID', $id).Replace('FIXTURE_MODE', $mode) +
+            "`n& '$workerPath' -TaskId '$id'"
         if ($mode -eq 'cleanup-fail') {
             $code = @'
 function Remove-Item {
@@ -124,6 +142,13 @@ function Remove-Item {
             Assert-True ($null -eq $uncertain.ElapsedSeconds -and $null -eq $uncertain.ExecutionEndedUtc) 'Uncertain cleanup invented timing'
             continue
         }
+        if ($mode -eq 'scheduler-cleanup-fail') {
+            $uncertain = Get-DevelopmentRecord $id
+            Assert-True ($uncertain.State -eq 'cleanup-uncertain' -and -not $uncertain.CompletedUtc -and
+                $uncertain.Message -match 'Scheduler' -and -not (Test-Path -LiteralPath (Join-Path $directory 'request.json'))) 'Scheduler retirement failure was hidden by a terminal receipt'
+            Assert-True ($null -eq $uncertain.ElapsedSeconds -and $null -eq $uncertain.ExecutionEndedUtc) 'Uncertain Scheduler cleanup invented timing'
+            continue
+        }
         if ($mode -eq 'crash') {
             Assert-True ($null -ne $descendant -and $descendant.WaitForExit(10000)) 'Guardian crash leaked a native descendant'
             $descendant.Dispose()
@@ -138,6 +163,8 @@ function Remove-Item {
         $result = Get-DevelopmentRecord $id
         $expected = switch ($mode) { success { 'complete' }; fail { 'failed' }; flood { 'complete' }; failed-flood { 'failed' }; paused-flood { 'complete' }; timeout { 'timed-out' }; cancel { 'cancelled' }; orphan { 'complete' } }
         Assert-True ($result.State -eq $expected -and $result.CompletedUtc) "Expected $expected after process cleanup; got $($result.State): $($result.Message)"
+        $retirement = Read-DevelopmentJson (Join-Path $directory 'scheduler-cleanup-observed.json')
+        Assert-True (-not $retirement.TerminalPublished) 'Terminal receipt preceded Scheduler retirement'
         Assert-True (-not (Test-Path -LiteralPath (Join-Path $directory 'request.json'))) 'Terminal task retained its environment snapshot'
         Assert-True ($result.ExecutionStartedUtc.EndsWith('Z') -and $result.ExecutionEndedUtc.EndsWith('Z') -and
             $result.ElapsedSeconds -gt 0 -and $result.ElapsedSeconds -lt 40) "Invalid $mode execution timing"

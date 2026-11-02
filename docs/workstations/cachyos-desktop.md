@@ -86,10 +86,21 @@ PipeWire/GStreamer PTS is stream-relative and is not a compositor presentation
 time or directly comparable with monotonic input time. Skipping a sample reduces
 initial-buffer ambiguity but cannot establish input-to-photon latency.
 
+Native `input drag --x X --y Y --to-x X --to-y Y --duration-ms 300` supports
+bounded straight-line canvas gestures with buttons 1–3 and the same fresh
+generation/geometry requirements. Cancellation releases the button, and failed
+release stops the helper. `screenshot --crop X Y WIDTH HEIGHT` returns
+`image_origin` and `image_geometry` alongside full-monitor `geometry`. Add the
+origin to crop-image coordinates before input; the helper then converts monitor
+pixels to portal logical coordinates. Crops remain selected-monitor observations.
+See the [native control reference](../../common/agent_skills/basaltwater-cachyos-desktop/references/native-control.md#observe-act-verify)
+for bounds, interruption and mapping details. Drag/crop contract tests use mocked
+system calls; live application interaction is a separate qualification.
+
 `screenshot --compact` returns the image path, generation, geometry, timestamps,
 pixel SHA-256 and `changed`, omitting the status envelope. Full screenshot
 metadata remains the default; use `status`/`doctor` for diagnostics. Native
-`changed` compares visible RGBA pixels and geometry with the preceding successful
+`changed` compares visible RGBA pixels, geometry and crop rectangle with the preceding successful
 capture in this helper generation, ignoring row padding; the first comparison
 is null. False means equal pixels, not a stalled app; true can include a cursor
 or unrelated desktop content. Debian compact results retain available metadata,
@@ -161,5 +172,5 @@ API differences, companion files, formats, and render settings.
 Capture/input permission does not establish every application's readiness.
 Window inventory is partial AT-SPI coverage; it cannot prove compositor focus
 or window absence. Window-specific capture, compositor window management,
-clipboard, drag gestures, and desktop logout remain unavailable. Monitor images
+clipboard and desktop logout remain unavailable. Monitor images
 can include personal content; inspect evidence before sharing it.

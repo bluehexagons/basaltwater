@@ -207,8 +207,14 @@ for evidence, staged repair and recovery decisions.
 ## Persist panel changes and controller configuration
 
 Approved share and routine changes survive panel/host restarts in the target's
-private saved setup. Target-side `sudo basaltw refresh` replays it and rejects
+private saved setup. Target-side refresh replays it and rejects
 configuration changes during source activation/handoff; rerun after such a refusal.
+Use the installed launcher with root privileges, or
+`sudo python3 -I /opt/basaltwater/basaltwater.py refresh` when the user launcher
+is outside sudo's command search path.
+Refresh requires every referenced Samba account to exist and preserves its
+password and login flags. It does not require saved plaintext share credentials;
+use explicit setup or account management to provision a missing login.
 
 Panel edits do **not** update a controller's cached configuration. Before applying
 controller setup, patch, deployment or shares commands, reconcile their desired

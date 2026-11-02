@@ -12,9 +12,20 @@ import time
 import zlib
 
 
-def capture(fd: int, node: int, output_fd: int, next_frame: int = 0) -> dict:
+def validate_crop(crop: list | None, geometry: list | None = None) -> None:
+    if crop is None:
+        return
+    if (not isinstance(crop, list) or len(crop) != 4 or any(type(n) is not int for n in crop)
+            or min(crop[:2]) < 0 or min(crop[2:]) <= 0 or max(crop) > 16384):
+        raise ValueError("Crop must be integer [x, y, width, height] within the selected monitor")
+    if geometry is not None and (crop[0] + crop[2] > geometry[0] or crop[1] + crop[3] > geometry[1]):
+        raise ValueError("Crop lies outside the selected monitor")
+
+
+def capture(fd: int, node: int, output_fd: int, next_frame: int = 0, crop: list | None = None) -> dict:
     if next_frame not in (0, 1):
         raise ValueError("next_frame must be 0 or 1")
+    validate_crop(crop)
     import gi
     gi.require_version("Gst", "1.0")
     gi.require_version("GstApp", "1.0")
@@ -43,6 +54,8 @@ def capture(fd: int, node: int, output_fd: int, next_frame: int = 0) -> dict:
         width, height = info.width, info.height
         if not (0 < width <= 16384 and 0 < height <= 16384 and width * height <= 32 * 1024 * 1024):
             raise ValueError("Selected capture exceeds the 32-megapixel limit")
+        validate_crop(crop, [width, height])
+        x, y, image_width, image_height = crop if crop is not None else (0, 0, width, height)
         buffer = sample.get_buffer()
         if buffer.get_size() > 160 * 1024 * 1024:
             raise ValueError("Frame exceeds the capture buffer limit")
@@ -56,9 +69,9 @@ def capture(fd: int, node: int, output_fd: int, next_frame: int = 0) -> dict:
             compressor = zlib.compressobj()
             digest = hashlib.sha256()
             chunks = []
-            for row in range(height):
-                start = offset + row * stride
-                pixels = mapped.data[start:start + width * 4]
+            for row in range(y, y + image_height):
+                start = offset + row * stride + x * 4
+                pixels = mapped.data[start:start + image_width * 4]
                 digest.update(pixels)
                 chunks.append(compressor.compress(b"\0" + pixels))
             chunks.append(compressor.flush())
@@ -73,10 +86,11 @@ def capture(fd: int, node: int, output_fd: int, next_frame: int = 0) -> dict:
 
         with os.fdopen(os.dup(output_fd), "wb") as stream:
             stream.write(b"\x89PNG\r\n\x1a\n")
-            stream.write(chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)))
+            stream.write(chunk(b"IHDR", struct.pack(">IIBBBBB", image_width, image_height, 8, 6, 0, 0, 0)))
             stream.write(chunk(b"IDAT", compressed))
             stream.write(chunk(b"IEND", b""))
-        return {"geometry": [width, height], "pixel_sha256": digest.hexdigest(),
+        return {"geometry": [width, height], "image_geometry": [image_width, image_height],
+                "image_origin": [x, y], "pixel_sha256": digest.hexdigest(),
                 "frame_received_at": received_at, "frame_received_monotonic_ns": received_monotonic_ns,
                 "frame_pts_ns": None if buffer.pts == Gst.CLOCK_TIME_NONE else buffer.pts,
                 "initial_frame_skipped": bool(next_frame)}
@@ -86,7 +100,11 @@ def capture(fd: int, node: int, output_fd: int, next_frame: int = 0) -> dict:
 
 if __name__ == "__main__":
     try:
-        print(json.dumps(capture(*(int(n) for n in sys.argv[1:]))))
+        if len(sys.argv) not in (4, 5, 9):
+            raise ValueError("Expected fd, node, output fd, optional next-frame and crop")
+        print(json.dumps(capture(*(int(n) for n in sys.argv[1:4]),
+                                 next_frame=int(sys.argv[4]) if len(sys.argv) >= 5 else 0,
+                                 crop=[int(n) for n in sys.argv[5:]] or None)))
     except Exception as exc:
         print(json.dumps({"error": str(exc)}))
         raise SystemExit(1)

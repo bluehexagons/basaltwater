@@ -27,6 +27,8 @@ RepositorySource = Callable[[str, str, bool], tuple[str, str]]
 def build_post_setup_steps(
     config: SetupConfig,
     repository_source: RepositorySource,
+    *,
+    preserve_samba_accounts: bool = False,
 ) -> list[tuple[str, StepFunc]]:
     """Return the exact optional plan, sharing deploy results between its steps."""
     steps: list[tuple[str, StepFunc]] = []
@@ -158,7 +160,7 @@ def build_post_setup_steps(
             configure_samba_global_settings(_config)
             configure_samba_firewall(_config)
             configure_samba_fail2ban(_config)
-            reconcile_samba_shares(_config)
+            reconcile_samba_shares(_config, preserve_accounts=preserve_samba_accounts)
 
         steps.append(("Configuring Samba and reconciling shares", configure_samba))
 

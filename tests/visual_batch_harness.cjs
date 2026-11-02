@@ -27,11 +27,14 @@ const get = id => { if (!elements.has(id)) elements.set(id, new Element(id)); re
 get('captureData').textContent = payload;
 for (const value of ['after','overlay','difference']) { const el = new Element(); el.value = value; get('mode').append(el); }
 get('opacity').value = '50'; get('gain').value = '1';
-let downloaded, blob;
-const context = {document:{getElementById:get, querySelector:get, createElement:tag => new Element(tag)},
+let downloaded, blob, timerId = 0;
+const timers = new Map(), documentHandlers = {};
+const context = {document:{getElementById:get, querySelector:get, createElement:tag => new Element(tag),
+  addEventListener:(event, handler) => { documentHandlers[event] = handler; }},
   Image:class { constructor() { this.naturalWidth = this.naturalHeight = 4; } set src(value) { Promise.resolve().then(() => this.onload()); } },
   Blob, URL:{createObjectURL(value) { blob = value; return 'blob:test'; }, revokeObjectURL() {}},
-  requestAnimationFrame:fn => fn(), setTimeout:fn => fn(), Uint8ClampedArray};
+  requestAnimationFrame:fn => fn(), setTimeout:fn => { timers.set(++timerId, fn); return timerId; },
+  clearTimeout:id => timers.delete(id), Uint8ClampedArray};
 vm.runInNewContext(script, context);
 const flush = () => new Promise(resolve => setImmediate(resolve));
 (async () => {
@@ -55,5 +58,26 @@ const flush = () => new Promise(resolve => setImmediate(resolve));
   assert.ok(record.pairs[0].views['Full image'].inspected_at);
   assert.equal(record.pairs[0].views.attachment.inspected_at, null);
   assert.equal(record.visual_correctness, 'unverified');
+  if (JSON.parse(payload).sequence) {
+    assert.equal(get('timeline').hidden, false);
+    get('zoom').value = '150'; get('zoom').handlers.input();
+    get('mode').value = 'overlay'; get('mode').handlers.input();
+    get('play').click();
+    assert.equal(get('play').textContent, 'Pause');
+    // Ignore the export's URL cleanup timer and advance playback once.
+    const frameTimer = Math.max(...timers.keys());
+    const tick = timers.get(frameTimer); timers.delete(frameTimer); await tick(); await flush();
+    assert.equal(get('pair').selectedIndex, 1);
+    assert.equal(get('scrub').value, '1');
+    assert.equal(get('zoom').value, '150');
+    assert.equal(get('mode').value, 'after'); // incompatible frame disables overlay
+    assert.equal(get('inspected').checked, false); // playback never marks inspection
+    get('scrub').value = '0'; get('scrub').handlers.input(); await flush();
+    assert.equal(get('play').textContent, 'Play');
+    assert.equal(get('pair').selectedIndex, 0);
+    assert.equal(get('zoom').value, '150');
+    get('play').click(); context.document.hidden = true; documentHandlers.visibilitychange();
+    assert.equal(get('play').textContent, 'Play');
+  }
   process.stdout.write('Batch UI contract passed\n');
 })().catch(error => { console.error(error); process.exitCode = 1; });

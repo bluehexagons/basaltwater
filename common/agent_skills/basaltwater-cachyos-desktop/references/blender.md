@@ -89,6 +89,45 @@ basaltw agent blender inspect /absolute/project/prop.blend \
   --render-views --timeout 300 --json
 ```
 
+Inspection also accepts `.obj`, `.gltf` and `.glb`, importing them into an empty
+factory scene with Blender's default import axes/units. Use `--dependency FILE`
+for each external buffer, MTL and texture to hash it before and after the run.
+Only declared files are hashed; geometry import does not prove textures loaded
+or that a consumer uses the same axes/materials. Retain the relocated reimport
+and consumer checks above.
+
+For project-owned scene assemblies, pass a version 1 JSON file:
+
+```json
+{
+  "version": 1,
+  "parts": [{
+    "name": "prop",
+    "source": "exports/prop.glb",
+    "matrix": [[1,0,0,0], [0,1,0,0], [0,0,1,2], [0,0,0,1]]
+  }]
+}
+```
+
+Each of up to 64 uniquely named parts imports OBJ/glTF/GLB below the assembly
+directory. The optional row-major affine matrix transforms imported roots,
+preserving child hierarchy; identity is the default. Object names become
+`part:ImportedName` (at most 63 UTF-8 bytes). Inspect once to inventory names,
+then designate pairs. The assembly, geometry files and declared companions
+are hashed in `input_sha256`. Project procedural assemblies can instead save a
+`.blend` checkpoint through a declared `visuals check` recipe and inspect that
+checkpoint; the shared inspector does not execute assembly scripts.
+
+`--support Prop Floor --support-tolerance 0.001` casts world -Z rays from
+vertices within tolerance of Prop's lowest Z, starting one tolerance above each
+vertex. It reports minimum/maximum signed vertical gap, gaps above tolerance,
+missed support rays and sample truncation (4096 vertices per pair). Units are
+Blender world units. Rotate a Y-up consumer assembly explicitly before checking.
+This detects sampled floating bases or missing support, and complements
+`--intersect`; it cannot prove stability, detect all penetrations, or cover
+overhangs away from the sampled base. Empty meshes remain unverified. Inspection
+success means observations completed, even when gaps/intersections are present.
+
 This opens the source without auto-executing embedded scripts, using private
 configuration and a background factory session. It never saves over the source.
 `report.json` retains the source hash and outcome; `inspection.json` records

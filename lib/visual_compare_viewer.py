@@ -30,7 +30,7 @@ select,button { font:inherit; padding:6px 10px; background:#263445; color:inheri
 input[type=range] { accent-color:#58c5ce; width:120px; }
 button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible { outline:2px solid #58c5ce; outline-offset:3px; }
 #batch { margin:0 0 20px; padding:16px; background:#17212d; border:1px solid #405166; border-radius:8px; }
-#batch[hidden] { display:none; }
+#batch[hidden],#timeline[hidden] { display:none; }
 .toolbar { display:flex; gap:14px; flex-wrap:wrap; align-items:center; }
 #pair { max-width:100%; }
 #coverage { color:#ffce85; }
@@ -50,6 +50,11 @@ pre { padding:14px 16px; margin:0; white-space:pre-wrap; overflow-wrap:anywhere;
     <label>View <select id="pair"></select></label>
     <label>Detail <select id="crop"></select></label>
     <button id="previous" type="button">Previous</button><button id="next" type="button">Next</button>
+  </div>
+  <div id="timeline" class="toolbar" hidden aria-label="Transition sequence">
+    <button id="play" type="button">Play</button>
+    <label>Frame <input id="scrub" type="range" min="0" max="0" value="0" step="1"><output id="frameValue"></output></label>
+    <span id="cadence"></span>
   </div>
   <p id="coverage"></p>
   <label><input id="inspected" type="checkbox"> I inspected this view at this crop</label>
@@ -142,7 +147,9 @@ get('fit').addEventListener('click', () => {
   get('zoom').value = String(Math.max(1, value));
   scale(Math.max(1, value));
 });
-async function showPair(pair, rect = null) {
+async function showPair(pair, rect = null, preserveView = false) {
+ const previousMode = get('mode').value, previousZoom = Number(get('zoom').value) || 100;
+ const previousScroll = [beforeViewport.scrollLeft, beforeViewport.scrollTop];
  const revision = ++loadRevision;
  pairData = pair;
  beforeImage = afterImage = null;
@@ -156,7 +163,7 @@ async function showPair(pair, rect = null) {
   }
   beforeImage = before; afterImage = after;
   changed = 0; delta = null;
-  get('mode').value = 'after';
+  get('mode').value = preserveView ? previousMode : 'after';
   for (const [canvas, image, capture, side] of [[beforeCanvas, before, pair.before, 'before'], [afterCanvas, after, pair.after, 'after']]) {
     canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
     canvas.getContext('2d').drawImage(image, 0, 0);
@@ -164,6 +171,7 @@ async function showPair(pair, rect = null) {
     get(`${side}Settings`).textContent = JSON.stringify(capture.metadata, null, 2);
   }
   equalSize = beforeCanvas.width === afterCanvas.width && beforeCanvas.height === afterCanvas.height && !pair.issues?.length;
+  if (!equalSize) get('mode').value = 'after';
   for (const option of get('mode').options) option.disabled = !equalSize && option.value !== 'after';
   if (equalSize) {
     const first = beforeCanvas.getContext('2d').getImageData(0, 0, beforeCanvas.width, beforeCanvas.height);
@@ -188,18 +196,24 @@ async function showPair(pair, rect = null) {
     get('zoom').value = String(value); scale(value);
     beforeViewport.scrollLeft = afterViewport.scrollLeft = Math.max(0, (x + w / 2) * value / 100 - beforeViewport.clientWidth / 2);
     beforeViewport.scrollTop = afterViewport.scrollTop = Math.max(0, (y + h / 2) * value / 100 - beforeViewport.clientHeight / 2);
+  } else if (preserveView) {
+    get('zoom').value = String(previousZoom); scale(previousZoom);
+    beforeViewport.scrollLeft = afterViewport.scrollLeft = previousScroll[0];
+    beforeViewport.scrollTop = afterViewport.scrollTop = previousScroll[1];
   } else {
     get('zoom').value = '100';
     beforeViewport.scrollLeft = afterViewport.scrollLeft = 0;
     beforeViewport.scrollTop = afterViewport.scrollTop = 0;
   }
   get('inspected').disabled = false;
+  return true;
  } catch(error) {
   if (revision === loadRevision) {
     beforeImage = afterImage = null;
     for (const canvas of [beforeCanvas, afterCanvas]) canvas.getContext('2d').clearRect(0,0,canvas.width,canvas.height);
     get('status').textContent = error.message;
   }
+  return false;
  }
 }
 if (data.pairs) {
@@ -219,26 +233,70 @@ if (data.pairs) {
     const all = Object.values(records).flatMap(Object.values);
     get('progress').textContent = `${all.filter(record => record.inspected_at).length} / ${all.length} views and crops inspected`;
   }
-  function selectCrop() {
+  function selectCrop(preserveView = false) {
     const pair = currentPair(), record = currentRecord();
     get('inspected').checked = Boolean(record.inspected_at); get('notes').value = record.notes;
-    showPair(pair, pair.crops.find(crop => crop.name === get('crop').value)?.rect);
+    return showPair(pair, pair.crops.find(crop => crop.name === get('crop').value)?.rect, preserveView);
   }
-  function selectPair() {
+  function selectPair(preserveView = false) {
     get('crop').replaceChildren();
     for (const name of ['Full image', ...currentPair().crops.map(crop => crop.name)]) {
       const option = document.createElement('option'); option.value = option.textContent = name; get('crop').append(option);
     }
-    selectCrop();
+    if (data.sequence) {
+      get('scrub').value = String(get('pair').selectedIndex);
+      get('frameValue').textContent = `${get('pair').selectedIndex + 1} / ${data.pairs.length} · ${currentPair().label}`;
+    }
+    return selectCrop(preserveView);
   }
-  get('pair').addEventListener('change', selectPair); get('crop').addEventListener('change', selectCrop);
+  let playing = false, playbackTimer = null, playbackRevision = 0;
+  function pause() {
+    playing = false; playbackRevision++; clearTimeout(playbackTimer); get('play').textContent = 'Play';
+  }
+  function scheduleFrame() {
+    const revision = playbackRevision;
+    playbackTimer = setTimeout(async () => {
+      if (!playing || revision !== playbackRevision) return;
+      if (get('pair').selectedIndex === data.pairs.length - 1) { pause(); return; }
+      get('pair').selectedIndex++;
+      const loaded = await selectPair(true);
+      if (revision !== playbackRevision) return;
+      if (!loaded) { pause(); return; }
+      scheduleFrame();
+    }, 1000 / data.sequence.fps);
+  }
+  if (data.sequence) {
+    get('timeline').hidden = false;
+    get('scrub').max = String(data.pairs.length - 1);
+    get('cadence').textContent = `${data.sequence.fps} fps requested · paired frames advance together; decode may slow playback`;
+    get('play').addEventListener('click', async () => {
+      if (playing) { pause(); return; }
+      playing = true; get('play').textContent = 'Pause';
+      const revision = ++playbackRevision;
+      if (get('pair').selectedIndex === data.pairs.length - 1) {
+        get('pair').selectedIndex = 0;
+        const loaded = await selectPair(true);
+        if (revision !== playbackRevision) return;
+        if (!loaded) { pause(); return; }
+      }
+      scheduleFrame();
+    });
+    get('scrub').addEventListener('input', () => {
+      pause(); get('pair').selectedIndex = Number(get('scrub').value); selectPair(true);
+    });
+    document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
+  }
+  get('pair').addEventListener('change', () => { pause(); selectPair(); });
+  get('crop').addEventListener('change', () => { pause(); selectCrop(); });
   for (const [id, offset] of [['previous', -1], ['next', 1]]) get(id).addEventListener('click', () => {
+    pause();
     get('pair').selectedIndex = (get('pair').selectedIndex + offset + data.pairs.length) % data.pairs.length; selectPair();
   });
-  get('inspected').addEventListener('change', () => { currentRecord().inspected_at = get('inspected').checked ? new Date().toISOString() : null; progress(); });
-  get('notes').addEventListener('input', () => { currentRecord().notes = get('notes').value; });
+  get('inspected').addEventListener('change', () => { pause(); currentRecord().inspected_at = get('inspected').checked ? new Date().toISOString() : null; progress(); });
+  get('notes').addEventListener('focus', pause);
+  get('notes').addEventListener('input', () => { pause(); currentRecord().notes = get('notes').value; });
   get('export').addEventListener('click', () => {
-    const report = {schema_version:1, batch_id:data.batch_id, exported_at:new Date().toISOString(), visual_correctness:'unverified', missing_categories:data.missing_categories,
+    const report = {schema_version:1, batch_id:data.batch_id, sequence:data.sequence, exported_at:new Date().toISOString(), visual_correctness:'unverified', missing_categories:data.missing_categories,
       pairs:data.pairs.map(pair => ({id:pair.id, before_sha256:pair.before.metadata.sha256, after_sha256:pair.after.metadata.sha256, issues:pair.issues, views:records[pair.id]}))};
     const url = URL.createObjectURL(new Blob([JSON.stringify(report,null,2)], {type:'application/json'}));
     const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'inspection.json'; anchor.click(); setTimeout(() => URL.revokeObjectURL(url),1000);
