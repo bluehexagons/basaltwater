@@ -216,6 +216,54 @@ public static class Native {
     static void Send(Input[] items) { if(SendInput((uint)items.Length,items,Marshal.SizeOf(typeof(Input)))!=items.Length) throw new Exception("Input rejected or partial; observe before retrying"); }
     [DllImport("user32.dll")] static extern short GetAsyncKeyState(int key);
     static Input Key(ushort vk,ushort scan,uint flags) { return new Input {type=1,data=new InputUnion {key=new Keyboard {vk=vk,scan=scan,flags=flags}}}; }
+    [DllImport("user32.dll")] static extern IntPtr GetKeyboardLayout(uint thread);
+    [DllImport("user32.dll")] static extern uint MapVirtualKeyEx(uint code,uint kind,IntPtr layout);
+    // Build the entire bounded request before sending anything. Each chord releases
+    // in reverse order; one SendInput call prevents interleaved human/agent input.
+    static Input[] KeyInputs(string text,bool sequence,Func<ushort,uint> map) {
+        if(String.IsNullOrEmpty(text) || text.Length>1024) throw new Exception("Expected key/chord or sequence of at most 1024 characters");
+        var chords=sequence ? text.Split(',') : new [] {text};
+        if(chords.Length>32) throw new Exception("Sequence limit is 32 chords");
+        var result=new List<Input>();
+        var named=new Dictionary<string,ushort>(StringComparer.OrdinalIgnoreCase) {{"ENTER",13},{"ESC",27},{"TAB",9},{"SPACE",32},{"LEFT",37},{"UP",38},{"RIGHT",39},{"DOWN",40},{"BACKSPACE",8},{"DELETE",46},{"HOME",36},{"END",35},{"PAGEUP",33},{"PAGEDOWN",34},{"INSERT",45}};
+        foreach(string chord in chords) {
+            var parts=chord.Split('+'); var pressed=new List<Input>(); bool ctrl=false,shift=false;
+            for(int i=0;i<parts.Length;i++) {
+                string name=parts[i].ToUpperInvariant(); ushort vk;
+                if(i<parts.Length-1) {
+                    if(name=="CTRL" && !ctrl) { vk=0xa2; ctrl=true; }
+                    else if(name=="SHIFT" && !shift) { vk=0xa0; shift=true; }
+                    else throw new Exception("Only distinct CTRL/SHIFT prefixes are supported");
+                } else {
+                    int number;
+                    if(name.Length==1 && ((name[0]>='A' && name[0]<='Z') || (name[0]>='0' && name[0]<='9'))) vk=name[0];
+                    else if(name.StartsWith("F") && Int32.TryParse(name.Substring(1),out number) && name=="F"+number && number>=1 && number<=12) vk=(ushort)(111+number);
+                    else if(!named.TryGetValue(name,out vk)) throw new Exception("Unsupported key; use A-Z, 0-9, F1-F12 or named navigation keys");
+                }
+                uint scan=map(vk); uint prefix=scan>>8;
+                if((scan&255)==0 || (prefix!=0 && prefix!=0xe0)) throw new Exception("Key has no supported scan code in target keyboard layout");
+                pressed.Add(Key(0,(ushort)(scan&255),8u | (prefix==0xe0 ? 1u : 0u)));
+            }
+            result.AddRange(pressed);
+            for(int i=pressed.Count-1;i>=0;i--) { var release=pressed[i]; release.data.key.flags|=2; result.Add(release); }
+        }
+        return result.ToArray();
+    }
+    static void SendKeys(Input[] items,Func<Input[],uint> send) {
+        uint count=send(items);
+        if(count==items.Length) return;
+        // No replay after partial delivery. Release only potentially submitted
+        // keys; cleanup is best effort and application outcome remains unknown.
+        var pending=new List<Input>();
+        for(int i=0;i<Math.Min(count,(uint)items.Length);i++) {
+            if((items[i].data.key.flags&2)==0) pending.Add(items[i]);
+            else if(pending.Count>0) pending.RemoveAt(pending.Count-1);
+        }
+        var releases=new List<Input>();
+        for(int i=pending.Count-1;i>=0;i--) { var release=pending[i]; release.data.key.flags|=2; releases.Add(release); }
+        bool cleaned=releases.Count==0 || send(releases.ToArray())==releases.Count;
+        throw new Exception("Input rejected or partial; key release " + (cleaned ? "submitted" : "unconfirmed") + "; observe before retrying");
+    }
     public static void InputAction(long id,string identity,string kind,string text,int x,int y,int width,int height) {
         var w=Check(id,identity); if(!w.active || w.minimized || w.width!=width || w.height!=height) throw new Exception("Target must remain foreground with observed geometry");
         foreach(int key in new [] {16,17,18,91,92,1,2,4}) if((GetAsyncKeyState(key)&0x8000)!=0) throw new Exception("Physical modifier or mouse button held; input refused");
@@ -231,12 +279,13 @@ public static class Native {
         } else if(kind=="text") {
             if(text==null || text.Length>1024) throw new Exception("Input text limit is 1024");
             foreach(char c in text) { Check(id,identity); if(GetForegroundWindow()!=new IntPtr(id)) throw new Exception("Foreground changed"); Send(new [] {Key(0,c,4),Key(0,c,6)}); }
-        } else if(kind=="key") {
-            var keys=new Dictionary<string,ushort>(StringComparer.OrdinalIgnoreCase) {{"ENTER",13},{"ESC",27},{"TAB",9},{"SPACE",32},{"LEFT",37},{"UP",38},{"RIGHT",39},{"DOWN",40},{"BACKSPACE",8},{"DELETE",46}};
-            ushort vk;
-            if(text!=null && text.Length==1 && ((text[0]>='a' && text[0]<='z') || (text[0]>='A' && text[0]<='Z') || (text[0]>='0' && text[0]<='9'))) vk=(ushort)Char.ToUpperInvariant(text[0]);
-            else if(!keys.TryGetValue(text??"",out vk)) throw new Exception("Unsupported key; use A-Z, 0-9, ENTER ESC TAB SPACE LEFT UP RIGHT DOWN BACKSPACE DELETE");
-            Send(new [] {Key(vk,0,0),Key(vk,0,2)});
+        } else if(kind=="key" || kind=="sequence") {
+            int pid; uint thread=GetWindowThreadProcessId(new IntPtr(id),out pid); var layout=GetKeyboardLayout(thread);
+            var items=KeyInputs(text,kind=="sequence",delegate(ushort vk) { return MapVirtualKeyEx(vk,4,layout); });
+            w=Check(id,identity);
+            if(!w.active || w.minimized || w.width!=width || w.height!=height) throw new Exception("Foreground or geometry changed");
+            foreach(int key in new [] {16,17,18,91,92,1,2,4}) if((GetAsyncKeyState(key)&0x8000)!=0) throw new Exception("Physical modifier or mouse button held; input refused");
+            SendKeys(items,delegate(Input[] batch) { return SendInput((uint)batch.Length,batch,Marshal.SizeOf(typeof(Input))); });
         } else throw new Exception("Unsupported input kind");
     }
     [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(Point p);

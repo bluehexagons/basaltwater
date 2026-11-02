@@ -59,6 +59,60 @@ try {
     }
     # Parse/compile only: not a single user32, capture, UIA or input call.
     Initialize-NativeDesktopTypes
+    # Pure event construction with a synthetic keyboard map. No user32 calls.
+    $builder = [Basaltwater.Desktop.Native].GetMethod('KeyInputs', [Reflection.BindingFlags]'Static,NonPublic')
+    $map = [Func[uint16,uint32]]{ param($vk)
+        switch ($vk) { 162 { return 0x1d }; 160 { return 0x2a }; 36 { return 0xe047 }; 35 { return 0xe04f }; 122 { return 0x57 }; default { return 0x1e } }
+    }
+    $events = $builder.Invoke($null, @('ctrl+shift+HOME,END,F11', $true, $map))
+    Assert-True ($events.Count -eq 10) 'Chord sequence event count changed'
+    Assert-True ($events[0].data.key.scan -eq 0x1d -and $events[0].data.key.flags -eq 8 -and
+        $events[1].data.key.scan -eq 0x2a -and $events[2].data.key.scan -eq 0x47 -and
+        $events[2].data.key.vk -eq 0 -and $events[2].data.key.flags -eq 9 -and
+        $events[3].data.key.flags -eq 11 -and $events[4].data.key.scan -eq 0x2a -and
+        $events[5].data.key.scan -eq 0x1d -and $events[6].data.key.scan -eq 0x4f -and
+        $events[8].data.key.scan -eq 0x57) 'Scan codes, extended flags or reverse releases incorrect'
+    foreach ($invalid in @('CTRL+CTRL+A','ALT+A','CTRL','A,,B', ('A,' * 32 + 'A'), 'F13', 'SHIFT+')) {
+        $caught = $null
+        try { $null = $builder.Invoke($null, @($invalid, $true, $map)) } catch { $caught = $_ }
+        Assert-True ($null -ne $caught) "Invalid chord/sequence accepted: $invalid"
+    }
+    $caught = $null
+    try { $null = $builder.Invoke($null, @('A', $false, [Func[uint16,uint32]]{ return 0 })) } catch { $caught = $_ }
+    Assert-True ($null -ne $caught) 'Unmapped key accepted'
+    $sender = [Basaltwater.Desktop.Native].GetMethod('SendKeys', [Reflection.BindingFlags]'Static,NonPublic')
+    $script:SentBatches = @(); $script:PartialDelivery = $false
+    $fakeSend = [Management.Automation.LanguagePrimitives]::ConvertTo({ param($batch)
+        $script:SentBatches += ,$batch
+        if ($script:PartialDelivery -and $script:SentBatches.Count -eq 1) { return [uint32]3 }
+        return [uint32]$batch.Length
+    }, $sender.GetParameters()[1].ParameterType)
+    $null = $sender.Invoke($null, @($events, $fakeSend))
+    Assert-True ($script:SentBatches.Count -eq 1 -and $script:SentBatches[0].Length -eq 10) 'Sequence was split across calls'
+    $script:SentBatches = @(); $script:PartialDelivery = $true; $caught = $null
+    try { $null = $sender.Invoke($null, @($events, $fakeSend)) } catch { $caught = $_ }
+    Assert-True ($null -ne $caught -and $caught.Exception.Message -match 'observe before retrying' -and
+        $script:SentBatches.Count -eq 2 -and $script:SentBatches[1].Length -eq 3 -and
+        $script:SentBatches[1][0].data.key.flags -eq 11 -and $script:SentBatches[1][2].data.key.scan -eq 0x1d) 'Partial delivery did not release the submitted chord without replay'
+    $script:SentBatches = @()
+    $reject = [Management.Automation.LanguagePrimitives]::ConvertTo({ param($batch)
+        $script:SentBatches += ,$batch
+        return [uint32]0
+    }, $sender.GetParameters()[1].ParameterType)
+    $caught = $null
+    try { $null = $sender.Invoke($null, @($events, $reject)) } catch { $caught = $_ }
+    Assert-True ($null -ne $caught -and $script:SentBatches.Count -eq 1) 'Rejected input attempted replay or unrelated releases'
+    $script:SentBatches = @()
+    $releaseFails = [Management.Automation.LanguagePrimitives]::ConvertTo({ param($batch)
+        $script:SentBatches += ,$batch
+        if ($script:SentBatches.Count -eq 1) { return [uint32]7 }
+        return [uint32]0
+    }, $sender.GetParameters()[1].ParameterType)
+    $caught = $null
+    try { $null = $sender.Invoke($null, @($events, $releaseFails)) } catch { $caught = $_ }
+    Assert-True ($null -ne $caught -and $caught.Exception.Message -match 'release unconfirmed' -and
+        $script:SentBatches.Count -eq 2 -and $script:SentBatches[1].Length -eq 1 -and
+        $script:SentBatches[1][0].data.key.scan -eq 0x4f) 'Cleanup failure hidden or already released chord cleaned again'
     $dto = [Basaltwater.Desktop.Element]([pscustomobject]@{ reference = 'r'; window = 123L; pid = 42; path = @(0,1); identity = 'i'; runtime = 'r'; name = 'n'; role = 'ControlType.Edit' })
     Assert-True ($dto.path.Length -eq 2 -and $dto.window -eq 123) 'Worker cannot deserialize UIA DTO'
     # Exercise the native outcome rule without calling Win32: SW_RESTORE can
@@ -199,10 +253,15 @@ function Invoke-NativeDesktopWorkerBody($Request) {
     $script:DesktopTestSession = 'fixture-session-2'
     Assert-Failure (Window-Action $generation) 'Stale session generation'
     $generation = Observe-Window
+    $sequence = @('input','sequence','--window','123','--identity','42:birth:class:title','--generation',$generation,'--width','640','--height','480','--keys','HOME,SHIFT+END')
+    Assert-True (Invoke-NativeDesktopCli $sequence).ok 'Sequence rejected by public CLI'
+    Assert-Failure (Invoke-NativeDesktopCli $sequence) 'not recently observed'
+    $generation = Observe-Window
     $before = $script:DesktopTestCalls.Count
     foreach ($arguments in @(
         @('window','resize','--window','123','--identity','42:birth:class:title','--generation',$generation,'--width','0','--height','480'),
         @('input','text','--window','123','--identity','42:birth:class:title','--generation',$generation,'--width','640','--height','480','--text',('x' * 1025)),
+        @('input','sequence','--window','123','--identity','42:birth:class:title','--generation',$generation,'--width','640','--height','480','--keys',('A,' * 32 + 'A')),
         @('inspect','--pid','-2'), @('inspect','--pid','42','--pid','43'), @('windows','--surprise'),
         @('window','focus','--window','0','--identity','x','--generation',$generation),
         @('screenshot','--output',(Join-Path $temporary 'new.png'))

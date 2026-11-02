@@ -99,8 +99,23 @@ Window actions verify their observed outcome; `invoke` and raw input explicitly
 require application-specific verification. Raw input requires the window to
 remain foreground with the observed geometry. Click coordinates are relative
 to that window; multi-monitor origins and DPI scaling are handled by the worker.
-The first input slice supports individual keys, Unicode text and clicks, without
-key chords or held gamepad/key input. It does not bypass UAC or a locked desktop.
+Input supports scan-code keys, atomic Ctrl/Shift chords, Unicode text and clicks.
+Named keys include ENTER, ESC, TAB, SPACE, arrows, BACKSPACE, DELETE, HOME, END,
+PAGEUP, PAGEDOWN, INSERT and F1–F12, plus A–Z and 0–9. For example, use
+`--key CTRL+SHIFT+HOME` with `input key`. Scan codes use the target thread's
+keyboard layout and extended-key flags; Unicode `input text` remains separate
+from physical game bindings. See Microsoft's [keyboard event contract](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-keybdinput).
+
+`input sequence` uses the same window selectors and `--keys 'HOME,SHIFT+END,F11'`.
+It accepts at most 32 chords and 1024 characters, validates the entire sequence,
+then submits one [SendInput batch](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput).
+Each chord releases keys in reverse order. No delays or held keys are supported;
+games polling keyboard state per frame may miss a tap. Use separate observed
+steps when application transitions require waiting. Queue acceptance does not
+prove application delivery. Partial delivery fails without replay and attempts
+key releases; inspect before retrying. Existing human-control, physical-modifier,
+foreground, identity and geometry guards apply. Input does not bypass UAC or a
+locked desktop.
 
 Restoring a minimized window resumes its previous presentation, which can be
 maximized. Restoring an already maximized, non-minimized window returns it to
@@ -126,6 +141,10 @@ are outside the adapter. GUI automation follows the active browser-tool policy;
 this backend does not grant permission to substitute another browser.
 
 ## Supervised project tasks
+
+The [game-testing facilities plan](../plans/windows-game-testing.md) records
+native input acceptance and the proposed isolated-session, GPU capture, pacing,
+device recovery and process-audio increments.
 
 ```powershell
 basaltw desktop develop --help

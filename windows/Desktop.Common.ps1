@@ -8,7 +8,7 @@ All OS desktop calls are behind Invoke-NativeDesktopWorker for offline mocks.
 Desktop APIs run in an owned Windows PowerShell 5.1 8s worker: it provides the
 installed .NET Framework UIAutomation assemblies without another runtime/package.
 The public CLI wrapper also uses 5.1; development shells/task guardians use 7.
-No start/stop, launch, lease, elevation, clipboard, key chords, or held input.
+No start/stop, launch, lease, elevation, clipboard, or held input.
 #>
 $script:NativeDesktopSource = $PSScriptRoot
 
@@ -211,7 +211,7 @@ function ConvertTo-NativeDesktopRequest([string[]]$Arguments) {
         screenshot = @('window','identity','generation','output','monitor');
         window = @('window','identity','generation','x','y','width','height');
         element = @('ref','generation','text','action-name');
-        input = @('window','identity','generation','width','height','x','y','text','key')
+        input = @('window','identity','generation','width','height','x','y','text','key','keys')
     }
     if (-not $allowed.ContainsKey($request.command)) { throw "Unsupported Windows desktop command: $($request.command)" }
     if ($request.command -in @('control','window','element','input')) {
@@ -285,10 +285,14 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
             }
             if ($request.command -eq 'input') {
                 Assert-NativeDesktopRequired $request @('width','height')
-                if ($request.operation -notin @('key','text','click')) { throw 'Unsupported input operation' }
+                if ($request.operation -notin @('key','sequence','text','click')) { throw 'Unsupported input operation' }
                 if ($request.operation -eq 'click') { Assert-NativeDesktopRequired $request @('x','y') }
                 if ($request.operation -eq 'text') { Assert-NativeDesktopRequired $request @('text'); if ($request.text.Length -gt 1024) { throw 'Text limit is 1024' } }
                 if ($request.operation -eq 'key') { Assert-NativeDesktopRequired $request @('key'); $request.text = $request.key }
+                if ($request.operation -eq 'sequence') {
+                    Assert-NativeDesktopRequired $request @('keys'); $request.text = $request['keys']
+                    if ($request.text.Length -gt 1024 -or $request.text.Split(',').Count -gt 32) { throw 'Sequence limit is 32 chords and 1024 characters' }
+                }
             }
             $request.record = $null
             if ($request.command -eq 'element' -or $request.ContainsKey('root')) {
