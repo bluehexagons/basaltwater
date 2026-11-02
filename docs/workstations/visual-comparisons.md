@@ -154,6 +154,13 @@ when automating it, or open it on the managed native desktop when that is the
 requested surface. A viewer intended for the T3 client needs an explicitly
 requested managed publication because its browser cannot read VM-local files.
 
+Individual comparisons and batch galleries default to **T3 compact**, with
+neutral dark panels, smaller controls and metadata collapsed below each image.
+Expand **Before metadata** or **After metadata** to inspect the full records;
+choose **Roomy** in Layout for larger spacing. Compatibility warnings and manual
+inspection controls remain visible. Layout changes affect presentation only;
+they do not change the embedded evidence or verification results.
+
 Output defaults to a new private directory under
 `~/.local/state/basaltwater/visuals/`. `--output DIRECTORY` chooses a new artifact
 directory and refuses existing paths. PNGs are read without following their

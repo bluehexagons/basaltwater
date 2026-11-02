@@ -2,11 +2,13 @@
 'use strict';
 const fs = require('node:fs'), vm = require('node:vm'), assert = require('node:assert/strict');
 const html = fs.readFileSync(0, 'utf8');
+assert.match(html, /<body id="viewer" data-theme="t3">/);
+assert.equal((html.match(/<details class="metadata">/g) || []).length, 2, 'Capture metadata should start collapsed');
 const payload = html.match(/id="captureData">([\s\S]*?)<\/script>/)[1];
 const script = html.match(/<script>\s*([\s\S]*?)<\/script>/)[1];
 class Element {
   constructor(id) {
-    this.id = id; this.value = ''; this.children = []; this.handlers = {}; this.checked = false; this.style = {};
+    this.id = id; this.value = ''; this.children = []; this.handlers = {}; this.checked = false; this.style = {}; this.dataset = {};
     this.clientWidth = 600; this.clientHeight = 300; this.scrollLeft = this.scrollTop = 0;
     this.width = this.height = 4;
   }
@@ -39,6 +41,10 @@ vm.runInNewContext(script, context);
 const flush = () => new Promise(resolve => setImmediate(resolve));
 (async () => {
   await flush();
+  get('theme').value = 'roomy'; get('theme').handlers.change();
+  assert.equal(get('viewer').dataset.theme, 'roomy');
+  get('theme').value = 't3'; get('theme').handlers.change();
+  assert.equal(get('viewer').dataset.theme, 't3');
   assert.equal(get('inspected').disabled, false, get('status').textContent);
   assert.equal(get('inspected').checked, false);
   get('inspected').checked = true; get('inspected').handlers.change();

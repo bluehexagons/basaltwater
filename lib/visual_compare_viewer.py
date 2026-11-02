@@ -28,7 +28,7 @@ header { display:flex; gap:20px; align-items:center; flex-wrap:wrap; margin-bott
 label { display:flex; gap:8px; align-items:center; }
 select,button { font:inherit; padding:6px 10px; background:#263445; color:inherit; border:1px solid #576a80; border-radius:5px; }
 input[type=range] { accent-color:#58c5ce; width:120px; }
-button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible { outline:2px solid #58c5ce; outline-offset:3px; }
+button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible,summary:focus-visible { outline:2px solid #a78bfa; outline-offset:3px; }
 #batch { margin:0 0 20px; padding:16px; background:#17212d; border:1px solid #405166; border-radius:8px; }
 #batch[hidden],#timeline[hidden] { display:none; }
 .toolbar { display:flex; gap:14px; flex-wrap:wrap; align-items:center; }
@@ -42,8 +42,27 @@ h2 { font-size:16px; padding:12px 16px; margin:0; border-bottom:1px solid #40516
 canvas { display:block; image-rendering:pixelated; }
 pre { padding:14px 16px; margin:0; white-space:pre-wrap; overflow-wrap:anywhere; max-height:240px; overflow:auto; font-size:12px; }
 #status { color:#b8cbdc; margin:14px 0; }
+.metadata { border-top:1px solid #405166; }
+summary { cursor:pointer; padding:10px 16px; font-size:12px; color:#b8cbdc; }
+body[data-theme=t3] { background:#18181b; color:#e4e4e7; padding:12px; font-size:13px; }
+body[data-theme=t3] h1 { font-size:18px; margin-bottom:12px; }
+body[data-theme=t3] header { gap:10px; margin-bottom:10px; }
+body[data-theme=t3] select,body[data-theme=t3] button { padding:4px 8px; background:#27272a; border-color:#52525b; }
+body[data-theme=t3] input[type=range] { accent-color:#a78bfa; width:100px; }
+body[data-theme=t3] #batch { margin-bottom:12px; padding:10px; background:#202023; border-color:#3f3f46; border-radius:6px; }
+body[data-theme=t3] .toolbar { gap:10px; }
+body[data-theme=t3] #notes { margin:8px 0; padding:8px; background:#18181b; border-color:#52525b; }
+body[data-theme=t3] .grid { gap:10px; }
+body[data-theme=t3] .pane { background:#202023; border-color:#3f3f46; border-radius:6px; }
+body[data-theme=t3] h2 { padding:8px 10px; font-size:13px; border-color:#3f3f46; }
+body[data-theme=t3] .metadata { border-color:#3f3f46; }
+body[data-theme=t3] summary { padding:8px 10px; color:#a1a1aa; }
+body[data-theme=t3] pre { padding:10px; font-size:11px; }
+body[data-theme=t3] #status { margin:10px 0; color:#a1a1aa; }
+body[data-theme=t3] .viewport { min-height:180px; background:repeating-conic-gradient(#27272a 0% 25%,#202023 0% 50%) 50%/20px 20px; }
 @media(max-width:700px) { body { padding:12px; } .grid { grid-template-columns:1fr; } .viewport { height:35vh; } }
 </style>
+<body id="viewer" data-theme="t3">
 <h1>Capture comparison</h1>
 <section id="batch" hidden aria-label="Batch inspection">
   <div class="toolbar">
@@ -64,6 +83,7 @@ pre { padding:14px 16px; margin:0; white-space:pre-wrap; overflow-wrap:anywhere;
   <p>Inspection records stay in this tab until downloaded. Reloading clears them. Inspection does not establish visual correctness.</p>
 </section>
 <header>
+  <label>Layout <select id="theme"><option value="t3">T3 compact</option><option value="roomy">Roomy</option></select></label>
   <label>Zoom <input id="zoom" type="range" min="1" max="400" step="1" value="100"><output id="zoomValue">100%</output></label>
   <button id="fit" type="button">Fit</button>
   <label>Compare <select id="mode"><option value="after">After</option><option value="overlay">Overlay</option><option value="difference">Difference</option></select></label>
@@ -72,14 +92,15 @@ pre { padding:14px 16px; margin:0; white-space:pre-wrap; overflow-wrap:anywhere;
 </header>
 <p id="status" role="status">Loading captures…</p>
 <div class="grid">
-  <section class="pane"><h2 id="beforeTitle">Before</h2><div id="beforeViewport" class="viewport"><canvas id="beforeCanvas" aria-label="Before capture"></canvas></div><pre id="beforeSettings" aria-label="Before capture settings"></pre></section>
-  <section class="pane"><h2 id="afterTitle">After</h2><div id="afterViewport" class="viewport"><canvas id="afterCanvas" aria-label="After capture"></canvas></div><pre id="afterSettings" aria-label="After capture settings"></pre></section>
+  <section class="pane"><h2 id="beforeTitle">Before</h2><div id="beforeViewport" class="viewport"><canvas id="beforeCanvas" aria-label="Before capture"></canvas></div><details class="metadata"><summary>Before metadata</summary><pre id="beforeSettings" aria-label="Before capture settings"></pre></details></section>
+  <section class="pane"><h2 id="afterTitle">After</h2><div id="afterViewport" class="viewport"><canvas id="afterCanvas" aria-label="After capture"></canvas></div><details class="metadata"><summary>After metadata</summary><pre id="afterSettings" aria-label="After capture settings"></pre></details></section>
 </div>
 <script type="application/json" id="captureData">__CAPTURE_DATA__</script>
 <script>
 'use strict';
 const data = JSON.parse(document.getElementById('captureData').textContent);
 const get = id => document.getElementById(id);
+get('theme').addEventListener('change', () => { get('viewer').dataset.theme = get('theme').value; });
 const beforeCanvas = get('beforeCanvas'), afterCanvas = get('afterCanvas');
 const beforeViewport = get('beforeViewport'), afterViewport = get('afterViewport');
 let beforeImage, afterImage, delta, changed = 0, equalSize = false;
@@ -304,5 +325,6 @@ if (data.pairs) {
   selectPair(); progress();
 } else showPair(data);
 </script>
+</body>
 </html>
 '''
