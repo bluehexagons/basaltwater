@@ -5,6 +5,12 @@ older checkouts. It does not establish installed behavior after a source change.
 Raw application/state receipts remain private. This review does not refresh,
 reboot, install language engines or change physical control/routing preferences.
 
+Scope correction: the owner subsequently identified Windows feedback as an
+accidental inclusion. Further implementation here focuses on CachyOS. Existing
+Windows commits `d6f3f191` and `ae5fe136` are retained for the separate Windows
+agent to review/qualify; Windows rows below are handoff items, not this
+workstream's remaining implementation scope.
+
 ## Changes and existing coverage
 
 - Windows raw editing keys now use mapped scan codes and extended-key flags;
@@ -34,7 +40,7 @@ reboot, install language engines or change physical control/routing preferences.
 | --- | --- | --- |
 | First | Native Windows scan-code qualification | Run offline desktop/CLI contracts and full native suite; disposable SDL and WinForms fixtures verify navigation, selection, F11, modifier release, partial-send/release failure, foreground change and physical takeover. Include ordinary and non-BMP/spaced paths; test long paths without changing policy. |
 | First | Consolidated installed/worker/source/skill provenance | Report installed CLI revision, actual selected worker source revision/dirty state, delivered skill revision and explicitly unknown session-loaded revision together. Legacy metadata stays unknown; important drift must be visible without implying installation. Current commands provide separate evidence, not a consolidated report. |
-| Next | Read-only input environment report | Bound probes for desktop/layout/framework/enabled engines; distinguish configured defaults from the active per-window layout, expose unknowns and never start an IME or change preferences during discovery. |
+| Implemented, scoped | Read-only input environment report | Doctor includes KDE layout snapshots and already-running Fcitx current-group metadata without service activation. IBus ownership is discovery only; other engine/framework routes remain unknown. Physical composition still needs manual qualification. |
 | Next | Expected native foreground identity | Use a trustworthy compositor/backend identity immediately before injection; reject changed focus. AT-SPI inventory alone is insufficient on Wayland. Preserve generation/age/control guards. |
 | Next | Evidence crop/clip/report exporter | New private derivatives only, immutable originals, source/hash/rectangle/time provenance, reviewed captions and portable-path validation; verify crops against originals and reject unsafe/oversized media. |
 | Later | Tool/model/phase telemetry and specialist packets | Monotonic tool durations and captured timestamps; distinguish handoff overhead; actual model/effort/usage only when exposed. Absolute paths, read acknowledgements, immutable inputs, advice deadlines and exclusive controller ownership. |

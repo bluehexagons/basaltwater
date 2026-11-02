@@ -198,6 +198,7 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
     if session not in ("wayland", "x11", "absent"):
         session = "unknown"
     records: list[CapabilityResult] = []
+    input_environment = None
 
     def record(name: str, state: str, reason: str, **kwargs: object) -> None:
         records.append(CapabilityResult(name, state, reason, owner, session,
@@ -346,6 +347,13 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
         record("host", "available", "CachyOS x86_64 detected; live qualification is recorded separately.")
         runtime = Path(f"/run/user/{uid}")
         bus_ready = _owned_socket(runtime / "bus", uid)
+        from lib.cachyos_input import collect_input_environment
+
+        input_environment = collect_input_environment(lambda command: _probe(command, uid), bus_ready=bus_ready)
+        keyboard = input_environment["keyboard"]
+        record("session.keyboard", "available" if keyboard["state"] == "observed" else "deferred",
+               "KDE layout snapshot observed; see input_environment. OS composition and application delivery are unverified."
+               if keyboard["state"] == "observed" else "KDE layout unknown; inspect input_environment and the existing session's keyboard settings.")
         record("session.bus", "available" if bus_ready else "deferred",
                "Owned user bus socket exists; service health is checked separately." if bus_ready else
                "User bus socket unavailable or unsafe; log into KDE as this user.")
@@ -474,6 +482,7 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
         record(name, "deferred", "Task-scoped automation requires basaltw desktop --native doctor/start from KDE and portal consent; this inventory does not start or verify it.",
                origin=origin)
     return {"schema_version": SCHEMA_VERSION, "observed_at": observed_at,
+            "input_environment": input_environment,
             "capabilities": [record.to_dict() for record in records]}
 
 
@@ -503,4 +512,6 @@ def run_cachyos_doctor(args: argparse.Namespace) -> int:
                   f"{summary['deferred']} deferred, {summary['failed']} failed")
         for item in report["capabilities"]:
             print(f"{item['name']}: {item['state']} — {item['reason']}")
+        if report.get("input_environment") is not None:
+            print("input_environment: " + json.dumps(report["input_environment"], ensure_ascii=True, sort_keys=True))
     return 0

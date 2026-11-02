@@ -1,5 +1,20 @@
 # Windows desktop and development integration
 
+The 2026-11-02 CachyOS feedback pass initially included Windows feedback in error.
+Windows follow-up is owned by a separate workstream. Commit `d6f3f191` already
+added scan-code keys/chords and offline test cases, but those cases and live
+SDL/WinForms delivery were not run on CachyOS. The Windows owner should review
+and qualify that change; it is not a native Windows pass or an installed refresh.
+The task/Ninja guidance from `ae5fe136` also awaits native recipe validation.
+
+The subsequent Windows review reconciled those changes with bounded input
+sequences, target-thread layout mapping and partial-delivery cleanup. The full
+native Windows offline suite and focused desktop/CLI contracts passed on
+2026-11-02, along with both documentation checkers. Live SDL/WinForms delivery,
+frame-polled game input and the Ninja recipe remain unqualified; no refresh was
+performed by that review. See the [game-testing plan](../plans/windows-game-testing.md)
+for the remaining facilities and acceptance checks.
+
 The native `agent_windows` setup installs stable PowerShell 7 when missing and
 continues the pinned installation in it before applying development tools.
 Windows PowerShell 5.1 remains the initial bootstrap and the bounded UI Automation

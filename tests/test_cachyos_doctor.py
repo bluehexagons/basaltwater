@@ -16,6 +16,7 @@ from unittest.mock import patch
 
 import basaltwater
 from lib import cachyos_doctor as doctor
+from lib.cachyos_input import collect_input_environment
 from lib.local_cli import run_local_command
 
 DPMS_PROBE = ["/usr/bin/env", "WAYLAND_DISPLAY=wayland-0", "QT_QPA_PLATFORM=wayland",
@@ -125,6 +126,90 @@ class ProbeTests(unittest.TestCase):
                         SimpleNamespace(st_mode=parent_mode, st_uid=parent_uid),
                     ]):
                 self.assertEqual(doctor._owned_socket(Path("/run/user/1000/bus"), 1000), expected)
+
+
+class InputEnvironmentTests(unittest.TestCase):
+    def setUp(self):
+        self.calls = []
+        self.layouts = [["us", "", "English (US)"], ["jp", "", "日本語"]]
+        self.overrides = {}
+
+    def probe(self, command):
+        self.calls.append(command)
+        self.assertEqual(command[:6], ["/usr/bin/busctl", "--user", "--timeout=2",
+                                       "--auto-start=no", "--json=short", "call"])
+        method = command[9]
+        if method in self.overrides:
+            return self.overrides[method]
+        if method == "NameHasOwner":
+            signature, data = "b", [command[-1] != "org.freedesktop.IBus"]
+        else:
+            signature, data = {
+                "getLayoutsList": ("a(sss)", [self.layouts]),
+                "getLayout": ("u", [1]),
+                "CurrentInputMethodGroup": ("s", ["Default"]),
+                "CurrentInputMethod": ("s", ["mozc"]),
+                "InputMethodGroupInfo": ("sa(ss)", ["us", [["keyboard-us", ""], ["mozc", "jp"]]]),
+            }[method]
+        return "ok", json.dumps({"type": signature, "data": data})
+
+    def test_observed_layout_and_current_group_are_separate_from_qualification(self):
+        result = collect_input_environment(self.probe, bus_ready=True)
+        self.assertEqual(result["keyboard"]["active_index"], 1)
+        self.assertEqual(result["keyboard"]["layouts"][1]["long_name"], "日本語")
+        fcitx = result["frameworks"]["fcitx5"]
+        self.assertTrue(fcitx["owner_observed"])
+        self.assertEqual(fcitx["current_engine"], "mozc")
+        self.assertEqual(fcitx["enabled_engines"][1], {"name": "mozc", "layout": "jp"})
+        self.assertFalse(result["frameworks"]["ibus"]["owner_observed"])
+        self.assertEqual(self.calls[-2][-2:], ["s", "Default"])
+
+    def test_no_bus_never_probes_and_unowned_framework_is_not_started(self):
+        result = collect_input_environment(self.probe, bus_ready=False)
+        self.assertEqual(self.calls, [])
+        self.assertIsNone(result["frameworks"]["fcitx5"]["owner_observed"])
+        self.overrides["NameHasOwner"] = "ok", '{"type":"b","data":[false]}'
+        result = collect_input_environment(self.probe, bus_ready=True)
+        self.assertTrue(all(command[9] == "NameHasOwner" for command in self.calls))
+        self.assertIsNone(result["keyboard"]["layouts"])
+
+    def test_bad_layouts_or_indices_remain_unknown_without_raw_output(self):
+        for method, payload in (
+            ("getLayoutsList", {"type": "a(sss)", "data": [[["us", "", "private\nvalue"]]]}),
+            ("getLayoutsList", {"type": "a(sss)", "data": [[['us', '', 'x']] * 33]}),
+            ("getLayout", {"type": "u", "data": [True]}),
+            ("getLayout", {"type": "u", "data": [99]}),
+            ("getLayout", {"type": "i", "data": [1]}),
+        ):
+            with self.subTest(method=method, payload=payload):
+                self.overrides = {method: ("ok", json.dumps(payload))}
+                result = collect_input_environment(self.probe, bus_ready=True)
+                self.assertEqual(result["keyboard"]["state"], "unknown")
+                self.assertIsNone(result["keyboard"]["active_index"])
+                self.assertNotIn("private", json.dumps(result))
+
+    def test_failed_malformed_or_oversized_responses_do_not_leak(self):
+        for response in (("error", "private error"), ("ok", "private malformed"),
+                         ("ok", "x" * 16385), ("ok", "[]"),
+                         ("ok", '{"type":"b","data":[1]}')):
+            with self.subTest(response=response[1][:30]):
+                self.overrides = {"NameHasOwner": response}
+                result = collect_input_environment(self.probe, bus_ready=True)
+                self.assertIsNone(result["keyboard"]["layouts"])
+                self.assertIsNone(result["frameworks"]["fcitx5"]["owner_observed"])
+                self.assertNotIn("private", json.dumps(result))
+
+    def test_group_or_layout_list_change_cannot_publish_a_mixed_snapshot(self):
+        def changing(command):
+            if command[9] == "CurrentInputMethodGroup" and any(c[9] == "InputMethodGroupInfo" for c in self.calls):
+                return "ok", '{"type":"s","data":["Other"]}'
+            if command[9] == "getLayoutsList" and any(c[9] == "getLayout" for c in self.calls):
+                return "ok", '{"type":"a(sss)","data":[[["us","","US"]]]}'
+            return self.probe(command)
+        result = collect_input_environment(changing, bus_ready=True)
+        self.assertIsNone(result["keyboard"]["layouts"])
+        self.assertIsNone(result["frameworks"]["fcitx5"]["current_group"])
+        self.assertIsNone(result["frameworks"]["fcitx5"]["enabled_engines"])
 
 
 class DoctorOutputTests(unittest.TestCase):
@@ -381,7 +466,8 @@ class DoctorTests(unittest.TestCase):
                 self.assertEqual(command[1:3], ["-Q", "--"])
                 self.assertIn(command[3], doctor.PACKAGES)
             elif command[0] == "/usr/bin/busctl":
-                self.assertEqual(command[4:8], ["org.freedesktop.DBus", "/org/freedesktop/DBus",
+                offset = 6 if "--json=short" in command else 4
+                self.assertEqual(command[offset:offset+4], ["org.freedesktop.DBus", "/org/freedesktop/DBus",
                                               "org.freedesktop.DBus", "NameHasOwner"])
             else:
                 self.assertEqual(command[:4], ["/usr/bin/systemctl", "--user", "--no-pager", "is-active"])
