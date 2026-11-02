@@ -161,9 +161,10 @@ this backend does not grant permission to substitute another browser.
 
 ## Supervised project tasks
 
-The [game-testing facilities plan](../plans/windows-game-testing.md) records
-native input acceptance and the proposed isolated-session, GPU capture, pacing,
-device recovery and process-audio increments.
+Use [test sessions](windows-test-sessions.md) for disposable profiles,
+project-defined readiness, project reservations and retained evidence. The
+[game-testing facilities plan](../plans/windows-game-testing.md) records native
+input acceptance and the remaining capture, pacing and recovery increments.
 
 For a long T3 workload, submit once without waiting. Save its ID and initial
 receipt in private task notes before calling `wait`. Record the executable/runtime

@@ -14,6 +14,7 @@ $savedLocal = $env:LOCALAPPDATA; $savedFnm = $env:FNM_DIR; $savedProvider = $env
 New-Item -ItemType Directory -Path $temporary | Out-Null
 try {
     & (Join-Path $PSScriptRoot 'Run-DevelopmentStateTests.ps1')
+    & (Join-Path $PSScriptRoot 'Run-DevelopmentSessionTests.ps1')
     $env:LOCALAPPDATA = Join-Path $temporary 'profile'
     $env:FNM_DIR = Join-Path $temporary 'fnm'
     $env:BASALTWATER_PROVIDER_FIXTURE = 'provider shell value'

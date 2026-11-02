@@ -83,6 +83,17 @@ Exit 0 means completed success, 1 means failure or attention required, and 124
 means caller wait timeout. Wait timeout/Ctrl+C leaves the task running; task
 timeout remains separate in `Receipt.State`. Collect output with `logs`.
 
+Opt-in `develop exec|node|run --test-session` creates a disposable profile and
+retains provenance/logs/artifacts with the task receipt. The project must honor
+`BASALTWATER_TEST_PROFILE` and atomically publish its readiness token; this does
+not sandbox an app that ignores the profile. `--ready-timeout` bounds readiness
+to 1–300 seconds (default 30). `develop ready ID [--timeout SECONDS]` waits for
+live readiness: exit 0 ready, 1 ended/attention, 124 caller timeout. It does not
+replace `wait` for confirmed terminal cleanup. Conflicting supervised work for
+the same project is refused until the session settles; uncertain cleanup retains
+the reservation and profile. See the [session contract](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/windows-test-sessions.md)
+before adapting a project. GPU/display metadata and recording remain separate.
+
 Status includes UTC execution boundaries and monotonic elapsed seconds from gate
 release preparation through confirmed cleanup, excluding queue time. Unknown or
 legacy timing is not reconstructed. Settled stream counters distinguish the

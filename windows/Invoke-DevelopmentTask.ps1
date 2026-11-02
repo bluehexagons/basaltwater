@@ -101,12 +101,19 @@ try {
     while (-not $process.WaitForExit(200)) {
         if (Test-Path -LiteralPath (Join-Path $directory 'cancel')) { $desired = 'cancelled'; break }
         if ($timer.Elapsed.TotalSeconds -ge $request.TimeoutSeconds) { $desired = 'timed-out'; break }
+        Update-DevelopmentSessionReadiness $record $timer.Elapsed.TotalSeconds
     }
     if ($process.HasExited) {
         $record.ExitCode = $process.ExitCode
         if ($desired -notin @('cancelled','timed-out')) { $desired = if ($process.ExitCode -eq 0) { 'complete' } else { 'failed' } }
+        if ($desired -notin @('cancelled','timed-out') -and (Test-DevelopmentSession $record) -and $record.TestSession.ReadyState -ne 'ready') {
+            $desired = 'failed'; $record.Message = 'Process exited before test readiness was observed'
+        }
     }
-} catch { $record.Message = $_.Exception.Message }
+} catch {
+    $record.Message = $_.Exception.Message
+    if ((Test-DevelopmentSession $record) -and $record.TestSession.ReadyState -eq 'pending') { $record.TestSession.ReadyState = 'failed' }
+}
 finally {
     try {
         Stop-DevelopmentProcess $job $process $started $copies
@@ -134,6 +141,13 @@ finally {
             catch {
                 $record.State = 'cleanup-uncertain'; $record.CompletedUtc = $null
                 $record.Message = 'Scheduler cleanup could not be confirmed: ' + $_.Exception.Message
+            }
+        }
+        if ($record.CompletedUtc) {
+            try { Remove-DevelopmentSessionProfile $record }
+            catch {
+                $record.State = 'cleanup-uncertain'; $record.CompletedUtc = $null
+                $record.Message = 'Test profile cleanup could not be confirmed: ' + $_.Exception.Message
             }
         }
         if ($record.CompletedUtc -and $timer -and $desired -ne 'interrupted') {

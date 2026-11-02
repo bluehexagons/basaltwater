@@ -132,7 +132,7 @@ Get-Acl -LiteralPath $PSScriptRoot | Out-Null
     [IO.File]::WriteAllText((Join-Path $developmentSource 'windows\Development.Common.ps1'), @'
 function Invoke-NativeDevelopmentCli($Arguments) {
     $receipt = [pscustomobject]@{ State = $env:BASALTWATER_TEST_TASK_STATE; ExitCode = 23 }
-    if ($Arguments[0] -eq 'wait') {
+    if ($Arguments[0] -in @('wait','ready')) {
         return [pscustomobject]@{ WaitState = $env:BASALTWATER_TEST_WAIT_STATE;
             TimedOut = ($env:BASALTWATER_TEST_WAIT_STATE -eq 'timed-out'); Receipt = $receipt }
     }
@@ -158,6 +158,13 @@ function Invoke-NativeDevelopmentCli($Arguments) {
             $wait = $response | ConvertFrom-Json
             Assert-True ($code -eq $case[2] -and $wait.WaitState -eq $case[0] -and
                 $wait.Receipt.State -eq $case[1] -and $wait.Receipt.ExitCode -eq 23) "Development wait lost receipt or exit meaning: $($case[0])/$($case[1])"
+        }
+        foreach ($case in @(@('ready','running',0), @('completed','complete',1),
+            @('timed-out','running',124), @('attention-required','cleanup-uncertain',1))) {
+            $env:BASALTWATER_TEST_WAIT_STATE = $case[0]
+            $env:BASALTWATER_TEST_TASK_STATE = $case[1]
+            $response = & $launcher desktop develop ready fixture-id --timeout 1 | Out-String
+            Assert-True ($LASTEXITCODE -eq $case[2] -and ($response | ConvertFrom-Json).WaitState -eq $case[0]) 'Ready wait lost receipt or exit meaning'
         }
     } finally {
         $env:BASALTWATER_TEST_TASK_STATE = $savedTaskState

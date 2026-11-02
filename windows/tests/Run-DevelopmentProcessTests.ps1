@@ -23,7 +23,7 @@ try {
     $env:LOCALAPPDATA = Join-Path $temporary 'account'
     $fixtureSource = Join-Path $temporary 'worker source'
     New-Item -ItemType Directory -Path $fixtureSource | Out-Null
-    foreach ($file in @('Development.Common.ps1','Development.Process.ps1','Invoke-DevelopmentTask.ps1','GitHubRunner.Common.ps1','ShellIntegration.Common.ps1')) {
+    foreach ($file in @('Development.Common.ps1','Development.Session.ps1','Development.Process.ps1','Invoke-DevelopmentTask.ps1','GitHubRunner.Common.ps1','ShellIntegration.Common.ps1')) {
         Copy-Item -LiteralPath (Join-Path $windows $file) -Destination (Join-Path $fixtureSource $file)
     }
     $processTypes = Join-Path $fixtureSource 'Development.Process.ps1'
@@ -37,6 +37,20 @@ try {
 from __future__ import annotations
 import json, os, pathlib, subprocess, sys, time
 mode, child_path = sys.argv[1:3]
+if mode.startswith('session-'):
+    profile = pathlib.Path(os.environ['BASALTWATER_TEST_PROFILE'])
+    (profile / 'settings.json').write_text('{}', encoding='utf-8')
+    if mode == 'session-early':
+        sys.exit(0)
+    if mode != 'session-timeout':
+        ready = pathlib.Path(os.environ['BASALTWATER_TEST_READY_FILE'])
+        marker = ready.with_suffix('.tmp')
+        marker.write_text(json.dumps({'Token': os.environ['BASALTWATER_TEST_READY_TOKEN']}), encoding='utf-8')
+        os.replace(marker, ready)
+    if mode in ('session-ready', 'session-scheduler-cleanup-fail'):
+        print('session evidence retained', flush=True)
+        time.sleep(2)
+        sys.exit(0)
 if mode in ('flood', 'failed-flood', 'paused-flood'):
     for stream in (sys.stdout.buffer, sys.stderr.buffer):
         head, tail = b'BEGIN-OF-PROBE\n', b'\nEND-OF-PROBE\n'
@@ -46,7 +60,7 @@ if mode in ('flood', 'failed-flood', 'paused-flood'):
         while not pathlib.Path(child_path + '.release').exists():
             time.sleep(0.01)
     sys.exit(23 if mode == 'failed-flood' else 0)
-if mode in ('cancel', 'timeout', 'orphan', 'crash'):
+if mode in ('cancel', 'timeout', 'orphan', 'crash', 'session-timeout', 'session-cancel'):
     child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
     marker = pathlib.Path(child_path + '.tmp')
     marker.write_text(str(child.pid), encoding='utf-8')
@@ -55,7 +69,8 @@ if mode in ('cancel', 'timeout', 'orphan', 'crash'):
 print(json.dumps({'argv': sys.argv[3:], 'date': os.environ.get('TASK_LITERAL_DATE')}))
 sys.exit(23 if mode == 'fail' else 0)
 '@
-    foreach ($mode in @('success','fail','flood','failed-flood','paused-flood','timeout','cancel','orphan','cleanup-fail','scheduler-cleanup-fail','crash')) {
+    foreach ($mode in @('success','fail','flood','failed-flood','paused-flood','timeout','cancel','orphan','cleanup-fail','scheduler-cleanup-fail','crash',
+        'session-ready','session-early','session-timeout','session-cancel','session-scheduler-cleanup-fail')) {
         $id = [guid]::NewGuid().ToString('N')
         $directory = Get-DevelopmentDirectory $id
         Initialize-DevelopmentDirectory $directory
@@ -68,7 +83,7 @@ sys.exit(23 if mode == 'fail' else 0)
         $request = [pscustomobject]@{ Project = $project; Executable = $python.Source;
             Argv = @($fixture, $mode, $childFile) + $literal; Environment = $environment; Msvc = $false;
             # Include startup/compilation headroom so timeout exercises a live native tree.
-            PowerShell = $shell; TimeoutSeconds = $(if ($mode -eq 'timeout') { 10 } else { 30 }) }
+            PowerShell = $shell; Node = ''; TimeoutSeconds = $(if ($mode -eq 'timeout') { 10 } else { 30 }) }
         $record = [pscustomobject]@{ Id = $id; OwnerSid = (Get-DevelopmentSid); SessionId = (Get-Process -Id $PID).SessionId;
             WorkerPid = 0; WorkerStartedUtc = ''; ChildPid = 0; ChildStartedUtc = ''; CreatedUtc = [datetime]::UtcNow.ToString('o');
             CompletedUtc = $null; State = 'queued'; ExitCode = $null; TaskName = 'Basaltwater Development ' + $id; Message = '' }
@@ -76,6 +91,10 @@ sys.exit(23 if mode == 'fail' else 0)
             # A long queue across wall-clock days must not inflate execution time.
             $record.CreatedUtc = [datetime]::UtcNow.AddDays(-30).ToString('o')
             $record | Add-Member NoteProperty Boot (Get-DevelopmentBoot)
+        }
+        if ($mode -like 'session-*') {
+            $record | Add-Member NoteProperty TestSession (New-DevelopmentSession $id 10)
+            Initialize-DevelopmentSession $record $request
         }
         Write-DevelopmentJson (Join-Path $directory 'request.json') $request
         Write-DevelopmentJson (Join-Path $directory 'receipt.json') $record
@@ -92,7 +111,7 @@ function Unregister-ScheduledTask {
     $published = Get-DevelopmentRecord 'FIXTURE_ID'
     [IO.File]::WriteAllText((Join-Path $directory 'scheduler-cleanup-observed.json'),
         (@{ TerminalPublished = [bool]$published.CompletedUtc } | ConvertTo-Json))
-    if ('FIXTURE_MODE' -eq 'scheduler-cleanup-fail') { throw 'fixture Scheduler retirement failure' }
+    if ('FIXTURE_MODE' -in @('scheduler-cleanup-fail','session-scheduler-cleanup-fail')) { throw 'fixture Scheduler retirement failure' }
     $global:FixtureRegistration = $false
 }
 function Show-NativeDesktopNotification { }
@@ -124,12 +143,12 @@ function Remove-Item {
                     [IO.File]::WriteAllText($childFile + '.release', 'release')
                 }
             }
-            if ($mode -in @('timeout','cancel','orphan','crash') -and -not $descendant -and (Test-Path -LiteralPath $childFile)) {
+            if ($mode -in @('timeout','cancel','orphan','crash','session-timeout','session-cancel') -and -not $descendant -and (Test-Path -LiteralPath $childFile)) {
                 $descendant = Get-Process -Id ([int](Get-Content -LiteralPath $childFile)) -ErrorAction Stop
                 $null = $descendant.Handle
                 $active = Get-DevelopmentStatus $id
                 Assert-True ($active.State -eq 'running') 'A live PS7 guardian was misidentified as interrupted'
-                if ($mode -eq 'cancel') { [IO.File]::WriteAllText((Join-Path $directory 'cancel'), 'cancel') }
+                if ($mode -in @('cancel','session-cancel')) { [IO.File]::WriteAllText((Join-Path $directory 'cancel'), 'cancel') }
                 if ($mode -eq 'crash') { $guardian.Kill() }
             }
         }
@@ -142,11 +161,12 @@ function Remove-Item {
             Assert-True ($null -eq $uncertain.ElapsedSeconds -and $null -eq $uncertain.ExecutionEndedUtc) 'Uncertain cleanup invented timing'
             continue
         }
-        if ($mode -eq 'scheduler-cleanup-fail') {
+        if ($mode -in @('scheduler-cleanup-fail','session-scheduler-cleanup-fail')) {
             $uncertain = Get-DevelopmentRecord $id
             Assert-True ($uncertain.State -eq 'cleanup-uncertain' -and -not $uncertain.CompletedUtc -and
                 $uncertain.Message -match 'Scheduler' -and -not (Test-Path -LiteralPath (Join-Path $directory 'request.json'))) 'Scheduler retirement failure was hidden by a terminal receipt'
             Assert-True ($null -eq $uncertain.ElapsedSeconds -and $null -eq $uncertain.ExecutionEndedUtc) 'Uncertain Scheduler cleanup invented timing'
+            if ($mode -like 'session-*') { Assert-True (Test-Path -LiteralPath $uncertain.TestSession.ProfilePath) 'Uncertain Scheduler cleanup removed the session profile' }
             continue
         }
         if ($mode -eq 'crash') {
@@ -161,6 +181,17 @@ function Remove-Item {
             continue
         }
         $result = Get-DevelopmentRecord $id
+        if ($mode -like 'session-*') {
+            $expected = switch ($mode) { session-ready { 'complete' }; session-early { 'failed' }; session-timeout { 'failed' }; session-cancel { 'cancelled' } }
+            Assert-True ($result.State -eq $expected -and $result.CompletedUtc -and $result.TestSession.ProfileCleanup -eq 'removed' -and
+                -not (Test-Path -LiteralPath $result.TestSession.ProfilePath)) "Session $mode did not settle: $($result | ConvertTo-Json -Depth 5 -Compress)"
+            Assert-True ((Test-Path -LiteralPath (Join-Path $directory 'session-evidence.json')) -and
+                -not (Test-Path -LiteralPath (Join-Path $directory 'request.json'))) 'Session lost provenance or retained credentials'
+            if ($mode -eq 'session-ready') { Assert-True ($result.TestSession.ReadyState -eq 'ready' -and $result.TestSession.ReadyElapsedSeconds -gt 0) 'Live readiness not observed' }
+            if ($mode -eq 'session-timeout') { Assert-True ($result.TestSession.ReadyState -eq 'timed-out' -and $result.Message -match 'readiness deadline') 'Readiness deadline not distinct from task timeout' }
+            if ($descendant) { Assert-True ($descendant.WaitForExit(0)) 'Session terminal receipt preceded descendant cleanup'; $descendant.Dispose() }
+            continue
+        }
         $expected = switch ($mode) { success { 'complete' }; fail { 'failed' }; flood { 'complete' }; failed-flood { 'failed' }; paused-flood { 'complete' }; timeout { 'timed-out' }; cancel { 'cancelled' }; orphan { 'complete' } }
         Assert-True ($result.State -eq $expected -and $result.CompletedUtc) "Expected $expected after process cleanup; got $($result.State): $($result.Message)"
         $retirement = Read-DevelopmentJson (Join-Path $directory 'scheduler-cleanup-observed.json')
