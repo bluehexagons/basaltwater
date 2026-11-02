@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import uuid
@@ -56,6 +57,12 @@ def review_batch(args: argparse.Namespace) -> dict:
         raise ValueError("Batch manifest requires version: 1")
     json.dumps(manifest, allow_nan=False)
     keys = _keys(manifest.get("compare_keys"))
+    sequence = manifest.get("sequence")
+    if sequence is not None:
+        if (not isinstance(sequence, dict) or set(sequence) != {"fps"}
+                or type(sequence["fps"]) not in (int, float) or not math.isfinite(sequence["fps"])
+                or not 0 < sequence["fps"] <= 60):
+            raise ValueError("sequence requires only fps, greater than zero and at most 60")
     entries = manifest.get("pairs")
     if not isinstance(entries, list) or not 1 <= len(entries) <= 256:
         raise ValueError("Batch manifest requires 1–256 pairs")
@@ -107,10 +114,12 @@ def review_batch(args: argparse.Namespace) -> dict:
         pairs.append(pair)
     # Identity binds downloaded review records to the exact images, metadata and crops.
     records = [{**pair, "before": pair["before"]["metadata"], "after": pair["after"]["metadata"]} for pair in pairs]
-    identity = hashlib.sha256(json.dumps(records, sort_keys=True, allow_nan=False).encode()).hexdigest()
+    identity = hashlib.sha256(json.dumps({"pairs": records, "sequence": sequence}, sort_keys=True, allow_nan=False).encode()).hexdigest()
     result = {"schema_version": 1, "batch_id": identity, "compare_keys": keys, "pairs": records,
               "missing_categories": sorted(set(CATEGORIES) - {pair["category"] for pair in pairs}),
               "visual_correctness": "unverified"}
+    if sequence is not None:
+        result["sequence"] = sequence
     title = _label(manifest.get("title", "Batch visual review"), "Batch title")
     directory = _directory(args.output, "batch-" + uuid.uuid4().hex[:12])
     viewer = os.path.join(directory, "index.html")

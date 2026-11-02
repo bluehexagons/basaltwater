@@ -87,6 +87,19 @@ class BatchReviewTests(unittest.TestCase):
         self.manifest["pairs"][0]["crops"][0]["rect"] = [0, 0, 1, 1]
         self.assertNotEqual(self.review()["batch_id"], original)
 
+    def test_sequence_cadence_is_validated_and_bound_to_review_identity(self) -> None:
+        for fps in (True, 0, -1, 61, "24"):
+            self.manifest["sequence"] = {"fps": fps}
+            with self.subTest(fps=fps), self.assertRaisesRegex(ValueError, "fps"):
+                self.review()
+            self.assertFalse((self.root / "review").exists())
+        self.manifest["sequence"] = {"fps": 12}
+        original = self.review()
+        self.assertEqual(original["sequence"], {"fps": 12})
+        self.args.output = str(self.root / "changed-cadence")
+        self.manifest["sequence"] = {"fps": 24}
+        self.assertNotEqual(self.review()["batch_id"], original["batch_id"])
+
     def test_dimension_mismatch_and_unsafe_metadata(self) -> None:
         (self.root / "b.png").write_bytes(png_bytes(5, 4))
         with self.assertRaisesRegex(ValueError, "Different image dimensions"):
@@ -103,12 +116,16 @@ class BatchReviewTests(unittest.TestCase):
         pair["after"]["settings"]["quality"] = 2
         self.manifest["pairs"].append(pair)
         self.args.allow_incompatible = True
-        result = self.review()
-        completed = subprocess.run(
-            [shutil.which("node"), str(Path(__file__).with_name("visual_batch_harness.cjs"))],
-            input=Path(result["viewer"]).read_text(), capture_output=True, text=True, timeout=20,
-        )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
+        for sequence in (None, {"fps": 12}):
+            with self.subTest(sequence=sequence):
+                self.manifest["sequence"] = sequence
+                self.args.output = str(self.root / ("sequence" if sequence else "still"))
+                result = self.review()
+                completed = subprocess.run(
+                    [shutil.which("node"), str(Path(__file__).with_name("visual_batch_harness.cjs"))],
+                    input=Path(result["viewer"]).read_text(), capture_output=True, text=True, timeout=20,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
 
 
 if __name__ == "__main__":

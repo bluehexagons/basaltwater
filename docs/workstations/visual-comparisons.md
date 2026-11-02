@@ -239,6 +239,30 @@ private output rules match individual comparisons. `batch.json` records
 observations, hashes, crops, compatibility issues and missing categories;
 `index.html` embeds the images without external resources.
 
+### Review transition sequences
+
+Add `"sequence": {"fps": 12}` at the top level of a batch manifest and list
+its pairs in chronological order. Each pair is one synchronized before/after
+frame. Include the observed simulation frame/time in each side's settings and
+in `compare_keys`, alongside camera and renderer observations. The project
+owns pairing, equal capture steps and deterministic transition preparation;
+file names alone do not establish synchronization.
+
+The gallery adds a keyboard-accessible frame scrubber and Play/Pause control.
+Playback advances both images together, retains zoom/scroll and the selected
+comparison mode, and stops at the last pair or a decode error. Incompatible
+pairs still disable overlays/differences. Scrubbing, changing views, entering
+notes or hiding the tab pauses playback. Playing through a frame never marks
+it inspected. Notes and inspection records remain per frame/crop; download
+the record to retain them. Playback starts only when requested.
+
+`fps` accepts a finite number greater than zero through 60 and is included in
+the batch identity and downloaded record. The browser waits for both images
+before advancing; decoding and pixel-difference computation can slow playback.
+This is visual sequence review, not a measurement of display cadence. Existing
+batch limits apply, including 256 pairs and 128 MiB embedded image data; split
+longer transitions. No GIF/video conversion, server or network is required.
+
 ## Export and inspect the consumer
 
 Keep interchange recipes in the asset's project. Use the existing declared
