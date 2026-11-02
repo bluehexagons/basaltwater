@@ -37,7 +37,7 @@ from test status.
 | Compressed swap | 🟡 **Partial** | Real zram devices and component failure/recovery | Native zswap controls, reboot and pressure |
 | Security event retention | 🟡 **Partial** | Logs, rotation, gaps and live monitor components | Continuous daemon behavior and power loss |
 | Agent tools and tasks | 🟢 **Labbed** | Selected enrollment, managed skills, task/goal flows | Other providers and longer interrupted runs |
-| Approval and admin jobs | 🟢 **Labbed** | Selected approval/refresh; real leaf-package upgrade, separately approved no-op, native index failure/lock wait and task/service preservation. 2026-11-02 owned signed package adds real APT/dpkg conffile conflict, daemon restart and no-op without another restart; see [scope](evidence.md#admin-service-restart-and-conffile-conflict) | Distribution service packages, kernel updates, failing maintainer hooks and uncertain/power-loss boundaries |
+| Approval and admin jobs | 🟢 **Labbed** | Selected approval/refresh; real leaf-package upgrade/no-op, index failure/lock wait and task/service preservation. Owned signed packages add conffile conflict/restart and a failed post-install hook, retained half-configured state, independently approved recovery and no-op; see [recovery scope](evidence.md#admin-failed-maintainer-hook-and-recovery) | Distribution service/kernel packages, broader hook failures and uncertain/power-loss boundaries |
 | mDNS and automatic updates | 🟡 **Partial** | Packaged services and timer handoff failure/retry components | Full setup, remote discovery and scheduled upgrades |
 | Sync and PAR2 | 🟢 **Labbed** | Selected mirror, mount guards and repair; controlled failures | Hard-mounted network storage and power loss |
 | Btrfs | 🟢 **Labbed** | Single-device setup, rerun, reboot and read-only native scrub | Diagnostic integration and scheduled native scrub; multi-device/subvolume support needs design, and single-copy data cannot self-repair |
@@ -53,7 +53,7 @@ from test status.
 | Web panels | 🟢 **Labbed** | Selected setup/auth and component lifecycle/recovery; browser fixtures | Full removal/interruption, additional browsers and native console |
 | Managed user rename | 🟢 **Labbed** | Selected identity, home and recovery cases | More interruption points and application-specific migration |
 | Resource-constrained development | 🟢 **Labbed** | Selected 1 vCPU / 1 GiB Debian workload | Full suite, browser and other platforms at that floor |
-| Repository checks | 🟡 **Partial** | [Proxmox-fix revision: 9,243 tests, six skips, 82% branch-aware coverage](evidence.md#automated-validation), 2026-10-31; full Debian and Node compatibility CI passed | Historical revision only; browser and physical hardware are separate |
+| Repository checks | 🟡 **Partial** | [2026-11-02 specimen repair `785c3ffd`: 9,196 tests, six local skips, 82% branch-aware coverage](evidence.md#automated-validation); hosted full Debian (three skips) and Node compatibility CI passed | Named revision only; browser and physical hardware are separate |
 | Desktop development and visual checks | 🟡 **Partial** | Debian 13 software GLX, small Blender CPU render and XRDP edit/save fixture | Native GPU/display, audio, Wayland and full project images |
 | T3 Code and provider workflows | 🟡 **Partial** | Selected enrollment and task checks; additional T3 components | Exact-candidate install, pairing, migration and complete live workflow |
 | Game publishing and external alerts | 🟡 **Partial** | Automated checks or selected observations | Full publishing and external-provider paths |

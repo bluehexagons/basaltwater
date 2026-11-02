@@ -100,6 +100,18 @@ change counts as `changed` even when its pixel hash is identical. Cropping is
 a monitor observation, not private window capture or compositor targeting.
 The output, compact observation and evidence record retain this mapping.
 
+When the image is presented at a different size, calculate monitor coordinates
+before input with `basaltw desktop --native map-point --geometry WIDTH HEIGHT
+--view-geometry WIDTH HEIGHT --x X --y Y`. Use the full-monitor capture geometry,
+the size of the entire PNG as presented (excluding viewer margins), and points
+relative to that view. Pass the same `--crop` for a cropped capture; optional
+paired `--to-x`/`--to-y` map a drag endpoint. The read-only result includes
+per-axis scale, origin and ready-to-copy `input_args`. Copy them without applying
+another scale; the input helper handles portal logical scaling. No desktop
+request is made, so this calculation cannot refresh an expired observation.
+For unknown viewer transforms, obtain a known full view or a bounded native crop.
+See [mapping examples and playtest qualification](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/game-testing.md).
+
 ```fish
 basaltw desktop --native input click --generation GEN --geometry 2560 1440 --x 400 --y 200
 basaltw desktop --native input key --generation GEN --geometry 2560 1440 --key ctrl+s

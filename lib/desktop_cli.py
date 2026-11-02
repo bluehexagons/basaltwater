@@ -67,6 +67,18 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     target = screenshot.add_mutually_exclusive_group()
     target.add_argument("--window", help="Capture a window ID from 'desktop windows'")
     target.add_argument("--active-window", action="store_true", help="Capture the active application without changing focus")
+    mapping = commands.add_parser("map-point", help="Native: convert presented-image points to monitor pixels without sending input")
+    mapping.add_argument("--geometry", required=True, nargs=2, type=int, metavar=("WIDTH", "HEIGHT"),
+                         help="Full-monitor geometry from the screenshot metadata")
+    mapping.add_argument("--view-geometry", required=True, nargs=2, type=int, metavar=("WIDTH", "HEIGHT"),
+                         help="Dimensions of the entire PNG as presented, excluding viewer margins")
+    mapping.add_argument("--crop", nargs=4, type=int, metavar=("X", "Y", "WIDTH", "HEIGHT"),
+                         help="Same monitor-pixel crop used for the screenshot; omit for a full capture")
+    mapping.add_argument("--x", required=True, type=int, help="Image-local x in the presented view")
+    mapping.add_argument("--y", required=True, type=int, help="Image-local y in the presented view")
+    mapping.add_argument("--to-x", type=int, help="Optional drag endpoint x in the same view")
+    mapping.add_argument("--to-y", type=int, help="Optional drag endpoint y in the same view")
+    mapping.add_argument("--json", action="store_true")
     execute = commands.add_parser("exec")
     execute.add_argument("--wait-window", help="Wait for a visible window with this literal title substring")
     execute.add_argument("--timeout", type=float, default=15)
@@ -161,7 +173,13 @@ def run_desktop_command(args: argparse.Namespace) -> int:
     try:
         command = args.desktop_command
         control_command = "basaltw desktop --native" if backend is not runtime else "basaltw desktop"
-        if command == "evidence":
+        if command == "map-point":
+            if backend is runtime:
+                raise ValueError("Selected-monitor coordinate mapping requires --native")
+            from desktop.coordinates import map_capture_points
+            result = map_capture_points(args.geometry, args.view_geometry, args.x, args.y,
+                                        crop=args.crop, to_x=args.to_x, to_y=args.to_y)
+        elif command == "evidence":
             if backend is runtime:
                 raise ValueError("Manual desktop evidence requires --native")
             from desktop.evidence import finalize

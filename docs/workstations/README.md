@@ -16,6 +16,7 @@ workflows that use native desktop applications. For coding-agent security and VM
 | [CachyOS desktop control](cachyos-desktop.md) | KDE capture, input, accessibility, consent, and qualification |
 | [Remote CachyOS development](cachyos-development.md) | Godot-first development, playtesting, and client workflows |
 | [CachyOS game tooling](cachyos-game-development.md) | Native game tools, runtime selection and capture backends |
+| [Agent-assisted game testing](game-testing.md) | Controller qualification, coordinate mapping, scene checks, budgets and private playtest evidence |
 | [Windows game tooling](windows-game-development.md) | Native compiler/SDK setup, runtime tools and local qualification |
 | [Antistatic integration](../integrations/antistatic/README.md) | Optional game, Animator, asset and service workflows |
 | [Desktop automation](desktop-automation.md) | Accessibility inspection, screenshots, window management, and input |
