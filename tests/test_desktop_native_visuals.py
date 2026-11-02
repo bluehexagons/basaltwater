@@ -19,8 +19,65 @@ from unittest.mock import Mock, call, patch
 import zlib
 
 from desktop import client, control_state, native_session as native, portal_capture
+from desktop.coordinates import map_capture_points
 from desktop.observations import compact_capture
 from lib import desktop_cli
+
+
+class CaptureCoordinateTests(unittest.TestCase):
+    def test_presented_full_capture_and_drag_map_to_monitor_pixels(self) -> None:
+        result = map_capture_points([2400, 1600], [1920, 1280], 800, 600, to_x=1200, to_y=800)
+        self.assertEqual(result["input_coordinates"], {"x": 1000, "y": 750, "to_x": 1500, "to_y": 1000})
+        self.assertEqual(result["input_args"], "--x 1000 --y 750 --to-x 1500 --to-y 1000")
+        self.assertEqual(result["scale"], [1.25, 1.25])
+        self.assertFalse(result["input_sent"])
+
+    def test_crop_origin_scaling_rounding_and_edges(self) -> None:
+        for point, expected in (((0, 0), (100, 200)), ((200, 150), (500, 500)), ((399, 299), (898, 798))):
+            with self.subTest(point=point):
+                result = map_capture_points([2400, 1600], [400, 300], *point, crop=[100, 200, 800, 600])
+                self.assertEqual(result["input_coordinates"], dict(zip(("x", "y"), expected)))
+                self.assertEqual(result["image_origin"], [100, 200])
+                self.assertEqual(result["image_geometry"], [800, 600])
+        # Independent axes and floor division also cover rounded viewer sizes and upscaling.
+        self.assertEqual(map_capture_points([3, 2], [8, 5], 7, 4)["input_coordinates"], {"x": 2, "y": 1})
+        self.assertEqual(map_capture_points([2400, 1600], [2400, 1600], 2399, 1599)["input_coordinates"],
+                         {"x": 2399, "y": 1599})
+
+    def test_invalid_geometry_crop_points_and_partial_drag_are_rejected(self) -> None:
+        base = {"geometry": [2400, 1600], "view_geometry": [1920, 1280], "x": 800, "y": 600}
+        for changes in ({"geometry": None}, {"geometry": [1]}, {"geometry": [True, 100]},
+                        {"geometry": [16385, 1]}, {"geometry": [8192, 8192]},
+                        {"view_geometry": [0, 100]}, {"view_geometry": [100.5, 100]},
+                        {"view_geometry": "1920x1280"}, {"crop": [100, 200, 2400, 1600]},
+                        {"crop": [True, 0, 100, 100]}, {"x": -1}, {"x": 1920},
+                        {"x": True}, {"y": 1280}, {"y": 1.5}, {"to_x": 100},
+                        {"to_y": 100}, {"to_x": 100, "to_y": 1280}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                map_capture_points(**{**base, **changes})
+
+    def test_cli_mapping_never_contacts_desktop_or_creates_artifacts(self) -> None:
+        parser = argparse.ArgumentParser()
+        desktop_cli.add_desktop_subparser(parser.add_subparsers())
+        arguments = ["map-point", "--geometry", "2400", "1600", "--view-geometry", "400", "300",
+                     "--crop", "100", "200", "800", "600", "--x", "200", "--y", "150", "--json"]
+        with patch.object(native, "status") as status, patch.object(native, "request") as request, \
+                patch.object(client.runtime, "status") as debian_status, \
+                patch.object(client.runtime, "request") as debian_request, \
+                patch.object(client, "artifact_path") as artifact:
+            for prefix, suffix, code in ((["desktop", "--native"], [], 0),
+                                         (["desktop", "--native"], ["--to-x", "400", "--to-y", "10"], 1),
+                                         (["desktop"], [], 1)):
+                output = StringIO()
+                with self.subTest(prefix=prefix, suffix=suffix), redirect_stdout(output):
+                    self.assertEqual(desktop_cli.run_desktop_command(parser.parse_args(prefix + arguments + suffix)), code)
+                    result = json.loads(output.getvalue())
+                    if code == 0:
+                        self.assertEqual(result["input_args"], "--x 500 --y 500")
+                    else:
+                        self.assertIn("error", result)
+            for mock in (status, request, debian_status, debian_request, artifact):
+                mock.assert_not_called()
 
 
 class NativeCanvasTests(unittest.TestCase):

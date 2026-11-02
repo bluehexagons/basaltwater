@@ -34,6 +34,7 @@ Read only the reference needed for the current operation:
 | Vector, raster, audio, video and other native assets | [Media](references/media.md) |
 | Capture backends, Xvfb, high-resolution and post-refresh evidence | [Rendering evidence](references/rendering.md) |
 | Persistent agent control, Wayland consent, accessibility, input and recovery | [Native control](references/native-control.md) |
+| Manual game playtests, controller/scene qualification, waits, budgets and handoffs | [Game testing](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/game-testing.md) |
 
 ## Keep the desktop loop focused
 

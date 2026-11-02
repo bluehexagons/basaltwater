@@ -10,6 +10,8 @@ For Godot, Electron, and native project launches over T3, Sunshine/Moonlight,
 or SSH, use the [remote development guide](cachyos-development.md).
 `basaltw desktop --native develop` launches supervised tasks without requesting
 screen/input access, while honoring the persistent agent control state.
+For manual game tests, use the [playtest procedure](game-testing.md) for fresh
+worker qualification, scene verification, game-specific waits and bounded briefs.
 
 ## Agent permission and portal access
 
@@ -93,6 +95,13 @@ release stops the helper. `screenshot --crop X Y WIDTH HEIGHT` returns
 `image_origin` and `image_geometry` alongside full-monitor `geometry`. Add the
 origin to crop-image coordinates before input; the helper then converts monitor
 pixels to portal logical coordinates. Crops remain selected-monitor observations.
+If the PNG is presented at a different size, use
+`basaltw desktop --native map-point --geometry WIDTH HEIGHT --view-geometry WIDTH HEIGHT
+--x X --y Y` to calculate monitor-pixel input arguments before acting. Pass the
+same `--crop` when mapping a cropped screenshot; optional `--to-x`/`--to-y` map
+a drag endpoint. This read-only aid reports scale and origin, validates bounds,
+and sends no input. It does not establish scene, focus or capture freshness.
+See [mapping examples and viewer limits](game-testing.md#map-a-presented-image).
 See the [native control reference](../../common/agent_skills/basaltwater-cachyos-desktop/references/native-control.md#observe-act-verify)
 for bounds, interruption and mapping details. Drag/crop contract tests use mocked
 system calls; live application interaction is a separate qualification.
