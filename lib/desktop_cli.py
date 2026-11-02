@@ -149,8 +149,9 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     action = commands.add_parser("input", help="Apply a bounded input using screenshot generation/geometry")
     action.add_argument("--generation", required=True)
     action.add_argument("--geometry", required=True, nargs=2, type=int, metavar=("WIDTH", "HEIGHT"))
-    action.add_argument("kind", choices=("key", "text", "click", "move", "drag"))
+    action.add_argument("kind", choices=("key", "keycode", "text", "click", "move", "drag"))
     action.add_argument("--key")
+    action.add_argument("--codes", nargs="+", type=int, help="Native physical chord: 1–8 distinct Linux evdev keyboard codes (1–255), e.g. 29 30 for Ctrl+A; no XKB +8 offset")
     action.add_argument("--text")
     action.add_argument("--delay-ms", type=int, help="Pace text characters by 1–100 ms (20-second budget); useful for Blender's console")
     action.add_argument("--hold-ms", type=int, help="Native key/button press duration, 0–5000 ms; e.g. 120 for game buttons")
@@ -359,6 +360,8 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                         if Path(observation_output).suffix.lower() != ".png" or Path(observation_output).exists():
                             raise ValueError("Observation requires a new PNG path")
                     payload.update({name: getattr(args, name) for name in ("generation", "geometry", "kind", "key", "text", "x", "y", "button")})
+                    payload["codes"] = getattr(args, "codes", None)
+                    client.validate_keycodes(payload)
                     payload["delay_ms"] = (10 if backend is not runtime and args.kind == "text" and args.delay_ms is None else args.delay_ms)
                     client.validate_text_delay(payload)
                     payload["hold_ms"] = args.hold_ms

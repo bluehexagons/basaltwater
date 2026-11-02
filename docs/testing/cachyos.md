@@ -25,6 +25,8 @@ CachyOS VM/container provisioning are outside its scope. See the
 | Managed worktrees and shared checkpoints | 🟢 **Labbed** | Native CLI create/status, shared-memory revision-checked updates, isolated edits/checks, Git fast-forward integration and push, then clean/merged status, removal preview and removal on 2026-11-01; ignored audit evidence retained before cleanup | Dirty/unmerged removal refusal, revision conflicts, concurrent editors, alternate roots and T3 worktree binding |
 | T3 web runtime | 🟡 **Partial** | 0.1.6 archive, PTY, disposable HTTP startup, SQLite and generated unit checks | Live unit activation/restart, pressure and complete client/provider workflows |
 | KDE desktop capture and input | 🟢 **Labbed** | Owner-approved selected-monitor capture and real Godot menus/gameplay on 2026-10-31 and 2026-11-01; 120 ms held keys/buttons, wheel input, text entry and popup interaction. Saved access restored without a new prompt; stale-capture input rejection recovered through fresh capture. Earlier native checks exercised stale-generation rejection and renewal | Live takeover/revocation, monitor/scaling changes, logout/reboot and other application identities |
+| Physical keyboard injection and helper state | 🟢 **Labbed** | Evdev bracket presses, Ctrl+A, Shift+W and an unmodified following key reached disposable Godot 4.7.2 XWayland and Wayland fields on 2026-11-02; held Ctrl appeared in helper-only status and cleared after release | Godot's bracket physical codes differed by display backend; global hardware modifiers, lock state, other layouts/providers and live interruption remain unverified |
+| Session-scoped task inventory | 🟢 **Labbed** | Time-filtered discovery recovered one task from a game session whose global listing was truncated; new evidence automatically attached its in-session probe and finalized without inventory truncation on 2026-11-02 | The separate 500-entry scan cap, more than 50 matching tasks and interruption remain qualification boundaries; mocked cap/timezone regressions are separate |
 | Timed native observations | 🟢 **Labbed** | `input --observe` and `screenshot --next-frame --compact` returned reviewed game captures, ordered input/frame timestamps, pixel hashes and change metadata on 2026-11-01; native help correctly hides unavailable window capture | Stalled/static streams, cancellation, capture-failure recovery and latency qualification |
 | Sleeping-display capture recovery | 🟢 **Labbed** | A black monitor capture recovered after `basaltw desktop --native wake` with agent control enabled; a fresh capture showed the desktop and later game presentation on 2026-11-01 | Locked, disconnected or disabled outputs, repeated sleep/wake cycles and capture-stream recovery beyond this case |
 | Manual native evidence records | 🟢 **Labbed** | Automatic task attachment, Git provenance, exit outcomes, private modes/paths, offline and repeated finalization verified. Extended audit reported its 500-event cap; shorter follow-ups retained complete events. A long-session task inventory reported truncation on 2026-11-02, with owned task completion separately verified | Interrupted writes/collection, unavailable task inventory, recovery at caps and other application identities |
@@ -237,9 +239,9 @@ the application's known shutdown warnings without runtime errors. Running
 Basaltwater source still reported `5184cef0` with a dirty flag, so this is not
 clean-release qualification.
 
-Useful additions would be app-scoped loopback capture for audio acceptance and
-paginated or time-scoped evidence task discovery for long sessions. Neither is
-claimed as an available, qualified capability here.
+This pass identified app-scoped loopback capture and session-scoped task
+discovery as useful additions. The later toolkit follow-up below qualifies
+time-scoped discovery; application audio capture remains unavailable.
 
 ### Native translated menus and input limits, 2026-11-02
 
@@ -268,7 +270,9 @@ modifier-state diagnostics and a verified Unicode/IME committed-text path.
 Qualification should compare requested input with events delivered to the
 application and the resulting field contents. Existing keysym input remains
 useful for the individually observed flows; it is not equivalent to physical
-keyboard coverage across layouts.
+keyboard coverage across layouts. The later toolkit follow-up below qualifies
+physical injection and helper-only modifier observations, while retaining the
+Wayland punctuation-mapping and Unicode/IME boundaries.
 
 The two native processes exited with status zero and no runtime errors, apart
 from the application's separately documented shutdown warnings. Their records
@@ -309,6 +313,53 @@ directly. Normal exits retained known application/engine shutdown warnings
 without runtime errors. Raw records, monitor captures and observer state stay
 private. Running Basaltwater still reported dirty source `5184cef0`, so this
 does not qualify a clean toolkit release, performance, audible output or HDR.
+
+### Native keyboard and task-inventory improvements, 2026-11-02
+
+An isolated Basaltwater checkout based on clean main `2e5e763a` added physical
+evdev keyboard chords, helper-injected modifier diagnostics and time-scoped
+development task discovery. The native helper was restarted from that changed
+checkout using the saved grant without another prompt. The installed launcher
+still reported dirty source `5184cef0`; its source was preserved. These checks
+qualify the changed source and helper, not an updated installation or release.
+
+Disposable Godot 4.7.2 OpenGL Compatibility windows ran sequentially on the same
+KDE Wayland/NVIDIA workstation, first through XWayland and then with Godot's
+explicit Wayland driver. Evdev codes 26/27 delivered bracket press/release
+events and inserted `[]` in both fields. Ctrl+A selected the field, Shift+W
+replaced it with `W`, and a subsequent unmodified B produced `Wb`. Application
+event logs verified delivered modifiers, Unicode and resulting field contents;
+fresh monitor captures independently showed the fields. During a one-second
+Ctrl+A hold, status reported two helper-injected presses and Ctrl, then zero
+pending keys and no modifiers after release. This does not observe the human's
+keyboard, lock state or other virtual input providers.
+
+The bracket mapping remained backend-dependent: XWayland delivered Godot
+physical codes 91/93, while Wayland delivered 123/125 with logical codes 91/93
+for the same evdev inputs. Physical injection therefore does not by itself
+qualify the game's physical-key-93 shortcut on Wayland. A related
+[upstream Godot punctuation report](https://github.com/godotengine/godot/issues/121097)
+also describes a Wayland/embedded difference; it is context rather than proof
+of the cause of this observation. No engine or game mapping workaround was
+applied. Unicode/IME committed text remains unqualified.
+
+Read-only time-scoped discovery over an existing game record returned its one
+session task without truncation, while the same project's global listing
+returned 50 tasks with truncation. The historical record was preserved. A new
+19-event probe record automatically attached the launch created during its
+interval; the earlier launch was attached explicitly. Both owned tasks exited
+normally with status zero. Finalization reported no event or task-inventory
+truncation, and offline verification matched all five recorded PNG files.
+Raw captures, logs, synthetic fields and identifiers remain private.
+
+Automated validation passed the desktop suite's 669 tests, plus 32 test-runner
+and documentation regressions, compilation, CLI/Markdown links and package
+metadata checks. These counts are Basaltwater tests, separate from the earlier
+game assertions. Mocked regressions cover complete-chord validation, native-only
+routing, reverse release after cancellation/partial failure, stop on release
+failure, timezone comparisons, filter-before-limit and the retained scan cap.
+Live takeover, revocation, disconnect and expiry were not repeated. All probe
+windows closed; enabled desktop control and the saved grant were preserved.
 
 ## Native SDL/OpenGL application follow-up, 2026-11-01
 

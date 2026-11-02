@@ -123,6 +123,28 @@ basaltw desktop --native input drag --generation GEN --geometry 2560 1440 \
 ```
 
 Keys use XKB names such as `Return`, `Shift_L`, `F4`, `ctrl+s`.
+For a game's physical bindings use `input keycode --codes 26` (left bracket),
+`--codes 27` (right bracket), or `--codes 29 30` (left Ctrl+A). Codes are Linux
+evdev keyboard codes, with no XKB +8 offset; they are not Godot key constants.
+The native-only chord accepts 1–8 distinct integers from 1 through 255,
+presses in order and releases in reverse. Use `--hold-ms` and `--observe` as
+with symbolic chords. Layout, shortcuts and application focus still affect
+the result. This uses the portal's
+[NotifyKeyboardKeycode method](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.RemoteDesktop.html).
+Verify delivered application events before claiming binding coverage: a native
+Godot 4.7.2 probe reported bracket physical codes 123/125 on Wayland and 91/93
+on XWayland for the same evdev codes 26/27. Physical injection does not normalize
+an engine's backend-specific key mapping. See the
+[dated qualification](https://github.com/bluehexagons/basaltwater/blob/main/docs/testing/cachyos.md#native-keyboard-and-task-inventory-improvements-2026-11-02).
+
+`status.input_capabilities` identifies helpers supporting physical input;
+restart older helpers after updating. `status.input_state` reports counts of
+pending helper-injected key presses and their named modifiers during a hold.
+It omits key values. A failed release retains its pending count and stops the
+helper. This is not global keyboard state: physical modifiers, lock keys and
+other input providers remain unavailable. A zero count cannot establish that
+the human's keyboard or another virtual keyboard has no stuck modifier.
+
 Key chords and pointer buttons 1–3 accept `--hold-ms 0–5000`
 (default 0); use 120 ms for game buttons that actuate during a press animation.
 Human override, disabled state, stop, backend expiry and client disconnection

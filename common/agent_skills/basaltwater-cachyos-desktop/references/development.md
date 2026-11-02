@@ -30,6 +30,16 @@ snapshot plus log/report paths and worker duration after completion. Counts
 include threads; historical PIDs are not cleanup identities. Save changes before
 stopping an editor.
 
+Use `develop list --project PATH --since ISO_TIME --until ISO_TIME --json` to
+find tasks created in one QA interval. Bounds are inclusive and require a
+timezone; comparison and ordering use UTC instants. Filtering precedes the
+50-match limit. `matches_truncated` reports excess matches, while
+`scan_truncated` reports the separate 500-entry scan bound; either sets
+`truncated`. A truncated scan cannot establish a complete inventory. Evidence
+finalization applies its own recording interval automatically. Explicit task
+IDs still attach earlier launches, and status remains the authority for each
+task's process outcome.
+
 Use `develop wait TASK_ID --timeout SECONDS --json` for completion (1–3600
 seconds, default 600). It returns one status with log/report paths and
 `wait_timed_out`; only verified successful completion exits zero. Failed,

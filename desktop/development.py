@@ -94,6 +94,8 @@ def add_development_parser(commands: argparse._SubParsersAction) -> None:
             action.add_argument("--timeout", type=int, default=600, help="Wait deadline in seconds (1–3600); does not stop the task")
     listing = actions.add_parser("list", help="List private task records; use status for current process state")
     listing.add_argument("--project", help="Filter records to an existing project/worktree")
+    listing.add_argument("--since", help="Inclusive creation-time lower bound, ISO 8601 with timezone")
+    listing.add_argument("--until", help="Inclusive creation-time upper bound, ISO 8601 with timezone")
     listing.add_argument("--json", action="store_true")
 
 
@@ -303,6 +305,19 @@ def _private_json(path: Path) -> dict:
     return value
 
 
+def parse_task_timestamp(value: str) -> datetime:
+    """Compare recorded instants in UTC, including explicit timezone offsets."""
+    try:
+        if not isinstance(value, str) or len(value) > 40:
+            raise ValueError
+        timestamp = datetime.fromisoformat(value)
+        if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+            raise ValueError
+        return timestamp.astimezone(timezone.utc)
+    except (ValueError, OverflowError) as exc:
+        raise ValueError("Task timestamps must be ISO 8601 with an explicit timezone") from exc
+
+
 def load_task(directory: Path) -> dict:
     _private_directory(directory)
     value = _private_json(directory / "task.json")
@@ -313,9 +328,7 @@ def load_task(directory: Path) -> dict:
             or value.get("kind") not in KINDS or type(value.get("owner_uid")) is not int
             or value["owner_uid"] != os.getuid()):
         raise ValueError("Invalid development task identity")
-    timestamp = value.get("created_at")
-    if not isinstance(timestamp, str) or len(timestamp) > 40 or datetime.fromisoformat(timestamp).tzinfo is None:
-        raise ValueError("Invalid development task timestamp")
+    parse_task_timestamp(value.get("created_at"))
     if "invocation_id" in value and (not isinstance(value["invocation_id"], str) or not TASK_ID.fullmatch(value["invocation_id"])):
         raise ValueError("Invalid development task invocation")
     if "control_revision" in value and (not isinstance(value["control_revision"], str)
@@ -473,13 +486,21 @@ def wait_task(task_id: str, *, timeout: int = 600) -> dict:
         time.sleep(min(0.5, remaining))
 
 
-def list_tasks(project: str | None = None) -> dict:
+def list_tasks(project: str | None = None, *, since: str | None = None, until: str | None = None) -> dict:
+    lower = parse_task_timestamp(since) if since is not None else None
+    upper = parse_task_timestamp(until) if until is not None else None
+    if lower is not None and upper is not None and lower > upper:
+        raise ValueError("Task creation-time lower bound must not follow the upper bound")
     _guard()
     selected = str(_project(project)) if project is not None else None
+    result = {"schema_version": 1, "ok": True, "tasks": [], "truncated": False,
+              "scan_truncated": False, "matches_truncated": False,
+              "filters": {"project": selected, "since": lower.isoformat() if lower is not None else None,
+                          "until": upper.isoformat() if upper is not None else None}}
     try:
         root = _root()
     except FileNotFoundError:
-        return {"schema_version": 1, "ok": True, "tasks": [], "truncated": False}
+        return result
     records = []
     truncated = False
     for index, directory in enumerate(root.iterdir()):
@@ -489,11 +510,14 @@ def list_tasks(project: str | None = None) -> dict:
         if not TASK_ID.fullmatch(directory.name):
             continue
         task = load_task(directory)
-        if selected is None or task["project"] == selected:
+        created = parse_task_timestamp(task["created_at"])
+        if ((selected is None or task["project"] == selected)
+                and (lower is None or lower <= created) and (upper is None or created <= upper)):
             records.append({"task": task["task"], "kind": task["kind"], "project": task["project"],
                 "created_at": task["created_at"], "directory": str(directory), "state": "recorded"})
-    records.sort(key=lambda value: value["created_at"], reverse=True)
-    return {"schema_version": 1, "ok": True, "tasks": records[:50], "truncated": truncated or len(records) > 50}
+    records.sort(key=lambda value: (parse_task_timestamp(value["created_at"]), value["task"]), reverse=True)
+    return {**result, "tasks": records[:50], "truncated": truncated or len(records) > 50,
+            "scan_truncated": truncated, "matches_truncated": len(records) > 50}
 
 
 def launch(project: str, kind: str, *, engine: str | None = None, scene: str | None = None,
@@ -619,7 +643,7 @@ def run_development_command(args: argparse.Namespace) -> int:
         if action == "doctor":
             result = doctor(args.project, args.engine, export_check=getattr(args, "export_check", False))
         elif action == "list":
-            result = list_tasks(args.project)
+            result = list_tasks(args.project, since=getattr(args, "since", None), until=getattr(args, "until", None))
         elif action in ("status", "stop"):
             result = task_status(args.task, stop=action == "stop", dry_run=getattr(args, "dry_run", False))
         elif action == "wait":

@@ -25,6 +25,12 @@ MAX_MESSAGE = 65536
 SESSION_SECONDS = 0
 MAX_SESSION_SECONDS = 28800
 
+# These describe only our own pending injections, never the user's keyboard.
+KEYSYM_MODIFIERS = {0xffe1: "shift", 0xffe2: "shift", 0xffe3: "ctrl", 0xffe4: "ctrl",
+                    0xffe9: "alt", 0xffea: "alt", 0xfe03: "altgr", 0xffeb: "super", 0xffec: "super"}
+KEYCODE_MODIFIERS = {42: "shift", 54: "shift", 29: "ctrl", 97: "ctrl", 56: "alt",
+                     100: "altgr", 125: "super", 126: "super"}
+
 
 def validate_session_seconds(seconds):
     if type(seconds) is not int or (seconds != 0 and not 60 <= seconds <= MAX_SESSION_SECONDS):
@@ -296,6 +302,8 @@ class NativeSession:
         self.last_failure = None
         self.receipt = receipt
         self.input_active = False
+        self.injected_keysyms = set()
+        self.injected_keycodes = set()
         self.input_released = threading.Event()
         self.input_released.set()
         self.initialization_done = threading.Event()
@@ -336,6 +344,12 @@ class NativeSession:
                 "interactive_required": False if self.state == "running" else (None if self.restore_attempted or self.state == "initializing" else True),
                 "expires_in": (None if not self.session_seconds else max(0, int(self.until - time.monotonic()))) if self.state == "running" else 0,
                 "control_active": self.input_active,
+                "input_capabilities": ["keysym", "keycode"],
+                "input_state": {"scope": "helper-injected", "physical_modifiers": "unavailable",
+                                "keysym_presses": len(self.injected_keysyms),
+                                "keycode_presses": len(self.injected_keycodes),
+                                "modifiers": sorted({KEYSYM_MODIFIERS[key] for key in self.injected_keysyms if key in KEYSYM_MODIFIERS}
+                                                    | {KEYCODE_MODIFIERS[key] for key in self.injected_keycodes if key in KEYCODE_MODIFIERS})},
                 "detail": self.detail}
 
     def sync_control(self):
@@ -664,6 +678,7 @@ class NativeSession:
             self.guard(payload)
 
     def input(self, payload):
+        codes = client.validate_keycodes(payload)
         hold_ms = client.validate_hold(payload)
         drag_ms = client.validate_drag(payload)
         if self.geometry is None or payload.get("geometry") != self.geometry or time.monotonic() - self.captured > 60:
@@ -709,14 +724,18 @@ class NativeSession:
                             self.fail("Pointer release failed; native control stopped")
                             self.close()
                             raise RuntimeError("Pointer release failed; native control stopped") from exc
-        elif kind in ("key", "text"):
+        elif kind in ("key", "keycode", "text"):
             if kind == "text":
                 text = payload.get("text")
                 if not isinstance(text, str) or len(text) > 1024 or "\0" in text:
                     raise ValueError("Text must contain at most 1024 characters without NUL")
                 keys = [[{"\n":0xff0d, "\t":0xff09}.get(char, ord(char) if ord(char) < 256 else 0x01000000 | ord(char))] for char in text]
+            elif kind == "keycode":
+                keys = [codes]
             else:
                 keys = [keysyms(payload.get("key"))]
+            method = "NotifyKeyboardKeycode" if kind == "keycode" else "NotifyKeyboardKeysym"
+            pending = self.injected_keycodes if kind == "keycode" else self.injected_keysyms
             for chord in keys:
                 self.guard(payload)
                 pressed = []
@@ -724,13 +743,15 @@ class NativeSession:
                     for key in chord:
                         self.guard(payload)
                         pressed.append(key)
-                        self.portal.notify("NotifyKeyboardKeysym", "iu", key, 1)
+                        pending.add(key)
+                        self.portal.notify(method, "iu", key, 1)
                     self.hold(hold_ms, payload)
                 finally:
                     release_error = None
                     for key in reversed(pressed):
                         try:
-                            self.portal.notify("NotifyKeyboardKeysym", "iu", key, 0)
+                            self.portal.notify(method, "iu", key, 0)
+                            pending.discard(key)
                         except Exception as exc:
                             release_error = exc
                     if release_error is not None:

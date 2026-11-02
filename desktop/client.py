@@ -228,12 +228,29 @@ def validate_text_delay(payload: dict[str, Any]) -> None:
         raise ValueError("Paced text exceeds 20 seconds; use shorter verified commands")
 
 
+def validate_keycodes(payload: dict[str, Any]) -> list[int] | None:
+    """Validate a complete physical chord before any key is pressed."""
+    codes = payload.get("codes")
+    if payload.get("kind") != "keycode":
+        if codes is not None:
+            raise ValueError("Physical keycodes apply only to keycode input")
+        return None
+    if (payload.get("action") != "input" or not isinstance(codes, list)
+            or not 1 <= len(codes) <= 8
+            or any(type(code) is not int or not 1 <= code <= 255 for code in codes)
+            or len(set(codes)) != len(codes)):
+        raise ValueError("Physical input requires 1–8 distinct Linux evdev keyboard codes from 1 through 255")
+    if payload.get("key") is not None or payload.get("text") is not None:
+        raise ValueError("Physical keycodes cannot be combined with key symbols or text")
+    return codes
+
+
 def validate_hold(payload: dict[str, Any]) -> int:
     """Bound native button/chord holds separately from character pacing."""
     hold = payload.get("hold_ms")
     if hold is None:
         return 0
-    if (payload.get("action") != "input" or payload.get("kind") not in ("key", "click")
+    if (payload.get("action") != "input" or payload.get("kind") not in ("key", "keycode", "click")
             or (payload.get("kind") == "click" and payload.get("button", 1) not in (1, 2, 3))):
         raise ValueError("Hold duration applies only to key chords and pointer buttons 1–3")
     if type(hold) is not int or not 0 <= hold <= 5000:
@@ -279,9 +296,12 @@ def validate_capture_crop(payload: dict[str, Any], *, backend=runtime) -> list |
 def send_action(payload: dict[str, Any], *, deadline: float | None = None, backend=runtime) -> dict[str, Any]:
     """Pace text with short revocable requests, including on existing supervisors."""
     validate_text_delay(payload)
+    validate_keycodes(payload)
     validate_hold(payload)
     validate_drag(payload)
     crop = validate_capture_crop(payload, backend=backend)
+    if payload.get("kind") == "keycode" and backend is runtime:
+        raise ValueError("Physical keycodes require the native desktop backend")
     if payload.get("kind") == "drag" and backend is runtime:
         raise ValueError("Drag requires the native desktop backend")
     if payload.get("hold_ms") is not None and backend is runtime:
@@ -341,9 +361,12 @@ def run_sequence(path: str, generation: str, *, backend=runtime) -> dict[str, An
                 or any(key in step for key in ("generation", "control_revision", "lease"))):
             raise ValueError("Sequences accept input, window, screenshot, and windows actions without embedded control metadata")
         validate_text_delay(step)
+        validate_keycodes(step)
         validate_hold(step)
         validate_drag(step)
         validate_capture_crop(step, backend=backend)
+        if step.get("kind") == "keycode" and backend is runtime:
+            raise ValueError("Physical keycodes require the native desktop backend")
         if step.get("kind") == "drag" and backend is runtime:
             raise ValueError("Drag requires the native desktop backend")
         if step.get("hold_ms") is not None and backend is runtime:

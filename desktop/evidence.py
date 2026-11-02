@@ -191,23 +191,25 @@ def verify(path: str) -> dict:
 
 def finalize(path: str, *, tasks: list[str], renderer: str | None) -> dict:
     """Collect supervised task status outside the portal's short request budget."""
-    from desktop.development import TASK_ID, list_tasks, task_status
+    from desktop.development import TASK_ID, list_tasks, parse_task_timestamp, task_status
     data = _load_record(path)
     for timestamp in (data["started_at"], data["finished_at"]):
         if not isinstance(timestamp, str) or len(timestamp) > 40 or datetime.fromisoformat(timestamp).tzinfo is None:
             raise ValueError("Finish recording before finalizing evidence; timestamps must include timezones")
+    if parse_task_timestamp(data["started_at"]) > parse_task_timestamp(data["finished_at"]):
+        raise ValueError("Recording finish time must not precede its start")
     if len(tasks) > 50 or any(not isinstance(task, str) or not TASK_ID.fullmatch(task) for task in tasks):
         raise ValueError("Attach at most 50 valid task identifiers")
     if renderer is not None:
         validate_no_control_characters(renderer, "Observed renderer")
         if not renderer or len(renderer) > 512:
             raise ValueError("Observed renderer must contain 1–512 characters")
-    listing = list_tasks(data["project"])
-    automatic = [row["task"] for row in listing["tasks"]
-                 if data["started_at"] <= row["created_at"] <= data["finished_at"]]
+    listing = list_tasks(data["project"], since=data["started_at"], until=data["finished_at"])
+    automatic = [row["task"] for row in listing["tasks"]]
     previous = [row["task"] for row in data["tasks"]]
     selected = list(dict.fromkeys([*tasks, *previous, *automatic]))
     data["task_inventory_truncated"] = listing["truncated"] or len(selected) > 50
+    data["task_inventory_scan_truncated"] = listing.get("scan_truncated", False)
     snapshots = []
     for task in selected[:50]:
         try:

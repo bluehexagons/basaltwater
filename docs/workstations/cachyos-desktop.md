@@ -88,6 +88,14 @@ PipeWire/GStreamer PTS is stream-relative and is not a compositor presentation
 time or directly comparable with monotonic input time. Skipping a sample reduces
 initial-buffer ambiguity but cannot establish input-to-photon latency.
 
+Physical game bindings can use `input keycode --codes 26` for left bracket or
+`--codes 29 30` for left Ctrl+A. These are Linux evdev codes, without an XKB
+offset or Godot key constants. Native chords accept 1–8 distinct codes (1–255),
+the same bounded hold/observation options, and reverse-order release on
+interruption. `status.input_state` reports pending helper-injected press counts
+and named modifiers; physical and other providers' modifier state is unavailable.
+See the [keyboard contract](../../common/agent_skills/basaltwater-cachyos-desktop/references/native-control.md#observe-act-verify).
+
 Native `input drag --x X --y Y --to-x X --to-y Y --duration-ms 300` supports
 bounded straight-line canvas gestures with buttons 1–3 and the same fresh
 generation/geometry requirements. Cancellation releases the button, and failed
@@ -139,6 +147,17 @@ Tasks created for that exact project during the recording are attached
 automatically; repeat `--task` to include tasks launched earlier. Renderer text
 is explicitly operator-observed, never inferred from installed GPU inventory.
 It is not a project assertion or release qualification.
+
+For session-scoped discovery use `develop list --project /absolute/project
+--since 2026-01-15T10:00:00Z --until 2026-01-15T11:00:00Z --json`. Bounds include
+their endpoints and require explicit timezones. The listing compares instants
+in UTC and filters before limiting results to 50 matching tasks. Evidence
+finalization uses its recording interval automatically, so older task history
+does not consume that limit. `matches_truncated` reports excess matches;
+`scan_truncated` reports the separate 500-entry scan bound. Either makes
+`truncated` true; a bounded scan cannot establish that all session tasks were
+found. Listing reads private records without starting or stopping tasks;
+use each task's `status` for current process state.
 
 Records live outside repositories in private
 `~/.local/state/basaltwater/desktop-evidence/*.json` files (0700 directory,
