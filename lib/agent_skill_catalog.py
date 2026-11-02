@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import stat
@@ -68,6 +69,13 @@ def _is_reference(name: str) -> bool:
     return name.startswith("references/") and name.lower().endswith(".md")
 
 
+def _bundle_digest(files: dict[str, tuple[bytes, int]]) -> str:
+    """Identify compared bundle bytes and delivery modes, independent of paths."""
+    return _digest(json.dumps([
+        [name, _digest(content), mode] for name, (content, mode) in sorted(files.items())
+    ], separators=(",", ":")).encode("utf-8"))
+
+
 def inspect_skill_catalogs(home: str) -> dict[str, object]:
     """Compare known skill bundles with this CLI's source; never inspect auth/config."""
     validate_filesystem_path(home, must_exist=True)
@@ -84,6 +92,9 @@ def inspect_skill_catalogs(home: str) -> dict[str, object]:
             status = "current"
             entrypoint_size = _measurement()
             references_size = _measurement()
+            provenance = {"delivered_revision": None, "session_loaded_revision": None,
+                          "delivery_metadata": "unknown", "bundle_sha256": None,
+                          "comparison_bundle_sha256": None, "drift": None}
             try:
                 check_skill_path(destination, uid)
                 entrypoint = _read(destination / "SKILL.md", uid)
@@ -101,6 +112,7 @@ def inspect_skill_catalogs(home: str) -> dict[str, object]:
                     if not complete:
                         status = "incomplete"
                     inventory = destination / _INVENTORY
+                    provenance["delivery_metadata"] = "resource-inventory" if inventory.exists() else "unknown-legacy"
                     if inventory.exists() and inventory.stat().st_mode & 0o022:
                         raise RuntimeError(f"Unsafe managed agent skill inventory: {inventory}")
                     expected_inventory = {
@@ -111,6 +123,8 @@ def inspect_skill_catalogs(home: str) -> dict[str, object]:
                     # must match too, including resources removed from source.
                     different = inventory.exists() and recorded != expected_inventory
                     references = []
+                    delivered = {}
+                    provenance["comparison_bundle_sha256"] = _bundle_digest(files)
                     # Obsolete recorded references are outside the known source
                     # reads. Report an incomplete measurement without opening them.
                     references_complete = not any(
@@ -127,6 +141,7 @@ def inspect_skill_catalogs(home: str) -> dict[str, object]:
                         if path.stat().st_mode & 0o022:
                             status = "unsafe"
                             break
+                        delivered[relative] = (content, stat.S_IMODE(path.stat().st_mode))
                         if _is_reference(relative):
                             references.append(_measure(content))
                         different = different or content != expected or stat.S_IMODE(path.stat().st_mode) != mode
@@ -137,11 +152,19 @@ def inspect_skill_catalogs(home: str) -> dict[str, object]:
                         references_size = _measurement("incomplete")
                     if status == "current" and different:
                         status = "different"
+                    # Obsolete inventory paths are not read, so no full digest
+                    # can be claimed when the compared bundle is incomplete.
+                    if len(delivered) == len(files) and not set(recorded) - set(files):
+                        provenance["bundle_sha256"] = _bundle_digest(delivered)
+                    provenance["drift"] = True if status == "different" else False if status == "current" else None
             except (OSError, ValueError, RuntimeError):
                 status = "unsafe"
             if status == "unsafe":
                 entrypoint_size, references_size = _measurement(), _measurement()
+                provenance.update(bundle_sha256=None, comparison_bundle_sha256=None, drift=None,
+                                  delivery_metadata="unknown")
             entries.append({"name": name, "path": str(destination / "SKILL.md"), "status": status,
+                            "provenance": provenance,
                             "instruction_footprint": _footprint(entrypoint_size, references_size)})
         catalogs.append({"path": str(root), "providers": list(providers), "skills": entries,
                          "instruction_footprint": _sum_footprints([entry["instruction_footprint"] for entry in entries])})
@@ -151,6 +174,8 @@ def inspect_skill_catalogs(home: str) -> dict[str, object]:
             entry["instruction_footprint"] for catalog in catalogs for entry in catalog["skills"]
         ]),
         "session_access": "unverified",
+        "session_loaded_revision": None,
+        "delivered_revision": None,
         "instructions": "Catalog presence does not prove that a session enabled or loaded a skill. "
                         "Check the active agent's skill list and configuration; pass relevant absolute "
                         "skill paths to fresh subagents. Refresh managed guidance through the platform's setup.",

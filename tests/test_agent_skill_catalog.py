@@ -56,6 +56,31 @@ class SkillCatalogTests(unittest.TestCase):
         self.assertEqual(self.status(1), "current")
         self.execute.assert_not_called()
 
+    def test_delivered_content_identity_and_legacy_revision_are_separate(self) -> None:
+        destination = self.install()
+        def provenance():
+            result = catalog.inspect_skill_catalogs(str(self.home))
+            self.assertIsNone(result["session_loaded_revision"])
+            return result["catalogs"][0]["skills"][0]["provenance"]
+
+        current = provenance()
+        self.assertFalse(current["drift"])
+        self.assertEqual(current["bundle_sha256"], current["comparison_bundle_sha256"])
+        self.assertIsNone(current["delivered_revision"])
+        self.assertIsNone(current["session_loaded_revision"])
+        (destination / ".basaltwater-files.json").unlink()
+        legacy = provenance()
+        self.assertEqual(legacy["delivery_metadata"], "unknown-legacy")
+        self.assertEqual(legacy["bundle_sha256"], current["bundle_sha256"])
+        (destination / "references/context.md").write_text("Local edit\n")
+        edited = provenance()
+        self.assertTrue(edited["drift"])
+        self.assertNotEqual(edited["bundle_sha256"], current["bundle_sha256"])
+        (destination / "references/context.md").unlink()
+        incomplete = provenance()
+        self.assertIsNone(incomplete["drift"])
+        self.assertIsNone(incomplete["bundle_sha256"])
+
     def test_missing_catalogs_are_informational_and_personal_names_are_not_scanned(self) -> None:
         private = self.home / ".agents/skills/personal"
         private.mkdir(parents=True)

@@ -282,6 +282,52 @@ def _cachyos_service_context() -> JSONDict:
     return result
 
 
+def _cachyos_native_worker_context() -> JSONDict:
+    """Read the worker's startup observation; stopped receipts are historical only."""
+    from desktop.native_session import status
+
+    result = {"state": "unknown", "source": None, "startup": None,
+              "provenance_status": "unknown"}
+    try:
+        current = status()
+    except (OSError, ValueError, RuntimeError):
+        return result
+    state = current.get("state")
+    if isinstance(state, str) and state in {"running", "initializing", "awaiting-consent", "failed", "stopped"}:
+        result["state"] = state
+    startup = current.get("worker_provenance")
+    if not isinstance(startup, dict) or type(startup.get("schema_version")) is not int or startup["schema_version"] != 1:
+        return result
+    source = startup.get("source")
+    if (not isinstance(source, dict) or set(source) != {"version", "commit", "dirty"}
+            or not isinstance(source["version"], str) or not _VERSION_RE.fullmatch(source["version"])
+            or (source["commit"] is not None and (not isinstance(source["commit"], str)
+                                                  or not _COMMIT_RE.fullmatch(source["commit"])))
+            or (source["dirty"] is not None and type(source["dirty"]) is not bool)):
+        return result
+    evidence = startup.get("evidence_source")
+    if not isinstance(evidence, str) or evidence not in {"running-git", "refresh-receipt", "setup-receipt", "unrecorded"}:
+        return result
+    # Do not copy arbitrary worker status details, paths or portal grant data.
+    result["startup"] = {"source": dict(source), "evidence_source": evidence}
+    result["provenance_status"] = "historical" if state == "stopped" else "startup-observation"
+    if current.get("helper_running") is True and result["state"] in {"running", "initializing", "awaiting-consent", "failed"}:
+        result["source"] = dict(source)
+    return result
+
+
+def _source_drift(left: object, right: object) -> bool | None:
+    """Equal commits only establish no drift when both sources were clean."""
+    same = _same_revision(left, right)
+    if same is False:
+        return True
+    if same is None:
+        return None
+    if isinstance(left, dict) and isinstance(right, dict) and left.get("dirty") is False and right.get("dirty") is False:
+        return False
+    return None
+
+
 def inspect_installation_context(installation_root: str, *, managed_root: str | None = None) -> JSONDict:
     """Compare known source receipts; never change a launcher or infer service code."""
     from lib.cachyos import is_cachyos
@@ -304,12 +350,14 @@ def inspect_installation_context(installation_root: str, *, managed_root: str | 
         pass
     activation = managed.get("refresh_receipt") if managed else None
     snapshot = managed.get("setup_snapshot") if managed else None
-    last_setup = service = None
+    last_setup = service = worker = None
     if native:
         from lib.cachyos_refresh import inspect_successful_setup_source
 
         last_setup = inspect_successful_setup_source()
         service = _cachyos_service_context()
+        worker = _cachyos_native_worker_context()
+    worker_source = worker.get("source") if worker else None
     return {
         "invoked": invoked,
         "managed": managed,
@@ -318,11 +366,20 @@ def inspect_installation_context(installation_root: str, *, managed_root: str | 
         "setup_snapshot": snapshot,
         "last_successful_setup": last_setup,
         "service_context": service,
+        "native_worker": worker,
+        "source_revisions": {"invoked": invoked.get("commit"),
+                             "managed": managed.get("commit") if managed else None,
+                             "native_worker": worker_source.get("commit") if worker_source else None},
+        "drift": {"invoked_managed": _source_drift(invoked, managed),
+                  "managed_native_worker": _source_drift(managed, worker_source),
+                  "invoked_native_worker": _source_drift(invoked, worker_source)},
         "same_revision": {
             "invoked_managed": _same_revision(invoked, managed),
             "managed_activation": _same_revision(managed, activation),
             "managed_snapshot": _same_revision(managed, snapshot),
             "managed_last_setup": _same_revision(managed, last_setup),
             "managed_service": _same_revision(managed, service.get("source") if service else None),
+            "managed_native_worker": _same_revision(managed, worker_source),
+            "invoked_native_worker": _same_revision(invoked, worker_source),
         },
     }
