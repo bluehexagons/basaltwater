@@ -1,0 +1,51 @@
+# Native workstation feedback review, 2026-11-02
+
+Feedback describes selected Windows and CachyOS application runs, sometimes from
+older checkouts. It does not establish installed behavior after a source change.
+Raw application/state receipts remain private. This review does not refresh,
+reboot, install language engines or change physical control/routing preferences.
+
+## Changes and existing coverage
+
+- Windows raw editing keys now use mapped scan codes and extended-key flags;
+  Home/End/PageUp/PageDown/F11 and bounded CTRL/SHIFT chords are available.
+  Submission is one batch; partial failure attempts reverse-order release and
+  reports unconfirmed release separately. Existing identity, generation,
+  foreground, physical-modifier and human-control guards remain. Leaf input
+  help lists keys/text limits. Queue acceptance still requires app verification.
+- Native compact captures already expose age/remaining validity and recovery
+  guidance (`59ce468b`); expired input still fails. Inspect refreshed scenes
+  before reusing coordinates. No freshness timeout was relaxed.
+- [Windows task guidance](../workstations/windows-desktop.md#supervised-project-tasks)
+  now records the initial ID/receipt and provenance before waiting, reattaches
+  to the same job and retains final cleanup/log/truncation evidence.
+  [Optional Ninja analysis](../workstations/windows-desktop.md#optional-ninja-analysis-build)
+  documents a separate task-local compile-database build and SDK validation.
+  This recipe has not yet been tested natively.
+- [Native input QA](../workstations/native-input-qa.md) defines multilingual
+  environment records, OS composition/clipboard/device checks, application key
+  verification, private derivative provenance, observer packets and closeout.
+  It also documents read-only timezone-data diagnosis. The separate reported
+  regulatory-domain failure did not reproduce on the inspected workstation.
+
+## Follow-up priorities and acceptance gates
+
+| Priority | Work remaining | Acceptance before advertising support |
+| --- | --- | --- |
+| First | Native Windows scan-code qualification | Run offline desktop/CLI contracts and full native suite; disposable SDL and WinForms fixtures verify navigation, selection, F11, modifier release, partial-send/release failure, foreground change and physical takeover. Include ordinary and non-BMP/spaced paths; test long paths without changing policy. |
+| First | Consolidated installed/worker/source/skill provenance | Report installed CLI revision, actual selected worker source revision/dirty state, delivered skill revision and explicitly unknown session-loaded revision together. Legacy metadata stays unknown; important drift must be visible without implying installation. Current commands provide separate evidence, not a consolidated report. |
+| Next | Read-only input environment report | Bound probes for desktop/layout/framework/enabled engines; distinguish configured defaults from the active per-window layout, expose unknowns and never start an IME or change preferences during discovery. |
+| Next | Expected native foreground identity | Use a trustworthy compositor/backend identity immediately before injection; reject changed focus. AT-SPI inventory alone is insufficient on Wayland. Preserve generation/age/control guards. |
+| Next | Evidence crop/clip/report exporter | New private derivatives only, immutable originals, source/hash/rectangle/time provenance, reviewed captions and portable-path validation; verify crops against originals and reject unsafe/oversized media. |
+| Later | Tool/model/phase telemetry and specialist packets | Monotonic tool durations and captured timestamps; distinguish handoff overhead; actual model/effort/usage only when exposed. Absolute paths, read acknowledgements, immutable inputs, advice deadlines and exclusive controller ownership. |
+| Later | Virtual gamepad adapter | Opt-in owned device, bounded buttons/axes, control-state integration, neutralization/watchdog recovery and verified removal. Qualify in an event inspector before a game. Prerequisite discovery is not qualification. |
+| Later | Application audio and capability probes | Opt-in OpenGL context/vendor/version and silent audio open/close; isolated app-scoped capture without routing changes. No claims about audible quality, scanout or other devices. |
+| Later | Automated run closeout | Track owned tasks/launches/recorders/workers and retained artifacts; report verified exits and uncertain resources, preserving shared services and indexed evidence. Manual procedure is available now. |
+
+The Windows changes have added offline test cases for scan/extended flags,
+chord order, malformed chords, unmapped keys, partial submission and release
+failure. They were not executed on this CachyOS host, which has no Windows
+PowerShell/.NET Framework test runtime. The desktop Python suite passed 675
+tests; that is Linux/offline evidence, not an SDL or WinForms pass.
+Refresh/reboot, restored desktop grants, physical input/audio, IME composition,
+clean-target packages and streaming remain separate acceptance work.
