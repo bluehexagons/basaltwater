@@ -63,7 +63,20 @@ try {
     # Pure event construction with a synthetic keyboard map. No user32 calls.
     $builder = [Basaltwater.Desktop.Native].GetMethod('KeyInputs', [Reflection.BindingFlags]'Static,NonPublic')
     $map = [Func[uint16,uint32]]{ param($vk)
-        switch ($vk) { 162 { return 0x1d }; 160 { return 0x2a }; 37 { return 0xe04b }; 36 { return 0xe047 }; 35 { return 0xe04f }; 122 { return 0x57 }; default { return 0x1e } }
+        switch ($vk) { 162 { return 0x1d }; 160 { return 0x2a }; 33 { return 0x49 }; 34 { return 0x51 }; 35 { return 0x4f }; 36 { return 0x47 }; 37 { return 0x4b }; 38 { return 0x48 }; 39 { return 0x4d }; 40 { return 0x50 }; 45 { return 0x52 }; 46 { return 0x53 }; 122 { return 0x57 }; default { return 0x1e } }
+    }
+    $prefixedMap = [Func[uint16,uint32]]{ param($vk) return ($map.Invoke($vk) -bor 0xe000) }
+    foreach ($navigationMap in @($map,$prefixedMap)) {
+        foreach ($name in @('LEFT','UP','RIGHT','DOWN','HOME','END','PAGEUP','PAGEDOWN','INSERT','DELETE')) {
+            $navigation = $builder.Invoke($null, @($name,$false,$navigationMap))
+            Assert-True ($navigation.Length -eq 2 -and $navigation[0].data.key.flags -eq 9 -and
+                $navigation[1].data.key.flags -eq 11 -and $navigation[0].data.key.scan -eq $navigation[1].data.key.scan -and
+                $navigation[0].data.key.scan -lt 256) "Dedicated navigation lost extended flag: $name"
+        }
+    }
+    foreach ($name in @('A','1','ENTER','TAB','SPACE','BACKSPACE','F11')) {
+        $ordinary = $builder.Invoke($null, @($name,$false,$map))
+        Assert-True ($ordinary[0].data.key.flags -eq 8 -and $ordinary[1].data.key.flags -eq 10) "Ordinary key gained extended flags: $name"
     }
     foreach ($name in @('LEFT','HOME','END','PAGEUP','PAGEDOWN','F11')) {
         $single = $builder.Invoke($null, @($name,$false,$map))

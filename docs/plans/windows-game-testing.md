@@ -15,8 +15,12 @@ physical-modifier and human-control guards. Partial delivery is an error with
 best-effort releases and no replay. Unicode text remains a separate path.
 
 Offline construction and transport tests cover flags, ordering, bounds, invalid
-input and partial submission. Native delivery in SDL and WinForms remains an
-acceptance check after refresh:
+input and partial submission. The [native readiness and acceptance record](../workstations/windows-testing.md)
+documents installed-host/session qualification and the unprefixed-navigation
+mapping defect found in SDL. Corrected source explicitly marks dedicated
+navigation keys extended; installed `b16d1ca0` requires an update. Real SDL event
+delivery and nine Antistatic caret/selection assertions passed on corrected
+source. WinForms and other application widgets remain separate acceptance checks:
 
 1. Use a disposable text fixture in each toolkit. Record the loaded Basaltwater
    revision, keyboard layout and toolkit version in private evidence.

@@ -134,3 +134,9 @@ live readiness, terminal completion, profile/request removal and retained result
 evidence were observed. These fixtures do not qualify a game's save isolation,
 rendering, input or project-specific assertions. No installation refresh or
 reboot was performed; raw receipts and logs remain private.
+
+The subsequent installed-launcher review confirmed literal argv, caller wait
+timeout without cancellation, project conflict/refusal and reservation release,
+native exit seven propagation, and retained live/settled diagnostics. See the
+[native readiness and acceptance record](windows-testing.md) for the tested
+scope and the separate navigation-input correction required after `b16d1ca0`.

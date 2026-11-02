@@ -242,7 +242,10 @@ public static class Native {
                 }
                 uint scan=map(vk); uint prefix=scan>>8;
                 if((scan&255)==0 || (prefix!=0 && prefix!=0xe0)) throw new Exception("Key has no supported scan code in target keyboard layout");
-                pressed.Add(Key(0,(ushort)(scan&255),8u | (prefix==0xe0 ? 1u : 0u)));
+                // Some layouts return unprefixed keypad-shared scan codes for
+                // dedicated navigation VKs. Their physical keys still require E0.
+                bool extended=prefix==0xe0 || (vk>=0x21 && vk<=0x28) || vk==0x2d || vk==0x2e;
+                pressed.Add(Key(0,(ushort)(scan&255),8u | (extended ? 1u : 0u)));
             }
             result.AddRange(pressed);
             for(int i=pressed.Count-1;i>=0;i--) { var release=pressed[i]; release.data.key.flags|=2; result.Add(release); }
