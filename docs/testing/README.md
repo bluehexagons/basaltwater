@@ -104,14 +104,24 @@ See the [Admin evidence](evidence.md#package-changing-admin-update).
 The [owned-package follow-up](evidence.md#admin-service-restart-and-conffile-conflict)
 also passes modified-conffile preservation and an actual daemon restart, followed
 by a separately approved no-op without another restart. Distribution service
-packages, kernel updates, failing hooks and interruption/power-loss remain open.
+packages, kernel updates and interruption/power-loss remain open. The subsequent
+[failed-hook batch](evidence.md#admin-failed-maintainer-hook-and-recovery) qualifies
+an owned failed post-install hook, retained half-configured package, independently
+approved configuration recovery and no-op, preserving other packages/services/data.
+
+CI was repaired at `785c3ffd` by regenerating the stale Shares & Data specimen.
+Full local validation passed 9,196 tests with six skips and 82% coverage;
+hosted full Debian and Node compatibility checks passed. See the
+[automated evidence](evidence.md#automated-validation) for the separate CI scope.
 
 The [Proxmox inventory batch](evidence.md#proxmox-inventory-and-exporter) adds
 native inventory comparison, unattended timer refresh, verified host-local HTTPS
 and worker isolation. Separately owned component units passed interruption,
 snapshot preservation, recovery and removal. Intermittent controller partial-page
-timeouts reproduced with server TCP retransmissions and remain unresolved; this
-does not qualify the full controller/browser or production teardown lifecycle.
+timeouts reproduced with server TCP retransmissions and remain unresolved.
+Investigation was deferred by the owner on 2026-11-02, with evidence retained for
+paired captures; unrelated testing continues. Full controller/browser and
+production teardown qualification remain open.
 
 Update the affected status and its evidence date when new checks complete;
 preserve older dates for areas not retested. Keep raw logs, personal addresses,

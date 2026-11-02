@@ -18,13 +18,20 @@ The [owned-package follow-up](evidence.md#admin-service-restart-and-conffile-con
 adds a real APT/dpkg conffile conflict and daemon restart, plus a no-op without
 another restart. Distribution service packages, kernel updates and interrupted
 upgrades remain separate.
+The [failed-hook batch](evidence.md#admin-failed-maintainer-hook-and-recovery)
+adds an owned post-install failure, retained half-configured package, independently
+approved configuration recovery and a no-op. This does not qualify arbitrary
+distribution maintainer scripts or interruption/power loss.
 
 The [Proxmox inventory batch](evidence.md#proxmox-inventory-and-exporter) adds
 native inventory, unattended exports, host-local HTTPS and owned component
 interruption/recovery/removal. Controller partial-body timeouts remain unresolved;
-inspect the private transport evidence before extending that HTTP/browser scope.
-Later bounded captures narrow a reproduced stall to an unacknowledged final
-TLS segment and FIN; they do not establish the dropping endpoint or a fix.
+the owner deferred transport investigation on 2026-11-02. Continue unrelated
+qualification while retaining that HTTP/browser boundary. Bounded captures narrow
+a reproduced stall to an unacknowledged final TLS segment and FIN; they establish
+neither the dropping endpoint nor a hardware fault. When investigation resumes,
+use paired endpoint captures and controlled keepalive/close comparisons before
+selecting a fix; inspect the retained private evidence first.
 
 ## Establish a baseline
 
@@ -89,8 +96,8 @@ as untested rather than substituting HTTP or another browser silently.
 
 | Batch | Acceptance boundary / prerequisites |
 | --- | --- |
-| Package-changing Admin update | Leaf-package case passed at `176caeff62ad`; owned signed native package at `3c6fd7fa` adds modified-conffile preservation, daemon restart and separately approved no-op. Repeat affected cases after changes. Use an isolated disposable target, real approvals/workers and observable package/service/data outcomes. Extend to distribution service packages, kernel updates and maintainer-hook failures separately. An empty upgrade plan does not qualify a package change |
-| Proxmox panel/exporter | Selected installed inventory, unattended scheduling, host-local HTTPS and owned component lifecycle passed with collector/renderer bytes matching `ece5e5bc`. Diagnose intermittent controller partial-body timeouts first. Keep console, multi-node, native password replacement and public full-host setup/production teardown separate; plan ownership before further fault tests |
+| Package-changing Admin update | Leaf-package case passed at `176caeff62ad`; owned signed package at `3c6fd7fa` adds conffile preservation/restart/no-op. At `785c3ffd`, another owned package qualifies a failed post-install hook, retained partial state, independently approved recovery and no-op. Repeat affected cases after changes. Extend to distribution service/kernel packages, broader hook failures and interruption separately. An empty upgrade plan does not qualify a package change |
+| Proxmox panel/exporter | Selected installed inventory, unattended scheduling, host-local HTTPS and owned component lifecycle passed with collector/renderer bytes matching `ece5e5bc`. Controller transport investigation is deferred; complete controller/browser acceptance remains open. Keep console, multi-node, native password replacement and public full-host setup/production teardown separate; plan ownership before further fault tests |
 | Native storage diagnostics/scrub | Use disposable guest data; target missing integration/scheduling. Keep mount guards. Hard-mounted CIFS can leave uninterruptible I/O, so isolation and a bounded containment plan must precede fault injection |
 | Registered runner and GitHub mirrors | Authorized test account/repository and privately supplied credentials; actual registration/events/jobs/cancellation or transport permissions. Pending tokenless setup is already covered |
 | Off-host recovery / physical clients | Another physical recovery destination, or the required graphics/input/client hardware. A second VM on the same node does not close the off-host case |

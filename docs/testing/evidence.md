@@ -154,8 +154,8 @@ or complete current-profile qualification is claimed.
 | **Preservation and cleanup** | Component evidence was privately archived before enumerated fixture cleanup. All pre-existing guest configurations/states/PIDs, host boot/setup/configuration, storage policy and mounts matched baseline. Production panel/Nginx identities and credentials were preserved; no failed units, active Proxmox tasks or owned lifecycle units remained | No guest allocation/start, host reboot, password replacement, formatting, stress or server limit change. Production teardown, setup interruption/power loss and off-host recovery remain separate |
 
 No Basaltwater defect was confirmed in this batch. Keep the controller transfer
-failure visible and diagnose it before extending the HTTP/browser acceptance;
-successful host-local and later controller probes do not erase that boundary.
+failure visible; successful host-local and later controller probes do not erase
+the incomplete HTTP/browser acceptance boundary.
 Further bounded captures on 2026-11-02 UTC retained 24 successful persistent
 responses and another partial-body timeout. In that failed connection-close
 probe, the final 306 encrypted bytes and FIN were repeatedly retransmitted while
@@ -163,6 +163,10 @@ the client acknowledgement stayed immediately before them. A server-only capture
 cannot identify the dropping endpoint/intermediary; no network configuration or
 application fix was applied. All owned capture processes/directories were removed
 after private archival. Complete controller/browser acceptance remains open.
+The owner deferred further transport investigation on 2026-11-02; unrelated
+qualification may continue. No driver or hardware fault has been established.
+Retained evidence supports paired endpoint captures and a controlled
+keepalive/connection-close comparison when investigation resumes.
 
 ## USB storage
 
@@ -283,6 +287,32 @@ upgrade plan. Remaining fixture preparation then ran in an owned independent
 unit without replaying that upgrade. This retained preparation failure is
 separate from the two successful approved transactions.
 
+## Admin failed maintainer hook and recovery
+
+**2026-11-02 UTC; clean installed `785c3ffd`, fresh disposable Debian 13 guest.**
+Normal selected-step setup configured a non-root panel operator, independent
+HTTPS approval service and real root Admin workers. All 575 runtime files matched
+source. A signed guest-local repository offered exactly one owned native package
+upgrade; its post-install hook had an explicit disposable failure condition.
+
+| Check level | Observed result | Qualification boundary |
+| --- | --- | --- |
+| **Installed failed transaction** | A separately approved worker reported `failed`, command 2, APT exit 100 and `nonzero_exit`; the authenticated panel displayed the same result. The real root hook recorded its matching worker ID and maintenance cgroup before deliberately exiting 42. Dpkg retained v2 as half-configured while the existing v1 daemon continued unchanged | Expected package failure, not a Basaltwater defect or an atomic package rollback. The new package files were already unpacked; the retained running process still used v1 |
+| **Installed independently approved recovery** | After removing only the owned failure flag, a new approved update worker configured the retained v2 without a manual APT/dpkg repair command. The package audit became clean and the owned daemon restarted exactly once with v2 and the retained operator configuration | Recovery from this controlled post-install failure; no distribution maintainer script, interrupted process or power-loss qualification |
+| **Installed no-op and preservation** | A third separately approved worker completed without another hook call, restart, package change or dpkg/APT-history change. Across all three jobs, other package versions/states, panel/broker/approval/Nginx identities, user IDs/groups, credentials/PKI, boot identity and exact fixture data stayed unchanged. Three distinct terminal workers were correlated with serialized approval records | Real verified HTTPS and workers, without browser or provider execution. Broker dispatch alone was not treated as completion |
+
+Cleanup removed the owned APT source/trust entry and stopped the owned daemon and
+completed preparation/qualification units. Package/configuration/data, original
+failure records, three terminal requests and an integrity-checked online broker
+backup were retained privately. The guest was stopped with autostart disabled and
+an offline local snapshot. Existing guest configurations/states/PIDs and host
+boot/setup/storage/mounts were preserved; no tasks, locks or failed host units
+remained. Same-node retention does not qualify off-host recovery.
+
+No product defect was reproduced. Base OS updates were preparation, separate
+from the approved transactions. Distribution service/kernel packages, broader
+hook failures, interruption and power loss remain open.
+
 ## Automated validation
 
 | Date / source | Observed result | Qualification boundary |
@@ -290,6 +320,7 @@ separate from the two successful approved transactions.
 | 2026-10-31 / Proxmox fixes at `a4400a78` | Full `make -j2 check-ci`: 9,243 tests, six skips, 82% branch-aware aggregate coverage; static/docs/brand/metadata/wheel checks passed. [Hosted CI](https://github.com/bluehexagons/basaltwater/actions/runs/41253522451) passed full Debian/Node 24 and Node 26 compatibility jobs | Historical source revision; mocked system calls and fixture coverage do not establish live behavior of all profiles/options |
 | 2026-10-31 / Shares & Data UI at `bca3b72e` | Full `check-ci`: 9,190 tests, six skips, 82% aggregate coverage; all six local Chromium/Firefox Shares cases passed | Separate historical revision and browser run, not an installed-system refresh |
 | 2026-11-01 / Unicode fix `986d3061`, timer fix `7ba41724` | Each fix passed `make check-fast SUITE=web`: 1,289 tests run, one skipped, plus compilation, docs and package metadata. All eight focused local Chromium/Firefox Shares cases passed at `986d3061`; the new Unicode regression failed in both engines before the fix | Focused checks, not a new full CI or release-candidate pass. Local browser services use simulated host actions; installed-service results are recorded separately above |
+| 2026-11-02 / specimen repair `785c3ffd` | CI had stopped before the full suite because the generated Shares & Data specimen lacked the existing Unicode search attributes. Regeneration fixed the two stale inputs. Full local `make -j2 check-ci` passed 9,196 tests, six skips and 82% branch-aware coverage, plus static/docs/brand/metadata/wheel checks. [Hosted CI](https://github.com/bluehexagons/basaltwater/actions/runs/41478410457) passed full Debian/Node 24 validation (9,196 tests, three skips, 82%) and Node 26 compatibility | Generated specimen repair; no application behavior changed. Automated checks do not establish browser, hardware or exact-candidate release qualification |
 
 Failures remain in private evidence alongside successful continuations. The
 Proxmox suite initially exposed two corrected test-fixture issues; the Shares
