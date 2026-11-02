@@ -216,7 +216,7 @@ test ran. These are actual HTTP/CLI checks, without a new interactive browser ru
 | --- | --- | --- |
 | Initial `13b7cf3f`, fix installed `a94119e7` | Full setup reproduced a lost `--no-browser-automation` flag during controller-to-target serialization. The fix retains the explicit opt-out in remote arguments and saved target state; normal full-profile installation omits browser reconciliation | The initial `server_lite` dry run correctly refused the approval service before mutation; the supported `agent_vm` profile was used. Initial first-observation security-retention gaps and missing test-client preparation were inspected before continuation |
 | Installed `a94119e7` | Two separately approved real workers changed a writable share to read-only and created a paused daily mirror. Encrypted SMB writes worked before the change; reads passed and writes were denied afterward. Approved target declarations were explicitly reconciled into the separate controller cache before setup reruns | Disposable local data; no hard-mounted CIFS, other client OS, provider login or public TLS/DNS qualification |
-| Fix installed `0ca6ddff` | Public refresh at `a94119e7` refused saved shares because plaintext passwords are intentionally absent. The fix requires matching existing Unix/Samba accounts and preserves their passwords/login flags. Actual queued refresh completed through its independent root worker. All 574 runtime files matched source; approved declarations, pause controls, identities, credentials/PKI and exact bytes survived | Fresh setup still requires credentials; automated refusal checks reject missing accounts before source changes. The original failed dry runs are retained. This qualifies the selected profile/configuration, not all profiles or interrupted source activation |
+| Fix installed `0ca6ddff` | Public refresh at `a94119e7` refused saved shares because plaintext passwords are intentionally absent. The fix requires matching existing Unix/Samba accounts and preserves their passwords/login flags. Actual queued refresh completed through its independent root worker. All 573 runtime files matched source; approved declarations, pause controls, identities, credentials/PKI and exact bytes survived | Fresh setup still requires credentials; automated refusal checks reject missing accounts before source changes. The original failed dry runs are retained. This qualifies the selected profile/configuration, not all profiles or interrupted source activation |
 | Installed `0ca6ddff` | A populated public controller rerun and an owned-guest reboot preserved approved read-only access, empty paused mirror destination, user IDs/groups, password hashes/login flags, panel/approval credentials, certificates and file hashes. Verified HTTPS and encrypted SMB checks passed after each phase | Ordinary setup can update Samba password-set timestamps when replaying controller credentials; refresh and reboot retained the complete account listing. Same-node retention is not off-host recovery |
 | Installed `0ca6ddff` | After reboot, a normal unattended audit run published a newer valid storage snapshot and retained a future deadline, verified through native D-Bus. Cleanup retained both terminal broker records, worker logs, an integrity-checked online broker backup and an offline snapshot, then left the owned guest stopped with autostart disabled | No manual export or schedule override during observation. Other guest configurations/states/PIDs and host boot/setup/storage/mounts matched baseline; no active hypervisor tasks, guest locks, failed host units or owned capture remnants remained |
 
@@ -250,6 +250,38 @@ and fixture-preparation failures remain in private evidence. No host reboot,
 formatting, disk stress, server quota relaxation or uncertain-request replay
 occurred. Repeat affected checks when the Admin implementation changes; wider
 package and interruption boundaries remain open.
+
+## Admin service restart and conffile conflict
+
+**2026-11-02 UTC; clean installed `3c6fd7fa`, fresh disposable Debian 13 guest.**
+Normal public custom-step setup configured a non-root panel operator, independent
+HTTPS approval service and actual root Admin worker. All 573 runtime files matched
+source. An owned signed guest-local APT repository offered exactly one tiny native
+Debian package upgrade; its conffile, daemon and data were isolated fixtures.
+No provider credentials or tasks were used. This is real APT/dpkg execution with
+a controlled package, not qualification of distribution maintainer scripts.
+
+| Check level | Observed result | Qualification boundary |
+| --- | --- | --- |
+| **Installed HTTPS/worker** | Controller and guest HTTPS passed CA/hostname verification; anonymous and cross-password access were rejected. Two one-use submissions received separate approvals and completed through distinct actual root workers. Serialized request events, action/times and terminal worker outcomes were correlated | Actual HTTP, without a new browser pass. Broker dispatch alone was not completion |
+| **Installed conffile conflict/restart** | Package `1.0` → `2.0` retained the operator-modified conffile and saved the changed packaged default as `.dpkg-dist`. Its real post-install hook restarted the owned daemon: PID/start record changed once, v2 loaded the retained config, and exact data bytes survived. All other package versions, panel/broker/approval/Nginx identities, user IDs/groups, setup/auth/PKI and boot identity stayed exact | The hook briefly waited on an owned bounded fixture signal so the real root worker could be inspected before restart. No distribution service, kernel, failed hook, interruption or power-loss qualification |
+| **Installed separately approved no-op** | Another actual worker completed with no package, conffile, dpkg/APT history, data or service-identity changes; the daemon did not restart again | Available upgrade plan was empty; this qualifies repeat behavior after the preceding package change |
+
+Cleanup removed the owned APT source and trust entry, stopped its daemon, and
+retained the package, config variants, exact data, two terminal broker records,
+worker/APT logs and an integrity-checked online broker backup. The guest is
+stopped with autostart disabled and an offline local snapshot retained. Existing
+guest configurations/states/PIDs and host boot/setup/storage/mounts matched baseline;
+no active hypervisor tasks, guest locks or failed host units remained. Same-node
+retention does not qualify off-host recovery.
+
+No product defect was reproduced. All 32 existing Admin job tests passed; final
+documentation checks also passed. Base OS/tool installation was preparation.
+Its original SSH wrapper ended while the guest's APT process continued; the
+original upgrade was inspected to completion, with a clean dpkg audit and empty
+upgrade plan. Remaining fixture preparation then ran in an owned independent
+unit without replaying that upgrade. This retained preparation failure is
+separate from the two successful approved transactions.
 
 ## Automated validation
 

@@ -100,8 +100,11 @@ other profiles and interruption/power-loss cases remain separate.
 A separate fresh Debian guest at `176caeff62ad` also passed a real approved
 leaf-package upgrade, separately approved no-op, native APT index failure and
 lock waiting, with exact task, service-identity, credential and data preservation.
-See the [Admin evidence](evidence.md#package-changing-admin-update); broader
-packages, conffile conflicts and interruption/power-loss remain open.
+See the [Admin evidence](evidence.md#package-changing-admin-update).
+The [owned-package follow-up](evidence.md#admin-service-restart-and-conffile-conflict)
+also passes modified-conffile preservation and an actual daemon restart, followed
+by a separately approved no-op without another restart. Distribution service
+packages, kernel updates, failing hooks and interruption/power-loss remain open.
 
 The [Proxmox inventory batch](evidence.md#proxmox-inventory-and-exporter) adds
 native inventory comparison, unattended timer refresh, verified host-local HTTPS

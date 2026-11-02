@@ -14,7 +14,10 @@ evidence paths; keep those out of Git. Follow repository and session instruction
 The subsequent [Admin package batch](evidence.md#package-changing-admin-update)
 qualifies a real leaf-package upgrade, separately approved no-op, native index
 failure/lock waiting and task/service preservation on another disposable guest.
-Package breadth, conffile conflicts and interrupted upgrades remain separate.
+The [owned-package follow-up](evidence.md#admin-service-restart-and-conffile-conflict)
+adds a real APT/dpkg conffile conflict and daemon restart, plus a no-op without
+another restart. Distribution service packages, kernel updates and interrupted
+upgrades remain separate.
 
 The [Proxmox inventory batch](evidence.md#proxmox-inventory-and-exporter) adds
 native inventory, unattended exports, host-local HTTPS and owned component
@@ -86,7 +89,7 @@ as untested rather than substituting HTTP or another browser silently.
 
 | Batch | Acceptance boundary / prerequisites |
 | --- | --- |
-| Package-changing Admin update | Selected leaf-package case passed at `176caeff62ad`; repeat affected cases after changes. Use a separate disposable Debian target with a deliberately available safe upgrade; actual approval, changed package version, correlated worker outcome, separately approved rerun/no-op and task/service preservation. Extend to service-restarting packages/conffile conflicts separately. An empty upgrade plan does not qualify a package change |
+| Package-changing Admin update | Leaf-package case passed at `176caeff62ad`; owned signed native package at `3c6fd7fa` adds modified-conffile preservation, daemon restart and separately approved no-op. Repeat affected cases after changes. Use an isolated disposable target, real approvals/workers and observable package/service/data outcomes. Extend to distribution service packages, kernel updates and maintainer-hook failures separately. An empty upgrade plan does not qualify a package change |
 | Proxmox panel/exporter | Selected installed inventory, unattended scheduling, host-local HTTPS and owned component lifecycle passed with collector/renderer bytes matching `ece5e5bc`. Diagnose intermittent controller partial-body timeouts first. Keep console, multi-node, native password replacement and public full-host setup/production teardown separate; plan ownership before further fault tests |
 | Native storage diagnostics/scrub | Use disposable guest data; target missing integration/scheduling. Keep mount guards. Hard-mounted CIFS can leave uninterruptible I/O, so isolation and a bounded containment plan must precede fault injection |
 | Registered runner and GitHub mirrors | Authorized test account/repository and privately supplied credentials; actual registration/events/jobs/cancellation or transport permissions. Pending tokenless setup is already covered |
