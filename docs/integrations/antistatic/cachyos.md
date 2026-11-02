@@ -90,6 +90,16 @@ Keep detailed captures and run evidence private. Project recipes own image
 assertions; the general [visual check command](../../workstations/visual-comparisons.md#run-a-project-check)
 can retain their settings, logs and results without copying the harness here.
 
+Antistatic's `basaltwater-agent.json` registers `capture-menus`,
+`capture-lighting` and `capture-model-inspection`. Select its Node runtime,
+then run `basaltw agent visuals check RECIPE --repository . --settings FILE`.
+Its adapter reads native capture options from `{"args":["--software-gl"]}`
+and places captures/metadata under the check's evidence directory. Follow the
+project's [recipe contract](https://github.com/bluehexagons/antistatic/blob/main/docs/development/captures.md#optional-basaltwater-recipes)
+for selections and a native invocation without Basaltwater. These recipes retain
+runtime observations but do not yet emit the optional strict build receipt;
+isolate build outputs and review original metadata before comparing captures.
+
 For before/after effects, use the deterministic showcase fixtures and pin the
 same frame, camera, graphics, data state and actual renderer. Some effect
 batch manifests have omitted resolved graphics and GL identity even though

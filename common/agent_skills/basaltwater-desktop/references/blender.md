@@ -110,7 +110,7 @@ renderer when testing its output.
 `basaltw agent blender inspect SOURCE` accepts `.blend`, OBJ, glTF/GLB and
 declarative scene assemblies, with designated intersection and downward support
 gap observations. See the shared
-[inspection contract](../../basaltwater-cachyos-desktop/references/blender.md#render-and-compare)
+[inspection contract](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-cachyos-desktop/references/blender.md#render-and-compare)
 for assembly transforms, companion hashes, limits and diagnostic views. These
 background checks leave UI, textures and consumer appearance unverified.
 
