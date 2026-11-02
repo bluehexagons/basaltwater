@@ -12,7 +12,7 @@ from lib.config import SetupConfig
 from lib.command_display import redacted_setup_parts
 from lib.setup_common import copy_project_files, create_tar_from_dir
 from lib.remote_utils import CommandTimeoutError, run
-from lib.ssh_utils import build_ssh_command as _build_ssh_command, shell_join
+from lib.ssh_utils import build_ssh_command as _build_ssh_command, shell_join, ssh_batch_mode, ssh_process_timeout
 
 REMOTE_BASALTWATER_PATH = "/opt/basaltwater/basaltwater.py"
 REMOTE_RECONSTRUCT_SCRIPT = '''set -eu
@@ -27,21 +27,27 @@ python3 "$recall_stage/source/basaltwater.py" reconstruct --compact
 '''
 
 
-def build_ssh_command(host: str, username: str, ssh_key: Optional[str] = None) -> list[str]:
+def build_ssh_command(
+    host: str, username: str, ssh_key: Optional[str] = None, *, batch_mode: bool | None = None,
+) -> list[str]:
     """Build an SSH command for connecting to a remote host."""
-    return _build_ssh_command(host, username, ssh_key, connect_timeout=30, server_alive_interval=30)
+    return _build_ssh_command(
+        host, username, ssh_key, batch_mode=batch_mode, connect_timeout=30, server_alive_interval=30,
+    )
 
 
 def retrieve_stored_config(host: str, username: str, ssh_key: Optional[str] = None) -> Optional[SetupConfig]:
     """Retrieve the stored configuration from the remote host."""
     remote_config_path = "/opt/basaltwater/state/setup.json"
+    batch_mode = ssh_batch_mode()
     try:
         result = run(
-            build_ssh_command(host, username, ssh_key) + [shell_join(["cat", remote_config_path])],
+            build_ssh_command(host, username, ssh_key, batch_mode=batch_mode) + [shell_join(["cat", remote_config_path])],
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=ssh_process_timeout(30, batch_mode=batch_mode),
             check=False,
+            preserve_terminal=not batch_mode,
         )
         if result.returncode == 0 and result.stdout.strip():
             config_dict = json.loads(result.stdout)
@@ -64,12 +70,14 @@ def reconstruct_remote_config(
     ssh_key: Optional[str] = None,
 ) -> Optional[tuple[SetupConfig, dict[str, Any]]]:
     """Run the remote reconstruction command and return the inferred config."""
+    batch_mode = ssh_batch_mode()
     try:
         check_result = run(
-            build_ssh_command(host, username, ssh_key) + [shell_join(["test", "-f", REMOTE_BASALTWATER_PATH])],
+            build_ssh_command(host, username, ssh_key, batch_mode=batch_mode) + [shell_join(["test", "-f", REMOTE_BASALTWATER_PATH])],
             capture_output=True,
-            timeout=10,
+            timeout=ssh_process_timeout(10, batch_mode=batch_mode),
             check=False,
+            preserve_terminal=not batch_mode,
         )
         if check_result.returncode not in (0, 1):
             print('Cannot inspect remote basaltwater installation; reconstruction aborted', file=sys.stderr)
@@ -81,13 +89,14 @@ def reconstruct_remote_config(
                 copy_project_files(build_dir)
                 tar_data = create_tar_from_dir(build_dir)
                 result = run(
-                    build_ssh_command(host, username, ssh_key)
+                    build_ssh_command(host, username, ssh_key, batch_mode=batch_mode)
                     + [shell_join(['timeout', '--kill-after=5s', '60s', 'sh', '-c', REMOTE_RECONSTRUCT_SCRIPT])],
                     input_data=base64.b64encode(tar_data).decode('ascii'),
                     capture_output=True,
                     text=True,
-                    timeout=120,
+                    timeout=ssh_process_timeout(120, batch_mode=batch_mode),
                     check=False,
+                    preserve_terminal=not batch_mode,
                 )
             finally:
                 if os.path.exists(build_dir):
@@ -95,12 +104,13 @@ def reconstruct_remote_config(
 
         else:
             result = run(
-                build_ssh_command(host, username, ssh_key)
+                build_ssh_command(host, username, ssh_key, batch_mode=batch_mode)
                 + [shell_join(['timeout', '--kill-after=5s', '60s', "python3", REMOTE_BASALTWATER_PATH, "reconstruct", "--compact"])],
                 capture_output=True,
                 text=True,
-                timeout=120,
+                timeout=ssh_process_timeout(120, batch_mode=batch_mode),
                 check=False,
+                preserve_terminal=not batch_mode,
             )
         if result.returncode == 0 and result.stdout.strip():
             reconstructed = json.loads(result.stdout)

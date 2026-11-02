@@ -23,6 +23,31 @@ def completed(returncode: int = 0, stdout: str = "", stderr: str = "") -> subpro
 
 
 class TestRetrieveStoredConfig(unittest.TestCase):
+    def test_recall_and_reconstruction_allow_terminal_authentication(self) -> None:
+        for interactive in (True, False):
+            with (
+                self.subTest(interactive=interactive),
+                patch.object(recall, "ssh_batch_mode", return_value=not interactive),
+                patch.object(recall, "build_ssh_command", return_value=["ssh"]) as build,
+                patch.object(recall, "run") as run,
+                patch.object(recall, "copy_project_files"),
+                patch.object(recall, "create_tar_from_dir", return_value=b"source"),
+            ):
+                run.return_value = completed(stdout='{"username":"remote"}')
+                self.assertIsNotNone(recall.retrieve_stored_config("server", "remote"))
+                self.assertEqual(run.call_args.kwargs["timeout"], None if interactive else 30)
+                self.assertEqual(run.call_args.kwargs["preserve_terminal"], interactive)
+                for installed in (True, False):
+                    run.reset_mock()
+                    run.side_effect = [completed(0 if installed else 1), completed(stdout='{}')]
+                    self.assertIsNotNone(recall.reconstruct_remote_config("server", "remote"))
+                    self.assertEqual([call.kwargs["timeout"] for call in run.call_args_list],
+                                     [None, None] if interactive else [10, 120])
+                    self.assertTrue(all(call.kwargs["preserve_terminal"] == interactive
+                                        for call in run.call_args_list))
+                self.assertTrue(all(call.kwargs["batch_mode"] == (not interactive)
+                                    for call in build.call_args_list))
+
     def test_retrieves_and_decodes_stored_config(self) -> None:
         stored = {"username": "remote", "friendly_name": "production", "tags": "web,prod"}
         with patch.object(recall, "build_ssh_command", return_value=["ssh"]), patch.object(recall, "run", return_value=completed(stdout=json.dumps(stored))) as run:

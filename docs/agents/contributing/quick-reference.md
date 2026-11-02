@@ -72,13 +72,18 @@ For edit workflow and tests, see the [contributor guide](README.md).
 Use the strict default of `lib.remote_utils.run()` for required mutations.
 `check=False` returns a result for probes, optional work or verified installers;
 inspect or verify it before treating the operation as successful. Timeouts raise
-in either mode. Each command runs in a process group with a one-hour default
-timeout; pass a positive `timeout` to shorten it or `None` only for an
+in either mode. By default, commands run in an isolated process group with a
+one-hour default timeout; pass a positive `timeout` to shorten it or `None` only for an
 intentionally unbounded command. Timeout cleanup terminates the group and bounds
 output collection, including when a detached child retains a pipe. Cleanup can
 add up to two five-second grace periods. Keyboard interruption also terminates
 the isolated group before cancellation propagates. A detached process that
-creates its own session needs caller-specific supervision.
+creates its own session needs caller-specific supervision. Use `interactive=True`
+for inherited terminal input/output, or `preserve_terminal=True` when SSH must
+read authentication from `/dev/tty` while its output is captured or stdin carries
+a payload. These modes retain the caller's session, so cleanup targets only the
+immediate child. Resolve SSH batch mode once and preserve the terminal only for
+interactive authentication; keep automation isolated and bounded.
 
 Use `lib.remote_utils.missing_packages()` for Debian package bundles. It validates
 the names and observes the bundle with one bounded `dpkg-query`, preserving

@@ -60,6 +60,18 @@ input carries the setup archive; no graphical `ssh-askpass` program or prior
 command starts, but time spent entering the local key passphrase does not
 consume it. Non-interactive uploads retain their local deadline and batch mode.
 
+Post-setup Proxmox pending-configuration checks, VM restart/shutdown requests,
+guest power preparation, and target restart checks also retain the controlling
+terminal. They can prompt again if the earlier control connection has expired;
+no graphical `ssh-askpass` program is needed. Restart readiness polling retains
+its overall deadline, including any authentication needed to reconnect.
+The prompt normally asks for the private key's passphrase. An account-password
+prompt is available only if the remote SSH server permits password authentication;
+managed hosts use key-only SSH.
+Configuration recall/reconstruction and rolling-update checks use the same
+terminal authentication behavior. Reconstruction still bounds remote execution
+with its target-side timeout; rolling-update polling retains its overall deadline.
+
 Commands started without a terminal—such as piped setup, automation, and
 parallel host checks—cannot safely ask several processes for a passphrase. In
 that case Basaltwater enables OpenSSH batch mode and retains bounded operation

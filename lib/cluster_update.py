@@ -19,7 +19,7 @@ from lib.config import SetupConfig
 from lib.proxmox_hosts import ProxmoxHost
 from lib.proxmox_maintenance import ProxmoxMaintenanceReport, collect_maintenance_report
 from lib.setup_common import prepare_validated_runtime_config
-from lib.ssh_utils import build_ssh_command, ssh_batch_mode
+from lib.ssh_utils import build_ssh_command, ssh_batch_mode, ssh_process_timeout
 from lib.workspace import get_workspace_dir, set_workspace_dir
 
 
@@ -43,22 +43,25 @@ def _ssh_result(
     remote_command: str,
     *,
     connect_timeout: int = 5,
-    timeout: float = 30,
+    timeout: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    batch_mode = ssh_batch_mode()
+    process_timeout = timeout if timeout is not None else ssh_process_timeout(30, batch_mode=batch_mode)
     return run(
         build_ssh_command(
             config.host,
             "root",
             config.ssh_key,
             remote_command=remote_command,
-            batch_mode=ssh_batch_mode(),
+            batch_mode=batch_mode,
             connect_timeout=connect_timeout,
             server_alive_interval=connect_timeout,
         ),
         capture_output=True,
         text=True,
         check=False,
-        timeout=timeout,
+        timeout=process_timeout,
+        preserve_terminal=not batch_mode,
     )
 
 

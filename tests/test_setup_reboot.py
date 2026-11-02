@@ -112,6 +112,41 @@ class RestartStatusTests(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs["timeout"], 12)
 
 
+class SetupSSHAuthenticationTests(unittest.TestCase):
+    def test_captured_checks_preserve_terminal_only_for_interactive_authentication(self) -> None:
+        config = _config(hosted_node="pve.example.test")
+        commands = (
+            ("provider", lambda: proxmox_vm_restart._provider_command(config, "probe"), 30),
+            ("guest drain", lambda: proxmox_vm_restart._drain_guest(config), 30),
+            ("restart check", lambda: setup_reboot._ssh_result(config, "probe"), 30),
+            ("readiness poll", lambda: setup_reboot._ssh_result(config, "probe", timeout=7), 7),
+        )
+        for interactive in (True, False):
+            for name, invoke, timeout in commands:
+                with (
+                    self.subTest(interactive=interactive, command=name),
+                    patch("lib.ssh_utils.sys.stdin.isatty", return_value=interactive),
+                    patch("lib.ssh_utils.get_workspace_known_hosts_path", return_value="/workspace/known_hosts"),
+                    patch.object(proxmox_vm_restart, "get_ssh_control_path", return_value="/private/provider.sock"),
+                    patch.object(setup_reboot, "get_ssh_control_path", return_value="/private/guest.sock"),
+                    patch("lib.remote_utils._dry_run", False),
+                    patch("lib.remote_utils.subprocess.Popen") as popen,
+                ):
+                    process = popen.return_value
+                    process.communicate.return_value = ("probe result", "")
+                    process.returncode = 0
+                    invoke()
+
+                    argv = popen.call_args.args[0]
+                    self.assertIn("BatchMode=no" if interactive else "BatchMode=yes", argv)
+                    self.assertIn("StrictHostKeyChecking=yes", argv)
+                    self.assertEqual(popen.call_args.kwargs["start_new_session"], not interactive)
+                    self.assertEqual(popen.call_args.kwargs["stdout"], subprocess.PIPE)
+                    self.assertEqual(popen.call_args.kwargs["stderr"], subprocess.PIPE)
+                    expected_timeout = None if interactive and name != "readiness poll" else timeout
+                    process.communicate.assert_called_once_with(input=None, timeout=expected_timeout)
+
+
 class RestartWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
         self.control = self.enterContext(patch.object(setup_reboot, "get_ssh_control_path", return_value="/root/control.sock"))

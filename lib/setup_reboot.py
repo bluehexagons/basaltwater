@@ -18,7 +18,7 @@ from lib.machine_state import can_restart_system
 from lib.maintenance_lock import maintenance_lock, retain_reboot_drain
 from lib.proxmox_vm_restart import pending_vm_restart, request_vm_restart, request_vm_shutdown
 from lib.remote_utils import CommandTimeoutError, run
-from lib.ssh_utils import build_ssh_command, get_ssh_control_path, ssh_batch_mode
+from lib.ssh_utils import build_ssh_command, get_ssh_control_path, ssh_batch_mode, ssh_process_timeout
 from lib.validators import validate_host, validate_username
 
 
@@ -114,15 +114,19 @@ def _ssh_result(
     config: SetupConfig,
     remote_command: str,
     *,
-    timeout: float = 30,
+    timeout: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    batch_mode = ssh_batch_mode()
+    # Ordinary checks can wait for authentication; restart polling supplies
+    # an explicit timeout to preserve its overall readiness deadline.
+    process_timeout = timeout if timeout is not None else ssh_process_timeout(30, batch_mode=batch_mode)
     return run(
         build_ssh_command(
             config.host,
             "root",
             config.ssh_key,
             remote_command=remote_command,
-            batch_mode=ssh_batch_mode(),
+            batch_mode=batch_mode,
             connect_timeout=15,
             server_alive_interval=15,
             control_path=get_ssh_control_path(config.host, "root", config.ssh_key),
@@ -130,7 +134,8 @@ def _ssh_result(
         capture_output=True,
         text=True,
         check=False,
-        timeout=timeout,
+        timeout=process_timeout,
+        preserve_terminal=not batch_mode,
     )
 
 

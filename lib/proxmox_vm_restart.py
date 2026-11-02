@@ -11,7 +11,7 @@ from typing import Any
 from lib.config import SetupConfig
 from lib.proxmox_guest import _build_guest_hostname
 from lib.remote_utils import run
-from lib.ssh_utils import build_ssh_command, get_ssh_control_path, ssh_batch_mode
+from lib.ssh_utils import build_ssh_command, get_ssh_control_path, ssh_batch_mode, ssh_process_timeout
 from lib.validation import validate_filesystem_path, validate_positive_integer
 from lib.validators import validate_host, validate_username
 
@@ -27,14 +27,17 @@ def _validate_provider(config: SetupConfig) -> None:
 
 def _provider_command(config: SetupConfig, command: str, *, timeout: int = 30) -> str:
     _validate_provider(config)
+    batch_mode = ssh_batch_mode()
     result = run(
         build_ssh_command(
             config.hosted_node, config.hosted_user, config.hosted_key,
-            remote_command=command, batch_mode=ssh_batch_mode(), connect_timeout=15,
+            remote_command=command, batch_mode=batch_mode, connect_timeout=15,
             server_alive_interval=15,
             control_path=get_ssh_control_path(config.hosted_node, config.hosted_user, config.hosted_key),
         ),
-        capture_output=True, text=True, check=False, timeout=timeout,
+        capture_output=True, text=True, check=False,
+        timeout=ssh_process_timeout(timeout, batch_mode=batch_mode),
+        preserve_terminal=not batch_mode,
     )
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip() or "SSH command failed"
@@ -133,12 +136,18 @@ def _drain_guest(config: SetupConfig) -> None:
         'from lib.setup_reboot import _prepare_local_vm_power; '
         'raise SystemExit(_prepare_local_vm_power())'
     )
-    result = run(build_ssh_command(
-        config.host, "root", config.ssh_key,
-        remote_command=shlex.join(["/usr/bin/python3", "-I", "-c", program]),
-        batch_mode=ssh_batch_mode(), connect_timeout=15, server_alive_interval=15,
-        control_path=get_ssh_control_path(config.host, "root", config.ssh_key),
-    ), capture_output=True, text=True, check=False, timeout=30)
+    batch_mode = ssh_batch_mode()
+    result = run(
+        build_ssh_command(
+            config.host, "root", config.ssh_key,
+            remote_command=shlex.join(["/usr/bin/python3", "-I", "-c", program]),
+            batch_mode=batch_mode, connect_timeout=15, server_alive_interval=15,
+            control_path=get_ssh_control_path(config.host, "root", config.ssh_key),
+        ),
+        capture_output=True, text=True, check=False,
+        timeout=ssh_process_timeout(30, batch_mode=batch_mode),
+        preserve_terminal=not batch_mode,
+    )
     if result.returncode != 0:
         raise RuntimeError("Guest power preparation refused or is uncertain; inspect guest capacity before retrying")
 

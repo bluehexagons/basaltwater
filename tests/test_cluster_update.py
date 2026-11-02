@@ -289,9 +289,17 @@ class TestRollingPolicyAndDeadlines(unittest.TestCase):
                 cluster_update._rolling_policy(_config("10.0.0.10"))
 
     def test_ssh_command_has_overall_timeout(self):
-        with patch.object(cluster_update, "run") as run:
-            cluster_update._ssh_result(_config("10.0.0.10"), "true", timeout=3)
-        self.assertEqual(run.call_args.kwargs["timeout"], 3)
+        for interactive in (True, False):
+            with self.subTest(interactive=interactive), \
+                 patch.object(cluster_update, "ssh_batch_mode", return_value=not interactive), \
+                 patch.object(cluster_update, "build_ssh_command", return_value=["ssh"]) as build, \
+                 patch.object(cluster_update, "run") as run:
+                cluster_update._ssh_result(_config("pve.example.test"), "true", timeout=3)
+                self.assertEqual(run.call_args.kwargs["timeout"], 3)
+                self.assertEqual(run.call_args.kwargs["preserve_terminal"], interactive)
+                self.assertEqual(build.call_args.kwargs["batch_mode"], not interactive)
+                cluster_update._ssh_result(_config("pve.example.test"), "true")
+                self.assertEqual(run.call_args.kwargs["timeout"], None if interactive else 30)
 
     def test_poll_uses_remaining_budget_without_final_extra_probe(self):
         clock = [0.0]

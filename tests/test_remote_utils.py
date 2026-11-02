@@ -192,6 +192,34 @@ class TestRunCommandDispatch(unittest.TestCase):
                     run("sudo true", interactive=True, **kwargs)
 
     @patch("lib.remote_utils.subprocess.Popen")
+    def test_preserve_terminal_keeps_capture_and_payload_separate(self, mock_popen):
+        process = self._completed_process(mock_popen, stdout="remote result", stderr="")
+
+        result = run(["ssh", "example.test", "command"], capture_output=True,
+                     input_data="payload", preserve_terminal=True, timeout=None)
+
+        self.assertFalse(mock_popen.call_args.kwargs["start_new_session"])
+        for stream in ("stdin", "stdout", "stderr"):
+            self.assertEqual(mock_popen.call_args.kwargs[stream], subprocess.PIPE)
+        process.communicate.assert_called_once_with(input="payload", timeout=None)
+        self.assertEqual(result.stdout, "remote result")
+
+    @patch("lib.remote_utils.os.killpg")
+    @patch("lib.remote_utils.subprocess.Popen")
+    def test_preserved_terminal_cleanup_never_signals_callers_group(self, mock_popen, killpg):
+        for failure in (subprocess.TimeoutExpired(["ssh"], 2), KeyboardInterrupt()):
+            with self.subTest(failure=type(failure).__name__):
+                process = self._completed_process(mock_popen)
+                process.communicate.side_effect = [failure, ("", "")]
+                process.poll.return_value = 0
+                expected = CommandTimeoutError if isinstance(failure, subprocess.TimeoutExpired) else KeyboardInterrupt
+                with self.assertRaises(expected):
+                    run(["ssh"], capture_output=True, preserve_terminal=True, timeout=2)
+                process.terminate.assert_called_once_with()
+                killpg.assert_not_called()
+                mock_popen.reset_mock()
+
+    @patch("lib.remote_utils.subprocess.Popen")
     def test_interactive_timeout_does_not_signal_the_calling_process_group(
         self, mock_popen
     ):
