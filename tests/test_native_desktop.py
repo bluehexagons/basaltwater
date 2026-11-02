@@ -870,6 +870,58 @@ class NativeReceiptTests(PrivateHomeTestCase):
         super().setUp()
         self.enterContext(patch.object(native_grants, "metadata", return_value={"remember_requested": False, "grant_saved": False, "paused": False}))
 
+    def test_status_reobserves_shutdown_disconnect_before_using_private_receipt(self):
+        session = native.NativeSession(None, receipt=self.home / "status.json")
+        session.close()
+        for disconnected in (ConnectionResetError, BrokenPipeError):
+            with self.subTest(disconnected=disconnected.__name__), \
+                    patch.object(native, "runtime_directory", return_value=self.home), \
+                    patch.object(native, "request", side_effect=[disconnected, FileNotFoundError]) as request, \
+                    patch.object(native.time, "sleep"):
+                result = native.status()
+                self.assertEqual(result["state"], "stopped")
+                self.assertEqual(result["generation"], session.generation)
+                self.assertFalse(result["helper_running"])
+                self.assertEqual(request.call_args_list, [call({"action": "status"})] * 2)
+
+    def test_status_reobserves_live_generation_after_disconnect(self):
+        current = {"state": "running", "generation": "replacement"}
+        with patch.object(native, "request", side_effect=[ConnectionResetError, current]) as request, \
+                patch.object(native.time, "sleep"), patch.object(native, "read_json_file") as receipt:
+            self.assertEqual(native.status(), current)
+        self.assertEqual(request.call_args_list, [call({"action": "status"})] * 2)
+        receipt.assert_not_called()
+
+    def test_persistent_status_disconnect_is_bounded_and_does_not_claim_stopped(self):
+        with patch.object(native, "request", side_effect=ConnectionResetError) as request, \
+                patch.object(native.time, "sleep") as sleep, \
+                patch.object(native, "read_json_file") as receipt, \
+                self.assertRaisesRegex(RuntimeError, "status connection closed"):
+            native.status()
+        self.assertEqual(request.call_args_list, [call({"action": "status"})] * 3)
+        self.assertEqual(sleep.call_count, 2)
+        receipt.assert_not_called()
+
+    def test_status_does_not_retry_invalid_unsafe_or_timed_out_responses(self):
+        for error in (ValueError("Invalid reply"), RuntimeError("Unsafe socket"), PermissionError(), TimeoutError()):
+            with self.subTest(error=type(error).__name__), \
+                    patch.object(native, "request", side_effect=error) as request, \
+                    patch.object(native.time, "sleep") as sleep, self.assertRaises(type(error)):
+                native.status()
+            request.assert_called_once_with({"action": "status"})
+            sleep.assert_not_called()
+
+    def test_reobserved_shutdown_keeps_start_lock_guard_before_launch(self):
+        with patch.object(native, "runtime_directory", return_value=self.home), \
+                patch.object(native, "request", side_effect=[ConnectionResetError, FileNotFoundError, FileNotFoundError]), \
+                patch.object(native.time, "sleep"), patch.object(native, "check_session"), \
+                patch.object(control_state, "status", return_value={"agent_control": "enabled"}), \
+                patch.object(native.fcntl, "flock", side_effect=[None, BlockingIOError]), \
+                patch.object(native.subprocess, "Popen") as launch, \
+                self.assertRaisesRegex(RuntimeError, "helper is still stopping"):
+            native.start()
+        launch.assert_not_called()
+
     def test_initializing_and_last_failure_remain_available_after_helper_exit(self):
         with tempfile.TemporaryDirectory() as directory, redirect_stdout(output := StringIO()):
             receipt = Path(directory, "status.json")

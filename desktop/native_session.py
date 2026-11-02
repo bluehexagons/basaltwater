@@ -67,9 +67,20 @@ def request(payload):
     return result
 
 
+def _request_status():
+    """Reobserve transient socket teardown without replaying any mutation."""
+    for attempt in range(3):
+        try:
+            return request({"action": "status"})
+        except (ConnectionResetError, BrokenPipeError) as exc:
+            if attempt == 2:
+                raise RuntimeError("Native helper status connection closed; inspect desktop status before retrying") from exc
+            time.sleep(.05)
+
+
 def status():
     try:
-        return request({"action": "status"})
+        return _request_status()
     except (FileNotFoundError, ConnectionRefusedError):
         path = runtime_directory() / "status.json"
         receipt = {}

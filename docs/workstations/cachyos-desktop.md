@@ -185,6 +185,13 @@ Use `--native` explicitly; ordinary `basaltw desktop` addresses Debian XRDP.
 The helper uses a private same-account Unix socket, without a network listener,
 global input daemon, systemd service, or autostart.
 
+During helper shutdown, `status` can encounter a reset connection. It retries
+only that read-only query, up to three attempts with 50 ms between attempts.
+Persistent resets remain an error, and invalid replies or timeouts are not
+retried. `start` still refuses to launch while the previous helper holds its
+session lock; wait for teardown and inspect status before trying again.
+Input, launches and control changes are never replayed by this recovery.
+
 Prefer application scripting for bulk edits and focused UI checks for interaction.
 Use exact PID/name/role/root selectors, fresh monitor captures, task copies,
 and isolated test profiles. Reopen editable sources and verify exports in their
