@@ -18,7 +18,7 @@ CachyOS VM/container provisioning are outside its scope. See the
 | T3 Code desktop session with Codex | 🟢 **Labbed** | Owner's manual reopen after waiting succeeded; subsequent live Codex conversation, shell-tool execution, repository edits, tests, commit and push worked through T3 | Other providers, T3's interactive terminal UI, pairing/Connect and broader GUI workflows |
 | T3 Code desktop refresh/relaunch | 🟡 **Partial** | Native logs confirmed the old backend still owned the T3 home during premature reopen. Fix `bf0eb670` passed automated shutdown/timeout regressions; read-only native discovery captured the live embedded server | Corrected worker has not been exercised through a live shutdown/relaunch; repeat refresh, slow-backend exit, timeout, reboot and interruption remain open |
 | Graphics discovery and reference contexts | 🟡 **Partial** | Accelerated GLX and isolated llvmpipe contexts | Other devices/backends; these probes alone do not qualify application rendering |
-| Native Godot rendering and gameplay | 🟢 **Labbed** | Godot 4.7.2 on KDE Wayland with NVIDIA hardware: Vulkan Forward+ and explicit OpenGL Compatibility launches, gameplay and renderer settings on 2026-10-31; extended menu audit on 2026-11-01; native weather/time/idle and fixed section navigation with focused GPU regressions on 2026-11-02 | Other GPU vendors, HDR, performance acceptance, exported-game renderer restart and target devices |
+| Native Godot rendering and gameplay | 🟢 **Labbed** | Godot 4.7.2 on KDE Wayland with NVIDIA hardware: Vulkan Forward+ and explicit OpenGL Compatibility launches, gameplay and renderer settings on 2026-10-31; extended menu audit on 2026-11-01; weather/time/idle, fixed section navigation, binding chords/mouse input and settings/audio controls with focused GPU regressions on 2026-11-02 | Other GPU vendors, HDR, performance acceptance, exported-game renderer restart and target devices |
 | Native SDL/OpenGL rendering and scripted UI | 🟢 **Labbed** | Antistatic on KDE Wayland with Mesa Intel Arc OpenGL 4.6: controls-menu scrolling, pause preference toggle, reviewed application/monitor captures and clean shutdown on 2026-11-01; four fixed-frame llvmpipe effect comparisons also matched | Physical controllers, audible output, HDR, display scaling/pacing, other devices and package qualification; software comparisons do not qualify hardware rendering |
 | Blender and visual workflows | 🟡 **Partial** | Small native Blender CPU render | Full project scenes, image fidelity and hardware rendering |
 | Supervised development tasks | 🟡 **Partial** | Native game and GPU-recipe completion through `develop wait`; a wait timeout left the game running, intentional exit 7 remained a failure, stop preview preserved a running task and scoped stop reached `stopped` on 2026-11-01. Application regression failures and an engine abort also surfaced as failed tasks with retained logs | Interruption/disconnection, long-running descendants, unavailable user manager and logout/reboot recovery |
@@ -27,7 +27,8 @@ CachyOS VM/container provisioning are outside its scope. See the
 | KDE desktop capture and input | 🟢 **Labbed** | Owner-approved selected-monitor capture and real Godot menus/gameplay on 2026-10-31 and 2026-11-01; 120 ms held keys/buttons, wheel input, text entry and popup interaction. Saved access restored without a new prompt; stale-capture input rejection recovered through fresh capture. Earlier native checks exercised stale-generation rejection and renewal | Live takeover/revocation, monitor/scaling changes, logout/reboot and other application identities |
 | Timed native observations | 🟢 **Labbed** | `input --observe` and `screenshot --next-frame --compact` returned reviewed game captures, ordered input/frame timestamps, pixel hashes and change metadata on 2026-11-01; native help correctly hides unavailable window capture | Stalled/static streams, cancellation, capture-failure recovery and latency qualification |
 | Sleeping-display capture recovery | 🟢 **Labbed** | A black monitor capture recovered after `basaltw desktop --native wake` with agent control enabled; a fresh capture showed the desktop and later game presentation on 2026-11-01 | Locked, disconnected or disabled outputs, repeated sleep/wake cycles and capture-stream recovery beyond this case |
-| Manual native evidence records | 🟢 **Labbed** | Automatic task attachment, Git provenance, exit outcomes, private modes/paths, offline and repeated finalization verified. Extended audit reached the 500-event cap and reported truncation; three focused follow-up records finalized without truncation on 2026-11-01 | Interrupted writes/collection, unavailable task inventory, recovery at the event cap and other application identities |
+| Manual native evidence records | 🟢 **Labbed** | Automatic task attachment, Git provenance, exit outcomes, private modes/paths, offline and repeated finalization verified. Extended audit reported its 500-event cap; shorter follow-ups retained complete events. A long-session task inventory reported truncation on 2026-11-02, with owned task completion separately verified | Interrupted writes/collection, unavailable task inventory, recovery at caps and other application identities |
+| Application audio routing observations | 🟡 **Partial** | Native Godot input changed saved bus gains, mute/reset and background attenuation; a read-only application observer sampled engine meters during gameplay on 2026-11-02 | Speaker/loopback output, loudness, clipping and transition quality; the desktop helper does not capture audio |
 | Godot export prerequisite diagnosis | 🟢 **Labbed** | `develop doctor --export-check` observed Godot 4.7.2 and correctly rejected installed 4.7.1 stable and 4.7 beta4 templates as mismatched on 2026-11-01 | Matching-template positive case, template contents/provenance and actual export remain unverified |
 | Optional Sunshine streaming | ⚪ **Untested** | No end-to-end stream pass recorded in these summaries | Service, pairing, video/audio/input and reconnect |
 | Creative/game tools and publishing | 🟡 **Partial** | Broad tool selections included in the owner-reported refresh; Godot application QA is recorded separately above | Other selected applications, project-specific build/export, input and publishing |
@@ -199,6 +200,46 @@ Physical controllers, audible output, HDR, target-platform exports, latency,
 Sunshine, setup/reboot and interruption/recovery boundaries remain unverified.
 The helper stayed enabled; no desktop permission or display-layout change was
 needed. Application-only window-size tests do not qualify KDE scaling changes.
+
+### Native controls and audio follow-up, 2026-11-02
+
+The same approved helper and supervised development workflow supported native
+modifier-chord and mouse-button rebinding, cancellation, default restoration
+and restart persistence. Plain-key input left the hand unchanged; the bound
+chord dealt one card and the mouse binding stood once. Compact Russian menus
+at 150% text exposed application label/badge overlap, which was corrected and
+rechecked through real input and focused project GPU assertions. Final focused
+UI checks passed 2,531 assertions plus 75 display preflight assertions; the
+delivery gate passed 3,975 assertions across 75 headless suites and affected
+tooling. These are project-owned checks, not Basaltwater unit-test counts.
+
+Native slider changes reached distinct production audio bus gains and survived
+restart. With Main at 50%, Background Volume 0% set Master to zero on focus
+loss, while Background Volume 50% set it to 25%; refocusing restored 50%.
+Individual bus gains were preserved. Unpaused gameplay produced Music and
+Ambient meter activity. Music at zero reached the meter floor while Ambient
+continued; restoring defaults returned gains to one and music activity resumed.
+The hand/shoe and play counters stayed unchanged through the settings flows.
+
+The observer was private, application-specific and read-only. It sampled engine
+state; it was not desktop audio capture or a listening check. Gameplay music
+was available, but the local presentation bundle contained no menu music tracks.
+Audible mix, speakers, clipping, transitions and Steam-overlay attenuation
+remain unverified. Source sessions used synthetic player data with Steam/cloud
+disabled and the application's account-write guard. No export was attempted.
+
+Two focused audio evidence records finalized with 74 and 100 events and no
+event truncation. The later record reported `task_inventory_truncated: true`;
+its owned successful task was present and separately checked through
+`develop wait`. This does not establish a complete task inventory. Raw records,
+captures, profiles and observer states remain private. Normal exits retained
+the application's known shutdown warnings without runtime errors. Running
+Basaltwater source still reported `5184cef0` with a dirty flag, so this is not
+clean-release qualification.
+
+Useful additions would be app-scoped loopback capture for audio acceptance and
+paginated or time-scoped evidence task discovery for long sessions. Neither is
+claimed as an available, qualified capability here.
 
 ## Native SDL/OpenGL application follow-up, 2026-11-01
 
