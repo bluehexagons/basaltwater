@@ -53,6 +53,65 @@ def selected(elements) -> dict:
     return {"count": len(indices), "indices": indices[:1000], "truncated": len(indices) > 1000}
 
 
+def support_gaps(vertices: list, cast, tolerance: float) -> dict:
+    """Sample at most 4096 base vertices along world -Z; misses stay explicit."""
+    if not vertices:
+        return {"status": "unverified", "reason": "empty object"}
+    bottom = min(vertex[2] for vertex in vertices)
+    base = [vertex for vertex in vertices if vertex[2] <= bottom + tolerance]
+    gaps, misses = [], 0
+    for x, y, z in base[:4096]:
+        # Offset above the base to observe contacts within tolerance as well.
+        distance = cast((x, y, z + tolerance))
+        if distance is None:
+            misses += 1
+        else:
+            gaps.append(distance - tolerance)
+    return {"status": "observed", "axis": "world -Z", "tolerance": tolerance,
+            "base_vertices": len(base), "sampled_vertices": min(len(base), 4096),
+            "truncated": len(base) > 4096, "missed_support": misses,
+            "minimum_gap": min(gaps) if gaps else None, "maximum_gap": max(gaps) if gaps else None,
+            "gaps_above_tolerance": sum(gap > tolerance for gap in gaps)}
+
+
+def load_geometry(bpy, source: str) -> None:
+    suffix = Path(source).suffix.lower()
+    if suffix == ".obj":
+        result = bpy.ops.wm.obj_import(filepath=source)
+    else:
+        result = bpy.ops.import_scene.gltf(filepath=source)
+    if "FINISHED" not in result:
+        raise ValueError(f"Geometry import did not finish: {source}")
+
+
+def load_source(bpy, request: dict) -> None:
+    """Import into an empty scene, preserving hierarchy under assembly transforms."""
+    from mathutils import Matrix
+
+    source = request["source"]
+    if Path(source).suffix.lower() == ".blend":
+        bpy.ops.wm.open_mainfile(filepath=source, load_ui=False, use_scripts=False)
+        return
+    bpy.ops.object.select_all(action="SELECT")
+    bpy.ops.object.delete(use_global=False)
+    if not request["assembly"]:
+        load_geometry(bpy, source)
+        return
+    for part in request["assembly"]:
+        previous = set(bpy.context.scene.objects)
+        load_geometry(bpy, part["source"])
+        imported = set(bpy.context.scene.objects) - previous
+        # Reserve deterministic namespaces before Blender applies length limits.
+        names = [part["name"] + ":" + obj.name for obj in imported]
+        if any(len(name.encode("utf-8")) > 63 for name in names):
+            raise ValueError("Assembly object names exceed Blender's 63-byte name limit")
+        for obj in imported:
+            obj.name = part["name"] + ":" + obj.name
+            if obj.parent not in imported:
+                obj.matrix_world = Matrix(part["matrix"]) @ obj.matrix_world
+        bpy.context.view_layer.update()
+
+
 def diagnostic_material(bpy, mode: str, highlight: bool = False):
     material = bpy.data.materials.new(f"Inspection {mode} {highlight}")
     material.use_nodes = True
@@ -150,7 +209,7 @@ def main() -> None:
     os.umask(0o077)
     directory = Path(sys.argv[sys.argv.index("--") + 1])
     request = json.loads((directory / "request.json").read_text())
-    bpy.ops.wm.open_mainfile(filepath=request["source"], load_ui=False, use_scripts=False)
+    load_source(bpy, request)
     scene = bpy.context.scene
     # Synchronize edit selection back to the source mesh before evaluating it.
     if bpy.context.object and bpy.context.object.mode != "OBJECT":
@@ -211,13 +270,29 @@ def main() -> None:
         if not intentional:
             for name, indices in ((first, {pair[0] for pair in overlap}), (second, {pair[1] for pair in overlap})):
                 highlights.setdefault(name, set()).update(indices)
+    supports = []
+    from mathutils import Vector
+
+    for first, second in request["supports"]:
+        if first not in surfaces or second not in surfaces:
+            raise ValueError(f"Support pair must name inspected scene meshes: {first}, {second}")
+        vertices, polygons = surfaces[second]
+        if not polygons:
+            supports.append({"objects": [first, second], "status": "unverified", "reason": "empty support"})
+            continue
+        tree = BVHTree.FromPolygons(vertices, polygons)
+        def cast(origin):
+            return tree.ray_cast(Vector(origin), Vector((0, 0, -1)))[3]
+        supports.append({"objects": [first, second], **support_gaps(surfaces[first][0], cast, request["support_tolerance"])})
     result = {"schema_version": 1, "blender_version": bpy.app.version_string, "scene": scene.name,
               "frame": scene.frame_current, "evaluation": "viewport dependency graph", "objects": records,
-              "intersections": intersections, "images": [],
+              "intersections": intersections, "supports": supports, "images": [],
               "limits": ["Instances are not expanded; inspect source scene mesh objects.",
                          "Surface overlap does not detect full containment or prove a defect.",
                          "Coplanar overlap, unusual protrusions and outward normals need visual review.",
                          "Diagnostic materials do not represent consumer appearance."]}
+    result["limits"].extend(["Support rays sample lowest vertices along world -Z; misses and truncation do not prove stability.",
+                             "Only declared inputs are hashed; undeclared companions and texture loading remain unverified."])
     # Retain geometry observations if optional rendering fails or times out.
     (directory / "inspection.json").write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
     if request["render_views"]:

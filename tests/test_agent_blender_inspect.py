@@ -10,7 +10,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from desktop.blender_inspect_scene import bounds, topology
+from desktop.blender_inspect_scene import bounds, load_geometry, support_gaps, topology
+from lib.blender_inputs import assembly_inputs
 from lib import agent_blender_inspect, agent_cli
 from tests.test_agent_visuals import png_bytes
 
@@ -95,6 +96,60 @@ class BlenderInspectionTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIsNone(result["returncode"])
         self.assertTrue((self.output / "report.json").exists())
+
+    def test_support_gaps_distinguish_contacts_gaps_misses_and_truncation(self) -> None:
+        distances = iter([0.001, 0.101, None])
+        result = support_gaps([(0, 0, 1), (1, 0, 1), (2, 0, 1), (0, 0, 2)], lambda origin: next(distances), 0.001)
+        self.assertEqual(result["base_vertices"], 3)
+        self.assertEqual(result["minimum_gap"], 0)
+        self.assertAlmostEqual(result["maximum_gap"], 0.1)
+        self.assertEqual(result["missed_support"], 1)
+        self.assertEqual(result["gaps_above_tolerance"], 1)
+        self.assertTrue(support_gaps([(0, 0, 0)] * 4100, lambda origin: None, 0.001)["truncated"])
+
+    def test_export_import_dispatch_and_operator_failure(self) -> None:
+        from unittest.mock import Mock
+
+        bpy = Mock()
+        bpy.ops.wm.obj_import.return_value = {"FINISHED"}
+        load_geometry(bpy, "model.obj")
+        bpy.ops.wm.obj_import.assert_called_once_with(filepath="model.obj")
+        bpy.ops.import_scene.gltf.return_value = {"CANCELLED"}
+        with self.assertRaisesRegex(ValueError, "did not finish"):
+            load_geometry(bpy, "model.glb")
+
+    def test_assembly_resolves_geometry_and_rejects_unsafe_transforms(self) -> None:
+        geometry = self.root / "part.obj"
+        geometry.write_text("o Body\nv 0 0 0\n")
+        assembly = self.root / "assembly.json"
+        data = {"version": 1, "parts": [{"name": "prop", "source": "part.obj"}]}
+        assembly.write_text(json.dumps(data))
+        parts = assembly_inputs(str(assembly))
+        self.assertEqual(parts[0]["source"], str(geometry))
+        self.assertEqual(parts[0]["matrix"][3], [0, 0, 0, 1])
+        for change in ({"matrix": [[0]]}, {"source": "../outside.obj"}, {"name": "bad\nname"}):
+            assembly.write_text(json.dumps({"version": 1, "parts": [{**data["parts"][0], **change}]}))
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                assembly_inputs(str(assembly))
+
+    def test_export_companions_are_hashed_and_changes_fail(self) -> None:
+        self.source = self.root / "model.gltf"
+        self.source.write_text("synthetic glTF")
+        companion = self.root / "model.bin"
+        companion.write_bytes(b"geometry")
+        self.args.source = str(self.source)
+        self.args.dependency = [str(companion)]
+
+        def changed(command, **options):
+            result = self.inspect(command, **options)
+            companion.write_bytes(b"concurrent export")
+            return result
+
+        self.run.side_effect = changed
+        result = agent_blender_inspect.inspect_blender(self.args)
+        self.assertFalse(result["ok"])
+        self.assertIn("input changed", result["error"])
+        self.assertIn(str(companion), result["input_sha256"])
 
 
 if __name__ == "__main__":
