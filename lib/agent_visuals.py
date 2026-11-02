@@ -182,7 +182,8 @@ def capture_revisions(args: argparse.Namespace) -> dict:
             environment = {**os.environ, "BASALTWATER_VISUAL_EVIDENCE": directory,
                            "BASALTWATER_VISUAL_SETTINGS": settings_path,
                            "BASALTWATER_VISUAL_REVISION": commits[side],
-                           "BASALTWATER_VISUAL_RECEIPT": receipt_path}
+                           "BASALTWATER_VISUAL_RECEIPT": receipt_path,
+                           "BASALTWATER_VISUAL_VERIFY": "1" if args.verify_evidence or args.require_artifact_kind else "0"}
             argv = [arg.replace("{output}", output).replace("{settings}", settings_path) for arg in command]
             started = time.monotonic()
             log_path = os.path.join(directory, side + ".log")

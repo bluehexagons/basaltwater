@@ -138,6 +138,7 @@ class TestAgentVisuals(unittest.TestCase):
         self.assertEqual([call.kwargs["cwd"] for call in calls], [str(self.root / "worktree-before"), str(self.root / "worktree-after")])
         self.assertTrue(all(call.kwargs["timeout"] == 20 for call in calls))
         for side, call in zip(("before", "after"), calls):
+            self.assertEqual(call.kwargs["env"]["BASALTWATER_VISUAL_VERIFY"], "0")
             self.assertEqual(call.args[0][2], str(self.root / "capture" / f"{side}.png"))
             self.assertEqual(call.args[0][4], str(self.root / "capture" / "settings.json"))
             self.assertEqual(result["captures"][side]["settings"], json.loads(self.settings.read_text()))
@@ -157,8 +158,9 @@ class TestAgentVisuals(unittest.TestCase):
         self.assertFalse((self.root / "capture/index.html").exists())
 
     def test_strict_capture_requires_receipt_before_second_capture(self) -> None:
-        _, create, _ = self.mock_capture_system()
+        _, create, execute = self.mock_capture_system()
         result = agent_visuals.capture_revisions(self.capture_args("--verify-evidence"))
+        self.assertEqual(execute.call_args.kwargs["env"]["BASALTWATER_VISUAL_VERIFY"], "1")
         self.assertFalse(result["ok"])
         self.assertEqual(create.call_count, 1)
         self.assertFalse((self.root / "capture/index.html").exists())

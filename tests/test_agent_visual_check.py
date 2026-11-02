@@ -48,7 +48,7 @@ class TestAgentVisualCheck(unittest.TestCase):
         ])
 
     def test_check_preserves_literal_argv_backend_and_private_evidence(self) -> None:
-        with patch.dict(os.environ, {"SDL_VIDEODRIVER": "offscreen", "UNRELATED_TOKEN": "private"}):
+        with patch.dict(os.environ, {"SDL_VIDEODRIVER": "offscreen", "UNRELATED_TOKEN": "private", "BASALTWATER_VISUAL_VERIFY": "1"}):
             result = agent_visual_check.check_recipe(self.args("--timeout", "25"))
         self.assertTrue(result["ok"])
         self.assertEqual(result["status"], "passed")
@@ -63,6 +63,7 @@ class TestAgentVisualCheck(unittest.TestCase):
         self.assertEqual(call.kwargs["env"]["SDL_VIDEODRIVER"], "offscreen")
         self.assertEqual(call.kwargs["env"]["BASALTWATER_VISUAL_EVIDENCE"], str(self.output))
         self.assertEqual(call.kwargs["env"]["BASALTWATER_VISUAL_SETTINGS"], str(self.output / "settings.json"))
+        self.assertEqual(call.kwargs["env"]["BASALTWATER_VISUAL_VERIFY"], "0")
         for filename, mode in (("check.json", 0o600), ("check.log", 0o600), ("environment.json", 0o600), ("settings.json", 0o400)):
             self.assertEqual((self.output / filename).stat().st_mode & 0o777, mode)
         self.assertEqual(self.output.stat().st_mode & 0o777, 0o700)
@@ -91,6 +92,7 @@ class TestAgentVisualCheck(unittest.TestCase):
 
         def checked(argv, **kwargs):
             env = kwargs["env"]
+            self.assertEqual(env["BASALTWATER_VISUAL_VERIFY"], "1")
             receipt = {"version": 1, "revision": env["BASALTWATER_VISUAL_REVISION"],
                        "effective_settings": json.loads(self.settings.read_text()),
                        "artifacts": [{"path": "asset.bin", "kind": "asset", "revision": "a" * 40,

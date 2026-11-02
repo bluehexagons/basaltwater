@@ -123,6 +123,7 @@ def check_recipe(args: argparse.Namespace) -> dict:
     revision = manifest["workspace"].get("commit")
     environment["BASALTWATER_VISUAL_REVISION"] = revision or ""
     environment["BASALTWATER_VISUAL_RECEIPT"] = receipt_path
+    environment["BASALTWATER_VISUAL_VERIFY"] = "1" if args.verify_evidence or args.require_artifact_kind else "0"
     write_json_atomic(settings_path, settings, mode=0o400, indent=None)
     report = {
         "schema_version": 1, "ok": False, "status": "running", "recipe": args.recipe,

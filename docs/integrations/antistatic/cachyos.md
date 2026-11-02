@@ -106,8 +106,9 @@ basaltw agent visuals check capture-lighting --repository . --settings FILE \
   --require-artifact-kind typescript --require-artifact-kind asset --json
 ```
 
-This requires a clean checkout at the intended full revision. Dirty runs retain
-ordinary captures without a receipt; the strict gate still refuses them. The
+This requires refreshed Basaltwater's explicit verification indicator and a
+clean checkout at the intended full revision. Strict requests reject dirty
+source before capture; ordinary checks keep normal captures without a receipt. The
 adapter's optional `expect` settings assert observed frame, graphics and GL
 identity across every capture. Literal `args` record capture-command options;
 they do not substitute for renderer observations. See the project's

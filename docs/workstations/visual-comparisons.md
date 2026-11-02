@@ -102,7 +102,13 @@ The harness receives the same environment contract in both commands:
 `BASALTWATER_VISUAL_SETTINGS`, `BASALTWATER_VISUAL_EVIDENCE`,
 `BASALTWATER_VISUAL_REVISION` and `BASALTWATER_VISUAL_RECEIPT`. The last path is
 new for each run (and each side of a revision capture). Write this receipt there
-after rendering, using actual renderer observations and retained build records:
+after rendering, using actual renderer observations and retained build records.
+
+`BASALTWATER_VISUAL_VERIFY` is `1` when `--verify-evidence` or any required
+artifact kind is selected, otherwise `0`. It overrides an inherited value on
+every invocation. Adapters should use it to opt into strict build preparation;
+the presence of the receipt destination alone does not request verification.
+A version-1 receipt contains:
 
 ```json
 {
