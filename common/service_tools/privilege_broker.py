@@ -41,6 +41,8 @@ from lib.privilege_execution import (
     COMMAND_HELPER, ENVIRONMENT, EXECUTOR_WAIT_SECONDS, ExecutionResult, command_executor_argv,
 )
 
+_REVIEW_ORDER = "CASE WHEN state IN ('pending','approved','executing') THEN 0 ELSE 1 END, created DESC"
+
 
 class BrokerRequestRejected(ValueError):
     """A request failed validation before its durable acceptance began."""
@@ -404,7 +406,7 @@ class Broker:
                                       for row in rows if json.loads(row["plan"])["operation"] == "admin.run"][:20]
                 # The panel can inspect its account's broker work, but receives
                 # neither approval authority nor potentially sensitive argv.
-                rows = self.db.execute("SELECT id,created,expires,state,plan,execution FROM requests WHERE uid=? ORDER BY created DESC LIMIT 20", (uid,)).fetchall()
+                rows = self.db.execute(f"SELECT id,created,expires,state,plan,execution FROM requests WHERE uid=? ORDER BY {_REVIEW_ORDER} LIMIT 20", (uid,)).fetchall()
                 result["privilege_requests"] = []
                 for row in rows:
                     plan = json.loads(row["plan"])
@@ -420,7 +422,7 @@ class Broker:
         if approval and action == "list" and set(message) == {"action"}:
             with self.lock, self.db:
                 self._expire()
-                rows = self.db.execute("SELECT id,uid,created,state,plan FROM requests ORDER BY created DESC LIMIT 20").fetchall()
+                rows = self.db.execute(f"SELECT id,uid,created,state,plan FROM requests ORDER BY {_REVIEW_ORDER} LIMIT 20").fetchall()
                 return {"requests": [{"id": row["id"], "uid": row["uid"], "created": row["created"],
                                       "state": row["state"], "operation": json.loads(row["plan"])["operation"]} for row in rows]}
         if action == "status" and set(message) == {"action", "id"}:

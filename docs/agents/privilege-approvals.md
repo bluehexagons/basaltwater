@@ -130,7 +130,9 @@ When the [web panel](../services/web-panel.md) is installed, **Admin
 controls → Privilege approvals** lists this account's recent requests from task
 follow-ups, terminal agents and Admin controls. It shows status, approval expiry,
 safe execution results, cancellation for unclaimed work, and links to review
-the exact actions. Use **Refresh status** after an action finishes. Command
+the exact actions. Both panels list pending, approved and executing requests
+before recent closed requests, so completed work cannot hide an active review.
+Use **Refresh status** after an action finishes. Command
 arguments and agent explanations appear on the exact-action review page.
 Follow-up restart prerequisites use registered service rules when available.
 Otherwise they request one-time command approval for the exact `systemctl`

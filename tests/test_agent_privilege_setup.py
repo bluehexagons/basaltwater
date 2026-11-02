@@ -149,14 +149,17 @@ class SetupTests(unittest.TestCase):
         remote = received.parse_args(shlex.split(" ".join(config.to_remote_args())))
         remote.host = "localhost"
         self.assertEqual(SetupConfig.from_args(remote, "server_github_runner").privilege_broker_port, 9444)
-        args = self.parser.parse_args(["patch", "vm.example", "operator", "--no-privilege-broker"])
-        with patch("basaltwater.load_setup_command", return_value=config), patch("basaltwater._execute_patch_config", return_value=0) as execute:
-            self.assertEqual(run_patch_command(args), 0)
-        merged = execute.call_args.args[0]
-        self.assertIsNone(merged.privilege_broker_port)
-        disabled = [step.__name__ for _, step in build_github_runner_steps(merged)]
-        self.assertIn("configure_agent_user_security", disabled)
-        self.assertIn("configure_privilege_broker", disabled)
+        for flag in ("--no-privilege-broker", "--no-approval-panel"):
+            with self.subTest(flag=flag):
+                args = self.parser.parse_args(["patch", "vm.example", "operator", flag])
+                with patch("basaltwater.load_setup_command", return_value=config), patch("basaltwater._execute_patch_config", return_value=0) as execute:
+                    self.assertEqual(run_patch_command(args), 0)
+                merged = execute.call_args.args[0]
+                self.assertIsNone(merged.privilege_broker_port)
+                self.assertEqual(broker_enabled(merged), flag == "--no-approval-panel")
+                disabled = [step.__name__ for _, step in build_github_runner_steps(merged)]
+                self.assertIn("configure_agent_user_security", disabled)
+                self.assertIn("configure_privilege_broker", disabled)
 
     def test_runner_patch_preserves_or_replaces_the_complete_scope(self):
         from lib.github_runner_config import runner_repositories

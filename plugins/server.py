@@ -76,7 +76,7 @@ def build_github_runner_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]
         ("Checking Debian GitHub runner prerequisites", check_runner_platform),
         ("Setting up operator account", setup_user),
     ]
-    if config.privilege_broker_port is not None or config.disable_privilege_broker:
+    if config.privilege_broker_port is not None or config.disable_privilege_broker or config.disable_approval_panel:
         from common.agent_security_steps import configure_agent_user_security
 
         steps.append(("Configuring operator account security", configure_agent_user_security))

@@ -116,6 +116,25 @@ class BrokerTests(unittest.TestCase):
         events = self.broker.db.execute("SELECT state FROM events ORDER BY sequence").fetchall()
         self.assertEqual([row[0] for row in events], ["pending", "cancelled"])
 
+    def test_active_requests_stay_visible_when_terminal_history_exceeds_the_queue_limit(self):
+        pending, approved, executing = [self.request() for _ in range(3)]
+        self.broker.decide(approved["id"], approved["digest"], True, "operator")
+        with self.broker.db:
+            self.broker._transition(executing["id"], "executing", "operator")
+        for _ in range(25):
+            self.broker.cancel(self.request()["id"], 1000)
+        active_ids = {row["id"] for row in (pending, approved, executing)}
+        review = self.broker.dispatch({"action": "list"}, 999, approval=True)["requests"]
+        with patch("common.service_tools.privilege_broker.job_status", return_value={"blocked": {}}):
+            administration = self.broker.dispatch({"action": "admin-status"}, 1000)["privilege_requests"]
+        for records in (review, administration):
+            self.assertEqual(len(records), 20)
+            self.assertEqual({row["id"] for row in records[:3]}, active_ids)
+            self.assertTrue(all(row["state"] == "cancelled" for row in records[3:]))
+            self.assertEqual([row["created"] for row in records[3:]],
+                             sorted((row["created"] for row in records[3:]), reverse=True))
+        self.runner.assert_not_called()
+
     def test_cancellation_can_withdraw_approval_but_cannot_impersonate_an_owner(self):
         request = self.request()
         for message, uid, approval in (

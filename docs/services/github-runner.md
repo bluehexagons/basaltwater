@@ -133,6 +133,10 @@ removes the operator's sudo/group privileges; finish old operator sessions
 afterward. Keep root SSH for recovery. See [privilege approvals](../agents/privilege-approvals.md)
 for access restrictions and trust boundaries. Drain jobs before maintenance.
 
+Remove the standalone panel with `--no-approval-panel` to retain main-panel
+approvals. Setup restores operator groups previously removed by brokered mode;
+start a new operator session to pick up those memberships.
+
 ## Check and use it
 
 Confirm **Online/Idle** in GitHub's runner settings. On the VM:
