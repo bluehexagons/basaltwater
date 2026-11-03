@@ -172,7 +172,7 @@ class InputReliabilityTests(unittest.TestCase):
 
     def test_deadline_validation_and_expired_actions_send_nothing(self):
         backend = Mock()
-        for deadline in (True, "later", float("inf"), float("nan"), time.monotonic() - 1):
+        for deadline in (True, "later", float("inf"), float("nan"), 10**1000, time.monotonic() - 1):
             with self.subTest(deadline=deadline), self.assertRaises((ValueError, RuntimeError)):
                 client.send_action({"action": "windows"}, deadline=deadline, backend=backend)
         backend.request.assert_not_called()
@@ -193,6 +193,23 @@ class InputReliabilityTests(unittest.TestCase):
                 self.assertEqual(request.args[0]["deadline"], deadline)
                 self.assertEqual(request.args[0].get("delay_ms"), 10 if count == 1 else None)
             backend.status.assert_called_once_with(deadline=deadline)
+
+    def test_transport_failure_preserves_uncertainty_without_replay(self):
+        backend = Mock()
+        failure = TimeoutError("transport ended")
+        failure.add_note("A prefix may have arrived")
+        backend.request.side_effect = failure
+        backend.status.return_value = {"input_capabilities": ["server-paced-text"]}
+        result = client.send_action(self.payload, backend=backend)
+        self.assertIsNone(result["submitted_characters"])
+        self.assertTrue(result["completion_unknown"])
+        self.assertIn("A prefix may have arrived", result["error"])
+        self.assertIn("do not replay", result["error"])
+        backend.request.assert_called_once()
+        backend.reset_mock()
+        with self.assertRaisesRegex(RuntimeError, "A prefix may have arrived"):
+            client.send_action({**self.payload, "delay_ms": None}, backend=backend)
+        backend.request.assert_called_once()
 
     def test_native_transport_keeps_absolute_deadline_across_socket_waits(self):
         import stat

@@ -299,7 +299,11 @@ def bounded_deadline(payload: dict, *, deadline: float | None = None, seconds: f
     limits = [time.monotonic() + seconds]
     for value in (payload.get("deadline"), deadline):
         if value is not None:
-            if type(value) not in (int, float) or not math.isfinite(value):
+            try:
+                valid = type(value) in (int, float) and math.isfinite(value)
+            except OverflowError:
+                valid = False
+            if not valid:
                 raise ValueError("Deadline must be a finite monotonic timestamp")
             limits.append(value)
     return min(limits)
@@ -331,17 +335,25 @@ def send_action(payload: dict[str, Any], *, deadline: float | None = None, backe
     request["deadline"] = deadline
     if delay is None:
         remaining_seconds(deadline)
-        result = backend.request(request)
+        try:
+            result = backend.request(request)
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+            if payload.get("action") != "input":
+                raise
+            detail = "\n".join([str(exc), *getattr(exc, "__notes__", [])])
+            raise RuntimeError(f"{detail}; input outcome may be partial or unknown; inspect before further input; do not replay") from exc
         if crop is not None and (result.get("image_origin") != crop[:2] or result.get("image_geometry") != crop[2:]):
             return {**result, "error": "Backend did not confirm requested crop mapping; restart the native helper and recapture"}
         return result
     submitted = 0
+    server_attempted = False
     result: dict[str, Any] = {"generation": payload["generation"], "geometry": payload["geometry"]}
     try:
         if backend is not runtime:
             capabilities = backend.status(deadline=deadline).get("input_capabilities", [])
             if isinstance(capabilities, list) and "server-paced-text" in capabilities:
                 remaining_seconds(deadline)
+                server_attempted = True
                 return backend.request({**request, "delay_ms": delay})
         for character in payload["text"]:
             if submitted:
@@ -352,8 +364,10 @@ def send_action(payload: dict[str, Any], *, deadline: float | None = None, backe
             result = backend.request({**request, "text": character})
             submitted += 1
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
-        return {**result, "error": f"{exc}; inspect input before retrying; the last character may have arrived",
-                "submitted_characters": submitted}
+        detail = "\n".join([str(exc), *getattr(exc, "__notes__", [])])
+        return {**result, "error": f"{detail}; input may be partial; inspect input before further actions; do not replay",
+                "submitted_characters": None if server_attempted else submitted,
+                "completion_unknown": server_attempted}
     return {**result, "submitted_characters": submitted}
 
 
