@@ -478,6 +478,8 @@ class NativeSession:
         if payload.get("action") == "input":
             payload["input_id"] = secrets.token_hex(16)
             payload["_dispatch_stage"] = "before-input"
+            payload["_input_receipt"] = {"input_received_at": datetime.now(timezone.utc).isoformat(),
+                                         "input_received_monotonic_ns": time.monotonic_ns()}
         elif payload.get("action") == "screenshot":
             payload["related_input_id"] = self.last_input.get("input_id") if self.last_input else None
         try:
@@ -771,6 +773,13 @@ class NativeSession:
                 self.lock.acquire()
             self.guard(payload)
 
+    def mark_input_dispatch(self, payload):
+        if payload.get("_dispatch_stage") != "input-dispatch":
+            payload["_dispatch_stage"] = "input-dispatch"
+            payload.setdefault("_input_receipt", {}).update(
+                input_dispatch_at=datetime.now(timezone.utc).isoformat(),
+                input_dispatch_monotonic_ns=time.monotonic_ns())
+
     def input(self, payload):
         client.validate_text_delay(payload)
         codes = client.validate_keycodes(payload)
@@ -781,8 +790,11 @@ class NativeSession:
             age = freshness["age_seconds"]
             detail = ("no current capture" if age is None else
                       f"capture age {age:.1f}s, limit {self.capture_max_age}s")
-            raise ValueError("Capture the selected monitor again before input; geometry must match a recent screenshot "
-                             f"({detail}). Recapture and re-plan before retrying")
+            reason = ("capture-unavailable" if age is None else "capture-expired" if not freshness["fresh"]
+                      else "capture-geometry-changed")
+            raise DesktopRequestError({"error": "Capture the selected monitor again before input; geometry must match a recent screenshot "
+                                       f"({detail}). Recapture and re-plan before retrying", "reason": reason,
+                                       "capture_freshness": freshness})
         kind = payload.get("kind")
         if kind in ("click", "move", "drag"):
             x, y = payload.get("x"), payload.get("y")
@@ -792,7 +804,7 @@ class NativeSession:
             if kind == "click" and (type(button) is not int or button not in range(1, 8)):
                 raise ValueError("Button must be 1 through 7")
             self.guard(payload)
-            payload["_dispatch_stage"] = "input-dispatch"
+            self.mark_input_dispatch(payload)
             self.portal.notify("NotifyPointerMotionAbsolute", "udd", self.node,
                 x * self.logical_size[0] / self.geometry[0], y * self.logical_size[1] / self.geometry[1])
             self.guard(payload)
@@ -847,7 +859,7 @@ class NativeSession:
                         self.guard(payload)
                         pressed.append(key)
                         pending.add(key)
-                        payload["_dispatch_stage"] = "input-dispatch"
+                        self.mark_input_dispatch(payload)
                         self.portal.notify(method, "iu", key, 1)
                     self.hold(hold_ms, payload)
                 finally:
@@ -865,6 +877,7 @@ class NativeSession:
         else:
             raise ValueError("Unknown native input kind")
         self.last_input = {"input_id": payload.get("input_id"),
+                           **payload.get("_input_receipt", {}),
                            "input_completed_at": datetime.now(timezone.utc).isoformat(),
                            "input_completed_monotonic_ns": time.monotonic_ns()}
         return {"generation": self.generation, "geometry": self.geometry, **self.last_input,

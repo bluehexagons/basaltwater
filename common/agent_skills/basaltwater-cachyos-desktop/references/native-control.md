@@ -152,6 +152,11 @@ helpers/journals cannot prove these stages from a generic error. See the
 [failure receipt contract](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/desktop-observations.md#native-input-failure-receipts).
 Status also exposes recorder capacity and its existing artifact; a duplicate
 start reports that handle without creating another recorder.
+For long evaluations, link explicit recorder segments to `desktop evidence run`
+checkpoints under the same match clocks. Record owner waits and timing changes
+explicitly; check due reviews in the controller's normal loop. `evidence closeout`
+saves a new inventory/verification receipt without deleting media or stopping
+processes. See the [evaluation recipes](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/desktop-evaluation.md#durable-controller-checkpoints).
 
 ```fish
 basaltw desktop --native input click --generation GEN --geometry 2560 1440 --x 400 --y 200

@@ -157,6 +157,10 @@ class NativeCanvasTests(unittest.TestCase):
         with self.assertRaises(DesktopRequestError) as refused:
             self.session.handle(self.payload)
         self.assertEqual(refused.exception.receipt["input_delivery"], "not-sent")
+        self.assertEqual(refused.exception.receipt["reason"], "capture-expired")
+        self.assertFalse(refused.exception.receipt["capture_freshness"]["fresh"])
+        self.assertIn("input_received_monotonic_ns", refused.exception.receipt)
+        self.assertNotIn("input_dispatch_monotonic_ns", refused.exception.receipt)
         self.portal.notify.assert_not_called()
         self.assertEqual(recorder.data["events"][-1]["outcome"], "refused")
         self.session.captured = time.monotonic()
@@ -165,11 +169,16 @@ class NativeCanvasTests(unittest.TestCase):
             self.session.handle(self.payload)
         self.assertEqual(unknown.exception.receipt["input_delivery"], "unknown")
         self.assertEqual(unknown.exception.receipt["dispatch_stage"], "input-dispatch")
+        self.assertGreaterEqual(unknown.exception.receipt["input_dispatch_monotonic_ns"], unknown.exception.receipt["input_received_monotonic_ns"])
         backend = Mock()
         backend.request.side_effect = ConnectionResetError("lost response")
         with self.assertRaises(DesktopRequestError) as transport:
             client.send_action(self.payload, backend=backend)
         self.assertEqual(transport.exception.receipt["reason"], "transport-failed")
+        backend.request.side_effect = DesktopRequestError({"error": "Old worker error without dispatch evidence"})
+        with self.assertRaises(DesktopRequestError) as legacy:
+            client.send_action(self.payload, backend=backend)
+        self.assertEqual(legacy.exception.receipt["input_delivery"], "unknown")
         backend.status.return_value = {"generation": self.session.generation, "control_revision": self.session.control_revision}
         completed = {"input_completed_at": "now", "input_id": "a" * 32}
         with patch.object(client.time, "sleep"):

@@ -120,6 +120,8 @@ class Recorder:
                 row["result"] = compact_capture(result) if action == "screenshot" else {
                     key: result[key] for key in ("pid", "launch", "returncode", "state", "generation",
                         "input_completed_at", "input_completed_monotonic_ns", "observation_id",
+                        "input_received_at", "input_received_monotonic_ns", "input_dispatch_at", "input_dispatch_monotonic_ns",
+                        "capture_freshness",
                         "input_id", "reason", "dispatch_stage", "input_delivery") if key in result}
                 if "error" in result:
                     row["outcome"] = "refused" if result.get("input_delivery") == "not-sent" else "uncertain"
@@ -162,7 +164,10 @@ def _load_record(path: str) -> dict:
 
 def verify(path: str) -> dict:
     """Check recorded capture file bytes without input, finalization or repairs."""
-    data = _load_record(path)
+    return _verify_captures(path, _load_record(path))
+
+
+def _verify_captures(path: str, data: dict) -> dict:
     counts = {"verified": 0, "missing": 0, "mismatched": 0, "unverified": 0, "image_less": 0}
     uncertain = sum(row.get("outcome") == "uncertain" for row in data["events"])
     problems = []
@@ -204,6 +209,107 @@ def verify(path: str) -> dict:
             "events_truncated": data["events_truncated"], "finalized": data.get("finalized") is True,
             "problems": problems, "problems_truncated": failures > len(problems),
             "scope": "Recorded PNG bytes and event uncertainty/truncation only; no game outcome, pixel decoding or task logs verified"}
+
+
+def closeout(path: str, *, extras: list[str], derivatives: list[str], output: str | None = None,
+             previous: str | None = None, processes: list[list[str]] | None = None) -> dict:
+    """Save a new inventory receipt; never repair a journal, move media or stop apps."""
+    from desktop.qa_artifacts import file_digest, new_bundle, process_identity
+
+    if len(extras) > 50 or len(derivatives) > 16:
+        raise ValueError("Closeout accepts at most 50 extra PNGs and 16 derivative manifests")
+    selected = processes or []
+    if len(selected) > 16:
+        raise ValueError("Inspect at most 16 exact process identities")
+    resources = []
+    for identity in selected:
+        if (not isinstance(identity, list) or len(identity) != 2
+                or any(not isinstance(n, str) or not re.fullmatch(r"[0-9]{1,24}", n) for n in identity)):
+            raise ValueError("Processes require PID START_TICKS from a prior exact identity receipt")
+        pid, ticks = identity
+        if not 0 < int(pid) <= 2147483647:
+            raise ValueError("Process PID is out of range")
+        resource = {"pid": int(pid), "expected_start_ticks": ticks, "normal_exit": "unknown"}
+        try:
+            current = process_identity(int(pid))
+            resource.update(state="running-preserve" if current["start_ticks"] == ticks else "identity-replaced",
+                            observed=current)
+        except FileNotFoundError:
+            resource["state"] = "identity-not-present"
+        except (OSError, ValueError) as exc:
+            resource.update(state="unavailable", detail=str(exc)[:300])
+        resources.append(resource)
+    data = _load_record(path)
+    checked = _verify_captures(path, data)
+    captures = [row.get("result", {}).get("output") for row in data["events"]
+                if row.get("action") == "screenshot" and isinstance(row.get("result"), dict)]
+    originals = sorted({name for name in captures if isinstance(name, str)})
+    extra_rows = []
+    for name in dict.fromkeys(extras):
+        validate_filesystem_path(name)
+        if not Path(name).is_absolute() or Path(name).suffix.lower() != ".png":
+            raise ValueError("Extra captures require absolute PNG paths")
+        try:
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            try:
+                digest = capture_digest(fd)
+            finally:
+                os.close(fd)
+            extra_rows.append({"path": name, "sha256": digest, "state": "observed", "already_recorded": name in originals})
+        except (OSError, ValueError) as exc:
+            extra_rows.append({"path": name, "state": "unavailable", "detail": str(exc)[:300], "already_recorded": name in originals})
+    derived_rows = []
+    for name in dict.fromkeys(derivatives):
+        validate_filesystem_path(name, must_exist=True)
+        manifest = read_json_file(name, max_bytes=65536)
+        kind = manifest.get("kind") if isinstance(manifest, dict) else None
+        names = ("source.png", "crop.png") if kind == "literal-crop" else None
+        if names is None:
+            raise ValueError("Expected a literal-crop manifest; optional audio remains separate")
+        media = []
+        for key, filename in zip(("source", "derivative"), names):
+            entry = manifest.get(key)
+            if not isinstance(entry, dict) or entry.get("artifact") != filename:
+                raise ValueError("Invalid derivative media reference")
+            media_path = Path(name).absolute().parent / filename
+            try:
+                # Reuse bounded stable hashing; no full source is exported here.
+                fd = os.open(media_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                try:
+                    digest = capture_digest(fd)
+                finally:
+                    os.close(fd)
+                state = "verified" if digest == entry.get("sha256") else "mismatched"
+                media.append({"path": str(media_path), "role": key, "state": state, "sha256": digest})
+            except (OSError, ValueError) as exc:
+                media.append({"path": str(media_path), "role": key, "state": "unavailable", "detail": str(exc)[:300]})
+        derived_rows.append({"artifact": name, "kind": kind, "media": media})
+    previous_receipt = None
+    if previous is not None:
+        validate_filesystem_path(previous, must_exist=True)
+        prior = read_json_file(previous, max_bytes=4 * 1024 * 1024)
+        if not isinstance(prior, dict) or prior.get("kind") != "desktop-closeout" or prior.get("recording") != path:
+            raise ValueError("Previous closeout must describe the same recording")
+        previous_receipt = {"artifact": previous, "sha256": file_digest(Path(previous))}
+    receipt = {"schema_version": 1, "kind": "desktop-closeout", "created": stamp(), "recording": path,
+               "ownership": {"project": data["project"], "generation": data.get("generation"),
+                             "task_owner": "not-recorded; link this recorder in the controller-owned run ledger"},
+               "previous_receipt": previous_receipt, "verification": checked,
+               "recording_finished": data.get("finished_at") is not None, "finalized": data.get("finalized") is True,
+               "canonical_capture_paths": originals, "extra_captures": extra_rows, "derivatives": derived_rows,
+               "resources": resources,
+               "counts": {"recorded_png_paths": len(originals), "capture_events": checked["checked"],
+                          "image_less_events": checked["counts"]["image_less"],
+                          "extra_png_paths": sum(not row.get("already_recorded", False) for row in extra_rows),
+                          "derivative_bundles": len(derived_rows),
+                          "source_copies": len(derived_rows), "derived_media": len(derived_rows)},
+               "resource_state": "selected-identities-only" if resources else "not-observed; finalization snapshots do not prove current process exit",
+               "limit": "No media moved/deleted, process stopped, game outcome or normal exit inferred. Inspect exact live process/start identities separately."}
+    folder = new_bundle(output)
+    write_json_atomic(str(folder / "closeout.json"), receipt, mode=0o600)
+    return {"artifact": str(folder / "closeout.json"), "counts": receipt["counts"],
+            "verification": checked, "resources": resources,
+            "resource_state": receipt["resource_state"], "previous_receipt": previous_receipt}
 
 
 def finalize(path: str, *, tasks: list[str], renderer: str | None) -> dict:

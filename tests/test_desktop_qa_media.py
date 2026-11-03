@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import argparse
+import io
 import os
 from pathlib import Path
 import struct
@@ -12,7 +14,8 @@ from unittest.mock import patch
 from unittest.mock import Mock
 from contextlib import ExitStack
 
-from desktop import audio_analysis, audio_capture, audio_capture_worker, evidence_media, qa_artifacts, qa_timeline, preflight
+from desktop import audio_analysis, audio_capture, audio_capture_worker, evidence_media, qa_artifacts, qa_timeline, preflight, run_checkpoint, evidence
+from lib import desktop_cli
 
 
 class QAMediaTests(unittest.TestCase):
@@ -37,6 +40,126 @@ class QAMediaTests(unittest.TestCase):
         source.write_text("changed")
         with self.assertRaisesRegex(ValueError, "digest changed"):
             preflight.instruction_page(str(source), sha256=first["sha256"])
+
+    def test_run_continuation_wait_policy_and_late_reviews_preserve_original_clocks(self):
+        domain = {"boot_id": "11111111-2222-3333-4444-555555555555", "monotonic_scope": "linux-boot"}
+        def at(seconds):
+            return {"at": "2026-01-01T00:00:00+00:00", "monotonic_ns": seconds * 10**9}
+        with patch.object(run_checkpoint, "clock", return_value=domain), patch.object(run_checkpoint, "stamp") as stamp:
+            stamp.return_value = at(1)
+            started = run_checkpoint.start("run-a", "match-a", "play", output=str(self.root / "run"), review_seconds=30, hard_seconds=120)
+            path = started["artifact"]
+            stamp.return_value = at(41)
+            paused = run_checkpoint.update(path, "suspend", note="Awaiting owner decision")
+            self.assertEqual(paused["checkpoint_late_seconds"], 10)
+            stamp.return_value = at(141)
+            segments = ["/private/segment-a.json", "/private/segment-b.json"]
+            continued = run_checkpoint.update(path, "context", context="new-context", artifacts=segments)
+            self.assertEqual(continued["match_id"], "match-a")
+            self.assertEqual(continued["latest"]["artifacts"], segments)
+            self.assertTrue(continued["hard_limit_reached"])
+            self.assertEqual(continued["owner_wait_seconds"], 100)
+            stamp.return_value = at(241)
+            run_checkpoint.update(path, "resume")
+            stamp.return_value = at(251)
+            run_checkpoint.update(path, "policy", hard_seconds=500, note="Owner extended same match in current thread")
+            stamp.return_value = at(261)
+            reviewed = run_checkpoint.update(path, "checkpoint", phase="results", game_clock="05:17")
+            self.assertEqual(reviewed["latest"]["checkpoint_late_seconds"], 230)
+            self.assertEqual(reviewed["checkpoint_late_seconds"], 0)
+            stamp.return_value = at(301)
+            finished = run_checkpoint.update(path, "finish")
+            self.assertEqual(finished["wall_seconds"], 300)
+            self.assertEqual(finished["owner_wait_seconds"], 200)
+            self.assertEqual(finished["declared_active_wall_seconds"], 100)
+            self.assertEqual(finished["started"], at(1))
+            self.assertIsNone(finished["model_reasoning_seconds"])
+            self.assertIsNone(finished["observed_active_work_seconds"])
+            self.assertFalse(finished["hard_limit_reached"])
+            with self.assertRaisesRegex(ValueError, "finished"):
+                run_checkpoint.update(path, "context", context="another")
+            before = Path(path).read_bytes()
+            with patch.object(run_checkpoint, "clock", return_value={**domain, "boot_id": None}):
+                self.assertEqual(run_checkpoint.update(path)["timing"], "unsupported-clock")
+                with self.assertRaisesRegex(ValueError, "comparable boot clock"):
+                    run_checkpoint.update(path, "checkpoint")
+            self.assertEqual(Path(path).read_bytes(), before)
+
+    def test_run_parser_records_one_bounded_event_without_contacting_desktop(self):
+        parser = argparse.ArgumentParser()
+        desktop_cli.add_desktop_subparser(parser.add_subparsers())
+        with patch("desktop.session_runtime.status") as status, patch("sys.stdout", new_callable=io.StringIO) as out:
+            args = parser.parse_args(["desktop", "evidence", "run", "start", "--run-id", "a", "--match-id", "m",
+                "--phase", "play", "--review-seconds", "30", "--hard-seconds", "600", "--output", str(self.root / "cli-run")])
+            self.assertEqual(desktop_cli.run_desktop_command(args), 0)
+            artifact = json.loads(out.getvalue())["artifact"]
+            out.truncate(0)
+            out.seek(0)
+            args = parser.parse_args(["desktop", "evidence", "run", "policy", artifact,
+                "--hard-seconds", "1200", "--note", "Owner authorized extension"])
+            self.assertEqual(desktop_cli.run_desktop_command(args), 0)
+            self.assertEqual(json.loads(out.getvalue())["events"], 2)
+            status.assert_not_called()
+        before = Path(artifact).read_bytes()
+        for changes in ({"event": "resume"}, {"event": "policy", "hard_seconds": 50},
+                        {"event": "checkpoint", "hard_seconds": 900}, {"event": "context"}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                run_checkpoint.update(artifact, **changes)
+        self.assertEqual(Path(artifact).read_bytes(), before)
+
+    def test_run_capacity_corruption_and_duplicate_wait_transitions_preserve_history(self):
+        with patch.object(run_checkpoint, "EVENT_LIMIT", 3):
+            path = run_checkpoint.start("a", "m", "play", output=str(self.root / "bounded"))["artifact"]
+            run_checkpoint.update(path, "suspend", note="Awaiting owner")
+            before = Path(path).read_bytes()
+            with self.assertRaisesRegex(ValueError, "contradicts"):
+                run_checkpoint.update(path, "suspend", note="Duplicate wait")
+            with patch.object(run_checkpoint, "MAX_BYTES", len(before) + 20):
+                with self.assertRaisesRegex(ValueError, "byte capacity"):
+                    run_checkpoint.update(path, "context", context="next")
+            self.assertEqual(Path(path).read_bytes(), before)
+            run_checkpoint.update(path, "resume")
+            before = Path(path).read_bytes()
+            with self.assertRaisesRegex(ValueError, "capacity"):
+                run_checkpoint.update(path, "checkpoint")
+            self.assertEqual(Path(path).read_bytes(), before)
+        Path(path).write_text('{"schema_version":999}')
+        before = Path(path).read_bytes()
+        with self.assertRaisesRegex(ValueError, "unsupported"):
+            run_checkpoint.update(path, "checkpoint")
+        self.assertEqual(Path(path).read_bytes(), before)
+
+    def test_closeout_retains_failure_then_links_new_receipt_after_path_restoration(self):
+        with patch.object(Path, "home", return_value=self.root), patch.object(evidence, "revision", return_value={}):
+            recorder = evidence.Recorder(str(self.root), "g")
+            png = self.root / "capture.png"
+            png.write_bytes(b"synthetic PNG bytes")
+            png.chmod(0o600)
+            digest = qa_artifacts.file_digest(png)
+            recorder.event({"action": "screenshot"}, {"output": str(png), "artifact_sha256": digest})
+            moved = self.root / "moved.png"
+            png.rename(moved)
+            before = recorder.path.read_bytes()
+            first = evidence.closeout(str(recorder.path), extras=[str(moved)], derivatives=[], output=str(self.root / "closeout-1"))
+            self.assertEqual(first["verification"]["counts"]["missing"], 1)
+            png.write_bytes(moved.read_bytes())
+            png.chmod(0o600)
+            second = evidence.closeout(str(recorder.path), extras=[str(moved)], derivatives=[],
+                previous=first["artifact"], output=str(self.root / "closeout-2"))
+            self.assertTrue(second["verification"]["healthy"])
+            self.assertEqual(second["previous_receipt"]["artifact"], first["artifact"])
+            self.assertEqual(second["counts"]["recorded_png_paths"], 1)
+            self.assertEqual(second["counts"]["extra_png_paths"], 1)
+            self.assertEqual(json.loads(Path(first["artifact"]).read_text())["verification"]["counts"]["missing"], 1)
+            self.assertEqual(recorder.path.read_bytes(), before)
+            identities = [{"pid": 12345, "start_ticks": "987654"}, {"pid": 12345, "start_ticks": "987655"},
+                          FileNotFoundError(), ValueError("unavailable")]
+            with patch.object(qa_artifacts, "process_identity", side_effect=identities):
+                for index, expected in enumerate(("running-preserve", "identity-replaced", "identity-not-present", "unavailable")):
+                    result = evidence.closeout(str(recorder.path), extras=[], derivatives=[],
+                        processes=[["12345", "987654"]], output=str(self.root / f"process-{index}"))
+                    self.assertEqual(result["resources"][0]["state"], expected)
+                    self.assertEqual(result["resources"][0]["normal_exit"], "unknown")
 
     def test_preflight_preserves_unknown_stopped_worker_and_changed_skills(self):
         clean = {"commit": "a" * 40, "dirty": False}
@@ -106,6 +229,14 @@ class QAMediaTests(unittest.TestCase):
         self.assertEqual(exported["included_originals"], ["source.png"])
         self.assertNotIn(str(self.root), Path(exported["artifact"]).read_text())
         Path(result["artifact"]).parent.joinpath("crop.png").write_bytes(b"tampered")
+        with patch.object(Path, "home", return_value=self.root), patch.object(evidence, "revision", return_value={}):
+            recorder = evidence.Recorder(str(self.root), "g")
+            inventory = evidence.closeout(str(recorder.path), extras=[], derivatives=[result["artifact"]],
+                                         output=str(self.root / "derived-closeout"))
+        receipt = json.loads(Path(inventory["artifact"]).read_text())
+        self.assertEqual(inventory["counts"]["source_copies"], 1)
+        self.assertEqual(inventory["counts"]["derived_media"], 1)
+        self.assertEqual([row["state"] for row in receipt["derivatives"][0]["media"]], ["verified", "mismatched"])
         with self.assertRaisesRegex(ValueError, "matches"):
             evidence_media.export_reviewed(result["artifact"], str(self.root / "changed"), "QA reviewer")
         with patch.object(evidence_media, "media_command") as command:

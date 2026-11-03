@@ -6,6 +6,38 @@ import argparse
 
 
 def add_qa_parser(commands: argparse._SubParsersAction, evidence: argparse._SubParsersAction) -> None:
+    run = evidence.add_parser("run", help="Offline controller-written match clocks/checkpoints; no watcher or input")
+    operations = run.add_subparsers(dest="run_command", required=True)
+    start = operations.add_parser("start")
+    start.add_argument("--run-id", required=True)
+    start.add_argument("--match-id", required=True)
+    start.add_argument("--phase", required=True)
+    start.add_argument("--output")
+    for name in ("show", "checkpoint", "suspend", "resume", "context", "policy", "finish"):
+        operation = operations.add_parser(name)
+        operation.add_argument("artifact", help="Private run.json returned by start; continue the same match")
+        if name != "show":
+            operation.add_argument("--phase")
+            operation.add_argument("--note")
+            operation.add_argument("--context")
+            operation.add_argument("--artifact", dest="artifacts", action="append", default=[], help="Link evidence/recording segment without resetting run clocks")
+            operation.add_argument("--game-clock", help="Operator-observed game clock, distinct from host time")
+        if name == "policy":
+            policy = operation
+        operation.add_argument("--json", action="store_true")
+    for operation in (start, policy):
+        operation.add_argument("--review-seconds", type=int, help="Controller-local soft review cadence; never pauses for approval")
+        operation.add_argument("--hard-seconds", type=int, help="Hard wall limit from ORIGINAL start; controller must enforce it")
+    start.add_argument("--json", action="store_true")
+    closeout = evidence.add_parser("closeout", help="Save a new read-only inventory/verification receipt; never stop apps or delete media")
+    closeout.add_argument("artifact")
+    closeout.add_argument("--extra", action="append", default=[], help="Extra PNG capture outside the recorder; repeat up to 50")
+    closeout.add_argument("--derived", action="append", default=[], help="Literal crop manifest; repeat up to 16")
+    closeout.add_argument("--previous", help="Preserve a previous closeout receipt when rechecking restored evidence")
+    closeout.add_argument("--process", nargs=2, action="append", default=[], metavar=("PID", "START_TICKS"),
+                          help="Read-only exact process identity check; never claims normal exit or stops an active match")
+    closeout.add_argument("--output")
+    closeout.add_argument("--json", action="store_true")
     audio = commands.add_parser("audio", help="Application-only PipeWire capture and offline WAV analysis")
     operations = audio.add_subparsers(dest="audio_command", required=True)
     sources = operations.add_parser("sources", help="List playback node serials for an exact application PID")
@@ -38,6 +70,18 @@ def add_qa_parser(commands: argparse._SubParsersAction, evidence: argparse._SubP
 
 
 def run_qa_command(args: argparse.Namespace) -> dict:
+    if args.desktop_command == "evidence" and args.evidence_command == "run":
+        from desktop import run_checkpoint
+        if args.run_command == "start":
+            return run_checkpoint.start(args.run_id, args.match_id, args.phase, output=args.output,
+                                        review_seconds=args.review_seconds, hard_seconds=args.hard_seconds)
+        fields = ("phase", "note", "context", "review_seconds", "hard_seconds", "artifacts", "game_clock")
+        return run_checkpoint.update(args.artifact, args.run_command,
+                                     **{key: getattr(args, key) for key in fields if hasattr(args, key)})
+    if args.desktop_command == "evidence" and args.evidence_command == "closeout":
+        from desktop.evidence import closeout
+        return closeout(args.artifact, extras=args.extra, derivatives=args.derived, output=args.output,
+                        previous=args.previous, processes=args.process)
     if args.desktop_command == "audio":
         from desktop import audio_capture, audio_analysis
         if args.audio_command == "sources":

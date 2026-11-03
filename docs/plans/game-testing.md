@@ -19,6 +19,14 @@ external test repository is required.
 
 ## Desktop observation follow-up
 
+The [evaluation receipt workflow](../workstations/desktop-evaluation.md) adds
+native frame-receipt mapping, structured refusal/dispatch/observation stages,
+compact preflight and bounded instruction reads, controller-written run clocks,
+and read-only evidence closeout inventories. Existing token and human-control
+guards remain. Recorder segments are explicitly linked in one run ledger;
+automatic rotation and Windows receipt parity remain open. These additions have
+offline failure-path coverage, without a new game or native platform smoke claim.
+
 The [shared observation contract](../workstations/desktop-observations.md)
 defines the implemented baseline: per-capture ages (1–600 seconds, default 60),
 single-use observation IDs on Linux and Windows, explicit coordinate spaces,

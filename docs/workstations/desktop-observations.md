@@ -99,6 +99,10 @@ Updated native helpers and clients preserve `reason`, `dispatch_stage`,
 `input_delivery`, `input_id` and related `observation_id` through CLI failures
 and recorder events:
 
+Capture guard reasons include `capture-unavailable`, `capture-expired`,
+`capture-geometry-changed` and `observation-expired`. Legacy capture guard
+failures retain the observed `capture_freshness` in both CLI and journal.
+
 | Stage | Delivery | Meaning |
 | --- | --- | --- |
 | `before-input` | `not-sent` | Validation/guard refusal before the first portal notification; no dispatch. |

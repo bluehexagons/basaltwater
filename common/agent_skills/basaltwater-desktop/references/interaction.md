@@ -1,5 +1,14 @@
 # Observe, act, verify
 
+Use `basaltw desktop preflight --repository PATH --instruction REQUIRED_FILE
+--json` for compact read-only manifest/status discovery with private full receipts
+and explicit gaps. Retrieve required instruction text with `desktop instructions
+PATH --start N --sha256 DIGEST`; follow the emitted ranges and maintain a checklist.
+For longer evaluations, `desktop evidence run` records controller-written phase,
+context, owner-wait and timing-policy events without resetting match clocks or
+starting a watcher. See [evaluation receipts](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/desktop-evaluation.md)
+for recipes, unsupported provenance, telemetry limits and controller responsibilities.
+
 For native controls, prefer accessibility inspection before coordinate input:
 
 ```bash

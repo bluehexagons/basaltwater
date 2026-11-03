@@ -16,4 +16,6 @@ def input_failure(error: Exception, payload: dict, *, stage: str = "before-input
     return {"error": str(error), "reason": receipt.get("reason", "request-refused" if stage == "before-input" else "input-failed"),
             "dispatch_stage": stage,
             "input_delivery": "not-sent" if stage == "before-input" else "unknown",
+            **{key: receipt[key] for key in ("capture_freshness",) if key in receipt},
+            **payload.get("_input_receipt", {}),
             **{key: payload[key] for key in ("input_id", "generation", "observation_id") if key in payload}}
