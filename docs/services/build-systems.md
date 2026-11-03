@@ -30,12 +30,12 @@ Substitute your pools, addresses and published sample repository; the repository
 must contain a committed root `basaltwater.json`.
 
 ```bash
-basaltw setup server_lite 192.0.2.20 operator \
+basaltw setup server_lite 192.0.2.20 buildadmin \
   --machine vm --provision-on lab-node --name build-local \
   --image-storage image-pool --storage root vm-pool 80G \
   --memory 4G --cores 4 --key "$HOME/.ssh/id_ed25519" --build-server
 
-basaltw setup server_web 192.0.2.30 operator \
+basaltw setup server_web 192.0.2.30 buildadmin \
   --machine vm --provision-on lab-node --name web-local \
   --image-storage image-pool --storage root vm-pool 20G \
   --memory 1G --cores 2 --key "$HOME/.ssh/id_ed25519" \

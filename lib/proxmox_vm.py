@@ -2169,7 +2169,7 @@ def _verify_cloud_init_bootstrap(
     # PVE hashes user-data into the NoCloud instance ID. Removing cicustom
     # changes that ID; trust this guest's cache before allowing detachment.
     guest_command = (
-        "timeout 180 cloud-init status --wait && "
+        "timeout 180 cloud-init status --wait --long && "
         "grep -qxF 'manual_cache_clean: true' "
         "/etc/cloud/cloud.cfg.d/99-basaltwater-instance.cfg"
     )

@@ -704,9 +704,28 @@ class TestCloudInitBootstrap(unittest.TestCase):
                         _verify_cloud_init_bootstrap(101, "10.0.0.10", "root", [])
         command = mock_run.call_args.args[3]
         self.assertIn("--timeout 190 --synchronous 1", command)
-        self.assertIn("timeout 180 cloud-init status --wait", command)
+        self.assertIn("timeout 180 cloud-init status --wait --long", command)
         self.assertIn("manual_cache_clean: true", command)
         self.assertGreater(mock_run.call_args.kwargs["timeout"], 190)
+
+    @patch("lib.proxmox_vm._ssh_run")
+    def test_reports_cloud_init_failure_reason_before_guest_cleanup(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=json.dumps({
+                "exited": 1,
+                "exitcode": 1,
+                "out-data": "status: error\nerrors:\nuseradd: group operator exists\n",
+            }),
+            stderr="",
+        )
+
+        with self.assertRaisesRegex(ProvisionError, "group operator exists"):
+            _verify_cloud_init_bootstrap(101, "192.0.2.10", "root", [])
+
+        guest_command = shlex.split(mock_run.call_args.args[3])[-1]
+        self.assertIn("cloud-init status --wait --long &&", guest_command)
+        self.assertIn("manual_cache_clean: true", guest_command)
 
     def setUp(self):
         public_key_dir = self.enterContext(tempfile.TemporaryDirectory())

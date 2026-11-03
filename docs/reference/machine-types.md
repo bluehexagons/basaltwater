@@ -144,6 +144,13 @@ public key is installed by cloud-init; `--provision-key` controls only SSH
 access to the Proxmox node. The target is the guest IPv4 address: bare IPv4
 uses `/24`, while `IPv4/PREFIX` selects another prefix.
 
+Choose a setup username that can have its own private group in the cloud image.
+For example, Debian already has an `operator` system group, so creating a new
+`operator` account fails during cloud-init. Basaltwater reports the detailed
+cloud-init error before cleaning up the partial guest; choose a distinct account
+name and provision again after cleanup is confirmed. Existing system groups are
+not automatically adopted as the new account's primary group.
+
 For raw Proxmox addresses, storage shorthand falls back to `auto`. For
 registered hosts, shorthand uses the saved/probed storage defaults first.
 
