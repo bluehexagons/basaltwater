@@ -54,35 +54,50 @@ def runtime_directory(*, create=False):
 
 
 def request(payload):
+    deadline = client.bounded_deadline(payload, seconds=20 if payload.get("delay_ms") is not None else 14)
+    client.remaining_seconds(deadline)
     path = runtime_directory() / "control.sock"
     info = path.lstat()
     if not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
         raise RuntimeError("Unsafe Wayland control socket")
     with socket.socket(socket.AF_UNIX) as connection:
-        connection.settimeout(15)
+        connection.settimeout(client.remaining_seconds(deadline))
         connection.connect(str(path))
         _, uid, _ = struct.unpack("3i", connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
         if uid != os.getuid():
             raise PermissionError("Wayland helper belongs to another user")
-        message = json.dumps({**payload, "deadline": time.monotonic() + 14}).encode() + b"\n"
+        message = json.dumps({**payload, "deadline": deadline}).encode() + b"\n"
         if len(message) > MAX_MESSAGE:
             raise ValueError("Wayland request exceeds its size limit")
+        connection.settimeout(client.remaining_seconds(deadline))
         connection.sendall(message)
-        result = session_runtime.receive(connection)
+        data = bytearray()
+        while not data.endswith(b"\n"):
+            connection.settimeout(client.remaining_seconds(deadline))
+            part = connection.recv(4096)
+            if not part:
+                raise ValueError("Incomplete desktop response")
+            data.extend(part)
+            if len(data) > MAX_MESSAGE:
+                raise ValueError("Desktop response is too large")
+        result = json.loads(data)
+        if not isinstance(result, dict):
+            raise ValueError("Desktop response must be an object")
+        client.remaining_seconds(deadline)
     if "error" in result:
         raise RuntimeError(result["error"])
     return result
 
 
-def _request_status():
+def _request_status(*, deadline=None):
     """Reobserve transient socket teardown without replaying any mutation."""
     for attempt in range(3):
         try:
-            return request({"action": "status"})
+            return request({"action": "status", **({"deadline": deadline} if deadline is not None else {})})
         except (ConnectionResetError, BrokenPipeError) as exc:
             if attempt == 2:
                 raise RuntimeError("Native helper status connection closed; inspect desktop status before retrying") from exc
-            time.sleep(.05)
+            time.sleep(.05 if deadline is None else min(.05, client.remaining_seconds(deadline)))
 
 
 def _capture_freshness(captured=0):
@@ -93,9 +108,9 @@ def _capture_freshness(captured=0):
             "fresh": age is not None and age <= CAPTURE_MAX_AGE_SECONDS}
 
 
-def status():
+def status(*, deadline=None):
     try:
-        result = _request_status()
+        result = _request_status(deadline=deadline)
         result.setdefault("worker_provenance", None)  # Legacy workers cannot attest to startup source.
         return result
     except (FileNotFoundError, ConnectionRefusedError):
@@ -298,7 +313,7 @@ def keysyms(chord):
     aliases = {"ctrl": "Control_L", "alt": "Alt_L", "shift": "Shift_L", "super": "Super_L",
                "enter": "Return", "esc": "Escape", "space": "space"}
     keys = [library.xkb_keysym_from_name(aliases.get(part.lower(), part).encode(), 1) for part in chord.split("+")]
-    if not 1 <= len(keys) <= 8 or not all(keys):
+    if not 1 <= len(keys) <= 8 or not all(keys) or len(set(keys)) != len(keys):
         raise ValueError("Unknown key symbol; use XKB names such as ctrl+s or Return")
     return keys
 
@@ -350,6 +365,7 @@ class NativeSession:
         self.control_revision = control_state.status()["control_revision"]
         self.launches = {}
         self.lock = threading.RLock()
+        self.capture_admission = threading.Lock()
         self.stopping = threading.Event()
 
     def snapshot_status(self):
@@ -372,7 +388,7 @@ class NativeSession:
                 "interactive_required": False if self.state == "running" else (None if self.restore_attempted or self.state == "initializing" else True),
                 "expires_in": (None if not self.session_seconds else max(0, int(self.until - time.monotonic()))) if self.state == "running" else 0,
                 "control_active": self.input_active,
-                "input_capabilities": ["keysym", "keycode"],
+                "input_capabilities": ["keysym", "keycode", "server-paced-text"],
                 "input_state": {"scope": "helper-injected", "physical_modifiers": "unavailable",
                                 "keysym_presses": len(self.injected_keysyms),
                                 "keycode_presses": len(self.injected_keycodes),
@@ -472,6 +488,8 @@ class NativeSession:
                     self.evidence_error = "Evidence checkpoint failed; inspect its private artifact"
 
     def _handle(self, payload):
+        payload["deadline"] = client.bounded_deadline(
+            payload, seconds=20 if payload.get("delay_ms") is not None else 14)
         with self.lock:
             self.sync_control()
             action = payload.get("action")
@@ -573,7 +591,20 @@ class NativeSession:
                 return {"generation": self.generation, "pid": process.pid, "returncode": code,
                         "state": "running" if code is None else "exited"}
             if action == "screenshot":
-                return self.capture(payload)
+                if payload.get("control_revision", self.control_revision) != self.control_revision:
+                    raise ValueError("Desktop control changed; observe again")
+                if not self.capture_admission.acquire(blocking=False):
+                    raise RuntimeError("A native capture is already in progress")
+                revision = self.control_revision
+                started = time.monotonic()
+                self.lock.release()
+                try:
+                    return self.capture(payload, revision=revision, started=started)
+                finally:
+                    self.lock.acquire()
+                    self.capture_admission.release()
+            if self.capture_admission.locked():
+                raise RuntimeError("A native capture is in progress; observe before input")
             self.guard(payload)
             self.elements = {ref: row for ref, row in self.elements.items() if time.monotonic() - row["observed_at"] <= 60}
             if action == "element":
@@ -618,7 +649,7 @@ class NativeSession:
                     self.input_released.set()
             raise ValueError("This operation is unavailable on KDE Wayland; use observed accessible controls or portal input")
 
-    def capture(self, payload):
+    def capture(self, payload, *, revision, started):
         from desktop.evidence import capture_digest
         from desktop.portal_capture import validate_crop
 
@@ -642,7 +673,8 @@ class NativeSession:
             if crop is not None:
                 argv.extend(str(n) for n in crop)
             process = subprocess.run(argv, pass_fds=(self.portal.fd, fd),
-                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=12, check=False)
+                stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                timeout=min(12, client.remaining_seconds(payload["deadline"])), check=False)
             if len(process.stdout) > 4096:
                 raise RuntimeError("Capture response exceeded its limit")
             result = json.loads(process.stdout)
@@ -669,14 +701,21 @@ class NativeSession:
             digest = result.get("pixel_sha256")
             if digest is not None and (not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)):
                 raise RuntimeError("Invalid capture pixel digest")
-            changed = (None if digest is None or self.pixel_digest is None else
-                       digest != self.pixel_digest or geometry != self.geometry or expected != self.capture_region)
             artifact_digest = capture_digest(fd)
-            self.pixel_digest = digest
-            self.capture_region = expected
-            self.geometry = geometry
-            self.captured = time.monotonic()
-            return {**self.snapshot_status(), "output": output, "image_geometry": image_geometry, "image_origin": origin,
+            with self.lock:
+                self.sync_control()
+                client.remaining_seconds(payload["deadline"])
+                if (self.stopping.is_set() or self.state != "running" or time.monotonic() >= self.until
+                        or payload.get("generation") != self.generation or revision != self.control_revision
+                        or payload.get("control_revision", revision) != self.control_revision):
+                    raise RuntimeError("Desktop control changed during capture; observe again")
+                changed = (None if digest is None or self.pixel_digest is None else
+                           digest != self.pixel_digest or geometry != self.geometry or expected != self.capture_region)
+                self.pixel_digest = digest
+                self.capture_region = expected
+                self.geometry = geometry
+                self.captured = started
+                return {**self.snapshot_status(), "output": output, "image_geometry": image_geometry, "image_origin": origin,
                     "captured_at": datetime.now(timezone.utc).isoformat(), "changed": changed,
                     "artifact_sha256": artifact_digest,
                     **{key: result.get(key) for key in ("pixel_sha256", "frame_received_at",
@@ -706,6 +745,7 @@ class NativeSession:
             self.guard(payload)
 
     def input(self, payload):
+        client.validate_text_delay(payload)
         codes = client.validate_keycodes(payload)
         hold_ms = client.validate_hold(payload)
         drag_ms = client.validate_drag(payload)
@@ -769,7 +809,9 @@ class NativeSession:
                 keys = [keysyms(payload.get("key"))]
             method = "NotifyKeyboardKeycode" if kind == "keycode" else "NotifyKeyboardKeysym"
             pending = self.injected_keycodes if kind == "keycode" else self.injected_keysyms
-            for chord in keys:
+            for index, chord in enumerate(keys):
+                if kind == "text" and index and payload.get("delay_ms") is not None:
+                    self.hold(payload["delay_ms"], payload)
                 self.guard(payload)
                 pressed = []
                 try:
@@ -795,7 +837,8 @@ class NativeSession:
             raise ValueError("Unknown native input kind")
         self.last_input = {"input_completed_at": datetime.now(timezone.utc).isoformat(),
                            "input_completed_monotonic_ns": time.monotonic_ns()}
-        return {"generation": self.generation, "geometry": self.geometry, **self.last_input}
+        return {"generation": self.generation, "geometry": self.geometry, **self.last_input,
+                **({"submitted_characters": len(keys)} if kind == "text" else {})}
 
 
 def serve(*, remember=False, session_seconds=SESSION_SECONDS):
@@ -866,7 +909,8 @@ def serve(*, remember=False, session_seconds=SESSION_SECONDS):
                 if uid != os.getuid():
                     raise PermissionError("Only the owning desktop user may control this session")
                 payload = session_runtime.receive(connection)
-                payload.setdefault("deadline", time.monotonic() + 14)
+                payload["deadline"] = client.bounded_deadline(
+                    payload, seconds=20 if payload.get("delay_ms") is not None else 14)
                 if payload.get("action") == "input":
                     def cancelled():
                         import select

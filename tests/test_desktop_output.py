@@ -144,6 +144,7 @@ class DesktopOutputTests(unittest.TestCase):
         self.assertEqual(result["input_completed_monotonic_ns"], 42)
         self.assertIn("Do not replay", result["error"])
         backend.request.assert_called_once_with({"action": "screenshot", "generation": "g",
+                                                 "control_revision": "r",
                                                  "output": "/tmp/new.png", "next_frame": True})
 
     def test_post_input_control_change_stops_observation(self) -> None:

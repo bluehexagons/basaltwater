@@ -11,7 +11,7 @@ import struct
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 from desktop import session_runtime as runtime
 from desktop import client, control_state
@@ -586,7 +586,7 @@ class DesktopProductivityTests(unittest.TestCase):
                 self.assertEqual(result["completed"], 1)
                 self.assertIn("error", result)
                 request.assert_called_once_with({"action": "screenshot", "output": "/private/first.png",
-                                                "generation": "g", "control_revision": "r"})
+                                                "generation": "g", "control_revision": "r", "deadline": ANY})
 
     @patch.object(runtime, "request")
     def test_sequence_rejects_embedded_control_before_sending_actions(self, request):
@@ -1137,7 +1137,7 @@ class DesktopCliTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(run_desktop_command(args), 0)
         request.assert_called_once_with({"action": "screenshot", "generation": "current", "control_revision": "r",
-                                        "window": "0x123", "active_window": False, "output": "/tmp/app.png"})
+                                        "window": "0x123", "active_window": False, "output": "/tmp/app.png", "deadline": ANY})
 
     @patch.object(runtime, "status", return_value={"state": "starting"})
     @patch.object(runtime, "request")
