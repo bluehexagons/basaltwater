@@ -134,8 +134,10 @@ from physical game bindings. See Microsoft's [keyboard event contract](https://l
 `input sequence` uses the same window selectors and `--keys 'HOME,SHIFT+END,F11'`.
 It accepts at most 32 chords and 1024 characters, validates the entire sequence,
 then submits one [SendInput batch](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput).
-Each chord releases keys in reverse order. No delays or held keys are supported;
-games polling keyboard state per frame may miss a tap. Use separate observed
+Each chord releases keys in reverse order. Sequences have no delays;
+games polling keyboard state per frame may miss a tap. Use a bounded
+[`input hold` keyboard lease](windows-held-input.md) for continuous state and
+explicit repeat, with independent release-watchdog evidence. Use separate observed
 steps when application transitions require waiting. Queue acceptance does not
 prove application delivery. Partial delivery fails without replay and attempts
 key releases. Worker termination or OS rejection cannot guarantee release;

@@ -200,6 +200,10 @@ Task timeout remains distinct in Receipt.State. Use logs separately for output.
 '@
 }
 function Assert-NativeDevelopmentIdle {
+    if (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'Basaltwater\desktop\leases\active.json')) {
+        . (Join-Path $PSScriptRoot 'Desktop.Common.ps1')
+        Assert-NativeHeldIdle
+    }
     $root = Get-DevelopmentRoot
     if (-not (Test-Path -LiteralPath $root)) { return }
     foreach ($directory in Get-ChildItem -LiteralPath $root -Directory) {

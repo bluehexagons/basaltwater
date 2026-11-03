@@ -1,7 +1,8 @@
 # Windows game testing facilities
 
-Status: input fidelity and an initial opt-in test-session facility are implemented;
-remaining facilities are planned. Basaltwater owns OS facilities and lifecycle/evidence collection.
+Status: input fidelity, opt-in test sessions, owned-child diagnostics and bounded
+keyboard holds are implemented; capture, pacing and audio facilities remain
+planned. Basaltwater owns OS facilities and lifecycle/evidence collection.
 Projects own readiness signals, assertions, deterministic replays and capture
 recipes. This plan does not introduce commands for unimplemented features.
 
@@ -35,7 +36,8 @@ requires an update. WinForms and other widgets remain separate acceptance checks
    human override reject further input. Releasing a physically held modifier
    must be an operator action, never synthetic cleanup of unrelated input.
 5. Distinguish key-event delivery from frame-polled game state: immediate
-   down/up taps need not span a game frame. Held input remains out of scope.
+   down/up taps need not span a game frame. Qualify
+   [bounded keyboard holds](../workstations/windows-held-input.md) separately.
 
 ## Isolated sessions: initial implementation
 
@@ -93,10 +95,15 @@ guardian samples owned identities and retains observed unsigned exit codes
 through worker replacement. Coverage explicitly remains partial for missed
 short-lived members, tracking overflow and unavailable observations.
 
+Priority 2 adds finite keyboard `input hold` leases with optional explicit
+repeat, QPC send/lateness records and an independent Scheduled Task release
+watchdog. Focus/control/identity changes stop input; physical ownership and
+uncertain release remain explicit. Mouse holds and virtual pads are separate.
+
 ### Delivery order from consuming-game testing
 
 Use the following order for new scoped increments. These are proposed
-capabilities; priority 1 is implemented as described above. Retain per-platform
+capabilities; priorities 1–2 are implemented as described above. Retain per-platform
 capability discovery and explicit unsupported results; Linux and Windows need
 equivalent evidence contracts, not identical implementation mechanisms.
 

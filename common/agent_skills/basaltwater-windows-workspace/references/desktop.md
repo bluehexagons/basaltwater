@@ -35,6 +35,16 @@ Use `desktop input key --help` for scan-code editing keys and text limits.
 partial failure attempts reverse-order key release. Queue acceptance does not
 verify application state; failed release requires inspection before continuing.
 
+For frame-polled continuous keyboard state, `input hold --key W --milliseconds
+600` uses the same fresh window selectors and a finite 50–5000 ms lease.
+`--repeat-ms 100` opts into explicit repeated downs. The independent watchdog
+stops on focus/geometry/identity/control loss, cancellation or expiry and releases
+owned synthetic keys. Other mutations remain blocked during the lease;
+observation and human handoff remain available. Discover its ID in
+`status.input_lease`; use `input release --lease ID` to request cancellation and
+`input lease --lease ID` to inspect cleanup. A physical-owner or uncertain release
+requires inspection, not replay. See the [keyboard lease contract](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/windows-held-input.md).
+
 Human override/disabled control blocks mutations and artifact/terminal handoff.
 Observation remains available. Only an explicit human decision authorizes a
 `desktop control ... --human-approved` transition; the task alone is not approval
@@ -55,6 +65,12 @@ selecting an installed fnm numeric pin and matching npm;
 it rejects unsupported package-manager pins instead of using incompatible tools.
 For a JavaScript file, use `develop exec --project PATH -- node.exe script.js`;
 explicit execution uses that executable without selecting a project runtime.
+Add `--track-children` to exec/node/run for sampled owned-child identities,
+including replacement workers and observed exits. `develop diagnose ID --tree`
+lists bounded retained identities and counters; `--member PID:FILETIME` selects
+an exact retained token. Default diagnostics select the native root. Sampling
+can miss short-lived workers; terminal cleanup does not invent their exits.
+See [diagnostics](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/windows-diagnostics.md).
 Godot `develop editor|run|import --project PATH` honors `GODOT_BIN`, then the managed
 engine. Project pins, templates and build commands remain authoritative.
 

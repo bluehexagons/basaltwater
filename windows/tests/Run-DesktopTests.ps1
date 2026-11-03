@@ -13,12 +13,13 @@ function Assert-Failure($Result, [string]$Pattern) {
 }
 $temporary = Join-Path ([IO.Path]::GetTempPath()) ('basaltwater-desktop-tests-' + [guid]::NewGuid().ToString('N'))
 $script:DesktopTestPath = Join-Path $temporary 'state\state.json'
+$script:DesktopTestSid = 'fixture-' + [guid]::NewGuid().ToString('N')
 $script:DesktopTestSession = 'fixture-session-1'
 $script:DesktopTestNow = 10000L
 $script:DesktopTestCalls = @()
 $script:DesktopTestFail = $false
 function Get-NativeDesktopStatePath { return $script:DesktopTestPath }
-function Get-NativeDesktopContext { return @{ Sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value; Session = $script:DesktopTestSession } }
+function Get-NativeDesktopContext { return @{ Sid = $script:DesktopTestSid; Session = $script:DesktopTestSession } }
 function Get-NativeDesktopTime { return $script:DesktopTestNow }
 function Invoke-NativeDesktopWorker($Request, [int]$TimeoutSeconds = 8) {
     $script:DesktopTestCalls += $Request.command
@@ -60,6 +61,7 @@ try {
     }
     # Parse/compile only: not a single user32, capture, UIA or input call.
     Initialize-NativeDesktopTypes
+    & (Join-Path $PSScriptRoot 'Run-HeldInputTests.ps1')
     # Pure event construction with a synthetic keyboard map. No user32 calls.
     $builder = [Basaltwater.Desktop.Native].GetMethod('KeyInputs', [Reflection.BindingFlags]'Static,NonPublic')
     $map = [Func[uint16,uint32]]{ param($vk)
@@ -282,6 +284,18 @@ function Invoke-NativeDesktopWorkerBody($Request) {
     $sequence = @('input','sequence','--window','123','--identity','42:birth:class:title','--generation',$generation,'--width','640','--height','480','--keys','HOME,SHIFT+END')
     Assert-True (Invoke-NativeDesktopCli $sequence).ok 'Sequence rejected by public CLI'
     Assert-Failure (Invoke-NativeDesktopCli $sequence) 'not recently observed'
+    & {
+        function Start-NativeHeldLease($Request,$Context,$State) { return @{id='a'*32} }
+        function Wait-NativeHeldLease($Record) { return @{ok=$true;lease=$Record.id} }
+        $generation=Observe-Window
+        $hold=@('input','hold','--window','123','--identity','42:birth:class:title','--generation',$generation,'--width','640','--height','480','--key','W')
+        Assert-Failure (Invoke-NativeDesktopCli ($hold+@('--milliseconds','49'))) '50-5000'
+        Assert-Failure (Invoke-NativeDesktopCli ($hold+@('--milliseconds','5001'))) '50-5000'
+        Assert-Failure (Invoke-NativeDesktopCli ($hold+@('--milliseconds','500','--repeat-ms','0'))) 'Repeat'
+        Assert-Failure (Invoke-NativeDesktopCli ($hold+@('--milliseconds','500','--repeat-ms','501'))) 'Repeat'
+        Assert-True (Invoke-NativeDesktopCli ($hold+@('--milliseconds','500','--repeat-ms','100'))).ok 'Bounded hold refused by public CLI'
+        Assert-Failure (Invoke-NativeDesktopCli ($hold+@('--milliseconds','500'))) 'not recently observed'
+    }
     $generation = Observe-Window
     $before = $script:DesktopTestCalls.Count
     foreach ($arguments in @(

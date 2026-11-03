@@ -8,9 +8,11 @@ All OS desktop calls are behind Invoke-NativeDesktopWorker for offline mocks.
 Desktop APIs run in an owned Windows PowerShell 5.1 8s worker: it provides the
 installed .NET Framework UIAutomation assemblies without another runtime/package.
 The public CLI wrapper also uses 5.1; development shells/task guardians use 7.
-No start/stop, launch, lease, elevation, clipboard, or held input.
+No elevation or clipboard access. Held keyboard input uses a finite lease and
+an independent interactive Scheduled Task release watchdog.
 #>
 $script:NativeDesktopSource = $PSScriptRoot
+. (Join-Path $PSScriptRoot 'Desktop.Hold.ps1')
 
 function Get-NativeDesktopContext {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -121,7 +123,7 @@ function Exit-NativeDesktopLock($Lock) { $Lock.ReleaseMutex(); $Lock.Dispose() }
 function Initialize-NativeDesktopTypes {
     if (-not ('Basaltwater.Desktop.Native' -as [type])) {
         $framework = [Runtime.InteropServices.RuntimeEnvironment]::GetRuntimeDirectory()
-        Add-Type -ErrorAction Stop -Path (Join-Path $script:NativeDesktopSource 'Desktop.Native.cs') -ReferencedAssemblies @(
+        Add-Type -ErrorAction Stop -Path @((Join-Path $script:NativeDesktopSource 'Desktop.Native.cs'), (Join-Path $script:NativeDesktopSource 'Desktop.Hold.cs')) -ReferencedAssemblies @(
             'System.dll','System.Core.dll','System.Drawing.dll','System.Windows.Forms.dll',
             (Join-Path $framework 'WPF\UIAutomationClient.dll'), (Join-Path $framework 'WPF\UIAutomationTypes.dll'), (Join-Path $framework 'WPF\WindowsBase.dll'))
     }
@@ -148,9 +150,15 @@ function Invoke-NativeDesktopWorkerBody($Request) {
     }
     Initialize-NativeDesktopTypes
     [Basaltwater.Desktop.Native]::Ready()
-    if ($Request.command -eq 'ready') { return @{ healthy = $true; interactive = $true; capture_performed = $false; backend = 'win32-uia'; worker = 'WindowsPowerShell-5.1'; timeout_seconds = 8 } }
+    if ($Request.command -eq 'ready') { return @{ healthy = $true; interactive = $true; capture_performed = $false; backend = 'win32-uia'; worker = 'WindowsPowerShell-5.1'; timeout_seconds = 8;
+        capabilities = @{ keyboard_hold = $true; maximum_hold_ms = 5000; explicit_repeat = $true; mouse_hold = $false } } }
     [Basaltwater.Desktop.Native]::Dpi()
     switch ($Request.command) {
+        'hold-plan' { return [Basaltwater.Desktop.Native]::PrepareHold([long]$Request.window,$Request.identity,$Request.key,[int]$Request.width,[int]$Request.height) }
+        'hold' {
+            # Keep the receipt's nullable error separate from transport errors.
+            return @{ held = Invoke-NativeHeldDriver $Request }
+        }
         'windows' { return @{ windows = @([Basaltwater.Desktop.Native]::Windows()); monitors = @([Basaltwater.Desktop.Native]::Monitors()); coverage = 'Visible accessible windows in current account/session; inaccessible windows omitted' } }
         'inspect' { return [Basaltwater.Desktop.Native]::Inspect([int]$Request.pid, $Request.record, $Request.name, $Request.role) }
         'window' { return @{ window = [Basaltwater.Desktop.Native]::Change([long]$Request.window, $Request.identity, $Request.operation, [int]$Request.x, [int]$Request.y, [int]$Request.width, [int]$Request.height); outcome_verified = $true } }
@@ -229,7 +237,7 @@ function ConvertTo-NativeDesktopRequest([string[]]$Arguments) {
         screenshot = @('window','identity','generation','output','monitor');
         window = @('window','identity','generation','x','y','width','height');
         element = @('ref','generation','text','action-name');
-        input = @('window','identity','generation','width','height','x','y','text','key','keys')
+        input = @('window','identity','generation','width','height','x','y','text','key','keys','milliseconds','repeat-ms','lease')
     }
     if (-not $allowed.ContainsKey($request.command)) { throw "Unsupported Windows desktop command: $($request.command)" }
     if ($request.command -in @('control','window','element','input')) {
@@ -246,7 +254,7 @@ function ConvertTo-NativeDesktopRequest([string[]]$Arguments) {
         if ($index -ge $Arguments.Count) { throw "Missing value: $option" }
         $request[$key] = $Arguments[$index++]
     }
-    foreach ($key in @('pid','window','x','y','width','height','seconds')) {
+    foreach ($key in @('pid','window','x','y','width','height','seconds','milliseconds','repeat-ms')) {
         if ($request.ContainsKey($key)) {
             $number = 0L
             if ($request[$key] -notmatch '\A-?[0-9]+\z' -or -not [long]::TryParse($request[$key], [ref]$number)) { throw "Invalid integer: $key" }
@@ -267,10 +275,21 @@ function Assert-NativeDesktopRequired($Request, [string[]]$Keys) {
 function Invoke-NativeDesktopCli([string[]]$Arguments) {
     $lock = $null
     try {
-        if ($Arguments.Count -eq 3 -and $Arguments[0] -eq 'input' -and $Arguments[1] -in @('key','chord','sequence','text','click') -and $Arguments[2] -eq '--help') {
+        if ($Arguments.Count -eq 3 -and $Arguments[0] -eq 'input' -and $Arguments[1] -in @('hold','release','lease','key','chord','sequence','text','click') -and $Arguments[2] -eq '--help') {
+            if ($Arguments[1] -in @('hold','release','lease')) { return @{ ok = $true; help = 'input hold --key W --milliseconds 500 [--repeat-ms 100], with fresh --window --identity --generation --width --height. Duration 50-5000 ms; repeat 50..duration. One key with optional CTRL/SHIFT prefixes. input release --lease ID cancels only that lease; input lease --lease ID reads retained evidence. Independent watchdog; release acceptance is not application verification. No mouse holds.' } }
             return @{ ok = $true; help = 'input key --key KEY | input chord --key CTRL+A (one/two distinct CTRL/SHIFT modifiers). input sequence --keys HOME,SHIFT+END: at most 32 chords and 1024 characters. Keys: A-Z 0-9 F1-F12 ENTER ESC TAB SPACE LEFT UP RIGHT DOWN BACKSPACE DELETE HOME END PAGEUP PAGEDOWN INSERT. input text --text TEXT: at most 1024 UTF-16 code units. input click --x X --y Y. All require --window --identity --generation --width --height from fresh windows. Queue acceptance only; inspect application afterward.' }
         }
         $request = ConvertTo-NativeDesktopRequest $Arguments
+        if ($request.command -eq 'input') {
+            $leaseOptions=@('milliseconds','repeat-ms','lease')
+            if ($request.operation -in @('release','lease')) {
+                foreach ($key in $request.Keys) { if ($key -notin @('command','operation','lease')) { throw "Unsupported lease option: --$key" } }
+            } elseif ($request.operation -eq 'hold') {
+                foreach ($key in $request.Keys) { if ($key -notin @('command','operation','window','identity','generation','width','height','key','milliseconds','repeat-ms')) { throw "Unsupported hold option: --$key" } }
+            } else {
+                foreach ($key in $leaseOptions) { if ($request.ContainsKey($key)) { throw "Unsupported input option: --$key" } }
+            }
+        }
         if ($request.command -eq 'environment') {
             . (Join-Path $PSScriptRoot 'Environment.Common.ps1')
             $report = Get-NativeEnvironmentReport
@@ -279,6 +298,10 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
         if ($request.command -eq 'doctor') { return Get-NativeDesktopReadiness }
         $context = Get-NativeDesktopContext; $lock = Enter-NativeDesktopLock $context
         $state = Read-NativeDesktopState $context
+        if ($request.command -eq 'input' -and $request.operation -in @('release','lease')) {
+            Assert-NativeDesktopRequired $request @('lease')
+            return Get-NativeHeldLease $request.lease $context ($request.operation -eq 'release')
+        }
         if ($request.command -eq 'control') {
             if (-not $request['human-approved']) { throw 'Control transitions require explicit human authorization (--human-approved)' }
             if ($request.operation -notin @('enabled','human-override','disabled')) { throw 'Invalid control state' }
@@ -291,10 +314,11 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
             $state.revision = [guid]::NewGuid().ToString('N'); $state.windows = @(); $state.elements = @()
         } elseif ($request.command -eq 'status') {
             $readiness = Get-NativeDesktopReadiness
-            return @{ ok = $true; generation = $state.generation; agent_control = $state.mode; control_revision = $state.revision; override_until = $state.until; readiness = $readiness }
+            return @{ ok = $true; generation = $state.generation; agent_control = $state.mode; control_revision = $state.revision; override_until = $state.until; readiness = $readiness; input_lease = Get-NativeHeldActive $context }
         } else {
             $mutation = $request.command -in @('window','element','input')
             if ($mutation -and $state.mode -ne 'enabled') { throw "Agent desktop control is $($state.mode)" }
+            if ($mutation) { Assert-NativeHeldIdle }
             if ($mutation -or $request.ContainsKey('root') -or ($request.command -eq 'screenshot' -and $request.ContainsKey('window'))) {
                 Assert-NativeDesktopRequired $request @('generation')
                 if ($request.generation -ne $state.generation) { throw 'Stale session generation' }
@@ -311,7 +335,13 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
             }
             if ($request.command -eq 'input') {
                 Assert-NativeDesktopRequired $request @('width','height')
-                if ($request.operation -notin @('key','chord','sequence','text','click')) { throw 'Unsupported input operation' }
+                if ($request.operation -notin @('hold','key','chord','sequence','text','click')) { throw 'Unsupported input operation' }
+                if ($request.operation -eq 'hold') {
+                    Assert-NativeDesktopRequired $request @('key','milliseconds')
+                    if ($request.milliseconds -lt 50 -or $request.milliseconds -gt 5000) { throw 'Hold duration must be 50-5000 milliseconds' }
+                    if ($request.ContainsKey('repeat-ms') -and ($request['repeat-ms'] -lt 50 -or $request['repeat-ms'] -gt $request.milliseconds)) { throw 'Repeat must be 50..duration milliseconds' }
+                    if ($request.key.Length -gt 64) { throw 'Hold key exceeds bound' }
+                }
                 if ($request.operation -eq 'click') { Assert-NativeDesktopRequired $request @('x','y') }
                 if ($request.operation -eq 'text') { Assert-NativeDesktopRequired $request @('text'); if ($request.text.Length -gt 1024) { throw 'Text limit is 1024' } }
                 if ($request.operation -in @('key','chord')) { Assert-NativeDesktopRequired $request @('key'); $request.text = $request.key }
@@ -343,6 +373,13 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
             }
             # Invalidate references durably BEFORE a possibly timed-out mutation.
             if ($mutation) { $state.elements = @(); $state.windows = @(); Write-NativeDesktopState $state }
+            if ($request.command -eq 'input' -and $request.operation -eq 'hold') {
+                $lease = Start-NativeHeldLease $request $context $state
+                # Control handoff and lease cancellation must remain available
+                # while the driver waits; the active lease blocks other mutations.
+                Exit-NativeDesktopLock $lock; $lock = $null
+                return Wait-NativeHeldLease $lease
+            }
             $result = Invoke-NativeDesktopWorker $request
             if ($request.command -eq 'windows') { $state.windows = @($result.windows); $state.elements = @(); $state.window_observed = Get-NativeDesktopTime }
             if ($request.command -eq 'inspect') {

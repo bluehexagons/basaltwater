@@ -121,6 +121,41 @@ game profile's inventory, hashes and modification times were unchanged, as was
 human-control state. Full source/native project gates passed separately; those
 results do not qualify a current clean package or a physical input/audio device.
 
+## Owned workers and held keyboard state
+
+Subsequent checkout qualification on 2026-11-02 exercised opt-in
+[`--track-children`](windows-diagnostics.md) through an actual limited
+interactive Scheduled Task and a disposable Node adapter. The first worker's
+exit 7 survived replacement; exact replacement selection returned live
+counters, a changed creation token was refused, and cancellation retained
+terminal member exits while removing the profile and Scheduler registration.
+Owned-process regressions separately cover guardian loss and an unrelated
+sleeper surviving. Sampling remains partial for short-lived processes.
+
+[`input hold`](windows-held-input.md) qualification used a real SDL 3 window
+and its frame-polled keyboard state, separately from CLI queue acceptance.
+A 600 ms W lease spanned more than 50 application ticks with balanced down/up.
+Explicit 100 ms repeat produced repeated downs and one final up. Further
+scenarios exercised owned-window minimize/focus loss, explicit cancellation,
+driver termination, caller termination and watchdog termination. SDL held state
+cleared in each case; watchdog-loss cleanup required explicit reconciliation
+after the surviving driver released. Focus loss can itself clear SDL state;
+the release receipt separately establishes the guard's up submission.
+
+Offline coverage checks partial downs, reverse-order subset cleanup, uncertain
+ups without replay, generic-modifier physical ownership, keypad/E0 distinction,
+control revision changes, Scheduler query failure and closed ownership before
+admission. Explicit observed-up and later-boot recovery use mocked state; no
+physical-key takeover, actual reboot, locked desktop or forced OS rejection was
+performed. Those boundaries remain separate qualification work.
+
+The full native suite passed during implementation, followed by focused desktop
+and ownership checks on the final changes. Raw event logs, timestamps, task IDs
+and failure receipts remain private. This qualification uses checkout source;
+it does not establish that the installed launcher has been refreshed, or prove
+any game's movement/attack assertions. WGC recording, PresentMon and process
+audio remain planned.
+
 ## Repeatable acceptance
 
 1. Record installed and tested source revisions, toolkit/runtime and keyboard

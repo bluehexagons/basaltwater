@@ -134,6 +134,8 @@ Native desktop commands (explicit actions use the current account's session):
   input key|chord|sequence|text|click --window HWND --identity TOKEN --generation GEN --width W --height H
   input key --help  Supported editing keys, chords, sequences and text limits
     key --key CTRL+SHIFT+HOME | sequence --keys HOME,SHIFT+END,F11 (max 32 chords)
+  input hold --key W --milliseconds 500 [--repeat-ms 100] (same window selectors)
+  input release|lease --lease ID          Cancel/read a finite keyboard lease
   control enabled|human-override|disabled --human-approved [--seconds N|--indefinite]
   open PATH [--reveal] | terminal --project PATH [--msvc]
   notify --title TEXT --message TEXT

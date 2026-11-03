@@ -23,7 +23,7 @@ public sealed class Element {
 }
 public sealed class Scan { public List<Element> elements = new List<Element>(); public bool truncated; public int visited; }
 public sealed class Monitor { public string id; public int x,y,width,height; }
-public static class Native {
+public static partial class Native {
     [StructLayout(LayoutKind.Sequential)] public struct Rect { public int left, top, right, bottom; }
     [StructLayout(LayoutKind.Sequential)] struct Point { public int x,y; }
     delegate bool EnumProc(IntPtr h, IntPtr p);
