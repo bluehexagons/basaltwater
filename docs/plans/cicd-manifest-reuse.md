@@ -1,8 +1,11 @@
 # Shared build hosts and artifact deployment
 
 Status: combined Debian setup, the shared worker/coordinator and exact-request
-nested runner scheduling are implemented. Qualification of the complete host
-is the current deliverable. Use the [build-system guide](../services/build-systems.md) for
+nested runner scheduling are implemented. Selected native conversion, mixed-role
+execution, nested cancellation, drain, saved rerun and reboot checks pass;
+see the [dated evidence](../testing/evidence.md#shared-debian-build-and-ci-host).
+Broader fault, provider and event cases remain open. Use the
+[build-system guide](../services/build-systems.md) for
 available commands and the [coverage map](testing-coverage.md) for test limits.
 
 `--build-on SAVED-BUILDER` selects that VM from another deployment's controller
@@ -23,7 +26,11 @@ Current source, admission, artifact and recovery contracts live in the
 [contributor build references](../agents/contributing/README.md). Do not repeat
 their implementation history here.
 
-## Delivery order
+## Delivery contract
+
+The composition and capacity steps below are implemented. Their acceptance
+criteria remain the contract for future changes; the coverage map distinguishes
+the selected native pass from remaining cases.
 
 ### 1. Compose roles and convert an existing runner
 

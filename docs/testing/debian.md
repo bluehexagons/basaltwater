@@ -1,6 +1,6 @@
 # Debian and Proxmox testing status
 
-**Evidence reconciled through 2026-11-02 UTC.** Selected live workflows cover Debian
+**Evidence reconciled through 2026-11-03 UTC.** Selected live workflows cover Debian
 12/13 guests and a physical Proxmox host; they do not establish a pass on every
 machine type. Status applies only to the workflow described in each row; see
 the [legend](README.md#status-legend).
@@ -48,12 +48,12 @@ from test status.
 | Web deployment | 🟢 **Labbed** | Selected Go, Node and SPA/API workflows, rollback and same-host recovery | Public tunnel/ACME, off-host restore and power loss |
 | Selected builder | 🟢 **Labbed** | Enrollment, delivery, refresh and multi-application workflows | Public ingress, more failure boundaries and unsupported interpreter services |
 | Builder retention/recovery | 🟡 **Partial** | Component and automated settlement, pruning and lost-acknowledgement guards | Further crash/power-loss boundaries; no automatic collection |
-| GitHub runner | 🟢 **Labbed** | Earlier tokenless setup, rerun and reboot; owner also reports a basic setup rerun selecting `--ci-register-with-gh` | Registered state was not separately reported; end-to-end registration, real jobs and cancellation remain open |
-| Combined build/CI host | 🔵 **In progress** | Separate roles implemented | Composition and shared capacity not yet implemented or qualified |
+| GitHub runner | 🟢 **Labbed** | Earlier tokenless checks; selected actual CLI registration, allowed dispatch, denied rerun/drain, nested build/cancellation and registered reboot at `550e8f7f`; see [dated evidence](evidence.md#shared-debian-build-and-ci-host) | Organization/group, registered multi-repository execution, push/PR events, expired-token/panel enrollment and forced crashes remain open |
+| Combined build/CI host | 🟢 **Labbed** | Registered-runner conversion, mixed Actions/SSH/signed-webhook capacity, exact nested scheduling, maintenance drain, saved rerun and reboot; [scope](evidence.md#shared-debian-build-and-ci-host) | Fresh provider bootstrap failed before role setup; public ingress, further crash/acknowledgement, storage exhaustion and power loss remain unqualified |
 | Web panels | 🟢 **Labbed** | Selected setup/auth and component lifecycle/recovery; browser fixtures | Full removal/interruption, additional browsers and native console |
 | Managed user rename | 🟢 **Labbed** | Selected identity, home and recovery cases | More interruption points and application-specific migration |
 | Resource-constrained development | 🟢 **Labbed** | Selected 1 vCPU / 1 GiB Debian workload | Full suite, browser and other platforms at that floor |
-| Repository checks | 🟡 **Partial** | [2026-11-02 specimen repair `785c3ffd`: 9,196 tests, six local skips, 82% branch-aware coverage](evidence.md#automated-validation); hosted full Debian (three skips) and Node compatibility CI passed | Named revision only; browser and physical hardware are separate |
+| Repository checks | 🟡 **Partial** | [2026-11-03 shared-host `550e8f7f`: 9,316 tests, six local skips, 82% branch-aware coverage](evidence.md#automated-validation); all remaining local `check-ci` checks and hosted CI passed | Named revision only; browser and physical hardware are separate |
 | Desktop development and visual checks | 🟡 **Partial** | Debian 13 software GLX, small Blender CPU render and XRDP edit/save fixture | Native GPU/display, audio, Wayland and full project images |
 | T3 Code and provider workflows | 🟡 **Partial** | Selected enrollment and task checks; additional T3 components | Exact-candidate install, pairing, migration and complete live workflow |
 | Game publishing and external alerts | 🟡 **Partial** | Automated checks or selected observations | Full publishing and external-provider paths |
@@ -86,8 +86,9 @@ detailed host checks cover one physical node; the owner also reports two basic
   other profile combinations and interruption boundaries separate.
 - On disposable targets, qualify off-host restore and interrupted setup/recovery;
   repeat relevant cases on the exact release candidate.
-- Exercise registered GitHub runner jobs and cancellation, then implement and
-  qualify combined build/CI host composition.
+- Extend the selected shared-host checks to broader GitHub events/scopes,
+  forced crashes, lost acknowledgements and storage exhaustion. Investigate
+  the separately retained fresh provider-bootstrap failure.
 - Complete public tunnel/certificate issuance and native browser cases; keep
   live provider credentials and raw evidence private.
 - Investigate the failed LXC suspend and run the separate Proxmox cluster and

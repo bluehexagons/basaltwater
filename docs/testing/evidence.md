@@ -313,6 +313,38 @@ No product defect was reproduced. Base OS updates were preparation, separate
 from the approved transactions. Distribution service/kernel packages, broader
 hook failures, interruption and power loss remain open.
 
+## Shared Debian build and CI host
+
+**2026-11-03 UTC; installed `550e8f7f`, including nested scheduling at
+`76eb0d08`, on an owned disposable Debian 13 x86-64 QEMU guest.** Twelve critical
+installed build, runner and webhook runtime files matched source. A private test
+repository supplied real Actions jobs; its restricted build key granted only
+the fixture projects, with no controller administrator or target credentials.
+
+| Check level | Observed result | Qualification boundary |
+| --- | --- | --- |
+| **Installed setup and conversion** | Normal dedicated-runner setup registered through the controller's GitHub CLI. Conversion to `server_lite --build-server --github-runner` preserved the same working GitHub runner identity. Normal setup then added signed webhook intake and its admission worker | One private repository and an allowed human actor; organization/group, multi-repository registered execution and panel enrollment were not tested |
+| **Real Actions and nested builds** | Allowed manual dispatch ran as the dedicated service account. A rerun was refused with zero workflow steps, including its `always()` canary. A synchronous same-host managed build returned verified artifacts in 5.91 seconds. With an older unrelated SSH request queued, the exact nested request ran inside its parent's slot; the older request started only after parent cleanup | Actual runner ancestry and restricted SSH transport, without workflow environment bypasses. Push/PR events, additional denial cases, forced guardian/worker crashes and lost-cleanup acknowledgements retain separate qualification |
+| **Real cancellation** | Normal GitHub cancellation of a running slow nested build produced a cancelled child, empty scratch and an empty capacity marker after cleanup | The initial 45-second observation window expired while awaiting GitHub cancellation delivery; eventual completion was confirmed against the original job and request. This does not promise a 45-second cancellation bound |
+| **Three-role capacity and maintenance** | During a real Actions hold, an ordinary SSH request and a signed HTTPS webhook remained queued. Busy maintenance refused and retained its drain; another assigned Actions job was denied before any step. Explicit idle maintenance released its own drain, then the SSH and pinned public-Git/Node webhook builds succeeded without overlapping execution | HTTPS verified the private lab certificate and hostname. Bad signatures returned 403; signed and duplicate deliveries returned 202 with one retained receipt and one core job. Public DNS, ACME, Tunnel and a GitHub-configured webhook sender were not exercised |
+| **Saved rerun and reboot** | Setup with all role flags omitted retained the saved three-role configuration. All four role units were active and boot-enabled, both runner credential files were unchanged, and no jobs, scratch or drain remained active. Actual guest reboot preserved those checks, runner UID and coordinator inode; a fresh nested workflow, ordinary SSH build and webhook signature/duplicate probes passed afterward | Selected configuration only; no host reboot, power loss, storage exhaustion or interrupted installation qualification |
+
+The initial fresh provider-provisioning attempt failed during cloud-init and
+removed only its partially created guest. Qualification instead used a separately
+owned full clone of the retained Debian template. Fresh provider bootstrap remains
+unqualified by this batch. Early private workflow preparation failures were
+inspected and corrected before new dispatches; their original failed jobs and
+cancellation evidence were retained. Intermittent pre-response controller SSH
+failures were inspected through later read-only queries using the original IDs;
+no uncertain mutation was replayed and no server quota was relaxed.
+
+Cleanup retained terminal jobs, receipts, credentials and private evidence with
+the owned guest stopped and autostart disabled. Existing guests and unrelated
+fixtures were preserved. These selected native checks qualify the shared
+build/test host; webhook-triggered deployment, GitHub status checks and release
+publishing remain outside this pass. Further crash, storage and power-loss cases
+remain open; this is not production or exact-release qualification.
+
 ## Automated validation
 
 | Date / source | Observed result | Qualification boundary |
@@ -321,6 +353,7 @@ hook failures, interruption and power loss remain open.
 | 2026-10-31 / Shares & Data UI at `bca3b72e` | Full `check-ci`: 9,190 tests, six skips, 82% aggregate coverage; all six local Chromium/Firefox Shares cases passed | Separate historical revision and browser run, not an installed-system refresh |
 | 2026-11-01 / Unicode fix `986d3061`, timer fix `7ba41724` | Each fix passed `make check-fast SUITE=web`: 1,289 tests run, one skipped, plus compilation, docs and package metadata. All eight focused local Chromium/Firefox Shares cases passed at `986d3061`; the new Unicode regression failed in both engines before the fix | Focused checks, not a new full CI or release-candidate pass. Local browser services use simulated host actions; installed-service results are recorded separately above |
 | 2026-11-02 / specimen repair `785c3ffd` | CI had stopped before the full suite because the generated Shares & Data specimen lacked the existing Unicode search attributes. Regeneration fixed the two stale inputs. Full local `make -j2 check-ci` passed 9,196 tests, six skips and 82% branch-aware coverage, plus static/docs/brand/metadata/wheel checks. [Hosted CI](https://github.com/bluehexagons/basaltwater/actions/runs/41478410457) passed full Debian/Node 24 validation (9,196 tests, three skips, 82%) and Node 26 compatibility | Generated specimen repair; no application behavior changed. Automated checks do not establish browser, hardware or exact-candidate release qualification |
+| 2026-11-03 / shared-host implementation at `550e8f7f` | Full local `make check-ci` passed 9,316 tests, six skips and 82% branch-aware aggregate coverage, plus static/docs/brand/metadata/wheel checks. [Hosted CI](https://github.com/bluehexagons/basaltwater/actions/runs/41551778724) also passed | Includes exact-request lease delegation, FIFO identity and cancellation regressions. Native results are the separate shared-host batch above; remaining fault and release cases are not inferred from CI |
 
 Failures remain in private evidence alongside successful continuations. The
 Proxmox suite initially exposed two corrected test-fixture issues; the Shares

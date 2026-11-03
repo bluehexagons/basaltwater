@@ -48,8 +48,9 @@ and registering the desired configuration. Without a usable token it stays
 pending; register later through setup or the HTTPS panel. Remove any retired
 runner entry from GitHub's runner settings. A credential-free pending installation
 can change scope directly.
-An allowlist update stops the listener and its current job before publishing
-policy, then restarts the service. Drain trusted jobs before repeating setup.
+Setup acquires the shared maintenance drain before publishing policy or stopping
+the listener. Busy or uncertain capacity blocks the update and retains the drain
+for inspection; finish trusted jobs before explicitly completing maintenance.
 
 | Event | Identity required |
 | --- | --- |
@@ -124,6 +125,8 @@ require root inspection before clearing it. Service shutdown also stops queued
 hooks and lock holders; it does not establish that the lease is safe to clear.
 Do not remove or replace the lock while any runner runs.
 The hook waits at most 60 seconds before refusing the job.
+Same-host managed builds can borrow only the parent's authenticated exact-request
+lease; see [nested builds](build-systems.md#managed-builds-inside-actions).
 GitHub shows an assigned waiting job as running, and its timeout includes this
 wait. Action downloads/setup may overlap before the hook; workflow steps are
 serialized. Cross-repository order is not guaranteed. All instances share the
@@ -329,9 +332,11 @@ credentials, verify the rest of setup and requested restart still complete.
 
 Offline tests validate identity rules, protected credential staging, service
 configuration and a disposable worker/canary boundary. Selected native tokenless
-setup/rerun and pending-state reboot checks are recorded in the
-[coverage map](../plans/testing-coverage.md). These do not establish GitHub delivery
-behavior or registered reboot persistence. Keep production qualification open
-until those checks have recorded evidence.
+checks are supplemented by actual CLI registration, allowed manual dispatch,
+denied rerun/drain, nested builds/cancellation and registered reboot on the
+[shared host](../testing/evidence.md#shared-debian-build-and-ci-host).
+Organization/group, registered multi-repository, push/PR and panel/expired-token
+cases and forced-crash recovery still need their own live evidence. The checklist
+above is broader than that selected pass; production qualification remains open.
 
 See [capacity and migration](build-systems.md) before upgrading old runner units.

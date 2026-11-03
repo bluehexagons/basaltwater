@@ -1,13 +1,15 @@
 # GitHub Runner on shared build hosts
 
-Status: dedicated Debian runner setup is implemented; composition with webhooks
-and managed on-demand builds is planned. Selected native tokenless setup, rerun
-and pending-state reboot checks pass; real GitHub job, runner-group and registered
-reboot qualification remains open. See [current usage](../services/github-runner.md)
+Status: dedicated Debian runner setup and shared-host composition are implemented.
+Selected native CLI registration, manual dispatch, denied rerun/drain, nested
+builds/cancellation and registered reboot pass; see the
+[dated scope](../testing/evidence.md#shared-debian-build-and-ci-host).
+Broader event, runner-group and fault qualification remains open.
+See [current usage](../services/github-runner.md)
 and [operations](../services/github-runner-operations.md).
 
-The immediate goal is the Debian three-role VM in the
-[shared build-host plan](cicd-manifest-reuse.md), not another workflow scheduler.
+The Debian three-role VM follows the
+[shared build-host plan](cicd-manifest-reuse.md). GitHub remains the workflow scheduler.
 
 ## Existing contract
 
@@ -27,16 +29,16 @@ private-repository, human-allowlist, same-repository PR and supported-event
 restrictions. Unknown identities fail closed before workflow steps; commit
 author text is not authorization.
 
-## Next implementation
+## Implemented shared-host contract
 
-1. **Role composition:** extend setup/profile builders so runners coexist with
+1. **Role composition:** setup/profile builders let runners coexist with
    webhook and on-demand roles. Save each capability and tool selection without
    silently ignoring flags. The dedicated profile is not the combined-host API.
 2. **Existing-runner conversion:** preserve declared repository scope, allowed
    users, labels and valid registration. Validate identities before changes;
    require explicit re-enrollment when needed and retain private recovery evidence.
-3. **Shared capacity:** replace the runner-only lock with the common host
-   coordinator. Qualify bounded waiting, nested builds and child cleanup.
+3. **Shared capacity:** use the common host coordinator for bounded waiting,
+   authenticated nested builds and child cleanup.
 4. **Maintenance:** drain all installed entry points before tool/policy updates
    and reboot. Recheck policy after capacity acquisition. Fail assigned-but-waiting
    jobs before steps when draining; this is not upstream workflow cancellation.

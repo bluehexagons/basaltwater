@@ -1,7 +1,7 @@
 # Continue testing on Proxmox
 
-Updated 2026-11-02 UTC after the selected Shares & Data full-profile, Admin and
-Proxmox inventory batches. The
+Updated 2026-11-03 UTC after the selected shared build/CI host, Shares & Data
+full-profile, Admin and Proxmox inventory batches. The
 [dated results](evidence.md#shares-and-data) record installed HTTP/worker,
 repair/acceptance, selected Chromium/Firefox, exclusion and reboot checks and
 remaining client/setup limits. This procedure is not blanket permission to modify
@@ -99,11 +99,16 @@ as untested rather than substituting HTTP or another browser silently.
 | Package-changing Admin update | Leaf-package case passed at `176caeff62ad`; owned signed package at `3c6fd7fa` adds conffile preservation/restart/no-op. At `785c3ffd`, another owned package qualifies a failed post-install hook, retained partial state, independently approved recovery and no-op. Repeat affected cases after changes. Extend to distribution service/kernel packages, broader hook failures and interruption separately. An empty upgrade plan does not qualify a package change |
 | Proxmox panel/exporter | Selected installed inventory, unattended scheduling, host-local HTTPS and owned component lifecycle passed with collector/renderer bytes matching `ece5e5bc`. Controller transport investigation is deferred; complete controller/browser acceptance remains open. Keep console, multi-node, native password replacement and public full-host setup/production teardown separate; plan ownership before further fault tests |
 | Native storage diagnostics/scrub | Use disposable guest data; target missing integration/scheduling. Keep mount guards. Hard-mounted CIFS can leave uninterruptible I/O, so isolation and a bounded containment plan must precede fault injection |
-| Registered runner and GitHub mirrors | Authorized test account/repository and privately supplied credentials; actual registration/events/jobs/cancellation or transport permissions. Pending tokenless setup is already covered |
+| Registered runner and GitHub mirrors | Selected CLI registration, manual dispatch, rerun/drain denial, nested cancellation and registered reboot now pass on the shared host. Extend organization/group, registered multi-repository, push/PR and panel/expired-token cases with authorized disposable repositories; GitHub mirror transport remains separate |
 | Off-host recovery / physical clients | Another physical recovery destination, or the required graphics/input/client hardware. A second VM on the same node does not close the off-host case |
 
-Combined build/CI host composition needs implementation before mixed-role
-qualification. Power loss, management-network isolation, HA/Ceph and physical
+Selected [combined-host qualification](evidence.md#shared-debian-build-and-ci-host)
+now covers conversion, mixed capacity, exact nested builds, cancellation,
+maintenance, saved rerun and reboot. Extend forced guardian/worker crashes,
+lost-cleanup acknowledgements and storage exhaustion on owned fixtures; inspect
+the retained fresh provider-bootstrap failure separately. Webhook deployment,
+status checks and release publishing are outside that completed host batch.
+Power loss, management-network isolation, HA/Ceph and physical
 disconnect tests need separate scope and suitable fixtures. Do not turn the
 documentation backlog into permission for host downtime or destructive testing.
 

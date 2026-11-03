@@ -71,6 +71,12 @@ For a combined host, select `--build-server --github-runner` on the same
 Add the webhook configuration from its guide to that same setup. These roles
 can also be enabled separately; installing tools does not enable an intake role.
 
+Selected Debian 13 native qualification covers registered-runner conversion,
+mixed-role capacity, nested builds/cancellation, maintenance drain, saved rerun
+and reboot. See the [dated evidence](../testing/evidence.md#shared-debian-build-and-ci-host)
+for tested revisions and remaining provider-bootstrap, public-ingress and fault
+boundaries.
+
 ### Managed builds inside Actions
 
 An Actions workflow can synchronously submit a managed build to its own host

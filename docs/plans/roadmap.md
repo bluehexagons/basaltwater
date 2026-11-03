@@ -17,18 +17,20 @@ a recovery path. The [plan index](README.md) maps related work; the
   are available. See [current usage](../services/build-systems.md).
 - Optional Actions runners, signed webhook intake and managed on-demand builds
   compose on one host and share capacity. Exact-request nested scheduling is
-  implemented; complete-host live qualification is the immediate priority.
+  implemented and selected native conversion, mixed-role execution, cancellation,
+  maintenance, saved rerun and reboot checks pass. See the
+  [dated scope](../testing/evidence.md#shared-debian-build-and-ci-host).
 
 Selected live and controlled checks are summarized in the
 [coverage map](testing-coverage.md). Passing CI is not full-host qualification.
 
-## Immediate priority: one shared Debian build/CI host
+## Shared Debian build/CI host
 
-Deliver a VM that can host on-demand builds, signed webhooks and GitHub Actions
+The implemented VM roles host on-demand builds, signed webhooks and GitHub Actions
 runners together. Other deployments select this VM with `--build-on`; that flag
 does not enable build services on the VM itself.
 
-Follow the [shared build-host plan](cicd-manifest-reuse.md):
+The [shared build-host contract](cicd-manifest-reuse.md) covers:
 
 1. Compose the three roles in setup and saved configuration. Convert an
    existing runner without silently dropping repository scope, allowed users,
@@ -43,6 +45,10 @@ Follow the [shared build-host plan](cicd-manifest-reuse.md):
 The combined setup interface is available in the build-system guide. Optional
 panel controls follow the common backend;
 they are not required to finish the initial three-role host.
+Remaining qualification includes forced crashes, uncertain acknowledgements,
+storage exhaustion, broader GitHub scopes/events and public ingress. The initial
+fresh provider-bootstrap failure remains a separate open case. Webhook-triggered
+deployment, GitHub status checks and release publishing are later scope.
 
 ## Other priorities
 

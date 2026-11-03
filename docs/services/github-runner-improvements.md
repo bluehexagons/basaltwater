@@ -1,9 +1,12 @@
 # GitHub runner registration status
 
 Debian pending registration, repository/organization scope and private CLI/panel
-enrollment are implemented. Selected native tokenless setup/rerun and
-pending-state reboot checks pass. Real GitHub delivery, runner-group selection
-and registered reboot qualification remain open. Use the [quick start](github-runner.md) and
+enrollment are implemented. Selected tokenless checks and actual CLI registration,
+manual dispatch, denied rerun/drain, nested builds/cancellation and registered
+reboot pass on a shared Debian host; see the
+[dated evidence](../testing/evidence.md#shared-debian-build-and-ci-host).
+Runner-group and broader event/registration qualification remain open.
+Use the [quick start](github-runner.md) and
 [operations reference](github-runner-operations.md) for commands and recovery.
 
 ## Available behavior
@@ -16,7 +19,7 @@ and registered reboot qualification remain open. Use the [quick start](github-ru
   privately for recovery.
 - Repository scope supports up to 20 independently registered repositories;
   organization scope supports an optional runner group. Runners share one
-  runner-only host slot, not capacity with webhook or on-demand builds.
+  host slot with managed on-demand and webhook builds.
 - `--ci-register-with-gh` obtains a short-lived registration token on the
   controller; the action is not replayed from saved setup. Reconnect credentials
   remain on the runner.
@@ -26,14 +29,13 @@ and registered reboot qualification remain open. Use the [quick start](github-ru
 
 ## Remaining checks and work
 
-1. Qualify both scopes with disposable private GitHub repositories: pending and
-   failed enrollment, permitted/denied events, runner-group selection, rerun and
-   reboot.
-2. Compose runners with webhook and managed build-host roles, then replace
-   independent capacity/drain paths under the
+1. Extend live checks to organization/group, registered multi-repository,
+   push/PR and broader denied events, panel enrollment and expired tokens.
+2. Extend the qualified shared capacity/drain and nested-build paths to forced
+   crashes and uncertain cleanup under the
    [shared-host plan](../plans/github-runner-support.md).
 3. Add broader panel controls only after their typed backend operations exist.
 
-The [coverage map](../plans/testing-coverage.md) separates tokenless native checks
-from automated lifecycle, policy, registration-channel and unit tests. Neither
-establishes live GitHub behavior. GitHub App-based token minting is a later enhancement.
+The [coverage map](../plans/testing-coverage.md) separates selected native GitHub
+results from automated lifecycle, policy, registration-channel and unit tests.
+GitHub App-based token minting is a later enhancement.

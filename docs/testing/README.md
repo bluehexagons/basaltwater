@@ -1,8 +1,8 @@
 # Testing status
 
-**Snapshot: 2026-11-02 UTC.** Includes the owner's newly reported stack setup rerun
-and retained live-test evidence through 2026-11-02. The rerun indicates **basic
-setup functionality only: not all features were tested**. It covers selected
+**Snapshot: 2026-11-03 UTC.** Includes selected native shared build/CI host
+qualification and earlier retained evidence. The owner's stack setup rerun
+indicates **basic setup functionality only: not all features were tested**. It covers selected
 Debian/Proxmox server and coding-VM commands, a partial CachyOS refresh and basic
 native Windows setup with Godot and T3 Code. Exact tested revisions were not
 supplied for this report. Subsequent native CachyOS checks confirm a running
@@ -28,7 +28,7 @@ comparisons and display-wake recovery; see the
 | [Debian and Proxmox](debian.md) | 🟢 **Labbed** — selected server and host workflows passed; options and recovery gaps remain |
 | [CachyOS](cachyos.md) | 🟡 **Partial** overall; 🟢 selected T3/Codex, Godot and SDL/OpenGL application workflows and display-wake recovery labbed; corrected T3 refresh relaunch awaits a live check |
 | [Windows and WSL](windows.md) | 🟡 **Partial** overall; 🟢 selected diagnostics/tasks, scoped desktop control, native toolchain workloads and T3/Codex session labbed; fresh installation, physical QA and WSL integration remain open |
-| Combined build/CI host | 🔵 **In progress** — separate roles exist; composition is not implemented or qualified |
+| Combined build/CI host | 🟢 **Labbed** — selected real Actions, SSH/webhook builds, nested scheduling, maintenance, saved rerun and reboot; see [scope and limits](evidence.md#shared-debian-build-and-ci-host) |
 | LXC suspend | 🔴 **Failed** — the recorded live attempt failed |
 | Production use and broad human QA | 🟣 **Deployed** / ✅ **Verified** — no status claimed without the relevant evidence |
 | `2.0.0rc1` stable release | ⚪ **Untested** — required [release qualification](../release-qualification.md) remains open |
@@ -67,8 +67,8 @@ do not infer deployed or verified status from lab or automated results.
 | [Release qualification](../release-qualification.md) | Exact-candidate cases and publication gate |
 
 Important open areas include off-host recovery, broader interrupted-setup and
-power-loss cases, real registered GitHub runner jobs, combined build/CI host
-composition, public tunnel and certificate issuance, and native platform
+power-loss cases, broader GitHub event/organization and shared-host fault cases,
+public tunnel and certificate issuance, and native platform
 qualification. Platform pages distinguish available, planned and unqualified
 work. Historical failures, including LXC suspend, are not passes.
 
@@ -113,6 +113,10 @@ CI was repaired at `785c3ffd` by regenerating the stale Shares & Data specimen.
 Full local validation passed 9,196 tests with six skips and 82% coverage;
 hosted full Debian and Node compatibility checks passed. See the
 [automated evidence](evidence.md#automated-validation) for the separate CI scope.
+The shared-host implementation at `550e8f7f` subsequently passed 9,316 local
+tests with six skips and 82% coverage, all remaining `check-ci` checks and hosted
+CI. Its [native qualification](evidence.md#shared-debian-build-and-ci-host) is
+recorded separately from those automated results.
 
 The [Proxmox inventory batch](evidence.md#proxmox-inventory-and-exporter) adds
 native inventory comparison, unattended timer refresh, verified host-local HTTPS
