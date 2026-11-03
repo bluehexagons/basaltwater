@@ -196,7 +196,26 @@ The [Node adapter example](node-test-session-adapter.md) passed its eleven
 owned-process acceptance cases and a real supervised run: live readiness,
 observed owned child, normal exit, retained artifacts and removed profile.
 Its assertions are synthetic. Raw events, process identities, timings and
-cleanup receipts remain private; the installed launcher still needs refresh.
+cleanup receipts remain private. Those checkout results preceded the installed
+qualification below.
+
+### Installed warm-worker qualification
+
+After refresh on 2026-11-03, installed `13e1e8af` reported complete setup,
+passed all 28 host checks, skill inventory verification and desktop readiness.
+Session-loaded skill provenance remained unknown. A real supervised task using
+the managed MSVC environment compiled and linked a Windows SDK program, then
+executed it successfully.
+
+Through the installed native launcher, a warm worker delivered balanced SDL
+LEFT events, `CTRL+SHIFT+HOME`, `HOME,SHIFT+END,F11` and exact 260-unit Unicode
+text. An isolated WinForms fixture passed Home/End, selection, Delete, Unicode
+and mouse-click checks. Its multiline control exposed no editable ValuePattern;
+semantic value-setting was explicitly unqualified. These smoke checks do not
+extend the earlier consuming-game or physical-device qualification.
+Both GUI sessions completed with removed disposable profiles and retired
+Scheduler registrations. The warm worker also stopped cleanly; final desktop
+readiness passed. Raw operational evidence remains private.
 
 ## Repeatable acceptance
 
