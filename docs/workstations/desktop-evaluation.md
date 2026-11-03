@@ -89,13 +89,41 @@ Check `show` within the controller's normal work loop. Checkpoint events retain
 actual previous gaps and lateness before restarting the chosen soft review
 cadence. `checkpoint_due_monotonic_ns`, `checkpoint_remaining_seconds` and
 `checkpoint_late_seconds` expose the current review deadline and actual timing.
-Policy changes require a source/authorization note and record a new
-limit; hard seconds always refer to the ORIGINAL start. Recording an override
+Policy changes require a source/authorization note and record a timing change;
+hard seconds always refer to the ORIGINAL start. Recording an override
 does not authenticate its author or grant permission. These commands neither
 schedule reminders nor poll a delegate. A late soft review never triggers an
 approval pause. The controller must honor hard limits, human takeover and the
 task's continuation policy; this offline ledger does not enforce desktop input
 admission. Follow the active orchestration policy for delegates and reminders.
+
+To remove an earlier hard limit, first verify that the effective owner instruction
+explicitly authorizes open-ended completion of the SAME match. If that authority
+is absent or ambiguous, do not clear the limit; resolve the brief with the owner.
+Then record the instruction/source in the required note, for example:
+
+```bash
+basaltw desktop evidence run policy /absolute/private/run/run.json \
+  --clear-hard-limit \
+  --note 'Owner instruction in task brief: finish this same match without a hard cap' --json
+```
+
+The resulting receipt and `show` report `hard_limit_seconds: null` and
+`hard_limit_reached: null`. Original run/match IDs, UTC/monotonic start, prior
+limits, elapsed time and policy events remain intact. Omitting both hard-limit
+options leaves the current hard limit unchanged, including after clearing it;
+`--hard-seconds 0` remains invalid. `--clear-hard-limit` is exclusive with
+`--hard-seconds` and available only on `policy`. A later positive hard limit
+still measures from the original start, so it can be reached immediately.
+The note records the claimed instruction; the CLI cannot authenticate its author
+or decide whether the task brief authorizes it. Clearing grants no input authority
+and does not change human control, soft checkpoints or orchestration policy.
+
+Existing version 1 run ledgers remain readable and unchanged by `show`. The first
+clear event atomically upgrades that ledger to schema version 2 while preserving
+all prior events. Older clients refuse version 2 rather than silently retaining
+the superseded cap; use an updated client for subsequent reads and updates.
+This offline change needs an updated controller CLI, with no desktop-helper restart.
 
 ## Recorder inventory and closeout
 
@@ -187,10 +215,11 @@ privately. Never substitute offline fixture success for native qualification.
 | BW-D04 | Run/match clocks, explicit waits, context/policy events and due/late checkpoint receipts | Continuation, suspension accounting, original hard limit, capacity and corrupt history | Linux same-boot timing; no provider inference telemetry or scheduler |
 | BW-D05 | Recorder capacity/duplicate handle, existing verify/crop/export, new closeout inventory/receipt links | Moved paths, restoration retains prior failure, derived hashes and exact process identity | Manual segment rotation has a gap; selected process absence cannot prove normal exit |
 | BW-D06 | Current parser examples, numeric buttons, pre-input path validation and duplicate-start diagnostic | Parser-to-client fixture, reused output refusal and installed-wheel offline commands | Refresh and safe helper restart required before native behavior qualification |
+| BW-D07 | Explicit sourced `policy --clear-hard-limit`; omission retains policy and later caps use original start | Finite/clear/omit/reapply history, invalid requests, versioned saved records and installed CLI | Controller must establish owner authority; clearing grants no permission or scheduler |
 
 `make check-fast SUITE=desktop` validates the relevant fixtures and static checks.
 `make artifact-check` builds and installs a wheel outside the checkout; on Linux
 it also exercises bounded instruction pages, offline mapping and run
-suspend/context/resume/policy/finish through the installed CLI. These commands
+suspend/context/resume/policy/clear/finish through the installed CLI. These commands
 perform no desktop input, capture, helper restart or system refresh. Full Debian
 CI remains the broad repository check described in the contributor guide.

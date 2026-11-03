@@ -18,7 +18,7 @@ def add_qa_parser(commands: argparse._SubParsersAction, evidence: argparse._SubP
         operation.add_argument("artifact", help="Private run.json returned by start; continue the same match")
         if name != "show":
             operation.add_argument("--phase")
-            operation.add_argument("--note")
+            operation.add_argument("--note", help="Policy changes require the authorization/instruction source" if name == "policy" else None)
             operation.add_argument("--context")
             operation.add_argument("--artifact", dest="artifacts", action="append", default=[], help="Link evidence/recording segment without resetting run clocks")
             operation.add_argument("--game-clock", help="Operator-observed game clock, distinct from host time")
@@ -27,7 +27,11 @@ def add_qa_parser(commands: argparse._SubParsersAction, evidence: argparse._SubP
         operation.add_argument("--json", action="store_true")
     for operation in (start, policy):
         operation.add_argument("--review-seconds", type=int, help="Controller-local soft review cadence; never pauses for approval")
-        operation.add_argument("--hard-seconds", type=int, help="Hard wall limit from ORIGINAL start; controller must enforce it")
+        limits = operation.add_mutually_exclusive_group() if operation is policy else operation
+        limits.add_argument("--hard-seconds", type=int, help="Hard wall limit from ORIGINAL start; controller must enforce it")
+        if operation is policy:
+            limits.add_argument("--clear-hard-limit", action="store_true",
+                                help="Explicitly remove the hard limit with a source note; grants no permission. Omission keeps the current limit")
     start.add_argument("--json", action="store_true")
     closeout = evidence.add_parser("closeout", help="Save a new read-only inventory/verification receipt; never stop apps or delete media")
     closeout.add_argument("artifact")
@@ -75,7 +79,7 @@ def run_qa_command(args: argparse.Namespace) -> dict:
         if args.run_command == "start":
             return run_checkpoint.start(args.run_id, args.match_id, args.phase, output=args.output,
                                         review_seconds=args.review_seconds, hard_seconds=args.hard_seconds)
-        fields = ("phase", "note", "context", "review_seconds", "hard_seconds", "artifacts", "game_clock")
+        fields = ("phase", "note", "context", "review_seconds", "hard_seconds", "clear_hard_limit", "artifacts", "game_clock")
         return run_checkpoint.update(args.artifact, args.run_command,
                                      **{key: getattr(args, key) for key in fields if hasattr(args, key)})
     if args.desktop_command == "evidence" and args.evidence_command == "closeout":

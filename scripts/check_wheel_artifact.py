@@ -196,12 +196,17 @@ def _smoke_desktop_cli(launcher: Path, work_dir: Path, environment: dict[str, st
     for event, arguments in (("suspend", ["--note", "Explicit fixture owner wait"]),
                              ("context", ["--context", "continuation"]), ("resume", []),
                              ("policy", ["--hard-seconds", "1200", "--note", "Fixture owner extension"]),
+                             ("policy", ["--clear-hard-limit", "--note", "Fixture owner authorized open-ended same-match completion"]),
+                             ("policy", ["--review-seconds", "60", "--note", "Fixture owner changed review cadence only"]),
+                             ("policy", ["--hard-seconds", "1500", "--note", "Fixture owner restored a finite cap"]),
                              ("checkpoint", ["--phase", "closeout", "--artifact", str(instructions)]), ("finish", [])):
         updated = request("desktop", "evidence", "run", event, artifact, *arguments, "--json")
         if updated["started"] != started["started"] or updated["match_id"] != "same-match":
             raise RuntimeError("Installed run continuation reset original identity/clocks")
+        if ("--clear-hard-limit" in arguments or "--review-seconds" in arguments) and updated["hard_limit_seconds"] is not None:
+            raise RuntimeError("Installed run ledger did not retain the explicitly cleared hard limit")
     shown = request("desktop", "evidence", "run", "show", artifact, "--json")
-    if not shown["finished"] or shown["events"] != 7 or shown["hard_limit_seconds"] != 1200:
+    if not shown["finished"] or shown["events"] != 10 or shown["hard_limit_seconds"] != 1500:
         raise RuntimeError("Installed run ledger lost checkpoint/policy history")
     before = Path(artifact).read_bytes()
     refused = request("desktop", "evidence", "run", "checkpoint", artifact, "--json", expected=1)

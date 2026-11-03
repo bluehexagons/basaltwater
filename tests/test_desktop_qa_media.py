@@ -102,6 +102,24 @@ class QAMediaTests(unittest.TestCase):
                 "--hard-seconds", "1200", "--note", "Owner authorized extension"])
             self.assertEqual(desktop_cli.run_desktop_command(args), 0)
             self.assertEqual(json.loads(out.getvalue())["events"], 2)
+            out.truncate(0)
+            out.seek(0)
+            args = parser.parse_args(["desktop", "evidence", "run", "policy", artifact,
+                "--clear-hard-limit", "--note", "Owner authorized open-ended same-match completion in task brief"])
+            self.assertEqual(desktop_cli.run_desktop_command(args), 0)
+            cleared = json.loads(out.getvalue())
+            self.assertEqual(cleared["events"], 3)
+            self.assertIsNone(cleared["hard_limit_seconds"])
+            with patch("sys.stderr", new_callable=io.StringIO), self.assertRaises(SystemExit):
+                parser.parse_args(["desktop", "evidence", "run", "policy", artifact,
+                    "--clear-hard-limit", "--hard-seconds", "500", "--note", "Contradictory changes"])
+            with patch("sys.stderr", new_callable=io.StringIO), self.assertRaises(SystemExit):
+                parser.parse_args(["desktop", "evidence", "run", "checkpoint", artifact, "--clear-hard-limit"])
+            out.truncate(0)
+            out.seek(0)
+            args = parser.parse_args(["desktop", "evidence", "run", "policy", artifact, "--clear-hard-limit"])
+            self.assertEqual(desktop_cli.run_desktop_command(args), 1)
+            self.assertIn("authorization/source", json.loads(out.getvalue())["error"])
             status.assert_not_called()
         before = Path(artifact).read_bytes()
         for changes in ({"event": "resume"}, {"event": "policy", "hard_seconds": 50},
@@ -109,6 +127,83 @@ class QAMediaTests(unittest.TestCase):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 run_checkpoint.update(artifact, **changes)
         self.assertEqual(Path(artifact).read_bytes(), before)
+
+    def test_clear_hard_limit_preserves_history_omission_and_original_deadline(self):
+        domain = {"boot_id": "11111111-2222-3333-4444-555555555555", "monotonic_scope": "linux-boot"}
+        def at(seconds):
+            return {"at": f"2026-01-01T00:{seconds // 60:02d}:{seconds % 60:02d}+00:00", "monotonic_ns": seconds * 10**9}
+        with patch.object(run_checkpoint, "clock", return_value=domain), patch.object(run_checkpoint, "stamp") as stamp:
+            stamp.return_value = at(10)
+            started = run_checkpoint.start("run-a", "match-a", "play", output=str(self.root / "clear"),
+                                           review_seconds=30, hard_seconds=120)
+            path = Path(started["artifact"])
+            self.assertEqual(json.loads(path.read_text())["schema_version"], 1)
+            before = path.read_bytes()
+            run_checkpoint.update(str(path))
+            self.assertEqual(path.read_bytes(), before)
+            stamp.return_value = at(41)
+            omitted = run_checkpoint.update(str(path), "policy", review_seconds=60, note="Owner changed review cadence")
+            self.assertEqual(omitted["hard_limit_seconds"], 120)
+            prior = json.loads(path.read_text())
+            stamp.return_value = at(151)
+            cleared = run_checkpoint.update(str(path), "policy", clear_hard_limit=True,
+                note="Owner authorized open-ended same-match completion in task brief")
+            self.assertIsNone(cleared["hard_limit_seconds"])
+            self.assertIsNone(cleared["hard_limit_reached"])
+            self.assertEqual(cleared["wall_seconds"], 141)
+            self.assertEqual(cleared["checkpoint_due_monotonic_ns"], omitted["checkpoint_due_monotonic_ns"])
+            history = json.loads(path.read_text())
+            self.assertEqual(history["schema_version"], 2)
+            self.assertEqual(history["events"][:-1], prior["events"])
+            self.assertEqual(history["clock"], domain)
+            self.assertTrue(history["events"][-1]["clear_hard_limit"])
+            stamp.return_value = at(201)
+            shown = run_checkpoint.update(str(path))
+            self.assertIsNone(shown["hard_limit_seconds"])
+            self.assertEqual(shown["wall_seconds"], 191)
+            unchanged = run_checkpoint.update(str(path), "policy", review_seconds=90, note="Owner changed review cadence again")
+            self.assertIsNone(unchanged["hard_limit_seconds"])
+            stamp.return_value = at(301)
+            restored = run_checkpoint.update(str(path), "policy", hard_seconds=240, note="Owner set a new finite cap in task brief")
+            self.assertTrue(restored["hard_limit_reached"])
+            self.assertEqual(restored["hard_limit_seconds"], 240)
+            self.assertEqual(restored["wall_seconds"], 291)
+            for result in (omitted, cleared, shown, unchanged, restored):
+                self.assertEqual(result["run_id"], "run-a")
+                self.assertEqual(result["match_id"], "match-a")
+                self.assertEqual(result["started"], started["started"])
+
+    def test_clear_hard_limit_rejects_ambiguous_or_unsourced_updates_without_writing(self):
+        path = run_checkpoint.start("a", "m", "play", output=str(self.root / "invalid-clear"), hard_seconds=120)["artifact"]
+        before = Path(path).read_bytes()
+        for changes in ({"hard_seconds": 0}, {"clear_hard_limit": True},
+                        {"clear_hard_limit": True, "note": "   "},
+                        {"clear_hard_limit": True, "hard_seconds": 60, "note": "Contradiction"},
+                        {"clear_hard_limit": 1, "note": "Wrong type"},
+                        {"clear_hard_limit": "true", "note": "Wrong type"},
+                        {"note": "No timing change"}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                run_checkpoint.update(path, "policy", **changes)
+            self.assertEqual(Path(path).read_bytes(), before)
+        for event in ("show", "checkpoint", "suspend", "resume", "context", "finish"):
+            with self.subTest(event=event), self.assertRaisesRegex(ValueError, "explicit policy"):
+                run_checkpoint.update(path, event, clear_hard_limit=True, note="Owner source", context="same-context")
+            self.assertEqual(Path(path).read_bytes(), before)
+
+    def test_saved_clear_policy_requires_supported_schema_note_and_unambiguous_change(self):
+        path = Path(run_checkpoint.start("a", "m", "play", output=str(self.root / "saved-clear"), hard_seconds=120)["artifact"])
+        original = json.loads(path.read_text())
+        first = original["events"][0]
+        clearing = {**first, "event": "policy", "monotonic_ns": first["monotonic_ns"] + 1,
+                    "hard_seconds": None, "clear_hard_limit": True, "note": "Owner authorized removal in task brief"}
+        for version, changes in ((1, {}), (2, {"hard_seconds": 60}), (2, {"note": None}),
+                                 (2, {"note": " "}), (2, {"event": "checkpoint"}),
+                                 (2, {"clear_hard_limit": 1})):
+            path.write_text(json.dumps({**original, "schema_version": version, "events": [first, {**clearing, **changes}]}))
+            before = path.read_bytes()
+            with self.subTest(version=version, changes=changes), self.assertRaises(ValueError):
+                run_checkpoint.update(str(path))
+            self.assertEqual(path.read_bytes(), before)
 
     def test_run_capacity_corruption_and_duplicate_wait_transitions_preserve_history(self):
         with patch.object(run_checkpoint, "EVENT_LIMIT", 3):

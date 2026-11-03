@@ -47,7 +47,7 @@ def _path(artifact: str) -> Path:
 
 def _load(path: Path) -> dict:
     data = read_json_file(str(path), max_bytes=MAX_BYTES)
-    if (not isinstance(data, dict) or type(data.get("schema_version")) is not int or data["schema_version"] != 1
+    if (not isinstance(data, dict) or type(data.get("schema_version")) is not int or data["schema_version"] not in (1, 2)
             or data.get("kind") != "desktop-run" or not isinstance(data.get("clock"), dict)
             or not isinstance(data.get("events"), list) or not 1 <= len(data["events"]) <= EVENT_LIMIT):
         raise ValueError("Invalid/unsupported run record; preserve it for inspection")
@@ -81,12 +81,16 @@ def _load(path: Path) -> dict:
             if not Path(reference).is_absolute():
                 raise ValueError("Run artifact references require absolute paths")
         event = row["event"]
+        clear = row.get("clear_hard_limit", False)
+        if (type(clear) is not bool or clear and (data["schema_version"] != 2
+                or event != "policy" or row.get("hard_seconds") is not None)):
+            raise ValueError("Invalid hard-limit clearing policy; preserve the record")
         if (finished or (event == "start") != (index == 0)
                 or event == "suspend" and (suspended or not row.get("note"))
                 or event == "resume" and not suspended
                 or event == "context" and not row.get("context")
-                or event == "policy" and (not row.get("note") or
-                    row.get("review_seconds") is None and row.get("hard_seconds") is None)
+                or event == "policy" and (not row.get("note") or not row["note"].strip() or
+                    row.get("review_seconds") is None and row.get("hard_seconds") is None and not clear)
                 or event not in ("start", "policy") and
                     (row.get("review_seconds") is not None or row.get("hard_seconds") is not None)):
             raise ValueError("Invalid run event history; preserve the record")
@@ -124,7 +128,9 @@ def _summary(data: dict, observed: dict) -> dict:
             review_due = row["monotonic_ns"] + review_interval * 10**9
         elif row["event"] == "checkpoint" and review_due is not None:
             review_due = row["monotonic_ns"] + review_interval * 10**9
-        if row.get("hard_seconds") is not None:
+        if row.get("clear_hard_limit"):
+            hard_seconds = None
+        elif row.get("hard_seconds") is not None:
             hard_seconds = row["hard_seconds"]
     if suspended_at is not None:
         suspension += end - suspended_at
@@ -165,7 +171,7 @@ def start(run_id: str, match_id: str, phase: str, *, output: str | None = None,
 
 def update(artifact: str, event: str = "show", *, phase: str | None = None, note: str | None = None,
            context: str | None = None, review_seconds: int | None = None, hard_seconds: int | None = None,
-           artifacts: list[str] | None = None, game_clock: str | None = None) -> dict:
+           artifacts: list[str] | None = None, game_clock: str | None = None, clear_hard_limit: bool = False) -> dict:
     path = _path(artifact)
     if event not in ("show", *EVENTS):
         raise ValueError("Unknown run event")
@@ -175,13 +181,16 @@ def update(artifact: str, event: str = "show", *, phase: str | None = None, note
             _label(value, label, maximum)
     _seconds(review_seconds)
     _seconds(hard_seconds)
-    if event == "policy" and (note is None or review_seconds is None and hard_seconds is None):
-        raise ValueError("Policy changes require a note with authorization/source and a new timing limit")
+    if type(clear_hard_limit) is not bool or clear_hard_limit and hard_seconds is not None:
+        raise ValueError("Use either clear_hard_limit=True or positive hard_seconds, never both")
+    if event == "policy" and (note is None or not note.strip() or
+            review_seconds is None and hard_seconds is None and not clear_hard_limit):
+        raise ValueError("Policy changes require a note with authorization/source and a timing change")
     if event == "context" and context is None:
         raise ValueError("Context changes require a context ID")
     if event == "suspend" and note is None:
         raise ValueError("Owner-wait suspension requires an explicit reason")
-    if event != "policy" and (review_seconds is not None or hard_seconds is not None):
+    if event != "policy" and (review_seconds is not None or hard_seconds is not None or clear_hard_limit):
         raise ValueError("Timing changes require an explicit policy event")
     references = artifacts or []
     if len(references) > 16:
@@ -208,7 +217,11 @@ def update(artifact: str, event: str = "show", *, phase: str | None = None, note
                "previous_gap_seconds": previous["since_last_event_seconds"],
                "checkpoint_late_seconds": previous["checkpoint_late_seconds"],
                "note": note, "context": context, "artifacts": references, "game_clock_observed": game_clock,
-               "review_seconds": review_seconds, "hard_seconds": hard_seconds}
+               "review_seconds": review_seconds, "hard_seconds": hard_seconds,
+               **({"clear_hard_limit": True} if clear_hard_limit else {})}
         data["events"].append(row)
+        if clear_hard_limit:
+            # Old readers must refuse rather than silently retain the old cap.
+            data["schema_version"] = 2
         _save(path, data)
         return {"artifact": str(path), **_summary(data, observed), "latest": row}
