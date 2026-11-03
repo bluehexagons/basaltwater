@@ -324,7 +324,7 @@ the fixture projects, with no controller administrator or target credentials.
 | Check level | Observed result | Qualification boundary |
 | --- | --- | --- |
 | **Installed setup and conversion** | Normal dedicated-runner setup registered through the controller's GitHub CLI. Conversion to `server_lite --build-server --github-runner` preserved the same working GitHub runner identity. Normal setup then added signed webhook intake and its admission worker | One private repository and an allowed human actor; organization/group, multi-repository registered execution and panel enrollment were not tested |
-| **Real Actions and nested builds** | Allowed manual dispatch ran as the dedicated service account. A rerun was refused with zero workflow steps, including its `always()` canary. A synchronous same-host managed build returned verified artifacts in 5.91 seconds. With an older unrelated SSH request queued, the exact nested request ran inside its parent's slot; the older request started only after parent cleanup | Actual runner ancestry and restricted SSH transport, without workflow environment bypasses. Push/PR events, additional denial cases, forced guardian/worker crashes and lost-cleanup acknowledgements retain separate qualification |
+| **Real Actions and nested builds** | Allowed manual dispatch ran as the dedicated service account. A rerun was refused with zero workflow steps, including its `always()` canary. A synchronous same-host managed build returned verified artifacts in 5.91 seconds. With an older unrelated SSH request queued, the exact nested request ran inside its parent's slot; the older request started only after parent cleanup | Actual runner ancestry and restricted SSH transport, without workflow environment bypasses. The follow-up below adds selected process-loss checks; push/PR events, additional denial cases and other crash/acknowledgement timings remain open |
 | **Real cancellation** | Normal GitHub cancellation of a running slow nested build produced a cancelled child, empty scratch and an empty capacity marker after cleanup | The initial 45-second observation window expired while awaiting GitHub cancellation delivery; eventual completion was confirmed against the original job and request. This does not promise a 45-second cancellation bound |
 | **Three-role capacity and maintenance** | During a real Actions hold, an ordinary SSH request and a signed HTTPS webhook remained queued. Busy maintenance refused and retained its drain; another assigned Actions job was denied before any step. Explicit idle maintenance released its own drain, then the SSH and pinned public-Git/Node webhook builds succeeded without overlapping execution | HTTPS verified the private lab certificate and hostname. Bad signatures returned 403; signed and duplicate deliveries returned 202 with one retained receipt and one core job. Public DNS, ACME, Tunnel and a GitHub-configured webhook sender were not exercised |
 | **Saved rerun and reboot** | Setup with all role flags omitted retained the saved three-role configuration. All four role units were active and boot-enabled, both runner credential files were unchanged, and no jobs, scratch or drain remained active. Actual guest reboot preserved those checks, runner UID and coordinator inode; a fresh nested workflow, ordinary SSH build and webhook signature/duplicate probes passed afterward | Selected configuration only; no host reboot, power loss, storage exhaustion or interrupted installation qualification |
@@ -344,6 +344,28 @@ fixtures were preserved. These selected native checks qualify the shared
 build/test host; webhook-triggered deployment, GitHub status checks and release
 publishing remain outside this pass. Further crash, storage and power-loss cases
 remain open; this is not production or exact-release qualification.
+
+### Shared-host crash and scratch follow-up
+
+**2026-11-03 UTC; same installed `550e8f7f` runtime on the retained owned guest.**
+All twelve critical runtime hashes still matched, as did the two runner
+credential files. Real Actions jobs supplied the active nested builds; neither
+process-loss test substituted a simulated runner or changed the installed code.
+
+| Check level | Observed result | Qualification boundary |
+| --- | --- | --- |
+| **Guardian SIGKILL** | Killing the exact job guardian cancelled its active nested build and emptied scratch, while retaining the durable capacity marker. A later SSH request remained queued. Maintenance refused the marker; only after stopping intake, verifying the original worker/guardian were gone and confirming empty execution/role cgroups did explicit root repair clear the existing lock inode. The queued request then succeeded | An inspected repair on the owned fixture, not automatic recovery. The original cancelled job, source, logs and lease evidence were retained |
+| **Managed-worker SIGKILL** | Killing the exact root worker left its detached execution service alive and its durable job claim running. The guardian failed the parent Actions job and retained capacity; a later request stayed queued. Explicit recovery stopped and verified the execution cgroup, archived the prior claim and scratch identity, released the verified original scratch mount, and used `WorkerLease.recover_interrupted()` to mark the original request `uncertain` without an artifact. The queued request then succeeded | The uncertain request was never replayed or reported successful. Root repair required empty producer/execution cgroups and exclusive ownership of the original coordinator inode |
+| **Bounded scratch exhaustion** | An authorized build filled only its own 256 MiB ext4 scratch filesystem. The real command logged `ENOSPC` and exited 42; the job became failed without an artifact, scratch was removed and the capacity marker was empty | Per-build scratch exhaustion, without filling the guest/host filesystem or exhausting retained-store bytes, records or inodes. No disk stress or endurance qualification |
+| **Post-fault health** | A new real nested workflow succeeded and retrieved verified artifacts. Verified-HTTPS invalid/signed/duplicate webhook probes again returned 403/202/202 with one retained receipt. All four role units were active and enabled; credentials, runner UID, coordinator inode and runtime hashes were preserved, with no active jobs, scratch or drain | The terminal uncertain history remained retained. No public ingress, power loss, additional crash/cleanup-acknowledgement timing or fresh provider-bootstrap qualification |
+
+The private harness initially had a quoting error before fault injection;
+after correction it continued against the same original workflow. Intermittent
+SSH response loss/refusal interrupted final read-only observations in both
+crash cases. Later queries reconciled the original request IDs and confirmed
+their outcomes; no fault or mutation was repeated. No server quota was relaxed.
+The owned guest was then stopped with autostart disabled, retaining the private
+fixture and evidence. No product defect was reproduced in this follow-up.
 
 ## Automated validation
 

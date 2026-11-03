@@ -28,7 +28,7 @@ comparisons and display-wake recovery; see the
 | [Debian and Proxmox](debian.md) | 🟢 **Labbed** — selected server and host workflows passed; options and recovery gaps remain |
 | [CachyOS](cachyos.md) | 🟡 **Partial** overall; 🟢 selected T3/Codex, Godot and SDL/OpenGL application workflows and display-wake recovery labbed; corrected T3 refresh relaunch awaits a live check |
 | [Windows and WSL](windows.md) | 🟡 **Partial** overall; 🟢 selected diagnostics/tasks, scoped desktop control, native toolchain workloads and T3/Codex session labbed; fresh installation, physical QA and WSL integration remain open |
-| Combined build/CI host | 🟢 **Labbed** — selected real Actions, SSH/webhook builds, nested scheduling, maintenance, saved rerun and reboot; see [scope and limits](evidence.md#shared-debian-build-and-ci-host) |
+| Combined build/CI host | 🟢 **Labbed** — selected real Actions, SSH/webhook builds, nested scheduling, maintenance, rerun/reboot, process-loss recovery and bounded scratch ENOSPC; see [scope and limits](evidence.md#shared-debian-build-and-ci-host) |
 | LXC suspend | 🔴 **Failed** — the recorded live attempt failed |
 | Production use and broad human QA | 🟣 **Deployed** / ✅ **Verified** — no status claimed without the relevant evidence |
 | `2.0.0rc1` stable release | ⚪ **Untested** — required [release qualification](../release-qualification.md) remains open |

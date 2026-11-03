@@ -336,7 +336,11 @@ checks are supplemented by actual CLI registration, allowed manual dispatch,
 denied rerun/drain, nested builds/cancellation and registered reboot on the
 [shared host](../testing/evidence.md#shared-debian-build-and-ci-host).
 Organization/group, registered multi-repository, push/PR and panel/expired-token
-cases and forced-crash recovery still need their own live evidence. The checklist
+cases and other process-loss/cleanup-acknowledgement timings still need their own
+live evidence. Selected guardian and managed-worker SIGKILL checks now confirm
+retained capacity, inspected recovery and a later successful real workflow;
+see the [fault evidence](../testing/evidence.md#shared-host-crash-and-scratch-follow-up).
+The checklist
 above is broader than that selected pass; production qualification remains open.
 
 See [capacity and migration](build-systems.md) before upgrading old runner units.

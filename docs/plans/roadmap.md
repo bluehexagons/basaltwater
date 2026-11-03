@@ -45,8 +45,10 @@ The [shared build-host contract](cicd-manifest-reuse.md) covers:
 The combined setup interface is available in the build-system guide. Optional
 panel controls follow the common backend;
 they are not required to finish the initial three-role host.
-Remaining qualification includes forced crashes, uncertain acknowledgements,
-storage exhaustion, broader GitHub scopes/events and public ingress. The initial
+Selected guardian/managed-worker SIGKILL recovery and bounded scratch ENOSPC
+checks also pass. Remaining qualification includes other process-loss and
+cleanup-acknowledgement timings, retained-store/host exhaustion, broader GitHub
+scopes/events and public ingress. The initial
 fresh provider-bootstrap failure remains a separate open case. Webhook-triggered
 deployment, GitHub status checks and release publishing are later scope.
 

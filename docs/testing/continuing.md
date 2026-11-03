@@ -104,8 +104,11 @@ as untested rather than substituting HTTP or another browser silently.
 
 Selected [combined-host qualification](evidence.md#shared-debian-build-and-ci-host)
 now covers conversion, mixed capacity, exact nested builds, cancellation,
-maintenance, saved rerun and reboot. Extend forced guardian/worker crashes,
-lost-cleanup acknowledgements and storage exhaustion on owned fixtures; inspect
+maintenance, saved rerun and reboot. The
+[fault follow-up](evidence.md#shared-host-crash-and-scratch-follow-up) adds actual
+guardian/managed-worker SIGKILL, inspected recovery, later successful builds and
+bounded scratch ENOSPC. Extend other process-loss/cleanup-acknowledgement timings
+and retained-store/physical host exhaustion on owned fixtures; inspect
 the retained fresh provider-bootstrap failure separately. Webhook deployment,
 status checks and release publishing are outside that completed host batch.
 Power loss, management-network isolation, HA/Ceph and physical

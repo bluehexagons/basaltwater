@@ -48,8 +48,8 @@ from test status.
 | Web deployment | 🟢 **Labbed** | Selected Go, Node and SPA/API workflows, rollback and same-host recovery | Public tunnel/ACME, off-host restore and power loss |
 | Selected builder | 🟢 **Labbed** | Enrollment, delivery, refresh and multi-application workflows | Public ingress, more failure boundaries and unsupported interpreter services |
 | Builder retention/recovery | 🟡 **Partial** | Component and automated settlement, pruning and lost-acknowledgement guards | Further crash/power-loss boundaries; no automatic collection |
-| GitHub runner | 🟢 **Labbed** | Earlier tokenless checks; selected actual CLI registration, allowed dispatch, denied rerun/drain, nested build/cancellation and registered reboot at `550e8f7f`; see [dated evidence](evidence.md#shared-debian-build-and-ci-host) | Organization/group, registered multi-repository execution, push/PR events, expired-token/panel enrollment and forced crashes remain open |
-| Combined build/CI host | 🟢 **Labbed** | Registered-runner conversion, mixed Actions/SSH/signed-webhook capacity, exact nested scheduling, maintenance drain, saved rerun and reboot; [scope](evidence.md#shared-debian-build-and-ci-host) | Fresh provider bootstrap failed before role setup; public ingress, further crash/acknowledgement, storage exhaustion and power loss remain unqualified |
+| GitHub runner | 🟢 **Labbed** | Earlier tokenless checks; actual CLI registration, allowed dispatch, denied rerun/drain, nested build/cancellation and registered reboot at `550e8f7f`. Selected guardian/managed-worker SIGKILL recovery and a later real workflow pass; see [dated evidence](evidence.md#shared-host-crash-and-scratch-follow-up) | Organization/group, registered multi-repository execution, push/PR events, expired-token/panel enrollment and other process-loss/acknowledgement timings remain open |
+| Combined build/CI host | 🟢 **Labbed** | Registered-runner conversion, mixed capacity, exact nested scheduling, drain, saved rerun and reboot; selected SIGKILL cases retain capacity until verified recovery, and bounded scratch ENOSPC fails cleanly. Post-fault nested artifacts and webhook probes pass; [scope](evidence.md#shared-host-crash-and-scratch-follow-up) | Fresh provider bootstrap failed before role setup; public ingress, further crash/acknowledgement timings, retained-store/physical host exhaustion and power loss remain unqualified |
 | Web panels | 🟢 **Labbed** | Selected setup/auth and component lifecycle/recovery; browser fixtures | Full removal/interruption, additional browsers and native console |
 | Managed user rename | 🟢 **Labbed** | Selected identity, home and recovery cases | More interruption points and application-specific migration |
 | Resource-constrained development | 🟢 **Labbed** | Selected 1 vCPU / 1 GiB Debian workload | Full suite, browser and other platforms at that floor |
@@ -87,7 +87,8 @@ detailed host checks cover one physical node; the owner also reports two basic
 - On disposable targets, qualify off-host restore and interrupted setup/recovery;
   repeat relevant cases on the exact release candidate.
 - Extend the selected shared-host checks to broader GitHub events/scopes,
-  forced crashes, lost acknowledgements and storage exhaustion. Investigate
+  other process-loss/acknowledgement timings and retained-store/host exhaustion;
+  selected SIGKILL and bounded scratch ENOSPC checks pass. Investigate
   the separately retained fresh provider-bootstrap failure.
 - Complete public tunnel/certificate issuance and native browser cases; keep
   live provider credentials and raw evidence private.

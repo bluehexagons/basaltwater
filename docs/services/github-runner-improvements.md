@@ -31,8 +31,8 @@ Use the [quick start](github-runner.md) and
 
 1. Extend live checks to organization/group, registered multi-repository,
    push/PR and broader denied events, panel enrollment and expired tokens.
-2. Extend the qualified shared capacity/drain and nested-build paths to forced
-   crashes and uncertain cleanup under the
+2. Extend the selected guardian/managed-worker SIGKILL and inspected-recovery
+   checks to other process-loss and cleanup-acknowledgement timings under the
    [shared-host plan](../plans/github-runner-support.md).
 3. Add broader panel controls only after their typed backend operations exist.
 
