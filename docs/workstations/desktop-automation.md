@@ -227,6 +227,16 @@ basaltw desktop input --generation GENERATION --geometry WIDTH HEIGHT \
   text --delay-ms 10 --text "print('desktop check')"
 ```
 
+Non-ASCII text on Debian defaults to this per-character path with 10 ms pacing.
+A native Tk fixture exposed intermittent character loss from rapid Unicode
+keymap changes in an unpaced xdotool batch. This default avoids that batch;
+application text still requires verification. Paced text, including this Unicode
+default, cannot reuse a single-use `--observation` token on the Debian backend.
+It is refused before dispatch rather than silently falling back to fast input.
+Prefer accessible `element set-text` with read-back; otherwise capture and
+inspect the intended control, omit `--observation` for paced text, and verify
+the result before submitting it. Explicit `--delay-ms` remains available.
+
 The delay accepts 1–100 milliseconds. Paced input rechecks session generation,
 geometry, enabled state and the same human control revision on every request.
 Human intervention invalidates the remaining characters. Text remains limited

@@ -799,6 +799,27 @@ class BoundCaptureTests(unittest.TestCase):
         self.assertIn("requires server-paced-text", result["error"])
         request.assert_not_called()
 
+    def test_debian_unicode_defaults_to_revocable_character_requests(self):
+        payload = {"action": "input", "kind": "text", "text": "日本語", "generation": self.debian.generation,
+                   "geometry": [10, 20], "control_revision": self.debian.control_revision}
+        with patch.object(runtime, "request", side_effect=self.debian.handle) as request, \
+                patch.object(client.time, "sleep"):
+            result = client.send_action(payload)
+        self.assertEqual([call.args[0]["text"] for call in request.call_args_list], list(payload["text"]))
+        self.assertEqual(result["submitted_characters"], len(payload["text"]))
+        self.assertNotIn("delay_ms", payload)
+
+    def test_debian_bound_unicode_cannot_silently_use_unpaced_batch(self):
+        observed = self.observe(self.debian)
+        with patch.object(runtime, "request") as request:
+            result = client.send_action({"action": "input", "kind": "text", "text": "日本語",
+                "observation_id": observed["observation_id"], "generation": self.debian.generation,
+                "geometry": [10, 20], "control_revision": self.debian.control_revision})
+        self.assertIn("requires server-paced-text", result["error"])
+        self.assertEqual(result["submitted_characters"], 0)
+        self.assertEqual(self.debian.observation.id, observed["observation_id"])
+        request.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

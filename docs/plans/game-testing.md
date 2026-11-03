@@ -25,19 +25,52 @@ single-use observation IDs on Linux and Windows, explicit coordinate spaces,
 mutation/control invalidation and capture admission clocks. Debian now supports
 post-input capture and completion timestamps. Compact Linux output retains
 window origins. Windows capture rechecks the target rectangle and removes its
-own incomplete output on failure. Linux changes pass local mocked checks;
-Windows regressions are added for the native pass. Platform qualification is
-still open. No model or gameplay benchmark
-is established by this implementation.
+own incomplete output on failure. Debian has native fixture coverage below;
+CachyOS and Windows qualification remain open. Windows regressions are added
+for the native pass. No model or gameplay benchmark is established by this
+implementation.
+
+### Debian XFCE qualification, 2026-11-03
+
+A refreshed Debian 13 installation at `fe77475e` passed `desktop doctor` and
+the live Geany smoke check. A fresh supervisor and a disposable native Tk
+fixture then passed 15 public-CLI observation checks:
+
+- Full-desktop, window and active-window captures, image-to-desktop mapping,
+  pointer delivery, completion timestamps and `input --observe`.
+- Supersession, single-use refusal, geometry and image-bound checks, and
+  application-driven foreground, placement and resize rejection before input.
+- Failed captures and read-only queries preserve the previous receipt without
+  renewing it. A follow-up capture failure retained completed input and never
+  replayed it or overwrote an existing file.
+- Lifetime bounds, real default expiry after 60 seconds, one successful action
+  after 90 seconds with an explicit 180-second capture, and the next capture's
+  return to the default lifetime.
+
+The fixture also exposed intermittent Unicode character loss in an unpaced
+xdotool batch. The client now defaults non-ASCII text to revocable per-character
+requests with 10 ms pacing. The checkout CLI, against the installed supervisor,
+delivered three multilingual strings exactly, verified from application state.
+Token-bound Unicode was refused before dispatch without consuming the receipt.
+Single-use tokens still need server-paced Debian text; prefer accessible
+`element set-text` with verification where available. The installed launcher
+needs the next normal source refresh to receive this client change.
+
+All fixture windows closed and their launch exited successfully. Raw receipts,
+failed harness attempts and captures remain private. This pass did not qualify
+RDP reconnect, display resize, human takeover, helper replacement during input,
+clipboard transfer or actual games.
+
+### Remaining platform acceptance
 
 Run the following against disposable fixtures on each platform, recording the
 tested revision and private evidence paths. Use the same match/save and timing
 budget when comparing model workflows.
 
-- [ ] Debian XFCE VM: start a new supervisor after updating; verify full and
-  window capture IDs, window-relative image to desktop-coordinate mapping,
-  window move/focus rejection, resize/reconnect invalidation, input completion
-  timestamps and `input --observe`, including capture failure after input.
+- [ ] Debian XFCE VM: qualify display resize/RDP reconnect, human takeover and
+  helper replacement during input at a safe checkpoint. The native fixture
+  coverage above establishes application-window resize rejection, not display
+  resize or reconnect behavior. Repeat affected checks after backend changes.
 - [ ] CachyOS KDE Plasma: safely restart the helper after updating; verify
   full/cropped capture IDs and scope, scaling, crop drag endpoints, holds,
   server-paced text, portal loss and human override during injection/acquisition.
@@ -53,6 +86,8 @@ budget when comparing model workflows.
   tokens. Failed captures and read-only status/window queries never renew age.
   Delayed target probes must not inject after the observation expires. Inspect
   application outcomes rather than scoring input acknowledgement as success.
+  Debian's real-age, receipt reuse and failed-capture cases passed above; the
+  other platform and lifecycle cases remain open.
 
 Remaining implementation tasks, independently assignable after qualification:
 
