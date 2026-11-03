@@ -14,13 +14,14 @@ import subprocess
 import time
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from desktop.observations import compact_capture, save_observation
 from desktop import client, control_state, native_session, portal_capture
 from desktop import session_runtime as runtime
 from desktop.display_power import display_power
 from desktop.evidence import Recorder, capture_digest, finalize, verify
+from desktop.receipts import DesktopRequestError
 from lib.desktop_cli import add_desktop_subparser, run_desktop_command
 
 
@@ -185,6 +186,51 @@ class DesktopOutputTests(unittest.TestCase):
                 {"generation": "g", "control_revision": "r"}, "/tmp/capture.png", settle_ms=0, backend=backend)
         self.assertIn("did not confirm", result["error"])
         self.assertEqual(result["input_completed_at"], "now")
+
+    def test_debian_transport_failure_distinguishes_before_send_from_possible_delivery(self):
+        payload = {"action": "input", "generation": "g", "observation_id": "a" * 32,
+                   "input_id": "caller-id", "_input_receipt": {"input_completed_at": "spoofed"}}
+        for stage in ("connect", "sendall", "recv"):
+            with self.subTest(stage=stage), patch.object(runtime, "configuration"), \
+                    patch.object(runtime, "runtime_directory", return_value=self.directory.parent), \
+                    patch.object(runtime.socket, "socket") as socket:
+                connection = socket.return_value.__enter__.return_value
+                failure = OSError(f"{stage} failed")
+                getattr(connection, stage).side_effect = failure
+                with self.assertRaises(OSError) as caught:
+                    runtime.request(payload)
+            self.assertIs(caught.exception, failure)
+            receipt = caught.exception.receipt
+            self.assertEqual(receipt["input_delivery"], "not-sent" if stage == "connect" else "unknown")
+            self.assertEqual(receipt["dispatch_stage"], "before-input" if stage == "connect" else "transport")
+            self.assertEqual(receipt["observation_id"], payload["observation_id"])
+            self.assertNotIn("input_id", receipt)
+            self.assertNotIn("input_completed_at", receipt)
+            if stage == "connect":
+                connection.sendall.assert_not_called()
+            else:
+                self.assertEqual(receipt["reason"], "transport-failed")
+                self.assertIn("do not replay", receipt["error"])
+                connection.sendall.assert_called_once()
+
+    def test_debian_local_deadline_refusal_has_no_dispatch(self):
+        with patch.object(runtime.socket, "socket") as socket, self.assertRaises(ValueError) as caught:
+            runtime.request({"action": "input", "deadline": 0})
+        self.assertEqual(caught.exception.receipt["input_delivery"], "not-sent")
+        self.assertEqual(caught.exception.receipt["dispatch_stage"], "before-input")
+        socket.assert_not_called()
+
+    def test_debian_legacy_worker_string_does_not_prove_refusal(self):
+        with patch.object(runtime, "configuration"), \
+                patch.object(runtime, "runtime_directory", return_value=self.directory.parent), \
+                patch.object(runtime.socket, "socket") as socket:
+            socket.return_value.__enter__.return_value.recv.return_value = b'{"error":"Observation expired"}\n'
+            with self.assertRaises(DesktopRequestError) as caught:
+                client.send_action({"action": "input", "kind": "move", "x": 1, "y": 2})
+        result = caught.exception.receipt
+        self.assertEqual(result["input_delivery"], "unknown")
+        self.assertEqual(result["dispatch_stage"], "transport")
+        self.assertIn("do not replay", result["error"])
 
 
 class NativeObservationTests(unittest.TestCase):
@@ -554,6 +600,119 @@ class BoundCaptureTests(unittest.TestCase):
             "generation": session.generation, "geometry": [10, 20],
             "control_revision": session.control_revision, "observation_id": observation["observation_id"], **options})
 
+    def test_debian_expired_frame_proves_no_dispatch_and_ignores_caller_receipt(self):
+        observation = self.observe(self.debian)
+        self.now += 61
+        self.tool.reset_mock()
+        with self.assertRaisesRegex(ValueError, "expired") as caught:
+            self.move(self.debian, observation, input_id="caller-id", _dispatch_stage="input-completed",
+                      _input_receipt={"input_completed_at": "spoofed"})
+        receipt = caught.exception.receipt
+        self.assertEqual(receipt["input_delivery"], "not-sent")
+        self.assertEqual(receipt["dispatch_stage"], "before-input")
+        self.assertEqual(receipt["reason"], "observation-expired")
+        self.assertFalse(receipt["capture_freshness"]["fresh"])
+        self.assertEqual(receipt["observation_id"], observation["observation_id"])
+        self.assertRegex(receipt["input_id"], r"^[0-9a-f]{32}$")
+        self.assertIn("input_received_monotonic_ns", receipt)
+        self.assertNotIn("input_dispatch_at", receipt)
+        self.assertNotIn("input_completed_at", receipt)
+        self.tool.assert_not_called()
+
+    def test_debian_injection_failure_stays_unknown_and_preserves_exception(self):
+        for failure in (RuntimeError("injection failed"), OSError("transport lost"),
+                        subprocess.TimeoutExpired("xdotool", 8)):
+            with self.subTest(failure=type(failure).__name__):
+                observation = self.observe(self.debian)
+                self.tool.reset_mock()
+                self.tool.side_effect = failure
+                try:
+                    with self.assertRaises(type(failure)) as caught:
+                        self.move(self.debian, observation)
+                finally:
+                    self.tool.side_effect = self.x_tool
+                self.assertIs(caught.exception, failure)
+                receipt = failure.receipt
+                self.assertEqual(receipt["input_delivery"], "unknown")
+                self.assertEqual(receipt["dispatch_stage"], "input-dispatch")
+                self.assertGreaterEqual(receipt["input_dispatch_monotonic_ns"], receipt["input_received_monotonic_ns"])
+                self.assertNotIn("input_completed_at", receipt)
+                self.assertIn("do not replay", receipt["error"])
+                self.tool.assert_called_once()
+                with self.assertRaisesRegex(ValueError, "consumed|invalidated"):
+                    self.move(self.debian, observation)
+                self.tool.assert_called_once()
+
+    def test_debian_capture_failure_retains_completed_input_identity_and_clocks(self):
+        observation = self.observe(self.debian)
+        completed = self.move(self.debian, observation)
+        self.tool.reset_mock()
+        self.tool.side_effect = RuntimeError("capture failed after input")
+        with patch.object(client.time, "sleep"), \
+                patch.object(runtime, "status", side_effect=self.debian.snapshot_status), \
+                patch.object(runtime, "request", side_effect=self.debian.handle):
+            result = client.observe_after_input(completed, {"generation": self.debian.generation,
+                "control_revision": self.debian.control_revision}, str(self.home / "failed.png"), settle_ms=0, backend=runtime)
+        self.assertEqual(result["input_delivery"], "completed")
+        self.assertEqual(result["dispatch_stage"], "post-input-observation")
+        self.assertEqual(result["input_id"], completed["input_id"])
+        self.assertEqual(result["observation_id"], observation["observation_id"])
+        self.assertLessEqual(result["input_received_monotonic_ns"], result["input_dispatch_monotonic_ns"])
+        self.assertLessEqual(result["input_dispatch_monotonic_ns"], result["input_completed_monotonic_ns"])
+        self.assertIn("Do not replay", result["error"])
+        self.tool.assert_called_once()
+        self.assertEqual(self.tool.call_args.args[0][0], "scrot")
+
+    def test_debian_takeover_after_pointer_move_stays_unknown_without_clicking(self):
+        observation = self.observe(self.debian)
+        def move_then_takeover(argv, **kwargs):
+            result = self.x_tool(argv, **kwargs)
+            control_state.change("disabled", human_approved=True)
+            return result
+        self.tool.reset_mock()
+        self.tool.side_effect = move_then_takeover
+        with self.assertRaises(RuntimeError) as caught:
+            self.move(self.debian, observation, kind="click")
+        receipt = caught.exception.receipt
+        self.assertEqual(receipt["input_delivery"], "unknown")
+        self.assertEqual(receipt["dispatch_stage"], "input-dispatch")
+        self.assertNotIn("input_completed_at", receipt)
+        self.tool.assert_called_once()
+        self.assertEqual(self.tool.call_args.args[0][1], "mousemove")
+
+    def test_debian_refusal_survives_worker_wire_and_client_boundaries(self):
+        observation = self.observe(self.debian)
+        self.now += 61
+        payload = {"action": "input", "kind": "move", "x": 1, "y": 2,
+                   "generation": self.debian.generation, "geometry": [10, 20],
+                   "control_revision": self.debian.control_revision, "observation_id": observation["observation_id"]}
+        process = Mock(pid=123)
+        process.poll.side_effect = [None, 0]
+        connection = MagicMock()
+        connection.__enter__.return_value = connection
+        connection.getsockopt.return_value = struct.pack("3i", 1, os.getuid(), 1)
+        with patch.object(runtime, "configuration", return_value={"desktop": "xfce", "username": "agent"}), \
+                patch.object(runtime, "session_lock"), patch.object(runtime, "runtime_directory", return_value=self.home), \
+                patch.object(runtime.pwd, "getpwnam"), patch.object(runtime.os, "chdir"), \
+                patch.object(runtime.os, "chmod"), patch.object(runtime.os, "killpg"), \
+                patch.object(runtime.signal, "signal"), patch.object(runtime.subprocess, "Popen", return_value=process), \
+                patch.object(runtime, "DesktopSession", return_value=self.debian), \
+                patch.object(runtime, "receive", return_value=payload), patch.object(runtime.socket, "socket") as socket:
+            socket.return_value.__enter__.return_value.accept.return_value = (connection, None)
+            self.assertEqual(runtime.serve(), 0)
+        connection.sendall.assert_called_once()
+        wire = connection.sendall.call_args.args[0]
+        receipt = json.loads(wire)
+        self.assertEqual(receipt["input_delivery"], "not-sent")
+        self.assertEqual(receipt["reason"], "observation-expired")
+        with patch.object(runtime, "configuration"), \
+                patch.object(runtime, "runtime_directory", return_value=self.home), \
+                patch.object(runtime.socket, "socket") as socket:
+            socket.return_value.__enter__.return_value.recv.return_value = wire
+            with self.assertRaises(DesktopRequestError) as caught:
+                client.send_action(payload)
+        self.assertEqual(caught.exception.receipt, receipt)
+
     def test_long_decision_uses_selected_window_and_token_is_single_use(self):
         for session in (self.debian, self.native):
             with self.subTest(session=type(session).__name__):
@@ -575,8 +734,9 @@ class BoundCaptureTests(unittest.TestCase):
             self.now = 1000
             old = self.observe(session)
             self.now = 1061
-            with self.assertRaisesRegex(ValueError, "expired"):
+            with self.assertRaisesRegex(ValueError, "expired") as caught:
                 self.move(session, old)
+            self.assertFalse(caught.exception.receipt["capture_freshness"]["fresh"])
             current = self.observe(session)
             with self.assertRaisesRegex(ValueError, "superseded"):
                 self.move(session, old)
@@ -777,7 +937,7 @@ class BoundCaptureTests(unittest.TestCase):
         for bound in (False, True):
             observed = self.observe(self.debian)
             arguments = ["desktop", "input", "--generation", self.debian.generation, "--geometry", "10", "20",
-                         "move", "--x", "1", "--y", "2", "--observe", "--settle-ms", "0",
+                         "click", "--x", "1", "--y", "2", "--button", "1", "--observe", "--settle-ms", "0",
                          "--output", str(self.home / f"cli-after-{bound}.png")]
             if bound:
                 arguments += ["--observation", observed["observation_id"]]

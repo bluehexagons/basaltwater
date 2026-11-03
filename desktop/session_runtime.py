@@ -30,6 +30,7 @@ from desktop.observations import (
     CaptureObservation, DEFAULT_CAPTURE_MAX_AGE_SECONDS, capture_freshness,
     validate_capture_max_age, validate_observation_option,
 )
+from desktop.receipts import DesktopRequestError, input_failure
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
 
@@ -140,25 +141,35 @@ def receive(connection: socket.socket, *, deadline: float | None = None) -> dict
 
 
 def request(payload: dict[str, Any]) -> dict[str, Any]:
-    deadline = input_deadline(payload) if payload.get("action") == "input" else None
-    if deadline is not None:
-        payload = {**payload, "deadline": deadline}
-    configuration()
-    with socket.socket(socket.AF_UNIX) as connection:
-        connection.settimeout(30 if deadline is None else input_remaining(deadline))
-        connection.connect(str(runtime_directory() / "control.sock"))
-        data = json.dumps(payload).encode() + b"\n"
+    is_input = payload.get("action") == "input"
+    attempted = False
+    try:
+        deadline = input_deadline(payload) if is_input else None
         if deadline is not None:
-            connection.settimeout(input_remaining(deadline))
-        try:
+            payload = {**payload, "deadline": deadline}
+        configuration()
+        with socket.socket(socket.AF_UNIX) as connection:
+            connection.settimeout(30 if deadline is None else input_remaining(deadline))
+            connection.connect(str(runtime_directory() / "control.sock"))
+            data = json.dumps(payload).encode() + b"\n"
+            if deadline is not None:
+                connection.settimeout(input_remaining(deadline))
+            attempted = True
             connection.sendall(data)
             result = receive(connection) if deadline is None else receive(connection, deadline=deadline)
-        except (ValueError, RuntimeError, OSError) as exc:
-            if deadline is not None:
+    except (ValueError, RuntimeError, OSError) as exc:
+        if is_input:
+            if attempted:
                 exc.add_note(INPUT_UNCERTAIN)
-            raise
+            context = {key: payload[key] for key in ("generation", "observation_id") if key in payload}
+            receipt = input_failure(exc, context, stage="transport" if attempted else "before-input")
+            if attempted:
+                receipt["reason"] = "transport-failed"
+            receipt["error"] = "\n".join([str(exc), *getattr(exc, "__notes__", [])])
+            exc.receipt = receipt
+        raise
     if "error" in result:
-        raise RuntimeError(result["error"])
+        raise DesktopRequestError(result)
     return result
 
 
@@ -436,6 +447,21 @@ class DesktopSession:
         return {"logout_requested": True, "generation": self.generation}
 
     def handle(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if payload.get("action") != "input":
+            return self._handle(payload)
+        # Worker-owned identities/stages cannot be supplied by a caller.
+        payload = {**payload, "input_id": secrets.token_hex(16), "_dispatch_stage": "before-input",
+                   "_input_receipt": {"input_received_at": datetime.now(timezone.utc).isoformat(),
+                                      "input_received_monotonic_ns": time.monotonic_ns()}}
+        try:
+            return self._handle(payload)
+        except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as exc:
+            receipt = input_failure(exc, payload, stage=payload["_dispatch_stage"])
+            receipt["error"] = "\n".join([str(exc), *getattr(exc, "__notes__", [])])
+            exc.receipt = receipt
+            raise
+
+    def _handle(self, payload: dict[str, Any]) -> dict[str, Any]:
         validate_observation_option(payload)
         deadline = input_deadline(payload) if payload.get("action") == "input" else 0.0
         self.sync_control()
@@ -662,6 +688,10 @@ class DesktopSession:
                     raise RuntimeError("Desktop is stopping")
             timeout = remaining()
             attempted = True
+            payload["_dispatch_stage"] = "input-dispatch"
+            if "input_dispatch_at" not in payload["_input_receipt"]:
+                payload["_input_receipt"].update(input_dispatch_at=datetime.now(timezone.utc).isoformat(),
+                                                   input_dispatch_monotonic_ns=time.monotonic_ns())
             return run_tool(argv, timeout=timeout)
 
         try:
@@ -710,6 +740,8 @@ class DesktopSession:
             # Completion must survive a later display/probe failure. Return
             # the geometry admitted for this input; a new capture observes size.
             return {"generation": self.generation, "geometry": payload["geometry"],
+                    "input_id": payload["input_id"], "input_delivery": "completed", "dispatch_stage": "input-completed",
+                    **payload["_input_receipt"],
                     "input_completed_at": datetime.now(timezone.utc).isoformat(),
                     "input_completed_monotonic_ns": time.monotonic_ns(),
                     **({"observation_id": observation.id} if observation is not None else {})}
@@ -757,7 +789,7 @@ def serve() -> int:
                                 raise PermissionError("Desktop control requires the session owner's UID")
                             result = session.handle(receive(connection))
                         except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as exc:
-                            result = {"error": "\n".join([str(exc), *getattr(exc, "__notes__", [])])}
+                            result = getattr(exc, "receipt", {"error": "\n".join([str(exc), *getattr(exc, "__notes__", [])])})
                         try:
                             connection.sendall(json.dumps(result).encode() + b"\n")
                         except OSError:

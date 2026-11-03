@@ -56,10 +56,11 @@ class CaptureObservation:
         geometry = payload.get("geometry")
         if not isinstance(geometry, list) or any(type(n) is not int for n in geometry) or geometry != self.geometry:
             raise ValueError("Observation geometry changed; capture and inspect again")
-        if not self.freshness()["fresh"]:
+        freshness = self.freshness()
+        if not freshness["fresh"]:
             from desktop.receipts import DesktopRequestError
             raise DesktopRequestError({"error": "Observation expired; capture and inspect again",
-                                       "reason": "observation-expired"})
+                                       "reason": "observation-expired", "capture_freshness": freshness})
         if payload.get("kind") in ("click", "move", "drag"):
             left, top, width, height = self.region
             endpoints = [("x", "y"), ("to_x", "to_y")] if payload["kind"] == "drag" else [("x", "y")]

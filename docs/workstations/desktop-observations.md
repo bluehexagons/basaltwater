@@ -95,9 +95,9 @@ without freshness validation. Neither route recognizes moving/fanned targets.
 
 ### Native input failure receipts
 
-Updated native helpers and clients preserve `reason`, `dispatch_stage`,
+Updated CachyOS and Debian helpers and clients preserve `reason`, `dispatch_stage`,
 `input_delivery`, `input_id` and related `observation_id` through CLI failures
-and recorder events:
+and, on CachyOS, native recorder events:
 
 Capture guard reasons include `capture-unavailable`, `capture-expired`,
 `capture-geometry-changed` and `observation-expired`. Legacy capture guard
@@ -105,11 +105,19 @@ failures retain the observed `capture_freshness` in both CLI and journal.
 
 | Stage | Delivery | Meaning |
 | --- | --- | --- |
-| `before-input` | `not-sent` | Validation/guard refusal before the first portal notification; no dispatch. |
-| `input-dispatch` | `unknown` | At least one portal notification was attempted; partial delivery/release may have occurred. |
+| `before-input` | `not-sent` | Validation/guard refusal before the first portal notification or xdotool invocation; no dispatch. |
+| `input-dispatch` | `unknown` | At least one portal notification or xdotool invocation was attempted; partial delivery/release may have occurred. |
 | `transport` | `unknown` | No authoritative worker response; delivery cannot be inferred. |
 | `input-completed` | `completed` | All intended input and release calls returned. Game effect remains unverified. |
 | `post-input-observation` | `completed` | Input retained, subsequent observation failed. Capture again, never replay automatically. |
+
+On Debian, local failures before attempting to send the socket request also
+prove `not-sent`. Once sending is attempted, a transport failure remains
+`unknown`, even if only part of the request may have reached the worker.
+Helper-owned input IDs and receive/first-dispatch UTC and monotonic timestamps
+survive structured failures. Completion adds its own timestamps only after all
+input calls return. These times describe helper operations, not game effect or
+model inference; compare monotonic clocks only on the same boot.
 
 Linux clients also retain these receipts for action sequences and paced typing.
 A sequence reports earlier completed results, a zero-based `failed_action_index`
@@ -128,8 +136,10 @@ The recorder retains refused events separately from uncertain ones. Verification
 counts `image_less` capture events separately from `missing` saved paths and
 includes uncertain events in health. PNG hashes alone cannot certify journal
 health. Older errors/journals have no proven dispatch stage; they remain
-uncertain and are never rewritten. Debian/Windows worker stage parity remains
-separate work; a new client cannot infer it from old strings.
+uncertain and are never rewritten. Windows worker stage parity remains separate
+work; a new client cannot infer it from old Linux or Windows strings. Restart a
+Debian desktop session normally after installing updated worker code; updating
+the client alone cannot add stages to an already running old worker.
 
 Existing input without `--observation` retains its platform-specific checks:
 Debian geometry/revision checks, CachyOS latest-capture age checks, and Windows

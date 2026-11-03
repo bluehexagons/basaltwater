@@ -140,6 +140,13 @@ failure never replays input. See the shared
 [observation contract](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/desktop-observations.md)
 for coordinate spaces, receipts and planner/operator guidance.
 
+Updated Debian workers retain `reason`, `dispatch_stage`, `input_delivery`,
+helper-owned `input_id` and observation identity in failures. `before-input` /
+`not-sent` proves refusal; `input-dispatch` or `transport` / `unknown` requires
+inspection before further actions. `post-input-observation` / `completed` retains
+input completion despite a failed capture. Never replay automatically. Old
+worker string errors remain unknown; a client update cannot add worker evidence.
+
 On Debian, non-ASCII text defaults to revocable per-character pacing to avoid
 character loss from rapid X11 keymap changes. This path requires omitting
 `--observation` until server-paced text is supported; token-bound Unicode is
@@ -150,7 +157,8 @@ without a token, and verify the delivered text before submitting it.
 For example:
 
 ```bash
-basaltw desktop input --generation GENERATION --geometry 1280 720 click --x 400 --y 300
+basaltw desktop input --generation GENERATION --geometry 1280 720 \
+  --observation OBSERVATION_ID click --x 400 --y 300 --button 1 --observe
 basaltw desktop input --generation GENERATION --geometry 1280 720 text --text 'example'
 basaltw desktop input --generation GENERATION --geometry 1280 720 key --key ctrl+s
 ```

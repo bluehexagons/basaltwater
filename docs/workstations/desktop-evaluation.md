@@ -80,7 +80,7 @@ includes game, reasoning, tool and coordination gaps. Host system suspend can
 pause this monotonic clock; UTC receipts remain available separately. Neither
 quantity measures active inference. Observed active work, model reasoning time,
 tokens and cost remain null without provider telemetry. `--game-clock` records
-an operator observation, with no conversion to host elapsed time. Native input
+an operator observation, with no conversion to host elapsed time. Linux input
 receipts additionally retain helper receive, first dispatch-attempt and completion
 UTC/monotonic times; failures before dispatch omit a dispatch time. Capture age
 and frame receipts retain their existing independent clocks.
@@ -182,7 +182,7 @@ privately. Never substitute offline fixture success for native qualification.
 | Request | Implemented/reused contract | Offline validation | Remaining qualification/limit |
 | --- | --- | --- | --- |
 | BW-D01 | Frame receipt + viewer transform + single-use input token; existing offline map retained | Margins, independent scales, crops, endpoints, changed context, bounds and parser roundtrip | Controller must inspect moving targets and verify effect/focus |
-| BW-D02 | Structured stage/reason/delivery and input/capture IDs; partial typing and sequence failures retained | Refusal, ambiguous transport, completed input/capture failure and image-less verification | Old strings stay unknown; Debian/Windows worker stages remain separate |
+| BW-D02 | CachyOS/Debian structured stage/reason/delivery and input/capture IDs; partial typing and sequence failures retained | Refusal, socket/worker receipt roundtrip, ambiguous transport, completed input/capture failure and image-less verification | Old strings stay unknown; Windows stages and live Debian qualification remain separate |
 | BW-D03 | Compact existing provenance/status bundle; digest-bound instruction ranges and explicit gaps | Unicode reconstruction, changed bytes, stopped worker, skill mismatch plus unknowns | No model comprehension or immutable loaded-code attestation |
 | BW-D04 | Run/match clocks, explicit waits, context/policy events and due/late checkpoint receipts | Continuation, suspension accounting, original hard limit, capacity and corrupt history | Linux same-boot timing; no provider inference telemetry or scheduler |
 | BW-D05 | Recorder capacity/duplicate handle, existing verify/crop/export, new closeout inventory/receipt links | Moved paths, restoration retains prior failure, derived hashes and exact process identity | Manual segment rotation has a gap; selected process absence cannot prove normal exit |
