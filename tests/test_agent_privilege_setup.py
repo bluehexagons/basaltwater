@@ -17,10 +17,11 @@ from unittest.mock import Mock, patch
 
 from common.privilege_broker_steps import _requester_has_sudo_grants, render_units
 from common.web_panel_steps import build_web_panel_manifest, render_web_panel_nginx
-from basaltwater import _patch_preserve_keys, create_basaltwater_parser, run_patch_command
+from basaltwater import _patch_preserve_keys, create_basaltwater_parser, run_patch_command, run_setup_command
 from lib.arg_parser import add_setup_arguments
-from lib.cache import merge_setup_configs
+from lib.cache import load_setup_command, merge_setup_configs, save_setup_command
 from lib.config import SetupConfig
+from lib.privilege_auth import authenticate
 from lib.privilege_setup import DEFAULT_PRIVILEGE_BROKER_PORT, approval_origin, broker_enabled, privilege_broker_origin
 from lib.privilege_policy import DEFAULT_REQUEST_TTL_SECONDS
 from plugins.common import extend_web_panel_steps
@@ -328,6 +329,114 @@ class SetupTests(unittest.TestCase):
         from common.privilege_broker_steps import configure_privilege_broker
         configure_privilege_broker(self.config(privilege_broker_port=9444))
         run.assert_not_called()
+
+
+class PasswordCLITests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.parser, _, _ = create_basaltwater_parser()
+        cls.remote_parser = argparse.ArgumentParser()
+        add_setup_arguments(cls.remote_parser, for_remote=True)
+
+    def setUp(self):
+        self.workspace = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.enterContext(patch.dict(os.environ, {"BASALTWATER_WORKSPACE": str(self.workspace)}))
+        self.output = self.enterContext(patch("sys.stdout", new_callable=io.StringIO))
+        self.enterContext(patch("basaltwater.prompt_for_missing_passwords"))
+        self.enterContext(patch("basaltwater.store_cli_credentials"))
+        self.remote = self.enterContext(patch("basaltwater.run_remote_setup", return_value=0))
+        self.prompt = self.enterContext(patch("getpass.getpass", return_value="test-only independent password"))
+        for name in ("subprocess.run", "subprocess.Popen", "socket.socket", "socket.getaddrinfo"):
+            self.enterContext(patch(name, side_effect=AssertionError("Unexpected system action: " + name)))
+
+    def run_command(self, command, *flags):
+        positionals = ["agent_vm", "vm.example", "agent"] if command == "setup" else ["vm.example", "agent"]
+        args = self.parser.parse_args([command, *positionals, "--timezone", "UTC", *flags])
+        run = run_setup_command if command == "setup" else run_patch_command
+        return run(args)
+
+    def assert_password_transport(self, port):
+        import base64
+
+        config = self.remote.call_args.args[0]
+        self.assertEqual(config.privilege_broker_port, port)
+        parsed = self.remote_parser.parse_args(shlex.split(" ".join(config.to_remote_args())))
+        parsed.host = "localhost"
+        received = SetupConfig.from_args(parsed, "agent_vm")
+        self.assertEqual(received.privilege_broker_port, port)
+        self.assertEqual(received.privilege_broker_auth, config.privilege_broker_auth)
+        header = "Basic " + base64.b64encode(b"agent:test-only independent password").decode()
+        self.assertTrue(authenticate(header, json.loads(received.privilege_broker_auth)))
+        saved = load_setup_command("vm.example")
+        self.assertEqual(saved.privilege_broker_port, port)
+        self.assertIsNone(saved.privilege_broker_auth)
+        self.assertNotIn("test-only independent password", self.output.getvalue())
+        for path in self.workspace.rglob("*.json"):
+            self.assertNotIn("test-only independent password", path.read_text())
+            self.assertNotIn(config.privilege_broker_auth, path.read_text())
+
+    def test_setup_password_selects_standalone_with_either_alias_and_panel_mode(self):
+        cases = (
+            (["--web-panel"], "--privilege-broker-password", 9444),
+            (["--web-panel", "--privilege-broker"], "--privilege-broker-password", 9444),
+            ([], "--approval-panel-password", 9444),
+            (["--privilege-broker"], "--approval-panel-password", 9444),
+            (["--web-panel", "--approval-panel", "9445"], "--approval-panel-password", 9445),
+        )
+        for flags, password_flag, port in cases:
+            with self.subTest(flags=flags, password_flag=password_flag):
+                self.assertEqual(self.run_command("setup", *flags, password_flag,
+                                                 "test-only independent password"), 0, self.output.getvalue())
+                self.assert_password_transport(port)
+        self.prompt.assert_not_called()
+
+    def test_prompt_only_password_selects_standalone_and_dry_run_never_prompts(self):
+        self.assertEqual(self.run_command("setup", "--web-panel", "--privilege-broker-password"), 0,
+                         self.output.getvalue())
+        self.prompt.assert_called_once()
+        self.assert_password_transport(9444)
+        self.prompt.reset_mock()
+        self.assertEqual(self.run_command("setup", "--web-panel", "--approval-panel-password", "--dry-run"), 0,
+                         self.output.getvalue())
+        self.prompt.assert_not_called()
+        config = self.remote.call_args.args[0]
+        self.assertEqual(config.privilege_broker_port, 9444)
+        self.assertIsNone(config.privilege_broker_auth)
+
+    def test_password_patch_selects_or_preserves_standalone_and_explicit_port_wins(self):
+        for saved_port, flags, expected in (
+            (None, [], 9444), (9445, [], 9445),
+            (9445, ["--privilege-broker"], 9445), (9445, ["--approval-panel", "9446"], 9446),
+        ):
+            with self.subTest(saved_port=saved_port, flags=flags):
+                save_setup_command(SetupConfig(host="vm.example", username="agent", system_type="agent_vm",
+                                               web_panel_port=80, privilege_broker_port=saved_port))
+                self.assertEqual(self.run_command("patch", *flags, "--privilege-broker-password",
+                                                 "test-only independent password"), 0, self.output.getvalue())
+                self.assert_password_transport(expected)
+
+    def test_password_conflicts_with_explicit_removal_before_prompt_or_execution(self):
+        for command in ("setup", "patch"):
+            for flag in ("--no-privilege-broker", "--no-approval-panel"):
+                with self.subTest(command=command, flag=flag):
+                    save_setup_command(SetupConfig(host="vm.example", username="agent", system_type="agent_vm",
+                                                   web_panel_port=80))
+                    self.assertEqual(self.run_command(command, flag, "--approval-panel-password"), 1)
+                    self.assertIn("Cannot change approval", self.output.getvalue())
+        self.prompt.assert_not_called()
+        self.remote.assert_not_called()
+
+    def test_implied_standalone_validates_posture_machine_and_port_before_execution(self):
+        for flags, error in ((["--nopasswd"], "cannot be combined"),
+                             (["--machine", "hardware"], "supported on VMs only"),
+                             (["--web-panel", "9444"], "conflicts with another managed interface")):
+            with self.subTest(flags=flags):
+                self.output.seek(0)
+                self.output.truncate()
+                self.assertEqual(self.run_command("setup", *flags, "--approval-panel-password",
+                                                 "test-only independent password"), 1)
+                self.assertIn(error, self.output.getvalue())
+        self.remote.assert_not_called()
 
 
 class LifecycleTests(unittest.TestCase):

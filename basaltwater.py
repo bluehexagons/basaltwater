@@ -88,6 +88,7 @@ from lib.proxmox_guest import (
 )
 from lib.proxmox_hosts import find_proxmox_host
 from lib.proxmox_lifecycle import LIFECYCLE_FIELD_FLAGS
+from lib.privilege_setup import resolve_approval_panel_args
 from lib.proxmox_cli import add_proxmox_subparser, run_proxmox_command
 from lib.vm_cli import add_vm_subparser, run_vm_command
 from lib.sysadmin_cli import add_sysadmin_subparsers, run_sysadmin_command
@@ -1784,7 +1785,7 @@ def _refresh_existing_managed_guest_host_keys(
 def _prepare_runtime_config_for_cli(config: SetupConfig) -> SetupConfig:
     validate_kiosk_settings(config)
     if config.privilege_broker_auth and config.privilege_broker_port is None:
-        raise ValueError("--privilege-broker-password requires an enabled privilege broker")
+        raise ValueError("--approval-panel-password requires a standalone --approval-panel")
     _apply_hosted_proxmox_defaults(config, None)
     if config.build_on is not None:
         from lib.build_setup import validate_build_setup_selection
@@ -1946,6 +1947,7 @@ def run_setup_command(args: argparse.Namespace) -> int:
         return 1
 
     try:
+        resolve_approval_panel_args(args)
         prompt_for_missing_passwords(args, args.system_type)
     except (EOFError, KeyboardInterrupt, ValueError) as exc:
         print(f"Error: {exc}")
@@ -2344,6 +2346,7 @@ def run_patch_command(args: argparse.Namespace) -> int:
                 setattr(args, field, getattr(cached_config, field))
 
     try:
+        resolve_approval_panel_args(args, saved_port=cached_config.privilege_broker_port)
         new_config = SetupConfig.from_args(args, cached_config.system_type)
         merged_config = merge_setup_configs(
             cached_config,

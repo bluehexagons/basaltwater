@@ -44,6 +44,15 @@ The password flag prompts privately. Pick a 16–256 character password that is
 different from the Linux, Git, T3, and web-panel passwords. Only a salted hash
 is uploaded; saved configuration and reconstructed setup commands omit it.
 
+Supplying `--approval-panel-password` or its legacy alias
+`--privilege-broker-password` also selects the standalone panel on port 9444
+when no standalone port is specified. This works with `--web-panel` and
+`--privilege-broker` too. A password-only patch keeps an existing standalone
+port; an explicit `--approval-panel PORT` overrides it. A dry run selects the
+same listener without prompting for a password. The independent password
+protects the standalone page; approvals inside the main web panel continue
+to use the main panel login.
+
 The approval page uses the managed VM host and HTTPS port 9444. If setup uses an
 IPv4 address with a CIDR prefix, the approval origin uses that address and drops
 the prefix. Use

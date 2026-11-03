@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import ipaddress
 import json
 
@@ -9,6 +10,22 @@ from lib.privilege_auth import validate_auth
 from lib.privilege_policy import DEFAULT_REQUEST_TTL_SECONDS, validate_policy
 
 DEFAULT_PRIVILEGE_BROKER_PORT = 9444
+
+
+def resolve_approval_panel_args(args: argparse.Namespace, *, saved_port: int | None = None) -> None:
+    """Select the independent password's listener before hashing or validation.
+
+    Resolve against saved settings on patches so a password rotation keeps its
+    custom port. The flag itself selects the listener even in a prompt-free dry run.
+    """
+    if not isinstance(getattr(args, "privilege_broker_password", None), str):
+        return
+    if getattr(args, "disable_privilege_broker", False):
+        raise ValueError("Cannot change approval credentials while disabling the broker")
+    if getattr(args, "disable_approval_panel", False):
+        raise ValueError("Cannot change approval panel credentials while removing it")
+    if getattr(args, "privilege_broker", None) in {None, 0}:
+        args.privilege_broker = saved_port if saved_port is not None else DEFAULT_PRIVILEGE_BROKER_PORT
 
 
 def broker_enabled(config) -> bool:
