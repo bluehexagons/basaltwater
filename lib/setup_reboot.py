@@ -355,6 +355,7 @@ def _request_restart(
 
 def _restart_job_failed(config: SetupConfig, restart_unit: str, *, timeout: float) -> bool:
     """Report a failed target-side job while its original host is reachable."""
+    deadline = time.monotonic() + timeout
     unit = shlex.quote(restart_unit + ".service")
     try:
         result = _ssh_result(
@@ -373,6 +374,19 @@ def _restart_job_failed(config: SetupConfig, restart_unit: str, *, timeout: floa
         f"Error: restart job {restart_unit}.service failed on {config.host} "
         f"({properties.get('Result', 'unknown')}, exit {properties.get('ExecMainStatus', 'unknown')})"
     )
+    remaining = deadline - time.monotonic()
+    if remaining > 0:
+        try:
+            journal = _ssh_result(
+                config,
+                f"journalctl -u {unit} --no-pager --lines=20 --output=cat",
+                timeout=min(10, remaining),
+            )
+        except (CommandTimeoutError, OSError, subprocess.SubprocessError):
+            pass  # The failed unit is authoritative even if SSH disconnects.
+        else:
+            if journal.returncode == 0 and journal.stdout.strip():
+                print(journal.stdout.strip())
     print(f"  Inspect journalctl -u {restart_unit}.service --no-pager on the node")
     return True
 

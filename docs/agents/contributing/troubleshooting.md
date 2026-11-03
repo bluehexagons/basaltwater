@@ -74,6 +74,13 @@ For a live incomplete operation, follow the
 [operator recovery guide](../../operations/transaction-recovery.md); do not
 delete locks or recovery markers to make a retry proceed.
 
+When a post-setup restart job fails, `--wait-for-restart` includes its last
+20 journal entries when the target remains reachable, within the existing wait
+deadline. Read the refusal before retrying: setup, maintenance or an active build
+can prevent the restart. The output also names the exact unit for a full
+`sudo journalctl -u UNIT.service --no-pager` inspection on the target if journal
+retrieval fails.
+
 For check selection and test maintenance, see the
 [contributor guide](README.md). Shared validators, capability helpers, and
 command contracts are in the [quick reference](quick-reference.md).

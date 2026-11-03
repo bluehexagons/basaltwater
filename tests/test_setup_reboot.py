@@ -528,6 +528,7 @@ class RestartTransportTests(unittest.TestCase):
             patch.object(setup_reboot, "_ssh_result", side_effect=[
                 _result(OLD_BOOT_ID),
                 _result("ActiveState=failed\nResult=exit-code\nExecMainStatus=1\n"),
+                _result("Error: refusing explicit host restart: reboot refused\n"),
             ]) as ssh,
             patch.object(setup_reboot.time, "monotonic", return_value=0),
             patch.object(setup_reboot.time, "sleep") as sleep,
@@ -537,10 +538,41 @@ class RestartTransportTests(unittest.TestCase):
                 _config(), OLD_BOOT_ID, timeout_seconds=2100, restart_unit=RESTART_UNIT,
             ))
         sleep.assert_not_called()
-        self.assertEqual(ssh.call_count, 2)
+        self.assertEqual(ssh.call_count, 3)
         self.assertIn(RESTART_UNIT + ".service", ssh.call_args.args[1])
         self.assertIn("exit-code, exit 1", output.getvalue())
+        self.assertIn("Error: refusing explicit host restart: reboot refused", output.getvalue())
         self.assertIn("journalctl -u " + RESTART_UNIT, output.getvalue())
+
+    def test_failed_restart_stays_failed_when_journal_cannot_be_read(self) -> None:
+        for journal in (_result(returncode=255), OSError("SSH unavailable"),
+                        subprocess.TimeoutExpired("ssh", 10)):
+            with (
+                self.subTest(journal=journal),
+                patch.object(setup_reboot, "_ssh_result", side_effect=[
+                    _result("ActiveState=failed\nResult=exit-code\nExecMainStatus=1\n"), journal,
+                ]),
+                redirect_stdout(io.StringIO()) as output,
+            ):
+                self.assertTrue(setup_reboot._restart_job_failed(_config(), RESTART_UNIT, timeout=10))
+            self.assertIn("exit-code, exit 1", output.getvalue())
+            self.assertIn("journalctl -u " + RESTART_UNIT, output.getvalue())
+
+    def test_restart_journal_uses_remaining_wait_budget(self) -> None:
+        for elapsed in (4, 5):
+            with (
+                self.subTest(elapsed=elapsed),
+                patch.object(setup_reboot.time, "monotonic", side_effect=(0, elapsed)),
+                patch.object(setup_reboot, "_ssh_result", side_effect=[
+                    _result("ActiveState=failed\n"), _result("restart refused"),
+                ]) as ssh,
+            ):
+                self.assertTrue(setup_reboot._restart_job_failed(_config(), RESTART_UNIT, timeout=5))
+            if elapsed == 4:
+                self.assertEqual(ssh.call_args.kwargs["timeout"], 1)
+                self.assertIn("--lines=20", ssh.call_args.args[1])
+            else:
+                ssh.assert_called_once()
 
     def test_wait_tolerates_running_job_or_probe_disconnect_and_then_new_boot(self) -> None:
         for job in (_result("ActiveState=active\nResult=success\n"), _result(returncode=255),
