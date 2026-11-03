@@ -108,8 +108,10 @@ public static partial class Native {
         }
         throw new Exception("Window outcome not observed; inspect before retrying");
     }
-    public static Window Change(long id,string identity,string operation,int x,int y,int width,int height) {
+    public static Window Change(long id,string identity,string operation,int x,int y,int width,int height,Func<string> guard) {
+        InputPermit(guard);
         var before=Check(id,identity); var w=before; var h=new IntPtr(id); bool requested=true;
+        InputPermit(guard);
         switch(operation) {
             case "focus": requested=SetForegroundWindow(h); break;
             case "move": requested=SetWindowPos(h,IntPtr.Zero,x,y,0,0,0x15); break;
@@ -183,16 +185,17 @@ public static partial class Native {
             Walk(child,window,identity,next,scan,clock,name,role); child=TreeWalker.ControlViewWalker.GetNextSibling(child);
         }
     }
-    public static bool Act(Element r,string operation,string text) {
+    public static bool Act(Element r,string operation,string text,Func<string> guard) {
+        InputPermit(guard);
         var e=Resolve(r); object p;
         // Re-resolve immediately before mutation; UIA providers can still race.
         switch(operation) {
-            case "focus": e.SetFocus(); return e.Current.HasKeyboardFocus;
+            case "focus": InputPermit(guard); e.SetFocus(); return e.Current.HasKeyboardFocus;
             case "set-text": if(text==null || text.Length>4096) throw new Exception("Text limit is 4096");
                 if(!e.TryGetCurrentPattern(ValuePattern.Pattern,out p) || ((ValuePattern)p).Current.IsReadOnly) throw new Exception("Editable ValuePattern unavailable");
-                ((ValuePattern)p).SetValue(text); return ((ValuePattern)p).Current.Value==text;
+                InputPermit(guard); ((ValuePattern)p).SetValue(text); return ((ValuePattern)p).Current.Value==text;
             case "invoke": if(!e.TryGetCurrentPattern(InvokePattern.Pattern,out p)) throw new Exception("InvokePattern unavailable");
-                ((InvokePattern)p).Invoke(); return false; // application acceptance cannot prove task completion
+                InputPermit(guard); ((InvokePattern)p).Invoke(); return false; // application acceptance cannot prove task completion
             default: throw new Exception("Unsupported element operation");
         }
     }
@@ -213,7 +216,21 @@ public static partial class Native {
             using(var file=new FileStream(output,FileMode.CreateNew,FileAccess.Write,FileShare.None)) bitmap.Save(file,ImageFormat.Png);
         }
     }
-    static void Send(Input[] items) { if(SendInput((uint)items.Length,items,Marshal.SizeOf(typeof(Input)))!=items.Length) throw new Exception("Input rejected or partial; observe before retrying"); }
+    static Input[] ClickInputs() { return new [] {new Input {data=new InputUnion {mouse=new Mouse {flags=2}}},new Input {data=new InputUnion {mouse=new Mouse {flags=4}}}}; }
+    static void SendPair(Input[] items,Func<Input[],uint> send) {
+        uint sent=send(items); if(sent==2) return;
+        bool released=sent==0 || (sent==1 && send(new [] {items[1]})==1);
+        throw new Exception("Input rejected or partial; release " + (released ? "submitted" : "unconfirmed") + "; some input may have arrived; do not replay");
+    }
+    static Input[] UnicodeInputs(string text) {
+        if(text==null || text.Length>1024) throw new Exception("Input text limit is 1024");
+        var result=new List<Input>();
+        foreach(char c in text) {result.Add(Key(0,c,4));result.Add(Key(0,c,6));}
+        return result.ToArray();
+    }
+    static void InputPermit(Func<string> guard) {
+        if(guard!=null) {var error=guard();if(!String.IsNullOrEmpty(error)) throw new Exception(error+"; some input may have arrived; do not replay");}
+    }
     [DllImport("user32.dll")] static extern short GetAsyncKeyState(int key);
     static Input Key(ushort vk,ushort scan,uint flags) { return new Input {type=1,data=new InputUnion {key=new Keyboard {vk=vk,scan=scan,flags=flags}}}; }
     [DllImport("user32.dll")] static extern IntPtr GetKeyboardLayout(uint thread);
@@ -267,7 +284,8 @@ public static partial class Native {
         bool cleaned=releases.Count==0 || send(releases.ToArray())==releases.Count;
         throw new Exception("Input rejected or partial; key release " + (cleaned ? "submitted" : "unconfirmed") + "; observe before retrying");
     }
-    public static void InputAction(long id,string identity,string kind,string text,int x,int y,int width,int height) {
+    public static void InputAction(long id,string identity,string kind,string text,int x,int y,int width,int height,Func<string> guard) {
+        InputPermit(guard);
         var w=Check(id,identity); if(!w.active || w.minimized || w.width!=width || w.height!=height) throw new Exception("Target must remain foreground with observed geometry");
         foreach(int key in new [] {16,17,18,91,92,1,2,4}) if((GetAsyncKeyState(key)&0x8000)!=0) throw new Exception("Physical modifier or mouse button held; input refused");
         if(kind=="click") {
@@ -275,13 +293,20 @@ public static partial class Native {
             // Reject occlusion and borders using WindowFromPoint.
             var point=new Point {x=w.x+x,y=w.y+y}; var target=WindowFromPoint(point); int owner; GetWindowThreadProcessId(target,out owner);
             if(owner!=w.pid || GetAncestor(target,2)!=new IntPtr(id)) throw new Exception("Click target occluded or changed");
-            if(!SetCursorPos(point.x,point.y)) throw new Exception("Pointer move rejected"); Point observed;
+            InputPermit(guard);if(!SetCursorPos(point.x,point.y)) throw new Exception("Pointer move rejected"); Point observed;
             if(!GetCursorPos(out observed) || observed.x!=point.x || observed.y!=point.y) throw new Exception("Pointer destination unverified");
-            Check(id,identity); if(GetForegroundWindow()!=new IntPtr(id)) throw new Exception("Foreground changed");
-            Send(new [] {new Input {data=new InputUnion {mouse=new Mouse {flags=2}}},new Input {data=new InputUnion {mouse=new Mouse {flags=4}}}});
+            var current=Check(id,identity);
+            if(!current.active || current.minimized || current.width!=width || current.height!=height || current.x!=w.x || current.y!=w.y) throw new Exception("Foreground or geometry changed before click");
+            target=WindowFromPoint(point);GetWindowThreadProcessId(target,out owner);
+            if(owner!=w.pid || GetAncestor(target,2)!=new IntPtr(id)) throw new Exception("Click target occluded or changed");
+            foreach(int key in new [] {16,17,18,91,92,1,2,4}) if((GetAsyncKeyState(key)&0x8000)!=0) throw new Exception("Physical modifier or mouse button held; input refused");
+            InputPermit(guard);SendPair(ClickInputs(),delegate(Input[] batch) {return SendInput((uint)batch.Length,batch,Marshal.SizeOf(typeof(Input)));});
         } else if(kind=="text") {
-            if(text==null || text.Length>1024) throw new Exception("Input text limit is 1024");
-            foreach(char c in text) { Check(id,identity); if(GetForegroundWindow()!=new IntPtr(id)) throw new Exception("Foreground changed"); Send(new [] {Key(0,c,4),Key(0,c,6)}); }
+            var items=UnicodeInputs(text);w=Check(id,identity);
+            if(!w.active || w.minimized || w.width!=width || w.height!=height) throw new Exception("Foreground or geometry changed");
+            foreach(int key in new [] {16,17,18,91,92,1,2,4}) if((GetAsyncKeyState(key)&0x8000)!=0) throw new Exception("Physical modifier or mouse button held; input refused");
+            InputPermit(guard);
+            if(items.Length>0) SendKeys(items,delegate(Input[] batch) {return SendInput((uint)batch.Length,batch,Marshal.SizeOf(typeof(Input)));});
         } else if(kind=="key" || kind=="chord" || kind=="sequence") {
             int pid; uint thread=GetWindowThreadProcessId(new IntPtr(id),out pid); var layout=GetKeyboardLayout(thread);
             if(kind=="chord" && (text==null || text.IndexOf('+')<0)) throw new Exception("Chord requires CTRL/SHIFT modifiers");
@@ -289,7 +314,7 @@ public static partial class Native {
             w=Check(id,identity);
             if(!w.active || w.minimized || w.width!=width || w.height!=height) throw new Exception("Foreground or geometry changed");
             foreach(int key in new [] {16,17,18,91,92,1,2,4}) if((GetAsyncKeyState(key)&0x8000)!=0) throw new Exception("Physical modifier or mouse button held; input refused");
-            SendKeys(items,delegate(Input[] batch) { return SendInput((uint)batch.Length,batch,Marshal.SizeOf(typeof(Input))); });
+            InputPermit(guard);SendKeys(items,delegate(Input[] batch) { return SendInput((uint)batch.Length,batch,Marshal.SizeOf(typeof(Input))); });
         } else throw new Exception("Unsupported input kind");
     }
     [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(Point p);

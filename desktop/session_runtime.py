@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 import fcntl
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import pwd
@@ -39,6 +40,31 @@ MAX_MESSAGE = 65536
 START_REQUEST_TIMEOUT = 30
 START_READY_TIMEOUT = 30
 BROWSER_CONTROL_TIMEOUT = 45
+INPUT_TIMEOUT = 8
+INPUT_UNCERTAIN = ("Desktop input completion is uncertain; a prefix or partial chord may have arrived. "
+                   "Inspect the desktop and modifier state before further input; do not replay this request.")
+
+
+def input_deadline(payload: dict[str, Any]) -> float:
+    """Cap input admission, probes and injection with one monotonic budget."""
+    now = time.monotonic()
+    deadline = payload.get("deadline", now + INPUT_TIMEOUT)
+    try:
+        valid = type(deadline) in (int, float) and math.isfinite(deadline)
+    except OverflowError:
+        valid = False
+    if not valid:
+        raise ValueError("Input deadline must be a finite absolute monotonic time")
+    if deadline <= now:
+        raise ValueError("Desktop input deadline expired; request was not started")
+    return min(deadline, now + INPUT_TIMEOUT)
+
+
+def input_remaining(deadline: float, maximum: float = INPUT_TIMEOUT) -> float:
+    budget = deadline - time.monotonic()
+    if budget <= 0:
+        raise ValueError("Desktop input deadline expired; no further input was sent")
+    return min(maximum, budget)
 
 
 def configuration() -> dict[str, Any]:
@@ -92,9 +118,11 @@ def session_lock(name: str) -> Iterator[None]:
         os.close(fd)
 
 
-def receive(connection: socket.socket) -> dict[str, Any]:
+def receive(connection: socket.socket, *, deadline: float | None = None) -> dict[str, Any]:
     data = bytearray()
     while not data.endswith(b"\n"):
+        if deadline is not None:
+            connection.settimeout(input_remaining(deadline))
         part = connection.recv(4096)
         if not part:
             raise ValueError("Incomplete desktop request")
@@ -108,12 +136,23 @@ def receive(connection: socket.socket) -> dict[str, Any]:
 
 
 def request(payload: dict[str, Any]) -> dict[str, Any]:
+    deadline = input_deadline(payload) if payload.get("action") == "input" else None
+    if deadline is not None:
+        payload = {**payload, "deadline": deadline}
     configuration()
     with socket.socket(socket.AF_UNIX) as connection:
-        connection.settimeout(30)
+        connection.settimeout(30 if deadline is None else input_remaining(deadline))
         connection.connect(str(runtime_directory() / "control.sock"))
-        connection.sendall(json.dumps(payload).encode() + b"\n")
-        result = receive(connection)
+        data = json.dumps(payload).encode() + b"\n"
+        if deadline is not None:
+            connection.settimeout(input_remaining(deadline))
+        try:
+            connection.sendall(data)
+            result = receive(connection) if deadline is None else receive(connection, deadline=deadline)
+        except (ValueError, RuntimeError, OSError) as exc:
+            if deadline is not None:
+                exc.add_note(INPUT_UNCERTAIN)
+            raise
     if "error" in result:
         raise RuntimeError(result["error"])
     return result
@@ -177,8 +216,8 @@ def run_tool(argv: list[str], *, timeout: float = 8) -> str:
     return result.stdout.strip()
 
 
-def geometry() -> list[int]:
-    output = run_tool(["xdotool", "getdisplaygeometry"], timeout=3)
+def geometry(*, timeout: float = 3) -> list[int]:
+    output = run_tool(["xdotool", "getdisplaygeometry"], timeout=timeout)
     parts = output.split()
     if len(parts) != 2 or not all(part.isdecimal() for part in parts):
         raise RuntimeError("Could not determine desktop geometry")
@@ -386,6 +425,7 @@ class DesktopSession:
         return {"logout_requested": True, "generation": self.generation}
 
     def handle(self, payload: dict[str, Any]) -> dict[str, Any]:
+        deadline = input_deadline(payload) if payload.get("action") == "input" else 0.0
         self.sync_control()
         self.expire_browser_control()
         action = payload.get("action")
@@ -560,8 +600,32 @@ class DesktopSession:
         if action == "logout":
             return self.logout()
         if action == "input":
-            if payload.get("geometry") != geometry():
+            return self.input(payload, deadline)
+        raise ValueError("Unknown desktop action")
+
+    def input(self, payload: dict[str, Any], deadline: float) -> dict[str, Any]:
+        """Admit each injection again after probes; never replay uncertain input."""
+        attempted = False
+
+        def remaining(maximum: float = INPUT_TIMEOUT) -> float:
+            return input_remaining(deadline, maximum)
+
+        def inject(argv: list[str]) -> str:
+            nonlocal attempted
+            control_state.require_enabled(payload)
+            if self.maintenance or self.process.poll() is not None:
+                raise RuntimeError("Desktop is stopping")
+            timeout = remaining()
+            attempted = True
+            return run_tool(argv, timeout=timeout)
+
+        try:
+            if "hold_ms" in payload or "duration" in payload:
+                raise ValueError("Debian input does not support hold_ms or duration; use discrete input")
+            if payload.get("geometry") != geometry(timeout=remaining(3)):
                 raise ValueError("Desktop geometry changed; capture a new screenshot")
+            control_state.require_enabled(payload)
+            remaining()
             kind = payload.get("kind")
             if not isinstance(kind, str):
                 raise ValueError("Unknown desktop input kind")
@@ -569,14 +633,16 @@ class DesktopSession:
                 text = payload.get("text")
                 if not isinstance(text, str) or len(text) > 1024 or "\0" in text:
                     raise ValueError("Text must contain at most 1024 characters")
-                run_tool(["xdotool", "type", "--clearmodifiers", "--delay", "1", "--", text])
+                # Do not clear/restore modifiers held by a human. xdotool has
+                # no per-request ownership receipt for restoration or cleanup.
+                inject(["xdotool", "type", "--delay", "1", "--", text])
             elif kind == "key":
                 key = payload.get("key")
                 if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9_+]{1,100}", key):
                     raise ValueError("Invalid key chord")
-                run_tool(["xdotool", "key", "--clearmodifiers", key])
+                inject(["xdotool", "key", key])
             elif kind in {"click", "move"}:
-                width, height = geometry()
+                width, height = payload["geometry"]
                 x, y = payload.get("x"), payload.get("y")
                 if type(x) is not int or type(y) is not int or not (0 <= x < width and 0 <= y < height):
                     raise ValueError("Pointer coordinates are outside the desktop")
@@ -586,19 +652,21 @@ class DesktopSession:
                 # --sync waits for a position change and hangs on a no-op move.
                 # Query on the same X connection to flush the move and verify
                 # its destination before any click, without waiting for motion.
-                location = run_tool(["xdotool", "mousemove", str(x), str(y),
+                location = inject(["xdotool", "mousemove", str(x), str(y),
                                      "getmouselocation", "--shell"])
                 actual_x = re.search(r"^X=(\d+)$", location, re.MULTILINE)
                 actual_y = re.search(r"^Y=(\d+)$", location, re.MULTILINE)
                 if actual_x is None or actual_y is None or (int(actual_x[1]), int(actual_y[1])) != (x, y):
-                    raise RuntimeError("Pointer did not reach the requested coordinates; inspect the desktop before retrying")
+                    raise RuntimeError("Pointer did not reach the requested coordinates; inspect the desktop")
                 if kind == "click":
-                    control_state.require_enabled(payload)
-                    run_tool(["xdotool", "click", str(button)])
+                    inject(["xdotool", "click", str(button)])
             else:
                 raise ValueError("Unknown desktop input kind")
-            return {"generation": self.generation, "geometry": geometry()}
-        raise ValueError("Unknown desktop action")
+            return {"generation": self.generation, "geometry": geometry(timeout=remaining(3))}
+        except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as exc:
+            if attempted:
+                exc.add_note(INPUT_UNCERTAIN)
+            raise
 
 
 def serve() -> int:
@@ -639,7 +707,7 @@ def serve() -> int:
                                 raise PermissionError("Desktop control requires the session owner's UID")
                             result = session.handle(receive(connection))
                         except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as exc:
-                            result = {"error": str(exc)}
+                            result = {"error": "\n".join([str(exc), *getattr(exc, "__notes__", [])])}
                         try:
                             connection.sendall(json.dumps(result).encode() + b"\n")
                         except OSError:

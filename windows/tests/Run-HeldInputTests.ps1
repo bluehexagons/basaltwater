@@ -165,14 +165,20 @@ try {
     # inside the held receipt must remain evidence, not become throw $null.
     & {
         function Invoke-NativeDesktopWorker($Request,[int]$TimeoutSeconds) {
-            return @{held=@{reason='expired';release_state='submitted';error=$null;sends=@(@{action='down';requested=1;accepted=1})}}
+            $reply=[pscustomobject]@{held=[pscustomobject]@{reason='expired';release_state='submitted';error=$null;sends=@(@{action='down';requested=1;accepted=1})}}
+            if($script:HeldCleanupWarning){$reply|Add-Member NoteProperty worker_cleanup @{confirmed=$false;message='do not replay'}}
+            return $reply
         }
         $eventName='Local\Basaltwater.HeldTest.'+[guid]::NewGuid().ToString('N')
         $ready=[Threading.EventWaitHandle]::new($true,'ManualReset',($eventName+'.ready'))
         try {
             Write-NativeHeldJson (Join-Path $dir 'receipt.json') @{cleanup_confirmed=$true;scheduler_retired=$true;watchdog=$null}
-            $result=Wait-NativeHeldLease @{name=$eventName;id=$id;directory=$dir}
-            Assert-Held ($result.ok -and $result.duration_completed -and $result.result.release_state -eq 'submitted') 'Nullable receipt error corrupted successful transport'
+            foreach($warning in @($false,$true)){
+                $script:HeldCleanupWarning=$warning
+                $result=Wait-NativeHeldLease @{name=$eventName;id=$id;directory=$dir}
+                Assert-Held ($result.ok -and $result.duration_completed -and $result.result.release_state -eq 'submitted') 'Nullable receipt error corrupted successful transport'
+                if($warning){Assert-Held (-not $result.result.worker_cleanup.confirmed) 'Hold wrapper discarded mailbox cleanup evidence'}
+            }
             Assert-Held (Test-Path -LiteralPath (Join-Path $dir 'driver.json')) 'Driver evidence was not retained'
         } finally {$ready.Dispose()}
     }

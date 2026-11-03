@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import secrets
@@ -293,6 +294,28 @@ def validate_capture_crop(payload: dict[str, Any], *, backend=runtime) -> list |
     return crop
 
 
+def bounded_deadline(payload: dict, *, deadline: float | None = None, seconds: float = 14) -> float:
+    """Keep the earliest finite absolute monotonic budget across local hops."""
+    limits = [time.monotonic() + seconds]
+    for value in (payload.get("deadline"), deadline):
+        if value is not None:
+            try:
+                valid = type(value) in (int, float) and math.isfinite(value)
+            except OverflowError:
+                valid = False
+            if not valid:
+                raise ValueError("Deadline must be a finite monotonic timestamp")
+            limits.append(value)
+    return min(limits)
+
+
+def remaining_seconds(deadline: float) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise RuntimeError("Desktop request expired; observe before retrying")
+    return remaining
+
+
 def send_action(payload: dict[str, Any], *, deadline: float | None = None, backend=runtime) -> dict[str, Any]:
     """Pace text with short revocable requests, including on existing supervisors."""
     validate_text_delay(payload)
@@ -308,26 +331,43 @@ def send_action(payload: dict[str, Any], *, deadline: float | None = None, backe
         raise ValueError("Hold duration requires the native desktop backend")
     delay = payload.get("delay_ms")
     request = {name: value for name, value in payload.items() if name != "delay_ms"}
+    deadline = bounded_deadline(payload, deadline=deadline, seconds=20 if delay is not None else 14)
+    request["deadline"] = deadline
     if delay is None:
-        result = backend.request(request)
+        remaining_seconds(deadline)
+        try:
+            result = backend.request(request)
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+            if payload.get("action") != "input":
+                raise
+            detail = "\n".join([str(exc), *getattr(exc, "__notes__", [])])
+            raise RuntimeError(f"{detail}; input outcome may be partial or unknown; inspect before further input; do not replay") from exc
         if crop is not None and (result.get("image_origin") != crop[:2] or result.get("image_geometry") != crop[2:]):
             return {**result, "error": "Backend did not confirm requested crop mapping; restart the native helper and recapture"}
         return result
-    deadline = time.monotonic() + 20 if deadline is None else deadline
     submitted = 0
+    server_attempted = False
     result: dict[str, Any] = {"generation": payload["generation"], "geometry": payload["geometry"]}
     try:
+        if backend is not runtime:
+            capabilities = backend.status(deadline=deadline).get("input_capabilities", [])
+            if isinstance(capabilities, list) and "server-paced-text" in capabilities:
+                remaining_seconds(deadline)
+                server_attempted = True
+                return backend.request({**request, "delay_ms": delay})
         for character in payload["text"]:
             if submitted:
-                time.sleep(delay / 1000)
+                time.sleep(min(delay / 1000, remaining_seconds(deadline)))
             if time.monotonic() >= deadline:
                 raise RuntimeError("Paced typing exceeded its 20-second budget")
             # Every character rechecks generation, geometry and the human's control revision.
             result = backend.request({**request, "text": character})
             submitted += 1
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
-        return {**result, "error": f"{exc}; inspect input before retrying; the last character may have arrived",
-                "submitted_characters": submitted}
+        detail = "\n".join([str(exc), *getattr(exc, "__notes__", [])])
+        return {**result, "error": f"{detail}; input may be partial; inspect input before further actions; do not replay",
+                "submitted_characters": None if server_attempted else submitted,
+                "completion_unknown": server_attempted}
     return {**result, "submitted_characters": submitted}
 
 
@@ -341,9 +381,13 @@ def observe_after_input(result: dict, payload: dict, output: str, *, settle_ms: 
                 observed.get("control_revision") != payload["control_revision"]):
             raise RuntimeError("Desktop control changed after input; observe before further input")
         capture = backend.request({"action": "screenshot", "generation": payload["generation"],
+                                   "control_revision": payload["control_revision"],
                                    "output": output, "next_frame": True})
         if capture.get("initial_frame_skipped") is not True:
             raise RuntimeError("Backend did not confirm subsequent-frame capture; restart the native helper")
+        if (capture.get("generation") != payload["generation"] or
+                capture.get("control_revision") != payload["control_revision"]):
+            raise RuntimeError("Desktop control changed during capture; observe before further input")
         return {**result, "observation": compact_capture(capture), "settle_ms": settle_ms}
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         return {**result, "error": f"Input completed; observation failed: {exc}. Do not replay input."}

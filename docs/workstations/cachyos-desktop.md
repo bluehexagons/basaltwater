@@ -82,6 +82,9 @@ sample and awaits a subsequent sample. Frame acquisition has an eight-second
 budget; a static/stalled stream can time out. Capture failure retains completed
 input timestamps and returns nonzero: inspect state and capture again rather
 than replaying the input. A changed control revision cancels the observation.
+The returned raw capture must also match the input generation and control
+revision before compact output is accepted. A mismatch retains completed-input
+evidence and the instruction not to replay input.
 This operation does not assert that an application's animation or rendering has
 finished. Project-owned waits/assertions still decide readiness.
 
@@ -100,6 +103,29 @@ the same bounded hold/observation options, and reverse-order release on
 interruption. `status.input_state` reports pending helper-injected press counts
 and named modifiers; physical and other providers' modifier state is unavailable.
 See the [keyboard contract](../../common/agent_skills/basaltwater-cachyos-desktop/references/native-control.md#observe-act-verify).
+
+Native status advertises `server-paced-text` in `input_capabilities`. The shared
+client (including CLI text input) sends one paced request to capable helpers;
+older helpers retain the per-character request fallback. Each character checks
+control revision, generation, cancellation and deadline, and pressed keys are
+released in reverse order even after interruption. Symbol aliases resolving to
+the same keysym are rejected before any key goes down.
+
+Requests may carry a finite absolute monotonic `deadline`, shared only between
+processes on the same machine. Each hop keeps the earlier caller deadline and
+local cap (14 seconds normally, 20 for paced text). Expired requests send no
+input; socket waits and capture subprocess waits use the remaining budget.
+Release cleanup runs independently of the expired action budget. An uncertain
+response must be inspected before any retry.
+If a server-paced request loses its reply, `submitted_characters` is null and
+`completion_unknown` is true: the client cannot infer the delivered prefix.
+Older per-character pacing retains only its count of acknowledged characters.
+
+Capture admits one worker at a time and runs slow frame acquisition outside
+the session state lock so status, human override and stop remain responsive.
+Final generation/control checks discard late captures after a control change;
+their artifacts are removed and they cannot renew input freshness. Successful
+capture freshness starts at admission, conservatively including acquisition time.
 
 Native `input drag --x X --y Y --to-x X --to-y Y --duration-ms 300` supports
 bounded straight-line canvas gestures with buttons 1–3 and the same fresh

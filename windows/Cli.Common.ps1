@@ -127,6 +127,7 @@ function Invoke-NativeCli([string[]]$Arguments) {
             Write-Host @'
 Native desktop commands (explicit actions use the current account's session):
   status|doctor|windows|environment [--json]
+  worker start [--idle-seconds 120] [--session-seconds 1800] | worker status|stop
   inspect --pid PID [--name NAME] [--role ROLE] [--json]
   screenshot --window HWND --identity TOKEN --generation GEN --output NEW.png
   window focus|move|resize|maximize|minimize|restore|close --window HWND --identity TOKEN --generation GEN

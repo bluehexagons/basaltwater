@@ -11,7 +11,7 @@ import struct
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 from desktop import session_runtime as runtime
 from desktop import client, control_state
@@ -222,7 +222,7 @@ class DesktopControlTests(unittest.TestCase):
 
     @patch.object(runtime, "run_tool")
     def test_repeated_pointer_moves_and_clicks_do_not_wait_for_motion(self, tool):
-        def respond(argv):
+        def respond(argv, **_options):
             if argv[1] == "mousemove":
                 # Reproduce xdotool --sync blocking when already at (10, 20).
                 if "--sync" in argv:
@@ -568,7 +568,8 @@ class DesktopProductivityTests(unittest.TestCase):
             path.write_text(json.dumps([{"action": "windows"}, {"action": "input"}]))
             result = client.run_sequence(str(path), "g")
         self.assertEqual(result["completed"], 1)
-        self.assertEqual(result["error"], "human-override")
+        self.assertIn("human-override", result["error"])
+        self.assertIn("do not replay", result["error"])
         self.assertEqual([call.args[0]["action"] for call in request.call_args_list], ["windows", "input"])
 
     @patch.object(runtime, "request", return_value={"output": "/private/first.png"})
@@ -586,7 +587,7 @@ class DesktopProductivityTests(unittest.TestCase):
                 self.assertEqual(result["completed"], 1)
                 self.assertIn("error", result)
                 request.assert_called_once_with({"action": "screenshot", "output": "/private/first.png",
-                                                "generation": "g", "control_revision": "r"})
+                                                "generation": "g", "control_revision": "r", "deadline": ANY})
 
     @patch.object(runtime, "request")
     def test_sequence_rejects_embedded_control_before_sending_actions(self, request):
@@ -1137,7 +1138,7 @@ class DesktopCliTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(run_desktop_command(args), 0)
         request.assert_called_once_with({"action": "screenshot", "generation": "current", "control_revision": "r",
-                                        "window": "0x123", "active_window": False, "output": "/tmp/app.png"})
+                                        "window": "0x123", "active_window": False, "output": "/tmp/app.png", "deadline": ANY})
 
     @patch.object(runtime, "status", return_value={"state": "starting"})
     @patch.object(runtime, "request")

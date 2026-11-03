@@ -181,11 +181,12 @@ class ControlStateTests(unittest.TestCase):
     def test_capture_failure_suggests_display_wake_and_removes_partial_artifact(self):
         session = native_session.NativeSession(Mock(fd=42))
         session.node = 17
+        session.state = "running"
         output = self.home / "failed-capture.png"
         with patch.object(native_session.subprocess, "run", return_value=Mock(
                 returncode=1, stdout=json.dumps({"error": "No frame arrived"}))), \
                 self.assertRaisesRegex(RuntimeError, "desktop --native wake"):
-            session.capture({"output": str(output)})
+            session.handle({"action": "screenshot", "generation": session.generation, "output": str(output)})
         self.assertFalse(output.exists())
 
     def test_native_handoff_cli_opens_without_backend_or_permission_changes(self):
@@ -264,7 +265,7 @@ class ControlStateTests(unittest.TestCase):
         session = session_runtime.DesktopSession({"desktop": "xfce", "username": "agent"}, process)
         current = control_state.status()
 
-        def move(argv):
+        def move(argv, **_options):
             if "mousemove" in argv:
                 self.change("disabled")
                 return "X=20\nY=30"
@@ -376,6 +377,168 @@ class ControlStateTests(unittest.TestCase):
         with patch.object(cachyos_steps, "_home") as home:
             cachyos_steps.configure_cachyos_desktop_control(SimpleNamespace(dry_run=True))
             home.assert_not_called()
+
+
+class DebianInputSafetyTests(unittest.TestCase):
+    """Mocked admission/injection checks, independent of Xorg and disk state."""
+
+    def setUp(self):
+        self.clock = self.enterContext(patch.object(session_runtime, "time", Mock()))
+        self.clock.monotonic.return_value = 100.0
+        self.control = self.enterContext(patch.object(session_runtime, "control_state"))
+        self.control.status.return_value = {"control_revision": "current"}
+        process = Mock(pid=1)
+        process.poll.return_value = None
+        self.session = session_runtime.DesktopSession({"desktop": "xfce", "username": "agent"}, process)
+        self.size = self.enterContext(patch.object(session_runtime, "geometry", return_value=[800, 600]))
+        self.tool = self.enterContext(patch.object(session_runtime, "run_tool", return_value="X=20\nY=30"))
+        self.payload = {"action": "input", "generation": self.session.generation,
+                        "geometry": [800, 600], "control_revision": "current",
+                        "kind": "key", "key": "ctrl+a", "text": "hello", "x": 20, "y": 30}
+
+    def test_expired_queued_and_invalid_deadlines_never_probe_or_inject(self):
+        for deadline in (99, 100, True, None, "101", float("nan"), float("inf"), 10**1000):
+            with self.subTest(deadline=repr(deadline)[:40]), self.assertRaises(ValueError):
+                self.session.handle({**self.payload, "deadline": deadline})
+        self.size.assert_not_called()
+        self.tool.assert_not_called()
+
+    def test_unsupported_hold_fields_are_rejected_even_when_zero(self):
+        for field in ("hold_ms", "duration"):
+            for kind in ("key", "text", "move", "click"):
+                with self.subTest(field=field, kind=kind), self.assertRaisesRegex(ValueError, "does not support"):
+                    self.session.handle({**self.payload, "kind": kind, field: 0})
+        self.size.assert_not_called()
+        self.tool.assert_not_called()
+
+    def test_revocation_during_geometry_prevents_all_injection(self):
+        for kind in ("key", "text", "move", "click"):
+            for reason in (RuntimeError("disabled"), ValueError("revision changed")):
+                with self.subTest(kind=kind, reason=str(reason)):
+                    self.control.require_enabled.side_effect = None
+                    def revoke(**_options):
+                        self.control.require_enabled.side_effect = reason
+                        return [800, 600]
+                    self.size.side_effect = revoke
+                    with self.assertRaises(type(reason)) as caught:
+                        self.session.handle({**self.payload, "kind": kind})
+                    self.assertIs(caught.exception, reason)
+        self.tool.assert_not_called()
+
+    def test_probe_exhausts_deadline_without_injection(self):
+        def expire(**_options):
+            self.clock.monotonic.return_value = 102
+            return [800, 600]
+        self.size.side_effect = expire
+        with self.assertRaisesRegex(ValueError, "deadline expired"):
+            self.session.handle({**self.payload, "deadline": 101})
+        self.tool.assert_not_called()
+
+    def test_injection_rechecks_permission_after_post_probe_check(self):
+        for kind in ("key", "text", "move", "click"):
+            with self.subTest(kind=kind):
+                self.control.require_enabled.side_effect = [None, None, RuntimeError("disabled")]
+                with self.assertRaisesRegex(RuntimeError, "disabled"):
+                    self.session.handle({**self.payload, "kind": kind})
+        self.tool.assert_not_called()
+
+    def test_each_probe_and_injection_use_remaining_caller_or_local_budget(self):
+        for supplied, expected in ((None, 8), (1000, 8), (102, 2)):
+            with self.subTest(deadline=supplied):
+                self.clock.monotonic.return_value = 100
+                payload = dict(self.payload)
+                if supplied is not None:
+                    payload["deadline"] = supplied
+                def probe(**options):
+                    elapsed = self.clock.monotonic.return_value - 100
+                    self.assertEqual(options["timeout"], min(3, expected - elapsed))
+                    self.clock.monotonic.return_value = 100.5
+                    return [800, 600]
+                self.size.side_effect = probe
+                self.session.handle(payload)
+                self.assertEqual(self.tool.call_args.kwargs["timeout"], expected - 0.5)
+
+    def test_expiry_after_move_prevents_click_and_marks_uncertain_completion(self):
+        def move(*_args, **_options):
+            self.clock.monotonic.return_value = 102
+            return "X=20\nY=30"
+        self.tool.side_effect = move
+        with self.assertRaisesRegex(ValueError, "deadline expired") as caught:
+            self.session.handle({**self.payload, "kind": "click", "deadline": 101})
+        self.assertEqual(self.tool.call_count, 1)
+        self.assertIn(session_runtime.INPUT_UNCERTAIN, caught.exception.__notes__)
+
+    def test_injection_failure_preserves_exception_without_replay_or_global_release(self):
+        for failure in (RuntimeError("failed chord"), session_runtime.subprocess.TimeoutExpired("xdotool", 1),
+                        OSError("X connection lost")):
+            with self.subTest(failure=type(failure).__name__):
+                self.tool.reset_mock()
+                self.tool.side_effect = failure
+                with self.assertRaises(type(failure)) as caught:
+                    self.session.handle(self.payload)
+                self.assertIs(caught.exception, failure)
+                self.assertIn(session_runtime.INPUT_UNCERTAIN, failure.__notes__)
+                self.tool.assert_called_once()
+
+    def test_text_and_key_do_not_clear_and_restore_human_modifiers(self):
+        for kind in ("key", "text"):
+            with self.subTest(kind=kind):
+                self.session.handle({**self.payload, "kind": kind})
+                argv = self.tool.call_args.args[0]
+                self.assertNotIn("--clearmodifiers", argv)
+                self.assertEqual(argv[:2], ["xdotool", "key" if kind == "key" else "type"])
+
+    def test_failed_post_injection_probe_reports_uncertainty(self):
+        failure = RuntimeError("display unavailable")
+        self.size.side_effect = [[800, 600], failure]
+        with self.assertRaises(RuntimeError) as caught:
+            self.session.handle(self.payload)
+        self.assertIs(caught.exception, failure)
+        self.assertIn(session_runtime.INPUT_UNCERTAIN, failure.__notes__)
+        self.tool.assert_called_once()
+
+    def test_transport_caps_and_propagates_deadline_without_mutating_payload(self):
+        connection = Mock()
+        connection.recv.return_value = b'{"generation": "g"}\n'
+        with patch.object(session_runtime, "configuration"), \
+                patch.object(session_runtime, "runtime_directory", return_value=Path("runtime")), \
+                patch.object(session_runtime.socket, "socket") as factory:
+            factory.return_value.__enter__.return_value = connection
+            session_runtime.request(self.payload)
+        sent = json.loads(connection.sendall.call_args.args[0])
+        self.assertEqual(sent["deadline"], 108)
+        self.assertNotIn("deadline", self.payload)
+        self.assertTrue(all(call.args == (8,) for call in connection.settimeout.call_args_list))
+
+    def test_connect_exhaustion_prevents_send_and_lost_reply_is_never_replayed(self):
+        connection = Mock()
+        with patch.object(session_runtime, "configuration"), \
+                patch.object(session_runtime, "runtime_directory", return_value=Path("runtime")), \
+                patch.object(session_runtime.socket, "socket") as factory:
+            factory.return_value.__enter__.return_value = connection
+            connection.connect.side_effect = lambda *_args: setattr(self.clock.monotonic, "return_value", 102)
+            with self.assertRaisesRegex(ValueError, "deadline expired"):
+                session_runtime.request({**self.payload, "deadline": 101})
+            connection.sendall.assert_not_called()
+            connection.connect.side_effect = None
+            self.clock.monotonic.return_value = 100
+            failure = TimeoutError("lost reply")
+            connection.recv.side_effect = failure
+            with self.assertRaises(TimeoutError) as caught:
+                session_runtime.request(self.payload)
+            self.assertIs(caught.exception, failure)
+            self.assertIn(session_runtime.INPUT_UNCERTAIN, failure.__notes__)
+            connection.sendall.assert_called_once()
+
+    def test_partial_reply_cannot_restart_receive_budget(self):
+        connection = Mock()
+        def partial(_size):
+            self.clock.monotonic.return_value = 102
+            return b'{"generation":'
+        connection.recv.side_effect = partial
+        with self.assertRaisesRegex(ValueError, "deadline expired"):
+            session_runtime.receive(connection, deadline=101)
+        connection.recv.assert_called_once()
 
 
 if __name__ == "__main__":
