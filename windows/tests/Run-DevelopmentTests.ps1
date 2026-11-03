@@ -74,6 +74,10 @@ try {
     Assert-True ($plan.Argv.Count -eq $literal.Count) 'Literal argv count changed'
     for ($i = 0; $i -lt $literal.Count; $i++) { Assert-True ($plan.Argv[$i] -ceq $literal[$i]) 'Literal argv changed' }
     Assert-True (-not (Test-Path -LiteralPath (Get-DevelopmentRoot))) 'Dry run created task state'
+    Assert-True (-not $plan.TrackChildren) 'Tracking was enabled without opt-in'
+    $tracked = Invoke-NativeDevelopmentCli @('exec','--project',$project,'--track-children','--dry-run','--',$shell)
+    Assert-True $tracked.TrackChildren 'Tracking option was not retained in the request'
+    Assert-Throws { Invoke-NativeDevelopmentCli @('doctor','--project',$project,'--track-children') } 'requires exec/node/run'
     Assert-True (-not [Environment]::GetEnvironmentVariable('TASK_ONLY')) 'Task env leaked into provider'
     $msvcPlan = Invoke-NativeDevelopmentCli @('exec','--project',$project,'--msvc','--dry-run','--','cl.exe','/c','source with spaces.cpp')
     Assert-True ($msvcPlan.Executable -eq 'cl.exe' -and $msvcPlan.Msvc) 'MSVC executable required provider-shell VS activation'

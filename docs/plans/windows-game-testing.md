@@ -87,10 +87,16 @@ actual executable identity/exit evidence and offer bounded owned-root resource
 snapshots before cancellation. This does not yet provide crash dumps or hang
 stack traces.
 
+Priority 1 now has opt-in `--track-children` on exec/node/run, with bounded
+`diagnose --tree` and exact retained `--member PID:FILETIME` selection. The
+guardian samples owned identities and retains observed unsigned exit codes
+through worker replacement. Coverage explicitly remains partial for missed
+short-lived members, tracking overflow and unavailable observations.
+
 ### Delivery order from consuming-game testing
 
 Use the following order for new scoped increments. These are proposed
-capabilities, not currently available Windows commands. Retain per-platform
+capabilities; priority 1 is implemented as described above. Retain per-platform
 capability discovery and explicit unsupported results; Linux and Windows need
 equivalent evidence contracts, not identical implementation mechanisms.
 

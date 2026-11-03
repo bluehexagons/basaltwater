@@ -68,7 +68,7 @@ function Initialize-DevelopmentSession($Record, $Request) {
         Graphics = $environment.Graphics; Display = $environment.Displays; HardwareMetadata = $environment.State;
         HostEnvironment = $environment;
         Receipt = 'receipt.json'; Stdout = 'stdout.log'; Stderr = 'stderr.log'; Artifacts = 'artifacts';
-        Target = 'target.json'; Diagnostics = 'diagnostics';
+        Target = 'target.json'; Members = 'members.json (only with --track-children)'; Diagnostics = 'diagnostics';
         Isolation = 'Project must honor BASALTWATER_TEST_PROFILE; this is not an OS sandbox';
         ArgumentCapture = 'Arguments and environment are omitted to avoid retaining credentials'
     }

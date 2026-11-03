@@ -175,9 +175,10 @@ Usage: basaltw desktop develop COMMAND [OPTIONS]
   status|logs|cancel TASK_ID               Inspect output or request cancellation
   wait TASK_ID [--timeout SECONDS]         Wait up to 60 seconds by default (1-86400)
   ready TASK_ID [--timeout SECONDS]        Wait for a live test session's readiness
-  diagnose TASK_ID                        Retain native root identity/resource evidence
+  diagnose TASK_ID [--tree | --member PID:FILETIME]  Retain identity/resource evidence
 
 Task options: --timeout SECONDS, --env NAME=VALUE, --msvc, --dry-run.
+Child diagnostics (exec/node/run): --track-children (sampled, partial coverage).
 Test sessions (exec/node/run): --test-session [--ready-timeout SECONDS (1-300)].
 Project must use BASALTWATER_TEST_PROFILE and atomically write a JSON Token from
 BASALTWATER_TEST_READY_TOKEN to BASALTWATER_TEST_READY_FILE after readiness.
@@ -340,7 +341,7 @@ function New-DevelopmentPlan([string[]]$Arguments) {
     $verb = $Arguments[0]
     if ($verb -notin @('doctor','exec','node','editor','run','import')) { throw "Unknown development command '$verb'. Run basaltw desktop develop --help." }
     $project = ''; $runtime = ''; $msvc = $false; $plan = $false; $timeout = 3600
-    $testSession = $false; $readyTimeout = 30; $readySelected = $false
+    $testSession = $false; $readyTimeout = 30; $readySelected = $false; $trackChildren = $false
     $environment = @{}; $literal = @(); $scriptName = ''
     for ($i = 1; $i -lt $Arguments.Count; $i++) {
         $arg = $Arguments[$i]
@@ -348,6 +349,7 @@ function New-DevelopmentPlan([string[]]$Arguments) {
         switch ($arg) {
             '--msvc' { $msvc = $true }
             '--test-session' { $testSession = $true }
+            '--track-children' { $trackChildren = $true }
             { $_ -in @('--dry-run','--plan') } { $plan = $true }
             { $_ -in @('--project','--runtime','--timeout','--env','--ready-timeout') } {
                 if (++$i -ge $Arguments.Count) { throw "Missing value for $arg" }
@@ -371,6 +373,7 @@ function New-DevelopmentPlan([string[]]$Arguments) {
             default { if ($verb -eq 'node' -and -not $scriptName -and $arg -notlike '--*') { $scriptName = $arg } else { throw "Unexpected option '$arg'; put literal arguments after --." } }
         }
     }
+    if ($trackChildren -and $verb -notin @('exec','node','run')) { throw '--track-children requires exec/node/run' }
     if (($testSession -and $verb -notin @('exec','node','run')) -or ($readySelected -and -not $testSession)) {
         throw 'Use --test-session with exec/node/run; --ready-timeout requires --test-session.'
     }
@@ -412,7 +415,7 @@ function New-DevelopmentPlan([string[]]$Arguments) {
         }
     }
     [pscustomobject]@{ Verb = $verb; Project = $project; Executable = $exe; Argv = @($argv); Environment = $environment;
-        Msvc = $msvc; TimeoutSeconds = $timeout; Plan = $plan; Node = $node; TestSession = $testSession; ReadyTimeoutSeconds = $readyTimeout }
+        Msvc = $msvc; TimeoutSeconds = $timeout; Plan = $plan; Node = $node; TestSession = $testSession; ReadyTimeoutSeconds = $readyTimeout; TrackChildren = $trackChildren }
 }
 function Initialize-DevelopmentDirectory([string]$Directory) {
     Assert-DevelopmentPath $Directory
@@ -441,9 +444,12 @@ function Invoke-NativeDevelopmentCli([string[]]$Arguments) {
         return
     }
     if ($Arguments[0] -eq 'diagnose') {
-        if ($Arguments.Count -ne 2) { throw 'Usage: develop diagnose TASK_ID' }
+        $tree = $Arguments.Count -eq 3 -and $Arguments[2] -eq '--tree'
+        $member = ''
+        if ($Arguments.Count -eq 4 -and $Arguments[2] -eq '--member') { $member = $Arguments[3] }
+        if ($Arguments.Count -ne 2 -and -not $tree -and -not $member) { throw 'Usage: develop diagnose TASK_ID [--tree | --member PID:FILETIME]' }
         . (Join-Path $PSScriptRoot 'Development.Diagnostics.ps1')
-        return Get-DevelopmentDiagnostics $Arguments[1]
+        return Get-DevelopmentDiagnostics $Arguments[1] -Tree:$tree -Member $member
     }
     if ($Arguments[0] -in @('wait','ready')) {
         if ($Arguments.Count -notin @(2,4) -or ($Arguments.Count -eq 4 -and
@@ -533,7 +539,7 @@ function Invoke-NativeDevelopmentCli([string[]]$Arguments) {
         WorkerPid = 0; WorkerStartedUtc = ''; ChildPid = 0; ChildStartedUtc = '';
         CreatedUtc = [DateTime]::UtcNow.ToString('o'); Boot = (Get-DevelopmentBoot); CompletedUtc = $null; State = 'queued'; ExitCode = $null;
         ExecutionStartedUtc = $null; ExecutionEndedUtc = $null; ElapsedSeconds = $null; Streams = $null; StreamLimitBytes = 4MB;
-        Project = $request.Project; TestSession = $null;
+        Project = $request.Project; TestSession = $null; TrackChildren = $request.TrackChildren;
         TaskName = ('Basaltwater Development ' + $id); Message = 'Use develop status/logs/cancel TASKID.' }
     $provider.Dispose()
     $snapshot = @{}

@@ -1,4 +1,6 @@
 <# Real owned process trees in a temporary store; Scheduler, notifications and sleep requests mocked. #>
+[CmdletBinding()]
+param([switch]$ChildDiagnosticsOnly)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 function Assert-True([bool]$Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
@@ -28,7 +30,7 @@ try {
     $env:LOCALAPPDATA = Join-Path $temporary 'account'
     $fixtureSource = Join-Path $temporary 'worker source'
     New-Item -ItemType Directory -Path $fixtureSource | Out-Null
-    foreach ($file in @('Development.Common.ps1','Development.Session.ps1','Development.Process.ps1','Invoke-DevelopmentTask.ps1','GitHubRunner.Common.ps1','ShellIntegration.Common.ps1')) {
+    foreach ($file in @('Development.Common.ps1','Development.Session.ps1','Development.Process.ps1','Development.Diagnostics.ps1','Development.Children.ps1','Development.Children.cs','Invoke-DevelopmentTask.ps1','GitHubRunner.Common.ps1','ShellIntegration.Common.ps1')) {
         Copy-Item -LiteralPath (Join-Path $windows $file) -Destination (Join-Path $fixtureSource $file)
     }
     $processTypes = Join-Path $fixtureSource 'Development.Process.ps1'
@@ -65,6 +67,14 @@ try {
 from __future__ import annotations
 import json, os, pathlib, subprocess, sys, time
 mode, child_path = sys.argv[1:3]
+if mode == 'children':
+    first = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(2); raise SystemExit(7)'])
+    first.wait()
+    child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
+    marker = pathlib.Path(child_path + '.tmp')
+    marker.write_text(str(child.pid), encoding='utf-8')
+    os.replace(marker, child_path)
+    time.sleep(60)
 if mode.startswith('session-'):
     profile = pathlib.Path(os.environ['BASALTWATER_TEST_PROFILE'])
     (profile / 'settings.json').write_text('{}', encoding='utf-8')
@@ -97,8 +107,9 @@ if mode in ('cancel', 'timeout', 'orphan', 'crash', 'diagnostic-crash', 'session
 print(json.dumps({'argv': sys.argv[3:], 'date': os.environ.get('TASK_LITERAL_DATE')}))
 sys.exit(23 if mode == 'fail' else 0)
 '@
-    foreach ($mode in @('success','fail','flood','failed-flood','paused-flood','timeout','cancel','orphan','cleanup-fail','scheduler-cleanup-fail','crash','publication-crash','diagnostic-crash',
+    foreach ($mode in @('children','success','fail','flood','failed-flood','paused-flood','timeout','cancel','orphan','cleanup-fail','scheduler-cleanup-fail','crash','publication-crash','diagnostic-crash',
         'session-ready','session-early','session-timeout','session-cancel','session-scheduler-cleanup-fail')) {
+        if ($ChildDiagnosticsOnly -and $mode -notin @('children','crash','diagnostic-crash')) { continue }
         $id = [guid]::NewGuid().ToString('N')
         $directory = Get-DevelopmentDirectory $id
         Initialize-DevelopmentDirectory $directory
@@ -119,6 +130,10 @@ sys.exit(23 if mode == 'fail' else 0)
         $record = [pscustomobject]@{ Id = $id; OwnerSid = (Get-DevelopmentSid); SessionId = (Get-Process -Id $PID).SessionId;
             WorkerPid = 0; WorkerStartedUtc = ''; ChildPid = 0; ChildStartedUtc = ''; CreatedUtc = [datetime]::UtcNow.ToString('o');
             CompletedUtc = $null; State = 'queued'; ExitCode = $null; TaskName = 'Basaltwater Development ' + $id; Message = '' }
+        if ($mode -in @('children','crash','diagnostic-crash')) {
+            $request | Add-Member NoteProperty TrackChildren $true
+            $record | Add-Member NoteProperty TrackChildren $true
+        }
         if ($mode -eq 'success') {
             # A long queue across wall-clock days must not inflate execution time.
             $record.CreatedUtc = [datetime]::UtcNow.AddDays(-30).ToString('o')
@@ -182,7 +197,35 @@ function Remove-Item {
                     [IO.File]::WriteAllText($childFile + '.release', 'release')
                 }
             }
+            if ($mode -eq 'children' -and -not $descendant -and (Test-Path -LiteralPath $childFile)) {
+                $catalog = Read-DevelopmentMembers $directory
+                $replacement = @($catalog.Members | Where-Object ProcessId -EQ ([int](Get-Content -LiteralPath $childFile)))
+                if ($replacement.Count -ne 1) { continue }
+                $exited = @($catalog.Members | Where-Object { $_.Role -eq 'child' -and $_.ExitCode -eq 7 })
+                Assert-True ($exited.Count -eq 1 -and $exited[0].ExitCodeHex -eq '0x00000007') 'Lost observed child exit7 across replacement'
+                $root = @($catalog.Members | Where-Object Role -EQ 'root')
+                $parent = @($catalog.Members | Where-Object Token -CEQ $replacement[0].ParentToken)
+                Assert-True ($root.Count -eq 1 -and (-not $replacement[0].ParentToken -or
+                    ($parent.Count -eq 1 -and [long]$parent[0].CreatedFileTimeUtc -le [long]$replacement[0].CreatedFileTimeUtc))) 'Replacement linked an unverified parent'
+                $tree = Invoke-NativeDevelopmentCli @('diagnose',$id,'--tree')
+                Assert-True ($tree.ok -and $tree.Members.Count -ge 4 -and $tree.Coverage -match 'partial') 'Child tree diagnostic failed'
+                $selected = Invoke-NativeDevelopmentCli @('diagnose',$id,'--member',$replacement[0].Token)
+                Assert-True ($selected.ok -and $selected.Samples[0].Resources.WorkingSetBytes -gt 0) 'Replacement counters unavailable'
+                $retained = Invoke-NativeDevelopmentCli @('diagnose',$id,'--member',$exited[0].Token)
+                Assert-True ($retained.ok -and $retained.Samples.Count -eq 0 -and $retained.Members[0].ExitCode -eq 7) 'Exited child probed or evidence lost'
+                $bad = $replacement[0].ProcessId.ToString() + ':' + ([long]$replacement[0].CreatedFileTimeUtc + 1)
+                Assert-True (-not (Invoke-NativeDevelopmentCli @('diagnose',$id,'--member',$bad)).ok) 'Stale child creation token accepted'
+                $foreign = $unrelated.Id.ToString() + ':' + $unrelated.StartTime.ToUniversalTime().ToFileTimeUtc()
+                Assert-True (-not (Invoke-NativeDevelopmentCli @('diagnose',$id,'--member',$foreign)).ok) 'Unrelated child selected'
+                $descendant = Get-Process -Id $replacement[0].ProcessId
+                $null = $descendant.Handle
+                [IO.File]::WriteAllText((Join-Path $directory 'cancel'), 'cancel')
+            }
             if ($mode -in @('timeout','cancel','orphan','crash','diagnostic-crash','session-timeout','session-cancel') -and -not $descendant -and (Test-Path -LiteralPath $childFile)) {
+                if ($mode -in @('crash','diagnostic-crash')) {
+                    $catalog = Read-DevelopmentMembers $directory
+                    if (-not @($catalog.Members | Where-Object ProcessId -EQ ([int](Get-Content -LiteralPath $childFile))).Count) { continue }
+                }
                 $descendant = Get-Process -Id ([int](Get-Content -LiteralPath $childFile)) -ErrorAction Stop
                 $null = $descendant.Handle
                 $active = Get-DevelopmentStatus $id
@@ -250,9 +293,22 @@ function Remove-Item {
             $blocked = $false
             try { Assert-NativeDevelopmentIdle } catch { $blocked = $_.Exception.Message -match 'cleanup-uncertain' }
             Assert-True $blocked 'Maintenance did not block on the interrupted guardian receipt'
+            if ($mode -in @('crash','diagnostic-crash')) {
+                $catalog = Read-DevelopmentMembers $directory
+                Assert-True (@($catalog.Members | Where-Object { $_.State -eq 'observed' -and $null -eq $_.ExitCode }).Count -gt 0) 'Guardian loss invented observed exit evidence'
+                Assert-True (-not (Invoke-NativeDevelopmentCli @('diagnose',$id,'--tree')).ok) 'Guardian loss allowed live child counters'
+            }
             continue
         }
         $result = Get-DevelopmentRecord $id
+        if ($mode -eq 'children') {
+            Assert-True ($result.State -eq 'cancelled' -and $result.CompletedUtc -and $descendant.WaitForExit(0)) 'Tracked cancellation did not settle owned members'
+            $terminal = Invoke-NativeDevelopmentCli @('diagnose',$id,'--tree')
+            Assert-True ($terminal.ok -and @($terminal.Members | Where-Object State -NE 'exited').Count -eq 0 -and
+                @($terminal.Members | Where-Object ExitCode -EQ 7).Count -eq 1) 'Terminal catalog lost observed exits'
+            $descendant.Dispose()
+            continue
+        }
         $target = Read-DevelopmentTarget $directory
         Assert-True ($null -ne $target -and $target.ProcessId -ne $result.ChildPid) 'Native root identity missing or confused with the PowerShell launcher'
         if ($mode -like 'session-*') {

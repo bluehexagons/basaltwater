@@ -132,6 +132,14 @@ function Invoke-NativeDesktopWorkerBody($Request) {
         if (-not ('Basaltwater.Diagnostics.Native' -as [type])) {
             Add-Type -Path (Join-Path $PSScriptRoot 'Diagnostics.Native.cs') -ErrorAction Stop
         }
+        if ($Request.PSObject.Properties['members']) {
+            if (@($Request.members).Count -gt 32) { throw 'Member sample limit is 32' }
+            return @{ samples = @($Request.members | ForEach-Object {
+                $target = $_
+                try { @{ Token = $target.Token; Resources = [Basaltwater.Diagnostics.Native]::Capture([int]$target.ProcessId,[long]$target.CreatedFileTimeUtc,$Request.job,$Request.sid,[int]$Request.session); Error = $null } }
+                catch { @{ Token = $target.Token; Resources = $null; Error = $_.Exception.Message } }
+            }) }
+        }
         return [Basaltwater.Diagnostics.Native]::Capture([int]$Request.pid,[long]$Request.created,$Request.job,$Request.sid,[int]$Request.session)
     }
     if ($Request.command -eq 'environment') {

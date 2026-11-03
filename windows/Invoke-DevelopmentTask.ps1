@@ -54,7 +54,7 @@ if ($record.CompletedUtc -or $record.WorkerPid) {
     $lease.Dispose()
     throw 'Task already acknowledged; refusing replay.'
 }
-$process = $null; $job = $null; $gateHandle = $null; $started = $false; $awake = $false
+$process = $null; $job = $null; $gateHandle = $null; $started = $false; $awake = $false; $tracker = $null
 $copies = @(); $cleanupError = $null; $desired = 'failed'; $timer = $null
 # A legacy queued receipt can still be dispatched; initialize evidence only here.
 foreach ($name in @('ExecutionStartedUtc','ExecutionEndedUtc','ElapsedSeconds','Streams')) {
@@ -100,8 +100,16 @@ try {
     $record.ExecutionStartedUtc = [DateTime]::UtcNow.ToString('o')
     $timer = [Diagnostics.Stopwatch]::StartNew()
     Write-DevelopmentJson (Join-Path $directory 'receipt.json') $record
+    if ($request.PSObject.Properties['TrackChildren'] -and $request.TrackChildren) {
+        . (Join-Path $PSScriptRoot 'Development.Diagnostics.ps1')
+        . (Join-Path $PSScriptRoot 'Development.Children.ps1')
+        Add-Type -Path (Join-Path $PSScriptRoot 'Development.Children.cs')
+        $tracker = [Basaltwater.Diagnostics.Children]::new($record.OwnerSid,[int]$record.SessionId,$process.Id)
+        Update-DevelopmentChildren $tracker $record $directory
+    }
     $gateHandle.Set() | Out-Null
     while (-not $process.WaitForExit(200)) {
+        if ($tracker) { Update-DevelopmentChildren $tracker $record $directory }
         if (Test-Path -LiteralPath (Join-Path $directory 'cancel')) { $desired = 'cancelled'; break }
         if ($timer.Elapsed.TotalSeconds -ge $request.TimeoutSeconds) { $desired = 'timed-out'; break }
         Update-DevelopmentSessionReadiness $record $timer.Elapsed.TotalSeconds
@@ -122,6 +130,11 @@ finally {
         Stop-DevelopmentProcess $job $process $started $copies
         if (Test-Path -LiteralPath (Join-Path $directory 'child-cleanup-uncertain')) { throw 'Native child cleanup could not be confirmed; inspect owned processes.' }
     } catch { $cleanupError = $_.Exception.Message }
+    if ($tracker) {
+        try { Update-DevelopmentChildren $tracker $record $directory $false }
+        catch { $record.Message = 'Child exit evidence unavailable: ' + $_.Exception.Message }
+        finally { $tracker.Dispose() }
+    }
     if ($job) { $job.Dispose() }
     if ($process) { $process.Dispose() }
     if ($gateHandle) { $gateHandle.Dispose() }

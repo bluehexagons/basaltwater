@@ -28,10 +28,40 @@ loss or final evidence-write failure can leave only the initial `created`
 record, with a null exit code. Do not reconstruct a native exit from an unrelated
 or recycled PID. Older tasks can have no native identity at all.
 
-The live probe accepts only this native root. For npm, Python or a project
-wrapper, that means the launcher executable, not automatically its game process
-or other descendants. Use direct execution of the intended application when
-root-level counters are needed. The command has no arbitrary `--pid` option.
+The default live probe selects only this native root. For npm, Python or a
+project wrapper, that means the wrapper executable. For child diagnostics,
+start `exec`, `node` or `run` with `--track-children`, then use:
+
+```powershell
+basaltw desktop develop exec --project F:\Repos\game --track-children -- node.exe adapter.js
+basaltw desktop develop diagnose TASK_ID --tree
+basaltw desktop develop diagnose TASK_ID --member PID:FILETIME
+```
+
+`--tree` returns up to 32 retained members plus live resource samples and errors.
+Copy a member's exact `Token` for `--member`; arbitrary PIDs and unretained or
+stale creation tokens are refused. Legacy tasks and tasks launched without
+tracking explicitly do not support either selector. The default root report
+and root-only tasks retain their existing behavior.
+
+The guardian samples exact named Job membership every 200ms (plus sampling and
+publication time), validates owner/session/creation time, and pins query and
+synchronize process handles for up to 128 retained identities, including
+replacement workers. `members.json` is private, bounded to 128 KiB, and published
+under the existing state mutex and atomic writer only when the catalog changes.
+Roles distinguish helper, native root and child. `ParentToken` is included only
+when a verified retained parent is still live and predates the child's creation;
+otherwise it is null. No executable arguments or environment are cataloged.
+
+Coverage is always partial: members that start and exit between samples may be
+missed. `Overflow`, catalog errors, omitted sample counts and terminal
+`UnobservedExits` remain explicit.
+An observed exit retains unsigned `ExitCode` and `ExitCodeHex` from the pinned
+handle, even after worker replacement or task cleanup. Exited members never
+cause a PID lookup. Missing exit observations remain unknown, including after
+guardian loss; terminal cleanup alone does not invent an exit code. Live selected
+members undergo the same identity, membership, account and session checks as
+the root on every counter sample.
 
 Before reading resource counters, the isolated worker checks creation time,
 current account/session and membership of the task's specific named Job Object.
@@ -70,10 +100,20 @@ Only identity, exit codes and counters are collected: no debugger attachment,
 memory dump, stack trace, module/command-line inventory, window messages, pixels
 or process mutation. Keep reports with private logs and session evidence. Test
 sessions index `target.json` and `diagnostics`; profile removal leaves both
-intact. Crash dumps and process-tree profiling remain separate future work.
+intact. Crash dumps and aggregate process-tree profiling remain separate future work.
 
 Native qualification on 2026-11-02 passed the full Windows suite and a separate
 interactive Scheduled Task session: live root counters, settled exit evidence,
 profile removal and retained snapshots were observed. Real owned-process tests
 also rejected stale creation times and a process outside the task's Job Object.
 Game-specific crash and hang diagnosis remains unqualified.
+
+Child diagnostics qualification uses `windows/tests/Run-DevelopmentProcessTests.ps1`
+(or `-ChildDiagnosticsOnly` for the three child-focused cases). It exercises real
+owned Windows processes and Job Objects, replacement after child exit 7, selected
+worker counters, stale/unrelated tokens, terminal exits, cancellation and guardian
+loss while an independent sleeper survives. Scheduler registration, notifications
+and idle-sleep requests are mocked; this is not a new installed-Scheduler or game
+qualification. `Run-DiagnosticsTests.ps1` covers bounded reports, malformed
+catalogs, unavailable samples, terminal no-probe behavior and unchanged catalogs
+with temporary files and mocked process workers on PowerShell 7 and 5.1.
