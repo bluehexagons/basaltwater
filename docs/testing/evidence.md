@@ -1,6 +1,6 @@
 # Dated testing evidence summaries
 
-Reconciled 2026-11-02 UTC from retained private reports, the owner's stack setup
+Reconciled 2026-11-03 UTC from retained private reports, the owner's stack setup
 rerun report, subsequent native CachyOS T3 and SDL/OpenGL application observations,
 installed native Windows checks, current Shares & Data qualification,
 package-changing Admin and Proxmox inventory qualification, and automated checks.
@@ -324,7 +324,7 @@ the fixture projects, with no controller administrator or target credentials.
 | Check level | Observed result | Qualification boundary |
 | --- | --- | --- |
 | **Installed setup and conversion** | Normal dedicated-runner setup registered through the controller's GitHub CLI. Conversion to `server_lite --build-server --github-runner` preserved the same working GitHub runner identity. Normal setup then added signed webhook intake and its admission worker | One private repository and an allowed human actor; organization/group, multi-repository registered execution and panel enrollment were not tested |
-| **Real Actions and nested builds** | Allowed manual dispatch ran as the dedicated service account. A rerun was refused with zero workflow steps, including its `always()` canary. A synchronous same-host managed build returned verified artifacts in 5.91 seconds. With an older unrelated SSH request queued, the exact nested request ran inside its parent's slot; the older request started only after parent cleanup | Actual runner ancestry and restricted SSH transport, without workflow environment bypasses. The follow-up below adds selected process-loss checks; push/PR events, additional denial cases and other crash/acknowledgement timings remain open |
+| **Real Actions and nested builds** | Allowed manual dispatch ran as the dedicated service account. A rerun was refused with zero workflow steps, including its `always()` canary. A synchronous same-host managed build returned verified artifacts in 5.91 seconds. With an older unrelated SSH request queued, the exact nested request ran inside its parent's slot; the older request started only after parent cleanup | Actual runner ancestry and restricted SSH transport, without workflow environment bypasses. The follow-ups below add selected process-loss and real push/PR checks; additional identity denial cases and other crash/acknowledgement timings remain open |
 | **Real cancellation** | Normal GitHub cancellation of a running slow nested build produced a cancelled child, empty scratch and an empty capacity marker after cleanup | The initial 45-second observation window expired while awaiting GitHub cancellation delivery; eventual completion was confirmed against the original job and request. This does not promise a 45-second cancellation bound |
 | **Three-role capacity and maintenance** | During a real Actions hold, an ordinary SSH request and a signed HTTPS webhook remained queued. Busy maintenance refused and retained its drain; another assigned Actions job was denied before any step. Explicit idle maintenance released its own drain, then the SSH and pinned public-Git/Node webhook builds succeeded without overlapping execution | HTTPS verified the private lab certificate and hostname. Bad signatures returned 403; signed and duplicate deliveries returned 202 with one retained receipt and one core job. Public DNS, ACME, Tunnel and a GitHub-configured webhook sender were not exercised |
 | **Saved rerun and reboot** | Setup with all role flags omitted left all four role units active and boot-enabled, both runner credential files unchanged, and no jobs, scratch or drain active. Actual guest reboot preserved those service checks, runner UID and coordinator inode; a fresh nested workflow, ordinary SSH build and webhook signature/duplicate probes passed afterward | This pass checked service state, not the saved role fields. The later fresh-host pass exposed those fields being erased on an omitted-role setup rerun. Selected configuration only; no host reboot, power loss, storage exhaustion or interrupted installation qualification |
@@ -398,6 +398,27 @@ registration, fixture and private evidence. Its webhook inbox/preparation queue
 was empty with one retained receipt. The older qualification guest remained
 stopped; other guests kept their states and running process identities, with no
 active hypervisor tasks or guest locks.
+
+### Real GitHub event follow-up
+
+**2026-11-03 UTC; unchanged installed `08c41ccb` runtime on the retained fresh
+Debian 13 QEMU guest.** Sixteen shared-host and identity-gate source files
+matched the controller. A branch-restricted workflow in the private fixture
+repository used real GitHub deliveries, without editing the installed hook,
+policy or credentials.
+
+| Check level | Observed result | Qualification boundary |
+| --- | --- | --- |
+| **Real push and PR updates** | An allowed human's actual Git push and same-repository PR opening and synchronization each ran workflow steps, completed a nested managed build and verified its artifact. Step canaries and local gate outcomes matched the original GitHub run IDs and event actions | One private repository and the same allowed human as actor, sender and PR author. No fork, bot, independent actor/author or organization/group qualification |
+| **Denied PR action** | Closing the unmerged fixture PR delivered the unsupported `closed` action. GitHub reported a failed job with zero workflow steps, the event-step canary was absent, and local telemetry recorded `pr-action-unsupported` | Expected denial, including prevention of the workflow's `always()` step. This does not qualify every denied event or identity combination |
+| **Reopening and host preservation** | Reopening the same PR ran a fourth allowed job, completed another nested build and verified its artifact. Final inspection correlated all five event runs: four successful builds/canaries and one denied job without a canary. All nine retained managed jobs were successful; source hashes, two runner credentials, public setup settings, four active/enabled role units, account identities and the coordinator inode were unchanged, with empty scratch/capacity/intake and no drain | Existing registration was reused. No policy relaxation, new registration, injected event file or workflow-controlled hook bypass. Local telemetry and step markers are operational evidence, not independent audit records |
+
+No product defect was reproduced. Cleanup disabled the event-only fixture
+workflow, closed the fixture PR without merging, and stopped the owned guest
+with autostart disabled. Registration, fixture branches and original run evidence
+were retained. Other guest states and process identities were preserved, with
+no active hypervisor tasks or guest locks. This follow-up changes documentation;
+the installed implementation remains the previously validated revision.
 
 ## Automated validation
 

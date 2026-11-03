@@ -335,9 +335,12 @@ configuration and a disposable worker/canary boundary. Selected native tokenless
 checks are supplemented by actual CLI registration, allowed manual dispatch,
 denied rerun/drain, nested builds/cancellation and registered reboot on the
 [shared host](../testing/evidence.md#shared-debian-build-and-ci-host).
-Organization/group, registered multi-repository, push/PR and panel/expired-token
-cases and other process-loss/cleanup-acknowledgement timings still need their own
-live evidence. Selected guardian and managed-worker SIGKILL checks now confirm
+The separate [event follow-up](../testing/evidence.md#real-github-event-follow-up)
+adds allowed real pushes and same-repository PRs, with a denied PR action
+executing no workflow steps. Organization/group, registered multi-repository,
+additional actor/author denial cases, fork/bot delivery, panel/expired-token
+cases and other process-loss/cleanup-acknowledgement timings still need their
+own live evidence. Selected guardian and managed-worker SIGKILL checks now confirm
 retained capacity, inspected recovery and a later successful real workflow;
 see the [fault evidence](../testing/evidence.md#shared-host-crash-and-scratch-follow-up).
 The checklist

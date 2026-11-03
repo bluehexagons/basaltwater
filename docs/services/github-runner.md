@@ -3,8 +3,9 @@
 Use a Debian 13/Trixie x86-64 VM or hardware host for trusted jobs from private
 `github.com` repositories. This persistent runner is not a sandbox for hostile
 code. Selected native tokenless checks and actual CLI registration, manual
-dispatch, denied rerun/drain, nested builds/cancellation and registered reboot
-pass on a shared Debian host. Broader events, scopes and fault cases remain open;
+dispatch, real push and same-repository PRs, denied rerun/drain, nested
+builds/cancellation and registered reboot pass on a shared Debian host.
+Broader identity, scope and fault cases remain open;
 see the [dated evidence](../testing/evidence.md#shared-debian-build-and-ci-host),
 [coverage map](../plans/testing-coverage.md) and
 [operations reference](github-runner-operations.md#qualification).
