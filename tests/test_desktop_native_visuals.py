@@ -55,8 +55,18 @@ class CaptureCoordinateTests(unittest.TestCase):
             request.reset_mock()
             used = Path(folder) / "used.png"
             used.write_bytes(b"existing")
-            with redirect_stdout(StringIO()):
-                self.assertEqual(desktop_cli.run_desktop_command(parser.parse_args(action + ["--observe", "--output", str(used)])), 1)
+            dangling = Path(folder) / "dangling.png"
+            dangling.symlink_to(Path(folder) / "absent.png")
+            for path in (used, dangling, used / "child.png", Path(folder) / "absent" / "child.png"):
+                for arguments in (action, [part for part in action if part != "--native"]):
+                    output = StringIO()
+                    with self.subTest(path=path, arguments=arguments), redirect_stdout(output), \
+                            patch.object(client.runtime, "status", return_value=current), \
+                            patch.object(client.runtime, "request") as debian_request:
+                        self.assertEqual(desktop_cli.run_desktop_command(parser.parse_args(
+                            arguments + ["--observe", "--output", str(path)])), 1)
+                        self.assertEqual(json.loads(output.getvalue())["input_delivery"], "not-sent")
+                        debian_request.assert_not_called()
             request.assert_not_called()
             for button in ("left", "0", "8"):
                 with redirect_stdout(StringIO()), patch("sys.stderr", StringIO()), self.assertRaises(SystemExit):

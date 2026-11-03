@@ -416,9 +416,12 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                     observation_output = None
                     if args.observe:
                         observation_output = str(Path(args.output).absolute()) if args.output else client.artifact_path()
-                        validate_filesystem_path(observation_output)
-                        if Path(observation_output).suffix.lower() != ".png" or Path(observation_output).exists():
+                        validate_filesystem_path(observation_output, check_writable=True)
+                        observation_path = Path(observation_output)
+                        if observation_path.suffix.lower() != ".png" or observation_path.exists() or observation_path.is_symlink():
                             raise ValueError("Observation requires a new PNG path")
+                        if not observation_path.parent.is_dir():
+                            raise ValueError("Observation output requires an existing parent directory")
                     payload.update({name: getattr(args, name) for name in ("generation", "geometry", "kind", "key", "text", "x", "y", "button")})
                     payload["codes"] = getattr(args, "codes", None)
                     client.validate_keycodes(payload)

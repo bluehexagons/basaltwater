@@ -139,7 +139,11 @@ need a safe restart before token-bound input. A non-default lifetime must be
 confirmed in the capture response, rather than assumed from a CLI flag.
 
 Linux `input --observe` retains the input completion receipt, settles, and
-captures again. Completion receipts retain the geometry admitted for input;
+captures again. It checks the output path before input, refusing existing files,
+dangling symlinks and invalid/unwritable parent directories. The precheck does
+not reserve a path; a later filesystem change can still cause post-input capture
+failure, which retains completed input and never replays it.
+Completion receipts retain the geometry admitted for input;
 take a new capture to observe current dimensions. Debian records completion
 without a final geometry query that could obscure successfully submitted input.
 CachyOS skips the stream's initial sample; Debian performs a
