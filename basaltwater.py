@@ -1952,7 +1952,13 @@ def run_setup_command(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        config = SetupConfig.from_args(args, args.system_type)
+        from lib.build_role_setup import BUILD_ROLE_PROFILES, setup_config_with_saved_build_roles
+
+        cached_build_roles = (
+            load_setup_command(_provisioning_cache_target(args.host))
+            if args.system_type in BUILD_ROLE_PROFILES else None
+        )
+        config = setup_config_with_saved_build_roles(args, cached_build_roles)
     except ValueError as exc:
         print(f"Error: {exc}")
         return 1

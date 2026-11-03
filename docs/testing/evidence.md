@@ -327,12 +327,13 @@ the fixture projects, with no controller administrator or target credentials.
 | **Real Actions and nested builds** | Allowed manual dispatch ran as the dedicated service account. A rerun was refused with zero workflow steps, including its `always()` canary. A synchronous same-host managed build returned verified artifacts in 5.91 seconds. With an older unrelated SSH request queued, the exact nested request ran inside its parent's slot; the older request started only after parent cleanup | Actual runner ancestry and restricted SSH transport, without workflow environment bypasses. The follow-up below adds selected process-loss checks; push/PR events, additional denial cases and other crash/acknowledgement timings remain open |
 | **Real cancellation** | Normal GitHub cancellation of a running slow nested build produced a cancelled child, empty scratch and an empty capacity marker after cleanup | The initial 45-second observation window expired while awaiting GitHub cancellation delivery; eventual completion was confirmed against the original job and request. This does not promise a 45-second cancellation bound |
 | **Three-role capacity and maintenance** | During a real Actions hold, an ordinary SSH request and a signed HTTPS webhook remained queued. Busy maintenance refused and retained its drain; another assigned Actions job was denied before any step. Explicit idle maintenance released its own drain, then the SSH and pinned public-Git/Node webhook builds succeeded without overlapping execution | HTTPS verified the private lab certificate and hostname. Bad signatures returned 403; signed and duplicate deliveries returned 202 with one retained receipt and one core job. Public DNS, ACME, Tunnel and a GitHub-configured webhook sender were not exercised |
-| **Saved rerun and reboot** | Setup with all role flags omitted retained the saved three-role configuration. All four role units were active and boot-enabled, both runner credential files were unchanged, and no jobs, scratch or drain remained active. Actual guest reboot preserved those checks, runner UID and coordinator inode; a fresh nested workflow, ordinary SSH build and webhook signature/duplicate probes passed afterward | Selected configuration only; no host reboot, power loss, storage exhaustion or interrupted installation qualification |
+| **Saved rerun and reboot** | Setup with all role flags omitted left all four role units active and boot-enabled, both runner credential files unchanged, and no jobs, scratch or drain active. Actual guest reboot preserved those service checks, runner UID and coordinator inode; a fresh nested workflow, ordinary SSH build and webhook signature/duplicate probes passed afterward | This pass checked service state, not the saved role fields. The later fresh-host pass exposed those fields being erased on an omitted-role setup rerun. Selected configuration only; no host reboot, power loss, storage exhaustion or interrupted installation qualification |
 
 The initial fresh provider-provisioning attempt failed during cloud-init and
 removed only its partially created guest. Qualification instead used a separately
-owned full clone of the retained Debian template. Fresh provider bootstrap remains
-unqualified by this batch. Early private workflow preparation failures were
+owned full clone of the retained Debian template. Fresh provider bootstrap was
+not qualified by that batch; the [fresh-host follow-up](#fresh-provider-bootstrap-and-shared-host)
+below records a separate installation. Early private workflow preparation failures were
 inspected and corrected before new dispatches; their original failed jobs and
 cancellation evidence were retained. Intermittent pre-response controller SSH
 failures were inspected through later read-only queries using the original IDs;
@@ -367,6 +368,27 @@ their outcomes; no fault or mutation was repeated. No server quota was relaxed.
 The owned guest was then stopped with autostart disabled, retaining the private
 fixture and evidence. No product defect was reproduced in this follow-up.
 
+### Fresh provider bootstrap and shared host
+
+**2026-11-03 UTC; controller and installed source at `a070bc49`, fresh owned
+Debian 13 x86-64 QEMU guest from the pinned cloud image.** The twelve critical
+shared-host runtime files matched source. The earlier template-clone checks
+remain separate from this normal public CLI provisioning and installation.
+
+| Check level | Observed result | Qualification boundary |
+| --- | --- | --- |
+| **Bootstrap diagnosis and fresh setup** | Retained cloud-init diagnostics identified the original failure: creating a new `operator` account collided with Debian's existing system group. The partial guest was removed. Detailed cloud-init status is now requested before cleanup, and fresh examples use an available private-group name. Normal CLI provisioning then completed cloud-init, authenticated host-key enrollment and combined builder/runner setup with a new non-root account; GitHub reported the new registration online/idle. Normal setup added signed webhook intake | Existing system groups were not adopted and initialization checks were not bypassed. One pinned Debian image, repository-scoped registration and private lab TLS; no public DNS/ACME/Tunnel or provider-configured webhook sender |
+| **Fresh-host workloads** | A real manual-dispatch workflow completed a same-host nested build and verified its artifact. An ordinary authenticated SSH build and a signed webhook build also returned verified artifacts. Invalid/signed/duplicate HTTPS deliveries returned 403/202/202 and retained one webhook core request | Restricted workflow build authority, without controller administrator or target credentials. No deployment, status-check or release publishing |
+
+The first workload harness stopped when a later SSH connection was refused
+before the webhook probe started. Authenticated guest-agent inspection found the
+matching kernel `UFW LIMIT BLOCK` entry; SSH remained active and Fail2ban had no
+failures or bans. Paced observations completed the remaining probe without
+changing firewall or quota policy or replaying the completed workflow/build.
+This establishes the cause of that refusal, not every earlier SSH interruption.
+The [build guide](../services/build-systems.md) now declares the controller's
+trusted SSH source and explains the connection-per-operation polling boundary.
+
 ## Automated validation
 
 | Date / source | Observed result | Qualification boundary |
@@ -376,6 +398,7 @@ fixture and evidence. No product defect was reproduced in this follow-up.
 | 2026-11-01 / Unicode fix `986d3061`, timer fix `7ba41724` | Each fix passed `make check-fast SUITE=web`: 1,289 tests run, one skipped, plus compilation, docs and package metadata. All eight focused local Chromium/Firefox Shares cases passed at `986d3061`; the new Unicode regression failed in both engines before the fix | Focused checks, not a new full CI or release-candidate pass. Local browser services use simulated host actions; installed-service results are recorded separately above |
 | 2026-11-02 / specimen repair `785c3ffd` | CI had stopped before the full suite because the generated Shares & Data specimen lacked the existing Unicode search attributes. Regeneration fixed the two stale inputs. Full local `make -j2 check-ci` passed 9,196 tests, six skips and 82% branch-aware coverage, plus static/docs/brand/metadata/wheel checks. [Hosted CI](https://github.com/bluehexagons/basaltwater/actions/runs/41478410457) passed full Debian/Node 24 validation (9,196 tests, three skips, 82%) and Node 26 compatibility | Generated specimen repair; no application behavior changed. Automated checks do not establish browser, hardware or exact-candidate release qualification |
 | 2026-11-03 / shared-host implementation at `550e8f7f` | Full local `make check-ci` passed 9,316 tests, six skips and 82% branch-aware aggregate coverage, plus static/docs/brand/metadata/wheel checks. [Hosted CI](https://github.com/bluehexagons/basaltwater/actions/runs/41551778724) also passed | Includes exact-request lease delegation, FIFO identity and cancellation regressions. Native results are the separate shared-host batch above; remaining fault and release cases are not inferred from CI |
+| 2026-11-03 / bootstrap diagnostics at `a070bc49` | Full local `make check-ci` passed 9,317 tests, six skips and 82% branch-aware aggregate coverage, plus static/docs/brand/metadata/wheel checks. [Hosted CI](https://github.com/bluehexagons/basaltwater/actions/runs/41618849094) passed | Includes detailed cloud-init failure propagation. The initial system-Python invocation stopped before the suite because its wheel-build dependency was absent; the complete development-environment run passed. Native fresh-host coverage is recorded separately above |
 
 Failures remain in private evidence alongside successful continuations. The
 Proxmox suite initially exposed two corrected test-fixture issues; the Shares

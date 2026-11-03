@@ -33,7 +33,8 @@ must contain a committed root `basaltwater.json`.
 basaltw setup server_lite 192.0.2.20 buildadmin \
   --machine vm --provision-on lab-node --name build-local \
   --image-storage image-pool --storage root vm-pool 80G \
-  --memory 4G --cores 4 --key "$HOME/.ssh/id_ed25519" --build-server
+  --memory 4G --cores 4 --key "$HOME/.ssh/id_ed25519" \
+  --ssh-access-source 192.0.2.10/32 --build-server
 
 basaltw setup server_web 192.0.2.30 buildadmin \
   --machine vm --provision-on lab-node --name web-local \
@@ -51,12 +52,26 @@ Existing hosts require administrative SSH access and verified pins first.
 See [deployment restrictions](deployments.md#build-on-a-saved-builder) and
 [sample manifests](../examples/builds/README.md).
 
+Declare the controller's trusted SSH source on both hosts, as above. Without
+trusted sources, the default firewall rate-limits SSH connections. Each typed
+build-client operation opens a fresh SSH connection, so rapid polling can be
+refused even while the build succeeds. Pace read-only observations and reconcile
+the original request ID after a transport failure before deciding another action.
+
 ## Update and reconcile
 
 Use `basaltw patch web-local --deploy site.example.com HTTPS_REPO` to update
 saved source, then `basaltw deploy web-local --yes` for later saved deployments.
 Retain exact request IDs, guards and receipts after an uncertain result.
 See [policy updates and recovery](build-operations.md).
+
+Repeating `setup` for the same saved server profile preserves omitted build,
+runner and webhook role selections, their public policies and webhook HTTPS
+mode. Existing restricted build grants remain restricted. Explicit options
+replace the corresponding saved values; `--no-build-server` also disables
+inherited webhook intake. Registration tokens and webhook credentials are never
+copied from saved configuration; installed credentials follow their existing
+retention rules. Changing the setup profile requires selecting its roles again.
 
 ## Optional intake
 
@@ -75,9 +90,10 @@ Selected Debian 13 native qualification covers registered-runner conversion,
 mixed-role capacity, nested builds/cancellation, maintenance drain, saved rerun
 and reboot. A [fault follow-up](../testing/evidence.md#shared-host-crash-and-scratch-follow-up)
 adds selected guardian/worker process loss, inspected recovery and bounded
-scratch exhaustion. See the [dated evidence](../testing/evidence.md#shared-debian-build-and-ci-host)
-for tested revisions and remaining provider-bootstrap, public-ingress and fault
-boundaries.
+scratch exhaustion. A separate [fresh-host pass](../testing/evidence.md#fresh-provider-bootstrap-and-shared-host)
+covers normal cloud-image provisioning, combined setup and real build artifacts.
+See the [dated evidence](../testing/evidence.md#shared-debian-build-and-ci-host)
+for tested revisions and remaining public-ingress, event and fault boundaries.
 
 ### Managed builds inside Actions
 
