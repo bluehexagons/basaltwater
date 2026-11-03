@@ -86,6 +86,16 @@ try {
     $bounded = Get-DevelopmentDiagnostics $id -Tree
     Assert-True ($bounded.ok -and $bounded.Members.Count -eq 32 -and $bounded.OmittedMembers -eq 8 -and $bounded.Overflow -and
         $bounded.UnobservedExits -eq 32 -and $bounded.CatalogError -eq 'fixture partial discovery') 'Tree failed to bound samples or invented terminal exits'
+    $originalMembers=$catalog.Members
+    $catalog.Members=@(1..40 | ForEach-Object {
+        $created=1000+$_
+        [pscustomobject]@{ProcessId=$_;CreatedFileTimeUtc="$created";Token="${_}:$created";ParentToken=$null;Role='child';State='exited';ExitCode=0;ExitCodeHex='0x00000000'}
+    }) + @([pscustomobject]@{ProcessId=99;CreatedFileTimeUtc='2';Token='99:2';ParentToken=$null;Role='child';State='observed';ExitCode=$null;ExitCodeHex=$null})
+    Write-DevelopmentJson $membersPath $catalog
+    $replacement=Get-DevelopmentDiagnostics $id -Tree
+    Assert-True ($replacement.ok -and $replacement.Members[0].Token -ceq '99:2' -and $replacement.Members.Count -eq 32 -and
+        $replacement.OmittedMembers -eq 9 -and $replacement.UnobservedExits -eq 1) 'Exit history hid the current worker from bounded discovery'
+    $catalog.Members=$originalMembers;Write-DevelopmentJson $membersPath $catalog
     $record.CompletedUtc = $null; $record.State = 'running'
     function Invoke-DevelopmentMemberWorker($Record,$Members) {
         return @{ samples = @($Members | ForEach-Object { @{ Token = $_.Token; Resources = $null; Error = 'fixture unavailable' } }) }

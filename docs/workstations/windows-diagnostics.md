@@ -39,6 +39,8 @@ basaltw desktop develop diagnose TASK_ID --member PID:FILETIME
 ```
 
 `--tree` returns up to 32 retained members plus live resource samples and errors.
+Observed members precede retained exits, newest first, so replacement workers
+remain discoverable when older exit history exceeds the snapshot limit.
 Copy a member's exact `Token` for `--member`; arbitrary PIDs and unretained or
 stale creation tokens are refused. Legacy tasks and tasks launched without
 tracking explicitly do not support either selector. The default root report
@@ -117,3 +119,10 @@ and idle-sleep requests are mocked; this is not a new installed-Scheduler or gam
 qualification. `Run-DiagnosticsTests.ps1` covers bounded reports, malformed
 catalogs, unavailable samples, terminal no-probe behavior and unchanged catalogs
 with temporary files and mocked process workers on PowerShell 7 and 5.1.
+
+A subsequent real limited interactive Scheduled Task also passed a disposable
+Node wrapper/replacement fixture: retained exit 7, selected replacement counters,
+stale-token refusal, cancellation, terminal member exits and profile removal.
+See the [acceptance record](windows-testing.md). This adds Scheduler-path
+coverage without establishing game crash/hang diagnosis or complete discovery
+of processes shorter than the sampling interval.

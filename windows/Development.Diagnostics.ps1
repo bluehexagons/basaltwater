@@ -89,6 +89,11 @@ function Get-DevelopmentDiagnostics([string]$Id,[switch]$Tree,[string]$Member = 
                 if ($Member) {
                     $selected = @($selected | Where-Object Token -CEQ $Member)
                     if ($selected.Count -ne 1) { throw 'Member identity is not retained in this task catalog' }
+                } else {
+                    # Keep replacement workers discoverable after more than 32
+                    # exits; observed state still requires live revalidation.
+                    $selected = @($selected | Sort-Object @{ Expression = { $_.State -eq 'exited' } },
+                        @{ Expression = { [long]$_.CreatedFileTimeUtc }; Descending = $true })
                 }
                 $omitted = [Math]::Max(0,$selected.Count - 32)
                 $selected = @($selected | Select-Object -First 32)
