@@ -49,9 +49,12 @@ class QAMediaTests(unittest.TestCase):
             stamp.return_value = at(1)
             started = run_checkpoint.start("run-a", "match-a", "play", output=str(self.root / "run"), review_seconds=30, hard_seconds=120)
             path = started["artifact"]
+            self.assertEqual(started["checkpoint_due_monotonic_ns"], 31 * 10**9)
+            self.assertEqual(started["checkpoint_remaining_seconds"], 30)
             stamp.return_value = at(41)
             paused = run_checkpoint.update(path, "suspend", note="Awaiting owner decision")
             self.assertEqual(paused["checkpoint_late_seconds"], 10)
+            self.assertEqual(paused["checkpoint_remaining_seconds"], 0)
             stamp.return_value = at(141)
             segments = ["/private/segment-a.json", "/private/segment-b.json"]
             continued = run_checkpoint.update(path, "context", context="new-context", artifacts=segments)
@@ -128,6 +131,31 @@ class QAMediaTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsupported"):
             run_checkpoint.update(path, "checkpoint")
         self.assertEqual(Path(path).read_bytes(), before)
+
+    def test_run_rejects_impossible_saved_history_without_rewriting_it(self):
+        path = Path(run_checkpoint.start("a", "m", "play", output=str(self.root / "history"))["artifact"])
+        original = json.loads(path.read_text())
+        first = original["events"][0]
+        def event(kind, **details):
+            return {**first, "event": kind, "monotonic_ns": first["monotonic_ns"] + 1,
+                    "review_seconds": None, "hard_seconds": None, **details}
+        invalid_histories = [
+            [event("resume")], [event("start")], [event("suspend")],
+            [event("suspend", note="Await owner"), event("suspend", note="Duplicate wait")],
+            [event("finish"), event("checkpoint")], [event("context")],
+            [event("policy", hard_seconds=100)], [event("checkpoint", hard_seconds=100)],
+            [event("checkpoint", at="2026-01-01T00:00:00")],
+            [event("checkpoint", at="2026-01-01T00:00:00+02:00")],
+            [event("checkpoint", monotonic_ns=-1)], [event("checkpoint", artifacts="/private/evidence")],
+            [event("checkpoint", artifacts=["relative/path"])], [event("checkpoint", note=42)],
+        ]
+        for rows in invalid_histories:
+            path.write_text(json.dumps({**original, "events": [first, *rows]}))
+            before = path.read_bytes()
+            for operation in ("show", "checkpoint"):
+                with self.subTest(rows=rows, operation=operation), self.assertRaises(ValueError):
+                    run_checkpoint.update(str(path), operation)
+                self.assertEqual(path.read_bytes(), before)
 
     def test_closeout_retains_failure_then_links_new_receipt_after_path_restoration(self):
         with patch.object(Path, "home", return_value=self.root), patch.object(evidence, "revision", return_value={}):

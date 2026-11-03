@@ -18,7 +18,7 @@ from desktop import session_runtime as runtime
 from desktop.accessibility import check_dependencies, validate_query
 from desktop.observations import validate_capture_max_age, validate_observation_option
 from lib.validation import validate_filesystem_path
-from desktop.receipts import DesktopRequestError, input_failure
+from desktop.receipts import DesktopRequestError, input_failure, input_request_failure
 
 
 def artifact_path() -> str:
@@ -351,13 +351,7 @@ def send_action(payload: dict[str, Any], *, deadline: float | None = None, backe
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
             if payload.get("action") != "input":
                 raise
-            if isinstance(exc, DesktopRequestError) and exc.receipt.get("input_delivery") in ("not-sent", "completed", "unknown"):
-                raise
-            detail = "\n".join([str(exc), *getattr(exc, "__notes__", [])])
-            receipt = input_failure(exc, payload, stage="transport")
-            receipt["reason"] = "transport-failed"
-            receipt["error"] = f"{detail}; input outcome may be partial or unknown; inspect before further input; do not replay"
-            raise DesktopRequestError(receipt) from exc
+            raise DesktopRequestError(input_request_failure(exc, payload)) from exc
         if crop is not None and (result.get("image_origin") != crop[:2] or result.get("image_geometry") != crop[2:]):
             return {**result, "error": "Backend did not confirm requested crop mapping; restart the native helper and recapture"}
         if payload.get("action") == "screenshot" and payload.get("max_age_seconds", 60) != 60 and not result.get("error"):
@@ -367,6 +361,7 @@ def send_action(payload: dict[str, Any], *, deadline: float | None = None, backe
         return result
     submitted = 0
     server_attempted = False
+    pending = False
     result: dict[str, Any] = {"generation": payload["generation"], "geometry": payload["geometry"]}
     try:
         if backend is not runtime:
@@ -374,6 +369,7 @@ def send_action(payload: dict[str, Any], *, deadline: float | None = None, backe
             if isinstance(capabilities, list) and "server-paced-text" in capabilities:
                 remaining_seconds(deadline)
                 server_attempted = True
+                pending = True
                 return backend.request({**request, "delay_ms": delay})
         if payload.get("observation_id") is not None:
             raise ValueError("Observation-bound paced text requires server-paced-text; on Debian use verified "
@@ -384,23 +380,34 @@ def send_action(payload: dict[str, Any], *, deadline: float | None = None, backe
             if time.monotonic() >= deadline:
                 raise RuntimeError("Paced typing exceeded its 20-second budget")
             # Every character rechecks generation, geometry and the human's control revision.
+            pending = True
             result = backend.request({**request, "text": character})
+            pending = False
             submitted += 1
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
-        detail = "\n".join([str(exc), *getattr(exc, "__notes__", [])])
-        if server_attempted and isinstance(exc, DesktopRequestError) and "input_delivery" in exc.receipt:
-            return {**result, **exc.receipt, "submitted_characters": None}
-        return {**result, "error": f"{detail}; input may be partial; inspect input before further actions; do not replay",
-                "submitted_characters": None if server_attempted else submitted,
-                "completion_unknown": server_attempted}
+        failure = input_request_failure(exc, payload) if pending else input_failure(exc, payload)
+        if server_attempted:
+            return {**failure, "submitted_characters": failure.get("submitted_characters"),
+                    "completion_unknown": failure["input_delivery"] == "unknown"}
+        # A refused later character does not mean the entire text was unsent.
+        # Keep the last completed request nested so its completion time/ID cannot
+        # be mistaken for completion of the failed character or whole operation.
+        delivery = failure["input_delivery"]
+        completed = submitted + (1 if pending and delivery == "completed" else 0)
+        if completed and delivery != "unknown":
+            delivery = "completed" if completed == len(payload["text"]) else "partial"
+        return {**failure, "input_delivery": delivery, "submitted_characters": completed,
+                "completion_unknown": delivery == "unknown", "failed_request": failure,
+                **({"last_completed_input": result} if submitted else {}),
+                "error": f"{failure['error']}; inspect input before further actions; do not replay"}
     return {**result, "submitted_characters": submitted}
 
 
 def observe_after_input(result: dict, payload: dict, output: str, *, settle_ms: int, backend) -> dict:
     """Retain completed input evidence even when its subsequent capture fails."""
     from desktop.observations import compact_capture
-    time.sleep(settle_ms / 1000)
     try:
+        time.sleep(settle_ms / 1000)
         observed = backend.status()
         if (observed.get("generation") != payload["generation"] or
                 observed.get("control_revision") != payload["control_revision"]):
@@ -466,8 +473,13 @@ def run_sequence(path: str, generation: str, *, backend=runtime) -> dict[str, An
             result = send_action({**step, "generation": generation, "control_revision": revision}, deadline=deadline, backend=backend)
             if "error" in result:
                 return {"generation": generation, "error": result["error"], "completed": len(results),
-                        "results": results, "failed_action": result}
+                        "results": results, "failed_action_index": len(results), "failed_action": result}
             results.append(result)
         return {"generation": generation, "completed": len(results), "results": results}
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
-        return {"generation": generation, "error": str(exc), "completed": len(results), "results": results}
+        # send_action wraps unstructured input transport errors. Plain errors
+        # here are validation/deadline/control refusals before this step's input.
+        failure = (dict(exc.receipt) if isinstance(exc, DesktopRequestError) else
+                   input_failure(exc, step) if step["action"] == "input" else {"error": str(exc)})
+        return {"generation": generation, "error": str(exc), "completed": len(results), "results": results,
+                "failed_action_index": len(results), "failed_action": failure}

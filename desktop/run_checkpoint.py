@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 import os
 import json
 from pathlib import Path
@@ -52,18 +53,46 @@ def _load(path: Path) -> dict:
         raise ValueError("Invalid/unsupported run record; preserve it for inspection")
     _label(data.get("run_id"), "Run ID")
     _label(data.get("match_id"), "Match ID")
-    previous = -1
-    for row in data["events"]:
+    previous, suspended, finished = -1, False, False
+    for index, row in enumerate(data["events"]):
         if (not isinstance(row, dict) or row.get("event") not in ("start", *EVENTS)
-                or type(row.get("monotonic_ns")) is not int or row["monotonic_ns"] < previous):
+                or type(row.get("monotonic_ns")) is not int or row["monotonic_ns"] < max(0, previous)):
             raise ValueError("Invalid run event clocks; preserve the record")
         previous = row["monotonic_ns"]
         _label(row.get("at"), "Event UTC")
+        try:
+            utc = datetime.fromisoformat(row["at"])
+        except ValueError as exc:
+            raise ValueError("Invalid run event UTC; preserve the record") from exc
+        if utc.utcoffset() != timedelta(0):
+            raise ValueError("Run event requires an explicit UTC timestamp; preserve the record")
         _label(row.get("phase"), "Phase")
         _seconds(row.get("review_seconds"))
         _seconds(row.get("hard_seconds"))
-    if data["events"][0]["event"] != "start":
-        raise ValueError("Run has no original start event")
+        for key, label, maximum in (("note", "Note", 1024), ("context", "Context ID", 128),
+                                     ("game_clock_observed", "Game clock", 128)):
+            if row.get(key) is not None:
+                _label(row[key], label, maximum)
+        references = row.get("artifacts", [])
+        if not isinstance(references, list) or len(references) > 16:
+            raise ValueError("Invalid run artifact references; preserve the record")
+        for reference in references:
+            validate_filesystem_path(reference)
+            if not Path(reference).is_absolute():
+                raise ValueError("Run artifact references require absolute paths")
+        event = row["event"]
+        if (finished or (event == "start") != (index == 0)
+                or event == "suspend" and (suspended or not row.get("note"))
+                or event == "resume" and not suspended
+                or event == "context" and not row.get("context")
+                or event == "policy" and (not row.get("note") or
+                    row.get("review_seconds") is None and row.get("hard_seconds") is None)
+                or event not in ("start", "policy") and
+                    (row.get("review_seconds") is not None or row.get("hard_seconds") is not None)):
+            raise ValueError("Invalid run event history; preserve the record")
+        if event in ("suspend", "resume"):
+            suspended = event == "suspend"
+        finished = event == "finish"
     return data
 
 
@@ -107,6 +136,8 @@ def _summary(data: dict, observed: dict) -> dict:
             "wall_seconds": wall, "owner_wait_seconds": suspension / 10**9,
             "declared_active_wall_seconds": wall - suspension / 10**9,
             "since_last_event_seconds": (end - rows[-1]["monotonic_ns"]) / 10**9,
+            "checkpoint_due_monotonic_ns": review_due,
+            "checkpoint_remaining_seconds": max(0, (review_due - end) / 10**9) if review_due is not None else None,
             "checkpoint_late_seconds": max(0, (end - review_due) / 10**9) if review_due is not None else None,
             "hard_limit_reached": wall >= hard_seconds if hard_seconds is not None else None,
             "hard_limit_seconds": hard_seconds, "observed_active_work_seconds": None,

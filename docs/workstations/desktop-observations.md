@@ -111,6 +111,19 @@ failures retain the observed `capture_freshness` in both CLI and journal.
 | `input-completed` | `completed` | All intended input and release calls returned. Game effect remains unverified. |
 | `post-input-observation` | `completed` | Input retained, subsequent observation failed. Capture again, never replay automatically. |
 
+Linux clients also retain these receipts for action sequences and paced typing.
+A sequence reports earlier completed results, a zero-based `failed_action_index`
+and the full `failed_action` receipt; failure stops subsequent steps. For legacy
+character-by-character typing, `submitted_characters` counts acknowledged complete
+character requests. If a later request is refused, overall `input_delivery` is
+`partial`, and `failed_request.input_delivery` is `not-sent`. A lost response
+remains `unknown`, even with an acknowledged prefix. Failure before the first
+request is `not-sent`. `last_completed_input` keeps the prior character's receipt
+separate from the failed request; its timestamp never certifies the whole text.
+Server-paced errors preserve a worker's count when available, otherwise null.
+Never replay a partial or unknown text operation automatically. Legacy string
+errors cannot prove refusal just because their wording resembles a guard error.
+
 The recorder retains refused events separately from uncertain ones. Verification
 counts `image_less` capture events separately from `missing` saved paths and
 includes uncertain events in health. PNG hashes alone cannot certify journal

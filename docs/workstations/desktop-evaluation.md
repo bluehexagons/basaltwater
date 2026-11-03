@@ -70,6 +70,9 @@ explicit owner waits and owner policy overrides preserve original clocks. The
 1000-event capacity refuses further writes instead of truncating history.
 Unsupported/corrupt records, missing boot clocks and later boots never silently
 reset or align a run. A finished run cannot be continued.
+Reads validate saved transitions, UTC timestamps and event details as well as
+monotonic ordering. Impossible histories, such as duplicate suspensions or an
+event after finish, fail without rewriting the original file.
 
 `wall_seconds` is elapsed monotonic time, including explicitly suspended owner
 waits. `declared_active_wall_seconds` excludes only recorded owner waits; it still
@@ -84,7 +87,9 @@ and frame receipts retain their existing independent clocks.
 
 Check `show` within the controller's normal work loop. Checkpoint events retain
 actual previous gaps and lateness before restarting the chosen soft review
-cadence. Policy changes require a source/authorization note and record a new
+cadence. `checkpoint_due_monotonic_ns`, `checkpoint_remaining_seconds` and
+`checkpoint_late_seconds` expose the current review deadline and actual timing.
+Policy changes require a source/authorization note and record a new
 limit; hard seconds always refer to the ORIGINAL start. Recording an override
 does not authenticate its author or grant permission. These commands neither
 schedule reminders nor poll a delegate. A late soft review never triggers an

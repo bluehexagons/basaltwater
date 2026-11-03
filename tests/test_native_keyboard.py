@@ -14,6 +14,7 @@ import unittest
 from unittest.mock import Mock, call, patch
 
 from desktop import client, control_state, native_session as native
+from desktop.receipts import DesktopRequestError
 from lib import desktop_cli
 
 
@@ -210,6 +211,89 @@ class InputReliabilityTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "A prefix may have arrived"):
             client.send_action({**self.payload, "delay_ms": None}, backend=backend)
         backend.request.assert_called_once()
+
+    def test_paced_prefix_does_not_turn_later_refusal_into_unsent_text(self):
+        previous = {"input_id": "first", "input_completed_at": "first-completed"}
+        refused = {"error": "capture expired", "input_delivery": "not-sent", "reason": "capture-expired",
+                   "dispatch_stage": "before-input", "input_id": "second", "observation_id": "old-frame"}
+        for failure, delivery, unknown in ((DesktopRequestError(refused), "partial", False),
+                                          (TimeoutError("lost reply"), "unknown", True)):
+            backend = Mock()
+            backend.status.return_value = {"input_capabilities": []}
+            backend.request.side_effect = [previous, failure]
+            with self.subTest(delivery=delivery), patch.object(client.time, "sleep"):
+                result = client.send_action(self.payload, backend=backend)
+            self.assertEqual(result["input_delivery"], delivery)
+            self.assertEqual(result["submitted_characters"], 1)
+            self.assertEqual(result["completion_unknown"], unknown)
+            self.assertEqual(result["last_completed_input"], previous)
+            self.assertNotIn("input_completed_at", result)
+            self.assertEqual(backend.request.call_count, 2)
+            if not unknown:
+                self.assertEqual(result["failed_request"], refused)
+                self.assertEqual(result["input_id"], "second")
+
+    def test_pacing_read_and_local_deadline_failures_prove_no_new_dispatch(self):
+        backend = Mock()
+        backend.status.side_effect = OSError("status unavailable")
+        result = client.send_action(self.payload, backend=backend)
+        self.assertEqual(result["input_delivery"], "not-sent")
+        self.assertFalse(result["completion_unknown"])
+        self.assertEqual(result["submitted_characters"], 0)
+        backend.request.assert_not_called()
+        backend.status.side_effect = None
+        backend.status.return_value = {"input_capabilities": []}
+        backend.request.return_value = {"input_completed_at": "first-completed"}
+        with patch.object(client.time, "sleep", side_effect=RuntimeError("local deadline")):
+            result = client.send_action(self.payload, backend=backend)
+        self.assertEqual(result["input_delivery"], "partial")
+        self.assertEqual(result["failed_request"]["input_delivery"], "not-sent")
+        self.assertEqual(result["submitted_characters"], 1)
+        self.assertNotIn("input_completed_at", result)
+        backend.request.assert_called_once()
+
+    def test_sequence_retains_failed_request_and_prior_completion_without_replay(self):
+        path = self.home / "sequence.json"
+        path.write_text(json.dumps([{"action": "windows"}, {"action": "input", "kind": "key", "key": "Return"},
+                                    {"action": "windows"}]))
+        refused = {"error": "capture expired", "input_delivery": "not-sent", "reason": "capture-expired",
+                   "dispatch_stage": "before-input", "input_id": "refused-input"}
+        for failure, delivery in ((DesktopRequestError(refused), "not-sent"), (TimeoutError("lost reply"), "unknown")):
+            backend = Mock(MAX_MESSAGE=65536)
+            backend.status.return_value = {"generation": "g", "control_revision": "r", "agent_control": "enabled"}
+            backend.request.side_effect = [{"windows": []}, failure]
+            with self.subTest(delivery=delivery):
+                result = client.run_sequence(str(path), "g", backend=backend)
+            self.assertEqual(result["completed"], 1)
+            self.assertEqual(result["results"], [{"windows": []}])
+            self.assertEqual(result["failed_action_index"], 1)
+            self.assertEqual(result["failed_action"]["input_delivery"], delivery)
+            self.assertEqual(backend.request.call_count, 2)
+            if delivery == "not-sent":
+                self.assertEqual(result["failed_action"], refused)
+
+    def test_server_paced_failure_keeps_authoritative_character_count(self):
+        backend = Mock()
+        backend.status.return_value = {"input_capabilities": ["server-paced-text"]}
+        receipt = {"error": "control changed", "input_delivery": "unknown", "dispatch_stage": "input-dispatch",
+                   "input_id": "paced-input", "submitted_characters": 1}
+        backend.request.side_effect = DesktopRequestError(receipt)
+        result = client.send_action(self.payload, backend=backend)
+        self.assertEqual(result["submitted_characters"], 1)
+        self.assertEqual(result["input_id"], "paced-input")
+        self.assertTrue(result["completion_unknown"])
+        backend.request.assert_called_once()
+
+    def test_settle_failure_retains_completed_input_without_capture_or_replay(self):
+        backend = Mock()
+        completed = {"input_id": "completed", "input_completed_at": "done"}
+        with patch.object(client.time, "sleep", side_effect=OSError("settle interrupted")):
+            result = client.observe_after_input(completed, self.payload, "unused.png", settle_ms=10, backend=backend)
+        self.assertEqual(result["input_id"], completed["input_id"])
+        self.assertEqual(result["input_delivery"], "completed")
+        self.assertEqual(result["dispatch_stage"], "post-input-observation")
+        backend.status.assert_not_called()
+        backend.request.assert_not_called()
 
     def test_native_transport_keeps_absolute_deadline_across_socket_waits(self):
         import stat
