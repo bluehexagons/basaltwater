@@ -129,13 +129,15 @@ Native desktop commands (explicit actions use the current account's session):
   status|doctor|windows|environment [--json]
   worker start [--idle-seconds 120] [--session-seconds 1800] | worker status|stop
   inspect --pid PID [--name NAME] [--role ROLE] [--json]
-  screenshot --window HWND --identity TOKEN --generation GEN --output NEW.png
+  screenshot --window HWND --identity TOKEN --generation GEN --output NEW.png [--max-age-seconds 60]
+  screenshot --monitor DEVICE --output NEW.png [--max-age-seconds 60]
   window focus|move|resize|maximize|minimize|restore|close --window HWND --identity TOKEN --generation GEN
   element invoke|set-text|focus --ref REF --generation GEN [--text TEXT]
   input key|chord|sequence|text|click --window HWND --identity TOKEN --generation GEN --width W --height H
   input key --help  Supported editing keys, chords, sequences and text limits
     key --key CTRL+SHIFT+HOME | sequence --keys HOME,SHIFT+END,F11 (max 32 chords)
   input hold --key W --milliseconds 500 [--repeat-ms 100] (same window selectors)
+  input key|chord|sequence|text|click ... [--observation ID]  Bind to latest window capture
   input release|lease --lease ID          Cancel/read a finite keyboard lease
   control enabled|human-override|disabled --human-approved [--seconds N|--indefinite]
   open PATH [--reveal] | terminal --project PATH [--msvc]
@@ -143,6 +145,13 @@ Native desktop commands (explicit actions use the current account's session):
   develop doctor|exec|node|editor|run|import|status|logs|cancel|wait|ready|diagnose ...
   develop --help  Task options, npm-script examples and bounded waiting
 Observe windows/inspect before actions. Pixel capture does not prove rendered content or input outcome.
+Screenshot returns observation_id and capture_freshness, timed from capture admission
+with a monotonic clock. Max age is an integer 1-600 (default 60); increase it explicitly
+only for stable turn-based work. Tokens are single-use, consumed before input attempt.
+New successful capture supersedes the token; failed capture retains it. Mutations and
+control/session changes invalidate it. Status/windows never renew it. Token input needs
+matching window/identity/generation/width/height; monitor capture cannot authorize it.
+Tokens do not prove semantic or scene validity. Input without a token keeps its existing guards.
 '@
             return 0
         }

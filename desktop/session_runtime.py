@@ -26,6 +26,10 @@ import time
 from typing import Any, Iterator
 
 from desktop import accessibility, control_state
+from desktop.observations import (
+    CaptureObservation, DEFAULT_CAPTURE_MAX_AGE_SECONDS, capture_freshness,
+    validate_capture_max_age, validate_observation_option,
+)
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
 
@@ -164,6 +168,7 @@ def status(*, include_control: bool = True) -> dict[str, Any]:
         return request({"action": "status"})
     except (FileNotFoundError, ConnectionRefusedError):
         return {"state": "stopped", "desktop": config["desktop"], "username": config["username"],
+                "observation_id": None, "capture_freshness": capture_freshness(),
                 **(control_state.status() if include_control else {})}
 
 
@@ -365,11 +370,13 @@ class DesktopSession:
         self.launches: dict[str, subprocess.Popen[Any]] = {}
         self.elements: dict[str, dict[str, Any]] = {}
         self.control_revision = control_state.status()["control_revision"]
+        self.observation: CaptureObservation | None = None
 
     def sync_control(self):
         current = control_state.status()
         if self.control_revision != current["control_revision"]:
             self.elements.clear()
+            self.observation = None
             self.control_revision = current["control_revision"]
         return current
 
@@ -394,6 +401,10 @@ class DesktopSession:
             "browser_pause": self.browser_pause,
             "pid": self.process.pid,
             "control_active": False,
+            "input_capabilities": ["observation-input"],
+            "observation_id": self.observation.id if self.observation is not None and state == "running" else None,
+            "capture_freshness": self.observation.freshness() if self.observation is not None and state == "running"
+                                 else capture_freshness(),
         }
         if detail:
             result["detail"] = detail
@@ -425,6 +436,7 @@ class DesktopSession:
         return {"logout_requested": True, "generation": self.generation}
 
     def handle(self, payload: dict[str, Any]) -> dict[str, Any]:
+        validate_observation_option(payload)
         deadline = input_deadline(payload) if payload.get("action") == "input" else 0.0
         self.sync_control()
         self.expire_browser_control()
@@ -477,6 +489,7 @@ class DesktopSession:
             self.maintenance = True
             self.release_browser_control()
             self.elements.clear()
+            self.observation = None
             return self.logout()
         if action == "inspect":
             result = accessibility.worker_request({**payload, "operation": "inspect"})
@@ -517,6 +530,11 @@ class DesktopSession:
             return {"generation": self.generation, "launch": launch, "pid": process.pid,
                     "state": "running" if code is None else "exited", "returncode": code}
         if action == "screenshot":
+            started = time.monotonic()
+            revision = self.control_revision
+            max_age = validate_capture_max_age(payload.get("max_age_seconds", DEFAULT_CAPTURE_MAX_AGE_SECONDS))
+            if payload.get("control_revision", revision) != revision:
+                raise ValueError("Desktop control changed; observe again")
             window = capture_window(payload)
             path = payload.get("output")
             if not isinstance(path, str):
@@ -560,14 +578,28 @@ class DesktopSession:
                 snapshot = self.snapshot_status()
                 if snapshot["geometry"] != desktop_geometry:
                     raise RuntimeError("Desktop resized during capture; take a new screenshot")
+                if snapshot["control_revision"] != revision:
+                    raise RuntimeError("Desktop control changed during capture; take a new screenshot")
             except Exception:
                 output.unlink(missing_ok=True)
                 raise
-            return {**snapshot, "image_geometry": captured_geometry,
+            self.observation = CaptureObservation(started, max_age, desktop_geometry, window=window,
+                                                  region=window["origin"] + window["geometry"] if window else None)
+            return {**snapshot, "observation_id": self.observation.id,
+                    "capture_freshness": self.observation.freshness(),
+                    "coordinate_space": "desktop", "image_origin": window["origin"] if window else [0, 0],
+                    "image_geometry": captured_geometry,
                     "window": window, "output": str(output), "captured_at": datetime.now(timezone.utc).isoformat()}
         control_state.require_enabled(payload)
         if self.maintenance:
             raise RuntimeError("Desktop is logging out for setup; finish logout and restart the session")
+        observation = self.observation if payload.get("observation_id") is not None else None
+        if payload.get("observation_id") is not None:
+            if observation is None:
+                raise ValueError("Observation is consumed or invalidated; capture and inspect again")
+            observation.validate(payload)
+        # Retire before dispatch: even a failed mutation may have changed the UI.
+        self.observation = None
         if action == "element":
             ref = payload.get("ref")
             observed = self.elements.get(ref) if isinstance(ref, str) else None
@@ -600,10 +632,10 @@ class DesktopSession:
         if action == "logout":
             return self.logout()
         if action == "input":
-            return self.input(payload, deadline)
+            return self.input(payload, deadline, observation=observation)
         raise ValueError("Unknown desktop action")
 
-    def input(self, payload: dict[str, Any], deadline: float) -> dict[str, Any]:
+    def input(self, payload: dict[str, Any], deadline: float, *, observation: CaptureObservation | None = None) -> dict[str, Any]:
         """Admit each injection again after probes; never replay uncertain input."""
         attempted = False
 
@@ -615,6 +647,19 @@ class DesktopSession:
             control_state.require_enabled(payload)
             if self.maintenance or self.process.poll() is not None:
                 raise RuntimeError("Desktop is stopping")
+            if observation is not None:
+                observation.validate(payload)
+                if payload.get("geometry") != geometry(timeout=remaining(3)):
+                    raise ValueError("Desktop geometry changed; capture and inspect again")
+                if observation.window is not None:
+                    if window_details(observation.window["id"]) != observation.window:
+                        raise ValueError("Observed window changed; capture and inspect again")
+                    if window_ids("_NET_ACTIVE_WINDOW") != [observation.window["id"]]:
+                        raise ValueError("Observed window must remain active before input")
+                observation.validate(payload)
+                control_state.require_enabled(payload)
+                if self.maintenance or self.process.poll() is not None:
+                    raise RuntimeError("Desktop is stopping")
             timeout = remaining()
             attempted = True
             return run_tool(argv, timeout=timeout)
@@ -662,7 +707,12 @@ class DesktopSession:
                     inject(["xdotool", "click", str(button)])
             else:
                 raise ValueError("Unknown desktop input kind")
-            return {"generation": self.generation, "geometry": geometry(timeout=remaining(3))}
+            # Completion must survive a later display/probe failure. Return
+            # the geometry admitted for this input; a new capture observes size.
+            return {"generation": self.generation, "geometry": payload["geometry"],
+                    "input_completed_at": datetime.now(timezone.utc).isoformat(),
+                    "input_completed_monotonic_ns": time.monotonic_ns(),
+                    **({"observation_id": observation.id} if observation is not None else {})}
         except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as exc:
             if attempted:
                 exc.add_note(INPUT_UNCERTAIN)

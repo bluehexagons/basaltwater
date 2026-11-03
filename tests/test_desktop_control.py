@@ -488,13 +488,18 @@ class DebianInputSafetyTests(unittest.TestCase):
                 self.assertNotIn("--clearmodifiers", argv)
                 self.assertEqual(argv[:2], ["xdotool", "key" if kind == "key" else "type"])
 
-    def test_failed_post_injection_probe_reports_uncertainty(self):
-        failure = RuntimeError("display unavailable")
-        self.size.side_effect = [[800, 600], failure]
-        with self.assertRaises(RuntimeError) as caught:
-            self.session.handle(self.payload)
-        self.assertIs(caught.exception, failure)
-        self.assertIn(session_runtime.INPUT_UNCERTAIN, failure.__notes__)
+    def test_completed_input_retains_receipt_after_execution_budget_is_spent(self):
+        def complete(*_args, **_options):
+            self.clock.monotonic.return_value = 109
+            self.clock.monotonic_ns.return_value = 109_000_000_000
+            return ""
+        self.tool.side_effect = complete
+        self.size.side_effect = [[800, 600], RuntimeError("display unavailable")]
+        result = self.session.handle(self.payload)
+        self.assertEqual(result["geometry"], [800, 600])
+        self.assertEqual(result["input_completed_monotonic_ns"], 109_000_000_000)
+        self.assertIn("input_completed_at", result)
+        self.size.assert_called_once()
         self.tool.assert_called_once()
 
     def test_transport_caps_and_propagates_deadline_without_mutating_payload(self):

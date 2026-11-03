@@ -20,6 +20,7 @@ workflows that use native desktop applications. For coding-agent security and VM
 | [Windows game tooling](windows-game-development.md) | Native compiler/SDK setup, runtime tools and local qualification |
 | [Antistatic integration](../integrations/antistatic/README.md) | Optional game, Animator, asset and service workflows |
 | [Desktop automation](desktop-automation.md) | Accessibility inspection, screenshots, window management, and input |
+| [Desktop observations](desktop-observations.md) | Shared observation IDs, capture lifetimes and planner/operator workflows across Linux and Windows |
 | [Desktop development](desktop-development.md) | Discover tools, render assets, and run native UI checks |
 | [Visual comparisons](visual-comparisons.md) | Compare captures or rendering results across Git revisions |
 | [Native Windows coding](windows.md) | Prepare the current Windows 11 account for local T3 Code and provider tools |

@@ -118,7 +118,20 @@ directories), retain them for the user, and never publish them to an external ho
 merely to display them. Prefer the narrowest useful capture; do not include
 passwords, tokens, or unrelated private windows in evidence.
 
-Use the returned `generation` and `geometry` for input, for example:
+Use the returned `generation` and `geometry` for input.
+
+Prefer `input --observation OBSERVATION_ID` from the latest inspected capture
+for one bounded action. `screenshot --max-age-seconds 180` explicitly allows
+more thinking time in a stable, untimed scene (1–600 seconds; default 60).
+Tokens are invalidated by mutations, newer captures and control changes;
+status and window queries do not renew them. Window tokens recheck placement,
+identity and active state, and pointer targets must lie inside the image.
+`input --observe` retains completion and captures again after settling; capture
+failure never replays input. See the shared
+[observation contract](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/desktop-observations.md)
+for coordinate spaces, receipts and planner/operator guidance.
+
+For example:
 
 ```bash
 basaltw desktop input --generation GENERATION --geometry 1280 720 click --x 400 --y 300

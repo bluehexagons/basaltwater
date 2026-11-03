@@ -16,8 +16,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from desktop.observations import save_observation
+from desktop.observations import compact_capture, save_observation
 from desktop import client, control_state, native_session, portal_capture
+from desktop import session_runtime as runtime
 from desktop.display_power import display_power
 from desktop.evidence import Recorder, capture_digest, finalize, verify
 from lib.desktop_cli import add_desktop_subparser, run_desktop_command
@@ -131,6 +132,25 @@ class DesktopOutputTests(unittest.TestCase):
             self.assertEqual("--active-window" in body, not native)
             if native:
                 self.assertIn("Window capture is unavailable", " ".join(body.split()))
+
+    def test_selected_capture_age_is_validated_and_requires_backend_confirmation(self):
+        confirmed = {"observation_id": "a" * 32, "capture_freshness": {"max_age_seconds": 180}}
+        for result, expected in ((confirmed, 0), ({"output": "/tmp/new.png"}, 1)):
+            code, output, request = self.run_cli(result, "screenshot", "--output", "/tmp/new.png", "--max-age-seconds", "180")
+            self.assertEqual(code, expected)
+            self.assertEqual(request.call_args.args[0]["max_age_seconds"], 180)
+            if expected:
+                self.assertIn("did not confirm", output["error"])
+        code, output, request = self.run_cli({}, "screenshot", "--max-age-seconds", "601")
+        self.assertEqual(code, 1)
+        request.assert_not_called()
+
+    def test_old_helper_cannot_silently_ignore_observation_input(self):
+        code, output, request = self.run_cli({}, "input", "--generation", "g", "--geometry", "10", "20",
+            "--observation", "a" * 32, "click", "--x", "1", "--y", "2")
+        self.assertEqual(code, 1)
+        self.assertIn("does not support", output["error"])
+        request.assert_not_called()
 
     def test_post_input_capture_failure_preserves_completion_and_never_replays(self) -> None:
         backend = Mock()
@@ -489,6 +509,295 @@ class NativeObservationTests(unittest.TestCase):
                 capture.unlink(missing_ok=True)
             status.assert_not_called()
             request.assert_not_called()
+
+
+class BoundCaptureTests(unittest.TestCase):
+    """Exercise the same observation lifecycle through both Linux helpers."""
+
+    def setUp(self):
+        self.home = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.enterContext(patch.object(Path, "home", return_value=self.home))
+        self.enterContext(patch.dict(os.environ, {"DISPLAY": ":10"}))
+        self.now = 1000.0
+        self.enterContext(patch.object(time, "monotonic", side_effect=lambda: self.now))
+        self.enterContext(patch.object(runtime, "geometry", return_value=[10, 20]))
+        self.enterContext(patch.object(runtime, "window_manager_ready", return_value=True))
+        self.tool = self.enterContext(patch.object(runtime, "run_tool", side_effect=self.x_tool))
+        self.capture = self.enterContext(patch.object(native_session.subprocess, "run", side_effect=self.portal_capture))
+        process = Mock(pid=42)
+        process.poll.return_value = None
+        self.debian = runtime.DesktopSession({"desktop": "xfce", "username": "agent"}, process)
+        self.native = native_session.NativeSession(Mock(fd=42))
+        self.native.state, self.native.node, self.native.logical_size = "running", 17, [10, 20]
+        self.counter = 0
+
+    @staticmethod
+    def png_header():
+        return b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + struct.pack(">II", 10, 20)
+
+    def x_tool(self, argv, **kwargs):
+        if argv[0] == "scrot":
+            Path(argv[-1]).write_bytes(self.png_header())
+        return "X=1\nY=2"
+
+    def portal_capture(self, argv, **kwargs):
+        os.write(kwargs["pass_fds"][-1], self.png_header())
+        return subprocess.CompletedProcess(argv, 0, json.dumps({"geometry": [10, 20]}))
+
+    def observe(self, session, **options):
+        self.counter += 1
+        return session.handle({"action": "screenshot", "generation": session.generation,
+            "output": str(self.home / f"capture-{self.counter}.png"), **options})
+
+    def move(self, session, observation, **options):
+        return session.handle({"action": "input", "kind": "move", "x": 1, "y": 2,
+            "generation": session.generation, "geometry": [10, 20],
+            "control_revision": session.control_revision, "observation_id": observation["observation_id"], **options})
+
+    def test_long_decision_uses_selected_window_and_token_is_single_use(self):
+        for session in (self.debian, self.native):
+            with self.subTest(session=type(session).__name__):
+                self.now = 1000
+                observation = self.observe(session, max_age_seconds=180)
+                self.assertEqual(len(observation["observation_id"]), 32)
+                self.now = 1120
+                status = session.handle({"action": "status"})
+                self.assertEqual(status["capture_freshness"]["remaining_seconds"], 60)
+                self.assertEqual(status["observation_id"], observation["observation_id"])
+                result = self.move(session, observation)
+                self.assertEqual(result["observation_id"], observation["observation_id"])
+                self.assertIn("input_completed_monotonic_ns", result)
+                with self.assertRaisesRegex(ValueError, "consumed|invalidated"):
+                    self.move(session, observation)
+
+    def test_default_expiry_and_new_capture_cannot_refresh_old_token(self):
+        for session in (self.debian, self.native):
+            self.now = 1000
+            old = self.observe(session)
+            self.now = 1061
+            with self.assertRaisesRegex(ValueError, "expired"):
+                self.move(session, old)
+            current = self.observe(session)
+            with self.assertRaisesRegex(ValueError, "superseded"):
+                self.move(session, old)
+            self.move(session, current)
+
+    def test_failed_capture_preserves_token_and_its_original_deadline(self):
+        for session in (self.debian, self.native):
+            self.now = 1000
+            old = self.observe(session)
+            self.now = 1050
+            tool = self.tool if session is self.debian else self.capture
+            original = tool.side_effect
+            tool.side_effect = RuntimeError("capture failed")
+            try:
+                with self.assertRaisesRegex(RuntimeError, "capture failed"):
+                    self.observe(session)
+            finally:
+                tool.side_effect = original
+            status = session.handle({"action": "status"})
+            self.assertEqual(status["observation_id"], old["observation_id"])
+            self.assertEqual(status["capture_freshness"]["remaining_seconds"], 10)
+            self.move(session, old)
+
+    def test_bounds_geometry_and_control_changes(self):
+        for session in (self.debian, self.native):
+            for value in (0, 601, True, 1.5):
+                with self.subTest(value=value), self.assertRaisesRegex(ValueError, "max age"):
+                    self.observe(session, max_age_seconds=value)
+            for value in (1, 600):
+                observed = self.observe(session, max_age_seconds=value)
+                self.assertEqual(observed["capture_freshness"]["max_age_seconds"], value)
+            with self.assertRaisesRegex(ValueError, "geometry"):
+                self.move(session, observed, geometry=[20, 10])
+            observed = self.observe(session)
+            control_state.change("disabled", human_approved=True)
+            control_state.change("enabled", human_approved=True)
+            self.assertIsNone(session.handle({"action": "status"})["observation_id"])
+            with self.assertRaisesRegex(ValueError, "invalidated"):
+                self.move(session, observed)
+
+    def test_input_failure_consumes_token_without_replay(self):
+        for session in (self.debian, self.native):
+            observed = self.observe(session)
+            target = self.tool if session is self.debian else session.portal.notify
+            target.side_effect = RuntimeError("uncertain injection")
+            with self.assertRaisesRegex(RuntimeError, "uncertain injection"):
+                self.move(session, observed)
+            with self.assertRaisesRegex(ValueError, "consumed|invalidated"):
+                self.move(session, observed)
+            if session is self.debian:
+                target.side_effect = self.x_tool
+
+    def test_debian_capture_rejects_control_change_during_acquisition(self):
+        previous = self.observe(self.debian)
+        def capture_and_change(argv, **kwargs):
+            result = self.x_tool(argv, **kwargs)
+            control_state.change("disabled", human_approved=True)
+            return result
+        self.tool.side_effect = capture_and_change
+        with self.assertRaisesRegex(RuntimeError, "control changed during capture"):
+            self.observe(self.debian)
+        self.assertFalse((self.home / f"capture-{self.counter}.png").exists())
+        self.assertIsNone(self.debian.observation)
+        self.assertIsNotNone(previous["observation_id"])
+
+    def test_debian_observe_after_input_and_compact_coordinate_metadata(self):
+        observation = self.observe(self.debian)
+        result = self.move(self.debian, observation)
+        with patch.object(client.time, "sleep"), patch.object(runtime, "status", return_value=self.debian.snapshot_status()), \
+                patch.object(runtime, "request", side_effect=self.debian.handle):
+            result = client.observe_after_input(result, {"generation": self.debian.generation,
+                "control_revision": self.debian.control_revision}, str(self.home / "after.png"), settle_ms=0, backend=runtime)
+        self.assertNotIn("error", result)
+        self.assertNotEqual(result["observation"]["observation_id"], observation["observation_id"])
+        self.assertEqual(result["observation"]["coordinate_space"], "desktop")
+        window = {"origin": [3, 4], "geometry": [5, 6]}
+        self.assertEqual(compact_capture({"window": window, "control_revision": "r"})["window"], window)
+
+    def test_debian_window_token_checks_scope_placement_and_focus(self):
+        window = {"id": "0x123", "origin": [2, 3], "geometry": [10, 20], "identity": "window"}
+        with patch.object(runtime, "geometry", return_value=[20, 30]), \
+                patch.object(runtime, "capture_window", return_value=window), \
+                patch.object(runtime, "window_details", return_value=window) as details, \
+                patch.object(runtime, "window_ids", return_value=["0x123"]) as active:
+            observed = self.observe(self.debian)
+            self.assertEqual(compact_capture(observed)["image_origin"], [2, 3])
+            with self.assertRaisesRegex(ValueError, "outside the observed image"):
+                self.move(self.debian, observed, geometry=[20, 30])
+            self.tool.reset_mock()
+            details.return_value = {**window, "origin": [3, 3]}
+            with self.assertRaisesRegex(ValueError, "window changed"):
+                self.move(self.debian, observed, geometry=[20, 30], kind="key", key="Return")
+            self.tool.assert_not_called()
+            details.return_value = window
+            observed = self.observe(self.debian)
+            active.return_value = ["0x124"]
+            with self.assertRaisesRegex(ValueError, "remain active"):
+                self.move(self.debian, observed, geometry=[20, 30], kind="key", key="Return")
+
+    def test_debian_slow_probe_cannot_inject_after_observation_expiry(self):
+        observed = self.observe(self.debian, max_age_seconds=1)
+        self.tool.reset_mock()
+        def slow_geometry(**kwargs):
+            self.now += .6
+            return [10, 20]
+        with patch.object(runtime, "geometry", side_effect=slow_geometry), \
+                self.assertRaisesRegex(ValueError, "expired"):
+            self.move(self.debian, observed)
+        self.tool.assert_not_called()
+
+    def test_debian_target_probe_cannot_inject_after_desktop_stops(self):
+        window = {"id": "0x123", "origin": [0, 0], "geometry": [10, 20], "identity": "window"}
+        def active_after_stop(*args):
+            self.debian.process.poll.return_value = 0
+            return [window["id"]]
+        with patch.object(runtime, "capture_window", return_value=window), \
+                patch.object(runtime, "window_details", return_value=window), \
+                patch.object(runtime, "window_ids", side_effect=active_after_stop):
+            observed = self.observe(self.debian)
+            self.tool.reset_mock()
+            with self.assertRaisesRegex(RuntimeError, "Desktop is stopping"):
+                self.move(self.debian, observed, kind="key", key="Return")
+        self.tool.assert_not_called()
+
+    def test_debian_completion_survives_geometry_loss_after_input(self):
+        for bound in (False, True):
+            with self.subTest(bound=bound):
+                observed = self.observe(self.debian)
+                sent = False
+                def completed_input(argv, **kwargs):
+                    nonlocal sent
+                    sent = True
+                    return self.x_tool(argv, **kwargs)
+                def current_geometry(**kwargs):
+                    if sent:
+                        raise RuntimeError("Desktop geometry became unavailable")
+                    return [10, 20]
+                with patch.object(runtime, "geometry", side_effect=current_geometry), \
+                        patch.object(runtime, "run_tool", side_effect=completed_input) as injection:
+                    result = self.move(self.debian, observed,
+                        observation_id=observed["observation_id"] if bound else None)
+                injection.assert_called_once()
+                self.assertEqual(result["geometry"], [10, 20])
+                self.assertIn("input_completed_at", result)
+                self.assertIn("input_completed_monotonic_ns", result)
+
+    def test_native_crop_token_rejects_target_outside_its_image(self):
+        def crop(argv, **kwargs):
+            os.write(kwargs["pass_fds"][-1], b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + struct.pack(">II", 3, 4))
+            return subprocess.CompletedProcess(argv, 0, json.dumps({"geometry": [10, 20],
+                "image_origin": [2, 3], "image_geometry": [3, 4]}))
+        self.capture.side_effect = crop
+        observed = self.observe(self.native, crop=[2, 3, 3, 4])
+        with self.assertRaisesRegex(ValueError, "outside the observed image"):
+            self.move(self.native, observed)
+        for start, end in (((1, 3), (3, 4)), ((2, 3), (5, 4))):
+            with self.subTest(start=start, end=end), self.assertRaisesRegex(ValueError, "outside the observed image"):
+                self.move(self.native, observed, kind="drag", x=start[0], y=start[1], to_x=end[0], to_y=end[1])
+        self.native.portal.notify.assert_not_called()
+        self.move(self.native, observed, x=2, y=3)
+
+    def test_native_token_expiry_during_hold_releases_and_invalidates(self):
+        observed = self.observe(self.native, max_age_seconds=1)
+        def notify(*args):
+            if args == ("NotifyPointerButton", "iu", 272, 1):
+                self.now += 2
+        self.native.portal.notify.side_effect = notify
+        with self.assertRaisesRegex(ValueError, "expired"):
+            self.move(self.native, observed, kind="click", hold_ms=120)
+        self.assertEqual(self.native.portal.notify.call_args.args, ("NotifyPointerButton", "iu", 272, 0))
+        self.assertIsNone(self.native.observation)
+
+    def test_sequence_rejects_bad_capture_age_before_any_action(self):
+        sequence = self.home / "sequence.json"
+        sequence.write_text(json.dumps([{"action": "input", "kind": "key", "key": "Return", "geometry": [10, 20]},
+                                        {"action": "screenshot", "max_age_seconds": 601}]))
+        with patch.object(runtime, "status") as status, patch.object(runtime, "request") as request, \
+                self.assertRaisesRegex(ValueError, "max age"):
+            client.run_sequence(str(sequence), self.debian.generation)
+        status.assert_not_called()
+        request.assert_not_called()
+
+    def test_sequence_stops_when_old_helper_ignores_selected_capture_age(self):
+        sequence = self.home / "sequence.json"
+        sequence.write_text(json.dumps([{"action": "screenshot", "max_age_seconds": 180},
+            {"action": "input", "kind": "key", "key": "Return", "geometry": [10, 20]}]))
+        backend = Mock(MAX_MESSAGE=65536)
+        backend.status.return_value = {"generation": "g", "control_revision": "r", "agent_control": "enabled"}
+        backend.request.return_value = {"output": "/tmp/capture.png"}
+        result = client.run_sequence(str(sequence), "g", backend=backend)
+        self.assertIn("did not confirm observation lifetime", result["error"])
+        self.assertEqual(result["completed"], 0)
+        backend.request.assert_called_once()
+
+    def test_debian_cli_routes_discrete_input_and_post_observation_to_real_handler(self):
+        parser = argparse.ArgumentParser()
+        add_desktop_subparser(parser.add_subparsers())
+        for bound in (False, True):
+            observed = self.observe(self.debian)
+            arguments = ["desktop", "input", "--generation", self.debian.generation, "--geometry", "10", "20",
+                         "move", "--x", "1", "--y", "2", "--observe", "--settle-ms", "0",
+                         "--output", str(self.home / f"cli-after-{bound}.png")]
+            if bound:
+                arguments += ["--observation", observed["observation_id"]]
+            with patch.object(runtime, "status", side_effect=self.debian.snapshot_status), \
+                    patch.object(runtime, "request", side_effect=self.debian.handle) as request, \
+                    patch.object(client.time, "sleep"), patch("sys.stdout", new_callable=io.StringIO) as output:
+                self.assertEqual(run_desktop_command(parser.parse_args(arguments)), 0, output.getvalue())
+            result = json.loads(output.getvalue())
+            self.assertIn("input_completed_at", result)
+            self.assertNotIn("hold_ms", request.call_args_list[0].args[0])
+            self.assertIsNotNone(result["observation"]["observation_id"])
+
+    def test_bound_debian_pacing_is_refused_without_sending_any_character(self):
+        observed = self.observe(self.debian)
+        with patch.object(runtime, "request") as request:
+            result = client.send_action({"action": "input", "kind": "text", "text": "abc", "delay_ms": 10,
+                "observation_id": observed["observation_id"], "generation": self.debian.generation,
+                "geometry": [10, 20], "control_revision": self.debian.control_revision})
+        self.assertIn("requires server-paced-text", result["error"])
+        request.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -86,10 +86,17 @@ before input, inspect it locally, identify the application and ensure focus.
 Coordinates are capture pixels, converted to the portal's logical monitor
 size. Recapture after layout changes. Stop/start with fresh consent after
 monitor, scaling or resolution changes to refresh portal coordinates. Input
-rejects snapshots older than 60 seconds or mismatched geometry/generation.
+rejects snapshots older than their selected lifetime or mismatched geometry/generation.
+`screenshot --max-age-seconds N` selects 1–600 seconds (default 60) for that
+capture only. Use longer ages for stable, untimed scenes. `input --observation
+ID` binds one action to the latest inspected screenshot; mutations, a newer
+capture or control changes invalidate it. Pointer and drag endpoints must stay
+inside that observed image/crop. See the cross-platform
+[observation contract](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/desktop-observations.md).
 
 Native `status` and screenshots (including `--compact`) report
-`capture_freshness`: age, remaining seconds, the 60-second maximum and `fresh`.
+`capture_freshness`: age, remaining seconds, the selected maximum and `fresh`.
+Age starts at capture admission, conservatively including frame acquisition.
 This is a response-time snapshot for the helper's latest successful capture;
 status queries and coordinate mapping never renew it. After long reasoning or
 waiting for advice, recapture and inspect the scene/target before input if the

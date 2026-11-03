@@ -18,6 +18,14 @@ application accessibility coverage still requires an inspection.
 human override, and disabled states, UI choices, approved CLI transitions, and
 restart behavior. Enabled agents work without a control lease or unpause request.
 
+For screenshot-based input, use the shared [observation contract](desktop-observations.md).
+`screenshot --max-age-seconds 180` explicitly selects a longer capture lifetime
+for stable scenes (1–600 seconds, default 60); `input --observation ID` binds
+one action to that exact capture. Window tokens also recheck placement and
+active state. Input without a token retains its existing geometry checks.
+`input --observe` now supports Debian: it preserves completion timestamps,
+settles and captures again without claiming subsequent compositor-frame timing.
+
 Agent-created sessions start at 1600×900 so media editors fit; existing sessions
 and RDP-client resolution choices are retained. `desktop windows` preserves
 Unicode titles for matching and identity checks. Application screenshots require

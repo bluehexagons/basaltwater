@@ -41,6 +41,7 @@ function Window-Action([string]$Generation, [string]$Identity = '42:birth:class:
 }
 New-NativeDesktopPrivateDirectory $temporary
 try {
+    & (Join-Path $PSScriptRoot 'Run-ObservationTests.ps1')
     & (Join-Path $PSScriptRoot 'Run-WarmWorkerTests.ps1')
     & (Join-Path $PSScriptRoot 'Run-EnvironmentTests.ps1')
     & {
@@ -62,6 +63,18 @@ try {
     }
     # Parse/compile only: not a single user32, capture, UIA or input call.
     Initialize-NativeDesktopTypes
+    # Pure capture rectangle validation; no PrintWindow or desktop API calls.
+    $captureCheck = [Basaltwater.Desktop.Native].GetMethod('CheckCaptureRectangle', [Reflection.BindingFlags]'Static,NonPublic')
+    $rectangle = New-Object Drawing.Rectangle(-640,-20,640,480)
+    $captureWindow = [Basaltwater.Desktop.Window]@{x=-640;y=-20;width=640;height=480}
+    $null = $captureCheck.Invoke($null, @($captureWindow,$rectangle))
+    foreach ($field in @('x','y','width','height','minimized')) {
+        $changed = [Basaltwater.Desktop.Window]@{x=-640;y=-20;width=640;height=480}
+        if ($field -eq 'minimized') { $changed.minimized=$true } else { $changed.$field++ }
+        $caught=$null
+        try { $null=$captureCheck.Invoke($null,@($changed,$rectangle)) } catch { $caught=$_ }
+        Assert-True ($null -ne $caught -and $caught.Exception.Message -match 'rectangle changed') "Capture accepted changed $field"
+    }
     & (Join-Path $PSScriptRoot 'Run-InputTransportTests.ps1')
     & (Join-Path $PSScriptRoot 'Run-HeldInputTests.ps1')
     # Pure event construction with a synthetic keyboard map. No user32 calls.
@@ -143,6 +156,8 @@ try {
         $script:SentBatches[1][0].data.key.scan -eq 0x4f) 'Cleanup failure hidden or already released chord cleaned again'
     $help = Invoke-NativeDesktopCli @('input','sequence','--help')
     Assert-True ($help.ok -and $help.help -match '32 chords' -and $help.help -match 'HOME') 'Leaf input help missing keys/limits'
+    $help = Invoke-NativeDesktopCli @('input','--help')
+    Assert-True ($help.ok -and $help.help -match 'key\|chord\|sequence\|text\|click\|hold\|release\|lease') 'Parent input help omitted operations'
     $help=Invoke-NativeDesktopCli @('worker','start','--help')
     Assert-True ($help.ok -and $help.help -match '30-600' -and $help.help -match 'stop reconciles') 'Worker help omitted bounds or recovery'
     $dto = [Basaltwater.Desktop.Element]([pscustomobject]@{ reference = 'r'; window = 123L; pid = 42; path = @(0,1); identity = 'i'; runtime = 'r'; name = 'n'; role = 'ControlType.Edit' })

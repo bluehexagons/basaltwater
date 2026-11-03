@@ -107,6 +107,54 @@ hardware-rendered applications may return incomplete or blank content. A PNG
 file establishes capture completion, not visual correctness. Existing files
 are never overwritten. Monitor captures can include other visible applications.
 
+See the shared [observation contract](desktop-observations.md) for the same
+lifecycle on Debian XFCE and CachyOS KDE Plasma and the platform-validation backlog.
+A successful screenshot normally returns `result.observation_id` (32 lowercase
+hex characters), `captured_at`, `geometry` (input width/height), `image_geometry`
+(actual PNG width/height), `image_origin`, `desktop_origin` and `coordinate_space`.
+Both geometry fields are `[width, height]` pairs, as on Linux.
+Image origin is `[0,0]` in `window` or `monitor` coordinates; desktop origin is
+separate and can be negative. Window identity and its entire rectangle are
+revalidated after PrintWindow and before publishing the receipt. A failed native
+capture removes its own partial output and preserves preexisting files.
+
+During an active or uncertain keyboard lease, screenshots remain available for
+monitoring but return a null `observation_id` and
+`observation_unavailable_reason: keyboard-lease-active-or-uncertain`. They clear
+preceding capture authority. Eligibility is checked before capture, so cleanup
+finishing during capture does not authorize that image. Capture again after
+confirmed key release, ownership closure and watchdog retirement before binding
+another action. `capture_freshness` still describes the monitoring image's age.
+
+`result.capture_freshness` contains `age_seconds`, `remaining_seconds`,
+`max_age_seconds` and `fresh`. Age starts at capture admission, includes worker
+and capture time, and uses Windows' monotonic Stopwatch clock. UTC rollback does
+not extend it. `--max-age-seconds INTEGER` accepts 1–600, defaults to 60, and
+is fresh through its age limit. Increase it explicitly only for stable turn-based work.
+A capture can already be expired when returned. Freshness establishes elapsed
+time and target continuity checks; it promises no semantic or scene validity.
+
+To bind the next input to that image, supply `--observation ID` alongside all
+existing `--window`, `--identity`, `--generation`, `--width` and `--height`
+selectors. Use dimensions from the receipt's `geometry`. The latest successful
+window capture establishes the identity for this route without another fresh
+`windows` inventory. Native foreground, identity, geometry, physical-modifier
+and occlusion guards still apply. A monitor capture cannot authorize window
+input. Capture itself still uses the existing window-discovery selectors.
+
+Only the latest successful capture token is retained in private state. Another
+successful screenshot supersedes it; failed capture leaves it intact. Tokens
+are single-use: input consumes the token durably before attempting dispatch,
+including failed or uncertain input, and cannot replay it. Any desktop mutation
+or control/session change invalidates it. Status and windows queries never renew
+the token. Input without `--observation` and existing UI Automation/window-action
+paths retain their existing guards and reference lifetimes.
+Status exposes the current ID and freshness without renewing either. Discrete
+token input rechecks the capture deadline inside cold and warm native workers.
+Token-bound `hold` is explicitly unsupported pending watchdog deadline plumbing;
+use the existing window-inventory hold route. Windows post-input capture remains
+follow-up work rather than an implemented `--observe` option.
+
 ## Act on observed controls
 
 ```powershell
@@ -125,7 +173,8 @@ Input supports scan-code keys, atomic Ctrl/Shift chords, Unicode text and clicks
 Named keys include ENTER, ESC, TAB, SPACE, arrows, BACKSPACE, DELETE, HOME, END,
 PAGEUP, PAGEDOWN, INSERT and F1–F12, plus A–Z and 0–9. For example, use
 `--key CTRL+SHIFT+HOME` with `input key` or `input chord`.
-`desktop input key --help` lists keys and limits without desktop calls.
+`desktop input --help` lists operations; `desktop input key --help` lists keys
+and limits without desktop calls.
 Unicode text is limited to 1024 UTF-16 code units and does not exercise an IME.
 Scan codes use the target thread's keyboard layout and extended-key flags;
 Unicode `input text` remains separate

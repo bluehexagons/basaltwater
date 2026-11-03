@@ -105,13 +105,13 @@ class Recorder:
         else:
             row = {"action": action, **stamp(), "outcome": "returned" if result is not None else "uncertain"}
             # Never record text, key values, argv, element content or portal tokens.
-            for key in ("kind", "x", "y", "to_x", "to_y", "duration_ms", "button", "hold_ms", "operation"):
+            for key in ("kind", "x", "y", "to_x", "to_y", "duration_ms", "button", "hold_ms", "operation", "observation_id"):
                 if key in payload:
                     row[key] = payload[key]
             if result is not None:
                 row["result"] = compact_capture(result) if action == "screenshot" else {
                     key: result[key] for key in ("pid", "launch", "returncode", "state", "generation",
-                        "input_completed_at", "input_completed_monotonic_ns") if key in result}
+                        "input_completed_at", "input_completed_monotonic_ns", "observation_id") if key in result}
                 if "error" in result:
                     row["outcome"] = "uncertain"
             self.data["events"].append(row)

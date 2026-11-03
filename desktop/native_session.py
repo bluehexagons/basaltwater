@@ -18,13 +18,16 @@ import threading
 import time
 
 from desktop import accessibility, client, control_state, native_grants, session_runtime
+from desktop.observations import (
+    CaptureObservation, DEFAULT_CAPTURE_MAX_AGE_SECONDS, capture_freshness,
+    validate_capture_max_age, validate_observation_option,
+)
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.validation import validate_filesystem_path
 
 MAX_MESSAGE = 65536
 SESSION_SECONDS = 0
 MAX_SESSION_SECONDS = 28800
-CAPTURE_MAX_AGE_SECONDS = 60
 
 # These describe only our own pending injections, never the user's keyboard.
 KEYSYM_MODIFIERS = {0xffe1: "shift", 0xffe2: "shift", 0xffe3: "ctrl", 0xffe4: "ctrl",
@@ -100,14 +103,6 @@ def _request_status(*, deadline=None):
             time.sleep(.05 if deadline is None else min(.05, client.remaining_seconds(deadline)))
 
 
-def _capture_freshness(captured=0):
-    """Describe the existing capture guard without renewing its clock."""
-    age = max(0, time.monotonic() - captured) if captured else None
-    return {"age_seconds": age, "max_age_seconds": CAPTURE_MAX_AGE_SECONDS,
-            "remaining_seconds": max(0, CAPTURE_MAX_AGE_SECONDS - age) if age is not None else 0,
-            "fresh": age is not None and age <= CAPTURE_MAX_AGE_SECONDS}
-
-
 def status(*, deadline=None):
     try:
         result = _request_status(deadline=deadline)
@@ -130,7 +125,7 @@ def status(*, deadline=None):
                 "worker_provenance": receipt.get("worker_provenance"),
                 "desktop": "kde-wayland", "backend": "portal", "helper_running": False,
                 **control_state.status(), "control_active": False, "expires_in": 0,
-                "capture_freshness": _capture_freshness(),
+                "capture_freshness": capture_freshness(), "observation_id": None,
                 "consent_expires_in": None,
                 "interactive_required": None if grant["grant_saved"] else True,
                 "detail": receipt.get("detail") if receipt.get("last_failure") else "Run desktop start; KDE may request selected-monitor/input approval"}
@@ -355,6 +350,8 @@ class NativeSession:
         self.until = time.monotonic() + session_seconds if session_seconds else float("inf")
         self.geometry = None
         self.captured = 0
+        self.capture_max_age = DEFAULT_CAPTURE_MAX_AGE_SECONDS
+        self.observation = None
         self.pixel_digest = None
         self.capture_region = None
         self.last_input = None
@@ -380,15 +377,16 @@ class NativeSession:
                 "restore_attempted": self.restore_attempted, "session_seconds": self.session_seconds,
                 "max_session_seconds": MAX_SESSION_SECONDS,
                 "geometry": self.geometry,
-                "capture_freshness": _capture_freshness(self.captured if self.state == "running"
-                                                       and time.monotonic() < self.until else 0),
+                "capture_freshness": capture_freshness(self.captured if self.captured and self.state == "running"
+                                                       and time.monotonic() < self.until else None, self.capture_max_age),
+                "observation_id": self.observation.id if self.observation is not None else None,
                 "evidence": str(self.evidence.path) if self.evidence else self.last_evidence,
                 "evidence_recording": self.evidence is not None,
                 "evidence_error": self.evidence_error,
                 "interactive_required": False if self.state == "running" else (None if self.restore_attempted or self.state == "initializing" else True),
                 "expires_in": (None if not self.session_seconds else max(0, int(self.until - time.monotonic()))) if self.state == "running" else 0,
                 "control_active": self.input_active,
-                "input_capabilities": ["keysym", "keycode", "server-paced-text"],
+                "input_capabilities": ["keysym", "keycode", "server-paced-text", "observation-input"],
                 "input_state": {"scope": "helper-injected", "physical_modifiers": "unavailable",
                                 "keysym_presses": len(self.injected_keysyms),
                                 "keycode_presses": len(self.injected_keycodes),
@@ -401,6 +399,7 @@ class NativeSession:
         if self.control_revision != current["control_revision"]:
             self.elements.clear()
             self.captured = 0
+            self.observation = None
             self.control_revision = current["control_revision"]
         return current
 
@@ -437,6 +436,7 @@ class NativeSession:
         with self.lock:
             self.state = "stopped"
             self.elements.clear()
+            self.observation = None
             self.stopping.set()
             if self.evidence:
                 try:
@@ -465,6 +465,10 @@ class NativeSession:
         if payload.get("generation") != self.generation:
             raise ValueError("Native session changed; observe again")
         control_state.require_enabled(payload)
+        if payload.get("observation_id") is not None:
+            if self.observation is None:
+                raise ValueError("Observation is consumed or invalidated; capture and inspect again")
+            self.observation.validate(payload)
 
     def handle(self, payload):
         try:
@@ -488,6 +492,7 @@ class NativeSession:
                     self.evidence_error = "Evidence checkpoint failed; inspect its private artifact"
 
     def _handle(self, payload):
+        validate_observation_option(payload)
         payload["deadline"] = client.bounded_deadline(
             payload, seconds=20 if payload.get("delay_ms") is not None else 14)
         with self.lock:
@@ -606,6 +611,8 @@ class NativeSession:
             if self.capture_admission.locked():
                 raise RuntimeError("A native capture is in progress; observe before input")
             self.guard(payload)
+            if action != "input":
+                self.observation = None
             self.elements = {ref: row for ref, row in self.elements.items() if time.monotonic() - row["observed_at"] <= 60}
             if action == "element":
                 observed = self.elements.get(payload.get("ref"))
@@ -645,6 +652,7 @@ class NativeSession:
                 try:
                     return self.input(payload)
                 finally:
+                    self.observation = None
                     self.input_active = False
                     self.input_released.set()
             raise ValueError("This operation is unavailable on KDE Wayland; use observed accessible controls or portal input")
@@ -653,6 +661,7 @@ class NativeSession:
         from desktop.evidence import capture_digest
         from desktop.portal_capture import validate_crop
 
+        max_age = validate_capture_max_age(payload.get("max_age_seconds", DEFAULT_CAPTURE_MAX_AGE_SECONDS))
         if payload.get("window") or payload.get("active_window"):
             raise ValueError("Portal capture uses the consent-selected monitor; window capture is unavailable")
         next_frame = payload.get("next_frame", False)
@@ -715,7 +724,10 @@ class NativeSession:
                 self.capture_region = expected
                 self.geometry = geometry
                 self.captured = started
+                self.capture_max_age = max_age
+                self.observation = CaptureObservation(started, max_age, geometry, region=expected)
                 return {**self.snapshot_status(), "output": output, "image_geometry": image_geometry, "image_origin": origin,
+                    "coordinate_space": "monitor",
                     "captured_at": datetime.now(timezone.utc).isoformat(), "changed": changed,
                     "artifact_sha256": artifact_digest,
                     **{key: result.get(key) for key in ("pixel_sha256", "frame_received_at",
@@ -749,11 +761,11 @@ class NativeSession:
         codes = client.validate_keycodes(payload)
         hold_ms = client.validate_hold(payload)
         drag_ms = client.validate_drag(payload)
-        freshness = _capture_freshness(self.captured)
+        freshness = capture_freshness(self.captured or None, self.capture_max_age)
         if self.geometry is None or payload.get("geometry") != self.geometry or not freshness["fresh"]:
             age = freshness["age_seconds"]
             detail = ("no current capture" if age is None else
-                      f"capture age {age:.1f}s, limit {CAPTURE_MAX_AGE_SECONDS}s")
+                      f"capture age {age:.1f}s, limit {self.capture_max_age}s")
             raise ValueError("Capture the selected monitor again before input; geometry must match a recent screenshot "
                              f"({detail}). Recapture and re-plan before retrying")
         kind = payload.get("kind")
@@ -838,6 +850,7 @@ class NativeSession:
         self.last_input = {"input_completed_at": datetime.now(timezone.utc).isoformat(),
                            "input_completed_monotonic_ns": time.monotonic_ns()}
         return {"generation": self.generation, "geometry": self.geometry, **self.last_input,
+                **({"observation_id": payload["observation_id"]} if payload.get("observation_id") is not None else {}),
                 **({"submitted_characters": len(keys)} if kind == "text" else {})}
 
 
