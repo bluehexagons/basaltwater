@@ -63,7 +63,8 @@ panel uses its own HTTPS origin and Basic Auth record, has no cookies, and does
 not share the web-panel credential.
 
 Main-panel approvals are enabled by default. Nginx authenticates the ordinary
-panel login and routes `/approvals` and exact `/requests/ID` paths to an HTTP
+panel login and routes `/approvals`, `/approvals/admin`, fixed-action review paths
+under `/approvals/admin/ACTION`, and exact `/requests/ID` paths to an HTTP
 Unix socket owned by the isolated approval identity and proxy group. The
 approval service checks the kernel peer UID against `www-data`, the single
 forwarded login, and the configured panel Host/Origin. The requester account
@@ -189,6 +190,27 @@ individual approval; reboot and shutdown also respect the existing `reboot`
 deny rule. Review the fixed helper argv and the described effects. Actions can
 update packages, replay saved setup, reload Nginx, restart the panel, or schedule
 host power changes, so approving them can interrupt active work.
+
+Administrator-initiated actions use approval-socket-only `admin-preview`
+(`admin_action`) and `admin-approve` (`admin_action`, reviewed plan `digest`,
+`actor`) messages. Preview reads the fixed plan and availability without creating
+a request. Approval rechecks availability and the plan digest, creates the ordinary
+audited `admin.run` request under the configured requester UID, then approves that
+exact request. All quotas, policy checks and execution claims still apply.
+A policy change during acceptance can leave a pending or invalidated request;
+inspect the queue before creating a replacement. Neither message accepts arbitrary
+argv or a caller-selected UID, and the requester socket rejects both messages.
+The isolated HTTP service binds the allowed timing variants to a random one-use
+review ticket, expires it after five minutes, and consumes it before broker I/O.
+Each listener retains at most 32 tickets; restart invalidates all outstanding
+forms. Host, Origin, authenticated peer/login and strict form checks apply to
+this path too. Lost responses are never replayed automatically.
+
+`reboot` schedules `systemctl --no-ask-password --when=+5s reboot` (systemd 254+).
+The explicit `reboot-warning` variant uses `shutdown -r +2` to warn logged-in
+users and wait two minutes. Both variants and power-off respect `reboot: deny`.
+`shutdown -c` cancels a still-pending logind power schedule, including the short
+restart. A successful worker result confirms scheduling, not host return.
 
 Long jobs are dispatched as the detached root
 `basaltwater-admin-maintenance.service`, with a six-hour runtime cap and no

@@ -450,7 +450,8 @@ class AdminJobTests(unittest.TestCase):
             "-o", "Dpkg::Options::=--force-confold", "--assume-yes", "upgrade",
         ])
         self.assertEqual(admin_job.commands("refresh-preview")[0][-2:], ["refresh", "--dry-run"])
-        self.assertEqual(admin_job.commands("reboot"), [["/usr/sbin/shutdown", "-r", "+2"]])
+        self.assertEqual(admin_job.commands("reboot"), [["/usr/bin/systemctl", "--no-ask-password", "--when=+5s", "reboot"]])
+        self.assertEqual(admin_job.commands("reboot-warning"), [["/usr/sbin/shutdown", "-r", "+2"]])
 
     def test_snapshot_installation_has_refresh_actions_without_a_managed_channel(self):
         with patch.object(admin_job, "can_manage_system_services", return_value=True), \

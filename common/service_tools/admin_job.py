@@ -92,7 +92,7 @@ def availability() -> dict[str, str]:
     except (OSError, RuntimeError, ValueError):
         return {key: "Machine capabilities could not be read." for key in ADMIN_ACTIONS}
     if not restart:
-        for key in ("reboot", "shutdown", "cancel-shutdown"):
+        for key in ("reboot", "reboot-warning", "shutdown", "cancel-shutdown"):
             blocked[key] = "Power control is unavailable for this machine profile."
     debian = read_os_release().get("ID") == "debian"
     if not debian or not os.path.isfile("/usr/bin/apt-get"):
@@ -247,7 +247,9 @@ def commands(action: str) -> list[list[str]]:
         )]
     if action == "restart-panel":
         return [["/usr/bin/systemctl", "--no-ask-password", "restart", "basaltwater-web-panel.service"]]
-    return [["/usr/sbin/shutdown", *({"reboot": ["-r", "+2"], "shutdown": ["-h", "+2"], "cancel-shutdown": ["-c"]}[action])]]
+    if action == "reboot":
+        return [["/usr/bin/systemctl", "--no-ask-password", "--when=+5s", "reboot"]]
+    return [["/usr/sbin/shutdown", *({"reboot-warning": ["-r", "+2"], "shutdown": ["-h", "+2"], "cancel-shutdown": ["-c"]}[action])]]
 
 
 def trusted_refresh_source() -> None:

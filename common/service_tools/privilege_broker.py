@@ -288,10 +288,42 @@ class Broker:
             self._transition(request["id"], result.state, request["actor"])
         return True
 
+    def admin_preview(self, action: str) -> dict:
+        """Review a fixed host action without creating a pending request."""
+        with self.lock, self.db:
+            self._expire()
+            policy = self.policy_loader()
+            plan = operation_plan(policy, policy["requester_uid"], "admin.run", {"action": action})
+            status = job_status()
+            if status["blocked"].get(action):
+                raise ValueError(status["blocked"][action])
+            if action != "cancel-shutdown" and status.get("unit_state") not in {"inactive", "failed"}:
+                raise ValueError("Maintenance is running or its state is unavailable")
+            if self.db.execute("SELECT 1 FROM requests WHERE state IN ('pending','approved','executing') AND json_extract(plan,'$.operation')='admin.run' LIMIT 1").fetchone():
+                raise ValueError("Review the outstanding administration request first")
+            return {"plan": plan, "digest": digest(plan)}
+
+    def admin_approve(self, action: str, fingerprint: str, actor: str) -> dict:
+        """Only the approval identity may create and approve a reviewed fixed action."""
+        with self.lock:
+            preview = self.admin_preview(action)
+            if fingerprint != preview["digest"]:
+                raise ValueError("The reviewed action changed; open a fresh review")
+            request = self.request(preview["plan"]["uid"], "admin.run", {"action": action}, "Administrator requested host action")
+            # request() rereads policy. Preserve a pending request if it changed
+            # during acceptance, and never approve a plan the browser did not see.
+            if digest(request["plan"]) != fingerprint:
+                raise ValueError("The reviewed action changed; inspect the pending request")
+            return self.decide(request["id"], request["digest"], True, actor)
+
     def dispatch(self, message: object, uid: int, *, approval: bool = False) -> dict:
         if not isinstance(message, dict):
             raise ValueError("Expected an object")
         action = message.get("action")
+        if approval and action == "admin-preview" and set(message) == {"action", "admin_action"}:
+            return self.admin_preview(message["admin_action"])
+        if approval and action == "admin-approve" and set(message) == {"action", "admin_action", "digest", "actor"}:
+            return self.admin_approve(message["admin_action"], message["digest"], message["actor"])
         if not approval and action == "routine-status" and set(message) == {"action"}:
             policy = self.policy_loader()
             if uid != policy["requester_uid"]:
@@ -396,7 +428,7 @@ class Broker:
             result = job_status()
             result["restartable_services"] = sorted(policy["services"])
             if policy["reboot"] == "deny":
-                result["blocked"].update({key: "Power control is denied by administrator policy." for key in ("reboot", "shutdown")})
+                result["blocked"].update({key: "Power control is denied by administrator policy." for key in ("reboot", "reboot-warning", "shutdown")})
             with self.lock, self.db:
                 self._expire()
                 rows = self.db.execute("SELECT id,created,state,plan FROM requests WHERE uid=? ORDER BY created DESC LIMIT 100", (uid,)).fetchall()
@@ -423,8 +455,14 @@ class Broker:
             with self.lock, self.db:
                 self._expire()
                 rows = self.db.execute(f"SELECT id,uid,created,state,plan FROM requests ORDER BY {_REVIEW_ORDER} LIMIT 20").fetchall()
-                return {"requests": [{"id": row["id"], "uid": row["uid"], "created": row["created"],
-                                      "state": row["state"], "operation": json.loads(row["plan"])["operation"]} for row in rows]}
+                records = []
+                for row in rows:
+                    plan = json.loads(row["plan"])
+                    target = (plan["parameters"]["action"] if plan["operation"] == "admin.run" else
+                              plan["parameters"]["unit"] if plan["operation"] == "service.restart" else "")
+                    records.append({"id": row["id"], "uid": row["uid"], "created": row["created"],
+                                    "state": row["state"], "operation": plan["operation"], "target": target})
+                return {"requests": records}
         if action == "status" and set(message) == {"action", "id"}:
             return self.status(message["id"], None if approval else uid)
         if not approval and action == "cancel" and set(message) == {"action", "id"}:

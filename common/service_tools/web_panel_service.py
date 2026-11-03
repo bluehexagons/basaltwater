@@ -2709,17 +2709,18 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         if set(values) != expected or any(len(entries) != 1 for entries in values.values()):
             self._send(HTTPStatus.BAD_REQUEST, "Invalid administration action\n", "text/plain")
             return
+        redirect = "/admin?view=requests"
         try:
             if path.endswith("/cancel"):
                 self.state.admin.cancel(values["id"][0])
             else:
-                self.state.admin.submit(values["action"][0], values["ticket"][0], values["confirmation"][0])
+                redirect = self.state.admin.submit(values["action"][0], values["ticket"][0], values["confirmation"][0])
         except (OSError, ValueError, RuntimeError):
-            self._send(HTTPStatus.CONFLICT, render_admin(self.state, _PAGE_STYLE, {}, error=
-                "The action could not be submitted. It may be unavailable, expired, or already submitted; power controls also require the exact host name. Check Recent requests and refresh status before trying again."), "text/html")
+            self._send(HTTPStatus.CONFLICT, render_admin(self.state, _PAGE_STYLE, {"view": "requests"}, error=
+                "The action was not confirmed. Review requests before trying again; an expired review or lost response is never replayed."), "text/html")
             return
         self.send_response(HTTPStatus.SEE_OTHER)
-        self.send_header("Location", "/admin")
+        self.send_header("Location", redirect)
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
 

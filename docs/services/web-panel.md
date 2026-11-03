@@ -71,8 +71,9 @@ notifications require ingest; certificate help requires gateway metadata.
 Empty service/access sections are omitted. See [feature discovery](web-panel-reference.md#feature-discovery-and-navigation)
 for the full availability contract.
 
-Agent tools and Admin controls group actions by task, with section links and
-explicit effects/unavailable reasons. **Shares & Data** separates Samba,
+Agent tools and Admin controls group actions by task, with explicit effects
+and unavailable reasons. Admin controls separates host actions, requests and
+activity into their own views. **Shares & Data** separates Samba,
 mirrors and integrity work; see its [operator guide](shares-data.md).
 The dashboard header identifies the host, profile and account. Service and audit
 totals reuse displayed records, distinguish unchecked endpoints and retain
@@ -296,7 +297,7 @@ page and documented in [Agent authentication](../agents/agent-authentication.md)
 ## Privilege approvals
 
 Installing the web panel includes the approval engine by default, with no
-additional password or public listener. **Admin controls → Privilege approvals**
+additional password or public listener. **Admin controls → Requests**
 also lists this account's recent broker requests, including agent follow-ups,
 service restarts and commands. Review status, expiry and safe execution results,
 cancel unclaimed requests, or open the exact action to approve or deny it using
@@ -331,21 +332,33 @@ T3 Code updates live under **Agents**.
 | Check web configuration | Run `nginx -t` without reloading. |
 | Reload web gateway | Run `nginx -t`, then reload Nginx only if validation passes. |
 | Restart web panel | Restart the UI; independent task work continues. Older installations with panel-owned scheduling interrupt active prompts. |
-| Restart / shut down host | Schedule reboot or power-off two minutes after approval; interrupt all running sessions. |
+| Restart host | Restart 5 seconds after scheduling by default. Choose **Warn users, then restart in 2 minutes** for a longer warning. All running sessions are interrupted. |
+| Shut down host | Schedule power-off two minutes after approval; interrupt all running sessions. |
 | Cancel scheduled power action | Cancel a still-pending scheduled reboot or power-off. |
 
-Choose **Review action**, read its effects, and select **Create approval request**.
-Power actions also require the exact displayed host name. Open the request's
-**Open approval review** link and approve or deny it within the panel.
+Click anywhere on an enabled action row to open its focused approval review.
+Read the effects, choose restart timing when applicable, then select **Approve**.
+That explicit decision creates and approves one fixed action through the isolated
+service. Opening the review creates no request and schedules nothing. The review
+expires in five minutes; a consumed review cannot be submitted twice. The result
+opens that request's status directly. The standalone panel also offers **Host
+actions** with the same flow, using its own sign-in.
+
+**Requests** contains pending decisions and recent outcomes. **Activity & diagnostics**
+contains the latest maintenance result and inspection links. Refresh keeps the
+selected view. Existing request links still open an individual review with
+**Approve once** and **Deny**; technical metadata and untrusted explanations are
+in a disclosure, while exact general-command arguments remain visible before approval.
 Use **Cancel request** to withdraw an unclaimed request; cancellation cannot undo
 an action already started. Approval expiry follows the installed broker policy.
 Cancelling a scheduled power action is a new approval request: allow time to
-approve it before the two-minute deadline, or use the administrator console.
+approve it before the selected deadline, or use the administrator console. Five
+seconds leaves little cancellation time; choose the two-minute warning when needed.
 After power-off, starting the machine requires its VM controller or physical
 access.
 
-The screen shows recent broker requests across all operations and the latest
-maintenance job's result, timestamps, and exit code. **Dispatched** means the
+The request and activity views show recent broker requests across all operations
+and the latest maintenance job's result, timestamps, and exit code. **Dispatched** means the
 maintenance service started, not that its commands finished. A successful power
 job confirms scheduling only. Review running work before updates or interruptions.
 

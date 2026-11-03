@@ -1,10 +1,16 @@
 # Privilege approvals
 
 The web panel installs the approval service by default. Open **Admin controls →
-Privilege approvals → Review all requests** to review, approve or deny exact
+Requests → Review all requests** to review, approve or deny exact
 actions using the panel login. Host administration, agent service prerequisites,
 Samba changes and storage operations share this queue. Nothing runs just because
 you open a review.
+
+For common host maintenance, open **Admin controls → Host actions**, click the
+action row, review its effects, then approve once. Restart defaults to five
+seconds after scheduling, with an explicit two-minute warning option. These
+focused reviews create no request until approval and expire after five minutes.
+The standalone panel offers the same catalog through **Host actions**.
 
 Use `--no-privilege-broker` to disable approvals, or `--privilege-broker` to
 re-enable them on a panel installation. An omitted option preserves an explicit
@@ -127,7 +133,7 @@ or already closed, unexecuted request. Setup must refresh both the CLI and the
 broker before using this command on an existing VM.
 
 When the [web panel](../services/web-panel.md) is installed, **Admin
-controls → Privilege approvals** lists this account's recent requests from task
+controls → Requests** lists this account's recent requests from task
 follow-ups, terminal agents and Admin controls. It shows status, approval expiry,
 safe execution results, cancellation for unclaimed work, and links to review
 the exact actions. Both panels list pending, approved and executing requests

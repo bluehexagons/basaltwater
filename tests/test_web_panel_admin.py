@@ -39,6 +39,9 @@ class AdminScreenTests(unittest.TestCase):
 
     def test_query_is_a_single_finite_review_action(self):
         self.assertEqual(parse_admin_query("action=refresh"), {"action": "refresh"})
+        self.assertEqual(parse_admin_query("view=requests"), {"view": "requests"})
+        with self.assertRaises(ValueError):
+            parse_admin_query("view=requests&action=reboot")
         for query in ("action=refresh&action=reboot", "action=refresh&argv=sh", "action=", "action=--help", "load=1"):
             with self.subTest(query=query), self.assertRaises(ValueError):
                 parse_admin_query(query)
@@ -67,7 +70,7 @@ class AdminScreenTests(unittest.TestCase):
                    "created": 0, "expires": 3600, "review_url": "https://vm.example/requests/" + "a" * 32}
         with patch("common.service_tools.web_panel_admin.exchange", return_value={
                 **status(), "privilege_requests": [request]}):
-            document = render_admin(self.state, _PAGE_STYLE, {})
+            document = render_admin(self.state, _PAGE_STYLE, {"view": "requests"})
         self.assertIn('href="/approvals"', document)
         self.assertIn('href="/requests/' + "a" * 32 + '"', document)
         self.assertIn("Uses your web panel sign-in", document)
@@ -98,21 +101,21 @@ class AdminScreenTests(unittest.TestCase):
                   "setup_context": {"job_id": "a" * 32, "phase": "recovery", "setup_stage": "steps",
                                     "step_index": 3, "step_count": 4, "error_type": "RuntimeError", "secret": "root-secret"}}
         with patch("common.service_tools.web_panel_admin.exchange", return_value={**status(), "latest": latest}):
-            document = render_admin(self.state, _PAGE_STYLE, {})
+            document = render_admin(self.state, _PAGE_STYLE, {"view": "activity"})
         for text in ("Command index", "Command exited unsuccessfully", "Setup phase", "RuntimeError"):
             self.assertIn(text, document)
         self.assertNotIn("root-secret", document)
         latest.update(stage="root-secret", failure="root-secret", command_index=True)
         latest["setup_context"]["job_id"] = "b" * 32
         with patch("common.service_tools.web_panel_admin.exchange", return_value={**status(), "latest": latest}):
-            document = render_admin(self.state, _PAGE_STYLE, {})
+            document = render_admin(self.state, _PAGE_STYLE, {"view": "activity"})
         self.assertIn("Unavailable", document)
         self.assertNotIn("root-secret", document)
         self.assertNotIn("Setup phase", document)
 
     def test_one_time_review_ticket_prevents_repeated_submission(self):
         ticket = self.manager.ticket("refresh")
-        with patch("common.service_tools.web_panel_admin.exchange", side_effect=[status(), {"state": "pending"}]) as exchange:
+        with patch("common.service_tools.web_panel_admin.exchange", side_effect=[status(), {"state": "pending", "id": "a" * 32}]) as exchange:
             self.manager.submit("refresh", ticket, "")
             self.assertEqual(exchange.call_args.args[0]["operation"], "admin.run")
             with self.assertRaisesRegex(ValueError, "already submitted"):
@@ -152,12 +155,12 @@ class AdminScreenTests(unittest.TestCase):
             document = render_admin(self.state, _PAGE_STYLE, {"action": "refresh"})
         self.assertIn("maintenance service state is unavailable", document)
         self.assertNotIn("Create approval request", document)
-        self.assertNotIn('href="/admin?action=refresh"', document)
+        self.assertNotIn('action="/actions/admin"', document)
 
     def test_output_is_escaped_and_arbitrary_review_urls_are_not_links(self):
         value = {**status(), "requests": [{"id": "a" * 32, "action": "refresh", "state": "<script>", "created": 0, "review_url": "javascript:alert(1)"}]}
         with patch("common.service_tools.web_panel_admin.exchange", return_value=value):
-            document = render_admin(self.state, _PAGE_STYLE, {})
+            document = render_admin(self.state, _PAGE_STYLE, {"view": "requests"})
         self.assertNotIn("javascript:", document)
         self.assertNotIn("<script>", document)
         self.assertIn("&lt;script&gt;", document)
@@ -165,7 +168,7 @@ class AdminScreenTests(unittest.TestCase):
     def test_pending_requests_can_be_cancelled_without_exposing_approval(self):
         value = {**status(), "requests": [{"id": "a" * 32, "action": "refresh", "state": "pending", "created": 0, "review_url": "https://vm.example:9444/requests/" + "a" * 32}]}
         with patch("common.service_tools.web_panel_admin.exchange", return_value=value):
-            document = render_admin(self.state, _PAGE_STYLE, {})
+            document = render_admin(self.state, _PAGE_STYLE, {"view": "requests"})
         self.assertIn("Cancel request", document)
         self.assertIn("Open approval review", document)
         self.assertNotIn('href="/admin?action=', document)
@@ -176,7 +179,7 @@ class AdminScreenTests(unittest.TestCase):
             {"id": "c" * 32, "operation": "command.run", "state": "failed", "target": "",
              "execution": {"exit_code": 7, "failure": "nonzero_exit"}, "review_url": "javascript:alert(1)"}]
         with patch("common.service_tools.web_panel_admin.exchange", return_value=value) as broker:
-            document = render_admin(self.state, _PAGE_STYLE, {})
+            document = render_admin(self.state, _PAGE_STYLE, {"view": "requests"})
         broker.assert_called_once_with({"action": "admin-status"})
         for text in ('Privilege approvals', 'auto-update-node.service', 'Approval expires',
                      'Review exact action', 'nonzero_exit', 'Exit code: 7', 'Privileged command'):
@@ -187,6 +190,26 @@ class AdminScreenTests(unittest.TestCase):
         with patch("common.service_tools.web_panel_admin.exchange") as broker:
             self.manager.cancel('b' * 32)
         broker.assert_called_once_with({"action": "cancel", "id": 'b' * 32})
+
+    def test_actions_are_whole_row_links_to_isolated_review(self):
+        self.state.admin = PanelAdmin({"host": "vm.example", "features": {"approvals": True}})
+        document = self.render()
+        self.assertRegex(document, r'<a class="action-row[^\"]*admin-action-link[^\"]*" href="/approvals/admin/reboot">.*?<h3>Restart host</h3>')
+        self.assertNotIn('href="/approvals/admin/reboot-warning"', document)
+        self.assertNotIn('href="#admin-', document)
+        self.assertNotIn('aria-labelledby="privilege-requests-heading"', document)
+        self.assertNotIn('Latest job:', document)
+        self.assertEqual(self.manager.action_url("reboot"), "https://vm.example:9444/approvals/admin/reboot")
+
+    def test_refresh_preserves_view_and_review_does_not_include_catalog_or_history(self):
+        for view in ("requests", "activity"):
+            document = self.render({"view": view})
+            self.assertIn(f'href="/admin?view={view}">Refresh status', document)
+            self.assertNotIn('id="admin-updates"', document)
+        document = self.render({"action": "refresh"})
+        self.assertIn('id="review-heading"', document)
+        self.assertNotIn('id="admin-updates"', document)
+        self.assertNotIn('id="privilege-requests-heading"', document)
 
     def handler(self, path, values):
         handler = object.__new__(WebPanelHandler)
@@ -217,8 +240,8 @@ class AdminScreenTests(unittest.TestCase):
         document = self.render({"action": "refresh"})
         ticket = re.search(r'name="ticket" value="([^"]+)"', document).group(1)
         handler = self.handler("/actions/admin", {"csrf": "csrf", "action": "refresh", "ticket": ticket, "confirmation": ""})
-        with patch("common.service_tools.web_panel_admin.exchange", side_effect=[status(), {"state": "pending"}]) as exchange:
+        with patch("common.service_tools.web_panel_admin.exchange", side_effect=[status(), {"state": "pending", "id": "a" * 32}]) as exchange:
             handler.do_POST()
             handler.send_response.assert_called_once_with(303)
-            handler.send_header.assert_any_call("Location", "/admin")
+            handler.send_header.assert_any_call("Location", "https://vm.example:9444/requests/" + "a" * 32)
             self.assertEqual(exchange.call_args.args[0]["parameters"], {"action": "refresh"})

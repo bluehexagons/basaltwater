@@ -405,7 +405,7 @@ server {{
 
         approval_location = f"""
     # The coding-user application cannot make decisions on these routes.
-    location ~ "^/(approvals$|requests/[a-f0-9]{{32}}$)" {{
+    location ~ "^/(approvals(?:/admin(?:/[a-z-]+)?)?$|requests/[a-f0-9]{{32}}$)" {{
         limit_req zone=basaltwater_web_panel_auth burst=5 nodelay;
         limit_req_status 429;
         client_max_body_size 2k;

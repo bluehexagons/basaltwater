@@ -147,7 +147,7 @@ def operation_plan(policy: dict, uid: int, operation: str, parameters: object) -
     elif operation == "admin.run" and set(parameters) == {"action"}:
         action = parameters["action"]
         spec = action_spec(action)
-        mode = policy["reboot"] if action in {"reboot", "shutdown"} else "approve"
+        mode = policy["reboot"] if action in {"reboot", "reboot-warning", "shutdown"} else "approve"
         argv = dispatch_argv(action)
         effect = spec["effect"]
         if action != "cancel-shutdown":
