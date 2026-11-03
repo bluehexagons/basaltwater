@@ -23,6 +23,19 @@ observed window selectors or an explicit monitor device. PrintWindow may not
 capture hardware-rendered content correctly. Inspect the artifact before claiming
 visual success; an API or process exit alone does not prove rendering/audio/input.
 
+Screenshots return `result.observation_id`, `[width,height]` geometry, explicit
+coordinate space/origins and monotonic `capture_freshness`. For stable, untimed
+scenes, `--max-age-seconds 180` allows more thinking time (1–600; default 60).
+Use `input ... --observation ID` for one discrete action with the matching window
+selectors and capture dimensions. New captures, mutations and control/session
+changes invalidate the token; status/windows never renew it. Monitor captures
+cannot authorize window input. Token-bound holds and post-input `--observe` are
+pending on Windows. See the shared [observation contract](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/desktop-observations.md).
+During an active or uncertain keyboard lease, captures return a null observation
+ID with `observation_unavailable_reason: keyboard-lease-active-or-uncertain`.
+Use those images for monitoring; take a fresh capture after confirmed cleanup
+before binding more input, even if the lease settled during capture.
+
 Window actions require `--window HWND --identity IDENTITY --generation GENERATION`.
 Element actions use `--ref REF --generation GENERATION`. References expire after
 60 seconds or a mutation; observe again before another action. Text/focus and
@@ -30,7 +43,8 @@ window geometry actions verify their outcomes, while invoke/raw input require
 task-specific reinspection. Raw input uses observed window width/height and
 window-relative coordinates and requires that window to remain foreground.
 Do not blindly repeat an action after timeout or an uncertain outcome.
-Use `desktop input key --help` for scan-code editing keys and text limits.
+Use `desktop input --help` to list operations and `desktop input key --help`
+for scan-code editing keys and text limits.
 `input chord --key CTRL+A` or `SHIFT+LEFT` submits bounded CTRL/SHIFT chords;
 partial failure attempts reverse-order key release. Queue acceptance does not
 verify application state; failed release requires inspection before continuing.

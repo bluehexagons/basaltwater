@@ -109,6 +109,61 @@ repeat, QPC send/lateness records and an independent Scheduled Task release
 watchdog. Focus/control/identity changes stop input; physical ownership and
 uncertain release remain explicit. Mouse holds and virtual pads are separate.
 
+### Consuming-game feedback and next Windows pass
+
+A reported native SDL pass at installed Basaltwater revision `13e1e8af` used
+public desktop commands, a supervised disposable profile, null audio and a
+private read-only game-state observer. All 26 keyboard leases settled with
+confirmed release/cleanup; 24 ran their requested durations. A fullscreen-key
+hold stopped through target guards after the transition, and one movement hold
+was explicitly cancelled after held state was observed. Sustained movement,
+jump/attack input, joining and battle pause/resume worked. Seven accepted
+Backspace downs deleted seven draft characters; nothing was submitted. The
+selected native child's live diagnostic samples remained separate from the
+wrapper's counters. Menu exit, profile removal and warm-worker cleanup completed.
+No blocking Basaltwater defect was reported. This is consuming-game feedback,
+not qualification of the current observation-token changes or independent
+review of the private receipts.
+
+Keep the following scoped tasks open for agents with Windows access:
+
+- [ ] Add multiple ordinary keys within one finite lease, then a small bounded
+  input timeline for combinations such as `W+J`, `A+M` and direction changes
+  during a jump. Validate the entire key set, ordering, event count and timing
+  bounds before injection. Pay watchdog startup once per lease; retain per-key
+  synthetic ownership, cancellation, control/foreground/identity/geometry
+  checks and independent release. Never layer leases or release unrelated
+  physical keys. Qualify overlapping downs, timed transitions, partial delivery
+  and cleanup after caller/driver/watchdog failures with SDL events and
+  frame-polled game state. Coordinate capture-deadline support with the
+  [shared observation backlog](game-testing.md#desktop-observation-follow-up).
+- [ ] Add wheel input and bounded left/right/middle button holds and drags
+  through the public desktop adapter. Qualify camera orbit, right-drag pan,
+  wheel zoom, scrollbars and sliders with observed effects. Reuse target,
+  ownership, duration and independent-release contracts; cover partial mouse
+  delivery, pointer/target changes, cancellation and controller loss.
+- [ ] Replace the combined held-target message with stable reason codes and
+  bounded expected/observed guard fields for foreground, identity, geometry
+  and control changes. Preserve the stop time and confirmed release/cleanup
+  separately. Keep raw target details in private evidence. Reproduce a fullscreen
+  transition and distinguish its geometry stop from a focus or identity stop.
+- [x] Fix `desktop input --help` to list supported operations before parsing an
+  operation or contacting the desktop. Leaf help remains available; rerun both
+  paths through the installed public launcher during the native pass.
+- [ ] Run `windows/tests/Run-ObservationTests.ps1` on Windows, then qualify
+  monitoring captures during a real keyboard lease with cold workers and an
+  explicit warm worker. These images must return null observation IDs, including
+  when cleanup finishes during capture. Confirm uncertain release, ownership or
+  watchdog retirement cannot mint authority; after confirmed cleanup, only a
+  new capture may authorize discrete input. The source fix has offline fixtures
+  but has not been executed on Windows in this pass.
+- [ ] Review the private hold summary, lease audit, gameplay/pause checks,
+  selected-child diagnostics, game completion and worker-stop receipts before
+  promoting qualification. Keep captures, replay copies and raw transcripts
+  outside Git. This feedback does not qualify physical gamepad/USB recovery,
+  human override, hard caller/watchdog loss, audible quality, IME, display
+  scanout, installation or different-network play.
+
 ### Delivery order from consuming-game testing
 
 Use the following order for new scoped increments. These are proposed

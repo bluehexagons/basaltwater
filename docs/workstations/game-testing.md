@@ -134,7 +134,7 @@ or send meaningless input to spend time. A transitional first frame calls for
 another observation at the declared cadence; repeated equal pixels alone do
 not establish a frozen capture. Apply the stuck-state threshold before recovery.
 
-Input rejects expired captures (older than 60 seconds), wrong geometry and
+Input rejects expired captures (60 seconds by default), wrong geometry and
 changed generations. Recapture and re-plan after rejection. When input completed
 but its follow-up capture failed, retain the completion result and capture again;
 never replay an uncertain purchase or placement blindly.
@@ -142,9 +142,10 @@ never replay an uncertain purchase or placement blindly.
 ### Keep decisions inside the capture window
 
 Native `status --json` and full/compact screenshots include `capture_freshness`:
-`age_seconds`, `remaining_seconds`, `max_age_seconds` (60), and `fresh`.
-These describe the helper's most recent successful capture, timed from PNG
-completion with its monotonic clock. No current capture gives null age, zero
+`age_seconds`, `remaining_seconds`, `max_age_seconds` (default 60), and `fresh`.
+These describe the helper's most recent successful capture, timed from
+capture admission with its monotonic clock, including acquisition time.
+`captured_at` separately describes PNG completion. No current capture gives null age, zero
 remaining time and false freshness. Stopped/expired helpers and observations
 invalidated by a control change cannot advertise a fresh capture.
 
@@ -162,6 +163,13 @@ check, not proof of focus, scene, target identity or animation completion; a
 purchase or transition can invalidate a target within the 60-second window.
 The backend still checks age and geometry at delivery and never automatically
 refreshes a capture or replays a rejected action.
+
+For stable, untimed turns, explicitly select `screenshot --max-age-seconds 180`
+(allowed range 1–600; default 60). This changes only that capture's age limit,
+not scene validity or request deadlines. Prefer `input --observation ID` from
+the inspected capture for one action; new captures and mutations invalidate
+that token. See the cross-platform [observation contract](desktop-observations.md)
+for coordinate spaces, existing non-token routes and planner/operator guidance.
 
 At a handoff, stop issuing actions and record the current match ID, objective,
 last verified scene/resources/board, learned strategy, pending/uncertain inputs,
@@ -196,7 +204,7 @@ originals and packet IDs; use separate crops/redactions as derivatives. Require
 the reply to identify the packet, observations, uncertainty, coordinate space,
 conditional recommendation and expiry. The controller rechecks current scene
 and target after any reorder, purchase or transition; old advice can be stale
-before the backend's 60-second limit. Disregard late optional advice.
+before the capture's selected age limit. Disregard late optional advice.
 
 For document reviewers, give an explicit repository root and exact paths
 relative to it, or private absolute paths. Resolve links to required inputs

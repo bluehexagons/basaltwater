@@ -17,6 +17,70 @@ external test repository is required.
 | Model/resource comparisons | Actual model/effort, assistance, comparable settings, clocks and outcomes remain project-owned. Unknown usage/latency stays unknown; no automated model ranking is provided. |
 | Virtual gamepad | No native gamepad action or qualified adapter exists. Implement and qualify the bounded route below before gameplay use. |
 
+## Desktop observation follow-up
+
+The [shared observation contract](../workstations/desktop-observations.md)
+defines the implemented baseline: per-capture ages (1–600 seconds, default 60),
+single-use observation IDs on Linux and Windows, explicit coordinate spaces,
+mutation/control invalidation and capture admission clocks. Debian now supports
+post-input capture and completion timestamps. Compact Linux output retains
+window origins. Windows capture rechecks the target rectangle and removes its
+own incomplete output on failure. Linux changes pass local mocked checks;
+Windows regressions are added for the native pass. Platform qualification is
+still open. No model or gameplay benchmark
+is established by this implementation.
+
+Run the following against disposable fixtures on each platform, recording the
+tested revision and private evidence paths. Use the same match/save and timing
+budget when comparing model workflows.
+
+- [ ] Debian XFCE VM: start a new supervisor after updating; verify full and
+  window capture IDs, window-relative image to desktop-coordinate mapping,
+  window move/focus rejection, resize/reconnect invalidation, input completion
+  timestamps and `input --observe`, including capture failure after input.
+- [ ] CachyOS KDE Plasma: safely restart the helper after updating; verify
+  full/cropped capture IDs and scope, scaling, crop drag endpoints, holds,
+  server-paced text, portal loss and human override during injection/acquisition.
+- [ ] Windows 11: run `windows/tests/Run-DesktopTests.ps1` in Windows PowerShell
+  5.1 (includes observation, warm-worker and transport regressions); compile
+  native types, verify serialization and private-state migration, then qualify
+  window captures and token input with cold and warm workers. Exercise mixed
+  DPI, negative monitor origins, monitor-token rejection and window changes
+  during PrintWindow. PowerShell/C# execution was unavailable in the Linux pass.
+- [ ] All three: a default capture rejects input after 60 seconds; an explicit
+  180-second capture can authorize one action after 90 seconds. New captures,
+  mutations, helper/session replacement and human takeover invalidate old
+  tokens. Failed captures and read-only status/window queries never renew age.
+  Delayed target probes must not inject after the observation expires. Inspect
+  application outcomes rather than scoring input acknowledgement as success.
+
+Remaining implementation tasks, independently assignable after qualification:
+
+- [ ] Apply the [reported Windows game-testing feedback](windows-game-testing.md#consuming-game-feedback-and-next-windows-pass):
+  multi-key/timeline leases, wheel and mouse gestures, and specific target-stop
+  diagnostics. Parent input help is fixed in source; native revalidation is open.
+- [ ] Carry observation deadlines through Windows held-key preparation, watchdog
+  startup and driver admission before enabling `hold --observation`. The new
+  token route currently rejects holds explicitly; existing inventory-based
+  holds retain their independent watchdog contract.
+- [ ] Give Windows cold one-shot workers the same pinned caller/control and
+  request-deadline envelope as warm workers. Discrete token input now checks
+  capture expiry inside both workers; that is separate from full transport
+  admission parity. Preserve structured submitted/uncertain outcomes through
+  the public CLI instead of reducing them to generic error strings.
+- [ ] Port post-input observation, compact capture output and explicit image
+  coordinate mapping to Windows with the same completion-preserving failures.
+  Add one-request server-paced Debian text before supporting single-use tokens
+  with `--delay-ms`; per-character pacing cannot reuse a consumed token.
+- [ ] Prototype guarded revalidation of a completed plan against a fresh
+  observation. Bind the expected target and relevant scene conditions; start
+  with conservative comparisons and measure false refusals from animation.
+  A background recapture must never silently authorize old coordinates.
+- [ ] Build a project-owned planner/operator trial using immutable packets,
+  compact phase checkpoints and bounded escalation. Keep one operator in
+  control; measure the full coordination cost before selecting lower effort
+  or smaller models. Record actual harness settings and comparable outcomes.
+
 ## Bounded Linux virtual-pad adapter
 
 Keep a prospective adapter in Basaltwater's desktop boundary, under the same

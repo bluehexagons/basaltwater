@@ -23,6 +23,11 @@ public sealed class Element {
 }
 public sealed class Scan { public List<Element> elements = new List<Element>(); public bool truncated; public int visited; }
 public sealed class Monitor { public string id; public int x,y,width,height; }
+public sealed class CaptureReceipt {
+    public int[] geometry,image_geometry;
+    public int[] image_origin,desktop_origin;
+    public string coordinate_space,captured_at;
+}
 public static partial class Native {
     [StructLayout(LayoutKind.Sequential)] public struct Rect { public int left, top, right, bottom; }
     [StructLayout(LayoutKind.Sequential)] struct Point { public int x,y; }
@@ -199,7 +204,11 @@ public static partial class Native {
             default: throw new Exception("Unsupported element operation");
         }
     }
-    public static void Capture(long id,string identity,string monitor,string output) {
+    static void CheckCaptureRectangle(Window w,Rectangle rect) {
+        if(w.minimized || w.x!=rect.X || w.y!=rect.Y || w.width!=rect.Width || w.height!=rect.Height)
+            throw new Exception("Window rectangle changed during capture");
+    }
+    public static CaptureReceipt Capture(long id,string identity,string monitor,string output) {
         if(String.IsNullOrEmpty(monitor)) monitor=null;
         Ready(); Rectangle rect;
         if(monitor!=null) { var matches=new List<System.Windows.Forms.Screen>(); foreach(var s in System.Windows.Forms.Screen.AllScreens) if(s.DeviceName==monitor) matches.Add(s);
@@ -209,12 +218,21 @@ public static partial class Native {
             rect=new Rectangle(w.x,w.y,w.width,w.height);
         }
         if(rect.Width<=0 || rect.Height<=0 || rect.Width>16384 || rect.Height>16384 || (long)rect.Width*rect.Height>64000000) throw new Exception("Capture geometry exceeds pixel budget");
+        bool created=false;
+        try {
         using(var bitmap=new Bitmap(rect.Width,rect.Height)) { using(var g=Graphics.FromImage(bitmap)) {
                 if(monitor!=null) g.CopyFromScreen(rect.Left,rect.Top,0,0,rect.Size);
-                else { var dc=g.GetHdc(); try { Check(id,identity); if(!PrintWindow(new IntPtr(id),dc,2)) throw new Exception("Application does not support window capture"); } finally { g.ReleaseHdc(dc); } }
+                else { var dc=g.GetHdc(); try { CheckCaptureRectangle(Check(id,identity),rect); if(!PrintWindow(new IntPtr(id),dc,2)) throw new Exception("Application does not support window capture"); } finally { g.ReleaseHdc(dc); } }
             }
-            using(var file=new FileStream(output,FileMode.CreateNew,FileAccess.Write,FileShare.None)) bitmap.Save(file,ImageFormat.Png);
+            if(monitor==null) CheckCaptureRectangle(Check(id,identity),rect);
+            using(var file=new FileStream(output,FileMode.CreateNew,FileAccess.Write,FileShare.None)) { created=true; bitmap.Save(file,ImageFormat.Png); }
+            if(monitor==null) CheckCaptureRectangle(Check(id,identity),rect);
+            return new CaptureReceipt { geometry=new [] {rect.Width,rect.Height},
+                image_geometry=new [] {bitmap.Width,bitmap.Height},image_origin=new [] {0,0},
+                desktop_origin=new [] {rect.X,rect.Y},coordinate_space=monitor==null ? "window" : "monitor",
+                captured_at=DateTimeOffset.UtcNow.ToString("o") };
         }
+        } catch { if(created) File.Delete(output); throw; }
     }
     static Input[] ClickInputs() { return new [] {new Input {data=new InputUnion {mouse=new Mouse {flags=2}}},new Input {data=new InputUnion {mouse=new Mouse {flags=4}}}}; }
     static void SendPair(Input[] items,Func<Input[],uint> send) {
@@ -230,6 +248,14 @@ public static partial class Native {
     }
     static void InputPermit(Func<string> guard) {
         if(guard!=null) {var error=guard();if(!String.IsNullOrEmpty(error)) throw new Exception(error+"; some input may have arrived; do not replay");}
+    }
+    public static Func<string> ObservationGuard(Func<string> guard,long deadline) {
+        return delegate {
+            if(Stopwatch.GetTimestamp()>deadline) return "Capture observation expired";
+            var error=guard==null ? null : guard();
+            if(!String.IsNullOrEmpty(error)) return error;
+            return Stopwatch.GetTimestamp()>deadline ? "Capture observation expired" : null;
+        };
     }
     [DllImport("user32.dll")] static extern short GetAsyncKeyState(int key);
     static Input Key(ushort vk,ushort scan,uint flags) { return new Input {type=1,data=new InputUnion {key=new Keyboard {vk=vk,scan=scan,flags=flags}}}; }

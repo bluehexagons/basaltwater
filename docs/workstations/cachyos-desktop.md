@@ -12,6 +12,9 @@ or SSH, use the [remote development guide](cachyos-development.md).
 screen/input access, while honoring the persistent agent control state.
 For manual game tests, use the [playtest procedure](game-testing.md) for fresh
 worker qualification, scene verification, game-specific waits and bounded briefs.
+Use the cross-platform [observation contract](desktop-observations.md) for
+single-use `input --observation ID` and per-capture `--max-age-seconds 1–600`
+(default 60). Token-bound pointer targets stay inside the captured image/crop.
 Use [native input QA](native-input-qa.md) for multilingual IME, clipboard,
 physical controller checks, environment records and evidence closeout.
 `basaltw local cachyos-doctor --json` includes read-only `input_environment`

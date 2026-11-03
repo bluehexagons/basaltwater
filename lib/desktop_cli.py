@@ -69,6 +69,8 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     screenshot.add_argument("--output", help="New PNG path; defaults to private Pictures/basaltwater artifact storage")
     screenshot.add_argument("--json", action="store_true")
     screenshot.add_argument("--compact", action="store_true", help="Return capture metadata without the status envelope; use status/doctor for diagnostics")
+    screenshot.add_argument("--max-age-seconds", type=int, default=60,
+                            help="Observation lifetime, 1–600 seconds (default: 60); longer ages suit stable, untimed scenes")
     screenshot.add_argument("--next-frame", action="store_true", help="Native: skip the initial PipeWire sample and await a subsequent sample (8-second frame budget)")
     screenshot.add_argument("--crop", nargs=4, type=int, metavar=("X", "Y", "WIDTH", "HEIGHT"), help="Native: crop selected-monitor pixels and return image_origin for coordinate mapping")
     target = screenshot.add_mutually_exclusive_group()
@@ -152,6 +154,7 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     semantic_wait.add_argument("--save-output", action="store_true", help="Save full JSON privately and print a bounded preview")
     action = commands.add_parser("input", help="Apply a bounded input using screenshot generation/geometry")
     action.add_argument("--generation", required=True)
+    action.add_argument("--observation", help="Bind input to the latest screenshot's single-use observation_id")
     action.add_argument("--geometry", required=True, nargs=2, type=int, metavar=("WIDTH", "HEIGHT"))
     action.add_argument("kind", choices=("key", "keycode", "text", "click", "move", "drag"))
     action.add_argument("--key")
@@ -165,7 +168,7 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     action.add_argument("--to-y", type=int)
     action.add_argument("--duration-ms", type=int, help="Native drag duration, 1–5000 ms (default: 300)")
     action.add_argument("--button", type=int, default=1)
-    action.add_argument("--observe", action="store_true", help="Native: after completed input, settle and capture a subsequent frame; never replay input on capture failure")
+    action.add_argument("--observe", action="store_true", help="After completed input, settle and capture again; native skips the initial sample; never replay on capture failure")
     action.add_argument("--settle-ms", type=int, default=120, help="Settling delay for --observe, 0–5000 ms (default: 120)")
     action.add_argument("--output", help="New PNG path for --observe; defaults to private artifact storage")
 
@@ -326,6 +329,10 @@ def run_desktop_command(args: argparse.Namespace) -> int:
             elif command == "sequence":
                 result = client.run_sequence(args.path, args.generation, backend=backend)
             elif command == "screenshot":
+                from desktop.observations import validate_capture_max_age
+                validate_capture_max_age(args.max_age_seconds)
+                if args.max_age_seconds != 60:
+                    payload["max_age_seconds"] = args.max_age_seconds
                 if args.crop is not None:
                     payload["crop"] = args.crop
                     client.validate_capture_crop(payload, backend=backend)
@@ -359,8 +366,10 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                     payload.update({name: getattr(args, name) for name in
                                     ("generation", "operation", "ref", "action_name", "text")})
                 elif command == "input":
-                    if args.observe and backend is runtime:
-                        raise ValueError("Post-input observation requires --native")
+                    if args.observation is not None:
+                        if "observation-input" not in current.get("input_capabilities", []):
+                            raise ValueError("Helper does not support observation-bound input; update and restart it at a safe checkpoint")
+                        payload["observation_id"] = args.observation
                     if not 0 <= args.settle_ms <= 5000:
                         raise ValueError("Observation settling delay must be 0–5000 ms")
                     if not args.observe and (args.output is not None or args.settle_ms != 120):
@@ -376,7 +385,8 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                     client.validate_keycodes(payload)
                     payload["delay_ms"] = (10 if backend is not runtime and args.kind == "text" and args.delay_ms is None else args.delay_ms)
                     client.validate_text_delay(payload)
-                    payload["hold_ms"] = args.hold_ms
+                    if args.hold_ms is not None:
+                        payload["hold_ms"] = args.hold_ms
                     client.validate_hold(payload)
                     payload.update({name: getattr(args, name) for name in ("to_x", "to_y", "duration_ms")})
                     client.validate_drag(payload)

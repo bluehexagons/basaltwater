@@ -16,6 +16,7 @@ from typing import Any
 
 from desktop import session_runtime as runtime
 from desktop.accessibility import check_dependencies, validate_query
+from desktop.observations import validate_capture_max_age, validate_observation_option
 from lib.validation import validate_filesystem_path
 
 
@@ -322,6 +323,9 @@ def send_action(payload: dict[str, Any], *, deadline: float | None = None, backe
     validate_keycodes(payload)
     validate_hold(payload)
     validate_drag(payload)
+    validate_observation_option(payload)
+    if payload.get("action") == "screenshot":
+        validate_capture_max_age(payload.get("max_age_seconds", 60))
     crop = validate_capture_crop(payload, backend=backend)
     if payload.get("kind") == "keycode" and backend is runtime:
         raise ValueError("Physical keycodes require the native desktop backend")
@@ -344,6 +348,10 @@ def send_action(payload: dict[str, Any], *, deadline: float | None = None, backe
             raise RuntimeError(f"{detail}; input outcome may be partial or unknown; inspect before further input; do not replay") from exc
         if crop is not None and (result.get("image_origin") != crop[:2] or result.get("image_geometry") != crop[2:]):
             return {**result, "error": "Backend did not confirm requested crop mapping; restart the native helper and recapture"}
+        if payload.get("action") == "screenshot" and payload.get("max_age_seconds", 60) != 60 and not result.get("error"):
+            if (not result.get("observation_id")
+                    or result.get("capture_freshness", {}).get("max_age_seconds") != payload["max_age_seconds"]):
+                return {**result, "error": "Backend did not confirm observation lifetime; update and restart the helper at a safe checkpoint"}
         return result
     submitted = 0
     server_attempted = False
@@ -355,6 +363,8 @@ def send_action(payload: dict[str, Any], *, deadline: float | None = None, backe
                 remaining_seconds(deadline)
                 server_attempted = True
                 return backend.request({**request, "delay_ms": delay})
+        if payload.get("observation_id") is not None:
+            raise ValueError("Observation-bound paced text requires server-paced-text; omit --delay-ms on Debian")
         for character in payload["text"]:
             if submitted:
                 time.sleep(min(delay / 1000, remaining_seconds(deadline)))
@@ -382,8 +392,8 @@ def observe_after_input(result: dict, payload: dict, output: str, *, settle_ms: 
             raise RuntimeError("Desktop control changed after input; observe before further input")
         capture = backend.request({"action": "screenshot", "generation": payload["generation"],
                                    "control_revision": payload["control_revision"],
-                                   "output": output, "next_frame": True})
-        if capture.get("initial_frame_skipped") is not True:
+                                   "output": output, **({"next_frame": True} if backend is not runtime else {})})
+        if backend is not runtime and capture.get("initial_frame_skipped") is not True:
             raise RuntimeError("Backend did not confirm subsequent-frame capture; restart the native helper")
         if (capture.get("generation") != payload["generation"] or
                 capture.get("control_revision") != payload["control_revision"]):
@@ -408,6 +418,9 @@ def run_sequence(path: str, generation: str, *, backend=runtime) -> dict[str, An
         validate_keycodes(step)
         validate_hold(step)
         validate_drag(step)
+        validate_observation_option(step)
+        if step.get("action") == "screenshot":
+            validate_capture_max_age(step.get("max_age_seconds", 60))
         validate_capture_crop(step, backend=backend)
         if step.get("kind") == "keycode" and backend is runtime:
             raise ValueError("Physical keycodes require the native desktop backend")
@@ -419,6 +432,8 @@ def run_sequence(path: str, generation: str, *, backend=runtime) -> dict[str, An
     if current.get("generation") != generation:
         raise ValueError("Desktop session changed; observe again")
     revision = current["control_revision"]
+    if any(step.get("observation_id") is not None for step in steps) and "observation-input" not in current.get("input_capabilities", []):
+        raise ValueError("Helper does not support observation-bound input; update and restart it at a safe checkpoint")
     results = []
     deadline = time.monotonic() + 20
     try:

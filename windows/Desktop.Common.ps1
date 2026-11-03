@@ -3,6 +3,8 @@ Invoke-NativeDesktopCli returns objects, never JSON/exit codes. Errors are
 {ok:false,error,code}; callers must exit nonzero. --json is accepted as a no-op.
 Window/input require --window DECIMAL_HWND --identity TOKEN --generation GEN.
 Input additionally requires --width/--height from windows (window-relative x/y).
+Optional input --observation binds to the latest single-use screenshot receipt;
+its geometry replaces the inventory requirement. Capture age uses Stopwatch/QPC.
 Inspection references expire after 60s, any mutation, or control transition.
 All OS desktop calls are behind Invoke-NativeDesktopWorker for offline mocks.
 Desktop APIs run in an owned Windows PowerShell 5.1 8s worker: it provides the
@@ -95,12 +97,40 @@ function Read-NativeDesktopState($Context) {
     if ($state.mode -eq 'human-override' -and $state.until -gt 0 -and (Get-NativeDesktopTime) -ge $state.until) {
         $state.mode = 'enabled'; $state.until = 0L; $state.revision = [guid]::NewGuid().ToString('N'); $state.windows = @(); $state.elements = @()
     }
+    # Optional bounded receipt: older version-1 state files remain readable.
+    $state.observation = $null
+    if (Test-Path -LiteralPath $path) {
+        if ($record.PSObject.Properties['observation']) { $state.observation = $record.observation }
+    }
+    if ($state.observation -and ($state.observation.session -cne $state.session -or $state.observation.generation -cne $state.generation -or $state.observation.revision -cne $state.revision)) { $state.observation = $null }
     return $state
 }
 
 function Get-NativeDesktopTime { return [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() }
 
-function Write-NativeDesktopState($State) {
+function Get-NativeDesktopMonotonic { return [Diagnostics.Stopwatch]::GetTimestamp() }
+
+function Get-NativeCaptureFreshness($Receipt) {
+    if (-not $Receipt) { return @{ age_seconds = $null; remaining_seconds = 0; max_age_seconds = 60; fresh = $false } }
+    $age = ((Get-NativeDesktopMonotonic) - [long]$Receipt.admitted) / [double][Diagnostics.Stopwatch]::Frequency
+    $maximum = [int]$Receipt.max_age_seconds
+    $fresh = $age -ge 0 -and $age -le $maximum
+    return @{ age_seconds = [Math]::Max(0, $age); remaining_seconds = $(if ($fresh) { $maximum - $age } else { 0 }); max_age_seconds = $maximum; fresh = $fresh }
+}
+
+function Assert-NativeCaptureObservation($Request, $State) {
+    $receipt = $State.observation
+    if (-not $receipt -or $Request.observation_id -cne $receipt.observation_id) { throw 'Observation is not the latest successful capture' }
+    if ($receipt.session -cne $State.session -or $receipt.generation -cne $State.generation -or $receipt.revision -cne $State.revision) { throw 'Observation control/session changed' }
+    if ($receipt.coordinate_space -cne 'window' -or $receipt.window -ne $Request.window -or $receipt.identity -cne $Request.identity) { throw 'Observation target mismatch; window capture required' }
+    if ($receipt.width -ne $Request.width -or $receipt.height -ne $Request.height) { throw 'Observation geometry mismatch' }
+    if (-not (Get-NativeCaptureFreshness $receipt).fresh) { throw 'Observation expired; capture again' }
+}
+
+function Write-NativeDesktopState($State, [switch]$KeepObservation) {
+    # Existing mutation callers (including shell handoff) invalidate by default.
+    # Only explicit observation/control bookkeeping may preserve a receipt.
+    if (-not $KeepObservation) { $State.observation = $null }
     $path = Get-NativeDesktopStatePath; $directory = Split-Path -Parent $path
     New-NativeDesktopPrivateDirectory $directory
     if (Test-Path -LiteralPath $path) { Assert-NativeDesktopPrivatePath $path }
@@ -128,6 +158,15 @@ function Initialize-NativeDesktopTypes {
             'System.dll','System.Core.dll','System.Drawing.dll','System.Windows.Forms.dll',
             (Join-Path $framework 'WPF\UIAutomationClient.dll'), (Join-Path $framework 'WPF\UIAutomationTypes.dll'), (Join-Path $framework 'WPF\WindowsBase.dll'))
     }
+}
+
+function Invoke-NativeDesktopInput($Request) {
+    $inputGuard = $script:NativeDesktopInputGuard
+    if (($Request -is [Collections.IDictionary] -and $Request.Contains('observation_deadline')) -or $Request.PSObject.Properties['observation_deadline']) {
+        $inputGuard = [Basaltwater.Desktop.Native]::ObservationGuard($inputGuard, [long]$Request.observation_deadline)
+    }
+    [Basaltwater.Desktop.Native]::InputAction([long]$Request.window, $Request.identity, $Request.operation, $Request.text, [int]$Request.x, [int]$Request.y, [int]$Request.width, [int]$Request.height,$inputGuard)
+    return @{ submitted = $true; outcome_verified = $false; verification = 'Input queue acceptance only; inspect application before further input' }
 }
 
 function Invoke-NativeDesktopWorkerBody($Request) {
@@ -168,10 +207,11 @@ function Invoke-NativeDesktopWorkerBody($Request) {
             if ($Request.operation -ne 'invoke' -and -not $verified) { throw 'Element outcome not observed; inspect before retrying' }
             return @{ accepted = $true; outcome_verified = $verified; verification = 'Focus/Value are read back; InvokePattern requires task-specific reinspection' }
         }
-        'input' { [Basaltwater.Desktop.Native]::InputAction([long]$Request.window, $Request.identity, $Request.operation, $Request.text, [int]$Request.x, [int]$Request.y, [int]$Request.width, [int]$Request.height,$script:NativeDesktopInputGuard)
-            return @{ submitted = $true; outcome_verified = $false; verification = 'Input queue acceptance only; inspect application before further input' } }
-        'screenshot' { [Basaltwater.Desktop.Native]::Capture([long]$Request.window, $Request.identity, $Request.monitor, $Request.output)
-            return @{ output = $Request.output; bytes = (Get-Item -LiteralPath $Request.output).Length; capture_method = 'PrintWindow for window; CopyFromScreen for explicit monitor'; outcome_verified = $true; content_verified = $false } }
+        'input' { return Invoke-NativeDesktopInput $Request }
+        'screenshot' {
+            $capture = [Basaltwater.Desktop.Native]::Capture([long]$Request.window, $Request.identity, $Request.monitor, $Request.output)
+            return @{ output = $Request.output; bytes = (Get-Item -LiteralPath $Request.output).Length; capture_method = 'PrintWindow for window; CopyFromScreen for explicit monitor'; outcome_verified = $true; content_verified = $false;
+                geometry = $capture.geometry; image_geometry = $capture.image_geometry; image_origin = $capture.image_origin; desktop_origin = $capture.desktop_origin; coordinate_space = $capture.coordinate_space; captured_at = $capture.captured_at } }
         default { throw 'Unsupported native worker request' }
     }
 }
@@ -239,10 +279,10 @@ function ConvertTo-NativeDesktopRequest([string[]]$Arguments) {
     $allowed = @{
         status = @(); doctor = @(); windows = @(); environment = @();
         control = @('human-approved','seconds','indefinite'); inspect = @('pid','root','generation','name','role');
-        screenshot = @('window','identity','generation','output','monitor');
+        screenshot = @('window','identity','generation','output','monitor','max-age-seconds');
         window = @('window','identity','generation','x','y','width','height');
         element = @('ref','generation','text','action-name');
-        input = @('window','identity','generation','width','height','x','y','text','key','keys','milliseconds','repeat-ms','lease');
+        input = @('window','identity','generation','width','height','x','y','text','key','keys','milliseconds','repeat-ms','lease','observation');
         worker = @('idle-seconds','session-seconds')
     }
     if (-not $allowed.ContainsKey($request.command)) { throw "Unsupported Windows desktop command: $($request.command)" }
@@ -260,17 +300,23 @@ function ConvertTo-NativeDesktopRequest([string[]]$Arguments) {
         if ($index -ge $Arguments.Count) { throw "Missing value: $option" }
         $request[$key] = $Arguments[$index++]
     }
-    foreach ($key in @('pid','window','x','y','width','height','seconds','milliseconds','repeat-ms','idle-seconds','session-seconds')) {
+    foreach ($key in @('pid','window','x','y','width','height','seconds','milliseconds','repeat-ms','idle-seconds','session-seconds','max-age-seconds')) {
         if ($request.ContainsKey($key)) {
             $number = 0L
             if ($request[$key] -notmatch '\A-?[0-9]+\z' -or -not [long]::TryParse($request[$key], [ref]$number)) { throw "Invalid integer: $key" }
             if ($key -in @('pid','width','height','seconds') -and ($number -le 0 -or $number -gt [int]::MaxValue)) { throw "Invalid positive integer: $key" }
             if ($key -eq 'window' -and $number -le 0) { throw 'Invalid window handle' }
+            if ($key -eq 'max-age-seconds' -and ($number -lt 1 -or $number -gt 600)) { throw 'Max age must be 1-600 seconds' }
             if ($key -in @('x','y') -and ($number -lt -100000 -or $number -gt 100000)) { throw 'Coordinate out of bounds' }
             if ($key -in @('width','height') -and $number -gt 16384) { throw 'Geometry out of bounds' }
             $request[$key] = $number
         }
     }
+    if ($request.ContainsKey('observation')) {
+        if ($request.observation -cnotmatch '\A[0-9a-f]{32}\z') { throw 'Invalid observation ID' }
+        $request.observation_id = $request.observation; $request.Remove('observation')
+    }
+    if ($request.command -eq 'screenshot' -and -not $request.ContainsKey('max-age-seconds')) { $request['max-age-seconds'] = 60 }
     return $request
 }
 
@@ -281,6 +327,9 @@ function Assert-NativeDesktopRequired($Request, [string[]]$Keys) {
 function Invoke-NativeDesktopCli([string[]]$Arguments) {
     $lock = $null
     try {
+        if ($Arguments.Count -eq 2 -and $Arguments[0] -eq 'input' -and $Arguments[1] -in @('--help','-h','help')) {
+            return @{ ok = $true; help = 'input key|chord|sequence|text|click|hold|release|lease. Discrete input and hold require --window --identity --generation --width --height. Discrete input accepts --observation ID from the latest window screenshot; observation-bound holds are unsupported. release/lease require --lease ID. Use input OPERATION --help for keys, limits and lease behavior. Queue acceptance does not prove application delivery.' }
+        }
         if($Arguments.Count -ge 2 -and $Arguments[0] -eq 'worker' -and
             (($Arguments.Count -eq 2 -and $Arguments[1] -eq '--help') -or
              ($Arguments.Count -eq 3 -and $Arguments[1] -in @('start','status','stop') -and $Arguments[2] -eq '--help'))){
@@ -288,7 +337,7 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
         }
         if ($Arguments.Count -eq 3 -and $Arguments[0] -eq 'input' -and $Arguments[1] -in @('hold','release','lease','key','chord','sequence','text','click') -and $Arguments[2] -eq '--help') {
             if ($Arguments[1] -in @('hold','release','lease')) { return @{ ok = $true; help = 'input hold --key W --milliseconds 500 [--repeat-ms 100], with fresh --window --identity --generation --width --height. Duration 50-5000 ms; repeat 50..duration. One key with optional CTRL/SHIFT prefixes. input release --lease ID cancels only that lease; input lease --lease ID reads retained evidence. Independent watchdog; release acceptance is not application verification. No mouse holds.' } }
-            return @{ ok = $true; help = 'input key --key KEY | input chord --key CTRL+A (one/two distinct CTRL/SHIFT modifiers). input sequence --keys HOME,SHIFT+END: at most 32 chords and 1024 characters. Keys: A-Z 0-9 F1-F12 ENTER ESC TAB SPACE LEFT UP RIGHT DOWN BACKSPACE DELETE HOME END PAGEUP PAGEDOWN INSERT. input text --text TEXT: at most 1024 UTF-16 code units. input click --x X --y Y. All require --window --identity --generation --width --height from fresh windows. Queue acceptance only; inspect application afterward.' }
+            return @{ ok = $true; help = 'input key --key KEY | input chord --key CTRL+A (one/two distinct CTRL/SHIFT modifiers). input sequence --keys HOME,SHIFT+END: at most 32 chords and 1024 characters. Keys: A-Z 0-9 F1-F12 ENTER ESC TAB SPACE LEFT UP RIGHT DOWN BACKSPACE DELETE HOME END PAGEUP PAGEDOWN INSERT. input text --text TEXT: at most 1024 UTF-16 code units. input click --x X --y Y. All require --window --identity --generation --width --height from fresh windows, or matching window screenshot geometry with --observation ID. Observation is single-use and consumed before input attempt; status/windows never renew it. Queue acceptance only; inspect application afterward.' }
         }
         $request = ConvertTo-NativeDesktopRequest $Arguments
         if ($request.command -eq 'input') {
@@ -296,7 +345,8 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
             if ($request.operation -in @('release','lease')) {
                 foreach ($key in $request.Keys) { if ($key -notin @('command','operation','lease')) { throw "Unsupported lease option: --$key" } }
             } elseif ($request.operation -eq 'hold') {
-                foreach ($key in $request.Keys) { if ($key -notin @('command','operation','window','identity','generation','width','height','key','milliseconds','repeat-ms')) { throw "Unsupported hold option: --$key" } }
+                foreach ($key in $request.Keys) { if ($key -notin @('command','operation','window','identity','generation','width','height','key','milliseconds','repeat-ms','observation_id')) { throw "Unsupported hold option: --$key" } }
+                if ($request.ContainsKey('observation_id')) { throw 'Observation-bound holds are not supported; use discrete input or the window-inventory hold route' }
             } else {
                 foreach ($key in $leaseOptions) { if ($request.ContainsKey($key)) { throw "Unsupported input option: --$key" } }
             }
@@ -318,7 +368,7 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
             if($request.operation -eq 'stop'){Exit-NativeDesktopLock $lock;$lock=$null;return @{ok=$true;result=Stop-NativeWarmWorker}}
             if($request.operation -ne 'start'){throw 'Expected worker start/status/stop'}
             if($state.mode -ne 'enabled'){throw 'Desktop control must be enabled to start a worker'}
-            Write-NativeDesktopState $state
+            Write-NativeDesktopState $state -KeepObservation
             $idle=120;$duration=1800
             if($request.ContainsKey('idle-seconds')){$idle=[int]$request['idle-seconds']}
             if($request.ContainsKey('session-seconds')){$duration=[int]$request['session-seconds']}
@@ -326,6 +376,7 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
         }
         if ($request.command -eq 'input' -and $request.operation -in @('release','lease')) {
             Assert-NativeDesktopRequired $request @('lease')
+            if ($request.operation -eq 'release') { Write-NativeDesktopState $state }
             return Get-NativeHeldLease $request.lease $context ($request.operation -eq 'release')
         }
         if ($request.command -eq 'control') {
@@ -337,10 +388,12 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
             if ($seconds -lt 60 -or $seconds -gt 86400) { throw 'Override seconds must be 60-86400' }
             $state.mode = $request.operation; $state.until = 0L
             if ($state.mode -eq 'human-override' -and -not $request['indefinite']) { $state.until = (Get-NativeDesktopTime) + $seconds }
-            $state.revision = [guid]::NewGuid().ToString('N'); $state.windows = @(); $state.elements = @()
+            $state.revision = [guid]::NewGuid().ToString('N'); $state.windows = @(); $state.elements = @(); $state.observation = $null
         } elseif ($request.command -eq 'status') {
             $readiness = Get-NativeDesktopReadiness
-            return @{ ok = $true; generation = $state.generation; agent_control = $state.mode; control_revision = $state.revision; override_until = $state.until; readiness = $readiness; input_lease = Get-NativeHeldActive $context }
+            return @{ ok = $true; generation = $state.generation; agent_control = $state.mode; control_revision = $state.revision; override_until = $state.until; readiness = $readiness; input_lease = Get-NativeHeldActive $context;
+                observation_id = $(if ($state.observation) { $state.observation.observation_id } else { $null });
+                capture_freshness = Get-NativeCaptureFreshness $state.observation; input_capabilities = @('observation-input') }
         } else {
             $mutation = $request.command -in @('window','element','input')
             if ($mutation -and $state.mode -ne 'enabled') { throw "Agent desktop control is $($state.mode)" }
@@ -351,8 +404,11 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
             }
             if ($request.command -in @('window','input') -or ($request.command -eq 'screenshot' -and $request.ContainsKey('window'))) {
                 Assert-NativeDesktopRequired $request @('window','identity')
-                $matches = @($state.windows | Where-Object { $_.id -eq $request.window -and $_.identity -ceq $request.identity })
-                if ($matches.Count -ne 1 -or (Get-NativeDesktopTime) - [long]$state.window_observed -gt 60) { throw 'Window identity was not recently observed; run windows' }
+                if (-not ($request.command -eq 'input' -and $request.ContainsKey('observation_id'))) {
+                    $matches = @($state.windows | Where-Object { $_.id -eq $request.window -and $_.identity -ceq $request.identity })
+                    $age = (Get-NativeDesktopTime) - [long]$state.window_observed
+                    if ($matches.Count -ne 1 -or $age -lt 0 -or $age -gt 60) { throw 'Window identity was not recently observed; run windows' }
+                }
             }
             if ($request.command -eq 'window') {
                 if ($request.operation -notin @('focus','move','resize','maximize','minimize','restore','close')) { throw 'Unsupported window operation' }
@@ -361,6 +417,10 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
             }
             if ($request.command -eq 'input') {
                 Assert-NativeDesktopRequired $request @('width','height')
+                if ($request.ContainsKey('observation_id')) {
+                    Assert-NativeCaptureObservation $request $state
+                    $request.observation_deadline = [long]$state.observation.admitted + [long]$state.observation.max_age_seconds * [Diagnostics.Stopwatch]::Frequency
+                }
                 if ($request.operation -notin @('hold','key','chord','sequence','text','click')) { throw 'Unsupported input operation' }
                 if ($request.operation -eq 'hold') {
                     Assert-NativeDesktopRequired $request @('key','milliseconds')
@@ -398,7 +458,7 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
                 if ([IO.Path]::GetExtension($request.output) -ine '.png' -or (Test-Path -LiteralPath $request.output) -or -not (Test-Path -LiteralPath (Split-Path -Parent $request.output) -PathType Container)) { throw 'Output must be a NEW .png in an existing directory' }
             }
             # Invalidate references durably BEFORE a possibly timed-out mutation.
-            if ($mutation) { $state.elements = @(); $state.windows = @(); Write-NativeDesktopState $state }
+            if ($mutation) { $state.elements = @(); $state.windows = @(); $state.observation = $null; Write-NativeDesktopState $state }
             if ($request.command -eq 'input' -and $request.operation -eq 'hold') {
                 $lease = Start-NativeHeldLease $request $context $state
                 # Control handoff and lease cancellation must remain available
@@ -406,7 +466,36 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
                 Exit-NativeDesktopLock $lock; $lock = $null
                 return Wait-NativeHeldLease $lease
             }
+            if ($request.command -eq 'screenshot') {
+                $admitted = Get-NativeDesktopMonotonic
+                # A running lease can send repeats/releases outside this lock.
+                # Its screenshots remain useful evidence but cannot authorize
+                # later input, even if cleanup settles during this capture.
+                $observationUnavailable = $null
+                try { Assert-NativeHeldIdle }
+                catch { $observationUnavailable = 'keyboard-lease-active-or-uncertain' }
+            }
             $result = Invoke-NativeDesktopWorker $request
+            if ($request.command -eq 'screenshot') {
+                $receipt = @{ observation_id = [guid]::NewGuid().ToString('N'); admitted = $admitted; max_age_seconds = $request['max-age-seconds'];
+                    session = $state.session; generation = $state.generation; revision = $state.revision; coordinate_space = $result.coordinate_space;
+                    window = $request['window']; identity = $request['identity']; width = $result.geometry[0]; height = $result.geometry[1] }
+                if ($observationUnavailable) { $receipt.observation_id = $null; $state.observation = $null }
+                else { $state.observation = $receipt }
+                $freshness = Get-NativeCaptureFreshness $receipt
+                if ($result -is [Collections.IDictionary]) {
+                    $result.observation_id = $receipt.observation_id; $result.capture_freshness = $freshness
+                    $result.observation_unavailable_reason = $observationUnavailable
+                } else {
+                    $result | Add-Member NoteProperty observation_id $receipt.observation_id
+                    $result | Add-Member NoteProperty capture_freshness $freshness
+                    $result | Add-Member NoteProperty observation_unavailable_reason $observationUnavailable
+                }
+            }
+            if ($request.command -eq 'input' -and $request.ContainsKey('observation_id')) {
+                if ($result -is [Collections.IDictionary]) { $result.observation_id = $request.observation_id }
+                else { $result | Add-Member NoteProperty observation_id $request.observation_id }
+            }
             if ($request.command -eq 'windows') { $state.windows = @($result.windows); $state.elements = @(); $state.window_observed = Get-NativeDesktopTime }
             if ($request.command -eq 'inspect') {
                 $workerCleanup=$result.PSObject.Properties['worker_cleanup']
@@ -419,7 +508,7 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
                 $result = @{ elements = $public; visited = $result.visited; truncated = $result.truncated }
                 if($workerCleanup){$result.worker_cleanup=$workerCleanup.Value}
             }
-            Write-NativeDesktopState $state
+            Write-NativeDesktopState $state -KeepObservation
             return @{ ok = $true; generation = $state.generation; control_revision = $state.revision; result = $result }
         }
         Write-NativeDesktopState $state
