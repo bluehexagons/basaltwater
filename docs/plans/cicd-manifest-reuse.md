@@ -2,7 +2,8 @@
 
 Status: combined Debian setup, the shared worker/coordinator and exact-request
 nested runner scheduling are implemented. Selected native fresh provisioning,
-conversion, mixed-role execution, nested cancellation, drain, saved rerun and reboot checks pass;
+conversion, mixed-role execution, nested cancellation, drain, saved rerun and
+reboot checks pass;
 see the [dated evidence](../testing/evidence.md#shared-debian-build-and-ci-host).
 Broader fault, provider and event cases remain open. Use the
 [build-system guide](../services/build-systems.md) for
