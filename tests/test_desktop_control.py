@@ -181,11 +181,12 @@ class ControlStateTests(unittest.TestCase):
     def test_capture_failure_suggests_display_wake_and_removes_partial_artifact(self):
         session = native_session.NativeSession(Mock(fd=42))
         session.node = 17
+        session.state = "running"
         output = self.home / "failed-capture.png"
         with patch.object(native_session.subprocess, "run", return_value=Mock(
                 returncode=1, stdout=json.dumps({"error": "No frame arrived"}))), \
                 self.assertRaisesRegex(RuntimeError, "desktop --native wake"):
-            session.capture({"output": str(output)})
+            session.handle({"action": "screenshot", "generation": session.generation, "output": str(output)})
         self.assertFalse(output.exists())
 
     def test_native_handoff_cli_opens_without_backend_or_permission_changes(self):

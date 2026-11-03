@@ -117,6 +117,9 @@ local cap (14 seconds normally, 20 for paced text). Expired requests send no
 input; socket waits and capture subprocess waits use the remaining budget.
 Release cleanup runs independently of the expired action budget. An uncertain
 response must be inspected before any retry.
+If a server-paced request loses its reply, `submitted_characters` is null and
+`completion_unknown` is true: the client cannot infer the delivered prefix.
+Older per-character pacing retains only its count of acknowledged characters.
 
 Capture admits one worker at a time and runs slow frame acquisition outside
 the session state lock so status, human override and stop remain responsive.

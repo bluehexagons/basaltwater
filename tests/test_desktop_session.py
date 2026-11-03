@@ -568,7 +568,8 @@ class DesktopProductivityTests(unittest.TestCase):
             path.write_text(json.dumps([{"action": "windows"}, {"action": "input"}]))
             result = client.run_sequence(str(path), "g")
         self.assertEqual(result["completed"], 1)
-        self.assertEqual(result["error"], "human-override")
+        self.assertIn("human-override", result["error"])
+        self.assertIn("do not replay", result["error"])
         self.assertEqual([call.args[0]["action"] for call in request.call_args_list], ["windows", "input"])
 
     @patch.object(runtime, "request", return_value={"output": "/private/first.png"})
