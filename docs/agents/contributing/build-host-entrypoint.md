@@ -32,6 +32,23 @@ readiness check. An interrupted or uncertain claim needs explicit recovery;
 the process never replays it automatically. Its service should stop on failure,
 leaving the claim and evidence available to an administrator.
 
+The worker reconciles retained nested runner intents before ordinary FIFO
+work. `lib.build_nested.NestedRequests` stores exact SSH-owner/request proofs in
+a root-private `0700` sibling `<state-root>-runner-leases`, with single-link
+`0600` records and at most `max_records` retained intents. Registration and
+worker scans share its stable lock; normal FIFO claims exclude every matching
+nested identity. Failed/colliding admission grants no scheduling or cancellation
+authority over a different owner or request digest. Evidence is retained for
+explicit inspection, including failed uploads.
+
+`lib.build_runner_lease` exchanges the guardian's actual coordinator flock and
+parent pidfd through a local `SOCK_SEQPACKET` socket. Peer credentials, managed
+service cgroup, actual ancestry, exact request digest and a random token bind
+the handoff. The worker checks the canonical inode and its held flock.
+The guardian waits for confirmed managed cleanup and parent exit before checking
+cgroup idleness and clearing its marker. Exceptions or lost cleanup
+acknowledgements retain it.
+
 For SSH, a dedicated key's forced command fixes `--serve --principal LABEL`.
 Use OpenSSH `restrict` and disable password login for this endpoint; do not
 grant the build identity that key or an interactive shell. The entrypoint

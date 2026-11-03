@@ -673,8 +673,15 @@ class BuildHostClient:
         )
         try:
             try:
+                fields = {"request": validated, "source_size": source.size}
+                if self._remote_command == REMOTE_COMMAND:
+                    from lib.build_runner_lease import submission_proof
+
+                    proof = submission_proof(self.host, validated)
+                    if proof is not None:
+                        fields["runner_lease"] = proof
                 result, _payload = self._call(
-                    "submit", {"request": validated, "source_size": source.size},
+                    "submit", fields,
                     source=source, deadline=deadline,
                 )
                 return result

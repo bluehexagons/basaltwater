@@ -1,9 +1,8 @@
 # Shared build hosts and artifact deployment
 
-Status: the bounded Debian on-demand build path is implemented. The next
-deliverable is one Debian VM hosting on-demand builds, signed webhooks and
-GitHub Actions runners together. Combined setup and shared capacity are not
-implemented. Use the [build-system guide](../services/build-systems.md) for
+Status: combined Debian setup, the shared worker/coordinator and exact-request
+nested runner scheduling are implemented. Qualification of the complete host
+is the current deliverable. Use the [build-system guide](../services/build-systems.md) for
 available commands and the [coverage map](testing-coverage.md) for test limits.
 
 `--build-on SAVED-BUILDER` selects that VM from another deployment's controller
@@ -17,8 +16,8 @@ without a selected builder continue to build on the destination.
 | On-demand builds | Managed Debian 13 x86-64 enrollment, typed SSH, pinned HTTPS source, declared or safely inferred exports and one supervised build slot. Static sites, shell/Node/Python builds and self-contained native services share manifest and serving helpers with ordinary deployment. |
 | Artifact delivery | Saved builder selection and revision replacement; target bootstrap/admission; verified staging and shared prebuilt activation; retained target refresh without source or builder access. |
 | Recovery and retention | Durable IDs/guards, offline controller inspection, explicit terminal settlement, source/log pruning, successful-bundle release and capacity inspection. Slots and replay history remain retained. |
-| Webhook CI/CD | Separate signed-event receiver/executor and queue; remote manifest publication is limited to one static/Godot component. |
-| GitHub Actions | Separate dedicated Debian runner profile, local identity policy, runner-only capacity lock and deferred registration. Live GitHub qualification is open. |
+| Webhook builds | Signed-event intake, delivery deduplication and pinned source feed the common managed build/artifact path. Automatic deployment, status checks and release publishing are outside this pass. |
+| GitHub Actions | Composable optional role and dedicated convenience profile, local identity policy, shared capacity, bounded waiting and exact-request nested builds. Real-job qualification is recorded separately from mocked checks. |
 
 Current source, admission, artifact and recovery contracts live in the
 [contributor build references](../agents/contributing/README.md). Do not repeat
@@ -44,8 +43,8 @@ credentials to other job identities. Do not add a general compatibility layer.
 
 **Acceptance:** parsed fresh and saved configurations select every requested
 role, omission/disable is explicit, and conversion plus rerun does not silently
-drop a role or desired setting. Until this exists, do not advertise an all-role
-setup command.
+drop a role or desired setting. Document combined commands with their
+implemented backend and qualification limits.
 
 ### 2. Share capacity, draining and maintenance
 
@@ -70,10 +69,10 @@ do not start unauthorized work or release capacity early.
 
 ### 3. Adapt webhooks to the common artifact path
 
-Reuse validated manifests, build requests, retained bundles and target
-activation instead of maintaining separate component/build declarations and
-direct publication into served directories. Begin with the qualified static/Go
-scope; do not silently broaden runtimes.
+Webhook intake now reuses validated manifests, build requests and retained
+bundles. Shared-host qualification covers build/test artifacts. Webhook-triggered
+deployment, GitHub status checks and release publishing are a later deliverable.
+The following publication constraints apply when that work is selected.
 
 Preserve signed-event verification, repository/branch grants, delivery
 deduplication and authenticated commit selection. Building grants no deployment

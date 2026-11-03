@@ -44,18 +44,40 @@ def _runner_cgroup_idle() -> bool:
     return True
 
 
-def hold_job_slot(lock: int, worker: int, ready: int) -> int:
-    """Keep the inherited flock until the pidfd reports worker termination."""
+def hold_job_slot(lock: int, worker: int, ready: int, worker_pid: int) -> int:
+    """Retain the flock through parent termination and nested build cleanup."""
+    from lib.build_runner_lease import GuardianBroker
+
+    broker = None
     def interrupted(_signal, _frame):
         raise InterruptedError("Queue guardian interrupted")
 
     for name in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(name, interrupted)
     try:
+        broker = GuardianBroker(lock, worker, worker_pid)
         os.write(ready, b"ready")
         os.close(ready)
-        select.select([worker], [], [])
-        if _runner_cgroup_idle():
+        while True:
+            watched = [broker.server]
+            if not broker.parent_exited:
+                watched.append(worker)
+            if broker.borrower is not None:
+                watched.append(broker.borrower)
+            available = select.select(watched, [], [])[0]
+            if worker in available:
+                broker.parent_stopped()
+            if broker.borrower is not None and broker.borrower in available:
+                broker.finish_borrow()
+            if broker.server in available:
+                broker.accept()
+            if broker.uncertain:
+                if not select.select([worker], [], [], 0)[0]:
+                    signal.pidfd_send_signal(worker, signal.SIGKILL)
+                return 1
+            if broker.parent_exited and broker.borrower is None:
+                break
+        if _runner_cgroup_idle() and not broker.uncertain:
             clear_slot(lock)
             return 0
         return 1  # Retain the durable marker when descendants or probes are uncertain.
@@ -64,6 +86,8 @@ def hold_job_slot(lock: int, worker: int, ready: int) -> int:
         # worker could still run workflow steps.
         if not select.select([worker], [], [], 0)[0]:
             signal.pidfd_send_signal(worker, signal.SIGKILL)
+        if broker is not None:
+            broker.close()
         os.close(worker)
         os.close(lock)
 
@@ -104,7 +128,7 @@ def acquire_job_slot(worker_pid: int, *, lock_path: str = QUEUE_LOCK, entry: str
         ready, outgoing = os.pipe()
         try:
             guardian = subprocess.Popen(
-                [sys.executable, "-I", entry, "--hold-queue", str(lock), str(worker), str(outgoing)],
+                [sys.executable, "-I", entry, "--hold-queue", str(lock), str(worker), str(outgoing), str(worker_pid)],
                 env={"PATH": "/usr/bin:/bin"}, pass_fds=(lock, worker, outgoing),
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 start_new_session=True,

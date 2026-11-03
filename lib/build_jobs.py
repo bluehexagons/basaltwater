@@ -656,6 +656,16 @@ class BuildJobStore:
             self._save(parent_fd, state)
             return self._public(record)
 
+    def matches_request(self, request_id: str, *, owner: str, request_sha256: str) -> bool:
+        """Match trusted scheduling evidence without granting operation authority."""
+        request_id = _identifier(request_id, "Request ID")
+        owner = _owner(owner)
+        request_sha256 = _identifier(request_sha256, "Request digest", _SHA256)
+        with self._locked() as (state, _parent_fd):
+            record = state["jobs"].get(request_id)
+            return (record is not None and record["owner"] == owner
+                    and record["request_sha256"] == request_sha256)
+
     def status(self, request_id: str, *, owner: str) -> dict[str, Any]:
         """Return detached, owner-scoped status without commands or env values."""
         request_id = _identifier(request_id, "Request ID")
@@ -813,7 +823,22 @@ class BuildJobStore:
             except BlockingIOError as exc:
                 raise PermissionError("Build worker lease no longer owns the host slot") from exc
 
-    def _claim(self, lease: WorkerLease) -> dict[str, Any] | None:
+    def _claim(self, lease: WorkerLease, *, request_id: str | None = None,
+               owner: str | None = None, request_sha256: str | None = None,
+               excluded_requests: frozenset[tuple[str, str, str]] = frozenset()) -> dict[str, Any] | None:
+        if not isinstance(excluded_requests, frozenset) or len(excluded_requests) > MAX_OPERATIONS:
+            raise ValueError("Invalid excluded build identities")
+        for identity in excluded_requests:
+            if not isinstance(identity, tuple) or len(identity) != 3:
+                raise ValueError("Invalid excluded build identity")
+            _identifier(identity[0], "Excluded request ID")
+            _owner(identity[1])
+            _identifier(identity[2], "Excluded request digest", _SHA256)
+        selected = (request_id, owner, request_sha256)
+        if any(value is not None for value in selected):
+            request_id = _identifier(request_id, "Request ID")
+            owner = _owner(owner)
+            request_sha256 = _identifier(request_sha256, "Request digest", _SHA256)
         with self._lease_guard(lease):
             with self._locked() as (state, parent_fd):
                 now = self._now(state)
@@ -833,12 +858,16 @@ class BuildJobStore:
                 if state["draining"]:
                     return None
                 record = min(
-                    (record for record in state["jobs"].values() if record["state"] == "queued"),
+                    (record for record in state["jobs"].values() if record["state"] == "queued"
+                     and (record["request_id"], record["owner"], record["request_sha256"]) not in excluded_requests
+                     and (request_id is None or record["request_id"] == request_id)),
                     key=lambda record: record["sequence"],
                     default=None,
                 )
                 if record is None:
                     return None
+                if request_id is not None and (record["owner"] != owner or record["request_sha256"] != request_sha256):
+                    raise PermissionError("Selected build does not match its authenticated lease")
                 # Expiration was checked after loading the locked state, directly
                 # before this durable running marker is written.
                 if now >= record["expires_at"]:
@@ -1000,9 +1029,12 @@ class WorkerLease:
             self._store._verify_lease(self, mutation=False)
             return self._descriptor
 
-    def claim(self) -> dict[str, Any] | None:
-        """Persist and return the oldest unexpired queued request, if any."""
-        return self._store._claim(self)
+    def claim(self, *, request_id: str | None = None, owner: str | None = None,
+              request_sha256: str | None = None,
+              excluded_requests: frozenset[tuple[str, str, str]] = frozenset()) -> dict[str, Any] | None:
+        """Claim oldest work, or one exact owner/digest-bound nested request."""
+        return self._store._claim(self, request_id=request_id, owner=owner, request_sha256=request_sha256,
+                                  excluded_requests=excluded_requests)
 
     def finish(
         self,

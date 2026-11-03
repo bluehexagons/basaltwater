@@ -237,13 +237,17 @@ class BuildHostEntrypointTest(unittest.TestCase):
         configured = config()
         with patch("lib.build_jobs.BuildJobStore") as store, \
              patch("lib.build_coordinator.host_slot", side_effect=nullcontext), \
+             patch("lib.build_nested.NestedRequests") as nested, \
              patch("lib.build_worker.run_next") as run, \
              patch.object(build_host, "authorizer", return_value=Mock()) as authorization, \
              patch.object(build_host.time, "sleep") as sleep:
+            nested.return_value.run_pending.return_value = False
+            nested.return_value.fifo_guard.side_effect = lambda: nullcontext(frozenset())
             build_host.run_worker(configured, config_path="/private/config", once=True)
             store.assert_called_once_with("/var/lib/builder/state/jobs.json")
             self.assertEqual(run.call_args.kwargs["inputs_root"], configured["roots"]["inputs"])
             self.assertEqual(run.call_args.kwargs["uid"], 999)
+            self.assertEqual(run.call_args.kwargs["excluded_requests"], frozenset())
             authorization.assert_called_once_with(configured, config_path="/private/config")
             sleep.assert_not_called()
 

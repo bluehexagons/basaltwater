@@ -50,7 +50,7 @@ Every header has `schema: 1`, an action, and exactly that action's fields:
 | Action | Additional fields |
 | --- | --- |
 | `capabilities` | none |
-| `submit` | `request`, `source_size` |
+| `submit` | `request`, `source_size`, optional `runner_lease` |
 | `status` | `request_id` |
 | `cancel` | `request_id` |
 | `log` | `request_id`, `offset`, `max_bytes` |
@@ -72,6 +72,16 @@ remaining bytes after denial or malformed input. The callback receives a
 preliminary current-policy authorization with `requested_runtimes=[]`; the
 worker later checks installed observations against required tools from the
 pinned manifest.
+
+Optional `runner_lease` contains exactly `worker_pid`, `request_id`,
+`request_sha256` and a 64-hex token. Its request identity must match the full
+submitted document. After ordinary principal authorization and before source
+admission, the trusted `nested_admission(request, proof, owner=principal)`
+callback verifies the local guardian and retains private scheduling evidence.
+The installed entrypoint supplies `NestedRequests.register`; a dispatcher
+without this callback refuses nested submissions. The proof never substitutes
+for SSH authentication or project policy, and never executes a job in the
+transport process. Lost admission replies retain the same reconciliation rules.
 
 ## Responses and actions
 

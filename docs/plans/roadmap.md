@@ -15,8 +15,9 @@ a recovery path. The [plan index](README.md) maps related work; the
   and retained target reconciliation are implemented for the bounded Debian
   static/Go path. Explicit builder retention and offline recovery inspection
   are available. See [current usage](../services/build-systems.md).
-- Webhook CI/CD and GitHub Actions runners exist separately. A host combining
-  both with managed on-demand builds is not implemented or qualified.
+- Optional Actions runners, signed webhook intake and managed on-demand builds
+  compose on one host and share capacity. Exact-request nested scheduling is
+  implemented; complete-host live qualification is the immediate priority.
 
 Selected live and controlled checks are summarized in the
 [coverage map](testing-coverage.md). Passing CI is not full-host qualification.
@@ -39,8 +40,8 @@ Follow the [shared build-host plan](cicd-manifest-reuse.md):
 4. Qualify fresh setup, existing-runner conversion, mixed-role execution,
    reruns and reboot. Keep credentials and unfinished recovery evidence intact.
 
-A combined setup command is documented only after its parser, composition and
-backend behavior exist. Optional panel controls follow the common backend;
+The combined setup interface is available in the build-system guide. Optional
+panel controls follow the common backend;
 they are not required to finish the initial three-role host.
 
 ## Other priorities

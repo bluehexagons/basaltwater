@@ -237,16 +237,30 @@ def run_worker(config: dict, *, config_path: str, once: bool = False) -> None:
     from lib.build_jobs import BuildJobStore
     from lib.build_worker import run_next
     from lib.build_coordinator import CoordinatorBusy, host_slot
+    from lib.build_nested import NestedRequests
 
     store = BuildJobStore(os.path.join(config["roots"]["state"], "jobs.json"))
     authorize = authorizer(config, config_path=config_path)
+    nested = NestedRequests(config)
+
+    def execute(**selection):
+        return run_next(store, uid=config["uid"], gid=config["gid"],
+                        inputs_root=config["roots"]["inputs"], scratch_root=config["roots"]["scratch"],
+                        artifacts_root=config["roots"]["artifacts"], logs_root=config["roots"]["logs"],
+                        authorize=authorize, **selection)
+
     while True:
+        handled = nested.run_pending(store, execute)
         try:
             with host_slot():
-                run_next(store, uid=config["uid"], gid=config["gid"],
-                         inputs_root=config["roots"]["inputs"], scratch_root=config["roots"]["scratch"],
-                         artifacts_root=config["roots"]["artifacts"], logs_root=config["roots"]["logs"],
-                         authorize=authorize)
+                if not handled:
+                    with nested.fifo_guard() as excluded:
+                        # Keep run_next visibly under host_slot: upgrade guards
+                        # inspect this boundary in the installed worker's AST.
+                        run_next(store, uid=config["uid"], gid=config["gid"],
+                                 inputs_root=config["roots"]["inputs"], scratch_root=config["roots"]["scratch"],
+                                 artifacts_root=config["roots"]["artifacts"], logs_root=config["roots"]["logs"],
+                                 authorize=authorize, excluded_requests=excluded)
         except CoordinatorBusy:
             pass
         if once:
@@ -259,6 +273,7 @@ def serve(config: dict, *, principal: str, config_path: str) -> None:
     from lib.build_host_service import BuildHostService
     from lib.build_inputs import BuildInputStore
     from lib.build_jobs import BuildJobStore
+    from lib.build_nested import NestedRequests
 
     store = BuildJobStore(os.path.join(config["roots"]["state"], "jobs.json"))
     inputs = BuildInputStore(config["roots"]["inputs"], max_records=config["max_records"],
@@ -266,7 +281,8 @@ def serve(config: dict, *, principal: str, config_path: str) -> None:
     service = BuildHostService(jobs=store, load_policy=lambda: load_config(config_path)["policy"],
                                admit_source=inputs.admit, tool_versions=observe_tools,
                                logs_root=config["roots"]["logs"],
-                               artifacts_root=config["roots"]["artifacts"])
+                               artifacts_root=config["roots"]["artifacts"],
+                               nested_admission=NestedRequests(config).register)
     with connection_deadline():
         service.serve_once(input_stream=sys.stdin.buffer, output_stream=sys.stdout.buffer,
                            principal=principal)

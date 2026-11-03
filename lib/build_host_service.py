@@ -242,7 +242,8 @@ class BuildHostService:
     def __init__(self, *, jobs: BuildJobStore, load_policy: Callable[[], object],
                  admit_source: Callable[..., dict[str, Any]],
                  tool_versions: Callable[[], dict[str, str]],
-                 logs_root: str, artifacts_root: str) -> None:
+                 logs_root: str, artifacts_root: str,
+                 nested_admission: Callable[..., None] | None = None) -> None:
         if not isinstance(jobs, BuildJobStore):
             raise ValueError("A build job store is required")
         for callback in (load_policy, admit_source, tool_versions):
@@ -256,6 +257,9 @@ class BuildHostService:
         self.tool_versions = tool_versions
         self.logs_root = logs_root
         self.artifacts_root = artifacts_root
+        if nested_admission is not None and not callable(nested_admission):
+            raise ValueError("Nested admission must be a trusted callback")
+        self.nested_admission = nested_admission
 
     def serve_once(self, *, principal: str, input_stream: BinaryIO,
                    output_stream: BinaryIO) -> None:
@@ -334,12 +338,19 @@ class BuildHostService:
         }
         if not isinstance(action, str) or action not in fields_by_action:
             raise ValueError("Unsupported build protocol action")
-        if set(document) != fields_by_action[action]:
+        expected = fields_by_action[action]
+        if action == "submit" and "runner_lease" in document:
+            expected = expected | {"runner_lease"}
+        if set(document) != expected:
             raise ValueError("Build protocol header has missing or unsupported fields")
 
         fields = dict(document)
         if action == "submit":
             fields["request"] = parse_build_request(fields["request"])
+            if "runner_lease" in fields:
+                from lib.build_runner_lease import validate_proof
+
+                fields["runner_lease"] = validate_proof(fields["runner_lease"])
             size = fields["source_size"]
             if type(size) is not int or not 1 <= size <= MAX_SNAPSHOT_BYTES:
                 raise ValueError("Source snapshot size is outside supported limits")
@@ -366,6 +377,10 @@ class BuildHostService:
             authorize_build_request(
                 self.load_policy(), principal=principal, request=request, requested_runtimes=[],
             )
+            if "runner_lease" in fields:
+                if self.nested_admission is None:
+                    raise ValueError("Nested admission is unavailable")
+                self.nested_admission(request, fields["runner_lease"], owner=principal)
             receipt = self.admit_source(
                 request, owner=principal, source=input_stream,
                 source_size=fields["source_size"], jobs=self.jobs,

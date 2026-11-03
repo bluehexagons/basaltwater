@@ -218,7 +218,14 @@ def _ready_toolchains(manifest: Manifest, observed: dict[str, str], *, source_pa
     return ready
 
 
-def _cancel_requested(store: BuildJobStore, request_id: str, owner: str) -> bool:
+def _cancel_requested(store: BuildJobStore, request_id: str, owner: str,
+                      cancelled: Callable[[], bool] | None = None) -> bool:
+    if cancelled is not None:
+        external = cancelled()
+        if type(external) is not bool:
+            raise RuntimeError("Parent build cancellation status is unavailable")
+        if external:
+            store.cancel(request_id, owner=owner)
     status = store.status(request_id, owner=owner)
     if (not isinstance(status, dict) or status.get("request_id") != request_id
             or status.get("state") != "running" or type(status.get("cancel_requested")) is not bool):
@@ -394,11 +401,12 @@ def _verify_artifact(root_fd: int, request_id: str, value: object, limit: int) -
 
 
 def _finish_known_failure(lease: WorkerLease, store: BuildJobStore, request_id: str, owner: str,
-                          handle: ScratchHandle | None) -> dict[str, Any]:
-    cancelled_before = _cancel_requested(store, request_id, owner)
+                          handle: ScratchHandle | None,
+                          cancelled: Callable[[], bool] | None = None) -> dict[str, Any]:
+    cancelled_before = _cancel_requested(store, request_id, owner, cancelled)
     if handle is not None:
         handle.release(work_stopped=True)
-    cancelled_after = _cancel_requested(store, request_id, owner)
+    cancelled_after = _cancel_requested(store, request_id, owner, cancelled)
     if cancelled_before and not cancelled_after:
         raise RuntimeError("Build cancellation status changed unexpectedly")
     outcome = "cancelled" if cancelled_after else "failed"
@@ -406,11 +414,12 @@ def _finish_known_failure(lease: WorkerLease, store: BuildJobStore, request_id: 
 
 
 def _finish_success(lease: WorkerLease, store: BuildJobStore, request_id: str, owner: str,
-                    handle: ScratchHandle, artifact: dict[str, Any]) -> dict[str, Any]:
-    if _cancel_requested(store, request_id, owner):
+                    handle: ScratchHandle, artifact: dict[str, Any],
+                    cancelled: Callable[[], bool] | None = None) -> dict[str, Any]:
+    if _cancel_requested(store, request_id, owner, cancelled):
         raise _KnownFailure
     handle.release(work_stopped=True)
-    if _cancel_requested(store, request_id, owner):
+    if _cancel_requested(store, request_id, owner, cancelled):
         return lease.finish(request_id, outcome="cancelled", work_stopped=True)
     try:
         return lease.finish(request_id, outcome="succeeded", work_stopped=True, artifact=artifact)
@@ -434,6 +443,11 @@ def run_next(
     artifacts_root: str | os.PathLike[str],
     logs_root: str | os.PathLike[str],
     authorize: Callable[[str, dict[str, Any]], object],
+    request_id: str | None = None,
+    owner: str | None = None,
+    request_sha256: str | None = None,
+    cancelled: Callable[[], bool] | None = None,
+    excluded_requests: frozenset[tuple[str, str, str]] = frozenset(),
 ) -> dict[str, Any] | None:
     """Claim and run at most one admitted request; return only public job status.
 
@@ -451,12 +465,16 @@ def run_next(
     """
     _require_root()
     _require_build_identity(uid, gid)
-    if not isinstance(store, BuildJobStore) or not callable(authorize):
+    if (not isinstance(store, BuildJobStore) or not callable(authorize)
+            or cancelled is not None and not callable(cancelled)):
         raise ValueError("A build store and trusted authorization callback are required")
 
     try:
         with store.worker() as lease:
-            claim = lease.claim()
+            claim = (lease.claim() if request_id is None and owner is None and request_sha256 is None
+                     and not excluded_requests else lease.claim(
+                         request_id=request_id, owner=owner, request_sha256=request_sha256,
+                         excluded_requests=excluded_requests))
             if claim is None:
                 return None
             request_id = claim.get("request_id")
@@ -473,7 +491,7 @@ def run_next(
                 # Authorization is checked before allocating scratch, using only
                 # the owner saved in the private durable claim.
                 first_observation = _observed_tools(authorize, owner, job)
-                if _cancel_requested(store, request_id, owner):
+                if _cancel_requested(store, request_id, owner, cancelled):
                     raise _KnownFailure
 
                 with _private_root(inputs_root) as (input_path, input_fd), \
@@ -487,7 +505,7 @@ def run_next(
                             or handle.size_bytes != job["limits"]["scratch_bytes"]):
                         raise RuntimeError("Scratch adapter returned a mismatched handle")
                     _verify_fresh_scratch_root(handle)
-                    if _cancel_requested(store, request_id, owner):
+                    if _cancel_requested(store, request_id, owner, cancelled):
                         raise _KnownFailure
 
                     source_fd, source_path, source_info = _input_file(input_fd, input_path, request_id)
@@ -502,7 +520,7 @@ def run_next(
                         _verify_input_unchanged(input_fd, source_fd, request_id + ".source", source_info)
                     finally:
                         os.close(source_fd)
-                    if _cancel_requested(store, request_id, owner):
+                    if _cancel_requested(store, request_id, owner, cancelled):
                         raise _KnownFailure
 
                     try:
@@ -512,11 +530,11 @@ def run_next(
                     except ValueError:
                         raise _KnownFailure from None
                     _ready_toolchains(manifest, first_observation, source_path=checkout)
-                    if _cancel_requested(store, request_id, owner):
+                    if _cancel_requested(store, request_id, owner, cancelled):
                         raise _KnownFailure
 
                     _provision_layout(handle, validated, uid, gid)
-                    if _cancel_requested(store, request_id, owner):
+                    if _cancel_requested(store, request_id, owner, cancelled):
                         raise _KnownFailure
                     log_path = _create_log(log_fd, log_root, request_id)
 
@@ -524,19 +542,19 @@ def run_next(
                     # boundary; only these fresh observations enter the bundle.
                     second_observation = _observed_tools(authorize, owner, validated)
                     toolchains = _ready_toolchains(manifest, second_observation, source_path=checkout)
-                    if _cancel_requested(store, request_id, owner):
+                    if _cancel_requested(store, request_id, owner, cancelled):
                         raise _KnownFailure
                     result = run_systemd_build(
                         validated, uid=uid, gid=gid, scratch_path=handle.mount_path,
                         log_path=log_path,
-                        cancelled=lambda: _cancel_requested(store, request_id, owner),
+                        cancelled=lambda: _cancel_requested(store, request_id, owner, cancelled),
                     )
                     if not isinstance(result, BuildExecutionResult) or result.state not in {
                             "succeeded", "failed", "cancelled"}:
                         raise RuntimeError("Build execution outcome is unconfirmed")
 
                     if result.state == "succeeded":
-                        if _cancel_requested(store, request_id, owner):
+                        if _cancel_requested(store, request_id, owner, cancelled):
                             raise _KnownFailure
                         artifact_destination = os.path.join(artifact_path, request_id + ".bundle")
                         try:
@@ -549,13 +567,13 @@ def run_next(
                             artifact_fd, request_id, artifact,
                             validated["limits"]["artifact_bytes"] + _ARTIFACT_SIZE_OVERHEAD,
                         )
-                        return _finish_success(lease, store, request_id, owner, handle, artifact)
+                        return _finish_success(lease, store, request_id, owner, handle, artifact, cancelled)
 
-                    if result.state == "cancelled" and not _cancel_requested(store, request_id, owner):
+                    if result.state == "cancelled" and not _cancel_requested(store, request_id, owner, cancelled):
                         raise RuntimeError("Build adapter reported cancellation without a durable request")
                     raise _KnownFailure
             except _KnownFailure:
-                return _finish_known_failure(lease, store, request_id, owner, handle)
+                return _finish_known_failure(lease, store, request_id, owner, handle, cancelled)
     except BaseException:
         raise RuntimeError(_SAFE_FAILURE) from None
 

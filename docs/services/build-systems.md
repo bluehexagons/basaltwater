@@ -66,6 +66,31 @@ using the same installer. See [registration](github-runner.md).
 Add [signed webhook builds](webhook-builds.md) for workflow-free build/test artifacts.
 Webhooks do not deploy targets, publish releases or create status checks.
 
+For a combined host, select `--build-server --github-runner` on the same
+`server_lite` or `server_web` setup and provide the runner scope and allowlist.
+Add the webhook configuration from its guide to that same setup. These roles
+can also be enabled separately; installing tools does not enable an intake role.
+
+### Managed builds inside Actions
+
+An Actions workflow can synchronously submit a managed build to its own host
+using `BuildHostClient`. The client discovers its actual managed runner process
+and requests an exact-request capacity handoff. The independent managed worker
+uses that parent's existing slot. Other queued requests remain excluded from
+the borrowed slot. Remote builders use their own capacity normally.
+
+The workflow still needs its own restricted build SSH key, verified host pin
+and current project grant. Runner identity grants no build or deployment
+authority. Do not place a controller administrator key, target credentials or
+runtime secrets on the runner. Workflow environment variables cannot bypass
+capacity. A same-host client without a verified guardian fails before upload.
+
+Parent termination cancels the managed build and capacity remains held until
+its owned execution has stopped. Uncertain cleanup retains recovery evidence.
+Nested request evidence is private, bounded and retained beside the configured
+state root as `<state-root>-runner-leases`; it is not automatically deleted.
+Upgrade the installed client and host together before using this path.
+
 ## Shared capacity and maintenance
 
 The fixed lock is `/var/lib/basaltwater-build-coordinator/slot.lock`,

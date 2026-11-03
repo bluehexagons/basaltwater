@@ -17,7 +17,7 @@ if __name__ == "__main__":
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--instance", default="")
     parser.add_argument("--worker", type=int)
-    parser.add_argument("--hold-queue", type=int, nargs=3)
+    parser.add_argument("--hold-queue", type=int, nargs=4)
     args = parser.parse_args()
     if args.hold_queue:
         raise SystemExit(hold_job_slot(*args.hold_queue))

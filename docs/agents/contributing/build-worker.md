@@ -29,6 +29,14 @@ while the store is draining, returns `None` without touching those roots.
 Otherwise it claims the job durably before reading inputs or creating scratch
 state.
 
+The trusted compositor can pass all of `request_id`, `owner` and
+`request_sha256` to claim one exact nested request. Partial selection and
+owner/digest mismatches fail before mutation; another queued job cannot run
+under that selection. `excluded_requests` contains exact `(ID, owner, digest)`
+tuples to keep retained nested intents out of ordinary FIFO claims. A colliding
+failed admission cannot exclude a different owner's or different-input job.
+Draining and interrupted-work checks still apply.
+
 ## Input and policy checks
 
 The private owner comes only from the returned `WorkerLease` claim. Request
@@ -77,6 +85,13 @@ artifact creation and again before final state. If cancellation races a
 successful finish, the durable store check prevents a success result; a bundle
 already published remains as an inspectable orphan and is not attached to a
 cancelled job.
+
+An optional trusted `cancelled()` callback adds parent-lifetime cancellation.
+It must return a boolean; a true result persists cancellation under the saved
+claim owner before normal cleanup. It is checked at the same execution and
+publication boundaries as an ordinary cancellation. The managed runner handoff
+uses both the actual parent pidfd and its guardian connection, and keeps the
+borrowed flock until cleanup is confirmed.
 
 ## Failure and recovery
 

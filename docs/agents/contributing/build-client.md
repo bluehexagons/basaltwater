@@ -111,6 +111,15 @@ do not contact a build host or run SSH against a VM.
 
 ## Internal transport reuse
 
+Managed Actions ancestry and a local destination cause `submit()` to request
+an exact-request proof from `lib.build_runner_lease`. The schema-1 submit
+header then includes optional `runner_lease`. Discovery walks actual process
+ancestry and the root-installed `Runner.Worker` path. A same-host guardian
+failure happens before SSH starts; remote builders and ordinary controller
+calls keep their existing framing. The SSH endpoint, key, principal and policy
+requirements are unchanged. The proof delegates capacity only. See
+[shared-host operations](../../services/build-systems.md#managed-builds-inside-actions).
+
 The [target client](build-target-client.md) composes a private specialization of
 this client. Its fixed `_remote_command`, `_header_limit` and `_parse_reply`
 extension points select the target protocol without duplicating credential,
