@@ -89,6 +89,10 @@ first down; this is an observation, not a latency guarantee. Correlate actual
 send timestamps with game markers, rather than treating command invocation as
 the press time. Frame-synchronous input remains a project protocol concern.
 
+An explicit [warm desktop worker](windows-worker.md) reuses the preparation and
+driver process across requests. The independent release watchdog remains
+per-lease; worker reuse does not waive any lifetime or foreground checks.
+
 Private evidence lives below `%LOCALAPPDATA%\Basaltwater\desktop\leases\ID`.
 The request freezes mapped scan codes/layout and observed identity. Driver and
 watchdog reports retain UTC/QPC anchors, QPC frequency, monotonic start/end,

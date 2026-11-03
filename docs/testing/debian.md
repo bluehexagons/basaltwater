@@ -87,8 +87,9 @@ environment:
 python3 run_tests.py tests.test_desktop_control tests.test_desktop_session
 ```
 
-The input safety changes have syntax and mocked behavioral validation on a
-Windows host only; this does not extend the earlier XRDP lab qualification.
+The input safety changes have syntax and mocked behavioral validation on Windows,
+plus passing [full Debian CI at `be011180`](https://github.com/bluehexagons/basaltwater/actions/runs/41642208328).
+These automated checks do not extend the earlier live XRDP lab qualification.
 Native follow-up must qualify the exact candidate's held-human-modifier
 behavior, timeout/failed-chord state, revocation during slow probes and expired
 queued requests on a disposable desktop. The xdotool adapter still lacks proven

@@ -26,14 +26,14 @@ function Read-NativeHeldJson([string]$Path,[int]$Limit = 65536) {
         return $text | ConvertFrom-Json @options
     } finally { $stream.Dispose() }
 }
-function Write-NativeHeldJson([string]$Path,$Record) {
+function Write-NativeHeldJson([string]$Path,$Record,[int]$Limit=65536) {
     Assert-NativeDesktopPrivatePath (Split-Path -Parent $Path)
     Assert-NativeDesktopPath $Path
     if (Test-Path -LiteralPath $Path) { Assert-NativeDesktopPrivatePath $Path }
     $temp = $Path + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
     try {
         [IO.File]::WriteAllText($temp,($Record | ConvertTo-Json -Depth 12 -Compress),(New-Object Text.UTF8Encoding($false)))
-        if ((Get-Item -LiteralPath $temp).Length -gt 65536) { throw 'Held-input receipt exceeds bound' }
+        if ((Get-Item -LiteralPath $temp).Length -gt $Limit) { throw 'Held-input receipt exceeds bound' }
         if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($temp,$Path,[Management.Automation.Language.NullString]::Value) }
         else { [IO.File]::Move($temp,$Path) }
     } finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp } }

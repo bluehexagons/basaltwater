@@ -13,6 +13,7 @@ an independent interactive Scheduled Task release watchdog.
 #>
 $script:NativeDesktopSource = $PSScriptRoot
 . (Join-Path $PSScriptRoot 'Desktop.Hold.ps1')
+. (Join-Path $PSScriptRoot 'Desktop.Worker.ps1')
 
 function Get-NativeDesktopContext {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -151,7 +152,7 @@ function Invoke-NativeDesktopWorkerBody($Request) {
     Initialize-NativeDesktopTypes
     [Basaltwater.Desktop.Native]::Ready()
     if ($Request.command -eq 'ready') { return @{ healthy = $true; interactive = $true; capture_performed = $false; backend = 'win32-uia'; worker = 'WindowsPowerShell-5.1'; timeout_seconds = 8;
-        capabilities = @{ keyboard_hold = $true; maximum_hold_ms = 5000; explicit_repeat = $true; mouse_hold = $false } } }
+        capabilities = @{ keyboard_hold = $true; maximum_hold_ms = 5000; explicit_repeat = $true; mouse_hold = $false; warm_worker = $true } } }
     [Basaltwater.Desktop.Native]::Dpi()
     switch ($Request.command) {
         'hold-plan' { return [Basaltwater.Desktop.Native]::PrepareHold([long]$Request.window,$Request.identity,$Request.key,[int]$Request.width,[int]$Request.height) }
@@ -167,7 +168,7 @@ function Invoke-NativeDesktopWorkerBody($Request) {
             if ($Request.operation -ne 'invoke' -and -not $verified) { throw 'Element outcome not observed; inspect before retrying' }
             return @{ accepted = $true; outcome_verified = $verified; verification = 'Focus/Value are read back; InvokePattern requires task-specific reinspection' }
         }
-        'input' { [Basaltwater.Desktop.Native]::InputAction([long]$Request.window, $Request.identity, $Request.operation, $Request.text, [int]$Request.x, [int]$Request.y, [int]$Request.width, [int]$Request.height)
+        'input' { [Basaltwater.Desktop.Native]::InputAction([long]$Request.window, $Request.identity, $Request.operation, $Request.text, [int]$Request.x, [int]$Request.y, [int]$Request.width, [int]$Request.height,$script:NativeDesktopInputGuard)
             return @{ submitted = $true; outcome_verified = $false; verification = 'Input queue acceptance only; inspect application before further input' } }
         'screenshot' { [Basaltwater.Desktop.Native]::Capture([long]$Request.window, $Request.identity, $Request.monitor, $Request.output)
             return @{ output = $Request.output; bytes = (Get-Item -LiteralPath $Request.output).Length; capture_method = 'PrintWindow for window; CopyFromScreen for explicit monitor'; outcome_verified = $true; content_verified = $false } }
@@ -176,6 +177,10 @@ function Invoke-NativeDesktopWorkerBody($Request) {
 }
 
 function Invoke-NativeDesktopWorker($Request, [int]$TimeoutSeconds = 8) {
+    if(-not $script:NativeDesktopWorkerServing -and $Request.command -notin @('environment','diagnostics')){
+        $warm=Get-NativeWarmRecord
+        if($warm -and -not $warm.cleanup_confirmed){return Invoke-NativeWarmRequest $warm $Request $TimeoutSeconds}
+    }
     # No external application is killed: this handle belongs exclusively to our worker.
     $directory = Join-Path ([IO.Path]::GetTempPath()) ('basaltwater-desktop-' + [guid]::NewGuid().ToString('N'))
     New-NativeDesktopPrivateDirectory $directory
@@ -237,10 +242,11 @@ function ConvertTo-NativeDesktopRequest([string[]]$Arguments) {
         screenshot = @('window','identity','generation','output','monitor');
         window = @('window','identity','generation','x','y','width','height');
         element = @('ref','generation','text','action-name');
-        input = @('window','identity','generation','width','height','x','y','text','key','keys','milliseconds','repeat-ms','lease')
+        input = @('window','identity','generation','width','height','x','y','text','key','keys','milliseconds','repeat-ms','lease');
+        worker = @('idle-seconds','session-seconds')
     }
     if (-not $allowed.ContainsKey($request.command)) { throw "Unsupported Windows desktop command: $($request.command)" }
-    if ($request.command -in @('control','window','element','input')) {
+    if ($request.command -in @('control','window','element','input','worker')) {
         if ($index -ge $Arguments.Count -or $Arguments[$index].StartsWith('--')) { throw 'Expected operation' }
         $request.operation = $Arguments[$index++];
     }
@@ -254,7 +260,7 @@ function ConvertTo-NativeDesktopRequest([string[]]$Arguments) {
         if ($index -ge $Arguments.Count) { throw "Missing value: $option" }
         $request[$key] = $Arguments[$index++]
     }
-    foreach ($key in @('pid','window','x','y','width','height','seconds','milliseconds','repeat-ms')) {
+    foreach ($key in @('pid','window','x','y','width','height','seconds','milliseconds','repeat-ms','idle-seconds','session-seconds')) {
         if ($request.ContainsKey($key)) {
             $number = 0L
             if ($request[$key] -notmatch '\A-?[0-9]+\z' -or -not [long]::TryParse($request[$key], [ref]$number)) { throw "Invalid integer: $key" }
@@ -275,6 +281,11 @@ function Assert-NativeDesktopRequired($Request, [string[]]$Keys) {
 function Invoke-NativeDesktopCli([string[]]$Arguments) {
     $lock = $null
     try {
+        if($Arguments.Count -ge 2 -and $Arguments[0] -eq 'worker' -and
+            (($Arguments.Count -eq 2 -and $Arguments[1] -eq '--help') -or
+             ($Arguments.Count -eq 3 -and $Arguments[1] -in @('start','status','stop') -and $Arguments[2] -eq '--help'))){
+            return @{ok=$true;help='worker start [--idle-seconds 120] [--session-seconds 1800]; worker status; worker stop. Idle 30-600 seconds, total idle..3600. Explicit limited interactive helper, fresh control/identity/deadline checks, no replay. Active or uncertain helpers block setup; stop reconciles cleanup. No autostart.'}
+        }
         if ($Arguments.Count -eq 3 -and $Arguments[0] -eq 'input' -and $Arguments[1] -in @('hold','release','lease','key','chord','sequence','text','click') -and $Arguments[2] -eq '--help') {
             if ($Arguments[1] -in @('hold','release','lease')) { return @{ ok = $true; help = 'input hold --key W --milliseconds 500 [--repeat-ms 100], with fresh --window --identity --generation --width --height. Duration 50-5000 ms; repeat 50..duration. One key with optional CTRL/SHIFT prefixes. input release --lease ID cancels only that lease; input lease --lease ID reads retained evidence. Independent watchdog; release acceptance is not application verification. No mouse holds.' } }
             return @{ ok = $true; help = 'input key --key KEY | input chord --key CTRL+A (one/two distinct CTRL/SHIFT modifiers). input sequence --keys HOME,SHIFT+END: at most 32 chords and 1024 characters. Keys: A-Z 0-9 F1-F12 ENTER ESC TAB SPACE LEFT UP RIGHT DOWN BACKSPACE DELETE HOME END PAGEUP PAGEDOWN INSERT. input text --text TEXT: at most 1024 UTF-16 code units. input click --x X --y Y. All require --window --identity --generation --width --height from fresh windows. Queue acceptance only; inspect application afterward.' }
@@ -290,6 +301,10 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
                 foreach ($key in $leaseOptions) { if ($request.ContainsKey($key)) { throw "Unsupported input option: --$key" } }
             }
         }
+        if($request.command -eq 'worker'){
+            if($request.operation -notin @('start','status','stop')){throw 'Expected worker start/status/stop'}
+            if($request.operation -ne 'start' -and ($request.ContainsKey('idle-seconds') -or $request.ContainsKey('session-seconds'))){throw 'Worker lifetime options apply only to start'}
+        }
         if ($request.command -eq 'environment') {
             . (Join-Path $PSScriptRoot 'Environment.Common.ps1')
             $report = Get-NativeEnvironmentReport
@@ -298,6 +313,17 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
         if ($request.command -eq 'doctor') { return Get-NativeDesktopReadiness }
         $context = Get-NativeDesktopContext; $lock = Enter-NativeDesktopLock $context
         $state = Read-NativeDesktopState $context
+        if($request.command -eq 'worker'){
+            if($request.operation -eq 'status'){return @{ok=$true;result=Get-NativeWarmStatus}}
+            if($request.operation -eq 'stop'){Exit-NativeDesktopLock $lock;$lock=$null;return @{ok=$true;result=Stop-NativeWarmWorker}}
+            if($request.operation -ne 'start'){throw 'Expected worker start/status/stop'}
+            if($state.mode -ne 'enabled'){throw 'Desktop control must be enabled to start a worker'}
+            Write-NativeDesktopState $state
+            $idle=120;$duration=1800
+            if($request.ContainsKey('idle-seconds')){$idle=[int]$request['idle-seconds']}
+            if($request.ContainsKey('session-seconds')){$duration=[int]$request['session-seconds']}
+            return @{ok=$true;result=Start-NativeWarmWorker $context $idle $duration}
+        }
         if ($request.command -eq 'input' -and $request.operation -in @('release','lease')) {
             Assert-NativeDesktopRequired $request @('lease')
             return Get-NativeHeldLease $request.lease $context ($request.operation -eq 'release')

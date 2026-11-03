@@ -15,6 +15,15 @@ It retains current-account/session, observed identity/geometry, foreground,
 physical-modifier and human-control guards. Partial delivery is an error with
 best-effort releases and no replay. Unicode text remains a separate path.
 
+Explicit [warm worker sessions](../workstations/windows-worker.md) now amortize
+native helper startup across repeated commands without caching observations or
+replaying failed requests. Callers, control revisions and absolute deadlines
+are checked again immediately before raw input. Unpaced Unicode text uses one
+bounded batch with accepted-prefix cleanup; partial mouse clicks release only
+their accepted down. Cold workers remain available when no session is active.
+Live SDL navigation/chord/sequence and exact Unicode delivery passed; see the
+[qualification record](../workstations/windows-testing.md) for scope and timings.
+
 Offline construction and transport tests cover flags, ordering, bounds, invalid
 input and partial submission. The [native readiness and acceptance record](../workstations/windows-testing.md)
 documents installed-host/session qualification and the unprefixed-navigation
@@ -153,12 +162,12 @@ inside Basaltwater. Preserve output/presentation dimensions separately from
 internal render size and scale. A project screenshot does not observe compositor
 delivery, and a captured desktop frame does not prove physical scanout.
 
-The small enabling documentation increment is a project-neutral Node session
-adapter example: explicitly apply the supplied profile to children, publish
-readiness after project checks, use file URLs for Windows preloads, forward exit
-failure and close all children. Demonstrate with a disposable fixture and keep
-project commands usable without Basaltwater. The adapter contract must explain
-which paths survive a project-owned worker/profile reset.
+The runnable [Node session adapter example](../workstations/node-test-session-adapter.md)
+explicitly applies a private runtime profile to a synthetic child, publishes
+readiness after project checks, uses file URLs for Windows preloads and forwards
+exit failure. Native acceptance covers bounded child cleanup and profile resets
+that preserve sibling control/evidence paths. It also runs without Basaltwater;
+the example is not a substitute for game assertions or OS tree containment.
 
 ### Capture, timing and recovery acceptance
 

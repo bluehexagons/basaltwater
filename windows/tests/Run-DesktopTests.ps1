@@ -41,6 +41,7 @@ function Window-Action([string]$Generation, [string]$Identity = '42:birth:class:
 }
 New-NativeDesktopPrivateDirectory $temporary
 try {
+    & (Join-Path $PSScriptRoot 'Run-WarmWorkerTests.ps1')
     & (Join-Path $PSScriptRoot 'Run-EnvironmentTests.ps1')
     & {
         # Identity comes from the token's AuthenticationId, never group-list
@@ -61,6 +62,7 @@ try {
     }
     # Parse/compile only: not a single user32, capture, UIA or input call.
     Initialize-NativeDesktopTypes
+    & (Join-Path $PSScriptRoot 'Run-InputTransportTests.ps1')
     & (Join-Path $PSScriptRoot 'Run-HeldInputTests.ps1')
     # Pure event construction with a synthetic keyboard map. No user32 calls.
     $builder = [Basaltwater.Desktop.Native].GetMethod('KeyInputs', [Reflection.BindingFlags]'Static,NonPublic')
@@ -141,6 +143,8 @@ try {
         $script:SentBatches[1][0].data.key.scan -eq 0x4f) 'Cleanup failure hidden or already released chord cleaned again'
     $help = Invoke-NativeDesktopCli @('input','sequence','--help')
     Assert-True ($help.ok -and $help.help -match '32 chords' -and $help.help -match 'HOME') 'Leaf input help missing keys/limits'
+    $help=Invoke-NativeDesktopCli @('worker','start','--help')
+    Assert-True ($help.ok -and $help.help -match '30-600' -and $help.help -match 'stop reconciles') 'Worker help omitted bounds or recovery'
     $dto = [Basaltwater.Desktop.Element]([pscustomobject]@{ reference = 'r'; window = 123L; pid = 42; path = @(0,1); identity = 'i'; runtime = 'r'; name = 'n'; role = 'ControlType.Edit' })
     Assert-True ($dto.path.Length -eq 2 -and $dto.window -eq 123) 'Worker cannot deserialize UIA DTO'
     # Exercise the native outcome rule without calling Win32: SW_RESTORE can
@@ -303,6 +307,7 @@ function Invoke-NativeDesktopWorkerBody($Request) {
         @('input','text','--window','123','--identity','42:birth:class:title','--generation',$generation,'--width','640','--height','480','--text',('x' * 1025)),
         @('input','sequence','--window','123','--identity','42:birth:class:title','--generation',$generation,'--width','640','--height','480','--keys',('A,' * 32 + 'A')),
         @('inspect','--pid','-2'), @('inspect','--pid','42','--pid','43'), @('windows','--surprise'),
+        @('worker','stop','--idle-seconds','30'), @('worker','surprise'),
         @('window','focus','--window','0','--identity','x','--generation',$generation),
         @('screenshot','--output',(Join-Path $temporary 'new.png'))
     )) { Assert-True (-not (Invoke-NativeDesktopCli $arguments).ok) "Invalid arguments accepted: $arguments" }

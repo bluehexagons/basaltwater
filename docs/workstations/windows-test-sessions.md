@@ -5,6 +5,8 @@ disposable application profile, bounded project-defined readiness and a retained
 evidence directory. Sessions use the existing Scheduled Task guardian and Job
 Object; `status`, `logs`, `wait` and `cancel` keep their normal lifecycle meanings.
 Projects retain their native launch commands, assertions and capture recipes.
+The runnable [Node adapter example](node-test-session-adapter.md) demonstrates
+explicit child profiles, atomic readiness, file-URL preloads and retained results.
 
 ```powershell
 basaltw desktop develop exec --project 'F:\Repos\sample-game' --test-session --ready-timeout 60 --timeout 600 --dry-run -- python.exe qa_session.py

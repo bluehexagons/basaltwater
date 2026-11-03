@@ -92,8 +92,8 @@ selection and left an empty value with caret/selection at zero. All nine
 application-state assertions passed, and the supervised process/profile settled.
 No feedback was submitted and the ordinary game profile was not used.
 
-This confirms those caret/selection outcomes in the tested game widget. WinForms
-delivery, other game widgets, IME composition, clipboard shortcuts and physical
+This confirms those caret/selection outcomes in the tested game widget. Other
+game widgets, IME composition, clipboard shortcuts and physical
 controller behavior remain separate acceptance work. That initial pass used the
 corrected checkout CLI; installed `b16d1ca0` requires refresh.
 
@@ -155,6 +155,48 @@ and failure receipts remain private. This qualification uses checkout source;
 it does not establish that the installed launcher has been refreshed, or prove
 any game's movement/attack assertions. WGC recording, PresentMon and process
 audio remain planned.
+
+## Warm workers and reusable adapters
+
+Checkout qualification on 2026-11-03 exercised explicit
+[warm desktop workers](windows-worker.md) through a private native launcher
+pointing at the checkout, without patching the installed source. A real limited
+interactive Scheduled Task reused its native types and process across fresh
+requests. SDL received balanced LEFT events, `CTRL+SHIFT+HOME`,
+`HOME,SHIFT+END,F11` and exact 260-unit UTF-16 text containing Japanese, accented,
+combining-mark and emoji characters. This qualifies committed Unicode delivery,
+not IME composition, clipboard handling or new game-widget assertions.
+An owned WinForms TextBox also passed Home/End caret movement,
+Ctrl+Shift+Home and sequence selection, Delete, exact Unicode insertion and a
+balanced mouse click. Per-key down/up counts were balanced. These are separate
+toolkit checks; they do not establish every control's shortcut behavior.
+
+Five warm LEFT CLI calls took about 2.27–2.32 seconds each; preceding cold
+samples took 3.36–3.80 seconds. Separate read-only helper probes were about
+0.36–0.43 seconds warm versus 1.14–1.18 seconds cold. These small sequential
+samples included other test activity and are not a controlled benchmark, p95,
+latency guarantee or input-to-display measurement. Hold watchdog startup remains
+per lease and must be included separately when measuring held-input latency.
+
+Warm SDL holds passed repeat, owned-window minimize/focus loss, cancellation,
+caller loss, watchdog loss and worker loss. Held state cleared with balanced
+events; watchdog loss required explicit receipt reconciliation. An outside-input
+event during a separate startup correctly refused the lease before down and
+settled cleanup. No physical input was suppressed or global release injected.
+Worker loss required explicit worker stop to reconcile its registration; no
+input was replayed in a replacement worker.
+
+The full native suite passed, followed by focused desktop checks on final guard
+changes. Mocked-API tests with real owned helpers cover expired requests, stale
+caller creation identities, source drift, disabled control, single-worker
+admission, timeout, late startup after retirement and maintenance blocking.
+Forced partial keyboard/mouse submission remains mocked qualification.
+
+The [Node adapter example](node-test-session-adapter.md) passed its eleven
+owned-process acceptance cases and a real supervised run: live readiness,
+observed owned child, normal exit, retained artifacts and removed profile.
+Its assertions are synthetic. Raw events, process identities, timings and
+cleanup receipts remain private; the installed launcher still needs refresh.
 
 ## Repeatable acceptance
 
