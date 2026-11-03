@@ -83,7 +83,9 @@ The fast target omits the generated brand export and wheel build/install checks;
 run affected checks before committing and let GitHub CI perform full validation.
 `make artifact-check` suppresses successful build/install chatter and reports
 the wheel smoke result. Failed build/install commands replay their full output
-and remain failures.
+and remain failures. Its Linux installed-CLI check also exercises offline desktop
+instruction paging, coordinate mapping and durable run continuation/refusal in
+private temporary files, without contacting or starting a desktop helper.
 Use `python3 run_tests.py --list-suites` to see concise suite names and sizes.
 Choose all affected domains; shared configuration, validators, plugin composition,
 test infrastructure, or uncertain dependencies warrant a full local run.

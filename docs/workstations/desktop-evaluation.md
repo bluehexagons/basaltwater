@@ -154,3 +154,43 @@ gaps. They do not constitute a native CachyOS, Windows or game smoke test.
 Windows still uses its native CLI contracts; these Linux CLI additions do not
 implement Windows input-stage or post-input-observation parity. Optional gamepad,
 audio and video qualification remains separate.
+
+## Refresh and freeze a comparison condition
+
+After saving active work, follow the existing [CachyOS refresh procedure](cachyos-maintenance.md#upgrade-and-repeat-your-last-setup).
+`basaltw refresh --dry-run` previews the saved selection; `basaltw refresh` applies
+it and can reload T3 after setup. A development channel follows `main`; a pinned
+channel remains pinned. The unchanged `2.0.0rc1` version string cannot identify
+this batch: retain the exact source revisions from preflight.
+
+At a safe desktop checkpoint after installation, inspect native status and its
+running-worker startup provenance. A stale running helper needs a normal, explicit
+stop/start before testing updated input behavior; this closes its portal session
+and may require renewed user consent. Do not restart during an active match or
+change human control merely to make a preflight look ready. Rerun the compact
+preflight into a NEW private directory, retrieve required instruction ranges,
+and preserve unavailable/mismatched checks for review. Confirm invoked, managed
+and running source separately. An observed startup match is still subject to
+the loaded-code limits above.
+
+Freeze the comparison condition only after that review and an independently
+authorized native pointer check in a disposable application. Start a new run
+ledger for a new match; continue the same ledger for the same match. Retain
+capture receipts, recorder segments, errors and the final closeout inventory
+privately. Never substitute offline fixture success for native qualification.
+
+| Request | Implemented/reused contract | Offline validation | Remaining qualification/limit |
+| --- | --- | --- | --- |
+| BW-D01 | Frame receipt + viewer transform + single-use input token; existing offline map retained | Margins, independent scales, crops, endpoints, changed context, bounds and parser roundtrip | Controller must inspect moving targets and verify effect/focus |
+| BW-D02 | Structured stage/reason/delivery and input/capture IDs; partial typing and sequence failures retained | Refusal, ambiguous transport, completed input/capture failure and image-less verification | Old strings stay unknown; Debian/Windows worker stages remain separate |
+| BW-D03 | Compact existing provenance/status bundle; digest-bound instruction ranges and explicit gaps | Unicode reconstruction, changed bytes, stopped worker, skill mismatch plus unknowns | No model comprehension or immutable loaded-code attestation |
+| BW-D04 | Run/match clocks, explicit waits, context/policy events and due/late checkpoint receipts | Continuation, suspension accounting, original hard limit, capacity and corrupt history | Linux same-boot timing; no provider inference telemetry or scheduler |
+| BW-D05 | Recorder capacity/duplicate handle, existing verify/crop/export, new closeout inventory/receipt links | Moved paths, restoration retains prior failure, derived hashes and exact process identity | Manual segment rotation has a gap; selected process absence cannot prove normal exit |
+| BW-D06 | Current parser examples, numeric buttons, pre-input path validation and duplicate-start diagnostic | Parser-to-client fixture, reused output refusal and installed-wheel offline commands | Refresh and safe helper restart required before native behavior qualification |
+
+`make check-fast SUITE=desktop` validates the relevant fixtures and static checks.
+`make artifact-check` builds and installs a wheel outside the checkout; on Linux
+it also exercises bounded instruction pages, offline mapping and run
+suspend/context/resume/policy/finish through the installed CLI. These commands
+perform no desktop input, capture, helper restart or system refresh. Full Debian
+CI remains the broad repository check described in the contributor guide.

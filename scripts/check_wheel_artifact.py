@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path, PurePosixPath
 import shutil
@@ -54,6 +55,14 @@ REQUIRED_WHEEL_PATHS = (
     "common/agent_skills/basaltwater-cachyos-workspace/SKILL.md",
     "common/agent_skills/basaltwater-cachyos-t3code/SKILL.md",
     "deploy/deploy_steps.py",
+    "desktop/client.py",
+    "desktop/coordinates.py",
+    "desktop/evidence.py",
+    "desktop/observations.py",
+    "desktop/preflight.py",
+    "desktop/qa_cli.py",
+    "desktop/receipts.py",
+    "desktop/run_checkpoint.py",
     "desktop/config/xrdp.ini.template",
     "security/security_steps.py",
     "smb/samba_steps.py",
@@ -149,6 +158,57 @@ def _venv_command(venv_dir: Path, command: str) -> Path:
     return venv_dir / bin_dir / command
 
 
+def _smoke_desktop_cli(launcher: Path, work_dir: Path, environment: dict[str, str]) -> None:
+    """Exercise installed offline contracts without a desktop connection or input."""
+    folder = work_dir / "desktop-smoke"
+    folder.mkdir(mode=0o700)
+
+    def request(*arguments: str, expected: int = 0) -> dict:
+        result = subprocess.run([str(launcher), *arguments], cwd=work_dir, env=environment,
+                                capture_output=True, text=True, timeout=20)
+        if result.returncode != expected:
+            raise RuntimeError(f"Installed desktop CLI failed ({result.returncode}): {result.stdout}\n{result.stderr}")
+        data = json.loads(result.stdout)
+        if not isinstance(data, dict):
+            raise RuntimeError("Installed desktop CLI did not return a JSON object")
+        return data
+
+    instructions = folder / "instructions.md"
+    text = "Bounded instructions α\n" * 300
+    instructions.write_text(text, encoding="utf-8")
+    first = request("desktop", "instructions", str(instructions), "--json")
+    continuation = ["basaltw", "desktop", "instructions", str(instructions), "--start", "4000", "--sha256", first["sha256"]]
+    if first["range"] != [0, 4000] or first["next_argv"] != continuation:
+        raise RuntimeError("Installed instruction continuation did not retain its bounded read-only command")
+    second = request(*continuation[1:], "--json")
+    if first["text"] + second["text"] != text or first["model_comprehension"] != "unknown":
+        raise RuntimeError("Installed instruction paging did not preserve bounded Unicode text/limits")
+    coordinates = request("desktop", "--native", "map-point", "--geometry", "2400", "1600",
+                          "--view-geometry", "400", "300", "--crop", "100", "200", "800", "600",
+                          "--x", "200", "--y", "150", "--to-x", "399", "--to-y", "299", "--json")
+    if coordinates["input_sent"] is not False or coordinates["input_coordinates"] != {
+            "x": 500, "y": 500, "to_x": 898, "to_y": 798}:
+        raise RuntimeError("Installed offline coordinate mapping failed")
+    started = request("desktop", "evidence", "run", "start", "--run-id", "wheel-smoke", "--match-id", "same-match",
+                      "--phase", "preparation", "--review-seconds", "30", "--hard-seconds", "600",
+                      "--output", str(folder / "run"), "--json")
+    artifact = started["artifact"]
+    for event, arguments in (("suspend", ["--note", "Explicit fixture owner wait"]),
+                             ("context", ["--context", "continuation"]), ("resume", []),
+                             ("policy", ["--hard-seconds", "1200", "--note", "Fixture owner extension"]),
+                             ("checkpoint", ["--phase", "closeout", "--artifact", str(instructions)]), ("finish", [])):
+        updated = request("desktop", "evidence", "run", event, artifact, *arguments, "--json")
+        if updated["started"] != started["started"] or updated["match_id"] != "same-match":
+            raise RuntimeError("Installed run continuation reset original identity/clocks")
+    shown = request("desktop", "evidence", "run", "show", artifact, "--json")
+    if not shown["finished"] or shown["events"] != 7 or shown["hard_limit_seconds"] != 1200:
+        raise RuntimeError("Installed run ledger lost checkpoint/policy history")
+    before = Path(artifact).read_bytes()
+    refused = request("desktop", "evidence", "run", "checkpoint", artifact, "--json", expected=1)
+    if "finished" not in refused.get("error", "") or Path(artifact).read_bytes() != before:
+        raise RuntimeError("Installed run ledger did not preserve its finished record on refusal")
+
+
 def _smoke_installed_wheel(
     wheel: Path, work_dir: Path,
 ) -> None:
@@ -159,9 +219,6 @@ def _smoke_installed_wheel(
     environment = os.environ.copy()
     environment.pop("PYTHONPATH", None)
     environment.pop("PYTHONHOME", None)
-
-
-
     _run_quietly(
         [str(pip), "install", "--no-deps", str(wheel)],
         cwd=work_dir,
@@ -224,6 +281,8 @@ def _smoke_installed_wheel(
     )
     if version_result.stdout.strip() != f"basaltw {installed_version}":
         raise RuntimeError("Installed basaltw launcher returned the wrong version")
+    if sys.platform == "linux":
+        _smoke_desktop_cli(_venv_command(venv_dir, "basaltw"), work_dir, environment)
     entrypoint = subprocess.run(
         [str(python), "-I", "-c",
          "import runpy; runpy.run_module('common.service_tools.build_webhooks', run_name='__main__')"],
