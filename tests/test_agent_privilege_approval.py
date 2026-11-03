@@ -240,7 +240,7 @@ class ApprovalTests(unittest.TestCase):
     def test_fixed_admin_interface_cannot_be_used_by_requester_or_accept_arbitrary_commands(self):
         preview = self.broker.dispatch({"action": "admin-preview", "admin_action": "reboot"}, 999, approval=True)
         message = {"action": "admin-approve", "admin_action": "reboot", "digest": preview["digest"], "actor": "operator"}
-        for item in ({"action": "admin-preview", "admin_action": "reboot"}, message):
+        for item in ({"action": "admin-catalog"}, {"action": "admin-preview", "admin_action": "reboot"}, message):
             with self.assertRaises(PermissionError):
                 self.broker.dispatch(item, 1000)
         with self.assertRaises(PermissionError):
@@ -253,6 +253,61 @@ class ApprovalTests(unittest.TestCase):
         for action in ("reboot", "reboot-warning", "shutdown"):
             with self.assertRaises(PermissionError):
                 self.broker.admin_preview(action)
+
+    def test_catalog_and_direct_review_explain_unavailable_actions_without_forms(self):
+        self.broker.policy_loader = lambda: {**policy(), "reboot": "deny"}
+        content = self.call(path="/approvals/admin")[2]
+        self.assertIn("Power control is denied by administrator policy.", content)
+        self.assertNotIn('href="/approvals/admin/reboot"', content)
+        status, _, content = self.call(path="/approvals/admin/reboot")
+        self.assertEqual(status, 200)
+        self.assertIn("Power control is denied by administrator policy.", content)
+        self.assertNotIn('<form', content)
+        self.assertEqual(self.server.admin_tickets, {})
+        self.runner.assert_not_called()
+
+    def test_catalog_blocks_busy_and_outstanding_maintenance_without_creating_requests(self):
+        self.job_status.return_value["unit_state"] = "unavailable"
+        blocked = self.broker.admin_catalog()["blocked"]
+        self.assertIn("refresh", blocked)
+        self.assertNotIn("cancel-shutdown", blocked)
+        self.job_status.return_value["unit_state"] = "inactive"
+        self.broker.request(1000, "admin.run", {"action": "refresh"}, "example")
+        status, _, content = self.call(path="/approvals/admin/check-web")
+        self.assertEqual(status, 200)
+        self.assertIn("outstanding administration request", content)
+        self.assertNotIn('<form', content)
+        self.assertEqual(self.broker.db.execute("SELECT count(*) FROM requests").fetchone()[0], 2)
+
+    def test_unavailable_restart_variant_cannot_be_forged_into_the_review(self):
+        self.job_status.return_value["blocked"] = {"reboot": "Five-second scheduler unavailable"}
+        content = self.call(path="/approvals/admin")[2]
+        self.assertIn('href="/approvals/admin/reboot"', content)
+        form = self.direct_form()
+        content = self.call()[2]
+        self.assertIn('value="reboot" disabled', content)
+        self.assertIn('value="reboot-warning" checked', content)
+        self.assertEqual(self.post(form)[0], 409)
+        form = self.direct_form()
+        form["variant"] = "reboot-warning"
+        self.assertEqual(self.post(form)[0], 303)
+
+    def test_ambiguous_form_headers_are_rejected_without_acceptance(self):
+        for header, value in (("Content-Type", "application/x-www-form-urlencoded"), ("Transfer-Encoding", "")):
+            form = self.direct_form()
+            handler = object.__new__(self.server.RequestHandlerClass)
+            handler.server, handler.path = self.server, self.path
+            handler.headers = http.client.HTTPMessage()
+            handler.headers["Origin"] = self.origin
+            handler.headers["Content-Type"] = "application/x-www-form-urlencoded"
+            handler.headers["Content-Length"] = str(len(urlencode(form)))
+            handler.headers[header] = value
+            handler.authorized = lambda: True
+            handler.approval_origin = self.origin
+            handler.respond = Mock()
+            handler.do_POST()
+            self.assertEqual(handler.respond.call_args.args[0], 409)
+        self.assertEqual(self.broker.db.execute("SELECT count(*) FROM requests WHERE state='approved'").fetchone()[0], 0)
 
     def test_decision_precedes_technical_details_but_command_argv_stays_visible(self):
         content = self.call()[2]

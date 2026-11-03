@@ -285,6 +285,10 @@ class Scenario:
 
     def exchange(self, message: dict) -> dict:
         with self.lock:
+            if message["action"] == "admin-catalog":
+                if self.name == "degraded":
+                    raise OSError("Synthetic broker unavailable")
+                return {"blocked": {}}
             if message["action"] in {"admin-preview", "admin-approve"}:
                 if self.name == "degraded":
                     raise OSError("Synthetic broker unavailable")

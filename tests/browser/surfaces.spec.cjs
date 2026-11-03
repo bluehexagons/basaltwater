@@ -571,15 +571,13 @@ test.describe('admin controls', () => {
     await expect(page.locator('dd').filter({ hasText: `"action":"${variant}"` })).toBeVisible();
   });
 
-  test('incorrect power host confirmation is rejected without a request', async ({ page, developmentServer: dev, diagnostics }) => {
-    await page.goto(dev.url + '/admin?action=reboot');
-    await page.getByLabel(/Confirm host name/).fill('wrong-host.example.test');
-    diagnostics.allowed.add(dev.url + '/actions/admin');
-    const submitted = page.waitForResponse(response => response.url() === dev.url + '/actions/admin'
-      && response.request().method() === 'POST');
-    await page.getByRole('button', { name: 'Create approval request', exact: true }).click();
-    expect((await submitted).status()).toBe(409);
-    await expect(page.getByRole('alert')).toContainText('The action was not confirmed.');
+  test('a substituted power action is rejected without a request', async ({ page, developmentServer: dev, diagnostics }) => {
+    const review = dev.url + '/approvals/admin/reboot';
+    await page.goto(review);
+    const ticket = await page.locator('input[name="ticket"]').inputValue();
+    diagnostics.allowed.add(review);
+    expect((await postForm(page, review, { ticket, variant: 'shutdown', decision: 'approve' })).status).toBe(409);
+    await page.goto(dev.url + '/admin?view=requests');
     await expect(page.getByText('No privilege requests for this panel account.', { exact: true })).toBeVisible();
     await expect(page.getByRole('region', { name: 'Privilege approvals', exact: true }).locator('li')).toHaveCount(0);
   });

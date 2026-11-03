@@ -4,9 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import html
-import secrets
-import threading
-import time
 from urllib.parse import parse_qs, urlsplit
 from typing import Any
 
@@ -27,10 +24,7 @@ def parse_admin_query(raw: str) -> dict[str, str]:
         return {}
     if set(values) == {"view"} and values["view"] in (["actions"], ["requests"], ["activity"]):
         return {"view": values["view"][0]}
-    if set(values) != {"action"} or len(values["action"]) != 1:
-        raise ValueError("Invalid administration view")
-    action_spec(values["action"][0])
-    return {"action": values["action"][0]}
+    raise ValueError("Invalid administration view")
 
 
 def _review_url(value: object) -> str | None:
@@ -55,15 +49,12 @@ def _review_url(value: object) -> str | None:
 
 class PanelAdmin:
     def __init__(self, manifest: dict) -> None:
-        self.host = manifest.get("host", "")
         self.integrated = manifest.get("features", {}).get("approvals") is True
         self.approval_url = next((url for record in manifest.get("services", [])
                                   if isinstance(record, dict) and record.get("label") == "Privilege approvals"
                                   and (url := _review_url(record.get("url")))), None)
         if self.integrated:
             self.approval_url = "/approvals"
-        self._lock = threading.Lock()
-        self._tickets: dict[str, tuple[str, float]] = {}
 
     def snapshot(self) -> dict:
         if not self.approval_url:
@@ -76,39 +67,6 @@ class PanelAdmin:
             return result
         except (OSError, ValueError, RuntimeError):
             return {"error": "The approval service could not report administration status. Check its service and installed version before submitting work."}
-
-    def ticket(self, action: str) -> str:
-        action_spec(action)
-        with self._lock:
-            self._tickets = {key: value for key, value in self._tickets.items() if value[1] > time.monotonic()}
-            if len(self._tickets) >= 32:
-                self._tickets.pop(next(iter(self._tickets)))
-            ticket = secrets.token_urlsafe(32)
-            self._tickets[ticket] = (action, time.monotonic() + 300)
-            return ticket
-
-    def submit(self, action: str, ticket: str, confirmation: str) -> str:
-        action_spec(action)
-        if action in {"reboot", "reboot-warning", "shutdown"} and confirmation != self.host:
-            raise ValueError("Type the host exactly to confirm the power action.")
-        with self._lock:
-            saved = self._tickets.pop(ticket, None)
-        if saved is None or saved[0] != action or saved[1] <= time.monotonic():
-            raise ValueError("This review expired or was already submitted. Refresh status before reviewing another action.")
-        snapshot = self.snapshot()
-        reason = unavailable_reason(snapshot, action)
-        if reason:
-            raise ValueError(reason)
-        # A lost response may follow a saved request. Never retry automatically.
-        request = exchange({"action": "request", "operation": "admin.run", "parameters": {"action": action},
-                            "reason": "Administration screen: " + ADMIN_ACTIONS[action]["title"]})
-        identifier = request.get("id")
-        if not isinstance(identifier, str) or not ID_PATTERN.fullmatch(identifier):
-            raise ValueError("Request acceptance was not confirmed; check Requests before retrying")
-        if self.integrated:
-            return "/requests/" + identifier
-        origin = urlsplit(self.approval_url or "")
-        return f"{origin.scheme}://{origin.netloc}/requests/{identifier}"
 
     def cancel(self, identifier: str) -> None:
         if not isinstance(identifier, str) or not ID_PATTERN.fullmatch(identifier):
@@ -128,7 +86,7 @@ class PanelAdmin:
 def unavailable_reason(snapshot: dict, action: str) -> str:
     if snapshot.get("error"):
         return snapshot["error"]
-    if snapshot["blocked"].get(action):
+    if snapshot["blocked"].get(action) and (action != "reboot" or snapshot["blocked"].get("reboot-warning")):
         return str(snapshot["blocked"][action])
     if any(row.get("state") in {"pending", "approved", "executing"} for row in snapshot["requests"]):
         return "Review or cancel the outstanding administration request first."
@@ -154,13 +112,6 @@ _GROUP_ICONS = {"Updates": "maintenance", "Services": "service-status", "Power":
 
 _STYLE = """
 main a { color:var(--accent); }
-.admin-card { display:flex; flex-direction:column; padding:16px; border:1px solid var(--line); border-radius:12px; background:var(--panel); }
-.admin-card p { color:var(--muted); font-size:.85rem; margin:8px 0; }
-.admin-card .refresh-link { min-height:44px; margin-top:auto; }
-.admin-review { border-left:4px solid var(--warning); margin-bottom:24px; }
-.admin-review input { width:100%; max-width:420px; min-height:44px; display:block; margin:8px 0 16px;
-  padding:10px; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:8px; font:inherit; }
-.admin-review button { white-space:normal; }
 .admin-history { display:grid; gap:10px; list-style:none; padding:0; }
 .admin-history li { padding:12px 16px; background:var(--panel); border:1px solid var(--line); border-radius:10px; }
 .admin-history .admin-request-actions { display:flex; flex-wrap:wrap; align-items:center; gap:16px; }
@@ -254,9 +205,8 @@ def render_admin(state: Any, style: str, query: dict[str, str], *, error: str = 
     snapshot = manager.snapshot()
     escape = html.escape
     host = escape(state.manifest["host"])
-    action = query.get("action")
     view = query.get("view", "actions")
-    current_url = "/admin?action=" + action if action else "/admin?view=" + view
+    current_url = "/admin?view=" + view
     csrf = f'<input type="hidden" name="csrf" value="{escape(state.csrf_token, quote=True)}">'
     header = f'''<header class="dashboard-header"><div><p class="eyebrow">Host administration</p><h1>Admin controls</h1>
 <p class="lede">Updates, service maintenance, and power controls for <code>{host}</code>.</p></div>
@@ -264,18 +214,18 @@ def render_admin(state: Any, style: str, query: dict[str, str], *, error: str = 
     body = f'<aside class="status failed" role="alert">{escape(error)}</aside>' if error else ""
     body += '<nav class="admin-views" aria-label="Administration views">'
     for key, label in (("actions", "Host actions"), ("requests", "Requests"), ("activity", "Activity & diagnostics")):
-        selected = ' aria-current="page"' if key == view and not action else ''
+        selected = ' aria-current="page"' if key == view else ''
         body += f'<a href="/admin?view={key}"{selected}>{label}</a>'
     body += '</nav>'
     if snapshot.get("error"):
         body += f'<aside class="status" role="status">{escape(snapshot["error"])} See the <a href="https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/privilege-approvals.md">approval setup guide</a>.</aside>'
     else:
         body += ('<p class="endpoint">Choose a host action, review it, then approve once using your web panel sign-in.</p>' if manager.integrated else
-                 '<p class="endpoint">Choose a host action, then review and approve it with your separate approval password.</p>') if view == "actions" and not action else ''
+                 '<p class="endpoint">Choose a host action, then review and approve it with your separate approval password.</p>') if view == "actions" else ''
         unit_label = {"active": "Running", "activating": "Starting", "deactivating": "Stopping", "inactive": "Ready", "failed": "Stopped after a failure"}.get(snapshot.get("unit_state"), "Unavailable")
         body += f'<p class="endpoint"><strong>Maintenance service: {unit_label}</strong></p>'
     latest = snapshot.get("latest", {})
-    if latest and view == "activity" and not action:
+    if latest and view == "activity":
         title = ADMIN_ACTIONS.get(latest.get("action"), {}).get("title", "Maintenance job")
         status = latest.get("status", "unavailable")
         tone = "complete" if status == "succeeded" else "failed" if status in {"failed", "interrupted", "unavailable"} else ""
@@ -300,28 +250,15 @@ def render_admin(state: Any, style: str, query: dict[str, str], *, error: str = 
     if not isinstance(records, list):
         records = snapshot.get("requests", [])
     active = sum(row.get("state") in {"pending", "approved", "executing"} for row in records)
-    if view == "actions" and active and not action:
+    if view == "actions" and active:
         body += f'<aside class="status"><a href="/admin?view=requests">{active} active approval request(s) · Review requests →</a></aside>'
-    if view == "requests" and not action:
+    if view == "requests":
         if not isinstance(snapshot.get('privilege_requests'), list):
             body += _request_history(snapshot, csrf, integrated=manager.integrated)
         if manager.approval_url:
             body += _privilege_requests(snapshot, csrf, manager.approval_url)
-    if action:
-        spec = action_spec(action)
-        reason = unavailable_reason(snapshot, action)
-        if reason:
-            body += f'<aside class="status" role="status">{escape(reason)}</aside>'
-        else:
-            ticket = manager.ticket(action)
-            confirmation = (f'<label>Confirm host name <code>{host}</code><input name="confirmation" autocomplete="off" required placeholder="{host}"></label>' if action in {"reboot", "reboot-warning", "shutdown"} else '<input type="hidden" name="confirmation" value="">')
-            body += f'''<section class="admin-card admin-review" aria-labelledby="review-heading">{render_heading("Review: " + spec['title'], _GROUP_ICONS[spec['group']], heading_id="review-heading")}
-<p>{escape(spec['effect'])}</p><p>Submitting creates an approval request. Open its review link in Recent requests to approve or deny it. The request expires after the configured approval window.</p>
-<form method="post" action="/actions/admin">{csrf}<input type="hidden" name="action" value="{action}">
-<input type="hidden" name="ticket" value="{ticket}">{confirmation}<button>Create approval request</button></form>
-<a class="refresh-link" href="/admin">Cancel review</a></section>'''
     for group in ("Updates", "Services", "Power"):
-        if view != "actions" or action:
+        if view != "actions":
             break
         icon = _GROUP_ICONS[group]
         tone = "water" if group == "Services" else "stone"

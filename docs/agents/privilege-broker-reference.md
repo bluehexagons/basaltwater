@@ -191,22 +191,29 @@ deny rule. Review the fixed helper argv and the described effects. Actions can
 update packages, replay saved setup, reload Nginx, restart the panel, or schedule
 host power changes, so approving them can interrupt active work.
 
-Administrator-initiated actions use approval-socket-only `admin-preview`
+Administrator-initiated actions use approval-socket-only `admin-catalog` (no
+parameters), `admin-preview`
 (`admin_action`) and `admin-approve` (`admin_action`, reviewed plan `digest`,
-`actor`) messages. Preview reads the fixed plan and availability without creating
+`actor`) messages. The catalog reports fixed availability and policy/busy reasons
+without exposing request plans. Preview reads the fixed plan and availability without creating
 a request. Approval rechecks availability and the plan digest, creates the ordinary
 audited `admin.run` request under the configured requester UID, then approves that
 exact request. All quotas, policy checks and execution claims still apply.
 A policy change during acceptance can leave a pending or invalidated request;
-inspect the queue before creating a replacement. Neither message accepts arbitrary
-argv or a caller-selected UID, and the requester socket rejects both messages.
+inspect the queue before creating a replacement. These messages accept no arbitrary
+argv or a caller-selected UID, and the requester socket rejects all three messages.
 The isolated HTTP service binds the allowed timing variants to a random one-use
 review ticket, expires it after five minutes, and consumes it before broker I/O.
 Each listener retains at most 32 tickets; restart invalidates all outstanding
 forms. Host, Origin, authenticated peer/login and strict form checks apply to
 this path too. Lost responses are never replayed automatically.
 
-`reboot` schedules `systemctl --no-ask-password --when=+5s reboot` (systemd 254+).
+`reboot` calls logind's `ScheduleShutdown` through `busctl`, using a fixed reboot
+type and a deadline computed by the trusted executor five seconds ahead. This
+also supports systemd versions before `systemctl --when`; see the
+[systemd 252 logind interface](https://www.freedesktop.org/software/systemd/man/252/org.freedesktop.login1.html).
+The browser supplies neither the timestamp nor D-Bus arguments. A scheduling
+failure is reported without attempting an alternate reboot command.
 The explicit `reboot-warning` variant uses `shutdown -r +2` to warn logged-in
 users and wait two minutes. Both variants and power-off respect `reboot: deny`.
 `shutdown -c` cancels a still-pending logind power schedule, including the short

@@ -343,6 +343,10 @@ service. Opening the review creates no request and schedules nothing. The review
 expires in five minutes; a consumed review cannot be submitted twice. The result
 opens that request's status directly. The standalone panel also offers **Host
 actions** with the same flow, using its own sign-in.
+Both surfaces explain unavailable actions before offering approval. If only one
+restart timing is supported, the review disables the other choice. The former
+`/admin?action=…` and `/actions/admin` submission flow has been removed; host
+actions now use the isolated review exclusively.
 
 **Requests** contains pending decisions and recent outcomes. **Activity & diagnostics**
 contains the latest maintenance result and inspection links. Refresh keeps the
@@ -358,7 +362,9 @@ After power-off, starting the machine requires its VM controller or physical
 access.
 
 The request and activity views show recent broker requests across all operations
-and the latest maintenance job's result, timestamps, and exit code. **Dispatched** means the
+and the latest maintenance job's result, timestamps, and exit code. A request's
+**View latest maintenance activity** link opens that latest job, which may be a
+different request. **Dispatched** means the
 maintenance service started, not that its commands finished. A successful power
 job confirms scheduling only. Review running work before updates or interruptions.
 

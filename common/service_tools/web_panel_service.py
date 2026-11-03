@@ -2094,7 +2094,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             "/actions/agent-task": "agent-tools", "/actions/agent-task/save": "agent-tools",
             "/actions/agent-tool/prepare": "agent-tools", "/actions/agent-diagnostics": "agents",
             "/actions/agent-inbox": "agent-inbox", "/actions/maintenance-agent": "maintenance-agent",
-            "/actions/admin": "admin", "/actions/admin/cancel": "admin",
+            "/actions/admin/cancel": "admin",
             "/actions/credentials/identity": "credentials",
             "/actions/credentials/github": "credentials", "/actions/credentials/github-remove": "credentials",
             **{"/actions/publishing/" + action: "publishing" for action in PUBLISHING_FIELDS},
@@ -2103,7 +2103,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         if page is None:
             return True
         features = self.state.features()
-        if path in {"/actions/admin", "/actions/admin/cancel"}:
+        if path == "/actions/admin/cancel":
             return features.admin
         if path in {"/actions/credentials/github", "/actions/credentials/github-remove"} and "gh" not in features.tools:
             return False
@@ -2313,7 +2313,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             self._handle_notification_ingest()
             return
         agent_paths = {"/actions/agent-task/save", "/actions/agent-task", "/actions/agent-diagnostics", "/actions/agent-tool/prepare"}
-        admin_paths = {"/actions/admin", "/actions/admin/cancel"}
+        admin_paths = {"/actions/admin/cancel"}
         data_paths = {"/actions/data/review", "/actions/data/submit", "/actions/data/cancel"}
         samba_paths = {"/actions/samba/review", "/actions/samba/submit", "/actions/samba/cancel"}
         share_paths = {"/actions/shares/review", "/actions/shares/submit", "/actions/shares/cancel"}
@@ -2386,7 +2386,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         if path in admin_paths:
-            self._handle_admin_action(path, values)
+            self._handle_admin_cancel(values)
             return
         if path in data_paths:
             self._handle_data_action(path, values)
@@ -2704,23 +2704,18 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             return
         self._send(HTTPStatus.SEE_OTHER, "", "text/plain", headers={"Location": "/shares-data?view=shares"})
 
-    def _handle_admin_action(self, path: str, values: dict[str, list[str]]) -> None:
-        expected = {"csrf", "id"} if path.endswith("/cancel") else {"csrf", "action", "ticket", "confirmation"}
-        if set(values) != expected or any(len(entries) != 1 for entries in values.values()):
+    def _handle_admin_cancel(self, values: dict[str, list[str]]) -> None:
+        if set(values) != {"csrf", "id"} or any(len(entries) != 1 for entries in values.values()):
             self._send(HTTPStatus.BAD_REQUEST, "Invalid administration action\n", "text/plain")
             return
-        redirect = "/admin?view=requests"
         try:
-            if path.endswith("/cancel"):
-                self.state.admin.cancel(values["id"][0])
-            else:
-                redirect = self.state.admin.submit(values["action"][0], values["ticket"][0], values["confirmation"][0])
+            self.state.admin.cancel(values["id"][0])
         except (OSError, ValueError, RuntimeError):
             self._send(HTTPStatus.CONFLICT, render_admin(self.state, _PAGE_STYLE, {"view": "requests"}, error=
-                "The action was not confirmed. Review requests before trying again; an expired review or lost response is never replayed."), "text/html")
+                "Cancellation was not confirmed. Check request status before trying again."), "text/html")
             return
         self.send_response(HTTPStatus.SEE_OTHER)
-        self.send_header("Location", redirect)
+        self.send_header("Location", "/admin?view=requests")
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
 

@@ -100,7 +100,7 @@ def render_request(request: dict, token: str, *, integrated: bool = False) -> st
         content += '<p>This request cannot be approved again. Refresh to see the latest execution status.</p>'
         content += f'<p><a href="/requests/{request["id"]}">Refresh request status</a>'
         if integrated and plan["operation"] == "admin.run":
-            content += ' · <a href="/admin?view=activity">View maintenance result</a>'
+            content += ' · <a href="/admin?view=activity">View latest maintenance activity</a>'
         content += '</p>'
     fields = [("Machine identity", plan["machine"]), ("Requesting account UID", plan["uid"]),
               ("Operation", plan["operation"]), ("Command", canonical(plan["argv"])),
@@ -229,7 +229,7 @@ class ApprovalHandler(BaseHTTPRequestHandler):
             return
         try:
             if self.path == "/approvals/admin":
-                content = self.page(render_catalog())
+                content = self.page(render_catalog(self.server), title="Host actions")
             elif self.path.startswith(ADMIN_PREFIX):
                 action = admin_action(self.path)
                 content = self.page(render_review(self.server, action), title=action_spec(action)["title"])
@@ -260,8 +260,8 @@ class ApprovalHandler(BaseHTTPRequestHandler):
                 request_id = self.request_id()
             if self.headers.get_all("Origin") != [self.approval_origin]:
                 raise ValueError("Cross-origin approval rejected")
-            if (self.headers.get("Content-Type") != "application/x-www-form-urlencoded"
-                or self.headers.get("Transfer-Encoding") or len(self.headers.get_all("Content-Length") or []) != 1):
+            if (self.headers.get_all("Content-Type") != ["application/x-www-form-urlencoded"]
+                or self.headers.get_all("Transfer-Encoding") is not None or len(self.headers.get_all("Content-Length") or []) != 1):
                 raise ValueError("Invalid form")
             length = int(self.headers["Content-Length"])
             if not 0 < length <= 2048:

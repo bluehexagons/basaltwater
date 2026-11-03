@@ -128,6 +128,8 @@ class SpecializedScenario:
         with self.lock:
             if self.name == "degraded":
                 raise OSError("Synthetic broker unavailable")
+            if message["action"] == "admin-catalog":
+                return {"blocked": {}}
             if message["action"] in {"admin-preview", "admin-approve"}:
                 preview = admin_preview(message["admin_action"])
                 if message["action"] == "admin-preview":

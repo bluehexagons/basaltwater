@@ -94,6 +94,11 @@ def availability() -> dict[str, str]:
     if not restart:
         for key in ("reboot", "reboot-warning", "shutdown", "cancel-shutdown"):
             blocked[key] = "Power control is unavailable for this machine profile."
+    if not os.path.isfile("/usr/bin/busctl"):
+        blocked.setdefault("reboot", "Five-second restart scheduling requires busctl and systemd-logind.")
+    if not os.path.isfile("/usr/sbin/shutdown"):
+        for key in ("reboot-warning", "shutdown", "cancel-shutdown"):
+            blocked.setdefault(key, "Scheduled power control requires shutdown.")
     debian = read_os_release().get("ID") == "debian"
     if not debian or not os.path.isfile("/usr/bin/apt-get"):
         blocked["update-packages"] = "Package updates currently require Debian with APT."
@@ -124,6 +129,9 @@ def availability() -> dict[str, str]:
         blocked.update({"refresh-preview": recovery_reason, "refresh": recovery_reason})
     if not os.path.isfile("/usr/sbin/nginx"):
         blocked.update({key: "Nginx is not installed." for key in ("check-web", "reload-web")})
+    if not any(os.path.isfile(directory + "/basaltwater-web-panel.service") for directory in (
+            "/etc/systemd/system", "/run/systemd/system", "/usr/lib/systemd/system", "/lib/systemd/system")):
+        blocked["restart-panel"] = "The web panel service is not installed."
     return blocked
 
 
@@ -248,7 +256,12 @@ def commands(action: str) -> list[list[str]]:
     if action == "restart-panel":
         return [["/usr/bin/systemctl", "--no-ask-password", "restart", "basaltwater-web-panel.service"]]
     if action == "reboot":
-        return [["/usr/bin/systemctl", "--no-ask-password", "--when=+5s", "reboot"]]
+        # logind's scheduler also works on hosts predating systemctl --when.
+        # Calculate the deadline only in the approved, trusted executor.
+        deadline = time.time_ns() // 1000 + 5_000_000
+        return [["/usr/bin/busctl", "--system", "--allow-interactive-authorization=no", "call",
+                 "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager",
+                 "ScheduleShutdown", "st", "reboot", str(deadline)]]
     return [["/usr/sbin/shutdown", *({"reboot-warning": ["-r", "+2"], "shutdown": ["-h", "+2"], "cancel-shutdown": ["-c"]}[action])]]
 
 

@@ -28,7 +28,7 @@ from lib.privilege_policy import (
     REQUEST_SOCKET, WEB_USER, canonical, digest, load_policy, operation_plan, protected_path,
 )
 from common.service_tools.admin_job import availability as admin_availability, job_status
-from lib.admin_actions import ADMIN_HELPER
+from lib.admin_actions import ADMIN_ACTIONS, ADMIN_HELPER
 from lib.data_actions import DATA_HELPER
 from lib.samba_accounts import PASSWORD_ACTIONS, SAMBA_ACCOUNT_HELPER
 from lib.samba_shares import SHARE_HELPER, share_label, share_name
@@ -288,19 +288,34 @@ class Broker:
             self._transition(request["id"], result.state, request["actor"])
         return True
 
+    def admin_catalog(self) -> dict:
+        """Report fixed host-action availability to the isolated approver."""
+        with self.lock, self.db:
+            self._expire()
+            policy = self.policy_loader()
+            status = job_status()
+            blocked = dict(status["blocked"])
+            if policy["reboot"] == "deny":
+                blocked.update({key: "Power control is denied by administrator policy."
+                                for key in ("reboot", "reboot-warning", "shutdown")})
+            if status.get("unit_state") not in {"inactive", "failed"}:
+                for key in ADMIN_ACTIONS:
+                    if key != "cancel-shutdown":
+                        blocked.setdefault(key, "Maintenance is running or its state is unavailable. Refresh after checking its status.")
+            if self.db.execute("SELECT 1 FROM requests WHERE state IN ('pending','approved','executing') AND json_extract(plan,'$.operation')='admin.run' LIMIT 1").fetchone():
+                for key in ADMIN_ACTIONS:
+                    blocked.setdefault(key, "Review or cancel the outstanding administration request first.")
+            return {"blocked": blocked}
+
     def admin_preview(self, action: str) -> dict:
         """Review a fixed host action without creating a pending request."""
         with self.lock, self.db:
             self._expire()
             policy = self.policy_loader()
             plan = operation_plan(policy, policy["requester_uid"], "admin.run", {"action": action})
-            status = job_status()
-            if status["blocked"].get(action):
-                raise ValueError(status["blocked"][action])
-            if action != "cancel-shutdown" and status.get("unit_state") not in {"inactive", "failed"}:
-                raise ValueError("Maintenance is running or its state is unavailable")
-            if self.db.execute("SELECT 1 FROM requests WHERE state IN ('pending','approved','executing') AND json_extract(plan,'$.operation')='admin.run' LIMIT 1").fetchone():
-                raise ValueError("Review the outstanding administration request first")
+            blocked = self.admin_catalog()["blocked"]
+            if blocked.get(action):
+                raise ValueError(blocked[action])
             return {"plan": plan, "digest": digest(plan)}
 
     def admin_approve(self, action: str, fingerprint: str, actor: str) -> dict:
@@ -320,6 +335,8 @@ class Broker:
         if not isinstance(message, dict):
             raise ValueError("Expected an object")
         action = message.get("action")
+        if approval and action == "admin-catalog" and set(message) == {"action"}:
+            return self.admin_catalog()
         if approval and action == "admin-preview" and set(message) == {"action", "admin_action"}:
             return self.admin_preview(message["admin_action"])
         if approval and action == "admin-approve" and set(message) == {"action", "admin_action", "digest", "actor"}:

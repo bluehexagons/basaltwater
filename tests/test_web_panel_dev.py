@@ -236,15 +236,11 @@ class PanelDevelopmentTests(unittest.TestCase):
         self.assertEqual(self.request("/actions/maintenance-agent", {"csrf": csrf, "submit": "hold", "hours": "2"})[0], 303)
         self.assertIn("Automatic restarts held", self.request("/maintenance-agent")[2])
 
-    def test_admin_form_keeps_review_ticket_and_confirmation_validation(self) -> None:
+    def test_obsolete_admin_submission_cannot_create_a_request(self) -> None:
         self.serve()
-        values = {"csrf": self.state.csrf_token, "action": "reboot", "confirmation": "wrong-host",
-                  "ticket": self.state.admin.ticket("reboot")}
-        self.assertEqual(self.request("/actions/admin", values)[0], 409)
-        values["confirmation"] = "development.example.test"
-        self.assertEqual(self.request("/actions/admin", values)[0], 303)
-        self.assertIn("succeeded", self.request("/admin?view=requests")[2])
-        self.assertEqual(self.request("/actions/admin", values)[0], 409)
+        self.assertEqual(self.request("/actions/admin", {"csrf": self.state.csrf_token, "action": "reboot"})[0], 404)
+        self.assertEqual(self.request("/admin?action=reboot")[0], 400)
+        self.assertEqual(self.scenario.data["requests"], [])
 
     def test_integrated_action_review_submits_once_through_production_handler(self) -> None:
         self.serve()

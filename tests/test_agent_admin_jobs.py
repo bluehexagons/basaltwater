@@ -450,8 +450,32 @@ class AdminJobTests(unittest.TestCase):
             "-o", "Dpkg::Options::=--force-confold", "--assume-yes", "upgrade",
         ])
         self.assertEqual(admin_job.commands("refresh-preview")[0][-2:], ["refresh", "--dry-run"])
-        self.assertEqual(admin_job.commands("reboot"), [["/usr/bin/systemctl", "--no-ask-password", "--when=+5s", "reboot"]])
         self.assertEqual(admin_job.commands("reboot-warning"), [["/usr/sbin/shutdown", "-r", "+2"]])
+
+    def test_short_restart_uses_logind_with_a_trusted_five_second_deadline(self):
+        with patch.object(admin_job.time, "time_ns", return_value=1_700_000_000_123_456_789):
+            self.assertEqual(admin_job.commands("reboot"), [[
+                "/usr/bin/busctl", "--system", "--allow-interactive-authorization=no", "call",
+                "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager",
+                "ScheduleShutdown", "st", "reboot", "1700000005123456",
+            ]])
+
+    def test_restart_scheduling_failure_never_falls_back_to_an_immediate_reboot(self):
+        with patch.object(admin_job.subprocess, "run", return_value=Mock(returncode=1)) as run:
+            self.assertEqual(admin_job.run_action("reboot"), 1)
+        run.assert_called_once()
+        self.assertEqual(run.call_args.args[0][0], "/usr/bin/busctl")
+        self.assertEqual(json.loads(Path(self.path).read_text())["status"], "failed")
+
+    def test_lighter_hosts_explain_missing_power_tools_and_panel_service(self):
+        with patch.object(admin_job, "can_manage_system_services", return_value=True), \
+                patch.object(admin_job, "can_restart_system", return_value=True), \
+                patch.object(admin_job, "read_os_release", return_value={"ID": "debian"}), \
+                patch.object(admin_job.os.path, "isfile", side_effect=lambda path: not (
+                    path in {"/usr/bin/busctl", "/usr/sbin/shutdown"} or path.endswith("basaltwater-web-panel.service"))), \
+                patch.object(admin_job, "read_json_file", return_value={"channel": "dev"}):
+            blocked = self.availability_checker()
+        self.assertEqual(set(blocked), {"reboot", "reboot-warning", "shutdown", "cancel-shutdown", "restart-panel"})
 
     def test_snapshot_installation_has_refresh_actions_without_a_managed_channel(self):
         with patch.object(admin_job, "can_manage_system_services", return_value=True), \

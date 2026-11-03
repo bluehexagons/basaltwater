@@ -21,19 +21,33 @@ def admin_action(path: str) -> str:
     return action
 
 
-def render_catalog() -> str:
-    rows = ''.join(
-        f'<li><a class="approval-task" href="{ADMIN_PREFIX}{key}"><strong>{html.escape(spec["title"])}</strong>'
-        f'<span>{html.escape(spec["effect"])}</span></a></li>'
-        for key, spec in ADMIN_ACTIONS.items() if not spec.get("variant_of"))
-    return '<h2>Host actions</h2><p>Choose an action to review and approve.</p><ul class="approval-tasks">' + rows + '</ul>'
+def render_catalog(server) -> str:
+    blocked = server.exchange({"action": "admin-catalog"})["blocked"]
+    rows = []
+    for key, spec in ADMIN_ACTIONS.items():
+        if spec.get("variant_of"):
+            continue
+        reason = blocked.get(key) if key != "reboot" or blocked.get("reboot-warning") else None
+        copy = f'<strong>{html.escape(spec["title"])}</strong><span>{html.escape(spec["effect"])}</span>'
+        rows.append('<li>' + (f'<div class="approval-task">{copy}<span>{html.escape(reason)}</span></div>' if reason else
+                             f'<a class="approval-task" href="{ADMIN_PREFIX}{key}">{copy}</a>') + '</li>')
+    listing = "/approvals" if server.integrated else "/"
+    return ('<p>Choose an action to review and approve.</p><p><a href="' + listing + '">Check existing requests</a></p>'
+            '<ul class="approval-tasks">' + ''.join(rows) + '</ul>')
 
 
 def render_review(server, action: str) -> str:
     """GET issues a bounded local review ticket, never a broker request."""
     spec = action_spec(action)
     variants = [action, "reboot-warning"] if action == "reboot" else [action]
-    previews = {key: server.exchange({"action": "admin-preview", "admin_action": key}) for key in variants}
+    blocked = server.exchange({"action": "admin-catalog"})["blocked"]
+    back = "/admin" if server.integrated else "/approvals/admin"
+    content = f'<p><a href="{back}">← Host actions</a></p>'
+    if all(blocked.get(key) for key in variants):
+        listing = "/approvals" if server.integrated else "/"
+        return content + '<p class="notice">' + html.escape(blocked[action]) + f'</p><p><a href="{listing}">Check existing requests</a></p>'
+    previews = {key: server.exchange({"action": "admin-preview", "admin_action": key})
+                for key in variants if not blocked.get(key)}
     now = time.monotonic()
     server.admin_tickets = {key: value for key, value in server.admin_tickets.items() if value["expires"] > now}
     if len(server.admin_tickets) >= 32:
@@ -42,19 +56,21 @@ def render_review(server, action: str) -> str:
     server.admin_tickets[ticket] = {"action": action, "previews": previews, "expires": now + 300,
                                     "username": server.auth["username"]}
     escape = html.escape
-    back = "/admin" if server.integrated else "/approvals/admin"
-    content = f'<p><a href="{back}">← Host actions</a></p>'
     content += '<p>On <strong>' + escape(urlsplit(server.origin).hostname or "this host") + '</strong></p>'
     effect = ("Restarting interrupts all sessions and running work. The panel disconnects until the host returns."
               if action == "reboot" else spec["effect"])
     content += '<p class="notice">' + escape(effect) + '</p>'
     content += f'<form method="post" action="{ADMIN_PREFIX}{action}"><input type="hidden" name="ticket" value="{ticket}">'
     if action == "reboot":
-        content += ('<fieldset><legend>Restart timing</legend>'
-                    '<label class="approval-option"><input type="radio" name="variant" value="reboot" checked> '
-                    '<span><strong>In 5 seconds</strong> · Restart shortly after approval.</span></label>'
-                    '<label class="approval-option"><input type="radio" name="variant" value="reboot-warning"> '
-                    '<span><strong>Warn users, then restart in 2 minutes</strong> · Send a warning to logged-in users; allow time to cancel.</span></label></fieldset>')
+        content += '<fieldset><legend>Restart timing</legend>'
+        for key, title, description in (
+                ("reboot", "In 5 seconds", "Restart shortly after approval."),
+                ("reboot-warning", "Warn users, then restart in 2 minutes", "Send a warning to logged-in users; allow time to cancel.")):
+            attributes = ' disabled' if key not in previews else ' checked' if key == next(iter(previews)) else ''
+            description = blocked.get(key) or description
+            content += (f'<label class="approval-option"><input type="radio" name="variant" value="{key}"{attributes}> '
+                        f'<span><strong>{title}</strong> · {escape(description)}</span></label>')
+        content += '</fieldset>'
     else:
         content += f'<input type="hidden" name="variant" value="{action}">'
     content += '<p class="muted">This review expires in 5 minutes. Opening it does not schedule any work.</p>'

@@ -10,7 +10,8 @@ For common host maintenance, open **Admin controls → Host actions**, click the
 action row, review its effects, then approve once. Restart defaults to five
 seconds after scheduling, with an explicit two-minute warning option. These
 focused reviews create no request until approval and expire after five minutes.
-The standalone panel offers the same catalog through **Host actions**.
+The standalone panel offers the same catalog through **Host actions**, with
+availability reasons for actions blocked by policy or outstanding maintenance.
 
 Use `--no-privilege-broker` to disable approvals, or `--privilege-broker` to
 re-enable them on a panel installation. An omitted option preserves an explicit
