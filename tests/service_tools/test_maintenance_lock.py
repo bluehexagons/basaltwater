@@ -16,6 +16,38 @@ from lib.setup_directories import directory_fd
 
 
 class TestMaintenanceLock(unittest.TestCase):
+    def test_bounded_wait_acquires_released_setup_lock_without_replacing_inode(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, "setup.lock")
+            with open(path, "a+") as setup, \
+                    patch.object(scheduled, "SETUP_LOCK_FILE", path), \
+                    patch.object(coordinator.os.path, "lexists", return_value=False), \
+                    patch.object(scheduled.time, "monotonic", return_value=0), \
+                    patch.object(scheduled.time, "sleep", side_effect=lambda _: fcntl.flock(setup, fcntl.LOCK_UN)) as wait:
+                fcntl.flock(setup, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                inode = os.stat(path).st_ino
+                with maintenance_lock(wait_seconds=60) as acquired:
+                    self.assertTrue(acquired)
+                    with self.assertRaises(BlockingIOError):
+                        fcntl.flock(setup, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                wait.assert_called_once()
+                self.assertEqual(os.stat(path).st_ino, inode)
+
+    def test_bounded_wait_expires_without_disturbing_setup_owner(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, "setup.lock")
+            with open(path, "a+") as setup, \
+                    patch.object(scheduled, "SETUP_LOCK_FILE", path), \
+                    patch.object(scheduled.time, "monotonic", side_effect=(0, 0.9, 1)), \
+                    patch.object(scheduled.time, "sleep") as wait:
+                fcntl.flock(setup, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                with maintenance_lock(wait_seconds=1) as acquired:
+                    self.assertFalse(acquired)
+                wait.assert_called_once()
+                self.assertAlmostEqual(wait.call_args.args[0], 0.1)
+                with maintenance_lock() as acquired:
+                    self.assertFalse(acquired)
+
     def test_setup_excludes_maintenance_and_release_keeps_inode(self):
         with tempfile.TemporaryDirectory() as root:
             path = os.path.join(root, "setup.lock")

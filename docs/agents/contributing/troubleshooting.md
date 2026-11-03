@@ -74,6 +74,11 @@ For a live incomplete operation, follow the
 [operator recovery guide](../../operations/transaction-recovery.md); do not
 delete locks or recovery markers to make a retry proceed.
 
+Explicit post-setup restart jobs wait up to 60 seconds for the target setup lock.
+This lets final setup work, such as the T3 reload and readiness check, release
+the lock before reboot is requested. A still-held lock or active build refuses
+the restart; scheduled maintenance keeps its immediate deferral behavior.
+
 When a post-setup restart job fails, `--wait-for-restart` includes its last
 20 journal entries when the target remains reachable, within the existing wait
 deadline. Read the refusal before retrying: setup, maintenance or an active build

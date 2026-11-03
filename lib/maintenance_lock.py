@@ -8,9 +8,10 @@ from contextvars import ContextVar
 import fcntl
 import os
 import stat
+import time
 from uuid import UUID
 
-from lib.validation import validate_filesystem_path
+from lib.validation import validate_filesystem_path, validate_positive_integer
 
 
 SETUP_LOCK_FILE = "/run/lock/basaltwater-setup.lock"
@@ -102,9 +103,29 @@ def recover_reboot_drain(*, cancel: bool = False) -> bool:
         os.close(slot)
 
 
+def _acquire_setup_lock(descriptor: int, wait_seconds: int) -> bool:
+    """Allow an explicit caller to wait briefly for setup finalization."""
+    deadline = time.monotonic() + wait_seconds if wait_seconds else 0
+    while True:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            if not wait_seconds:
+                return False
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            time.sleep(min(0.2, remaining))
+            if time.monotonic() >= deadline:
+                return False
+
+
 @contextmanager
-def maintenance_lock(*, build_slot: bool = True) -> Iterator[bool]:
-    """Try the setup lock without waiting; retain its inode after release."""
+def maintenance_lock(*, build_slot: bool = True, wait_seconds: int = 0) -> Iterator[bool]:
+    """Acquire setup exclusion, optionally waiting; build admission never waits."""
+    if wait_seconds != 0:
+        wait_seconds = validate_positive_integer(str(wait_seconds), "Setup lock wait")
     validate_filesystem_path(SETUP_LOCK_FILE, must_exist=False)
     descriptor = os.open(
         SETUP_LOCK_FILE,
@@ -115,9 +136,7 @@ def maintenance_lock(*, build_slot: bool = True) -> Iterator[bool]:
         info = os.fstat(descriptor)
         if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid():
             raise ValueError("Unsafe target setup lock file")
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
+        if not _acquire_setup_lock(descriptor, wait_seconds):
             yield False
         else:
             # Package updates and automatic restarts must also respect jobs

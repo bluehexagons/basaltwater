@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from contextlib import contextmanager, nullcontext, redirect_stdout
+import fcntl
 import io
 import json
+from pathlib import Path
 import shlex
 import subprocess
+import tempfile
 import unittest
 from unittest.mock import ANY, MagicMock, patch
 
@@ -15,6 +18,7 @@ from lib.config import SetupConfig
 from lib.proxmox_maintenance import ProxmoxMaintenanceReport
 from lib.state_read import StateReadError
 from lib import proxmox_vm_restart, setup_reboot
+from lib import maintenance_lock as scheduled
 
 
 OLD_BOOT_ID = "12345678-1234-4234-8234-123456789abc"
@@ -740,9 +744,42 @@ class ProxmoxGuestShutdownTests(unittest.TestCase):
         self.assertEqual(self.run.call_args.kwargs["timeout"], 1)
 
 
+class TargetRestartLockTests(unittest.TestCase):
+    def test_host_and_proxmox_restart_wait_for_final_setup_completion(self) -> None:
+        for restart in (setup_reboot._restart_local_host, setup_reboot._restart_local_proxmox):
+            with (
+                self.subTest(restart=restart.__name__),
+                tempfile.TemporaryDirectory() as root,
+                patch.object(scheduled, "SETUP_LOCK_FILE", str(Path(root) / "setup.lock")),
+                patch.object(setup_reboot.os, "geteuid", return_value=0),
+                patch.object(scheduled.os, "fstat", return_value=MagicMock(st_mode=0o100600, st_uid=0)),
+                patch("lib.build_coordinator.LOCK", str(Path(root) / "no-coordinator")),
+                patch.object(setup_reboot, "can_restart_system", return_value=True),
+                patch.object(setup_reboot, "_local_restart_status", return_value="needed-proxmox"),
+                patch("lib.proxmox_preflight.check_proxmox_update_safety",
+                      return_value=ProxmoxMaintenanceReport("pve1", "localhost")),
+                patch.object(setup_reboot, "retain_reboot_drain") as drain,
+                patch.object(setup_reboot, "run", return_value=_result()) as reboot,
+                patch.object(scheduled.time, "monotonic", return_value=0),
+                open(Path(root) / "setup.lock", "a+") as completion,
+            ):
+                fcntl.flock(completion, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+                def finish_completion(_delay):
+                    reboot.assert_not_called()
+                    drain.assert_not_called()
+                    fcntl.flock(completion, fcntl.LOCK_UN)
+
+                with patch.object(scheduled.time, "sleep", side_effect=finish_completion) as wait:
+                    self.assertEqual(restart(), 0)
+                wait.assert_called_once()
+                drain.assert_called_once_with()
+                self.assertEqual(reboot.call_args.args[0], ["/usr/bin/systemctl", "reboot", "--no-wall"])
+
+
 class ProxmoxTargetRestartTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.lock = self.enterContext(patch.object(setup_reboot, "maintenance_lock", side_effect=lambda: nullcontext(True)))
+        self.lock = self.enterContext(patch.object(setup_reboot, "maintenance_lock", side_effect=lambda **kwargs: nullcontext(True)))
         self.status = self.enterContext(patch.object(setup_reboot, "_local_restart_status", return_value="needed-proxmox"))
         self.collect = self.enterContext(patch("lib.proxmox_preflight.check_proxmox_update_safety"))
         self.shutdown = self.enterContext(patch.object(setup_reboot, "_shutdown_proxmox_guests", return_value=True))
@@ -754,7 +791,8 @@ class ProxmoxTargetRestartTests(unittest.TestCase):
         held = []
 
         @contextmanager
-        def lock():
+        def lock(*, wait_seconds):
+            self.assertEqual(wait_seconds, 60)
             held.append(True)
             try:
                 yield True
@@ -789,9 +827,9 @@ class ProxmoxTargetRestartTests(unittest.TestCase):
         self.reboot.assert_called_once()
 
     def test_busy_lock_or_cleared_marker_never_stops_guests(self) -> None:
-        self.lock.side_effect = lambda: nullcontext(False)
+        self.lock.side_effect = lambda **kwargs: nullcontext(False)
         self.assertEqual(setup_reboot._restart_local_proxmox(), 1)
-        self.lock.side_effect = lambda: nullcontext(True)
+        self.lock.side_effect = lambda **kwargs: nullcontext(True)
         self.status.return_value = "clear"
         self.assertEqual(setup_reboot._restart_local_proxmox(), 0)
         self.shutdown.assert_not_called()

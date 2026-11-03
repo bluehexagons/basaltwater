@@ -25,6 +25,7 @@ from lib.validators import validate_host, validate_username
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _RESTART_WAIT_SECONDS = 300
 _GUEST_SHUTDOWN_WAIT_SECONDS = 1800
+_RESTART_LOCK_WAIT_SECONDS = 60
 _POLL_INTERVAL_SECONDS = 5
 _REMOTE_RESTART_STATUS = r"""
 import sys
@@ -51,7 +52,7 @@ def _restart_local_host() -> int:
     try:
         if os.geteuid() != 0:
             raise PermissionError("Explicit restart requires root")
-        with maintenance_lock() as acquired:
+        with maintenance_lock(wait_seconds=_RESTART_LOCK_WAIT_SECONDS) as acquired:
             if not acquired:
                 raise RuntimeError("setup, maintenance or a build is running; retry restart when idle")
             if not can_restart_system():
@@ -241,7 +242,7 @@ def _restart_local_proxmox() -> int:
     from lib.proxmox_preflight import check_proxmox_update_safety
 
     try:
-        with maintenance_lock() as acquired:
+        with maintenance_lock(wait_seconds=_RESTART_LOCK_WAIT_SECONDS) as acquired:
             if not acquired:
                 raise RuntimeError("setup or another maintenance job is running")
             status = _local_restart_status()
