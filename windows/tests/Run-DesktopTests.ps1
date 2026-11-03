@@ -262,6 +262,16 @@ function Invoke-NativeDesktopWorkerBody($Request) {
     $generation = Observe-Window
     $inspection = Invoke-NativeDesktopCli @('inspect','--pid','42')
     Assert-True ($inspection.ok -and $inspection.result.elements[0].name.Length -eq 256 -and $inspection.result.elements[0].name_truncated) 'Inspection did not bound public names'
+    & {
+        $mockWorker=${function:Invoke-NativeDesktopWorker}
+        function Invoke-NativeDesktopWorker($Request,[int]$TimeoutSeconds=8){
+            $reply=[pscustomobject](& $mockWorker $Request $TimeoutSeconds)
+            $reply|Add-Member NoteProperty worker_cleanup @{confirmed=$false;message='do not replay'}
+            return $reply
+        }
+        $warning=Invoke-NativeDesktopCli @('inspect','--pid','42')
+        Assert-True ($warning.ok -and -not $warning.result.worker_cleanup.confirmed -and $warning.result.elements[0].name.Length -eq 256) 'Inspection compaction discarded cleanup evidence'
+    }
     $calls = $script:DesktopTestCalls.Count
     Assert-Failure (Invoke-NativeDesktopCli @('inspect','--pid','42','--root','element-ref')) 'generation'
     Assert-Failure (Invoke-NativeDesktopCli @('element','focus','--ref','unknown','--generation',$generation)) 'Stale element'

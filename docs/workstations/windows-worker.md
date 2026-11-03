@@ -51,7 +51,17 @@ they are private and removed after response consumption. A caller that disappear
 can leave a retained mailbox, including its text, after closeout; do not share
 that directory without review. Closeout does not prune this private evidence.
 Metadata describes worker cleanup, not proof that an application action succeeded.
+If retiring a consumed mailbox fails, an acknowledged action retains its normal
+receipt with `worker_cleanup.confirmed: false` and the retained directory/error.
+Inspect that private evidence; do not repeat the action to repair cleanup.
+Shutdown tolerates mailboxes concurrently consumed and removed by callers.
+Hold preparation stops before a driver starts if its mailbox cannot be retired;
+completed hold and inspection receipts retain any cleanup warning.
 After a timeout, inspect application state before deciding on another action.
+
+Host doctor retains the bounded desktop-readiness reason, including controller
+contention. If another desktop operation is active, inspect its outcome and run
+doctor again when idle; a busy result does not establish a locked desktop.
 
 Preliminary read-only worker probes on a native Windows workstation took about
 0.36–0.43 seconds after the first warm request, versus about 1.14–1.18 seconds for

@@ -80,7 +80,12 @@ public class HealthGuiFixture {
         function Get-NativeT3Desktop { return 'C:\T3 Code.exe' }
         function Get-NativeGitBash { if (-not $script:MissingGitBash) { return 'C:\Git\bin\bash.exe' } }
         function Get-NativePowerShell7 { if (-not $script:MissingPowerShell) { return 'C:\fixture\pwsh.exe' } }
-        function Get-NativeDesktopReadiness { return @{ healthy = (-not $script:LockedDesktop) } }
+        function Get-NativeDesktopReadiness {
+            $value=@{healthy=(-not $script:LockedDesktop)}
+            if($script:DesktopFailure){$value.error=$script:DesktopFailure}
+            if($script:ReadinessObject){return [pscustomobject]$value}
+            return $value
+        }
         function Get-NativeSunshineHealth {
             return [pscustomobject]@{ State = $(if ($script:BadSunshine) { 'failed' } else { 'ok' }); Detail = 'fixture service' }
         }
@@ -105,6 +110,7 @@ public class HealthGuiFixture {
         $script:BadStorage = $false; $script:BrokenCodex = $false
         $script:BrokenPython = $false; $script:BadLogin = $false; $script:BadSunshine = $false
         $script:MissingPowerShell = $false; $script:LockedDesktop = $false; $script:MissingGitBash = $false
+        $script:DesktopFailure=$null;$script:ReadinessObject=$false
         $report = Get-NativeWorkstationHealth $saved -TimeoutSeconds 1
         Assert-True $report.Healthy 'Complete healthy selection did not pass'
         Assert-True (($report | ConvertTo-Json -Depth 5) -notmatch 'never-publish|Secret') 'Doctor exposed arbitrary saved fields'
@@ -121,6 +127,14 @@ public class HealthGuiFixture {
         $script:MissingPowerShell = $false; $script:LockedDesktop = $true
         $report = Get-NativeWorkstationHealth $saved
         Assert-True (-not $report.Healthy -and @($report.Checks | Where-Object { $_.Name -eq 'desktop-session' -and $_.State -eq 'failed' }).Count -eq 1) 'Locked desktop readiness was reported healthy'
+        foreach($asObject in @($false,$true)){
+            $script:ReadinessObject=$asObject;$script:DesktopFailure='Desktop controller busy; '+('x'*600)
+            $report=Get-NativeWorkstationHealth $saved
+            $desktop=@($report.Checks|Where-Object Name -eq 'desktop-session')[0]
+            Assert-True (-not $report.Healthy -and $desktop.Detail -match 'controller busy' -and
+                $desktop.Detail.Length -lt 700 -and $desktop.Detail -notmatch 'locked') 'Doctor hid or failed to bound the actual busy reason'
+        }
+        $script:DesktopFailure=$null;$script:ReadinessObject=$false
         $script:LockedDesktop = $false
         $script:StorePython = $true
         Assert-True (Get-NativeWorkstationHealth $saved).Healthy 'Working Store Python was rejected solely by its path'

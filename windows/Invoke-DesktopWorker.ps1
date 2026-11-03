@@ -76,17 +76,7 @@ finally {
     if($record -and $lease -and $owned){
         $record.state='stopped';$record.error=$failure
         try {
-            $inbox=Join-Path $Directory 'requests'
-            foreach($mailbox in @(Get-ChildItem -LiteralPath $inbox -Directory)){
-                if($mailbox.Name -notmatch '\A[0-9a-f]{32}\z'){throw 'Invalid mailbox during worker closeout'}
-                # Preserve responses for still-waiting callers; they retire the
-                # mailbox. A caller that disappeared cannot trigger any replay.
-                $path=$mailbox.FullName
-                if(-not(Test-Path -LiteralPath (Join-Path $path 'response.json'))){
-                    $claimed=Test-Path -LiteralPath (Join-Path $path 'claimed')
-                    Write-NativeHeldJson (Join-Path $path 'response.json') @{version=1;id=$mailbox.Name;ok=$false;submitted=$claimed;result=$null;error='Desktop worker stopped; claimed action outcome may be unknown; inspect before retrying'}
-                }
-            }
+            Complete-NativeWarmMailboxes $record
             Remove-NativeWarmRegistration $record
             $record.cleanup_confirmed=$true;$record.completed_utc=[DateTime]::UtcNow.ToString('o')
         } catch {$record.state='cleanup-uncertain';$record.error=$_.Exception.Message}

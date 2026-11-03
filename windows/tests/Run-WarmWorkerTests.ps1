@@ -11,6 +11,22 @@ function Get-NativeHeldAdmissionPath {return Join-Path $script:WarmFixtureRoot '
 function Remove-NativeWarmRegistration($Record) { }
 $originalSource=$script:NativeDesktopSource;$process=$null
 try {
+    $closeout=Join-Path $temporary 'closeout';New-NativeDesktopPrivateDirectory $closeout
+    $inbox=Join-Path $closeout 'requests';New-NativeDesktopPrivateDirectory $inbox
+    $consumed=Join-Path $inbox ([guid]::NewGuid().ToString('N'));New-NativeDesktopPrivateDirectory $consumed
+    $pending=Join-Path $inbox ([guid]::NewGuid().ToString('N'));New-NativeDesktopPrivateDirectory $pending
+    Write-NativeHeldJson (Join-Path $pending 'request.json') @{version=1}
+    Complete-NativeWarmMailboxes @{directory=$closeout}
+    Assert-Warm (-not(Test-Path -LiteralPath (Join-Path $consumed 'response.json'))) 'Closeout recreated a consumed response'
+    $stoppedReply=Read-NativeHeldJson (Join-Path $pending 'response.json')
+    Assert-Warm (-not $stoppedReply.ok -and -not $stoppedReply.submitted) 'Queued request lost its unsubmitted shutdown reply'
+    & {
+        $ghostPath=Join-Path $inbox ([guid]::NewGuid().ToString('N'));New-NativeDesktopPrivateDirectory $ghostPath
+        $ghost=Get-Item -LiteralPath $ghostPath;[IO.Directory]::Delete($ghostPath)
+        function Get-ChildItem([string]$LiteralPath,[switch]$Directory){return $ghost}
+        Complete-NativeWarmMailboxes @{directory=$closeout}
+        Assert-Warm (-not(Test-Path -LiteralPath $ghostPath)) 'Closeout recreated a concurrently removed mailbox'
+    }
     $context=Get-NativeDesktopContext
     $state=@{owner=$context.Sid;session=$context.Session;revision=('a'*32);generation=('b'*32);mode='enabled'}
     Write-NativeHeldJson (Get-NativeDesktopStatePath) $state
@@ -93,6 +109,46 @@ function Invoke-NativeDesktopWorkerBody(`$Request) {
     $result=Read-NativeHeldJson $response
     Assert-Warm (-not $result.ok -and -not $result.submitted -and -not(Test-Path -LiteralPath (Join-Path $stale 'claimed'))) 'Stale caller identity reached dispatch'
     Assert-Warm (-not(Test-Path -LiteralPath (Join-Path $temporary 'effects'))) 'A rejected mailbox was replayed'
+    & {
+        $readJson=${function:Read-NativeHeldJson};$script:MalformedReplyPath=$null
+        function Read-NativeHeldJson([string]$Path,[int]$Limit=65536){
+            $value=& $readJson $Path $Limit
+            if((Split-Path -Leaf $Path) -eq 'response.json'){
+                $script:MalformedReplyPath=$Path
+                return [pscustomobject]@{id=$value.id;ok=$true;result=$value.result}
+            }
+            return $value
+        }
+        $caught=$null;try{Invoke-NativeWarmRequest $worker @{command='ready';text='invalid-reply'} 8}catch{$caught=$_}
+        Assert-Warm ($caught.Exception.Message -match 'schema mismatch' -and $caught.Exception.Message -match 'do not replay') 'Malformed response lost its uncertain outcome'
+        Assert-Warm (Test-Path -LiteralPath $script:MalformedReplyPath) 'Malformed response evidence was removed'
+    }
+    Remove-NativeWarmMailbox (Split-Path -Parent $script:MalformedReplyPath)
+    $acknowledged=& {
+        function Remove-NativeWarmMailbox([string]$Directory){throw 'fixture mailbox deletion denied'}
+        return Invoke-NativeWarmRequest $worker @{command='input';text='acknowledged'} 8
+    }
+    Assert-Warm ($acknowledged.echo -eq 'acknowledged' -and -not $acknowledged.worker_cleanup.confirmed -and
+        $acknowledged.worker_cleanup.message -match 'do not replay') 'Mailbox cleanup hid an acknowledged action'
+    Assert-Warm ([IO.File]::ReadAllText((Join-Path $temporary 'effects')) -eq '1') 'Cleanup failure replayed the action'
+    Remove-NativeWarmMailbox $acknowledged.worker_cleanup.directory
+    Remove-Item -LiteralPath (Join-Path $temporary 'effects')
+    $caught=$null
+    try{& {
+        function Remove-NativeWarmMailbox([string]$Directory){throw 'fixture mailbox deletion denied'}
+        Invoke-NativeWarmRequest $worker @{command='hold-plan';text='planning-only'} 8
+    }}catch{$caught=$_}
+    Assert-Warm ($caught.Exception.Message -match 'no held input started') 'Unretired hold preparation was passed to a driver'
+    $state.mode='disabled';Write-NativeHeldJson (Get-NativeDesktopStatePath) $state
+    $caught=$null
+    try{& {
+        function Remove-NativeWarmMailbox([string]$Directory){throw 'fixture mailbox deletion denied'}
+        Invoke-NativeWarmRequest $worker @{command='input';text='blocked-cleanup'} 8
+    }}catch{$caught=$_}
+    Assert-Warm ($caught.Exception.Message -match 'not enabled' -and $caught.Exception.Message -match 'cleanup unconfirmed' -and
+        $caught.Exception.Message -match 'do not replay') 'Cleanup failure replaced the primary rejection'
+    Assert-Warm (-not(Test-Path -LiteralPath (Join-Path $temporary 'effects'))) 'Rejected action reached input during cleanup'
+    $state.mode='enabled';Write-NativeHeldJson (Get-NativeDesktopStatePath) $state
     $stopped=Stop-NativeWarmWorker
     Assert-Warm $stopped.cleanup_confirmed 'Warm worker did not settle'
     Assert-Warm ($process.WaitForExit(3000)) 'Worker process survived graceful shutdown'

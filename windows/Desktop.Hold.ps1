@@ -259,7 +259,9 @@ function Wait-NativeHeldLease($Record) {
             if ($ready) { $ready.Dispose(); $ready=$null }; Start-Sleep -Milliseconds 50
         }
         if (-not $ready -or -not $ready.WaitOne(0)) { throw 'Held-input watchdog startup timed out; no input submitted' }
-        $driver = (Invoke-NativeDesktopWorker @{ command='hold'; lease=$Record.id } 10).held
+        $dispatch=Invoke-NativeDesktopWorker @{ command='hold'; lease=$Record.id } 10
+        $driver=$dispatch.held
+        if($dispatch.PSObject.Properties['worker_cleanup']){$driver|Add-Member NoteProperty worker_cleanup $dispatch.worker_cleanup -Force}
         Write-NativeHeldJson (Join-Path $Record.directory 'driver.json') $driver
     } catch { $driverError=$_.Exception.Message; Request-NativeHeldCancellation $Record.directory $Record.name }
     finally { if ($ready) { $ready.Dispose() } }

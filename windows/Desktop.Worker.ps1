@@ -69,6 +69,30 @@ function Remove-NativeWarmRegistration($Record) {
     }
     if(@(Get-ScheduledTask -TaskPath '\' -ErrorAction Stop|Where-Object TaskName -CEQ $Record.task).Count){throw 'Desktop worker Scheduler retirement unconfirmed'}
 }
+function Complete-NativeWarmMailboxes($Record) {
+    $inbox=Join-Path $Record.directory 'requests';Assert-NativeDesktopPrivatePath $inbox
+    foreach($mailbox in @(Get-ChildItem -LiteralPath $inbox -Directory)){
+        if($mailbox.Name -notmatch '\A[0-9a-f]{32}\z'){throw 'Invalid mailbox during worker closeout'}
+        $path=$mailbox.FullName
+        # The caller removes request.json BEFORE response.json. Check in this
+        # order so consuming a response cannot make closeout recreate it or
+        # write into a directory the caller has already removed.
+        if(-not(Test-Path -LiteralPath (Join-Path $path 'response.json')) -and
+            (Test-Path -LiteralPath (Join-Path $path 'request.json'))){
+            $claimed=Test-Path -LiteralPath (Join-Path $path 'claimed')
+            Write-NativeHeldJson (Join-Path $path 'response.json') @{version=1;id=$mailbox.Name;ok=$false;submitted=$claimed;result=$null;error='Desktop worker stopped; claimed action outcome may be unknown; inspect before retrying'}
+        }
+    }
+}
+function Remove-NativeWarmMailbox([string]$Directory) {
+    Assert-NativeDesktopPrivatePath $Directory
+    # This order pairs with Complete-NativeWarmMailboxes during shutdown.
+    foreach($name in @('request.json','response.json','claimed')){
+        $file=Join-Path $Directory $name
+        if(Test-Path -LiteralPath $file){Assert-NativeDesktopPrivatePath $file;Remove-Item -LiteralPath $file -ErrorAction Stop}
+    }
+    [IO.Directory]::Delete($Directory)
+}
 function Get-NativeWarmStatus {
     $record=Get-NativeWarmRecord
     if(-not $record){return @{state='stopped';cleanup_confirmed=$true}}
@@ -164,6 +188,7 @@ function Invoke-NativeWarmRequest($Record,$Request,[int]$TimeoutSeconds) {
     $process=Pin-NativeWarmProcess $Record ([int]$Record.pid) ([long]$Record.created)
     $id=[guid]::NewGuid().ToString('N');$directory=Join-Path (Join-Path $Record.directory 'requests') $id
     New-NativeDesktopPrivateDirectory $directory
+    $response=$null;$responseOwned=$false;$failure=$null;$cleanupError=$null
     try {
         $self=[Diagnostics.Process]::GetCurrentProcess()
         try {$created=$self.StartTime.ToUniversalTime().Ticks} finally {$self.Dispose()}
@@ -183,16 +208,31 @@ function Invoke-NativeWarmRequest($Record,$Request,[int]$TimeoutSeconds) {
             Start-Sleep -Milliseconds 10
         }
         $response=Read-NativeHeldJson $path 2097152
-        if($response.id -cne $id){throw 'Desktop worker response identity mismatch'}
+        if($null -eq $response -or $response -isnot [pscustomobject] -or
+            -not $response.PSObject.Properties['version'] -or $response.version -ne 1 -or
+            -not $response.PSObject.Properties['id'] -or $response.id -cne $id -or
+            -not $response.PSObject.Properties['ok'] -or $response.ok -isnot [bool] -or
+            -not $response.PSObject.Properties['result'] -or -not $response.PSObject.Properties['error']){
+            throw 'Desktop worker response identity/schema mismatch; outcome unknown; do not replay'
+        }
+        $responseOwned=$true
         if(-not $response.ok){throw $response.error}
-        return $response.result
-    } finally {
+    } catch {$failure=$_}
+    finally {
         $process.Dispose()
         # A timed-out mailbox is private retained evidence. Never race a
-        # server still using it or replay its input.
-        if(Test-Path -LiteralPath (Join-Path $directory 'response.json')){
-            foreach($name in @('request.json','response.json','claimed')){$file=Join-Path $directory $name;if(Test-Path -LiteralPath $file){Assert-NativeDesktopPrivatePath $file;Remove-Item -LiteralPath $file}}
-            [IO.Directory]::Delete($directory)
+        # server still using it, consume an invalid reply, or replay its input.
+        if($responseOwned){
+            try{Remove-NativeWarmMailbox $directory}catch{$cleanupError=$_.Exception.Message}
         }
     }
+    if($failure){
+        if($cleanupError){throw ($failure.Exception.Message+'; mailbox cleanup unconfirmed; inspect retained evidence; do not replay')}
+        throw $failure
+    }
+    if($cleanupError){
+        if($Request.command -eq 'hold-plan'){throw 'Hold preparation completed but mailbox cleanup is unconfirmed; no held input started; inspect retained evidence'}
+        $response.result|Add-Member NoteProperty worker_cleanup @{confirmed=$false;directory=$directory;error=$cleanupError;message='Action receipt retained; do not replay to repair mailbox cleanup'} -Force
+    }
+    return $response.result
 }

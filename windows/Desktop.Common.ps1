@@ -409,6 +409,7 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
             $result = Invoke-NativeDesktopWorker $request
             if ($request.command -eq 'windows') { $state.windows = @($result.windows); $state.elements = @(); $state.window_observed = Get-NativeDesktopTime }
             if ($request.command -eq 'inspect') {
+                $workerCleanup=$result.PSObject.Properties['worker_cleanup']
                 $state.elements = @($result.elements); $state.element_observed = Get-NativeDesktopTime
                 # Keep full identity only in private inventory; bound the public name.
                 $public = @($result.elements | ForEach-Object {
@@ -416,6 +417,7 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
                     if ($row.name_truncated) { $row.name = $row.name.Substring(0,256) }; $row
                 })
                 $result = @{ elements = $public; visited = $result.visited; truncated = $result.truncated }
+                if($workerCleanup){$result.worker_cleanup=$workerCleanup.Value}
             }
             Write-NativeDesktopState $state
             return @{ ok = $true; generation = $state.generation; control_revision = $state.revision; result = $result }

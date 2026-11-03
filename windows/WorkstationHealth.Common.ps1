@@ -106,10 +106,17 @@ function Get-NativeWorkstationHealth {
     }
     if (& $selected 'T3CodeDesktop') {
         $readiness = Get-NativeDesktopReadiness
+        $readinessError=$null
+        if($readiness -is [Collections.IDictionary]){$readinessError=$readiness['error']}
+        elseif($readiness.PSObject.Properties['error']){$readinessError=$readiness.error}
         $checks.Add([pscustomobject]@{ Name = 'desktop-session'; State = $(if ($readiness.healthy) { 'ok' } else { 'failed' });
             Command = 'basaltw desktop doctor'; Detail = $(if ($readiness.healthy) {
                 'Interactive desktop and Windows API readiness; no screenshot or input performed. Rendering, audio and streaming require qualification.'
-            } else { 'Interactive desktop is unavailable, locked or inaccessible. Inspect desktop doctor in the intended login session.' }) })
+            } else {
+                $detail='Desktop readiness did not complete. Inspect desktop doctor in the intended login session.'
+                if($readinessError -is [string] -and $readinessError){$detail+=' Reason: '+$readinessError.Substring(0,[Math]::Min(512,$readinessError.Length))}
+                $detail
+            }) })
         $desktop = Get-NativeT3Desktop
         $checks.Add([pscustomobject]@{ Name = 't3-desktop'; State = $(if ($desktop) { 'ok' } else { 'missing' });
             Command = $desktop; Detail = 'Desktop executable discovery only; the app was not launched.' })
