@@ -75,6 +75,45 @@ both endpoints of a native drag. Account for any image presentation scaling
 before submitting coordinates. A window move does not necessarily change the
 session generation. Compact Linux captures preserve window and origin metadata.
 
+On CachyOS, save the inspected capture's JSON receipt alongside its PNG, then
+map against that exact receipt:
+
+```bash
+basaltw desktop --native screenshot --compact > /absolute/private/frame.json
+basaltw desktop --native map-point --capture /absolute/private/frame.json \
+  --view-geometry 1200 800 --view-origin 20 30 --x 620 --y 430
+```
+
+`--view-geometry` is the presented image content size; `--view-origin` is its
+top-left offset inside the viewer (default zero). Points include that offset.
+Both drag endpoints use the same transform. The read-only status comparison
+rejects changed token, generation, control revision, geometry, crop or expiry.
+Copy `input_context_args` before the input kind and `input_args` after it.
+Input revalidates the single-use token; mapping does not reserve or renew it.
+Legacy `map-point --geometry ... --crop ...` remains an offline calculation,
+without freshness validation. Neither route recognizes moving/fanned targets.
+
+### Native input failure receipts
+
+Updated native helpers and clients preserve `reason`, `dispatch_stage`,
+`input_delivery`, `input_id` and related `observation_id` through CLI failures
+and recorder events:
+
+| Stage | Delivery | Meaning |
+| --- | --- | --- |
+| `before-input` | `not-sent` | Validation/guard refusal before the first portal notification; no dispatch. |
+| `input-dispatch` | `unknown` | At least one portal notification was attempted; partial delivery/release may have occurred. |
+| `transport` | `unknown` | No authoritative worker response; delivery cannot be inferred. |
+| `input-completed` | `completed` | All intended input and release calls returned. Game effect remains unverified. |
+| `post-input-observation` | `completed` | Input retained, subsequent observation failed. Capture again, never replay automatically. |
+
+The recorder retains refused events separately from uncertain ones. Verification
+counts `image_less` capture events separately from `missing` saved paths and
+includes uncertain events in health. PNG hashes alone cannot certify journal
+health. Older errors/journals have no proven dispatch stage; they remain
+uncertain and are never rewritten. Debian/Windows worker stage parity remains
+separate work; a new client cannot infer it from old strings.
+
 Existing input without `--observation` retains its platform-specific checks:
 Debian geometry/revision checks, CachyOS latest-capture age checks, and Windows
 fresh window-inventory checks. Do not describe these paths as exact observation

@@ -57,7 +57,9 @@ class CaptureObservation:
         if not isinstance(geometry, list) or any(type(n) is not int for n in geometry) or geometry != self.geometry:
             raise ValueError("Observation geometry changed; capture and inspect again")
         if not self.freshness()["fresh"]:
-            raise ValueError("Observation expired; capture and inspect again")
+            from desktop.receipts import DesktopRequestError
+            raise DesktopRequestError({"error": "Observation expired; capture and inspect again",
+                                       "reason": "observation-expired"})
         if payload.get("kind") in ("click", "move", "drag"):
             left, top, width, height = self.region
             endpoints = [("x", "y"), ("to_x", "to_y")] if payload["kind"] == "drag" else [("x", "y")]
@@ -77,7 +79,8 @@ def compact_capture(result: dict) -> dict:
         "output", "generation", "control_revision", "geometry", "image_geometry", "image_origin", "captured_at", "changed",
         "observation_id", "coordinate_space", "window",
         "pixel_sha256", "artifact_sha256", "frame_received_at", "frame_received_monotonic_ns", "frame_pts_ns",
-        "initial_frame_skipped", "capture_freshness", "last_input", "error", "evidence_error") if key in result}
+        "initial_frame_skipped", "capture_freshness", "last_input", "error", "reason", "dispatch_stage",
+        "input_delivery", "input_id", "evidence_error") if key in result}
 
 
 def save_observation(result: dict) -> dict:

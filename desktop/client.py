@@ -18,6 +18,7 @@ from desktop import session_runtime as runtime
 from desktop.accessibility import check_dependencies, validate_query
 from desktop.observations import validate_capture_max_age, validate_observation_option
 from lib.validation import validate_filesystem_path
+from desktop.receipts import DesktopRequestError, input_failure
 
 
 def artifact_path() -> str:
@@ -350,8 +351,13 @@ def send_action(payload: dict[str, Any], *, deadline: float | None = None, backe
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
             if payload.get("action") != "input":
                 raise
+            if isinstance(exc, DesktopRequestError) and exc.receipt.get("input_delivery") in ("not-sent", "completed", "unknown"):
+                raise
             detail = "\n".join([str(exc), *getattr(exc, "__notes__", [])])
-            raise RuntimeError(f"{detail}; input outcome may be partial or unknown; inspect before further input; do not replay") from exc
+            receipt = input_failure(exc, payload, stage="transport")
+            receipt["reason"] = "transport-failed"
+            receipt["error"] = f"{detail}; input outcome may be partial or unknown; inspect before further input; do not replay"
+            raise DesktopRequestError(receipt) from exc
         if crop is not None and (result.get("image_origin") != crop[:2] or result.get("image_geometry") != crop[2:]):
             return {**result, "error": "Backend did not confirm requested crop mapping; restart the native helper and recapture"}
         if payload.get("action") == "screenshot" and payload.get("max_age_seconds", 60) != 60 and not result.get("error"):
@@ -382,6 +388,8 @@ def send_action(payload: dict[str, Any], *, deadline: float | None = None, backe
             submitted += 1
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         detail = "\n".join([str(exc), *getattr(exc, "__notes__", [])])
+        if server_attempted and isinstance(exc, DesktopRequestError) and "input_delivery" in exc.receipt:
+            return {**result, **exc.receipt, "submitted_characters": None}
         return {**result, "error": f"{detail}; input may be partial; inspect input before further actions; do not replay",
                 "submitted_characters": None if server_attempted else submitted,
                 "completion_unknown": server_attempted}
@@ -407,7 +415,10 @@ def observe_after_input(result: dict, payload: dict, output: str, *, settle_ms: 
             raise RuntimeError("Desktop control changed during capture; observe before further input")
         return {**result, "observation": compact_capture(capture), "settle_ms": settle_ms}
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
-        return {**result, "error": f"Input completed; observation failed: {exc}. Do not replay input."}
+        return {**result, "error": f"Input completed; observation failed: {exc}. Do not replay input.",
+                "reason": "observation-failed", "dispatch_stage": "post-input-observation",
+                "input_delivery": "completed", "observation_output": output,
+                "observation_failure": getattr(exc, "receipt", {"error": str(exc)})}
 
 
 def run_sequence(path: str, generation: str, *, backend=runtime) -> dict[str, Any]:

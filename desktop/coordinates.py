@@ -5,6 +5,39 @@ from __future__ import annotations
 from desktop.portal_capture import validate_crop
 
 
+def map_observation_points(capture: dict, current: dict, view_geometry: list[int], x: int, y: int, *,
+                           view_origin: list[int] | None = None,
+                           to_x: int | None = None, to_y: int | None = None) -> dict:
+    """Bind a presented image transform to an existing, still-current capture.
+
+    Only the helper's current freshness is authoritative. This read-only check
+    never captures, consumes a token or promises that a semantic target stayed put.
+    """
+    import re
+    observation = capture.get("observation_id")
+    if not isinstance(observation, str) or not re.fullmatch(r"[0-9a-f]{32}", observation):
+        raise ValueError("Capture has no usable observation ID; capture and inspect again")
+    for key in ("observation_id", "generation", "control_revision", "geometry", "image_origin", "image_geometry"):
+        if capture.get(key) is None or capture[key] != current.get(key):
+            raise ValueError(f"Capture {key} changed or is unavailable; capture and inspect again")
+    if current.get("state") != "running" or current.get("capture_freshness", {}).get("fresh") is not True:
+        raise ValueError("Capture expired or helper stopped; capture and inspect again")
+    origin = [0, 0] if view_origin is None else view_origin
+    if (not isinstance(origin, list) or len(origin) != 2
+            or any(type(n) is not int or not 0 <= n <= 16384 for n in origin)):
+        raise ValueError("View origin must be two nonnegative viewer-margin offsets")
+    if type(x) is not int or type(y) is not int or (to_x is not None and type(to_x) is not int) or (to_y is not None and type(to_y) is not int):
+        raise ValueError("Presented points must use integer pixels")
+    result = map_capture_points(capture["geometry"], view_geometry, x - origin[0], y - origin[1],
+        crop=capture["image_origin"] + capture["image_geometry"],
+        to_x=to_x - origin[0] if to_x is not None else None,
+        to_y=to_y - origin[1] if to_y is not None else None)
+    context = {key: capture[key] for key in ("observation_id", "generation", "control_revision")}
+    return {**result, **context, "view_origin": origin, "capture_freshness": current["capture_freshness"],
+            "input_context_args": f"--generation {context['generation']} --geometry {' '.join(map(str, capture['geometry']))} --observation {observation}",
+            "limit": "Input revalidates the token; inspect moving/recentered targets again. No automatic retry."}
+
+
 def map_capture_points(
     geometry: list[int], view_geometry: list[int], x: int, y: int, *,
     crop: list[int] | None = None, to_x: int | None = None, to_y: int | None = None,

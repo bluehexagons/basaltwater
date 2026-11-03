@@ -123,4 +123,6 @@ def export_reviewed(source: str, output: str, reviewer: str) -> dict:
         exported[key] = {field: exported[key][field] for field in ("artifact", "sha256")}
     exported.update(review="operator-reviewed", reviewer=reviewer, reviewed_at=stamp()["at"])
     write_json_atomic(str(folder / "manifest.json"), exported, mode=0o600)
-    return {"artifact": str(folder / "manifest.json"), "review": "operator-reviewed"}
+    return {"artifact": str(folder / "manifest.json"), "review": "operator-reviewed",
+            "included_originals": [names[0]], "included_derivatives": [names[1]],
+            "included_files": [*names, "manifest.json"]}

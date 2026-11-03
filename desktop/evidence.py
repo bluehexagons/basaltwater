@@ -96,6 +96,11 @@ class Recorder:
     def save(self):
         write_json_atomic(str(self.path), self.data, mode=0o600)
 
+    def capacity(self) -> dict:
+        return {"events": len(self.data["events"]), "event_limit": EVENT_LIMIT,
+                "remaining_events": EVENT_LIMIT - len(self.data["events"]),
+                "events_truncated": self.data["events_truncated"]}
+
     def event(self, payload: dict, result: dict | None):
         action = payload.get("action")
         if action not in ("input", "element", "exec", "screenshot", "launch-status", "control"):
@@ -104,16 +109,21 @@ class Recorder:
             self.data["events_truncated"] = True
         else:
             row = {"action": action, **stamp(), "outcome": "returned" if result is not None else "uncertain"}
+            if action == "screenshot":
+                row["attempted_output"] = payload.get("output")
+                row["related_input_id"] = payload.get("related_input_id")
             # Never record text, key values, argv, element content or portal tokens.
-            for key in ("kind", "x", "y", "to_x", "to_y", "duration_ms", "button", "hold_ms", "operation", "observation_id"):
+            for key in ("kind", "x", "y", "to_x", "to_y", "duration_ms", "button", "hold_ms", "operation", "observation_id", "input_id"):
                 if key in payload:
                     row[key] = payload[key]
             if result is not None:
                 row["result"] = compact_capture(result) if action == "screenshot" else {
                     key: result[key] for key in ("pid", "launch", "returncode", "state", "generation",
-                        "input_completed_at", "input_completed_monotonic_ns", "observation_id") if key in result}
+                        "input_completed_at", "input_completed_monotonic_ns", "observation_id",
+                        "input_id", "reason", "dispatch_stage", "input_delivery") if key in result}
                 if "error" in result:
-                    row["outcome"] = "uncertain"
+                    row["outcome"] = "refused" if result.get("input_delivery") == "not-sent" else "uncertain"
+                    row["result"]["failure_detail"] = str(result["error"])[:512]
             self.data["events"].append(row)
         self.save()
 
@@ -153,7 +163,8 @@ def _load_record(path: str) -> dict:
 def verify(path: str) -> dict:
     """Check recorded capture file bytes without input, finalization or repairs."""
     data = _load_record(path)
-    counts = {"verified": 0, "missing": 0, "mismatched": 0, "unverified": 0}
+    counts = {"verified": 0, "missing": 0, "mismatched": 0, "unverified": 0, "image_less": 0}
+    uncertain = sum(row.get("outcome") == "uncertain" for row in data["events"])
     problems = []
     for index, row in enumerate(data["events"]):
         if row.get("action") != "screenshot":
@@ -162,6 +173,8 @@ def verify(path: str) -> dict:
         result = result if isinstance(result, dict) else {}
         output, expected = result.get("output"), result.get("artifact_sha256")
         state, detail = "unverified", "Capture has no valid PNG file hash or path (older or uncertain recording)"
+        if not isinstance(output, str):
+            state, detail = "image_less", "Capture event has no saved image path; never infer input delivery or replay safety"
         if (isinstance(output, str) and isinstance(expected, str)
                 and re.fullmatch(r"[0-9a-f]{64}", expected)):
             try:
@@ -186,10 +199,11 @@ def verify(path: str) -> dict:
     checked = sum(counts.values())
     failures = checked - counts["verified"]
     return {"artifact": path, "checked": checked, "counts": counts,
-            "healthy": checked > 0 and failures == 0 and not data["events_truncated"],
+            "healthy": checked > 0 and failures == 0 and uncertain == 0 and not data["events_truncated"],
+            "uncertain_events": uncertain,
             "events_truncated": data["events_truncated"], "finalized": data.get("finalized") is True,
             "problems": problems, "problems_truncated": failures > len(problems),
-            "scope": "Recorded PNG file bytes only; no game outcome, pixel decoding, task logs or omitted events verified"}
+            "scope": "Recorded PNG bytes and event uncertainty/truncation only; no game outcome, pixel decoding or task logs verified"}
 
 
 def finalize(path: str, *, tasks: list[str], renderer: str | None) -> dict:

@@ -24,6 +24,7 @@ from desktop.observations import (
 )
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.validation import validate_filesystem_path
+from desktop.receipts import DesktopRequestError, input_failure
 
 MAX_MESSAGE = 65536
 SESSION_SECONDS = 0
@@ -88,7 +89,7 @@ def request(payload):
             raise ValueError("Desktop response must be an object")
         client.remaining_seconds(deadline)
     if "error" in result:
-        raise RuntimeError(result["error"])
+        raise DesktopRequestError(result)
     return result
 
 
@@ -382,6 +383,9 @@ class NativeSession:
                 "observation_id": self.observation.id if self.observation is not None else None,
                 "evidence": str(self.evidence.path) if self.evidence else self.last_evidence,
                 "evidence_recording": self.evidence is not None,
+                "evidence_capacity": self.evidence.capacity() if self.evidence else None,
+                "image_origin": self.capture_region[:2] if self.capture_region else None,
+                "image_geometry": self.capture_region[2:] if self.capture_region else None,
                 "evidence_error": self.evidence_error,
                 "interactive_required": False if self.state == "running" else (None if self.restore_attempted or self.state == "initializing" else True),
                 "expires_in": (None if not self.session_seconds else max(0, int(self.until - time.monotonic()))) if self.state == "running" else 0,
@@ -471,10 +475,19 @@ class NativeSession:
             self.observation.validate(payload)
 
     def handle(self, payload):
+        if payload.get("action") == "input":
+            payload["input_id"] = secrets.token_hex(16)
+            payload["_dispatch_stage"] = "before-input"
+        elif payload.get("action") == "screenshot":
+            payload["related_input_id"] = self.last_input.get("input_id") if self.last_input else None
         try:
             result = self._handle(payload)
-        except Exception:
-            self.record_evidence(payload, None)
+        except Exception as exc:
+            if payload.get("action") == "input":
+                result = input_failure(exc, payload, stage=payload.get("_dispatch_stage", "before-input"))
+                self.record_evidence(payload, result)
+                raise DesktopRequestError(result) from exc
+            self.record_evidence(payload, {"error": str(exc), "reason": "request-failed"})
             raise
         self.record_evidence(payload, result)
         if self.evidence_error:
@@ -560,7 +573,9 @@ class NativeSession:
                 operation = payload.get("operation")
                 if operation == "start":
                     if self.evidence is not None:
-                        raise ValueError("Evidence recording is already active; finish it first")
+                        raise DesktopRequestError({"error": "Evidence recording is already active; inspect or finish it first",
+                                                   "reason": "recording-active", "artifact": str(self.evidence.path),
+                                                   **self.evidence.capacity()})
                     self.evidence = Recorder(payload.get("project"), self.generation, launches=self.launches)
                     self.evidence_error = None
                     self.record()
@@ -777,6 +792,7 @@ class NativeSession:
             if kind == "click" and (type(button) is not int or button not in range(1, 8)):
                 raise ValueError("Button must be 1 through 7")
             self.guard(payload)
+            payload["_dispatch_stage"] = "input-dispatch"
             self.portal.notify("NotifyPointerMotionAbsolute", "udd", self.node,
                 x * self.logical_size[0] / self.geometry[0], y * self.logical_size[1] / self.geometry[1])
             self.guard(payload)
@@ -831,6 +847,7 @@ class NativeSession:
                         self.guard(payload)
                         pressed.append(key)
                         pending.add(key)
+                        payload["_dispatch_stage"] = "input-dispatch"
                         self.portal.notify(method, "iu", key, 1)
                     self.hold(hold_ms, payload)
                 finally:
@@ -847,9 +864,11 @@ class NativeSession:
                         raise RuntimeError("Key release failed; native control stopped") from release_error
         else:
             raise ValueError("Unknown native input kind")
-        self.last_input = {"input_completed_at": datetime.now(timezone.utc).isoformat(),
+        self.last_input = {"input_id": payload.get("input_id"),
+                           "input_completed_at": datetime.now(timezone.utc).isoformat(),
                            "input_completed_monotonic_ns": time.monotonic_ns()}
         return {"generation": self.generation, "geometry": self.geometry, **self.last_input,
+                "input_id": payload.get("input_id"), "dispatch_stage": "input-completed", "input_delivery": "completed",
                 **({"observation_id": payload["observation_id"]} if payload.get("observation_id") is not None else {}),
                 **({"submitted_characters": len(keys)} if kind == "text" else {})}
 
@@ -938,7 +957,7 @@ def serve(*, remember=False, session_seconds=SESSION_SECONDS):
                 if payload.get("action") == "revoke":
                     session.fail(exc)
                     session.close()
-                result = {"error": str(exc)}
+                result = getattr(exc, "receipt", {"error": str(exc)})
             try:
                 connection.sendall(json.dumps(result).encode() + b"\n")
             except OSError:

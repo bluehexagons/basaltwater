@@ -74,6 +74,15 @@ For Moonlight connection failures while the monitor sleeps, see
 
 ## Observe, act, verify
 
+For evaluation discovery, use `desktop --native preflight --repository PATH
+--instruction /absolute/required/SKILL.md --json`. It saves verbose observations
+privately and keeps unknown checks explicit. Retrieve required text with
+`desktop instructions PATH --start N --sha256 DIGEST`; follow returned unread
+ranges rather than bulk-reading files until tool output truncates. See the
+[evaluation receipts](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/desktop-evaluation.md)
+for limits: matching hashes cannot prove model comprehension or session-loaded
+skill identity. Preflight never captures, starts the helper or changes control.
+
 Use `exec -- APPLICATION ARGS...` with absolute task paths and the intended cwd.
 It returns `pid` and `launch`; `launch-status TOKEN --generation GEN`
 checks that process, not document readiness. Task launches enable GTK/Qt
@@ -127,6 +136,22 @@ another scale; the input helper handles portal logical scaling. No desktop
 request is made, so this calculation cannot refresh an expired observation.
 For unknown viewer transforms, obtain a known full view or a bounded native crop.
 See [mapping examples and playtest qualification](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/game-testing.md).
+
+Prefer saving the inspected `screenshot --compact` JSON and using `map-point
+--capture /absolute/private/frame.json --view-geometry W H --x X --y Y`.
+For viewer margins add `--view-origin LEFT TOP`; points include those offsets.
+This mode checks frame identity, transform and helper freshness together,
+returning `input_context_args` and `input_args` to copy. It makes a read-only
+status request and never recaptures or sends input. A changed/recentered target
+requires fresh inspection even when the token remains valid.
+
+Native failures preserve `reason`, `dispatch_stage` and `input_delivery`.
+`not-sent` proves a guard refused before dispatch; `completed` preserves input
+when observation fails; `unknown` requires inspection without replay. Older
+helpers/journals cannot prove these stages from a generic error. See the
+[failure receipt contract](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/desktop-observations.md#native-input-failure-receipts).
+Status also exposes recorder capacity and its existing artifact; a duplicate
+start reports that handle without creating another recorder.
 
 ```fish
 basaltw desktop --native input click --generation GEN --geometry 2560 1440 --x 400 --y 200

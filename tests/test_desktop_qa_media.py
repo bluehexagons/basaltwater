@@ -12,7 +12,7 @@ from unittest.mock import patch
 from unittest.mock import Mock
 from contextlib import ExitStack
 
-from desktop import audio_analysis, audio_capture, audio_capture_worker, evidence_media, qa_artifacts, qa_timeline
+from desktop import audio_analysis, audio_capture, audio_capture_worker, evidence_media, qa_artifacts, qa_timeline, preflight
 
 
 class QAMediaTests(unittest.TestCase):
@@ -21,6 +21,42 @@ class QAMediaTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.root.chmod(0o700)
+
+    def test_instruction_pages_reconstruct_unicode_and_refuse_changed_files(self):
+        source = self.root / "instructions.md"
+        text = "詳しい instructions\n" * 1000
+        source.write_text(text)
+        first = preflight.instruction_page(str(source))
+        self.assertEqual(first["unread_ranges"], [[4000, len(text)]])
+        parts, start = [], 0
+        while start < len(text):
+            page = preflight.instruction_page(str(source), start=start, sha256=first["sha256"])
+            parts.append(page["text"])
+            start = page["range"][1]
+        self.assertEqual("".join(parts), text)
+        source.write_text("changed")
+        with self.assertRaisesRegex(ValueError, "digest changed"):
+            preflight.instruction_page(str(source), sha256=first["sha256"])
+
+    def test_preflight_preserves_unknown_stopped_worker_and_changed_skills(self):
+        clean = {"commit": "a" * 40, "dirty": False}
+        manifest = {"installation_context": {"invoked": clean, "managed": clean,
+                    "drift": {"invoked_managed": False, "invoked_native_worker": False}},
+                    "provenance": {"delivered_skills": [{"drift": True}, {"drift": None}]}}
+        backend = Mock()
+        backend.status.return_value = {"state": "stopped", "helper_running": False,
+            "worker_provenance": {"schema_version": 1, "source": clean}, "agent_control": "human-override"}
+        with patch("lib.agent_environment.inspect_environment", return_value=manifest), \
+                patch("lib.agent_environment.scoped_environment", return_value=manifest):
+            result = preflight.preflight(str(self.root), backend=backend, native=True, output=str(self.root / "preflight"),
+                                         instructions=[str(self.root / "missing")])
+        self.assertEqual(result["checks"]["invoked_managed"]["state"], "observed")
+        self.assertEqual(result["checks"]["invoked_native_worker"]["state"], "unavailable")
+        self.assertEqual(result["checks"]["delivered_skills"], {"state": "mismatched", "count": 2, "unknown_count": 1})
+        self.assertEqual(result["checks"]["human_control"]["value"], "human-override")
+        self.assertEqual(result["instructions"][0]["state"], "unavailable")
+        backend.request.assert_not_called()
+        self.assertTrue(Path(result["artifact"]).exists())
 
     def test_snapshot_pins_regular_bytes_rejects_links_and_preserves_original(self):
         source = self.root / "原 image.png"
@@ -67,6 +103,7 @@ class QAMediaTests(unittest.TestCase):
         self.assertNotIn("<script>", report)
         exported = evidence_media.export_reviewed(result["artifact"], str(self.root / "reviewed"), "QA reviewer")
         self.assertEqual(exported["review"], "operator-reviewed")
+        self.assertEqual(exported["included_originals"], ["source.png"])
         self.assertNotIn(str(self.root), Path(exported["artifact"]).read_text())
         Path(result["artifact"]).parent.joinpath("crop.png").write_bytes(b"tampered")
         with self.assertRaisesRegex(ValueError, "matches"):

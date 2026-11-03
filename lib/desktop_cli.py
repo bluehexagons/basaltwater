@@ -27,6 +27,18 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument("--native", action=_NativeBackendAction, nargs=0, default=False,
                         help="Use KDE Wayland portal automation on CachyOS; start requests user consent")
     commands = parser.add_subparsers(dest="desktop_command", required=True)
+    preflight = commands.add_parser("preflight", help="Read-only compact manifest/provenance/status bundle with explicit gaps")
+    preflight.add_argument("--repository", default=".")
+    preflight.add_argument("--managed-source")
+    preflight.add_argument("--instruction", action="append", default=[], help="Relevant required file; repeat up to 16, return retrievable range checklist")
+    preflight.add_argument("--output", help="New private evidence directory outside Git")
+    preflight.add_argument("--json", action="store_true")
+    instructions = commands.add_parser("instructions", help="Read at most 4000 Unicode characters with explicit remaining ranges")
+    instructions.add_argument("path")
+    instructions.add_argument("--start", type=int, default=0)
+    instructions.add_argument("--characters", type=int, default=4000)
+    instructions.add_argument("--sha256", help="Refuse a changed file when continuing a bounded read")
+    instructions.add_argument("--json", action="store_true")
     from desktop.development import add_development_parser
     add_development_parser(commands)
     evidence = commands.add_parser("evidence", help="Native: record manual launches, inputs and captures with project/task provenance")
@@ -77,7 +89,7 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     target.add_argument("--window", help="Capture a window ID from 'desktop windows'")
     target.add_argument("--active-window", action="store_true", help="Capture the active application without changing focus")
     mapping = commands.add_parser("map-point", help="Native: convert presented-image points to monitor pixels without sending input")
-    mapping.add_argument("--geometry", required=True, nargs=2, type=int, metavar=("WIDTH", "HEIGHT"),
+    mapping.add_argument("--geometry", nargs=2, type=int, metavar=("WIDTH", "HEIGHT"),
                          help="Full-monitor geometry from the screenshot metadata")
     mapping.add_argument("--view-geometry", required=True, nargs=2, type=int, metavar=("WIDTH", "HEIGHT"),
                          help="Dimensions of the entire PNG as presented, excluding viewer margins")
@@ -88,6 +100,9 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     mapping.add_argument("--to-x", type=int, help="Optional drag endpoint x in the same view")
     mapping.add_argument("--to-y", type=int, help="Optional drag endpoint y in the same view")
     mapping.add_argument("--json", action="store_true")
+    mapping.add_argument("--capture", help="Saved screenshot JSON receipt; checks its token, geometry and age against status without capturing")
+    mapping.add_argument("--view-origin", nargs=2, type=int, metavar=("LEFT", "TOP"),
+                         help="Presented image content origin inside a viewer; points include these margins (requires --capture)")
     execute = commands.add_parser("exec")
     execute.add_argument("--wait-window", help="Wait for a visible window with this literal title substring")
     execute.add_argument("--timeout", type=float, default=15)
@@ -167,7 +182,8 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     action.add_argument("--to-x", type=int, help="Native drag endpoint in full-monitor capture pixels")
     action.add_argument("--to-y", type=int)
     action.add_argument("--duration-ms", type=int, help="Native drag duration, 1–5000 ms (default: 300)")
-    action.add_argument("--button", type=int, default=1)
+    action.add_argument("--button", type=int, choices=range(1, 8), default=1,
+                        help="Integer: 1 left, 2 middle, 3 right, 4/5 vertical wheel, 6/7 horizontal wheel; drag uses 1–3")
     action.add_argument("--observe", action="store_true", help="After completed input, settle and capture again; native skips the initial sample; never replay on capture failure")
     action.add_argument("--settle-ms", type=int, default=120, help="Settling delay for --observe, 0–5000 ms (default: 120)")
     action.add_argument("--output", help="New PNG path for --observe; defaults to private artifact storage")
@@ -184,7 +200,14 @@ def run_desktop_command(args: argparse.Namespace) -> int:
     try:
         command = args.desktop_command
         control_command = "basaltw desktop --native" if backend is not runtime else "basaltw desktop"
-        if command == "accessibility-record":
+        if command == "preflight":
+            from desktop.preflight import preflight
+            result = preflight(args.repository, backend=backend, native=backend is not runtime,
+                               managed_source=args.managed_source, instructions=args.instruction, output=args.output)
+        elif command == "instructions":
+            from desktop.preflight import instruction_page
+            result = instruction_page(args.path, start=args.start, characters=args.characters, sha256=args.sha256)
+        elif command == "accessibility-record":
             from desktop.accessibility_recording import run_recording_command
             result = run_recording_command(args)
         elif command == "audio" or (command == "evidence" and args.evidence_command in ("crop", "excerpt", "export", "timeline")):
@@ -195,9 +218,22 @@ def run_desktop_command(args: argparse.Namespace) -> int:
         elif command == "map-point":
             if backend is runtime:
                 raise ValueError("Selected-monitor coordinate mapping requires --native")
-            from desktop.coordinates import map_capture_points
-            result = map_capture_points(args.geometry, args.view_geometry, args.x, args.y,
-                                        crop=args.crop, to_x=args.to_x, to_y=args.to_y)
+            from desktop.coordinates import map_capture_points, map_observation_points
+            if args.capture:
+                from lib.atomic_io import read_json_file
+                validate_filesystem_path(args.capture, must_exist=True)
+                capture = read_json_file(args.capture, max_bytes=65536)
+                if not isinstance(capture, dict):
+                    raise ValueError("Expected a screenshot JSON receipt")
+                if args.geometry is not None or args.crop is not None:
+                    raise ValueError("--capture supplies geometry/crop; omit --geometry and --crop")
+                result = map_observation_points(capture, backend.status(), args.view_geometry, args.x, args.y,
+                    view_origin=args.view_origin, to_x=args.to_x, to_y=args.to_y)
+            else:
+                if args.view_origin is not None:
+                    raise ValueError("--view-origin requires --capture")
+                result = map_capture_points(args.geometry, args.view_geometry, args.x, args.y,
+                                            crop=args.crop, to_x=args.to_x, to_y=args.to_y)
         elif command == "evidence":
             if backend is runtime:
                 raise ValueError("Manual desktop evidence requires --native")
@@ -418,5 +454,9 @@ def run_desktop_command(args: argparse.Namespace) -> int:
         print(json.dumps(result, indent=2))
         return exit_code
     except (OSError, ValueError, RuntimeError, KeyError, subprocess.SubprocessError) as exc:
-        print(json.dumps({"error": str(exc)}))
+        result = getattr(exc, "receipt", {"error": str(exc)})
+        if args.desktop_command == "input" and "input_delivery" not in result:
+            from desktop.receipts import input_failure
+            result = input_failure(exc, {"generation": args.generation}, stage="before-input")
+        print(json.dumps(result))
         return 1

@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import struct
+import shlex
 import subprocess
 import tempfile
 import time
@@ -19,12 +20,65 @@ from unittest.mock import Mock, call, patch
 import zlib
 
 from desktop import client, control_state, native_session as native, portal_capture
-from desktop.coordinates import map_capture_points
+from desktop.coordinates import map_capture_points, map_observation_points
 from desktop.observations import compact_capture
+from desktop.receipts import DesktopRequestError
+from desktop.evidence import Recorder, verify
 from lib import desktop_cli
 
 
 class CaptureCoordinateTests(unittest.TestCase):
+    def test_cli_frame_recipe_roundtrips_into_one_token_bound_action(self):
+        parser = argparse.ArgumentParser()
+        desktop_cli.add_desktop_subparser(parser.add_subparsers())
+        capture = {"observation_id": "a" * 32, "generation": "b" * 32, "control_revision": "c" * 32,
+                   "geometry": [2400, 1600], "image_origin": [0, 0], "image_geometry": [2400, 1600]}
+        current = {**capture, "state": "running", "capture_freshness": {"fresh": True},
+                   "input_capabilities": ["observation-input"]}
+        with tempfile.TemporaryDirectory() as folder, patch.object(native, "status", return_value=current), \
+                patch.object(native, "request", return_value={"input_delivery": "completed"}) as request:
+            path = Path(folder) / "frame.json"
+            path.write_text(json.dumps(capture))
+            output = StringIO()
+            with redirect_stdout(output):
+                code = desktop_cli.run_desktop_command(parser.parse_args(["desktop", "--native", "map-point", "--capture", str(path),
+                    "--view-geometry", "1200", "800", "--view-origin", "20", "30", "--x", "620", "--y", "430"]))
+            self.assertEqual(code, 0)
+            request.assert_not_called()
+            result = json.loads(output.getvalue())
+            action = ["desktop", "--native", "input", *shlex.split(result["input_context_args"]),
+                      "click", *shlex.split(result["input_args"]), "--button", "1"]
+            with redirect_stdout(StringIO()):
+                self.assertEqual(desktop_cli.run_desktop_command(parser.parse_args(action)), 0)
+            self.assertEqual(request.call_count, 1)
+            self.assertEqual(request.call_args.args[0]["observation_id"], capture["observation_id"])
+            request.reset_mock()
+            used = Path(folder) / "used.png"
+            used.write_bytes(b"existing")
+            with redirect_stdout(StringIO()):
+                self.assertEqual(desktop_cli.run_desktop_command(parser.parse_args(action + ["--observe", "--output", str(used)])), 1)
+            request.assert_not_called()
+            for button in ("left", "0", "8"):
+                with redirect_stdout(StringIO()), patch("sys.stderr", StringIO()), self.assertRaises(SystemExit):
+                    parser.parse_args(action + ["--button", button])
+
+    def test_frame_mapping_keeps_context_margins_and_both_endpoints(self):
+        capture = {"observation_id": "a" * 32, "generation": "b" * 32, "control_revision": "c" * 32,
+                   "geometry": [2400, 1600], "image_origin": [100, 200], "image_geometry": [800, 600]}
+        current = {**capture, "state": "running", "capture_freshness": {"fresh": True, "remaining_seconds": 40}}
+        result = map_observation_points(capture, current, [400, 200], 210, 120,
+                                       view_origin=[10, 20], to_x=409, to_y=219)
+        self.assertEqual(result["input_coordinates"], {"x": 500, "y": 500, "to_x": 898, "to_y": 797})
+        self.assertEqual(result["scale"], [2, 3])
+        self.assertIn("--observation " + "a" * 32, result["input_context_args"])
+        for changes in ({"generation": "new"}, {"geometry": [1200, 800]}, {"observation_id": None},
+                        {"image_origin": [101, 200]}, {"control_revision": "new"},
+                        {"capture_freshness": {"fresh": False}}, {"state": "stopped"}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                map_observation_points(capture, {**current, **changes}, [400, 200], 1, 1)
+        with self.assertRaisesRegex(ValueError, "within"):
+            map_observation_points(capture, current, [400, 200], 9, 20, view_origin=[10, 20])
+
     def test_presented_full_capture_and_drag_map_to_monitor_pixels(self) -> None:
         result = map_capture_points([2400, 1600], [1920, 1280], 800, 600, to_x=1200, to_y=800)
         self.assertEqual(result["input_coordinates"], {"x": 1000, "y": 750, "to_x": 1500, "to_y": 1000})
@@ -94,6 +148,49 @@ class NativeCanvasTests(unittest.TestCase):
         self.payload = {"action": "input", "kind": "drag", "generation": self.session.generation,
                         "geometry": self.session.geometry, "control_revision": self.session.control_revision,
                         "x": 100, "y": 200, "to_x": 500, "to_y": 400, "duration_ms": 40}
+
+    def test_refusal_transport_and_post_input_observation_have_distinct_receipts(self):
+        with patch("desktop.evidence.revision", return_value={}):
+            recorder = Recorder(str(self.home), self.session.generation)
+        self.session.evidence = recorder
+        self.session.captured -= 61
+        with self.assertRaises(DesktopRequestError) as refused:
+            self.session.handle(self.payload)
+        self.assertEqual(refused.exception.receipt["input_delivery"], "not-sent")
+        self.portal.notify.assert_not_called()
+        self.assertEqual(recorder.data["events"][-1]["outcome"], "refused")
+        self.session.captured = time.monotonic()
+        self.portal.notify.side_effect = RuntimeError("ambiguous portal transport")
+        with self.assertRaises(DesktopRequestError) as unknown:
+            self.session.handle(self.payload)
+        self.assertEqual(unknown.exception.receipt["input_delivery"], "unknown")
+        self.assertEqual(unknown.exception.receipt["dispatch_stage"], "input-dispatch")
+        backend = Mock()
+        backend.request.side_effect = ConnectionResetError("lost response")
+        with self.assertRaises(DesktopRequestError) as transport:
+            client.send_action(self.payload, backend=backend)
+        self.assertEqual(transport.exception.receipt["reason"], "transport-failed")
+        backend.status.return_value = {"generation": self.session.generation, "control_revision": self.session.control_revision}
+        completed = {"input_completed_at": "now", "input_id": "a" * 32}
+        with patch.object(client.time, "sleep"):
+            result = client.observe_after_input(completed, self.payload, str(self.home / "next.png"), settle_ms=0, backend=backend)
+        self.assertEqual(result["input_delivery"], "completed")
+        self.assertEqual(result["input_id"], completed["input_id"])
+        self.assertEqual(result["reason"], "observation-failed")
+        recorder.event({"action": "screenshot"}, {"error": "failed capture"})
+        result = verify(str(recorder.path))
+        self.assertEqual(result["counts"]["image_less"], 1)
+        self.assertEqual(result["uncertain_events"], 2)
+        self.assertFalse(result["healthy"])
+
+    def test_duplicate_recorder_exposes_existing_handle_and_capacity(self):
+        with patch("desktop.evidence.revision", return_value={}):
+            started = self.session.handle({"action": "evidence", "operation": "start", "generation": self.session.generation,
+                                           "project": str(self.home)})
+        with self.assertRaises(DesktopRequestError) as duplicate:
+            self.session.handle({"action": "evidence", "operation": "start", "generation": self.session.generation})
+        self.assertEqual(duplicate.exception.receipt["artifact"], started["artifact"])
+        self.assertEqual(duplicate.exception.receipt["remaining_events"], 500)
 
     def test_drag_interpolates_scaled_coordinates_and_releases_before_completion(self) -> None:
         with patch.object(self.session, "hold", side_effect=lambda ms, p: self.session.guard(p)) as hold:
