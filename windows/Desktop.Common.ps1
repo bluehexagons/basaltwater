@@ -162,9 +162,9 @@ function Invoke-NativeDesktopWorkerBody($Request) {
         }
         'windows' { return @{ windows = @([Basaltwater.Desktop.Native]::Windows()); monitors = @([Basaltwater.Desktop.Native]::Monitors()); coverage = 'Visible accessible windows in current account/session; inaccessible windows omitted' } }
         'inspect' { return [Basaltwater.Desktop.Native]::Inspect([int]$Request.pid, $Request.record, $Request.name, $Request.role) }
-        'window' { return @{ window = [Basaltwater.Desktop.Native]::Change([long]$Request.window, $Request.identity, $Request.operation, [int]$Request.x, [int]$Request.y, [int]$Request.width, [int]$Request.height); outcome_verified = $true } }
+        'window' { return @{ window = [Basaltwater.Desktop.Native]::Change([long]$Request.window, $Request.identity, $Request.operation, [int]$Request.x, [int]$Request.y, [int]$Request.width, [int]$Request.height,$script:NativeDesktopInputGuard); outcome_verified = $true } }
         'element' {
-            $verified = [Basaltwater.Desktop.Native]::Act($Request.record, $Request.operation, $Request.text)
+            $verified = [Basaltwater.Desktop.Native]::Act($Request.record, $Request.operation, $Request.text,$script:NativeDesktopInputGuard)
             if ($Request.operation -ne 'invoke' -and -not $verified) { throw 'Element outcome not observed; inspect before retrying' }
             return @{ accepted = $true; outcome_verified = $verified; verification = 'Focus/Value are read back; InvokePattern requires task-specific reinspection' }
         }

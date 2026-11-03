@@ -32,9 +32,10 @@ Changed source refuses further warm requests until explicit stop/start. A busy,
 failed or timed-out worker never falls back by replaying the action in another
 worker. Claimed requests are single-use. Expired queued requests and departed
 callers cannot begin input. Warm input rechecks caller/deadline/control admission
-after potentially slow target probes. Raw Unicode text is constructed in full
-and submitted in one bounded batch, with accepted-prefix release after partial
-delivery. It is not paced typing or an IME composition test.
+after potentially slow target probes. Window changes and UI Automation mutations
+also check admission after resolving their target or pattern. Raw Unicode text
+is constructed in full and submitted in one bounded batch, with accepted-prefix
+release after partial delivery. It is not paced typing or an IME composition test.
 
 The [keyboard hold watchdog](windows-held-input.md) remains independent of this
 worker. Warm holds reuse the driver and preparation path but still create their

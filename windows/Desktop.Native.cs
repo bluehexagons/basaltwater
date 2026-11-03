@@ -108,8 +108,10 @@ public static partial class Native {
         }
         throw new Exception("Window outcome not observed; inspect before retrying");
     }
-    public static Window Change(long id,string identity,string operation,int x,int y,int width,int height) {
+    public static Window Change(long id,string identity,string operation,int x,int y,int width,int height,Func<string> guard) {
+        InputPermit(guard);
         var before=Check(id,identity); var w=before; var h=new IntPtr(id); bool requested=true;
+        InputPermit(guard);
         switch(operation) {
             case "focus": requested=SetForegroundWindow(h); break;
             case "move": requested=SetWindowPos(h,IntPtr.Zero,x,y,0,0,0x15); break;
@@ -183,16 +185,17 @@ public static partial class Native {
             Walk(child,window,identity,next,scan,clock,name,role); child=TreeWalker.ControlViewWalker.GetNextSibling(child);
         }
     }
-    public static bool Act(Element r,string operation,string text) {
+    public static bool Act(Element r,string operation,string text,Func<string> guard) {
+        InputPermit(guard);
         var e=Resolve(r); object p;
         // Re-resolve immediately before mutation; UIA providers can still race.
         switch(operation) {
-            case "focus": e.SetFocus(); return e.Current.HasKeyboardFocus;
+            case "focus": InputPermit(guard); e.SetFocus(); return e.Current.HasKeyboardFocus;
             case "set-text": if(text==null || text.Length>4096) throw new Exception("Text limit is 4096");
                 if(!e.TryGetCurrentPattern(ValuePattern.Pattern,out p) || ((ValuePattern)p).Current.IsReadOnly) throw new Exception("Editable ValuePattern unavailable");
-                ((ValuePattern)p).SetValue(text); return ((ValuePattern)p).Current.Value==text;
+                InputPermit(guard); ((ValuePattern)p).SetValue(text); return ((ValuePattern)p).Current.Value==text;
             case "invoke": if(!e.TryGetCurrentPattern(InvokePattern.Pattern,out p)) throw new Exception("InvokePattern unavailable");
-                ((InvokePattern)p).Invoke(); return false; // application acceptance cannot prove task completion
+                InputPermit(guard); ((InvokePattern)p).Invoke(); return false; // application acceptance cannot prove task completion
             default: throw new Exception("Unsupported element operation");
         }
     }

@@ -40,4 +40,12 @@ Assert-Transport ($caught.Exception.Message -match 'unconfirmed' -and $script:Tr
 $caught=$null
 try{[Basaltwater.Desktop.Native]::InputAction(0,'invalid','text','x',0,0,1,1,[Func[string]]{return 'fixture caller expired'})}catch{$caught=$_}
 Assert-Transport ($caught.Exception.Message -match 'fixture caller expired') 'Caller/deadline guard ran after native input admission'
+foreach($operation in @('window','element')){
+    $caught=$null
+    try{
+        if($operation -eq 'window'){[Basaltwater.Desktop.Native]::Change(0,'invalid','focus',0,0,1,1,[Func[string]]{return 'fixture caller expired'})}
+        else{[Basaltwater.Desktop.Native]::Act($null,'focus','',[Func[string]]{return 'fixture caller expired'})}
+    }catch{$caught=$_}
+    Assert-Transport ($caught.Exception.Message -match 'fixture caller expired') 'Window/UIA mutation bypassed caller admission'
+}
 Write-Host 'Atomic Unicode, partial click and caller guard contracts passed (transport mocked).'
