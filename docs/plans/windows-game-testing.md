@@ -18,9 +18,10 @@ Offline construction and transport tests cover flags, ordering, bounds, invalid
 input and partial submission. The [native readiness and acceptance record](../workstations/windows-testing.md)
 documents installed-host/session qualification and the unprefixed-navigation
 mapping defect found in SDL. Corrected source explicitly marks dedicated
-navigation keys extended; installed `b16d1ca0` requires an update. Real SDL event
-delivery and nine Antistatic caret/selection assertions passed on corrected
-source. WinForms and other application widgets remain separate acceptance checks:
+navigation keys extended. Refreshed installed `58206546` passed ten real SDL
+input cases and 27 Antistatic editing, selection, resize and fullscreen
+assertions without a private input helper. The older installed `b16d1ca0`
+requires an update. WinForms and other widgets remain separate acceptance checks:
 
 1. Use a disposable text fixture in each toolkit. Record the loaded Basaltwater
    revision, keyboard layout and toolkit version in private evidence.
@@ -85,6 +86,68 @@ Native [task diagnostics](../workstations/windows-diagnostics.md) now retain
 actual executable identity/exit evidence and offer bounded owned-root resource
 snapshots before cancellation. This does not yet provide crash dumps or hang
 stack traces.
+
+### Delivery order from consuming-game testing
+
+Use the following order for new scoped increments. These are proposed
+capabilities, not currently available Windows commands. Retain per-platform
+capability discovery and explicit unsupported results; Linux and Windows need
+equivalent evidence contracts, not identical implementation mechanisms.
+
+| Priority | Capability | Additional game behavior it enables |
+| --- | --- | --- |
+| 1 | Owned-child identity and diagnostic selection | Attribute CPU, memory, handles and exit evidence to the game worker behind a Node/npm adapter, including replacement workers. |
+| 2 | Leased held input on Windows | Exercise continuous keyboard movement, held attacks, key repeat and focus-loss release through the real OS input path. |
+| 3 | Timestamped GPU-window capture and project event journal | Compare rendered game markers with captured desktop frames across scene changes, resize and fullscreen, without requiring an engine screenshot hook. |
+| 4 | Process-scoped frame-pacing traces | Correlate cold stage boundaries and focus/fullscreen events with observed presentation timing. |
+| 5 | Process audio and operator-assisted recovery checkpoints | Detect silence/discontinuities and correlate physical controller/audio-device recovery with game observations. |
+
+**Owned children:** keep the existing task guardian and Job Object. Resolve
+targets only inside that task, validate account/session, creation identity and
+membership on every sample, and retain parent/child identities through worker
+replacement. Refuse stale, escaped and unrelated targets. Distinguish native
+root, selected child and bounded tree samples, including partial/unavailable
+coverage. This directly addresses wrappers whose root remains idle while the
+game is busy. Acceptance needs a real wrapped fixture, child replacement, PID
+reuse rejection, cancellation and terminal retained exit evidence. Do not hold
+query handles in a way that prolongs the kill-on-close Job's lifetime.
+
+**Held input:** bring the useful bounded hold behavior of the
+[CachyOS native adapter](../workstations/cachyos-desktop.md) to Windows, with
+monotonic scheduled state changes and actual send-time/lateness records. Each
+request owns a finite lease and only its synthetic pressed keys/buttons.
+Foreground/identity/geometry loss, human override, cancellation and watchdog
+expiry must stop the sequence and release owned state. Do not release unrelated
+physical input or replay after partial delivery. Qualify both SDL events and
+frame-polled held state across multiple application ticks; immediate down/up
+events alone are insufficient. Keep deterministic game-frame timelines in the
+project protocol. Virtual-pad support remains a separate
+[controller-adapter increment](game-testing.md), not proof of physical HID,
+GameInput/XInput, USB or reconnect behavior.
+
+Bundle an optional fresh post-action observation/capture with the receipt to
+reduce control round trips, as the native Linux adapter already allows. Keep
+queue acceptance separate from the project's outcome assertions. Measure
+end-to-end latency before choosing a persistent worker, and retain lease expiry
+and control checks if a worker is reused; cached references must not bypass
+freshness or geometry checks.
+
+**Shared evidence:** align capture, input, diagnostics and optional project
+phase/frame markers using explicit clock domains, UTC/QPC anchors, sequence
+numbers and loss accounting. Accept project events only through an opt-in data
+contract; do not execute discovered commands or interpret game-specific state
+inside Basaltwater. Preserve output/presentation dimensions separately from
+internal render size and scale. A project screenshot does not observe compositor
+delivery, and a captured desktop frame does not prove physical scanout.
+
+The small enabling documentation increment is a project-neutral Node session
+adapter example: explicitly apply the supplied profile to children, publish
+readiness after project checks, use file URLs for Windows preloads, forward exit
+failure and close all children. Demonstrate with a disposable fixture and keep
+project commands usable without Basaltwater. The adapter contract must explain
+which paths survive a project-owned worker/profile reset.
+
+### Capture, timing and recovery acceptance
 
 - **GPU-window capture:** add an explicit Windows Graphics Capture backend,
   preserving PrintWindow as a named alternative. Record client-area geometry,

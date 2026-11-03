@@ -94,8 +94,32 @@ No feedback was submitted and the ordinary game profile was not used.
 
 This confirms those caret/selection outcomes in the tested game widget. WinForms
 delivery, other game widgets, IME composition, clipboard shortcuts and physical
-controller behavior remain separate acceptance work. The corrected checkout CLI
-was used for input; the installed `b16d1ca0` launcher still requires refresh.
+controller behavior remain separate acceptance work. That initial pass used the
+corrected checkout CLI; installed `b16d1ca0` requires refresh.
+
+### Refreshed installed qualification
+
+The installed `58206546` launcher subsequently passed ten real SDL input cases,
+including dedicated navigation keys, Ctrl/Shift chords, bounded sequences and
+exact committed Unicode text, with balanced key releases. Six rejection checks
+covered duplicate modifiers, unsupported/empty sequence items, sequence/text
+limits and changed geometry. No events reached the fixture for those requests;
+an invalid trailing item did not submit the preceding valid HOME.
+
+Antistatic then passed 27 real-game assertions using only the installed public
+input commands. The checks repeat grapheme navigation/deletion, selection and
+replacement, rejected over-limit edits, acceptance/cancellation and focus, and
+add combined-key sequences plus selection surviving resize and F11 fullscreen
+and window restoration. No private SendInput helper, clipboard manipulation or
+feedback submission was used. Unsupported emoji glyph coverage remains separate.
+
+A project adapter explicitly applied the supervised profile and published live
+readiness after advancing frames with a valid render target. Normal game exit,
+explicit fixture cancellation and screenshot smoke all settled; generated
+profiles/private requests and Scheduler registrations were removed. The ordinary
+game profile's inventory, hashes and modification times were unchanged, as was
+human-control state. Full source/native project gates passed separately; those
+results do not qualify a current clean package or a physical input/audio device.
 
 ## Repeatable acceptance
 
