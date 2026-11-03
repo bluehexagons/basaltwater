@@ -192,6 +192,25 @@ use normal logout when changing sessions.
 
 ## Pace text for custom editors
 
+On Debian/XRDP, each input request has one eight-second runtime budget, capped
+by an optional finite absolute `time.monotonic()` `deadline` in the local payload.
+The transport propagates that deadline so an expired queued request cannot
+inject later. Geometry probes and input subprocesses consume the same budget;
+permission and control revision are rechecked after probes and before each
+injection, including the click after a pointer move. These checks cannot make
+the permission read and X server injection atomic. Filesystem locks, process
+creation and OS scheduling can also delay return beyond a timeout.
+
+Debian input rejects `hold_ms` and `duration`, including zero. It supports
+discrete input only. Commands no longer ask xdotool to clear and restore human
+modifiers; a held human modifier can therefore affect typed text or a chord.
+Avoid simultaneous human and agent input. A failed/timed-out xdotool chord can
+leave a partial chord or uncertain modifier state. No global key release is
+attempted: the subprocess adapter cannot prove which pressed keys belong to
+this request. Inspect the desktop and modifier state before further input; do
+not replay an uncertain request. A persistent X connection with owned press/
+release tracking and qualified failure cleanup remains future adapter work.
+
 Some custom editors, including Blender's Python Console, can drop characters
 at the default typing speed. Use `--delay-ms 10` for these controls:
 
@@ -206,6 +225,8 @@ Human intervention invalidates the remaining characters. Text remains limited
 to 1024 characters; pacing has a 20-second budget including request overhead.
 Use shorter commands if it exceeds the budget. Sequence input actions accept
 `"delay_ms": 10` and share that budget across paced actions in the sequence.
+The Debian pacing path still opens a request for each character; these runtime
+safety checks do not establish a persistent input connection or release guarantee.
 
 `submitted_characters` counts acknowledged requests, not verified application
 text. Inspect the command before pressing Return, and verify its result afterward.

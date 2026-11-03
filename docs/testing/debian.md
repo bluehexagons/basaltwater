@@ -79,6 +79,22 @@ detailed host checks cover one physical node; the owner also reports two basic
 
 ## Next checks
 
+For Debian/XRDP input deadline, permission revalidation, unsupported hold fields
+and uncertain-completion regressions, run on the documented Debian development
+environment:
+
+```bash
+python3 run_tests.py tests.test_desktop_control tests.test_desktop_session
+```
+
+The input safety changes have syntax and mocked behavioral validation on a
+Windows host only; this does not extend the earlier XRDP lab qualification.
+Native follow-up must qualify the exact candidate's held-human-modifier
+behavior, timeout/failed-chord state, revocation during slow probes and expired
+queued requests on a disposable desktop. The xdotool adapter still lacks proven
+owned-key release after interruption; bounded holds and persistent X input are
+not qualified. See [input limits](../workstations/desktop-automation.md#pace-text-for-custom-editors).
+
 - Follow the [bounded continuation procedure](continuing.md). Selected Shares &
   Data HTTP/worker, recovery and installed-browser checks are recorded. A real
   leaf-package Admin update and separately approved no-op now pass

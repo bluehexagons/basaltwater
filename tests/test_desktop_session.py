@@ -222,7 +222,7 @@ class DesktopControlTests(unittest.TestCase):
 
     @patch.object(runtime, "run_tool")
     def test_repeated_pointer_moves_and_clicks_do_not_wait_for_motion(self, tool):
-        def respond(argv):
+        def respond(argv, **_options):
             if argv[1] == "mousemove":
                 # Reproduce xdotool --sync blocking when already at (10, 20).
                 if "--sync" in argv:
