@@ -292,8 +292,9 @@ class SetupTests(unittest.TestCase):
 
         document = render_web_panel_nginx(["vm.example"], 443, approvals=True)
         self.assertIn('auth_basic_user_file ', document)
-        self.assertIn('location ~ "^/(approvals$|requests/[a-f0-9]{32}$)"', document)
-        route = document.split('location ~ "^/(approvals$', 1)[1].split('\n    }', 1)[0]
+        route_pattern = 'location ~ "^/(approvals(?:/admin(?:/[a-z-]+)?)?$|requests/[a-f0-9]{32}$)"'
+        self.assertIn(route_pattern, document)
+        route = document.split(route_pattern, 1)[1].split('\n    }', 1)[0]
         self.assertIn('proxy_pass http://unix:' + PANEL_APPROVAL_SOCKET, route)
         self.assertIn('proxy_set_header X-Basaltwater-User $remote_user;', route)
         self.assertIn('proxy_set_header Authorization "";', route)

@@ -28,7 +28,7 @@ from lib.privilege_policy import (
     REQUEST_SOCKET, WEB_USER, canonical, digest, load_policy, operation_plan, protected_path,
 )
 from common.service_tools.admin_job import availability as admin_availability, job_status
-from lib.admin_actions import ADMIN_HELPER
+from lib.admin_actions import ADMIN_ACTIONS, ADMIN_HELPER
 from lib.data_actions import DATA_HELPER
 from lib.samba_accounts import PASSWORD_ACTIONS, SAMBA_ACCOUNT_HELPER
 from lib.samba_shares import SHARE_HELPER, share_label, share_name
@@ -288,10 +288,59 @@ class Broker:
             self._transition(request["id"], result.state, request["actor"])
         return True
 
+    def admin_catalog(self) -> dict:
+        """Report fixed host-action availability to the isolated approver."""
+        with self.lock, self.db:
+            self._expire()
+            policy = self.policy_loader()
+            status = job_status()
+            blocked = dict(status["blocked"])
+            if policy["reboot"] == "deny":
+                blocked.update({key: "Power control is denied by administrator policy."
+                                for key in ("reboot", "reboot-warning", "shutdown")})
+            if status.get("unit_state") not in {"inactive", "failed"}:
+                for key in ADMIN_ACTIONS:
+                    if key != "cancel-shutdown":
+                        blocked.setdefault(key, "Maintenance is running or its state is unavailable. Refresh after checking its status.")
+            if self.db.execute("SELECT 1 FROM requests WHERE state IN ('pending','approved','executing') AND json_extract(plan,'$.operation')='admin.run' LIMIT 1").fetchone():
+                for key in ADMIN_ACTIONS:
+                    blocked.setdefault(key, "Review or cancel the outstanding administration request first.")
+            return {"blocked": blocked}
+
+    def admin_preview(self, action: str) -> dict:
+        """Review a fixed host action without creating a pending request."""
+        with self.lock, self.db:
+            self._expire()
+            policy = self.policy_loader()
+            plan = operation_plan(policy, policy["requester_uid"], "admin.run", {"action": action})
+            blocked = self.admin_catalog()["blocked"]
+            if blocked.get(action):
+                raise ValueError(blocked[action])
+            return {"plan": plan, "digest": digest(plan)}
+
+    def admin_approve(self, action: str, fingerprint: str, actor: str) -> dict:
+        """Only the approval identity may create and approve a reviewed fixed action."""
+        with self.lock:
+            preview = self.admin_preview(action)
+            if fingerprint != preview["digest"]:
+                raise ValueError("The reviewed action changed; open a fresh review")
+            request = self.request(preview["plan"]["uid"], "admin.run", {"action": action}, "Administrator requested host action")
+            # request() rereads policy. Preserve a pending request if it changed
+            # during acceptance, and never approve a plan the browser did not see.
+            if digest(request["plan"]) != fingerprint:
+                raise ValueError("The reviewed action changed; inspect the pending request")
+            return self.decide(request["id"], request["digest"], True, actor)
+
     def dispatch(self, message: object, uid: int, *, approval: bool = False) -> dict:
         if not isinstance(message, dict):
             raise ValueError("Expected an object")
         action = message.get("action")
+        if approval and action == "admin-catalog" and set(message) == {"action"}:
+            return self.admin_catalog()
+        if approval and action == "admin-preview" and set(message) == {"action", "admin_action"}:
+            return self.admin_preview(message["admin_action"])
+        if approval and action == "admin-approve" and set(message) == {"action", "admin_action", "digest", "actor"}:
+            return self.admin_approve(message["admin_action"], message["digest"], message["actor"])
         if not approval and action == "routine-status" and set(message) == {"action"}:
             policy = self.policy_loader()
             if uid != policy["requester_uid"]:
@@ -396,7 +445,7 @@ class Broker:
             result = job_status()
             result["restartable_services"] = sorted(policy["services"])
             if policy["reboot"] == "deny":
-                result["blocked"].update({key: "Power control is denied by administrator policy." for key in ("reboot", "shutdown")})
+                result["blocked"].update({key: "Power control is denied by administrator policy." for key in ("reboot", "reboot-warning", "shutdown")})
             with self.lock, self.db:
                 self._expire()
                 rows = self.db.execute("SELECT id,created,state,plan FROM requests WHERE uid=? ORDER BY created DESC LIMIT 100", (uid,)).fetchall()
@@ -423,8 +472,14 @@ class Broker:
             with self.lock, self.db:
                 self._expire()
                 rows = self.db.execute(f"SELECT id,uid,created,state,plan FROM requests ORDER BY {_REVIEW_ORDER} LIMIT 20").fetchall()
-                return {"requests": [{"id": row["id"], "uid": row["uid"], "created": row["created"],
-                                      "state": row["state"], "operation": json.loads(row["plan"])["operation"]} for row in rows]}
+                records = []
+                for row in rows:
+                    plan = json.loads(row["plan"])
+                    target = (plan["parameters"]["action"] if plan["operation"] == "admin.run" else
+                              plan["parameters"]["unit"] if plan["operation"] == "service.restart" else "")
+                    records.append({"id": row["id"], "uid": row["uid"], "created": row["created"],
+                                    "state": row["state"], "operation": plan["operation"], "target": target})
+                return {"requests": records}
         if action == "status" and set(message) == {"action", "id"}:
             return self.status(message["id"], None if approval else uid)
         if not approval and action == "cancel" and set(message) == {"action", "id"}:

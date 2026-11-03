@@ -28,6 +28,7 @@ from common.service_tools import privilege_approval as approval
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.privilege_auth import password_record
 from scripts.panel_dev import RELOAD_SCRIPT, development_control, development_html
+from scripts.panel_approval_samples import admin_preview, admin_request
 
 
 class SpecializedScenario:
@@ -127,6 +128,18 @@ class SpecializedScenario:
         with self.lock:
             if self.name == "degraded":
                 raise OSError("Synthetic broker unavailable")
+            if message["action"] == "admin-catalog":
+                return {"blocked": {}}
+            if message["action"] in {"admin-preview", "admin-approve"}:
+                preview = admin_preview(message["admin_action"])
+                if message["action"] == "admin-preview":
+                    return preview
+                if message["digest"] != preview["digest"]:
+                    raise ValueError("Synthetic plan changed")
+                request = admin_request(message["admin_action"], "dispatched")
+                self.data["records"][request["id"]] = request
+                self.save()
+                return copy.deepcopy(request)
             for row in self.data["records"].values():
                 if row["state"] == "pending" and row["expires"] <= time.time():
                     row["state"] = "expired"
@@ -257,6 +270,7 @@ def create_app(directory: Path, settings: dict, stack: ExitStack) -> web.Applica
             backend.integrated = False
             backend.auth, backend.origin = password_record(settings["username"], settings["password"]), settings["url"]
             backend.secret, backend.failures, backend.exchange = secrets.token_bytes(32), deque(maxlen=20), scenario.exchange
+            backend.admin_tickets = {}
 
         async def proxy(request):
             async with app[CLIENT].request(request.method, f"http://127.0.0.1:{backend.server_port}{request.rel_url}",

@@ -34,6 +34,7 @@ from lib.maintenance_agent_config import DEFAULTS, validate_policy
 from lib.proxmox_panel import sanitize_cluster
 from lib.validation import validate_git_author_email, validate_git_author_name, validate_github_token, validate_runner_registration_token
 from scripts.panel_samples import finding_catalog_page, job_rows, shares_data_snapshot
+from scripts.panel_approval_samples import admin_preview, admin_request, privilege_request
 from scripts.panel_storage_samples import storage_snapshot
 
 SCENARIOS = ("minimal", "full", "empty", "degraded", "proxmox")
@@ -179,7 +180,8 @@ class Scenario:
         self.replace(state.git_settings, "set_identity", side_effect=self.set_identity)
         self.replace(state.git_settings, "set_github_token", side_effect=self.set_token)
         self.replace(state.git_settings, "remove_github_token", side_effect=lambda: self.set_token(None))
-        state.admin.approval_url = "https://127.0.0.1/fixture-approvals"
+        state.admin.integrated = True
+        state.admin.approval_url = "/approvals"
         self.replace(admin, "exchange", side_effect=self.exchange)
         self.replace(data_actions, "exchange", side_effect=self.exchange)
         self.replace(samba, "exchange", side_effect=self.exchange)
@@ -283,6 +285,27 @@ class Scenario:
 
     def exchange(self, message: dict) -> dict:
         with self.lock:
+            if message["action"] == "admin-catalog":
+                if self.name == "degraded":
+                    raise OSError("Synthetic broker unavailable")
+                return {"blocked": {}}
+            if message["action"] in {"admin-preview", "admin-approve"}:
+                if self.name == "degraded":
+                    raise OSError("Synthetic broker unavailable")
+                preview = admin_preview(message["admin_action"])
+                if message["action"] == "admin-preview":
+                    return preview
+                if message["digest"] != preview["digest"]:
+                    raise ValueError("Synthetic plan changed")
+                request = admin_request(message["admin_action"], "dispatched")
+                self.data["requests"].insert(0, request)
+                self.data["requests"] = self.data["requests"][:20]
+                self.save()
+                return copy.deepcopy(request)
+            if message["action"] == "list":
+                return {"requests": [{"id": row["id"], "uid": 1000, "operation": row.get("plan", {}).get("operation", "admin.run"),
+                                       "target": row.get("plan", {}).get("parameters", {}).get("action", ""),
+                                       "state": row["state"]} for row in self.data["requests"][:20]]}
             if message["action"] == "samba-stage-password":
                 # Never retain even a fixture password in scenario state.
                 return {"job_id": message["parameters"]["job_id"], "expires": time.time() + 3600}
@@ -316,24 +339,28 @@ class Scenario:
                         "privilege_requests": privilege, "restartable_services": ["example.service"], "unit_state": "inactive"}
             if message["action"] == "request":
                 if message["operation"] in {"service.restart", "command.run", "data.run", "data.routine", "samba.account", "samba.shares"}:
-                    request = {"id": uuid.uuid4().hex, "action": message["operation"],
-                               "state": "failed" if self.name == "degraded" else "pending" if message["operation"] in {"data.run", "data.routine", "samba.account", "samba.shares"} else "succeeded", "created": time.time(), "expires": time.time() + 3600,
-                               "plan": {"operation": message["operation"], "parameters": message["parameters"]}}
+                    request = privilege_request(message["operation"], message["parameters"],
+                        "failed" if self.name == "degraded" else "pending" if message["operation"] in {"data.run", "data.routine", "samba.account", "samba.shares"} else "succeeded")
                     request["review_url"] = "https://127.0.0.1/fixture-approvals/" + request["id"]
                     self.data["requests"].insert(0, request)
                     self.save()
                     return copy.deepcopy(request)
-                self.data["requests"].insert(0, {"id": uuid.uuid4().hex, "action": message["parameters"]["action"],
-                    "state": "failed" if self.name == "degraded" else "succeeded", "created": time.time()})
+                request = admin_request(message["parameters"]["action"], "failed" if self.name == "degraded" else "succeeded")
+                self.data["requests"].insert(0, request)
                 self.data["requests"] = self.data["requests"][:20]
                 self.save()
-                return {}
-            if message["action"] in {"status", "cancel"}:
+                return copy.deepcopy(request)
+            if message["action"] in {"status", "cancel", "decide"}:
                 request = next((item for item in self.data["requests"] if item["id"] == message["id"]), None)
                 if request is None:
                     raise ValueError("Synthetic request was not found")
                 if message["action"] == "cancel" and request["state"] == "pending":
                     request["state"] = "cancelled"
+                    self.save()
+                if message["action"] == "decide":
+                    if request["state"] != "pending" or message["digest"] != request["digest"]:
+                        raise ValueError("Synthetic request already decided or changed")
+                    request["state"] = "approved" if message["approve"] else "denied"
                     self.save()
                 return copy.deepcopy(request)
             raise ValueError("Unsupported synthetic broker operation")

@@ -8,6 +8,7 @@ import base64
 from contextlib import ExitStack
 import hashlib
 import html
+import http.client
 from http import HTTPStatus
 from http.server import ThreadingHTTPServer
 import os
@@ -120,7 +121,23 @@ def private_directory(directory: Path) -> None:
         raise ValueError("Development state must be a private directory owned by this account")
 
 
-def development_handler(state: panel.WebPanelState, settings: dict, generation: str, directory: Path):
+def development_approvals(directory: Path, settings: dict, exchange, stack: ExitStack):
+    from common.service_tools.privilege_approval import PanelApprovalServer
+
+    path = directory / "approval.sock"
+    path.unlink(missing_ok=True)
+    backend = PanelApprovalServer(str(path), [settings["url"]], settings["username"],
+                                  os.getuid(), os.getgid(), exchange)
+    thread = threading.Thread(target=backend.serve_forever, kwargs={"poll_interval": 0.1}, daemon=True)
+    thread.start()
+    stack.callback(path.unlink, missing_ok=True)
+    stack.callback(backend.server_close)
+    stack.callback(thread.join, 5)
+    stack.callback(backend.shutdown)
+    return backend
+
+
+def development_handler(state: panel.WebPanelState, settings: dict, generation: str, directory: Path, approval_backend=None):
     """Build a development-only handler without altering the production class."""
     authorization = "Basic " + base64.b64encode(f"{settings['username']}:{settings['password']}".encode()).decode()
 
@@ -154,8 +171,43 @@ def development_handler(state: panel.WebPanelState, settings: dict, generation: 
                 value = value.replace("script-src ", "connect-src 'self'; script-src 'self' ")
             super().send_header(keyword, value)
 
+        def proxy_approval(self) -> None:
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                self._send(HTTPStatus.BAD_REQUEST, "Invalid review length\n", "text/plain")
+                return
+            if not 0 <= length <= 2048:
+                self._send(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "Invalid review\n", "text/plain")
+                return
+            connection = http.client.HTTPConnection("localhost", timeout=5)
+            connection.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            connection.sock.settimeout(5)
+            try:
+                connection.sock.connect(approval_backend.server_address)
+                headers = dict(self.headers)
+                headers["X-Basaltwater-User"] = settings["username"]
+                connection.request(self.command, self.path, self.rfile.read(length), headers)
+                response = connection.getresponse()
+                content = response.read().decode()
+                if response.getheader("Content-Type", "").startswith("text/html"):
+                    content = development_html(content, settings, generation, state.csrf_token)
+                self.send_response(response.status)
+                for key, value in response.getheaders():
+                    if key.lower() not in {"content-length", "connection", "date", "server"}:
+                        self.send_header(key, value)
+                payload = content.encode()
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+            finally:
+                connection.close()
+
         def do_GET(self) -> None:
             if not self.authenticated():
+                return
+            if approval_backend and (self.path.startswith("/approvals") or self.path.startswith("/requests/")):
+                self.proxy_approval()
                 return
             if self.path == "/__dev__/status":
                 self._send_json(HTTPStatus.OK, {"generation": generation, "scenario": settings["scenario"]})
@@ -168,6 +220,9 @@ def development_handler(state: panel.WebPanelState, settings: dict, generation: 
 
         def do_POST(self) -> None:
             if not self.authenticated():
+                return
+            if approval_backend and (self.path.startswith("/approvals") or self.path.startswith("/requests/")):
+                self.proxy_approval()
                 return
             if self.path != "/__dev__/control":
                 super().do_POST()
@@ -215,13 +270,14 @@ def worker(directory: Path, descriptor: int) -> int:
             "panel_url": settings["url"] + "/",
         }, agent_home=str(home), audit_snapshot_path=str(home / "audit.json"),
             notification_log_path=str(home / "notifications.json"), ingest_token_path=str(home / "ingest-token"))
-        Scenario(state, settings["scenario"], stack)
+        scenario = Scenario(state, settings["scenario"], stack)
         if settings["scenario"] not in {"minimal", "empty", "proxmox"}:
             state.manifest["services"] = [{"label": "Synthetic project", "url": settings["url"] + "/__dev__/project",
                                             "description": "Disposable local destination"}]
         generation = uuid.uuid4().hex
 
-        handler = development_handler(state, settings, generation, directory)
+        approvals = development_approvals(directory, settings, scenario.exchange, stack)
+        handler = development_handler(state, settings, generation, directory, approvals)
         server = ThreadingHTTPServer(("127.0.0.1", 0), handler, bind_and_activate=False)
         server.socket.close()
         server.socket = socket.socket(fileno=descriptor)

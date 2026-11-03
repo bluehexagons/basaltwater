@@ -4,9 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import html
-import secrets
-import threading
-import time
 from urllib.parse import parse_qs, urlsplit
 from typing import Any
 
@@ -25,10 +22,9 @@ def parse_admin_query(raw: str) -> dict[str, str]:
     values = parse_qs(raw, keep_blank_values=True, max_num_fields=1)
     if not values:
         return {}
-    if set(values) != {"action"} or len(values["action"]) != 1:
-        raise ValueError("Invalid administration view")
-    action_spec(values["action"][0])
-    return {"action": values["action"][0]}
+    if set(values) == {"view"} and values["view"] in (["actions"], ["requests"], ["activity"]):
+        return {"view": values["view"][0]}
+    raise ValueError("Invalid administration view")
 
 
 def _review_url(value: object) -> str | None:
@@ -53,15 +49,12 @@ def _review_url(value: object) -> str | None:
 
 class PanelAdmin:
     def __init__(self, manifest: dict) -> None:
-        self.host = manifest.get("host", "")
         self.integrated = manifest.get("features", {}).get("approvals") is True
         self.approval_url = next((url for record in manifest.get("services", [])
                                   if isinstance(record, dict) and record.get("label") == "Privilege approvals"
                                   and (url := _review_url(record.get("url")))), None)
         if self.integrated:
             self.approval_url = "/approvals"
-        self._lock = threading.Lock()
-        self._tickets: dict[str, tuple[str, float]] = {}
 
     def snapshot(self) -> dict:
         if not self.approval_url:
@@ -75,32 +68,6 @@ class PanelAdmin:
         except (OSError, ValueError, RuntimeError):
             return {"error": "The approval service could not report administration status. Check its service and installed version before submitting work."}
 
-    def ticket(self, action: str) -> str:
-        action_spec(action)
-        with self._lock:
-            self._tickets = {key: value for key, value in self._tickets.items() if value[1] > time.monotonic()}
-            if len(self._tickets) >= 32:
-                self._tickets.pop(next(iter(self._tickets)))
-            ticket = secrets.token_urlsafe(32)
-            self._tickets[ticket] = (action, time.monotonic() + 300)
-            return ticket
-
-    def submit(self, action: str, ticket: str, confirmation: str) -> None:
-        action_spec(action)
-        if action in {"reboot", "shutdown"} and confirmation != self.host:
-            raise ValueError("Type the host exactly to confirm the power action.")
-        with self._lock:
-            saved = self._tickets.pop(ticket, None)
-        if saved is None or saved[0] != action or saved[1] <= time.monotonic():
-            raise ValueError("This review expired or was already submitted. Refresh status before reviewing another action.")
-        snapshot = self.snapshot()
-        reason = unavailable_reason(snapshot, action)
-        if reason:
-            raise ValueError(reason)
-        # A lost response may follow a saved request. Never retry automatically.
-        exchange({"action": "request", "operation": "admin.run", "parameters": {"action": action},
-                  "reason": "Administration screen: " + ADMIN_ACTIONS[action]["title"]})
-
     def cancel(self, identifier: str) -> None:
         if not isinstance(identifier, str) or not ID_PATTERN.fullmatch(identifier):
             raise ValueError("Invalid approval request")
@@ -108,11 +75,18 @@ class PanelAdmin:
             raise ValueError("Privilege approvals are not configured")
         exchange({"action": "cancel", "id": identifier})
 
+    def action_url(self, action: str) -> str:
+        action_spec(action)
+        if self.integrated:
+            return "/approvals/admin/" + action
+        origin = urlsplit(self.approval_url or "")
+        return f"{origin.scheme}://{origin.netloc}/approvals/admin/{action}"
+
 
 def unavailable_reason(snapshot: dict, action: str) -> str:
     if snapshot.get("error"):
         return snapshot["error"]
-    if snapshot["blocked"].get(action):
+    if snapshot["blocked"].get(action) and (action != "reboot" or snapshot["blocked"].get("reboot-warning")):
         return str(snapshot["blocked"][action])
     if any(row.get("state") in {"pending", "approved", "executing"} for row in snapshot["requests"]):
         return "Review or cancel the outstanding administration request first."
@@ -138,19 +112,20 @@ _GROUP_ICONS = {"Updates": "maintenance", "Services": "service-status", "Power":
 
 _STYLE = """
 main a { color:var(--accent); }
-.admin-card { display:flex; flex-direction:column; padding:16px; border:1px solid var(--line); border-radius:12px; background:var(--panel); }
-.admin-card p { color:var(--muted); font-size:.85rem; margin:8px 0; }
-.admin-card .refresh-link { min-height:44px; margin-top:auto; }
-.admin-review { border-left:4px solid var(--warning); margin-bottom:24px; }
-.admin-review input { width:100%; max-width:420px; min-height:44px; display:block; margin:8px 0 16px;
-  padding:10px; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:8px; font:inherit; }
-.admin-review button { white-space:normal; }
 .admin-history { display:grid; gap:10px; list-style:none; padding:0; }
 .admin-history li { padding:12px 16px; background:var(--panel); border:1px solid var(--line); border-radius:10px; }
 .admin-history .admin-request-actions { display:flex; flex-wrap:wrap; align-items:center; gap:16px; }
 .admin-result { display:flex; flex-wrap:wrap; gap:10px 24px; margin:12px 0; }
 .admin-result dd { margin:0; font-weight:650; } .admin-result dt { color:var(--muted); font-size:.8rem; }
 .admin-tools { display:flex; flex-wrap:wrap; gap:8px 24px; }
+.admin-views { display:flex; flex-wrap:wrap; gap:8px; margin:20px 0; }
+.admin-views a { display:flex; align-items:center; min-height:44px; padding:8px 16px; border:1px solid var(--line); border-radius:8px; text-decoration:none; }
+.admin-views a[aria-current=page] { background:var(--accent); color:var(--panel); }
+.admin-action-link { color:inherit!important; text-decoration:none; border-radius:12px; }
+.admin-action-link:hover { border-color:var(--accent); background:var(--accent-soft); }
+.admin-action-link:focus-visible { outline:3px solid var(--accent); outline-offset:3px; }
+.admin-action-link .row-action { color:var(--accent); }
+.action-list>li+li { border-top:1px solid var(--line); }
 """
 
 
@@ -230,20 +205,27 @@ def render_admin(state: Any, style: str, query: dict[str, str], *, error: str = 
     snapshot = manager.snapshot()
     escape = html.escape
     host = escape(state.manifest["host"])
+    view = query.get("view", "actions")
+    current_url = "/admin?view=" + view
     csrf = f'<input type="hidden" name="csrf" value="{escape(state.csrf_token, quote=True)}">'
     header = f'''<header class="dashboard-header"><div><p class="eyebrow">Host administration</p><h1>Admin controls</h1>
 <p class="lede">Updates, service maintenance, and power controls for <code>{host}</code>.</p></div>
-<a class="refresh-link" href="/admin">Refresh status</a></header>'''
+<a class="refresh-link" href="{current_url}">Refresh status</a></header>'''
     body = f'<aside class="status failed" role="alert">{escape(error)}</aside>' if error else ""
+    body += '<nav class="admin-views" aria-label="Administration views">'
+    for key, label in (("actions", "Host actions"), ("requests", "Requests"), ("activity", "Activity & diagnostics")):
+        selected = ' aria-current="page"' if key == view else ''
+        body += f'<a href="/admin?view={key}"{selected}>{label}</a>'
+    body += '</nav>'
     if snapshot.get("error"):
         body += f'<aside class="status" role="status">{escape(snapshot["error"])} See the <a href="https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/privilege-approvals.md">approval setup guide</a>.</aside>'
     else:
-        body += ('<p class="endpoint">Create a request, then review its exact action and approve or deny it in this panel. Every host action needs approval. An approved request is executed once.</p>' if manager.integrated else
-                 '<p class="endpoint">Review an action here, then approve it with your separate password on the privilege approval page. Every host action needs approval. An approved request is executed once.</p>')
+        body += ('<p class="endpoint">Choose a host action, review it, then approve once using your web panel sign-in.</p>' if manager.integrated else
+                 '<p class="endpoint">Choose a host action, then review and approve it with your separate approval password.</p>') if view == "actions" else ''
         unit_label = {"active": "Running", "activating": "Starting", "deactivating": "Stopping", "inactive": "Ready", "failed": "Stopped after a failure"}.get(snapshot.get("unit_state"), "Unavailable")
         body += f'<p class="endpoint"><strong>Maintenance service: {unit_label}</strong></p>'
     latest = snapshot.get("latest", {})
-    if latest:
+    if latest and view == "activity":
         title = ADMIN_ACTIONS.get(latest.get("action"), {}).get("title", "Maintenance job")
         status = latest.get("status", "unavailable")
         tone = "complete" if status == "succeeded" else "failed" if status in {"failed", "interrupted", "unavailable"} else ""
@@ -262,46 +244,41 @@ def render_admin(state: Any, style: str, query: dict[str, str], *, error: str = 
         for label, value in details:
             body += f'<div><dt>{label}</dt><dd>{escape(str(value))}</dd></div>'
         body += '</dl><details><summary>What these results mean</summary><p>The result covers the latest maintenance job only. Dispatch means the service started; it does not confirm completion. Power actions report scheduling, not the subsequent reboot or shutdown. Failed or interrupted work is never retried automatically.</p></details></aside>'
-    # Keep existing requests near the top for approvals; empty history can follow
-    # the controls so it does not displace the actions the user came to find.
-    history = '' if isinstance(snapshot.get('privilege_requests'), list) else _request_history(snapshot, csrf, integrated=manager.integrated)
-    if snapshot.get("requests"):
-        body += history
-    if manager.approval_url:
-        body += _privilege_requests(snapshot, csrf, manager.approval_url)
-    action = query.get("action")
-    if action:
-        spec = action_spec(action)
-        reason = unavailable_reason(snapshot, action)
-        if reason:
-            body += f'<aside class="status" role="status">{escape(reason)}</aside>'
-        else:
-            ticket = manager.ticket(action)
-            confirmation = (f'<label>Confirm host name <code>{host}</code><input name="confirmation" autocomplete="off" required placeholder="{host}"></label>' if action in {"reboot", "shutdown"} else '<input type="hidden" name="confirmation" value="">')
-            body += f'''<section class="admin-card admin-review" aria-labelledby="review-heading">{render_heading("Review: " + spec['title'], _GROUP_ICONS[spec['group']], heading_id="review-heading")}
-<p>{escape(spec['effect'])}</p><p>Submitting creates an approval request. Open its review link in Recent requests to approve or deny it. The request expires after the configured approval window.</p>
-<form method="post" action="/actions/admin">{csrf}<input type="hidden" name="action" value="{action}">
-<input type="hidden" name="ticket" value="{ticket}">{confirmation}<button>Create approval request</button></form>
-<a class="refresh-link" href="/admin">Cancel review</a></section>'''
-    body += '<nav class="catalog-nav" aria-label="Administration categories"><span>Jump to</span>' + ('<a href="#privilege-requests-heading">Privilege approvals</a>' if manager.approval_url else '') + '<a href="#admin-updates">Updates</a><a href="#admin-services">Services</a><a href="#admin-power">Power</a></nav>'
+    if view == "activity" and not latest:
+        body += '<p class="empty">No maintenance job has run yet.</p>'
+    records = snapshot.get("privilege_requests")
+    if not isinstance(records, list):
+        records = snapshot.get("requests", [])
+    active = sum(row.get("state") in {"pending", "approved", "executing"} for row in records)
+    if view == "actions" and active:
+        body += f'<aside class="status"><a href="/admin?view=requests">{active} active approval request(s) · Review requests →</a></aside>'
+    if view == "requests":
+        if not isinstance(snapshot.get('privilege_requests'), list):
+            body += _request_history(snapshot, csrf, integrated=manager.integrated)
+        if manager.approval_url:
+            body += _privilege_requests(snapshot, csrf, manager.approval_url)
     for group in ("Updates", "Services", "Power"):
+        if view != "actions":
+            break
         icon = _GROUP_ICONS[group]
         tone = "water" if group == "Services" else "stone"
         rows = []
         for key, spec in ADMIN_ACTIONS.items():
-            if spec["group"] != group:
+            if spec["group"] != group or spec.get("variant_of"):
                 continue
             reason = unavailable_reason(snapshot, key)
             if snapshot.get("error"):
                 reason = "Approvals disabled." if not manager.approval_url else "Approval service unavailable."
-            link = f'<p class="action-unavailable">{escape(reason)}</p>' if reason else f'<a class="refresh-link row-action" aria-label="Review action: {escape(spec["title"], quote=True)}" href="/admin?action={key}">Review action <span aria-hidden="true">→</span></a>'
-            rows.append(f'<li class="action-row admin-row tone-{tone}"><span class="action-icon">{render_icon(icon)}</span><div class="action-copy"><h3>{escape(spec["title"])}</h3><p>{escape(spec["effect"])}</p></div>{link}</li>')
+            copy = f'<span class="action-icon">{render_icon(icon)}</span><div class="action-copy"><h3>{escape(spec["title"])}</h3><p>{escape(spec["effect"])}</p></div>'
+            if reason:
+                rows.append(f'<li class="action-row admin-row tone-{tone}">{copy}<p class="action-unavailable">{escape(reason)}</p></li>')
+            else:
+                rows.append(f'<li><a class="action-row admin-row admin-action-link tone-{tone}" href="{escape(manager.action_url(key), quote=True)}">{copy}<span class="row-action">Review action <span aria-hidden="true">→</span></span></a></li>')
         identifier = "admin-" + group.lower()
         heading = render_heading(group, icon, heading_id=identifier)
         body += f'<section aria-labelledby="{identifier}"><div class="section-heading">{heading}<span class="count">{len(rows)} actions</span></div><ul class="action-list">{"".join(rows)}</ul></section>'
-    if not snapshot.get("requests"):
-        body += history
-    body += '<section aria-label="Inspection tools">' + render_heading("Inspection tools", "diagnostics") + '<div class="admin-tools"><a class="refresh-link" href="/shares-data">Shares &amp; Data</a><a class="refresh-link" href="/services">Local services</a><a class="refresh-link" href="/jobs">Scheduled jobs</a><a class="refresh-link" href="/logs">Service diagnostics</a><a class="refresh-link" href="/#audit-heading">Security activity</a></div><p class="endpoint">Long jobs run outside the panel, with a six-hour limit. Refresh status to check results without automatic page reloads. For detailed failures, use the administrator SSH or console path.</p></section>'
+    if view == "activity":
+        body += '<section aria-label="Inspection tools">' + render_heading("Inspection tools", "diagnostics") + '<div class="admin-tools"><a class="refresh-link" href="/shares-data">Shares &amp; Data</a><a class="refresh-link" href="/services">Local services</a><a class="refresh-link" href="/jobs">Scheduled jobs</a><a class="refresh-link" href="/logs">Service diagnostics</a><a class="refresh-link" href="/#audit-heading">Security activity</a></div><p class="endpoint">Long jobs run outside the panel, with a six-hour limit. Refresh status to check results without automatic page reloads. For detailed failures, use the administrator SSH or console path.</p></section>'
     return render_document(title=f"Admin controls · {state.manifest['host']}", style=style + _STYLE,
                            header=header, content=body, navigation=state.navigation("admin"),
                            footer='<footer><a href="/">Back to dashboard</a><span>One-time approval for host actions</span></footer>')

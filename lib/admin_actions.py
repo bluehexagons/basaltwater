@@ -8,7 +8,7 @@ ADMIN_HELPER = "/opt/basaltwater/common/service_tools/admin_job.py"
 ADMIN_STATE = "/var/lib/basaltwater-privilege-broker/admin-job.json"
 ADMIN_TIMEOUT = 6 * 60 * 60
 
-# Descriptions are also the effects reviewed at the independent approval origin.
+# Descriptions are also the effects reviewed by the isolated approval service.
 ADMIN_ACTIONS = {
     "update-packages": {
         "title": "Update system packages", "group": "Updates",
@@ -36,7 +36,11 @@ ADMIN_ACTIONS = {
     },
     "reboot": {
         "title": "Restart host", "group": "Power",
-        "effect": "Schedule a host reboot with shutdown -r +2. All sessions and running work will be interrupted after two minutes. Cancel before that deadline if needed.",
+        "effect": "Restart the host in 5 seconds after scheduling. All sessions and running work will be interrupted. The panel will disconnect until the host returns.",
+    },
+    "reboot-warning": {
+        "title": "Restart host with warning", "group": "Power", "variant_of": "reboot",
+        "effect": "Warn logged-in users and restart the host in 2 minutes with shutdown -r +2. All sessions and running work will be interrupted. Cancel before that deadline if needed.",
     },
     "shutdown": {
         "title": "Shut down host", "group": "Power",

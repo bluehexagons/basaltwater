@@ -303,7 +303,6 @@ class PanelFeatureTest(unittest.TestCase):
         self.assertIn("--privilege-broker", page)
         self.assertNotIn('href="/admin?action=', page)
         self.assertNotIn('href="/agents"', page)
-        self.assertFalse(handler._feature_available("/actions/admin"))
         self.assertFalse(handler._feature_available("/actions/admin/cancel"))
         broker.assert_not_called()
         tasks.assert_not_called()

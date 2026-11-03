@@ -89,7 +89,7 @@ class SpecializedDevelopmentTests(unittest.IsolatedAsyncioTestCase):
         await self.serve("approval")
         path = "/requests/" + "a" * 32
         body = await (await self.client.get(path)).text()
-        csrf = re.search(r'name="csrf" value="([^"]+)"', body[body.index('<h1>Privilege approvals'):])[1]
+        csrf = re.search(r'name="csrf" value="([^"]+)"', body[body.index('<form class="approval-buttons"'):])[1]
         fields = {"csrf": csrf, "digest": "a" * 64, "decision": "approve"}
         self.assertEqual((await self.client.post(path, data=fields, headers={"Origin": "https://wrong.example"})).status, 409)
         response = await self.client.post(path, data=fields, headers={"Origin": self.origin}, allow_redirects=False)

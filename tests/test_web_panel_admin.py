@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import http.client
 import io
-import re
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -37,19 +36,21 @@ class AdminScreenTests(unittest.TestCase):
         with patch("common.service_tools.web_panel_admin.exchange", return_value=status()):
             return render_admin(self.state, _PAGE_STYLE, query or {})
 
-    def test_query_is_a_single_finite_review_action(self):
-        self.assertEqual(parse_admin_query("action=refresh"), {"action": "refresh"})
-        for query in ("action=refresh&action=reboot", "action=refresh&argv=sh", "action=", "action=--help", "load=1"):
+    def test_query_is_a_single_finite_view(self):
+        self.assertEqual(parse_admin_query("view=requests"), {"view": "requests"})
+        with self.assertRaises(ValueError):
+            parse_admin_query("view=requests&action=reboot")
+        for query in ("action=refresh", "action=refresh&action=reboot", "action=refresh&argv=sh", "action=", "action=--help", "load=1", "view=unknown"):
             with self.subTest(query=query), self.assertRaises(ValueError):
                 parse_admin_query(query)
 
-    def test_navigation_and_review_only_read_status(self):
+    def test_navigation_only_reads_status_and_links_to_isolated_review(self):
         with patch("common.service_tools.web_panel_admin.exchange", return_value=status()) as exchange:
-            document = render_admin(self.state, _PAGE_STYLE, {"action": "reboot"})
+            document = render_admin(self.state, _PAGE_STYLE, {})
             exchange.assert_called_once_with({"action": "admin-status"})
         self.assertIn('href="/admin" aria-current="page"', document)
-        self.assertIn("Confirm host name", document)
-        self.assertIn("Create approval request", document)
+        self.assertIn('href="https://vm.example:9444/approvals/admin/reboot"', document)
+        self.assertNotIn('action="/actions/admin"', document)
         self.assertEqual([href for href, _, _ in panel_navigation(current="admin")], [href for href, _, _ in panel_navigation(current="agents")])
 
     def test_no_broker_still_renders_tools_without_privileged_actions(self):
@@ -58,7 +59,8 @@ class AdminScreenTests(unittest.TestCase):
             document = render_admin(self.state, _PAGE_STYLE, {})
             exchange.assert_not_called()
         self.assertIn("included with the web panel", document)
-        self.assertIn('href="/logs"', document)
+        with patch("common.service_tools.web_panel_admin.exchange"):
+            self.assertIn('href="/logs"', render_admin(self.state, _PAGE_STYLE, {"view": "activity"}))
         self.assertNotIn('href="/admin?action=', document)
 
     def test_integrated_queue_uses_panel_login_and_local_request_links(self):
@@ -67,7 +69,7 @@ class AdminScreenTests(unittest.TestCase):
                    "created": 0, "expires": 3600, "review_url": "https://vm.example/requests/" + "a" * 32}
         with patch("common.service_tools.web_panel_admin.exchange", return_value={
                 **status(), "privilege_requests": [request]}):
-            document = render_admin(self.state, _PAGE_STYLE, {})
+            document = render_admin(self.state, _PAGE_STYLE, {"view": "requests"})
         self.assertIn('href="/approvals"', document)
         self.assertIn('href="/requests/' + "a" * 32 + '"', document)
         self.assertIn("Uses your web panel sign-in", document)
@@ -98,66 +100,42 @@ class AdminScreenTests(unittest.TestCase):
                   "setup_context": {"job_id": "a" * 32, "phase": "recovery", "setup_stage": "steps",
                                     "step_index": 3, "step_count": 4, "error_type": "RuntimeError", "secret": "root-secret"}}
         with patch("common.service_tools.web_panel_admin.exchange", return_value={**status(), "latest": latest}):
-            document = render_admin(self.state, _PAGE_STYLE, {})
+            document = render_admin(self.state, _PAGE_STYLE, {"view": "activity"})
         for text in ("Command index", "Command exited unsuccessfully", "Setup phase", "RuntimeError"):
             self.assertIn(text, document)
         self.assertNotIn("root-secret", document)
         latest.update(stage="root-secret", failure="root-secret", command_index=True)
         latest["setup_context"]["job_id"] = "b" * 32
         with patch("common.service_tools.web_panel_admin.exchange", return_value={**status(), "latest": latest}):
-            document = render_admin(self.state, _PAGE_STYLE, {})
+            document = render_admin(self.state, _PAGE_STYLE, {"view": "activity"})
         self.assertIn("Unavailable", document)
         self.assertNotIn("root-secret", document)
         self.assertNotIn("Setup phase", document)
 
-    def test_one_time_review_ticket_prevents_repeated_submission(self):
-        ticket = self.manager.ticket("refresh")
-        with patch("common.service_tools.web_panel_admin.exchange", side_effect=[status(), {"state": "pending"}]) as exchange:
-            self.manager.submit("refresh", ticket, "")
-            self.assertEqual(exchange.call_args.args[0]["operation"], "admin.run")
-            with self.assertRaisesRegex(ValueError, "already submitted"):
-                self.manager.submit("refresh", ticket, "")
-            self.assertEqual(exchange.call_count, 2)
-
-    def test_power_confirmation_and_expired_ticket_cannot_submit(self):
-        ticket = self.manager.ticket("shutdown")
-        with patch("common.service_tools.web_panel_admin.exchange") as exchange:
-            with self.assertRaisesRegex(ValueError, "host exactly"):
-                self.manager.submit("shutdown", ticket, "wrong-host")
-            exchange.assert_not_called()
-        with patch("common.service_tools.web_panel_admin.time.monotonic", return_value=float("inf")), patch("common.service_tools.web_panel_admin.exchange") as exchange:
-            with self.assertRaisesRegex(ValueError, "expired"):
-                self.manager.submit("shutdown", ticket, "vm.example")
-            exchange.assert_not_called()
-
-    def test_ambiguous_response_is_not_retried_and_ticket_is_consumed(self):
-        ticket = self.manager.ticket("refresh")
-        with patch("common.service_tools.web_panel_admin.exchange", side_effect=[status(), OSError("Lost response")]) as exchange:
-            with self.assertRaises(OSError):
-                self.manager.submit("refresh", ticket, "")
-            with self.assertRaises(ValueError):
-                self.manager.submit("refresh", ticket, "")
-            self.assertEqual(exchange.call_count, 2)
-
-    def test_busy_or_unavailable_host_cannot_submit_another_job(self):
+    def test_busy_or_unavailable_host_disables_action_links(self):
         for state in ("active", "activating", "deactivating", "unavailable"):
             with patch("common.service_tools.web_panel_admin.exchange", return_value={**status(), "unit_state": state}) as exchange:
-                with self.assertRaises(ValueError):
-                    self.manager.submit("refresh", self.manager.ticket("refresh"), "")
+                document = render_admin(self.state, _PAGE_STYLE, {})
+                self.assertNotIn('href="https://vm.example:9444/approvals/admin/refresh"', document)
                 exchange.assert_called_once_with({"action": "admin-status"})
+
+    def test_restart_review_remains_available_when_only_warning_variant_is_supported(self):
+        with patch("common.service_tools.web_panel_admin.exchange", return_value={**status(), "blocked": {"reboot": "No scheduler"}}):
+            document = render_admin(self.state, _PAGE_STYLE, {})
+        self.assertIn('href="https://vm.example:9444/approvals/admin/reboot"', document)
 
     def test_unconfirmed_job_state_blocks_action_review_controls(self):
         with patch("common.service_tools.web_panel_admin.exchange", return_value={
                 **status(), "unit_state": "unavailable", "latest": {"status": "unavailable"}}):
-            document = render_admin(self.state, _PAGE_STYLE, {"action": "refresh"})
+            document = render_admin(self.state, _PAGE_STYLE, {})
         self.assertIn("maintenance service state is unavailable", document)
         self.assertNotIn("Create approval request", document)
-        self.assertNotIn('href="/admin?action=refresh"', document)
+        self.assertNotIn('action="/actions/admin"', document)
 
     def test_output_is_escaped_and_arbitrary_review_urls_are_not_links(self):
         value = {**status(), "requests": [{"id": "a" * 32, "action": "refresh", "state": "<script>", "created": 0, "review_url": "javascript:alert(1)"}]}
         with patch("common.service_tools.web_panel_admin.exchange", return_value=value):
-            document = render_admin(self.state, _PAGE_STYLE, {})
+            document = render_admin(self.state, _PAGE_STYLE, {"view": "requests"})
         self.assertNotIn("javascript:", document)
         self.assertNotIn("<script>", document)
         self.assertIn("&lt;script&gt;", document)
@@ -165,7 +143,7 @@ class AdminScreenTests(unittest.TestCase):
     def test_pending_requests_can_be_cancelled_without_exposing_approval(self):
         value = {**status(), "requests": [{"id": "a" * 32, "action": "refresh", "state": "pending", "created": 0, "review_url": "https://vm.example:9444/requests/" + "a" * 32}]}
         with patch("common.service_tools.web_panel_admin.exchange", return_value=value):
-            document = render_admin(self.state, _PAGE_STYLE, {})
+            document = render_admin(self.state, _PAGE_STYLE, {"view": "requests"})
         self.assertIn("Cancel request", document)
         self.assertIn("Open approval review", document)
         self.assertNotIn('href="/admin?action=', document)
@@ -176,7 +154,7 @@ class AdminScreenTests(unittest.TestCase):
             {"id": "c" * 32, "operation": "command.run", "state": "failed", "target": "",
              "execution": {"exit_code": 7, "failure": "nonzero_exit"}, "review_url": "javascript:alert(1)"}]
         with patch("common.service_tools.web_panel_admin.exchange", return_value=value) as broker:
-            document = render_admin(self.state, _PAGE_STYLE, {})
+            document = render_admin(self.state, _PAGE_STYLE, {"view": "requests"})
         broker.assert_called_once_with({"action": "admin-status"})
         for text in ('Privilege approvals', 'auto-update-node.service', 'Approval expires',
                      'Review exact action', 'nonzero_exit', 'Exit code: 7', 'Privileged command'):
@@ -187,6 +165,22 @@ class AdminScreenTests(unittest.TestCase):
         with patch("common.service_tools.web_panel_admin.exchange") as broker:
             self.manager.cancel('b' * 32)
         broker.assert_called_once_with({"action": "cancel", "id": 'b' * 32})
+
+    def test_actions_are_whole_row_links_to_isolated_review(self):
+        self.state.admin = PanelAdmin({"host": "vm.example", "features": {"approvals": True}})
+        document = self.render()
+        self.assertRegex(document, r'<a class="action-row[^\"]*admin-action-link[^\"]*" href="/approvals/admin/reboot">.*?<h3>Restart host</h3>')
+        self.assertNotIn('href="/approvals/admin/reboot-warning"', document)
+        self.assertNotIn('href="#admin-', document)
+        self.assertNotIn('aria-labelledby="privilege-requests-heading"', document)
+        self.assertNotIn('Latest job:', document)
+        self.assertEqual(self.manager.action_url("reboot"), "https://vm.example:9444/approvals/admin/reboot")
+
+    def test_refresh_preserves_view_without_showing_the_action_catalog(self):
+        for view in ("requests", "activity"):
+            document = self.render({"view": view})
+            self.assertIn(f'href="/admin?view={view}">Refresh status', document)
+            self.assertNotIn('id="admin-updates"', document)
 
     def handler(self, path, values):
         handler = object.__new__(WebPanelHandler)
@@ -203,22 +197,27 @@ class AdminScreenTests(unittest.TestCase):
         handler.end_headers = Mock()
         return handler
 
-    def test_http_rejects_missing_csrf_extra_fields_and_duplicate_actions(self):
-        for values, expected in (({"action": "reboot"}, 403),
+    def test_http_cancel_rejects_missing_csrf_extra_fields_and_duplicate_ids(self):
+        for values, expected in (({"id": "a" * 32}, 403),
                                  ({"csrf": "csrf", "id": "a" * 32, "approve": "1"}, 400),
-                                 ({"csrf": "csrf", "action": ["refresh", "shutdown"], "ticket": "t", "confirmation": ""}, 400)):
-            handler = self.handler("/actions/admin", values)
-            with patch.object(self.manager, "submit") as submit:
+                                 ({"csrf": "csrf", "id": ["a" * 32, "b" * 32]}, 400)):
+            handler = self.handler("/actions/admin/cancel", values)
+            with patch.object(self.manager, "cancel") as cancel:
                 handler.do_POST()
                 self.assertEqual(handler._send.call_args.args[0], expected)
-                submit.assert_not_called()
+                cancel.assert_not_called()
 
-    def test_http_valid_submission_creates_request_and_redirects(self):
-        document = self.render({"action": "refresh"})
-        ticket = re.search(r'name="ticket" value="([^"]+)"', document).group(1)
-        handler = self.handler("/actions/admin", {"csrf": "csrf", "action": "refresh", "ticket": ticket, "confirmation": ""})
-        with patch("common.service_tools.web_panel_admin.exchange", side_effect=[status(), {"state": "pending"}]) as exchange:
+    def test_http_valid_cancellation_returns_to_requests(self):
+        handler = self.handler("/actions/admin/cancel", {"csrf": "csrf", "id": "a" * 32})
+        with patch("common.service_tools.web_panel_admin.exchange") as exchange:
             handler.do_POST()
             handler.send_response.assert_called_once_with(303)
-            handler.send_header.assert_any_call("Location", "/admin")
-            self.assertEqual(exchange.call_args.args[0]["parameters"], {"action": "refresh"})
+            handler.send_header.assert_any_call("Location", "/admin?view=requests")
+            exchange.assert_called_once_with({"action": "cancel", "id": "a" * 32})
+
+    def test_main_panel_cannot_submit_through_removed_two_stage_endpoint(self):
+        handler = self.handler("/actions/admin", {"csrf": "csrf", "action": "reboot"})
+        with patch("common.service_tools.web_panel_admin.exchange") as exchange:
+            handler.do_POST()
+        self.assertEqual(handler._send.call_args.args[0], 404)
+        exchange.assert_not_called()

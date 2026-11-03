@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 from contextlib import ExitStack
 import http.client
+import re
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 import subprocess
@@ -72,6 +73,9 @@ class PanelDevelopmentTests(unittest.TestCase):
         handler = panel_dev.development_handler(self.state, self.settings, "generation-1", self.directory)
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         self.settings["url"] = f"http://127.0.0.1:{self.server.server_port}"
+        with patch("common.service_tools.privilege_approval.os.chown"):
+            backend = panel_dev.development_approvals(self.directory, self.settings, self.scenario.exchange, self.stack)
+        self.server.RequestHandlerClass = panel_dev.development_handler(self.state, self.settings, "generation-1", self.directory, backend)
         thread = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
         thread.start()
         self.addCleanup(thread.join, 2)
@@ -232,15 +236,39 @@ class PanelDevelopmentTests(unittest.TestCase):
         self.assertEqual(self.request("/actions/maintenance-agent", {"csrf": csrf, "submit": "hold", "hours": "2"})[0], 303)
         self.assertIn("Automatic restarts held", self.request("/maintenance-agent")[2])
 
-    def test_admin_form_keeps_review_ticket_and_confirmation_validation(self) -> None:
+    def test_obsolete_admin_submission_cannot_create_a_request(self) -> None:
         self.serve()
-        values = {"csrf": self.state.csrf_token, "action": "reboot", "confirmation": "wrong-host",
-                  "ticket": self.state.admin.ticket("reboot")}
-        self.assertEqual(self.request("/actions/admin", values)[0], 409)
-        values["confirmation"] = "development.example.test"
-        self.assertEqual(self.request("/actions/admin", values)[0], 303)
-        self.assertIn("succeeded", self.request("/admin")[2])
-        self.assertEqual(self.request("/actions/admin", values)[0], 409)
+        self.assertEqual(self.request("/actions/admin", {"csrf": self.state.csrf_token, "action": "reboot"})[0], 404)
+        self.assertEqual(self.request("/admin?action=reboot")[0], 400)
+        self.assertEqual(self.scenario.data["requests"], [])
+
+    def test_integrated_action_review_submits_once_through_production_handler(self) -> None:
+        self.serve()
+        path = "/approvals/admin/reboot"
+        self.assertIn('href="' + path + '"', self.request("/admin")[2])
+        status, _, body = self.request(path)
+        self.assertEqual(status, 200)
+        self.assertIn("In 5 seconds", body)
+        self.assertEqual(self.scenario.data["requests"], [])
+        fields = {"ticket": re.search(r'name="ticket" value="([^"]+)"', body)[1], "variant": "reboot", "decision": "approve"}
+        status, headers, _ = self.request(path, fields, headers={"Origin": self.settings["url"]})
+        self.assertEqual(status, 303)
+        self.assertIn("dispatched", self.request(headers["Location"])[2])
+        self.assertEqual(self.request(path, fields, headers={"Origin": self.settings["url"]})[0], 409)
+        self.assertEqual(len(self.scenario.data["requests"]), 1)
+
+    def test_integrated_request_review_can_decide_a_simulated_data_action(self) -> None:
+        self.serve()
+        request = self.scenario.exchange({"action": "request", "operation": "data.run", "parameters": {"action": "scrub"}})
+        path = "/requests/" + request["id"]
+        status, _, body = self.request(path)
+        self.assertEqual(status, 200)
+        # Use the isolated form token, independent of the development toolbar.
+        token = re.search(r'name="csrf" value="([^"]+)"', body[body.index('<form class="approval-buttons"'):])[1]
+        fields = {"csrf": token, "digest": request["digest"], "decision": "deny"}
+        self.assertEqual(self.request(path, fields, headers={"Origin": self.settings["url"]})[0], 303)
+        self.assertIn("Status: denied", self.request(path)[2])
+        self.assertEqual(self.request(path, fields, headers={"Origin": self.settings["url"]})[0], 409)
 
     def test_empty_scenario_retains_forms_without_seeded_records(self) -> None:
         self.serve("empty")

@@ -274,6 +274,7 @@ test('approval real form origin, forged token, decision and replay rejection', a
   const identifier = (browserName === 'chromium' ? 'a' : 'b').repeat(32);
   const url = urls.approval + '/requests/' + identifier;
   await page.goto(url);
+  await page.getByText('Technical details and request context', { exact: true }).click();
   await expect(page.getByText('Synthetic browser test <untrusted>', { exact: false })).toBeVisible();
   const digest = await page.locator('input[name=digest]').inputValue();
   const csrf = await page.locator('input[name=csrf]').inputValue();
@@ -301,7 +302,7 @@ test('approval denial and expiry reject subsequent decisions', async ({ page, br
       const response = page.waitForResponse(response => response.url() === url && response.request().method() === 'POST');
       await page.getByRole('button', { name: 'Deny', exact: true }).click();
       expect((await response).status()).toBe(303);
-      await expect(page.locator('dd').filter({ hasText: /^denied$/ })).toBeVisible();
+      await expect(page.locator('.approval-state')).toHaveText('Status: denied');
     } else {
       // Change only this synthetic broker's clock boundary after rendering a
       // valid form. The production handler must reject its now-expired request.
@@ -315,7 +316,7 @@ test('approval denial and expiry reject subsequent decisions', async ({ page, br
     await recovery.click();
     expect((await checked).status()).toBe(200);
     await expect(page.getByRole('button', { name: 'Approve once', exact: true })).toHaveCount(0);
-    await expect(page.locator('dd').filter({ hasText: new RegExp(`^${decision === 'deny' ? 'denied' : 'expired'}$`) })).toBeVisible();
+    await expect(page.locator('.approval-state')).toHaveText(`Status: ${decision === 'deny' ? 'denied' : 'expired'}`);
   }
 });
 
@@ -340,7 +341,7 @@ test('pairing and approval narrow layout with enlarged text', async ({ page, bro
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), url).toBe(true);
     if (url.startsWith(urls.approval)) {
       await expect(page.getByRole('button', { name: 'Approve once', exact: true })).toBeVisible();
-      await expect(page.locator('dd').filter({ hasText: 'x'.repeat(512) }).first()).toBeVisible();
+      await expect(page.locator('pre').filter({ hasText: 'x'.repeat(512) }).first()).toBeVisible();
     }
   }
 });
@@ -488,63 +489,95 @@ test('panel development forms, scenarios, reload, reset and cleanup', async ({ p
 test.describe('admin controls', () => {
   test.use({ developmentSurface: 'panel', javaScriptEnabled: false });
 
-  test('review cancellation creates no request and the power form fits enlarged text', async ({ page, developmentServer: dev }) => {
+  test('whole tasks open focused reviews, cancellation creates no request, and timing fits enlarged text', async ({ page, developmentServer: dev }, info) => {
     const adminPosts = [];
     page.on('request', request => {
-      if (request.method() === 'POST' && request.url() === dev.url + '/actions/admin') adminPosts.push(request.url());
+      if (request.method() === 'POST') adminPosts.push(request.url());
     });
 
     await page.goto(dev.url + '/admin');
     await expect(page.getByRole('heading', { name: 'Admin controls', exact: true })).toBeVisible();
-    await expect(page.getByText('No privilege requests for this panel account.', { exact: true })).toBeVisible();
-    await page.getByRole('link', { name: 'Review action: Check web configuration', exact: true }).click();
-    await expect(page).toHaveURL(dev.url + '/admin?action=check-web');
-    await expect(page.getByRole('heading', { name: 'Review: Check web configuration', exact: true })).toBeVisible();
-    await expect(page.locator('form[action="/actions/admin"]')).toHaveCount(1);
-    await page.getByRole('link', { name: 'Cancel review', exact: true }).click();
+    await expect(page.getByRole('region', { name: 'Privilege approvals', exact: true })).toHaveCount(0);
+    await page.getByRole('heading', { name: 'Check web configuration', exact: true }).click();
+    await expect(page).toHaveURL(dev.url + '/approvals/admin/check-web');
+    await expect(page.getByRole('heading', { name: 'Check web configuration', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Approve check web configuration', exact: true })).toBeVisible();
+    await expect(page.locator('.approval-details')).not.toHaveAttribute('open', '');
+    await expect(page.getByRole('heading', { name: 'Power', exact: true })).toHaveCount(0);
+    await page.getByRole('link', { name: 'Cancel', exact: true }).click();
     await expect(page).toHaveURL(dev.url + '/admin');
+    await page.getByRole('navigation', { name: 'Administration views' }).getByRole('link', { name: 'Requests', exact: true }).click();
     await expect(page.getByText('No privilege requests for this panel account.', { exact: true })).toBeVisible();
+    await page.getByRole('link', { name: 'Refresh status', exact: true }).click();
+    await expect(page).toHaveURL(dev.url + '/admin?view=requests');
     expect(adminPosts).toEqual([]);
 
-    await page.goto(dev.url + '/admin?action=reboot');
+    await page.goto(dev.url + '/admin');
+    const restart = page.locator('a.admin-action-link').filter({ has: page.getByRole('heading', { name: 'Restart host', exact: true }) });
+    await restart.focus();
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(dev.url + '/approvals/admin/reboot');
+    await page.evaluate(() => { document.getElementById('panel-development').style.display = 'none'; });
+    await expect(page.getByRole('radio', { name: /In 5 seconds/ })).toBeChecked();
+    await expect(page.getByRole('radio', { name: /Warn users/ })).not.toBeChecked();
+    await page.getByRole('heading', { name: 'Restart host', exact: true }).click();
+    await page.screenshot({ path: info.outputPath('restart-review-desktop.png'), fullPage: true });
     await page.setViewportSize({ width: 320, height: 900 });
     await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
-    await expect(page.getByRole('heading', { name: 'Review: Restart host', exact: true })).toBeVisible();
-    const confirmation = page.getByLabel(/Confirm host name/);
-    await expect(confirmation).toBeVisible();
-    const right = await confirmation.evaluate(input => input.getBoundingClientRect().right);
-    expect(right).toBeLessThanOrEqual(await page.evaluate(() => innerWidth + 1));
-    await expect(page.getByRole('button', { name: 'Create approval request', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Restart host', exact: true })).toBeVisible();
+    await page.getByRole('radio', { name: /Warn users/ }).check();
+    await expect(page.getByRole('radio', { name: /Warn users/ })).toBeChecked();
+    await expect(page.getByRole('button', { name: 'Approve restart host', exact: true })).toBeVisible();
+    await page.screenshot({ path: info.outputPath('restart-review-narrow.png'), fullPage: true });
   });
 
-  test('request submission shows the development adapter status', async ({ page, developmentServer: dev }) => {
+  test('one approval opens its exact request and a lost response cannot repeat it', async ({ page, developmentServer: dev, diagnostics }) => {
     await page.goto(dev.url + '/admin');
-    await page.getByRole('link', { name: 'Review action: Check web configuration', exact: true }).click();
-    const submitted = page.waitForResponse(response => response.url() === dev.url + '/actions/admin'
+    await page.getByRole('heading', { name: 'Check web configuration', exact: true }).click();
+    const review = dev.url + '/approvals/admin/check-web';
+    const ticket = await page.locator('input[name=ticket]').inputValue();
+    const submitted = page.waitForResponse(response => response.url() === review
       && response.request().method() === 'POST');
-    await page.getByRole('button', { name: 'Create approval request', exact: true }).click();
+    await page.getByRole('button', { name: 'Approve check web configuration', exact: true }).click();
     expect((await submitted).status()).toBe(303);
-    await expect(page).toHaveURL(dev.url + '/admin');
-
+    await expect(page).toHaveURL(new RegExp('/requests/[a-f0-9]{32}$'));
+    const requestUrl = page.url();
+    await expect(page.locator('.approval-state')).toHaveText('Status: dispatched');
+    await expect(page.getByRole('button', { name: /^Approve/ })).toHaveCount(0);
+    await page.getByRole('link', { name: 'All requests', exact: true }).click();
+    await page.locator('a.approval-task').click();
+    await expect(page).toHaveURL(requestUrl);
+    await page.goto(dev.url + '/admin?view=requests');
     const requests = page.getByRole('region', { name: 'Privilege approvals', exact: true });
     const request = requests.locator('li').first();
     await expect(request).toContainText('Administration job: Check web configuration');
-    await expect(request.locator('.badge')).toHaveText('succeeded');
+    await expect(request.locator('.badge')).toHaveText('dispatched');
     await expect(request.getByRole('link', { name: /Review exact action/ }))
-      .toHaveAttribute('href', /^https:\/\/127\.0\.0\.1\/fixture-approvals\/[a-f0-9]{32}$/);
+      .toHaveAttribute('href', new URL(requestUrl).pathname);
     await expect(request.getByRole('button', { name: 'Cancel request', exact: true })).toHaveCount(0);
+    diagnostics.allowed.add(review);
+    expect((await postForm(page, review, { ticket, variant: 'check-web', decision: 'approve' })).status).toBe(409);
+    await page.getByRole('link', { name: 'All requests', exact: true }).click();
+    await expect(page.locator('a.approval-task')).toHaveCount(1);
   });
 
-  test('incorrect power host confirmation is rejected without a request', async ({ page, developmentServer: dev, diagnostics }) => {
-    await page.goto(dev.url + '/admin?action=reboot');
-    await page.getByLabel(/Confirm host name/).fill('wrong-host.example.test');
-    diagnostics.allowed.add(dev.url + '/actions/admin');
-    const submitted = page.waitForResponse(response => response.url() === dev.url + '/actions/admin'
-      && response.request().method() === 'POST');
-    await page.getByRole('button', { name: 'Create approval request', exact: true }).click();
-    expect((await submitted).status()).toBe(409);
-    await expect(page.getByRole('alert')).toContainText('The action could not be submitted.');
+  for (const variant of ['reboot', 'reboot-warning']) test(`restart timing ${variant} is preserved in the approved plan`, async ({ page, developmentServer: dev }) => {
+    await page.goto(dev.url + '/approvals/admin/reboot');
+    if (variant === 'reboot-warning') await page.getByRole('radio', { name: /Warn users/ }).check();
+    await page.getByRole('button', { name: 'Approve restart host', exact: true }).click();
+    await expect(page.locator('.approval-state')).toHaveText('Status: dispatched');
+    await page.getByText('Technical details and request context', { exact: true }).click();
+    await expect(page.locator('dd').filter({ hasText: `"action":"${variant}"` })).toBeVisible();
+  });
+
+  test('a substituted power action is rejected without a request', async ({ page, developmentServer: dev, diagnostics }) => {
+    const review = dev.url + '/approvals/admin/reboot';
+    await page.goto(review);
+    const ticket = await page.locator('input[name="ticket"]').inputValue();
+    diagnostics.allowed.add(review);
+    expect((await postForm(page, review, { ticket, variant: 'shutdown', decision: 'approve' })).status).toBe(409);
+    await page.goto(dev.url + '/admin?view=requests');
     await expect(page.getByText('No privilege requests for this panel account.', { exact: true })).toBeVisible();
     await expect(page.getByRole('region', { name: 'Privilege approvals', exact: true }).locator('li')).toHaveCount(0);
   });
@@ -983,7 +1016,7 @@ test.describe('Shares & Data', () => {
 
   test('inventory, findings filters and recovery guidance work without JavaScript', async ({ page, developmentServer: dev, diagnostics }, info) => {
     test.setTimeout(90000);
-    await page.goto(dev.url + '/admin');
+    await page.goto(dev.url + '/admin?view=activity');
     await page.locator('.admin-tools').getByRole('link', { name: 'Shares & Data', exact: true }).focus();
     await page.keyboard.press('Enter');
     await expect(page.getByRole('heading', { name: 'Shares & Data', exact: true })).toBeVisible();
@@ -1584,10 +1617,10 @@ for (const surface of ['connect', 'pairing', 'approval', 'desktop', 'console']) 
       } else if (surface === 'approval') {
         await page.getByRole('link', { name: 'development-only' }).first().click();
         await page.getByRole('button', { name: 'Approve once', exact: true }).click();
-        await expect(page.locator('dd').filter({ hasText: /^approved$/ })).toBeVisible();
+        await expect(page.locator('.approval-state')).toHaveText('Status: approved');
         await dev.restart(() => fs.writeFileSync(dev.watched, 'approved'));
         await expect.poll(() => toolbar.getAttribute('data-generation')).toBe(dev.generation());
-        await expect(page.locator('dd').filter({ hasText: /^approved$/ })).toBeVisible();
+        await expect(page.locator('.approval-state')).toHaveText('Status: approved');
       } else {
         const sent = [];
         page.on('websocket', socket => socket.on('framesent', frame => sent.push(String(frame.payload))));
