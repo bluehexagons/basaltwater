@@ -91,9 +91,15 @@ new scrot capture without claiming compositor frame timing. A capture failure
 does not replay input. Windows post-input observation remains follow-up work;
 its observation-bound route currently supports discrete input, with held-key
 watchdog deadline plumbing still pending.
-Debian observation-bound text uses one unpaced request; `--delay-ms` requires
-server-paced text support for a single-use token. Per-character pacing is
-still available without a token, with its existing checks.
+Debian observation-bound ASCII text uses one unpaced request; `--delay-ms`
+requires server-paced text support for a single-use token. Non-ASCII text
+defaults to separate character requests with 10 ms pacing because rapid X11
+keymap changes can lose characters in native clients. This paced route is
+available without a token, with its existing generation/control/geometry
+checks. Token-bound non-ASCII text is refused before dispatch on Debian until
+server-paced text is implemented. Use accessible `element set-text` and verify
+its result when a control supports it; otherwise inspect a fresh capture and
+use paced text without `--observation`, then verify the delivered text.
 
 ## Planner and operator workflow
 

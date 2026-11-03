@@ -131,6 +131,13 @@ failure never replays input. See the shared
 [observation contract](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/desktop-observations.md)
 for coordinate spaces, receipts and planner/operator guidance.
 
+On Debian, non-ASCII text defaults to revocable per-character pacing to avoid
+character loss from rapid X11 keymap changes. This path requires omitting
+`--observation` until server-paced text is supported; token-bound Unicode is
+refused before dispatch. Prefer accessible `element set-text` and read-back.
+Otherwise inspect the intended control in a fresh capture, use paced text
+without a token, and verify the delivered text before submitting it.
+
 For example:
 
 ```bash

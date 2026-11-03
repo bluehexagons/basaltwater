@@ -319,6 +319,12 @@ def remaining_seconds(deadline: float) -> float:
 
 def send_action(payload: dict[str, Any], *, deadline: float | None = None, backend=runtime) -> dict[str, Any]:
     """Pace text with short revocable requests, including on existing supervisors."""
+    if (backend is runtime and payload.get("action") == "input" and payload.get("kind") == "text"
+            and payload.get("delay_ms") is None and isinstance(payload.get("text"), str)
+            and not payload["text"].isascii()):
+        # Rapid xdotool batches can lose newly mapped Unicode characters in
+        # native clients. Separate revocable requests let keymap updates settle.
+        payload = {**payload, "delay_ms": 10}
     validate_text_delay(payload)
     validate_keycodes(payload)
     validate_hold(payload)
@@ -364,7 +370,8 @@ def send_action(payload: dict[str, Any], *, deadline: float | None = None, backe
                 server_attempted = True
                 return backend.request({**request, "delay_ms": delay})
         if payload.get("observation_id") is not None:
-            raise ValueError("Observation-bound paced text requires server-paced-text; omit --delay-ms on Debian")
+            raise ValueError("Observation-bound paced text requires server-paced-text; on Debian use verified "
+                             "element set-text, or capture and use paced text without --observation")
         for character in payload["text"]:
             if submitted:
                 time.sleep(min(delay / 1000, remaining_seconds(deadline)))
