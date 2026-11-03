@@ -117,6 +117,7 @@ TEST_SUITE_PATTERNS: dict[str, tuple[str, ...]] = {
         "tests/test_desktop_wait.py",
         "tests/test_native_desktop.py",
         "tests/test_native_keyboard.py",
+        "tests/test_node_session_adapter.py",
         "tests/test_development_inventory.py",
         "tests/test_desktop_native_visuals.py",
         "tests/test_desktop_qa_media.py",
@@ -264,6 +265,7 @@ TEST_SUITES: dict[str, list[str]] = {
         "tests.test_agent_context_plugin",
         "tests.test_web_guacamole_browser",
         "tests.test_web_panel_ca",
+        "tests.test_node_session_adapter",
     ],
     **{
         name: _discover_pattern_suite(patterns)

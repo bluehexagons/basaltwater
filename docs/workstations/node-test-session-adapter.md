@@ -110,10 +110,8 @@ never publish a marker. The CLI's explicit `--fixture-mode` accepts `exit7`,
 It defaults to `success`. Logs inherit the caller's streams and evidence remains
 private; review artifacts before sharing.
 
-Parent integration hook: add the explicit command
-`node --test examples/game-testing/node-session/adapter.test.mjs` to the owning
-Node CI/native acceptance recipe and link this guide from the workstation
-testing documentation. This increment changes no global test registry,
-platform runtime or shared plan. The suite's malformed/missing synthetic
+The `desktop` and Node compatibility test selections run this acceptance suite
+through `tests.test_node_session_adapter`; it is also part of full CI.
+The suite's malformed/missing synthetic
 readiness checks complement the runtime's separate wrong/missing Token tests;
 they do not replace guardian acceptance tests.
