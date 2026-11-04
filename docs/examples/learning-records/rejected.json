@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "records": [
+    {
+      "kind": "observation",
+      "id": "packet-1",
+      "run_id": "run-1",
+      "match_id": "match-1",
+      "phase": "preparation",
+      "round_id": null,
+      "state_revision": "state-1",
+      "captured_at": "2026-01-01T00:00:00+00:00",
+      "monotonic_ns": 100,
+      "clock_scope": "synthetic-run-1",
+      "conditions": {
+        "game": null,
+        "build": null,
+        "environment": null,
+        "profile": null,
+        "recognizer": null,
+        "knowledge": null,
+        "policy": null,
+        "adapter": null,
+        "team": null,
+        "controller": null,
+        "coaching": null
+      },
+      "frames": [],
+      "fields": [
+        {
+          "name": "scene",
+          "status": "unknown",
+          "value": null,
+          "sources": []
+        }
+      ]
+    },
+    {
+      "kind": "decision",
+      "id": "decision-1",
+      "packet_id": "packet-1",
+      "state_revision": "state-1",
+      "policy": null,
+      "knowledge": null,
+      "action": "Request evidence",
+      "preconditions": [],
+      "alternative": null,
+      "opportunity_cost": null,
+      "expected_effect": null,
+      "dispatch": {
+        "id": null,
+        "stage": "not-attempted",
+        "delivery": "not-sent"
+      },
+      "observed_effect": null,
+      "evidence": []
+    },
+    {
+      "kind": "coach-request",
+      "id": "request-1",
+      "packet_id": "packet-1",
+      "state_revision": "state-1",
+      "trigger": "Unknown scene",
+      "allowed_digests": [],
+      "requested_settings": {
+        "model": null,
+        "effort": null,
+        "service": null
+      },
+      "question": "Which evidence is missing?",
+      "deadline_at": "2026-01-01T00:01:00+00:00",
+      "intervention_budget": 1
+    },
+    {
+      "kind": "coach-reply",
+      "id": "reply-1",
+      "packet_id": "packet-1",
+      "state_revision": "state-1",
+      "request_id": "request-1",
+      "received_at": "2026-01-01T00:00:10+00:00",
+      "actual_settings": {
+        "model": null,
+        "effort": null,
+        "service": null
+      },
+      "recommendation": "Obtain a labelled frame",
+      "evidence": [],
+      "validity": [
+        "Scene remains unknown"
+      ]
+    },
+    {
+      "kind": "coach-disposition",
+      "id": "disposition-1",
+      "reply_id": "reply-1",
+      "at": "2026-01-01T00:00:20+00:00",
+      "current_state_revision": "state-2",
+      "validation": "stale",
+      "disposition": "rejected",
+      "reason": "State changed before review",
+      "result": null
+    }
+  ]
+}

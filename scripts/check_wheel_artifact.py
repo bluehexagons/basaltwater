@@ -63,6 +63,8 @@ REQUIRED_WHEEL_PATHS = (
     "desktop/qa_cli.py",
     "desktop/receipts.py",
     "desktop/run_checkpoint.py",
+    "desktop/learning_records.py",
+    "desktop/record_bundles.py",
     "desktop/config/xrdp.ini.template",
     "security/security_steps.py",
     "smb/samba_steps.py",
@@ -172,6 +174,17 @@ def _smoke_desktop_cli(launcher: Path, work_dir: Path, environment: dict[str, st
         if not isinstance(data, dict):
             raise RuntimeError("Installed desktop CLI did not return a JSON object")
         return data
+
+    source = folder / "records-input.json"
+    source.write_bytes((ROOT / "docs/examples/learning-records/accepted.json").read_bytes())
+    records = request("desktop", "evidence", "records", "create", str(source),
+                      "--output", str(folder / "records"), "--json")
+    checked = request("desktop", "evidence", "records", "validate", records["artifact"],
+                      "--current-state", "state-2", "--at", "2026-01-01T00:00:20+00:00", "--json")
+    if checked["advice"][0]["validation"] != "stale" or checked["input_authority"] is not False:
+        raise RuntimeError("Installed record validator lost freshness/authority boundaries")
+    request("desktop", "evidence", "records", "create", str(source),
+            "--output", str(folder / "records"), "--json", expected=1)
 
     instructions = folder / "instructions.md"
     text = "Bounded instructions α\n" * 300

@@ -6,6 +6,18 @@ import argparse
 
 
 def add_qa_parser(commands: argparse._SubParsersAction, evidence: argparse._SubParsersAction) -> None:
+    records = evidence.add_parser("records", help="Offline immutable observation/decision/coach bundles; no input authority")
+    record_ops = records.add_subparsers(dest="records_command", required=True)
+    create = record_ops.add_parser("create")
+    create.add_argument("source", help="Version-1 closed record graph JSON")
+    create.add_argument("--media", nargs=2, action="append", default=[], metavar=("FRAME_ID", "PNG"))
+    create.add_argument("--output", help="New private bundle outside Git")
+    validate = record_ops.add_parser("validate")
+    validate.add_argument("artifact", help="Private manifest.json returned by create")
+    validate.add_argument("--current-state", help="Explicit current revision, or unknown")
+    validate.add_argument("--at", help="Explicit evaluation UTC; pair with --current-state")
+    for operation in (create, validate):
+        operation.add_argument("--json", action="store_true")
     run = evidence.add_parser("run", help="Offline controller-written match clocks/checkpoints; no watcher or input")
     operations = run.add_subparsers(dest="run_command", required=True)
     start = operations.add_parser("start")
@@ -74,6 +86,18 @@ def add_qa_parser(commands: argparse._SubParsersAction, evidence: argparse._SubP
 
 
 def run_qa_command(args: argparse.Namespace) -> dict:
+    if args.desktop_command == "evidence" and args.evidence_command == "records":
+        from desktop import record_bundles
+        try:
+            if args.records_command == "create":
+                media = dict(args.media)
+                if len(media) != len(args.media):
+                    raise ValueError("Duplicate media frame ID")
+                return record_bundles.create(args.source, media, args.output)
+            return record_bundles.validate(args.artifact, current_state_revision=args.current_state, at=args.at)
+        except (OSError, ValueError, RuntimeError) as exc:
+            return getattr(exc, "receipt", {"error": str(exc), "validation": "invalid",
+                                            "partial": False, "input_authority": False})
     if args.desktop_command == "evidence" and args.evidence_command == "run":
         from desktop import run_checkpoint
         if args.run_command == "start":
