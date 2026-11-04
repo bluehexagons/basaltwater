@@ -6,6 +6,12 @@ This plan separates implementation needs from game-owned acceptance. Keep filled
 briefs, actual inventories and raw evidence private; no particular game or
 external test repository is required.
 
+The [learning and local-execution plan](game-testing-learning.md) coordinates
+offline decision/coach packets, optional read-only perception, effect-verified
+batches and cross-run strategy review. Use its GL milestones for new work;
+those runtime facilities remain planned. Existing sequence support is not semantic
+gameplay automation, and a documented coach procedure is not a qualified live team.
+
 ## Current boundaries
 
 | Capability | State and next acceptance |

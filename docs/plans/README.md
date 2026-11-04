@@ -33,7 +33,7 @@ These areas are not prerequisites for the shared Debian build/CI host.
 | Basaltide operating system | Plan a completely free and open-source Debian-based developer and agent workstation bundling Basaltwater and selected customizations. Choose the desktop, image recipe, freely licensed components and package/update ownership under the [Basaltide plan](basaltide.md). |
 | CachyOS and mobile | Use the existing [CachyOS profile](../workstations/cachyos.md). Further workstation enhancements and the [mobile proposal](mobile-agent-support.md) are deferred. |
 | Games and publishing | Keep [Godot/release bundle scope](game-publishing.md) bounded. Live provider behavior, rendering and automatic public posts remain gated in the [communications plan](game-release-communications.md). |
-| Agent-assisted game testing | Use the [capability plan](game-testing.md) for bounded evidence, specialist-team qualification and a prospective virtual-pad adapter; per-game outcomes remain project-owned. |
+| Agent-assisted game testing | Use the [capability plan](game-testing.md) and [learning/execution milestones](game-testing-learning.md): private decision/coach packets, qualified local perception and verified batches; per-game strategy and outcomes remain project-owned. |
 | Broader recovery | Test restore on another physical host and remaining storage/network failures; use the [roadmap](roadmap.md) and [transaction recovery guide](../operations/transaction-recovery.md). |
 
 ## Backlog references
