@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "kind": "learning-compatibility",
+  "producer_commit": "2e3bef9d5b7e084104edcb7ede35198711a09e33",
+  "feature_commits": {
+    "BW-GL02A": "20167cd3453fad9f8a0ea6dc7ea11d0f0d21d45c",
+    "BW-GL06A": "96e926bac29f876a7c7d205696f2039a4bec5840",
+    "BW-GL04A": "e3bc572dd69ebfd697b7cd1d1ac01846abf3246d",
+    "BW-GL05A": "8262508dbe3e65e5eb6b727cd17a03fc0d5ba867"
+  },
+  "contracts": {
+    "records": 1,
+    "corpus": 1,
+    "region_profile": 1,
+    "region_heldout": 1,
+    "conditional_plan": 1,
+    "event_wait": 1,
+    "detector": "region-mae-v1"
+  },
+  "fixtures": {
+    "docs/examples/learning-records/accepted.json": "65fcd2fd4e16be8d56181cd756180973f122d334b21d1469c1a923e76a58d76e",
+    "docs/examples/learning-records/rejected.json": "590b1d643a01f98bf7f7cd6511a3c4b9e24f20ed73456696dd1eaa98e8153f69",
+    "docs/examples/learning-records/corpus.json": "3ad34bde344ba3187dc7f5bd87e1b83d6e0a96f8863924788db94992919d4dcb",
+    "docs/examples/learning-records/perception.json": "fa5a17efcdd09d235de1538b17641c41895d8cb3c55f1368593d44813b89889d",
+    "docs/examples/learning-records/conditional.json": "4b2c5ced2e359a7b2e1638f0dccaf09ba9d811def7b5293f38887a13da18b0ae"
+  },
+  "commands": [
+    "basaltw desktop evidence records create SOURCE [--media FRAME_ID PNG]... [--output NEW_DIRECTORY] [--json]",
+    "basaltw desktop evidence records validate MANIFEST [--current-state REVISION --at UTC] [--json]",
+    "basaltw desktop evidence corpus CORPUS_JSON [--source SOURCE_ID RECORDS_JSON]... [--output NEW_DIRECTORY] [--json]",
+    "basaltw desktop evidence perception recognize MANIFEST PACKET_ID FRAME_ID --profile PROFILE [--template ID PNG]... [--output NEW_DIRECTORY] [--json]",
+    "basaltw desktop evidence perception evaluate DATASET --bundle RUN_ID MANIFEST [--bundle RUN_ID MANIFEST]... --profile PROFILE [--template ID PNG]... [--output NEW_DIRECTORY] [--json]",
+    "basaltw desktop evidence conditional validate PLAN [--json]",
+    "basaltw desktop --native evidence conditional execute PLAN --profile PROFILE [--template ID PNG]... [--output NEW_DIRECTORY] [--json]",
+    "basaltw desktop --native evidence conditional wait PLAN --profile PROFILE [--template ID PNG]... [--output NEW_DIRECTORY] [--json]"
+  ],
+  "qualification": {
+    "source": "all four Basaltwater assignments implemented",
+    "offline": "synthetic records/corpus/perception, mocked execution/waits, installed offline CLI",
+    "native_executor": "not-attempted",
+    "game_profiles": "not-attempted",
+    "consumer_adoption": "not-asserted",
+    "installation_helper_parity": "not-asserted"
+  },
+  "separate_work": [
+    "owner-selected installation and safe helper refresh",
+    "disposable native application qualification",
+    "consumer-owned frozen real-profile held-out data and thresholds",
+    "consuming-project adapters, strategy, outcome mapping and adoption receipts",
+    "native game trial and any other-platform adapters"
+  ]
+}

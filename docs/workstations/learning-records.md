@@ -127,10 +127,14 @@ valid; the latter refuses advice after a state change. Tests also generate a
 tiny synthetic PNG and exercise observed regions without host access.
 Consumers should adopt these exact fields and grammar, record schema version,
 producer commit and fixture hashes, and preserve both tested repository commits.
-The [compatibility receipt](../examples/learning-records/compatibility.json)
+The [initial compatibility receipt](../examples/learning-records/compatibility.json)
 pins the initial producer commit, fixture hashes and supported command grammar.
+The [integrated receipt](../examples/learning-records/learning-compatibility.json)
+adds corpus, perception and execution producer commits/fixtures without changing
+the original record envelope.
 The [version-1 corpus extension](learning-corpus.md) adds closed-corpus validation
 and grouped summaries while preserving the record graph schema and fixtures.
-Recognizers, conditional execution, coach dispatch and live
-game qualification remain separate assignments in the
+Read-only [recognition](local-perception.md) and [conditional execution](conditional-execution.md)
+are implemented with synthetic/mocked acceptance. Coach dispatch and live game
+qualification remain separate in the
 [handoff plan](../plans/game-testing-handoffs/README.md).

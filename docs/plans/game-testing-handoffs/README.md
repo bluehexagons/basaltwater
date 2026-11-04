@@ -11,6 +11,10 @@ owns the overall design. The consuming project's
 [handoffs](https://github.com/bluehexagons/game-testing/blob/main/common/handoffs/README.md)
 use the same GL milestone IDs.
 
+See the [acceptance and adoption handoff](acceptance.md) and
+[integrated compatibility receipt](../../examples/learning-records/learning-compatibility.json)
+for the completed source scope, pinned commits/fixtures and remaining qualification.
+
 | Assignment | State / prerequisite | Deliverable |
 | --- | --- | --- |
 | [BW-GL02A: private records](records.md) | Implemented offline; adoption pending | Version-1 packet contract, validators, pinned artifact creation and offline CLI |

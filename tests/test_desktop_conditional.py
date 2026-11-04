@@ -336,6 +336,13 @@ class ConditionalTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             adapter.observe(self.root / "oversized.png", 100, 1)
 
+    def test_published_compatibility_fixture_pins(self):
+        receipt = json.loads((EXAMPLES / "learning-compatibility.json").read_text())
+        root = EXAMPLES.parents[2]
+        for filename, digest in receipt["fixtures"].items():
+            with self.subTest(fixture=filename):
+                self.assertEqual(hashlib.sha256((root / filename).read_bytes()).hexdigest(), digest)
+
 
 if __name__ == "__main__":
     unittest.main()
