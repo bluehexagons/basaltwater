@@ -1175,8 +1175,18 @@ def _install_locked_t3_service(
             if update_needed or pending is not None
             else None
         )
+        # Repointing service-state.json does not prove activation: 0.1.7 can
+        # leave the old invocation running with .restart-pending recorded.
+        # Prefer systemd identity; retain the version fallback only when that
+        # identity is unavailable and upstream reports no pending restart.
         updater_started_service = update_needed and (
-            binary != previous_binary or (
+            (
+                binary != previous_binary
+                and current_invocation is None
+                and not os.path.lexists(
+                    os.path.join(_t3_runtime_path(home), ".restart-pending")
+                )
+            ) or (
                 current_invocation is not None
                 and (previous_invocation is not None or not service_was_present)
                 and current_invocation != previous_invocation

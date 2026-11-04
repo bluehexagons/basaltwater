@@ -1750,6 +1750,39 @@ class T3CodeWebTest(unittest.TestCase):
             self.assertNotEqual(state.invocation, "b" * 32)
             self.assertFalse(os.path.exists(state.marker))
 
+    def test_repointed_runtime_requires_activation_unless_invocation_changed(self) -> None:
+        for updater_code, restarted, pending_restart, known_invocation in (
+            (0, False, True, True), (1, False, True, True),
+            (0, True, False, True), (1, True, False, True),
+            (0, False, False, True), (0, False, True, False),
+        ):
+            with (
+                self.subTest(updater_code=updater_code, restarted=restarted,
+                             pending_restart=pending_restart, known_invocation=known_invocation),
+                tempfile.TemporaryDirectory() as home,
+                ExitStack() as stack,
+            ):
+                state = self._service_fixture(home, stack)
+
+                def update(*_args, **_kwargs):
+                    self._write_upstream_native_runtime(home, "0.1.7", protocol=3)
+                    if restarted:
+                        state.invocation = "b" * 32
+                    if not known_invocation:
+                        state.invocation = None
+                    if pending_restart:
+                        with open(os.path.join(home, ".t3", "runtime", ".restart-pending"),
+                                  "w", encoding="utf-8") as marker:
+                            marker.write("0.1.7\n")
+                    return SimpleNamespace(returncode=updater_code, stdout="", stderr="updater output")
+
+                state.updater.side_effect = update
+                result = _install_t3_service(*state.arguments, refresh=True)
+                self.assertEqual(result, _active_t3_binary(home))
+                actions = [call.args[2] for call in state.manager.call_args_list]
+                self.assertEqual(actions.count("restart"), int(not restarted))
+                state.readiness.assert_called_once()
+
     def test_failed_updater_with_new_invocation_still_requires_active_runtime_validation(self) -> None:
         with tempfile.TemporaryDirectory() as home, ExitStack() as stack:
             state = self._service_fixture(home, stack)

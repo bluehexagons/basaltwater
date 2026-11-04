@@ -130,17 +130,17 @@ credential contents, use `basaltw agent support-bundle`.
 
 ## Stable feature baseline
 
-As checked on **2026-10-31**, GitHub's latest stable release and the local
-CachyOS `t3code-bin` package are **0.1.6** (package `0.1.6-1`). It retains
+As checked on **2026-11-04**, GitHub's latest stable release is **0.1.7**.
+Check AUR/WinGet availability and the installed desktop version separately. It retains
 the stable Orchestrator V2
 introduced in 0.1.0 and service-state protocol 3. Keep the
 server and every connected desktop client on compatible V2 releases; mobile
-requires the 2.0 app. See the [upstream release notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.6)
+requires the 2.0 app. See the [upstream release notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.7)
 and [V2 migration notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.0).
 
 The release's recommended provider versions are Codex **0.159+**, Claude Code
 **2.1.280+**, Grok **1.0.13+**, OpenCode 2 **2.0.18+**, and Pi **1.0+**.
-The [provider compatibility manifest](https://github.com/pingdotgg/t3code/blob/v0.1.6/apps/server/src/provider/model-manifest.json)
+The [provider compatibility manifest](https://github.com/pingdotgg/t3code/blob/v0.1.7/apps/server/src/provider/model-manifest.json)
 also marks Codex 0.156+ and Pi 0.80.5+ supported; distinguish recommended
 versions from minimum support. Inspect **Settings → Providers** for the selected account,
 binary, version, and readiness. Setup manages only selected Basaltwater
@@ -211,6 +211,29 @@ hidden rows retain their keyboard shortcuts. Setup preserves these UI choices.
 See the [usage guide](https://github.com/pingdotgg/t3code/blob/v0.1.5/docs/user/usage.md).
 
 ### Agent workflow integration
+
+The 0.1.7 source review retains service-state protocol 3, the standalone archive
+and native-module layout, provider recommendations, and the pairing helper's
+CLI session grant contract. Setup now distinguishes a repointed runtime from
+an activated service using systemd invocation identity and upstream's pending
+restart marker. Mocked regressions cover updater success/failure with and
+without activation; they do not qualify a live systemd upgrade.
+On Debian x64, the GitHub-digest-verified 0.1.7 archive passed version and
+embedded native-PTY probes, disposable fresh-home HTTP startup, administrative
+pairing with all 16 scopes and bootstrap-session revocation, and SQLite
+integrity checks. No live shared service was restarted for these component checks.
+
+0.1.7 adds one-time schedules (`type: "once"`, `runAt` with an explicit UTC
+offset), child approvals in the parent conversation, and shareable thread links.
+Use the [scheduling reference](../../common/agent_skills/basaltwater-subagents/references/t3-scheduling.md)
+for finite follow-ups. Kiro is an Early Access provider, not a newly managed
+Basaltwater tool. Machine-wide managed policy can restrict providers, permission
+modes, remote access and updates; invalid policy prevents startup. Inspect it
+with `t3 policy show` and validate proposed files with `t3 policy check`.
+Preserve administrator policy during troubleshooting; see the
+[policy guide](https://github.com/pingdotgg/t3code/blob/v0.1.7/docs/user/managed-policy.md).
+Native clients, managed-policy enforcement and live scheduling remain separate
+qualification work.
 
 Stable 0.1.6 adds these workflows to the existing integration:
 
@@ -333,8 +356,8 @@ separate from Basaltwater's owned-worktree ancestry checks and cache maintenance
 
 The shared [client workflow reference](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-016-client-workflows)
 ships in the existing project-development bundle on Debian, CachyOS, native
-Windows, and Ubuntu WSL. The shared orchestration and scheduling references
-also follow 0.1.6. No additional skill catalog entry is needed.
+Windows, and Ubuntu WSL. The shared scheduling reference also covers 0.1.7's
+one-time triggers. No additional skill catalog entry is needed.
 
 On Debian, rerun the saved setup or use `sudo basaltw refresh` to reconcile
 stable T3 and deliver updated skills; inspect the independent refresh and

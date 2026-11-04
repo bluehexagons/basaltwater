@@ -98,6 +98,24 @@ Basaltwater and rerun the saved setup command to apply the readiness fix.
 
 ## Release tracks and archive layout
 
+Stable 0.1.7 retains service-state protocol 3 and the standalone archive layout.
+An installed version can differ from the running service: upstream records
+`runtime/.restart-pending` when activation remains outstanding. Setup checks
+systemd invocation identity before deciding an updater already restarted it;
+it restarts an unchanged invocation even when the selected executable changed.
+An unavailable invocation plus a pending marker also requires activation.
+Do not delete the marker to report an update as ready.
+
+0.1.7 also reads machine-wide managed policy on startup. Use `t3 policy check
+policy.json` before deployment and `t3 policy show` as the T3 user to compare
+installed and loaded policy. Invalid or conflicting sources prevent startup;
+client restrictions can block remote pairing/Connect, and update restrictions
+can disable updates or select a mirror. Preserve those restrictions. Basaltwater
+does not install policy or remove it during refresh. Linux policy lives at
+`/etc/t3code/policy.json`; Windows can use Group Policy or a policy file, and WSL
+reads its own Linux policy. See the tagged
+[policy guide](https://github.com/pingdotgg/t3code/blob/v0.1.7/docs/user/managed-policy.md).
+
 Stable 0.1.6 keeps service-state protocol 3 and the standalone archive layout.
 It adds lower-priority agent slices with memory/task bounds and server resource
 priorities. Debian uses the upstream unit; CachyOS's managed web unit follows
