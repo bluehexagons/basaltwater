@@ -128,3 +128,29 @@ def validate(artifact, *, current_state_revision=None, at=None):
     return {"artifact": str(path), "schema_version": 1, "validation": "valid", "partial": False,
             "records": len(by_id), "advice": replies, "freshness": "evaluated" if at else "not-evaluated",
             "input_authority": False}
+
+
+def read_packet(artifact, packet_id, frame_id):
+    """Read a verified offline packet/frame pair; never return a helper lease."""
+    validate(artifact)
+    folder = Path(artifact).absolute().parent
+    manifest = parse_json(_read(folder / "manifest.json", 65536, private=True))
+    content = _read(folder / "records.json", contract.MAX_BYTES, private=True)
+    if _pin(content, "records.json") != manifest["source"]:
+        raise ValueError("Records changed after bundle validation")
+    document = parse_json(content)
+    contract.validate(document)
+    contract.text(packet_id)
+    contract.text(frame_id)
+    packet = next((row for row in document["records"] if row["id"] == packet_id and row["kind"] == "observation"), None)
+    if packet is None:
+        raise ValueError("Missing observation packet")
+    declaration = next((frame for frame in packet["frames"] if frame["id"] == frame_id), None)
+    if declaration is None:
+        raise ValueError("Frame does not belong to packet")
+    # Derive the filename from the validated graph, never a reread manifest path.
+    frames = contract.validate(document)
+    index = list(frames).index(frame_id)
+    data = _read(folder / f"frame-{index}.png", declaration["bytes"], private=True)
+    _frame(data, declaration)
+    return packet, data

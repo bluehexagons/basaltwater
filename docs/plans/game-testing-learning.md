@@ -3,7 +3,8 @@
 **Implement an offline evidence contract before adding a game-playing loop.**
 BW-GL02A now implements the [version-1 offline record contract](../workstations/learning-records.md).
 BW-GL06A implements [closed-corpus review](../workstations/learning-corpus.md).
-Perception and conditional execution remain planned; none are live-qualified.
+BW-GL04A implements [read-only scene-region perception](../workstations/local-perception.md)
+with synthetic acceptance. Conditional execution remains planned; none are live-qualified.
 Existing [game-testing tools](../workstations/game-testing.md)
 remain usable. No helper restart, model call, game input or system refresh is part
 of this planning increment.
@@ -35,7 +36,8 @@ for that project's tasks. Contracts use stable IDs/versions, never personal path
 | `lib/agent_memory.py` | Mutable CAS notes/todos can point to current state; not immutable knowledge releases |
 | `lib/agent_models.py` | Reviewed task acceptance/cost evidence; not game outcomes or an automatic stronger-coach selector |
 
-No OCR/template detector was found in the inspected desktop/lib implementations.
+`desktop/perception.py` now provides a bounded fixed-region template prototype;
+numeric OCR is not implemented.
 Keep generic additions under the desktop boundary; `game/` has an existing
 game-specific setup integration and should not become a universal strategy engine.
 

@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "kind": "synthetic-perception-assets",
+  "profile": {
+    "schema_version": 1,
+    "kind": "region-profile",
+    "id": "synthetic-scene",
+    "version": "1",
+    "detector": "region-mae-v1",
+    "conditions": {
+      "game": "synthetic",
+      "build": "build-1",
+      "profile": "profile-1",
+      "recognizer": "region-mae-v1"
+    },
+    "geometry": [
+      2,
+      2
+    ],
+    "image_origin": [
+      0,
+      0
+    ],
+    "image_geometry": [
+      2,
+      2
+    ],
+    "fields": [
+      {
+        "name": "scene",
+        "rectangle": [
+          0,
+          0,
+          2,
+          2
+        ],
+        "max_error": 0.01,
+        "min_margin": 0.1,
+        "action_risk": "offline-review",
+        "templates": [
+          {
+            "id": "red",
+            "label": "red",
+            "sha256": "d434b065e245cf06ed44895f78f8a75f9e5b43d03d503a43e90212f232455312",
+            "bytes": 76
+          },
+          {
+            "id": "blue",
+            "label": "blue",
+            "sha256": "7c3c919026a6f27ace0891b608cc0697fec53dedc25562bfd1443285557cdf8f",
+            "bytes": 72
+          }
+        ]
+      }
+    ]
+  },
+  "templates_hex": {
+    "red": "89504e470d0a1a0a0000000d4948445200000002000000020802000000fdd49a730000001349444154789c63f8cfc0f09f018cff333000001fee03fd351b00330000000049454e44ae426082",
+    "blue": "89504e470d0a1a0a0000000d4948445200000002000000020802000000fdd49a730000000f49444154789c636060f80f46600a0017f603fd7eeb37f30000000049454e44ae426082"
+  }
+}

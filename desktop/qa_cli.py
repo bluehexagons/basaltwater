@@ -6,6 +6,20 @@ import argparse
 
 
 def add_qa_parser(commands: argparse._SubParsersAction, evidence: argparse._SubParsersAction) -> None:
+    perception = evidence.add_parser("perception", help="Offline fixed-region recognition and frozen held-out evaluation")
+    perception_ops = perception.add_subparsers(dest="perception_command", required=True)
+    recognize = perception_ops.add_parser("recognize")
+    recognize.add_argument("artifact", help="Verified record bundle manifest.json")
+    recognize.add_argument("packet_id")
+    recognize.add_argument("frame_id")
+    evaluate = perception_ops.add_parser("evaluate")
+    evaluate.add_argument("dataset", help="Frozen region-heldout JSON")
+    evaluate.add_argument("--bundle", nargs=2, action="append", default=[], metavar=("RUN_ID", "MANIFEST"))
+    for operation in (recognize, evaluate):
+        operation.add_argument("--profile", required=True)
+        operation.add_argument("--template", nargs=2, action="append", default=[], metavar=("TEMPLATE_ID", "PNG"))
+        operation.add_argument("--output", help="New private directory outside Git")
+        operation.add_argument("--json", action="store_true")
     corpus = evidence.add_parser("corpus", help="Offline closed-corpus validation and condition-aware summaries")
     corpus.add_argument("source", help="Version-1 corpus manifest JSON")
     corpus.add_argument("--source", dest="sources", nargs=2, action="append", default=[], metavar=("SOURCE_ID", "RECORDS_JSON"))
@@ -91,6 +105,21 @@ def add_qa_parser(commands: argparse._SubParsersAction, evidence: argparse._SubP
 
 
 def run_qa_command(args: argparse.Namespace) -> dict:
+    if args.desktop_command == "evidence" and args.evidence_command == "perception":
+        from desktop import perception_reports
+        try:
+            templates = dict(args.template)
+            if len(templates) != len(args.template):
+                raise ValueError("Duplicate template ID")
+            if args.perception_command == "recognize":
+                return perception_reports.recognize(args.artifact, args.packet_id, args.frame_id,
+                                                     args.profile, templates, args.output)
+            bundles = dict(args.bundle)
+            if len(bundles) != len(args.bundle):
+                raise ValueError("Duplicate held-out run binding")
+            return perception_reports.evaluate(args.dataset, bundles, args.profile, templates, args.output)
+        except (OSError, ValueError, RuntimeError) as exc:
+            return getattr(exc, "receipt", {"error": str(exc), "partial": False, "input_authority": False})
     if args.desktop_command == "evidence" and args.evidence_command == "corpus":
         from desktop import corpus
         try:

@@ -66,6 +66,9 @@ REQUIRED_WHEEL_PATHS = (
     "desktop/learning_records.py",
     "desktop/record_bundles.py",
     "desktop/corpus.py",
+    "desktop/perception.py",
+    "desktop/perception_reports.py",
+    "desktop/png_regions.py",
     "desktop/config/xrdp.ini.template",
     "security/security_steps.py",
     "smb/samba_steps.py",
@@ -193,6 +196,37 @@ def _smoke_desktop_cli(launcher: Path, work_dir: Path, environment: dict[str, st
     summary = json.loads(Path(corpus["artifact"]).read_text())
     if summary["groups"][0]["starts"] != 1 or summary["groups"][0]["eventual"]["counts"]["win"] != 1:
         raise RuntimeError("Installed corpus summary lost deduplicated match outcomes")
+    import hashlib
+    synthetic = json.loads((ROOT / "docs/examples/learning-records/perception.json").read_text())
+    profile = folder / "profile.json"
+    profile.write_text(json.dumps(synthetic["profile"]))
+    template_args = []
+    for key, value in synthetic["templates_hex"].items():
+        filename = folder / f"{key}.png"
+        filename.write_bytes(bytes.fromhex(value))
+        template_args += ["--template", key, str(filename)]
+    red = bytes.fromhex(synthetic["templates_hex"]["red"])
+    packet = json.loads(source.read_text())["records"][0]
+    packet["conditions"].update(synthetic["profile"]["conditions"])
+    packet["frames"] = [{"id": "red", "sha256": hashlib.sha256(red).hexdigest(), "bytes": len(red),
+                         "width": 2, "height": 2, "origin": [0, 0], "geometry": [2, 2]}]
+    frame_source = folder / "frame-packet.json"
+    frame_source.write_text(json.dumps({"schema_version": 1, "records": [packet]}))
+    frame_bundle = request("desktop", "evidence", "records", "create", str(frame_source),
+                           "--media", "red", str(folder / "red.png"), "--json")
+    recognition = request("desktop", "evidence", "perception", "recognize", frame_bundle["artifact"], "packet-1", "red",
+                          "--profile", str(profile), *template_args, "--json")
+    if recognition["fields"][0]["value"] != "red" or recognition["input_authority"] is not False:
+        raise RuntimeError("Installed offline scene recognition failed")
+    dataset = folder / "heldout.json"
+    dataset.write_text(json.dumps({"schema_version": 1, "kind": "region-heldout", "id": "wheel-heldout",
+        "profile_sha256": hashlib.sha256(profile.read_bytes()).hexdigest(), "calibration_runs": [],
+        "heldout_runs": ["run-1"], "samples": [{"id": "sample-1", "run_id": "run-1", "packet_id": "packet-1",
+        "frame_id": "red", "case": "normal", "expected": {"scene": "red"}}]}))
+    evaluation = request("desktop", "evidence", "perception", "evaluate", str(dataset), "--bundle", "run-1", frame_bundle["artifact"],
+                         "--profile", str(profile), *template_args, "--json")
+    if evaluation["metrics"]["scene"]["false_confident"] != 0 or evaluation["game_qualification"] != "not-asserted":
+        raise RuntimeError("Installed held-out evaluation lost qualification boundaries")
 
     instructions = folder / "instructions.md"
     text = "Bounded instructions α\n" * 300
