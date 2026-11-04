@@ -105,7 +105,7 @@ and [1Password resolution](https://github.com/pingdotgg/t3code/blob/v0.1.6/packa
   contents. Inspect the actual recording surface for private material.
 
 One-time follow-ups use T3's new `once` schedule; the subagent skill's
-[scheduling reference](../../basaltwater-subagents/references/t3-scheduling.md)
+[scheduling reference](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-subagents/references/t3-scheduling.md)
 owns the schema, timezones, and dispatch checks. Machine-wide managed policy can
 cap modes or disable providers, remote access, and updates; inspect installed
 versus loaded policy with `t3 policy show` on the environment host. Windows
@@ -113,7 +113,7 @@ policy does not configure a server inside WSL and disables desktop-managed WSL
 connections. Read the [platform boundaries](t3-platforms.md) for that restriction,
 desktop CLI installation, and Debian's default systemd-path requirement.
 The T3 operations skill's
-[update reference](../../basaltwater-t3code/references/updates.md#release-tracks-and-archive-layout)
+[update reference](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-t3code/references/updates.md#release-tracks-and-archive-layout)
 owns policy diagnostics. Setup preserves the owner's feature settings.
 
 Contracts: [approvals](https://github.com/pingdotgg/t3code/blob/v0.1.7/docs/user/permission-modes.md),

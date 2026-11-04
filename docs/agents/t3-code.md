@@ -69,7 +69,9 @@ non-browser checks. For a desktop-browser `ERR_CERT_AUTHORITY_INVALID`, optional
 a timeout or unreachable address needs network diagnosis. Never bypass TLS.
 
 For server-hosted preview, use `target: {kind: "environment-port", port: PORT}`
-to reach a VM loopback development port directly. When a desktop-hosted browser
+to reach a VM loopback development port directly when the live tool schema
+exposes `target`; otherwise open a tab and navigate to the loopback URL.
+When a desktop-hosted browser
 needs a reachable VM URL, run
 `basaltwater-web preview resolve --port PORT --json`. It returns a verified
 owned gateway URL for `preview_navigate`, or an exact forward creation command
@@ -365,7 +367,7 @@ separate from Basaltwater's owned-worktree ancestry checks and cache maintenance
 
 ### Stable feature qualification
 
-The shared [client workflow reference](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-016-client-workflows)
+The shared [client workflow reference](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-017-client-workflows)
 ships in the existing project-development bundle on Debian, CachyOS, native
 Windows, and Ubuntu WSL. The shared scheduling reference also covers 0.1.7's
 one-time triggers. No additional skill catalog entry is needed.
@@ -393,7 +395,7 @@ blocked step. Mocked tests and service HTTP readiness cannot qualify these paths
 
 | Case | Required evidence |
 | --- | --- |
-| Providers and migration | Fresh 0.1.6 setup, 0.1.5-to-0.1.6 upgrade, and V1-to-V2 copy migration with matching client, selected Codex/Claude combinations, private recovery copy, pairing permissions, authenticated provider turn, and terminal. Qualify OpenCode 2 separately before claiming support. |
+| Providers and migration | Fresh 0.1.7 setup, 0.1.6-to-0.1.7 upgrade, and V1-to-V2 copy migration with matching client, selected Codex/Claude combinations, private recovery copy, pairing permissions, authenticated provider turn, and terminal. Qualify OpenCode 2 separately before claiming support. |
 | 0.1.6 workflows | Side-chat permission modes and idle Bring back, project pin/archive/unarchive across connected checkouts, local/merge commit review, optional 1Password resolution with missing/locked CLI failures, and server/agent priorities under pressure. Test service protection/undo separately on a disposable Debian host. |
 | 0.1.7 workflows | Parent-visible local/linked-child approvals reach the correct request; copied thread links open only for authorized recipients; one-time schedules respect offsets and do not repeat; usage filters apply before model mapping per environment; model/effort markers match changes; tagged-thread hiding does not stop work. Test managed-policy defaults/locks, cap enforcement, invalid-policy startup refusal and loaded-policy freshness on disposable hosts. Test direct preview-open targets only when exposed. |
 | Project promotion and release tracks | Promote a stopped No project folder in place; retain its files, all associated threads and schedules, then initialize Git. Exercise a deliberate Stable/Nightly switch on disposable installations, including offline/unsupported machines, incompatible or unreadable databases, and an incomplete switch whose requested track differs from its running version. Preserve database compatibility refusals. |
@@ -796,7 +798,9 @@ top-level thread creation within the user's requested scope. See the
 Managed setup refreshes reload selected provider configuration and skills. On
 CachyOS desktop, a detached user worker gracefully sends SIGTERM to a running
 same-user `t3code-bin` app, waits for exit, then relaunches the packaged app
-with its original environment and arguments. It does not force-kill; if the app
+with its original environment and persistent arguments, excluding consumed
+`t3code:` startup links so refresh does not repeat pairing or create a thread.
+It does not force-kill; if the app
 was stopped, it starts when a graphical session is available; otherwise KDE
 login autostart remains available. Check
 the worker's printed `journalctl --user` unit if it fails; queueing is not proof

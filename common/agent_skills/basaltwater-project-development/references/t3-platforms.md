@@ -18,7 +18,7 @@ Do not install a second runtime merely to make `t3 policy show` available.
 Run `t3 policy show` as the account running the intended server. It compares
 installed policy with what that server loaded; a client reconnect does not
 reload policy. For CachyOS's isolated web environment, use its
-[managed CLI and data directory](../../basaltwater-cachyos-t3code/references/web-service.md)
+[managed CLI and data directory](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-cachyos-t3code/references/web-service.md)
 rather than the desktop command. Keep policy output in private evidence.
 
 Contract: [bundled command](https://github.com/pingdotgg/t3code/blob/v0.1.7/docs/user/install.md#the-t3-command).

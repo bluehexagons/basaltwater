@@ -177,5 +177,11 @@ otherwise desktop startup waits until KDE login. Native Windows queues a
 same-session Task Scheduler worker after successful setup receipts, uses only
 graceful window closure, and writes a constant completion status under
 `%LOCALAPPDATA%\Basaltwater\t3-completion`. If the app cannot close safely or
-the login session differs, reopen it manually. Neither platform automatically
-restarts the OS; completion notices report pending reboot signals separately.
+the login session differs, reopen it manually. CachyOS reports pending reboot
+signals without restarting the OS. Native Windows setup queues a required
+Windows reboot with a visible countdown and a **Later** option; T3 startup then
+uses the next account login. If the reboot is deferred, reopen T3 manually.
+Use `-NoReboot` or `basaltw refresh --no-reboot` to defer the reboot for one run
+while retaining T3 completion. The WSL profile requires a manual Windows reboot.
+See the [Windows restart workflow](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/windows.md)
+for requirement checks, interruption recovery and status inspection.

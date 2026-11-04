@@ -51,12 +51,12 @@ Read only the route needed:
   Pairing credentials, cookies, and GitHub tokens must stay out of shared
   output. Startup filtering does not sanitize every application/provider log.
   For relocated systemd configuration, first read the
-  [Debian path boundary](../basaltwater-project-development/references/t3-platforms.md#debian-systemd-configuration-paths).
+  [Debian path boundary](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/t3-platforms.md#debian-systemd-configuration-paths).
 - **Side chats, project pin/archive, commit review, or 1Password:**
   [0.1.6 workflows](references/operations.md#016-conversation-project-and-credential-workflows).
   Side chats share the thread's folder; use bound worktrees for concurrent edits.
 - **Thread links, child approvals, usage filters, or model-switch history:**
-  [0.1.7 client workflows](../basaltwater-project-development/references/t3-workflows.md#shared-017-client-workflows).
+  [0.1.7 client workflows](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-017-client-workflows).
 - **Managed policy or a restricted provider/update/pairing control:**
   [policy diagnostics](references/updates.md#release-tracks-and-archive-layout).
   Inspect installed versus loaded policy with `t3 policy show`; preserve the

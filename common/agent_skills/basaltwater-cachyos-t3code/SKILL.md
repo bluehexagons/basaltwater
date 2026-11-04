@@ -51,7 +51,7 @@ Side chats share the main thread's folder; archiving preserves project data.
 Setup preserves these choices and does not enroll a secret provider.
 The Secrets UI depends on the upstream build-time `T3CODE_FEATURE_SECRETS`
 flag; setting a desktop/service environment variable does not enable it.
-The [0.1.7 workflows](../basaltwater-project-development/references/t3-workflows.md#shared-017-client-workflows)
+The [0.1.7 workflows](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-017-client-workflows)
 add child approvals, thread links, usage filters and model history. For KDE's
 separate capture helper and shortcut, read [SnapShots](references/desktop.md#kde-snapshots).
 

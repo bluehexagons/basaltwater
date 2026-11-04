@@ -1755,6 +1755,7 @@ class T3CodeWebTest(unittest.TestCase):
             (0, False, True, True), (1, False, True, True),
             (0, True, False, True), (1, True, False, True),
             (0, False, False, True), (0, False, True, False),
+            (0, False, False, False),
         ):
             with (
                 self.subTest(updater_code=updater_code, restarted=restarted,
@@ -1780,7 +1781,9 @@ class T3CodeWebTest(unittest.TestCase):
                 result = _install_t3_service(*state.arguments, refresh=True)
                 self.assertEqual(result, _active_t3_binary(home))
                 actions = [call.args[2] for call in state.manager.call_args_list]
-                self.assertEqual(actions.count("restart"), int(not restarted))
+                needs_restart = not restarted and (known_invocation or pending_restart)
+                self.assertEqual(actions.count("restart"), int(needs_restart))
+                self.assertEqual(actions.count("start"), int(not needs_restart))
                 state.readiness.assert_called_once()
 
     def test_failed_updater_with_new_invocation_still_requires_active_runtime_validation(self) -> None:
