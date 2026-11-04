@@ -16,7 +16,9 @@ desktop setup/refresh queue a detached user worker. This keeps local and remote
 T3 terminals available for package-review and sudo prompts until completion.
 The worker disables the managed web service, then gracefully sends SIGTERM to a running same-user `t3code-bin`,
 waits for the app and its packaged child processes (including the embedded
-server) to exit, and relaunches the packaged app with its original arguments.
+server) to exit, and relaunches the packaged app with its profile/launch flags.
+Consumed `t3code:` links are omitted, matching upstream relaunch behavior, so
+refresh does not replay pairing or create another thread from a startup link.
 The worker captures stable child process handles before shutdown so it still
 waits if the backend outlives its parent. One 60-second deadline covers the
 whole shutdown; a timeout leaves relaunch unapplied and reports the failure in

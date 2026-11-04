@@ -287,7 +287,11 @@ def restart_running_desktop(queued_before_ns: int, home: Path | None = None) -> 
                 pending.remove(descriptor)
         # Credentials/environment stay in memory. The worker becomes the app,
         # allowing systemd to track it without killing it when a helper exits.
-        _exec_desktop(app.arguments[1:], environment)
+        # Startup already consumed app links. Replaying one can create another
+        # thread or repeat pairing; keep only the persistent launch arguments.
+        arguments = [argument for argument in app.arguments[1:]
+                     if not argument.lower().startswith("t3code:")]
+        _exec_desktop(arguments, environment)
         return True  # Reached only by tests that mock execve.
     finally:
         for descriptor in [app.descriptor, *app.child_descriptors]:

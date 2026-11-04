@@ -286,6 +286,9 @@ class DesktopRefreshTests(unittest.TestCase):
 
     def test_restart_waits_for_graceful_shutdown_and_preserves_private_launch_state(self):
         app = self.runtime_mocks()
+        app.arguments = ["old-path", "T3Code://pair?key=fixture",
+                         "--user-data-dir=/private/profile", "t3code://new?prompt=fixture",
+                         "--profile", "fixture", "T3CODE://thread/fixture"]
         events = []
         self.terminate.side_effect = lambda *args: events.append("terminate")
         self.poller.poll.side_effect = lambda timeout: [] if timeout == 0 else events.append("exited") or [(1100, 1)]
@@ -295,7 +298,8 @@ class DesktopRefreshTests(unittest.TestCase):
         self.assertEqual(events, ["terminate", "exited", "receipt", "launch"])
         self.terminate.assert_called_once_with(app.descriptor, signal.SIGTERM)
         self.execute.assert_called_once_with(refresh.APP_EXECUTABLE,
-                                             [refresh.APP_EXECUTABLE, *app.arguments[1:]],
+                                             [refresh.APP_EXECUTABLE,
+                                              "--user-data-dir=/private/profile", "--profile", "fixture"],
                                              {key: value for key, value in {
                                                  **os.environ, **app.environment,
                                              }.items() if key != "ELECTRON_RUN_AS_NODE"})
