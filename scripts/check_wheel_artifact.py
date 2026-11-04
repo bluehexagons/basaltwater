@@ -69,6 +69,9 @@ REQUIRED_WHEEL_PATHS = (
     "desktop/perception.py",
     "desktop/perception_reports.py",
     "desktop/png_regions.py",
+    "desktop/conditional.py",
+    "desktop/conditional_contract.py",
+    "desktop/conditional_native.py",
     "desktop/config/xrdp.ini.template",
     "security/security_steps.py",
     "smb/samba_steps.py",
@@ -178,6 +181,16 @@ def _smoke_desktop_cli(launcher: Path, work_dir: Path, environment: dict[str, st
         if not isinstance(data, dict):
             raise RuntimeError("Installed desktop CLI did not return a JSON object")
         return data
+
+    plan = folder / "conditional.json"
+    plan.write_bytes((ROOT / "docs/examples/learning-records/conditional.json").read_bytes())
+    checked_plan = request("desktop", "evidence", "conditional", "validate", str(plan), "--json")
+    if checked_plan["validation"] != "valid" or checked_plan["input_authority"] is not False:
+        raise RuntimeError("Installed conditional plan validation lost its offline authority boundary")
+    refused_execution = request("desktop", "evidence", "conditional", "execute", str(plan),
+                                "--profile", str(folder / "unused.json"), "--json", expected=1)
+    if "--native" not in refused_execution.get("error", ""):
+        raise RuntimeError("Installed executor did not require explicit native selection")
 
     source = folder / "records-input.json"
     source.write_bytes((ROOT / "docs/examples/learning-records/accepted.json").read_bytes())

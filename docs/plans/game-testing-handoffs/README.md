@@ -1,9 +1,10 @@
 # Game-testing implementation handoffs
 
-**BW-GL02A now has a version-1 offline implementation.** See the
-[record contract and CLI](../../workstations/learning-records.md). Native/game
-qualification and consuming-project adoption remain separate. The remaining
-assignments describe planned capabilities, not running jobs. Read the repository's `AGENTS.md`,
+**All four Basaltwater assignments have source implementations and synthetic or
+mocked acceptance.** See the [record contract and CLI](../../workstations/learning-records.md)
+and the deliverable links below. Native/game qualification and consuming-project
+adoption remain separate. These briefs are scope/acceptance references, not
+running jobs. Read the repository's `AGENTS.md`,
 contributor guide, this page and the assigned brief; follow links as needed rather
 than loading every work package. The [architecture plan](../game-testing-learning.md)
 owns the overall design. The consuming project's
@@ -15,7 +16,7 @@ use the same GL milestone IDs.
 | [BW-GL02A: private records](records.md) | Implemented offline; adoption pending | Version-1 packet contract, validators, pinned artifact creation and offline CLI |
 | [BW-GL06A: corpus summaries](corpus.md) | Implemented offline; adoption pending | Deduplicated condition-aware outcome summaries and review inputs |
 | [BW-GL04A: local perception](perception.md) | Implemented and tested synthetically; real-profile acceptance waits for GT-GL04A data | Read-only recognizer interface, one bounded detector and held-out report |
-| [BW-GL05A: conditional execution](execution.md) | After records/perception contracts; live adoption waits for qualification | Effect-verified executor/event wait with partial receipts and fail-stop tests |
+| [BW-GL05A: conditional execution](execution.md) | Implemented and tested with mocked authority; native/game qualification pending | [Effect-verified executor/event wait](../../workstations/conditional-execution.md) with partial receipts and fail-stop tests |
 
 No generic model scheduler or game strategy engine is assigned. Coach request/
 reply/disposition records belong to BW-GL02A; coach orchestration remains in the

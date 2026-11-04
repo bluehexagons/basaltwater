@@ -6,6 +6,18 @@ import argparse
 
 
 def add_qa_parser(commands: argparse._SubParsersAction, evidence: argparse._SubParsersAction) -> None:
+    conditional = evidence.add_parser("conditional", help="Validate offline plans or explicitly run bounded native observe/act/verify")
+    conditional_ops = conditional.add_subparsers(dest="conditional_command", required=True)
+    check_plan = conditional_ops.add_parser("validate", help="Offline schema validation; grants no input authority")
+    check_plan.add_argument("plan")
+    check_plan.add_argument("--json", action="store_true")
+    for name in ("execute", "wait"):
+        operation = conditional_ops.add_parser(name, help="Requires --native and existing enabled control; never starts or refreshes helper")
+        operation.add_argument("plan")
+        operation.add_argument("--profile", required=True)
+        operation.add_argument("--template", nargs=2, action="append", default=[], metavar=("TEMPLATE_ID", "PNG"))
+        operation.add_argument("--output", help="New private directory outside Git")
+        operation.add_argument("--json", action="store_true")
     perception = evidence.add_parser("perception", help="Offline fixed-region recognition and frozen held-out evaluation")
     perception_ops = perception.add_subparsers(dest="perception_command", required=True)
     recognize = perception_ops.add_parser("recognize")
@@ -104,7 +116,28 @@ def add_qa_parser(commands: argparse._SubParsersAction, evidence: argparse._SubP
         operation.add_argument("--json", action="store_true")
 
 
-def run_qa_command(args: argparse.Namespace) -> dict:
+def run_qa_command(args: argparse.Namespace, *, backend=None) -> dict:
+    if args.desktop_command == "evidence" and args.evidence_command == "conditional":
+        from desktop import conditional, conditional_contract, conditional_native, perception
+        from desktop.record_bundles import _read
+        from lib.atomic_io import parse_json
+        try:
+            plan = parse_json(_read(args.plan, 65536))
+            conditional_contract.validate(plan)
+            if args.conditional_command == "validate":
+                return {"validation": "valid", "schema_version": 1, "plan_id": plan["id"], "input_authority": False}
+            if not getattr(args, "native", False) or backend is None:
+                raise ValueError("Conditional execution/event waits require --native")
+            paths = dict(args.template)
+            if len(paths) != len(args.template):
+                raise ValueError("Duplicate template ID")
+            _, profile, templates = perception.load_profile(args.profile, paths)
+            controller = conditional_native.NativeController(backend, profile, templates,
+                **{key: plan[key] for key in ("run_id", "match_id", "phase")})
+            operation = conditional.execute if args.conditional_command == "execute" else conditional.wait
+            return operation(plan, controller, output=args.output)
+        except (OSError, ValueError, RuntimeError) as exc:
+            return getattr(exc, "receipt", {"error": str(exc), "partial": False, "input_authority": False})
     if args.desktop_command == "evidence" and args.evidence_command == "perception":
         from desktop import perception_reports
         try:

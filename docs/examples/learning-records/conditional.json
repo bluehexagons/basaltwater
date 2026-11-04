@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "kind": "conditional-plan",
+  "id": "synthetic-click",
+  "run_id": "run-1",
+  "match_id": "match-1",
+  "phase": "preparation",
+  "scene_field": "scene",
+  "allowed_scenes": ["red", "blue"],
+  "terminal_scenes": [],
+  "limits": {"seconds": 20, "inputs": 1, "storage_bytes": 4194304, "frame_bytes": 131072},
+  "steps": [
+    {
+      "id": "step-1",
+      "action": "Synthetic red-to-blue click",
+      "target": {"field": "scene", "equals": "red"},
+      "preconditions": [{"field": "scene", "equals": "red"}],
+      "effect": [{"field": "scene", "equals": "blue"}],
+      "input": {"kind": "click", "button": 1, "hold_ms": 0}
+    }
+  ]
+}

@@ -1,6 +1,8 @@
 # BW-GL06A: offline corpus validation and grouped summaries
 
-**Blocked on the merged BW-GL02A contract.** Once available, implement the generic
+**Implemented offline on the merged BW-GL02A contract.** See the
+[corpus API/CLI](../../workstations/learning-corpus.md). The original scope follows:
+implement the generic
 closed-corpus layer under the [architecture plan](../game-testing-learning.md).
 Read the [handoff index](README.md) and published contract/fixtures first.
 

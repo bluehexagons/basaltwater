@@ -4,7 +4,8 @@
 BW-GL02A now implements the [version-1 offline record contract](../workstations/learning-records.md).
 BW-GL06A implements [closed-corpus review](../workstations/learning-corpus.md).
 BW-GL04A implements [read-only scene-region perception](../workstations/local-perception.md)
-with synthetic acceptance. Conditional execution remains planned; none are live-qualified.
+with synthetic acceptance. BW-GL05A implements [conditional execution and event waits](../workstations/conditional-execution.md)
+with mocked acceptance; none of these new learning facilities are live-qualified.
 Existing [game-testing tools](../workstations/game-testing.md)
 remain usable. No helper restart, model call, game input or system refresh is part
 of this planning increment.

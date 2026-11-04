@@ -207,9 +207,9 @@ def run_desktop_command(args: argparse.Namespace) -> int:
         elif command == "instructions":
             from desktop.preflight import instruction_page
             result = instruction_page(args.path, start=args.start, characters=args.characters, sha256=args.sha256)
-        elif command == "evidence" and args.evidence_command in ("run", "closeout", "records", "corpus", "perception"):
+        elif command == "evidence" and args.evidence_command in ("run", "closeout", "records", "corpus", "perception", "conditional"):
             from desktop.qa_cli import run_qa_command
-            result = run_qa_command(args)
+            result = run_qa_command(args, backend=backend)
         elif command == "accessibility-record":
             from desktop.accessibility_recording import run_recording_command
             result = run_recording_command(args)

@@ -1,6 +1,8 @@
 # BW-GL05A: effect-verified local batches and event waits
 
-**Wait for merged records and perception contracts.** Read the
+**Implemented with merged records/perception contracts and mocked acceptance.**
+See the [API, CLI and qualification recipe](../../workstations/conditional-execution.md).
+Native/game qualification remains pending. Read the
 [index](README.md), [GL-05 design](../game-testing-learning.md#gl-05-local-observeactverify-batches),
 current observation/input contracts and their tests. Live game adoption is a later
 consuming-project assignment, not part of implementation acceptance here.

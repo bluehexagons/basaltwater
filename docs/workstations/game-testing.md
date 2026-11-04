@@ -6,6 +6,12 @@ rules, saves, acceptance criteria and testing brief. Basaltwater supplies
 capture/input and private evidence collection. Installation or a previous
 successful match does not establish readiness for the next run.
 
+Generic learning tools now provide [immutable records](learning-records.md),
+[closed-corpus summaries](learning-corpus.md), [offline region perception](local-perception.md)
+and [conditional execution/event waits](conditional-execution.md). These have
+offline/mocked acceptance; native executor and game-profile qualification remain
+separate from source availability.
+
 ## Prepare a bounded brief
 
 Record these fields in the game project's private task tracker before play:
