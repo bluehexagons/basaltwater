@@ -6,6 +6,10 @@ not implemented or live-qualified. Existing [game-testing tools](../workstations
 remain usable. No helper restart, model call, game input or system refresh is part
 of this planning increment.
 
+Use the [implementation handoffs](game-testing-handoffs/README.md) to assign
+bounded jobs with contract ownership, writable scope and acceptance. Start the
+offline records contract first; source delivery and live adoption remain separate.
+
 ## Responsibility
 
 Basaltwater provides generic private packets, validation, optional local perception,
