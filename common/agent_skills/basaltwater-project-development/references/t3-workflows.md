@@ -109,7 +109,10 @@ One-time follow-ups use T3's new `once` schedule; the subagent skill's
 owns the schema, timezones, and dispatch checks. Machine-wide managed policy can
 cap modes or disable providers, remote access, and updates; inspect installed
 versus loaded policy with `t3 policy show` on the environment host. Windows
-policy does not configure a server inside WSL. The T3 operations skill's
+policy does not configure a server inside WSL and disables desktop-managed WSL
+connections. Read the [platform boundaries](t3-platforms.md) for that restriction,
+desktop CLI installation, and Debian's default systemd-path requirement.
+The T3 operations skill's
 [update reference](../../basaltwater-t3code/references/updates.md#release-tracks-and-archive-layout)
 owns policy diagnostics. Setup preserves the owner's feature settings.
 

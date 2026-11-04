@@ -60,7 +60,12 @@ worktree paths; the parent owns integration and cleanup. Read-only reviewers can
 inspect the primary checkout. User skills live under `~/.agents/skills` for
 Codex/OpenCode or `~/.claude/skills` for Claude Code inside Ubuntu.
 
-In T3 Code on Windows, select the intended Ubuntu distribution in Connections.
+On an unmanaged Windows machine, select the intended Ubuntu distribution in
+T3's Settings → Sharing & access. Windows managed policy disables desktop WSL
+environments in 0.1.7, including when policy cannot be read or validated. Read the
+[platform policy boundary](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/t3-platforms.md#windows-policy-and-ubuntu-wsl)
+before treating a missing distro as a setup failure. Preserve policy and request
+administrator review; do not create a second server to restore that connection.
 The provider must run as this Linux account to discover its skills. A native
 Windows provider has a separate home and does not discover Ubuntu's catalog.
 Use preview tools only when the active T3 session exposes them; another session
@@ -70,9 +75,11 @@ the shared [execution-environment checks](https://github.com/bluehexagons/basalt
 
 Stable 0.1.6's [shared client workflows](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-016-client-workflows)
 cover side chats, project pin/archive, local commit review, and optional
-1Password sources. A side chat on an Ubuntu connection shares that Linux
-folder. Provider commands and secret-provider resolution need Ubuntu binaries
-and account access; native Windows login does not establish either.
+1Password sources. The [0.1.7 workflows](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-017-client-workflows)
+add child approvals, thread links, usage filters and model history. A side chat
+on an Ubuntu connection shares that Linux folder. Provider commands and
+secret-provider resolution need Ubuntu binaries and account access; native
+Windows login does not establish either.
 Refresh the Windows desktop through its installer/WinGet or upstream updater,
 and refresh Ubuntu skills from updated Basaltwater source as described below.
 Verify both the client version and a provider turn/terminal on the selected

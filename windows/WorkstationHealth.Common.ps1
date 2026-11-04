@@ -50,6 +50,30 @@ function Invoke-NativeHealthProbe {
     } finally { $process.Dispose() }
 }
 
+function Get-NativeT3DesktopHealth {
+    param([string]$Command)
+    $version = $null
+    if ($Command) {
+        try {
+            $candidate = (Get-Item -LiteralPath $Command -ErrorAction Stop).VersionInfo.ProductVersion
+            # Metadata is optional and untrusted; do not publish arbitrary text
+            # or start Electron to obtain an installed version.
+            if ($candidate -is [string] -and $candidate.Length -le 128 -and
+                $candidate -cmatch '\A[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?\z') {
+                $version = $candidate
+            }
+        } catch {
+            # Keep executable discovery usable when version resources are absent
+            # or unreadable, without exposing OS/vendor error details.
+        }
+    }
+    $detail = if (-not $Command) { 'Desktop executable not found.' }
+        elseif ($version) { "Installed desktop version: $version. The app was not launched; verify the running version in About and qualify provider/terminal readiness separately." }
+        else { 'Desktop executable found; installed version unavailable. The app was not launched; verify the running version in About.' }
+    return [pscustomobject]@{ Name = 't3-desktop'; State = $(if ($Command) { 'ok' } else { 'missing' });
+        Command = $Command; InstalledVersion = $version; Detail = $detail }
+}
+
 function Get-NativeWorkstationHealth {
     param($Saved, [ValidateRange(1, 300)][int]$TimeoutSeconds = 30)
     $checks = New-Object 'Collections.Generic.List[object]'
@@ -118,8 +142,7 @@ function Get-NativeWorkstationHealth {
                 $detail
             }) })
         $desktop = Get-NativeT3Desktop
-        $checks.Add([pscustomobject]@{ Name = 't3-desktop'; State = $(if ($desktop) { 'ok' } else { 'missing' });
-            Command = $desktop; Detail = 'Desktop executable discovery only; the app was not launched.' })
+        $checks.Add((Get-NativeT3DesktopHealth $desktop))
         $checks.Add((Get-NativeT3LoginHealth $Saved.Source))
     }
     if (& $selected 'Sunshine') {

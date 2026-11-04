@@ -57,6 +57,8 @@ Use `basaltw doctor --json` for read-only checks of saved selections and actual
 tool versions. Probes time out; failures return a nonzero exit. Desktop/C++ SDK
 checks establish discovery, while logins, project builds, export templates and
 GPU readiness require their own qualification. Doctor does not apply setup.
+Its `t3-desktop` check reports `InstalledVersion` from executable metadata when
+available; null means unknown. Verify the running version separately in About.
 Use `basaltw doctor --skills --json` to compare known installed bundles with the
 saved installation source/revision. It reports completion, differences, personal
 edits and unsafe state without catalog writes; absent optional bundles are
@@ -136,6 +138,12 @@ For connection/account, loaded-skill or cross-platform command mismatches, use
 the shared [execution-environment checks](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/t3-workflows.md#establish-the-execution-environment).
 For stable 0.1.6 side chats, project pin/archive, local commit review, and optional
 1Password sources, read the shared [client workflows](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-016-client-workflows).
+The [0.1.7 workflows](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-017-client-workflows)
+cover child approvals, thread links, usage filters and model history. Before
+policy diagnostics, read [desktop CLI installation and the Windows/WSL policy boundary](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/t3-platforms.md).
+The bundled command is enabled through Settings → About → t3 command → Install;
+open a new terminal and verify which `t3` resolves. Managed Windows policy
+disables desktop WSL environments; a missing distro is not proof of failed setup.
 Use `basaltw refresh` to deliver updated skills and available WinGet T3 updates;
 WinGet can lag the upstream stable feed. Verify the running version in T3's
 About screen and check a provider turn and terminal after completion.

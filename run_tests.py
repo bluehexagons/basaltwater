@@ -61,6 +61,7 @@ TEST_SUITE_PATTERNS: dict[str, tuple[str, ...]] = {
         "tests/test_t3_agent_skills.py",
         "tests/test_t3code_admin_pair.py",
         "tests/test_t3code_steps.py",
+        "tests/test_t3code_systemd_paths.py",
         "tests/test_workspace_cli.py",
     ),
     "core": (

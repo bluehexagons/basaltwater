@@ -50,6 +50,8 @@ Read only the route needed:
 - **Service/logs, pairing, or Git:** [operations](references/operations.md).
   Pairing credentials, cookies, and GitHub tokens must stay out of shared
   output. Startup filtering does not sanitize every application/provider log.
+  For relocated systemd configuration, first read the
+  [Debian path boundary](../basaltwater-project-development/references/t3-platforms.md#debian-systemd-configuration-paths).
 - **Side chats, project pin/archive, commit review, or 1Password:**
   [0.1.6 workflows](references/operations.md#016-conversation-project-and-credential-workflows).
   Side chats share the thread's folder; use bound worktrees for concurrent edits.

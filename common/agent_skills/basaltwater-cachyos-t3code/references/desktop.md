@@ -63,6 +63,25 @@ provider thread and terminal after setup's worker runs or at a later login.
 
 Use the app's provider settings, local provider login, and absolute provider
 binary paths if KDE's PATH differs from the shell. Verify a thread and terminal
-in the app. Use desktop Settings → Connections for pairing or T3 Connect when
+in the app. Use desktop Settings → Sharing & access (Connections in older
+clients) for pairing or T3 Connect when
 supported by that version. The [web CLI commands](web-service.md) configure a
 separate environment from the desktop's default `~/.t3` data.
+
+## KDE SnapShots
+
+On KDE Plasma 6 Wayland, the owner can enable **Settings → SnapShots** and
+install T3's bundled per-user capture helper, then choose a key chord. No
+sign-out is needed. X11 sessions are unsupported. This helper is separate from
+Basaltwater's desktop-control portal helper and is not enabled by setup.
+
+After a desktop package update, revisit capture setup if T3 reports an outdated
+helper and choose **Update helper**. Updating `t3code-bin` alone does not replace
+that per-user copy. For a shortcut that does not fire, inspect T3 Code under
+**System Settings → Keyboard → Shortcuts**; try a letter chord if Shift plus a
+number fails on the current layout. Remove the helper through **Manage capture
+→ Access → Advanced**. Verify an actual capture after setup or a helper update;
+package presence does not qualify capture or shortcut behavior.
+
+Contracts: [SnapShots setup](https://github.com/pingdotgg/t3code/blob/v0.1.7/docs/user/snap-shot.md#linux-desktops)
+and [KDE helper freshness](https://github.com/pingdotgg/t3code/blob/v0.1.7/apps/desktop/src/snapShot/KdeSnapShot.ts).

@@ -108,16 +108,27 @@ the catalog versions. If T3 offers a newer stable release, wait for the catalog
 or use T3's [built-in updater](https://github.com/pingdotgg/t3code/blob/main/docs/user/updating.md).
 Reapplying setup cannot install a release that WinGet has not published yet.
 
-The integration baseline is stable **0.1.6**. Its side chats, project pin/archive,
-local commit review and build-gated 1Password sources are covered by the
-[shared client workflow reference](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-016-client-workflows),
-delivered with the existing project-development skill. `basaltw refresh` updates
+The integration baseline is stable **0.1.7**. Its child approvals, thread links,
+usage filters and model history are covered by the
+[shared client workflow reference](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-017-client-workflows),
+alongside the retained 0.1.6 workflows. These are delivered with the existing
+project-development skill. `basaltw refresh` updates
 that guidance as well as available packages. Check the running version in
 T3's About screen; successful WinGet reconciliation alone does not establish
-0.1.6 availability. Linux agent cgroup priorities and `t3 service protect` do
+0.1.7 availability. Linux agent cgroup priorities and `t3 service protect` do
 not apply to the native Windows desktop. After completion, verify an
 authenticated provider turn and native terminal in the local Windows connection.
-Native 0.1.6 desktop interaction remains a Windows qualification step.
+Native 0.1.7 desktop interaction remains a Windows qualification step.
+
+For managed-policy diagnostics, the desktop includes an optional `t3` command.
+Enable it through **Settings → About → t3 command → Install**, then open a new
+terminal and inspect `Get-Command t3` and `t3 --version` before `t3 policy show`.
+Setup installs the desktop without activating that command; an existing npm
+CLI is preserved. Use the bundled command rather than installing another runtime
+just for diagnostics. Read the [platform boundaries](../../common/agent_skills/basaltwater-project-development/references/t3-platforms.md)
+for command selection and policy behavior. Windows managed policy disables
+desktop-managed WSL environments; successful WSL installation cannot restore
+that connection. Preserve policy and request administrator review.
 
 Successful setup or refresh starts the selected T3 Code desktop if stopped,
 or requests a graceful close and relaunch to load the updated PATH and skills.
@@ -400,7 +411,12 @@ executable, and validates configured storage paths,
 required directories and the six persisted cache/runtime variables. Storage
 diagnostics do not repair missing directories or variables; rerun setup to repair them.
 Selected Visual Studio/Windows SDK and T3 desktop checks establish discovery;
-they do not compile code or launch the desktop. A separate `t3-login` check
+they do not compile code or launch the desktop. The `t3-desktop` check also
+reports `InstalledVersion` from the executable's product-version metadata when
+available. Missing, unreadable or malformed metadata leaves it null while
+retaining executable discovery; this does not verify the running About version
+or establish that the installed build meets the integration baseline.
+A separate `t3-login` check
 verifies that the current account's task is enabled with its limited interactive
 principal, account-specific logon trigger and expected hidden helper from the
 saved source. Missing, disabled or changed tasks fail doctor; reapply desktop

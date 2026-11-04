@@ -22,9 +22,10 @@ Read only the relevant reference before installation, updates, or repair:
 | `basaltwater-cachyos-t3.service`, data at `~/.local/share/basaltwater/cachyos-t3/data` | [Web service, pairing, Connect and activation recovery](references/web-service.md) |
 
 Desktop mode disables the managed web service; an inactive service is expected.
-Use desktop Settings → Connections for desktop pairing/Connect. The web CLI
-operates on separate data. Keep history, credentials and package ownership intact;
-do not start another backend to repair a working desktop.
+Use desktop Settings → Sharing & access for desktop pairing/Connect (Connections
+in older clients). The web CLI operates on separate data. Keep history,
+credentials and package ownership intact; do not start another backend to
+repair a working desktop.
 
 Setup/refresh can run in a local or remote T3 terminal. Package review and sudo
 prompts remain attached; disruptive T3 changes wait until all steps, saved state
@@ -50,6 +51,9 @@ Side chats share the main thread's folder; archiving preserves project data.
 Setup preserves these choices and does not enroll a secret provider.
 The Secrets UI depends on the upstream build-time `T3CODE_FEATURE_SECRETS`
 flag; setting a desktop/service environment variable does not enable it.
+The [0.1.7 workflows](../basaltwater-project-development/references/t3-workflows.md#shared-017-client-workflows)
+add child approvals, thread links, usage filters and model history. For KDE's
+separate capture helper and shortcut, read [SnapShots](references/desktop.md#kde-snapshots).
 
 Follow live session orchestration instructions. Use `basaltwater-subagents` for
 provider/model selection, child tasks, worktree binding and native schedules.

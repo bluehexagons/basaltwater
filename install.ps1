@@ -679,7 +679,10 @@ try {
         }
     }
     Write-Host "Basaltwater Ubuntu WSL setup complete. Authenticate selected agents in Ubuntu as $($state.LinuxUser)."
-    if ($state.T3CodeDesktop) { Write-Host "In T3 Code Settings > Connections, select $($state.Distro)." }
+    if ($state.T3CodeDesktop) {
+        Write-Host "On an unmanaged Windows machine, select $($state.Distro) in T3 Code Settings > Sharing & access (Connections in older clients)."
+        Write-Host 'Windows managed policy disables desktop WSL environments. If unavailable, preserve policy and ask the administrator to review the intended environment.'
+    }
     . (Join-Path $state.Source 'windows\AgentWorkstation.Common.ps1')
     . (Join-Path $state.Source 'windows\T3Completion.Common.ps1')
     Invoke-NativeSetupCompletion -Source $state.Source -T3CodeDesktop:$state.T3CodeDesktop -NoRestartT3:$NoRestartT3

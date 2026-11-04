@@ -21,6 +21,7 @@ try {
 using System;
 using System.IO;
 using System.Threading;
+[assembly: System.Reflection.AssemblyInformationalVersion("0.1.7+fixture")]
 public class HealthProbeFixture {
     public static int Main(string[] args) {
         string mode = Environment.GetEnvironmentVariable("BASALTWATER_HEALTH_FIXTURE_MODE");
@@ -35,6 +36,8 @@ public class HealthProbeFixture {
     }
 }
 '@
+    $result = Get-NativeT3DesktopHealth $fixture
+    Assert-True ($result.InstalledVersion -eq '0.1.7+fixture') 'Desktop health did not read executable product-version metadata'
     $env:BASALTWATER_HEALTH_FIXTURE_MODE = ''
     $result = Invoke-NativeHealthProbe $fixture -Arguments '--headless --version'
     Assert-True ($result.State -eq 'ok' -and $result.Detail -eq '--headless --version') 'Version arguments changed across the native boundary'
@@ -77,7 +80,14 @@ public class HealthGuiFixture {
         function Get-NativeGodotPackageCommand { return 'C:\package\Godot_console.exe' }
         function Get-NativeVisualStudio { return 'C:\VS2022' }
         function Test-NativeWindowsSdk { return $true }
-        function Get-NativeT3Desktop { return 'C:\T3 Code.exe' }
+        function Get-NativeT3Desktop { if (-not $script:MissingT3) { return 'C:\T3 Code.exe' } }
+        function Get-Item($LiteralPath, $ErrorAction) {
+            Assert-True ($LiteralPath -eq 'C:\T3 Code.exe') 'Unexpected desktop metadata path'
+            $script:T3MetadataReads++
+            if ($script:T3MetadataFailure) { throw 'private metadata failure' }
+            if ($script:T3MetadataAbsent) { return [pscustomobject]@{} }
+            return [pscustomobject]@{ VersionInfo = [pscustomobject]@{ ProductVersion = $script:T3Version } }
+        }
         function Get-NativeGitBash { if (-not $script:MissingGitBash) { return 'C:\Git\bin\bash.exe' } }
         function Get-NativePowerShell7 { if (-not $script:MissingPowerShell) { return 'C:\fixture\pwsh.exe' } }
         function Get-NativeDesktopReadiness {
@@ -111,8 +121,42 @@ public class HealthGuiFixture {
         $script:BrokenPython = $false; $script:BadLogin = $false; $script:BadSunshine = $false
         $script:MissingPowerShell = $false; $script:LockedDesktop = $false; $script:MissingGitBash = $false
         $script:DesktopFailure=$null;$script:ReadinessObject=$false
+        $script:MissingT3=$false;$script:T3MetadataFailure=$false;$script:T3MetadataAbsent=$false
+        $script:T3MetadataReads=0;$script:T3Version='0.1.7'
         $report = Get-NativeWorkstationHealth $saved -TimeoutSeconds 1
         Assert-True $report.Healthy 'Complete healthy selection did not pass'
+        $desktop = @($report.Checks | Where-Object Name -eq 't3-desktop')[0]
+        Assert-True ($desktop.InstalledVersion -eq '0.1.7' -and $desktop.Detail -match 'running version') 'Installed desktop version was not distinguished from the running app'
+        Assert-True (@($script:Probes | Where-Object { $_.Command -like '*T3 Code.exe' }).Count -eq 0) 'Doctor launched the desktop to determine its version'
+        foreach ($version in @('0.1.8-rc.1+fixture', '0.1.7.0', $null, '', "private`nmetadata", ('1' * 129))) {
+            $script:T3Version = $version
+            $report = Get-NativeWorkstationHealth $saved
+            $desktop = @($report.Checks | Where-Object Name -eq 't3-desktop')[0]
+            if ($version -in @('0.1.8-rc.1+fixture', '0.1.7.0')) {
+                Assert-True ($desktop.InstalledVersion -eq $version) 'Valid desktop version metadata was lost'
+            } else {
+                Assert-True ($null -eq $desktop.InstalledVersion -and $desktop.Detail -match 'unavailable' -and
+                    ($desktop | ConvertTo-Json) -notmatch 'private|metadata') 'Invalid or absent version metadata was published'
+            }
+            Assert-True $report.Healthy 'Optional version metadata changed executable discovery health'
+        }
+        $script:T3Version = '0.1.7'
+        foreach ($failure in @('T3MetadataAbsent', 'T3MetadataFailure')) {
+            Set-Variable -Name $failure -Scope Script -Value $true
+            $report = Get-NativeWorkstationHealth $saved
+            $desktop = @($report.Checks | Where-Object Name -eq 't3-desktop')[0]
+            Assert-True ($null -eq $desktop.InstalledVersion -and $desktop.Detail -match 'unavailable' -and
+                ($desktop | ConvertTo-Json) -notmatch 'private') 'Unreadable version metadata leaked diagnostics or became a version'
+            Set-Variable -Name $failure -Scope Script -Value $false
+        }
+        $reads = $script:T3MetadataReads
+        $script:MissingT3 = $true
+        $report = Get-NativeWorkstationHealth $saved
+        $desktop = @($report.Checks | Where-Object Name -eq 't3-desktop')[0]
+        Assert-True ($desktop.State -eq 'missing' -and $null -eq $desktop.InstalledVersion -and
+            $script:T3MetadataReads -eq $reads -and -not $report.Healthy) 'Missing desktop was probed or reported healthy'
+        $script:MissingT3 = $false; $script:T3Version = '0.1.7'; $script:Probes = @()
+        $report = Get-NativeWorkstationHealth $saved -TimeoutSeconds 1
         Assert-True (($report | ConvertTo-Json -Depth 5) -notmatch 'never-publish|Secret') 'Doctor exposed arbitrary saved fields'
         Assert-True (@($script:Probes | Where-Object { $_.Command -like '*\codex.exe' }).Count -eq 1) 'Provider was probed more than once'
         Assert-True (@($script:Probes | Where-Object { $_.Command -like '*Godot_console.exe' -and $_.Arguments -eq '--headless --version' }).Count -eq 1) 'Doctor did not resolve the managed Godot launcher to its executable'

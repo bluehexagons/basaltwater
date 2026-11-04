@@ -15,8 +15,9 @@ expose virtualization extensions for nested virtualization. WSL 2 requires
 nested virtualization when Windows runs in a VM; see Microsoft's
 [WSL FAQ](https://learn.microsoft.com/en-us/windows/wsl/faq). Install Windows
 updates, log in as the intended owner, then use the install steps below.
-`-T3CodeDesktop` installs T3 Code natively on Windows; in T3 Code, connect to
-the Ubuntu distribution under Settings > Connections as described below. This
+`-T3CodeDesktop` installs T3 Code natively on Windows; on an unmanaged Windows
+machine, connect to the Ubuntu distribution under Settings > Sharing & access
+as described below. Windows managed policy disables that desktop WSL path. This
 is a supported setup path for a manually provisioned guest, but the guest's
 creation and lifecycle remain outside Basaltwater setup.
 
@@ -92,8 +93,9 @@ are under `%LOCALAPPDATA%\Basaltwater`; credentials are never saved in setup
 state. Reusing `-Resume` reapplies the pinned setup and updates Ubuntu packages.
 WSL and Ubuntu release upgrades are deliberate maintenance; an existing
 Ubuntu distribution is not silently replaced. The user may need to log in to
-each selected agent after setup. In T3 Code, choose the Ubuntu distribution in
-Settings > Connections.
+each selected agent after setup. On an unmanaged Windows machine, choose the
+Ubuntu distribution in T3 Code's Settings > Sharing & access (Connections in
+older clients). See the managed-policy boundary below if it is unavailable.
 
 Selected Codex, Claude Code, or OpenCode installations also receive the `basaltw`
 helper and the `basaltwater-wsl-workspace`, `basaltwater-project-development`,
@@ -109,18 +111,35 @@ it does not establish WSL service readiness. Rerun installation from updated
 pinned source to refresh skills; `Manage-Wsl.ps1 refresh` retains the existing
 source revision. See [skill access](../agents/agent-skills.md#access-from-different-sessions).
 
-The shared T3 integration baseline is stable **0.1.6**. The existing
+The shared T3 integration baseline is stable **0.1.7**. The existing
 project-development bundle now includes [client workflows](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-016-client-workflows)
 for side chats, project pin/archive, local commit review, and build-gated
-1Password sources. Updating the Windows desktop alone does not update Ubuntu's
+1Password sources, plus [0.1.7 workflows](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-017-client-workflows)
+for child approvals, thread links, usage filters and model history.
+Updating the Windows desktop alone does not update Ubuntu's
 skills or authenticate its providers. Use the source-refresh flow below for
 Ubuntu guidance and selected tools, then verify the desktop version in About
 and an authenticated provider turn/terminal on the intended Ubuntu connection.
 Provider variables and secret references resolve in that environment; Windows
 `op` presence or login does not qualify Ubuntu access. This profile installs
 no T3 systemd service in Ubuntu, so Debian's `t3 service protect` flow is not
-a WSL refresh step. Native Windows/WSL 0.1.6 interaction remains unqualified
+a WSL refresh step. Native Windows/WSL 0.1.7 interaction remains unqualified
 until exercised on those platforms.
+
+## Managed Windows policy
+
+T3 0.1.7 disables desktop WSL environments when Windows managed policy is
+present, even if that policy otherwise allows providers and remote access.
+Invalid or unreadable policy also leaves WSL unavailable. Ubuntu preparation,
+provider installation and WSL discovery do not establish that T3 may connect.
+Preserve policy and have the administrator review the intended environment;
+do not remove policy or install a WSL service to repair the desktop connection.
+
+An independently authorized T3 server inside Ubuntu reads that distro's
+`/etc/t3code/policy.json`, not Windows policy. Deploying Linux policy does not
+re-enable the desktop WSL path, and this profile does not provision such a
+service. See the [platform reference](../../common/agent_skills/basaltwater-project-development/references/t3-platforms.md#windows-policy-and-ubuntu-wsl)
+and [upstream policy guide](https://github.com/pingdotgg/t3code/blob/v0.1.7/docs/user/managed-policy.md#what-a-policy-does-not-cover).
 
 ## Run a native PowerShell job
 

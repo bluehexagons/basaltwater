@@ -673,6 +673,44 @@ def _ensure_user_manager(username: str, uid: int) -> None:
     if manager.returncode != 0:
         detail = (manager.stderr or manager.stdout or "").strip()
         raise RuntimeError(f"Could not start the T3 Code user manager: {detail}")
+    _validate_t3_systemd_directory(username, uid)
+
+
+def _validate_t3_systemd_directory(username: str, uid: int) -> None:
+    """Reject relocated configuration before writing a drop-in upstream ignores."""
+
+    result = run(
+        ["runuser", "-u", username, "--", "env",
+         f"XDG_RUNTIME_DIR=/run/user/{uid}",
+         f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus",
+         "busctl", "--user", "--json=short", "get-property",
+         "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
+         "org.freedesktop.systemd1.Manager", "UnitPath"],
+        check=False, capture_output=True, timeout=15,
+    )
+    try:
+        value = json.loads(result.stdout) if result.returncode == 0 else None
+        paths = value.get("data") if isinstance(value, dict) else None
+        if not isinstance(paths, list) or not all(isinstance(path, str) for path in paths):
+            raise ValueError("Invalid systemd unit paths")
+        # Match upstream's manager discovery, not the setup shell's XDG value.
+        directory = next(
+            path.removesuffix(".control") for path in paths
+            if os.path.isabs(path) and path.endswith("/systemd/user.control")
+            and path.removesuffix(".control") in paths
+        )
+        validate_filesystem_path(directory)
+    except (ValueError, StopIteration) as exc:
+        raise RuntimeError(
+            "Could not verify the T3 Code systemd configuration directory; "
+            "inspect the user manager's D-Bus UnitPath before retrying setup"
+        ) from exc
+    expected = os.path.dirname(_t3_service_file(pwd.getpwnam(username).pw_dir))
+    if os.path.normpath(directory) != os.path.normpath(expected):
+        raise RuntimeError(
+            "Relocated systemd user configuration is not supported by the "
+            "Basaltwater T3 Code adapter; existing T3 configuration was preserved"
+        )
 
 
 def _t3_service_invocation(username: str, uid: int) -> str | None:
