@@ -127,6 +127,8 @@ valid; the latter refuses advice after a state change. Tests also generate a
 tiny synthetic PNG and exercise observed regions without host access.
 Consumers should adopt these exact fields and grammar, record schema version,
 producer commit and fixture hashes, and preserve both tested repository commits.
+The [compatibility receipt](../examples/learning-records/compatibility.json)
+pins the initial producer commit, fixture hashes and supported command grammar.
 Corpus aggregation, recognizers, conditional execution, coach dispatch and live
 game qualification remain separate assignments in the
 [handoff plan](../plans/game-testing-handoffs/README.md).
