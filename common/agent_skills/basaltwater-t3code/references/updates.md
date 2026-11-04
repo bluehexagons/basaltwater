@@ -116,6 +116,14 @@ does not install policy or remove it during refresh. Linux policy lives at
 reads its own Linux policy. See the tagged
 [policy guide](https://github.com/pingdotgg/t3code/blob/v0.1.7/docs/user/managed-policy.md).
 
+Policy defaults apply where the user has no choice saved; locks enforce values.
+A `maxRuntimeMode` cap also controls provider launch configuration. Pin absolute
+provider binaries and required environment variables in policy when deploying
+that cap; a user-controlled PATH or wrapper does not establish enforcement.
+The cap controls T3's provider requests, not a sandbox around independent CLIs.
+Policy changes need an arranged T3 restart; reconnecting a client does not reload
+them. Validate policy against the installed version before deploying newer keys.
+
 Stable 0.1.6 keeps service-state protocol 3 and the standalone archive layout.
 It adds lower-priority agent slices with memory/task bounds and server resource
 priorities. Debian uses the upstream unit; CachyOS's managed web unit follows

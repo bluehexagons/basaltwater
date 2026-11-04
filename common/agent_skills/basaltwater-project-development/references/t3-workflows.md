@@ -2,7 +2,7 @@
 
 Use these integrations when the active T3 session exposes the relevant tools.
 Follow its injected instructions and live schemas. This reference follows
-[stable 0.1.6](https://github.com/pingdotgg/t3code/releases/tag/v0.1.6).
+[stable 0.1.7](https://github.com/pingdotgg/t3code/releases/tag/v0.1.7).
 
 ## Establish the execution environment
 
@@ -78,6 +78,46 @@ Contracts: [side chats](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/use
 [project organization](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/project-settings.md#pin-and-archive-projects),
 [commit review](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/source-control.md),
 and [1Password resolution](https://github.com/pingdotgg/t3code/blob/v0.1.6/packages/secret-provider-onepassword/src/server/driver.ts).
+
+## Shared 0.1.7 client workflows
+
+- **Child approvals:** the parent conversation shows the child's name and
+  requested action. The owner can approve/reject there; this does not give the
+  parent agent additional approval authority. For a linked child, check the
+  owning environment. Questions and permission approvals remain separate flows.
+- **Thread links:** use **Copy → Thread**, or **Copy thread** on mobile, to
+  share a link that opens the conversation. A copied reference can prefer its
+  PR. Recipients still need access to the machine; copying a link does not
+  publish the thread. Preserve tool-returned `link` values verbatim in agent replies.
+- **Usage filters:** `usageModelFilter` in the server's `userdata/settings.json`
+  supports `include`/`exclude` lists of `{provider, model}` selectors; omit
+  `provider` to match a model across providers. Use the IDs Usage shows before
+  **Map to**: filtering precedes that mapping, and each environment has its own
+  filter. Invalid filters are ignored and can disappear on the next settings
+  save. Change these settings only when requested. Filtered API-equivalent cost
+  estimates are not a subscription bill or complete accounting of all work.
+- **Model history:** conversation markers show model or reasoning-effort changes.
+  Use them to locate a change when reviewing behavior; read the current thread
+  configuration before reusing settings for another task or schedule.
+- **Tagged-thread hiding:** the server settings `hiddenThreadTags` and
+  `hideTaggedThreads` can hide matching threads from lists for recording or
+  presentation. Hiding does not stop work, revoke access, or redact conversation
+  contents. Inspect the actual recording surface for private material.
+
+One-time follow-ups use T3's new `once` schedule; the subagent skill's
+[scheduling reference](../../basaltwater-subagents/references/t3-scheduling.md)
+owns the schema, timezones, and dispatch checks. Machine-wide managed policy can
+cap modes or disable providers, remote access, and updates; inspect installed
+versus loaded policy with `t3 policy show` on the environment host. Windows
+policy does not configure a server inside WSL. The T3 operations skill's
+[update reference](../../basaltwater-t3code/references/updates.md#release-tracks-and-archive-layout)
+owns policy diagnostics. Setup preserves the owner's feature settings.
+
+Contracts: [approvals](https://github.com/pingdotgg/t3code/blob/v0.1.7/docs/user/permission-modes.md),
+[thread links](https://github.com/pingdotgg/t3code/blob/v0.1.7/docs/user/prompt-links.md#share-a-thread),
+[usage filters](https://github.com/pingdotgg/t3code/blob/v0.1.7/docs/user/usage.md#show-only-some-models),
+[model history](https://github.com/pingdotgg/t3code/blob/v0.1.7/apps/web/src/components/chat/V2LifecycleRow.tsx),
+and [tag settings](https://github.com/pingdotgg/t3code/blob/v0.1.7/packages/contracts/src/settings.ts).
 
 ## Project commands and worktree setup
 

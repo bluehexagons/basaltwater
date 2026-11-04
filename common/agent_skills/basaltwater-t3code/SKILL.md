@@ -53,6 +53,12 @@ Read only the route needed:
 - **Side chats, project pin/archive, commit review, or 1Password:**
   [0.1.6 workflows](references/operations.md#016-conversation-project-and-credential-workflows).
   Side chats share the thread's folder; use bound worktrees for concurrent edits.
+- **Thread links, child approvals, usage filters, or model-switch history:**
+  [0.1.7 client workflows](../basaltwater-project-development/references/t3-workflows.md#shared-017-client-workflows).
+- **Managed policy or a restricted provider/update/pairing control:**
+  [policy diagnostics](references/updates.md#release-tracks-and-archive-layout).
+  Inspect installed versus loaded policy with `t3 policy show`; preserve the
+  administrator's limits rather than changing thread modes to work around them.
 - **Update, launcher migration, native-module repair:** [updates](references/updates.md).
   Prefer the connected client's **Update server** action for a deliberate
   update. Setup reruns reconcile stable T3 and selected providers. Fleet-wide
@@ -65,7 +71,7 @@ Read only the route needed:
 - **Linked environments:** [operations](references/operations.md#linked-environments)
   covers the opt-in beta, peer grants, reachability, and revocation. Remote
   delegation has different workspace constraints; use the subagent reference.
-- **Scheduled work:** `basaltwater-agent-tasks` chooses T3 recurring work versus
+- **Scheduled work:** `basaltwater-agent-tasks` chooses T3 one-time/recurring work versus
   independent Codex tasks. Use one scheduler per job; independent runs do not
   inherit this thread's tools/browser.
 - **Maintenance holds/recorded updates:** `basaltwater-agent-operations`.

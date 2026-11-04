@@ -13,8 +13,10 @@ deadline for follow-ups; indefinite recurrence needs authorization for it.
 
 In a T3 thread, first read the installed `basaltwater-subagents` skill's
 `references/t3-scheduling.md` when work should return to that conversation or
-use another T3 provider. Use Basaltwater tasks for independent Codex execution,
-one-shot follow-ups, or goals needing its lifetime limits and receipts. Choose
+use another T3 provider. Use Basaltwater tasks for independent Codex execution
+or goals needing its lifetime limits and receipts. Stable T3 0.1.7 can run a
+one-time follow-up in the conversation with `schedule: {type: "once", runAt: ...}`;
+use the scheduling reference for timezone and dispatch semantics. Choose
 one scheduler per job; do not duplicate it.
 
 For access discovery, use available task MCP tools or:

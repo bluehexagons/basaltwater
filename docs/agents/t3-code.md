@@ -235,6 +235,17 @@ Preserve administrator policy during troubleshooting; see the
 Native clients, managed-policy enforcement and live scheduling remain separate
 qualification work.
 
+The shipped [0.1.7 client workflows](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-017-client-workflows)
+explain responding to child approvals from the parent, copying a thread link
+instead of its PR reference, provider/model usage filters, model/effort change
+markers, and tagged-thread hiding for recordings. Thread links still require
+access to the owning environment; hiding a thread does not stop its work or
+redact its contents. Usage filters are per environment and apply before model
+mapping; estimated costs do not establish subscription billing.
+For browser work, 0.1.7 can open an environment-port target directly through
+`preview_open` when its live schema exposes `target`; older tools use open then
+navigate. See the [preview reference](../../common/agent_skills/basaltwater-t3-preview-testing/references/collaborative-preview.md#network-origin).
+
 Stable 0.1.6 adds these workflows to the existing integration:
 
 - **Side chats:** `/side` or `/btw`, or **Side chat** in the right panel's **+**
@@ -384,6 +395,7 @@ blocked step. Mocked tests and service HTTP readiness cannot qualify these paths
 | --- | --- |
 | Providers and migration | Fresh 0.1.6 setup, 0.1.5-to-0.1.6 upgrade, and V1-to-V2 copy migration with matching client, selected Codex/Claude combinations, private recovery copy, pairing permissions, authenticated provider turn, and terminal. Qualify OpenCode 2 separately before claiming support. |
 | 0.1.6 workflows | Side-chat permission modes and idle Bring back, project pin/archive/unarchive across connected checkouts, local/merge commit review, optional 1Password resolution with missing/locked CLI failures, and server/agent priorities under pressure. Test service protection/undo separately on a disposable Debian host. |
+| 0.1.7 workflows | Parent-visible local/linked-child approvals reach the correct request; copied thread links open only for authorized recipients; one-time schedules respect offsets and do not repeat; usage filters apply before model mapping per environment; model/effort markers match changes; tagged-thread hiding does not stop work. Test managed-policy defaults/locks, cap enforcement, invalid-policy startup refusal and loaded-policy freshness on disposable hosts. Test direct preview-open targets only when exposed. |
 | Project promotion and release tracks | Promote a stopped No project folder in place; retain its files, all associated threads and schedules, then initialize Git. Exercise a deliberate Stable/Nightly switch on disposable installations, including offline/unsupported machines, incompatible or unreadable databases, and an incomplete switch whose requested track differs from its running version. Preserve database compatibility refusals. |
 | Delegation | Same-provider and cross-provider child results, explicit model/options, fresh review rounds, async wake, nested completion state, pending question, cancellation, and restart interruption without duplicated work. |
 | Linked environments | On deliberately linked disposable peers, verify beta gates on both sides, server reachability/trust, read-only and narrower-mode denials, repository matching, missing/ambiguous project selection, remote result/restart/cancel, rejected worktree isolation/attachments, thread links, launch retry deduplication, expiry and peer revocation. Confirm forgetting a link does not claim to stop remote edits. |

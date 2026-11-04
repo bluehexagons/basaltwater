@@ -173,6 +173,13 @@ With the preferred server browser, `environment-port` resolves directly to
 `path` or `protocol` as needed. No gateway forward is needed for VM-loopback
 automation in this runtime.
 
+Stable 0.1.7 also accepts that `target` directly in `preview_open`, so a new
+tab can open on a development port in one call. Use either `url` or `target`,
+and only fields exposed by the active tool schema. If open lacks `target`,
+open once, retain the tab ID, then use `preview_navigate` with the target.
+This changes tab navigation, not service binding or client reachability. See
+the [tagged preview tools](https://github.com/pingdotgg/t3code/blob/v0.1.7/apps/server/src/mcp/toolkits/preview/tools.ts).
+
 When desktop automation is supported, the same target rewrites the requested
 port onto the environment connection host; it does not tunnel to VM loopback.
 A local environment on the desktop client's machine is reachable directly. Remote

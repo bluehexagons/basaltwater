@@ -2,7 +2,7 @@
 
 Follow T3's injected orchestration instructions and active tool schemas first.
 This reference adds Basaltwater workspace, cost, and context boundaries; use
-only the section needed. The baseline is stable 0.1.6. Terminal agents do not
+only the section needed. The baseline is stable 0.1.7. Terminal agents do not
 gain T3 tools merely because T3 is installed.
 
 ## Discovery and delegation fallback
@@ -40,6 +40,12 @@ its separate list/read/respond tools) with `threadId: childThreadId`. Read the
 question before answering within the delegated scope. `pendingApproval` grants
 no approval authority: read the current request and route it through its existing
 authorized approval flow. Question-response tools cannot approve permissions.
+Stable 0.1.7 shows a child's approval in the parent conversation, labeled with
+the child's name. The owner can respond there without opening another thread;
+the decision still targets that child's environment and request. A provider
+process that has exited cannot receive a live response. Inspect the child before
+an authorized restart, and do not retry the underlying command merely because
+its approval card appeared in a different conversation.
 
 Use `task_cancel` for abandoned work only after checking its current state.
 It stops the backing child thread, including later work after the original
@@ -79,12 +85,15 @@ Turning the beta off does not stop work already running on the peer; result
 delivery can wait until it is enabled again. Forgetting/revoking a link can
 fail the tracked task, so inspect the peer before retrying uncertain work.
 
-Use a result's `link` verbatim when mentioning a thread. Current links carry
-the owning environment and thread in `t3-thread://v2/<environmentId>/<threadId>`;
-do not construct one from a title or bare ID. A client unable to resolve that
+Use a result's `link` verbatim when mentioning a thread; do not construct one
+from a title or bare ID. A client unable to resolve that
 environment may show an inactive label. Outside OAuth clients receive browser
 URLs for their connected environment. Follow any active session fallback rule
 when a result supplies no link.
+0.1.7's **Copy → Thread** (mobile **Copy thread**) also supplies a shareable
+app.t3.codes link. Opening it still requires access to the owning machine; it
+does not publish the conversation or create a guest grant. **Copy reference**
+can prefer the thread's PR, so use the explicit thread action when that matters.
 
 ## Workspace ownership and retention
 
@@ -120,6 +129,9 @@ recorded command input/output and exit status, changed filenames, and plans.
 Native tool/session state, reasoning, and attachments are not replayed. Inspect
 what arrived and read omitted history when needed; prefer delegation for another
 harness's help. Within-provider model changes usually retain the native session.
+0.1.7 adds conversation markers for model/effort changes. Use them to explain
+historical behavior, then inspect the current model selection and options before
+launching work; a history marker does not establish current settings or cost.
 
 Read bounded `t3_thread_read` pages/cursors; retrieve long text only as needed.
 Select fields before emitting tool results. For an authorized cross-project
@@ -135,7 +147,7 @@ Queues survive restarts but wait for user resume; interrupted-turn continuation
 is a separate setting. Inspect live state rather than assuming delivery. Respect usage
 limits; do not bypass them with duplicate threads, schedules, or provider switches.
 
-For recurring work, read [scheduling](t3-scheduling.md) and use one owner with
+For one-time or recurring work, read [scheduling](t3-scheduling.md) and use one owner with
 verified provider settings and thread/workspace binding.
 
 When the workflow calls for settlement, `t3_thread_organize` can defer settling
@@ -168,7 +180,9 @@ joined; inspect that run before retrying. Check the completed guide against
 `currentHeadSha` and `stale` before citing it. Guides supplement actual diff,
 checks, and unresolved findings.
 
-Upstream: [0.1.6 release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.6),
+Upstream: [0.1.7 release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.7),
+[child approvals](https://github.com/pingdotgg/t3code/blob/v0.1.7/docs/user/permission-modes.md),
+[thread sharing](https://github.com/pingdotgg/t3code/blob/v0.1.7/docs/user/prompt-links.md#share-a-thread),
 [tagged orchestration reference](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/orchestration-v2/orchestrator-mcp-server.md),
 [linked environments](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/remote-access.md#link-another-environment),
 [remote delegation](https://github.com/pingdotgg/t3code/blob/v0.1.6/apps/server/src/peer/RemoteDelegation.ts),
