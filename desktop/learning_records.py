@@ -13,6 +13,8 @@ MAX_BYTES = 1024 * 1024
 MAX_RECORDS = 128
 CONDITIONS = ("game", "build", "environment", "profile", "recognizer", "knowledge",
               "policy", "adapter", "team", "controller", "coaching")
+OUTCOMES = ("win", "loss", "draw", "interrupted", "unknown")
+TERMINAL_OUTCOMES = ("win", "loss", "draw")
 
 
 def text(value, maximum=128):
@@ -251,3 +253,95 @@ def advice_status(reply, request, current_state_revision, at):
     if current_state_revision != reply["state_revision"]:
         return "stale"
     return "valid"
+
+
+def validate_corpus(document):
+    """Version-one corpus extension; existing record graphs remain version one."""
+    bounded(document)
+    if len(json.dumps(document, allow_nan=False).encode()) > MAX_BYTES:
+        raise ValueError("Corpus manifest exceeds 1 MiB")
+    keys(document, "schema_version kind id cutoff_at sources segments")
+    if type(document["schema_version"]) is not int or document["schema_version"] != 1 or document["kind"] != "learning-corpus":
+        raise ValueError("Unsupported corpus version/kind")
+    text(document["id"])
+    cutoff = utc(document["cutoff_at"])
+    sources = {}
+    for source in sequence(document["sources"], 32):
+        keys(source, "id sha256 bytes availability")
+        text(source["id"])
+        digest(source["sha256"])
+        integer(source["bytes"], 1, MAX_BYTES)
+        if source["availability"] not in ("available", "missing"):
+            raise ValueError("Invalid corpus source availability")
+        if source["id"] in sources:
+            raise ValueError("Duplicate corpus source ID")
+        sources[source["id"]] = source
+    if sum(source["bytes"] for source in sources.values()) > 16 * MAX_BYTES:
+        raise ValueError("Corpus sources exceed 16 MiB")
+    for row in sequence(document["segments"]):
+        keys(row, "id source_id packet_id match_id run_id condition_id conditions included reason started_at cutoff_at window_outcome eventual_outcome eventual_at setup_failure placement rounds displayed_timer wall_seconds active_seconds usage coaching_interventions evidence_availability")
+        for name in ("id", "source_id", "packet_id", "match_id", "run_id", "condition_id"):
+            text(row[name])
+        if row["source_id"] not in sources:
+            raise ValueError(f"Undeclared source for segment {row['id']}")
+        if type(row["included"]) is not bool:
+            raise ValueError("Segment included must be boolean")
+        text(row["reason"], 4096)
+        keys(row["conditions"], " ".join(CONDITIONS))
+        for value in row["conditions"].values():
+            if value is not None:
+                text(value)
+        end = utc(row["cutoff_at"])
+        if end > cutoff:
+            raise ValueError("Segment cutoff exceeds corpus cutoff")
+        for name in ("window_outcome", "eventual_outcome"):
+            if row[name] not in OUTCOMES:
+                raise ValueError("Invalid corpus outcome")
+        if row["window_outcome"] in TERMINAL_OUTCOMES and row["eventual_outcome"] != row["window_outcome"]:
+            raise ValueError("Terminal window outcome must agree with eventual outcome")
+        if row["eventual_outcome"] in TERMINAL_OUTCOMES:
+            if row["eventual_at"] is None or utc(row["eventual_at"]) > cutoff:
+                raise ValueError("Terminal eventual outcome needs a corpus-cutoff-bounded timestamp")
+            terminal_at = utc(row["eventual_at"])
+            if row["window_outcome"] in TERMINAL_OUTCOMES and terminal_at > end:
+                raise ValueError("Terminal window outcome postdates its window")
+            if row["window_outcome"] not in TERMINAL_OUTCOMES and terminal_at < end:
+                raise ValueError("Eventual terminal outcome predates nonterminal window")
+        elif row["eventual_at"] is not None:
+            raise ValueError("Nonterminal eventual outcome requires null eventual_at")
+        if row["started_at"] is None:
+            text(row["setup_failure"], 4096)
+            if row["window_outcome"] != "unknown" or row["eventual_outcome"] != "unknown" or row["placement"] is not None:
+                raise ValueError("Setup-only failure cannot have a match outcome/placement")
+        elif row["setup_failure"] is not None or utc(row["started_at"]) > end:
+            raise ValueError("Started match has inconsistent start/setup state")
+        elif row["eventual_at"] is not None and utc(row["eventual_at"]) < utc(row["started_at"]):
+            raise ValueError("Terminal outcome predates match start")
+        for name, low in (("placement", 1), ("rounds", 0), ("coaching_interventions", 0)):
+            if row[name] is not None:
+                integer(row[name], low, 1000000)
+        if row["displayed_timer"] is not None:
+            text(row["displayed_timer"])
+        for name in ("wall_seconds", "active_seconds"):
+            nullable_number(row[name], 30 * 86400)
+        if row["active_seconds"] is not None and row["wall_seconds"] is not None and row["active_seconds"] > row["wall_seconds"]:
+            raise ValueError("Active seconds exceed segment wall seconds")
+        keys(row["usage"], "scope tokens cost currency")
+        for name in ("scope", "currency"):
+            if row["usage"][name] is not None:
+                text(row["usage"][name])
+        if row["usage"]["tokens"] is not None:
+            integer(row["usage"]["tokens"], 0, 10**12)
+        nullable_number(row["usage"]["cost"], 10**9)
+        if (row["usage"]["tokens"] is not None or row["usage"]["cost"] is not None) and row["usage"]["scope"] is None:
+            raise ValueError("Known usage requires an explicit scope")
+        if row["usage"]["cost"] is not None and row["usage"]["currency"] is None:
+            raise ValueError("Known cost requires currency")
+        if row["evidence_availability"] not in ("complete", "partial", "missing"):
+            raise ValueError("Invalid evidence availability")
+    return sources
+
+
+def nullable_number(value, maximum):
+    if value is not None and (type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= maximum):
+        raise ValueError(f"Expected null or finite number in 0–{maximum}")

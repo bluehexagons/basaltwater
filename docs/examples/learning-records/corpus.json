@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "kind": "learning-corpus",
+  "id": "synthetic-corpus-1",
+  "cutoff_at": "2026-01-01T01:00:00Z",
+  "sources": [
+    {
+      "id": "source-1",
+      "sha256": "65fcd2fd4e16be8d56181cd756180973f122d334b21d1469c1a923e76a58d76e",
+      "bytes": 2569,
+      "availability": "available"
+    }
+  ],
+  "segments": [
+    {
+      "id": "segment-1",
+      "source_id": "source-1",
+      "packet_id": "packet-1",
+      "match_id": "match-1",
+      "run_id": "run-1",
+      "condition_id": "condition-1",
+      "conditions": {
+        "game": null,
+        "build": null,
+        "environment": null,
+        "profile": null,
+        "recognizer": null,
+        "knowledge": null,
+        "policy": null,
+        "adapter": null,
+        "team": null,
+        "controller": null,
+        "coaching": null
+      },
+      "included": true,
+      "reason": "Declared review window",
+      "started_at": "2026-01-01T00:00:00Z",
+      "cutoff_at": "2026-01-01T00:10:00Z",
+      "window_outcome": "interrupted",
+      "eventual_outcome": "unknown",
+      "eventual_at": null,
+      "setup_failure": null,
+      "placement": null,
+      "rounds": null,
+      "displayed_timer": null,
+      "wall_seconds": null,
+      "active_seconds": null,
+      "usage": {
+        "scope": null,
+        "tokens": null,
+        "cost": null,
+        "currency": null
+      },
+      "coaching_interventions": null,
+      "evidence_availability": "partial"
+    },
+    {
+      "id": "segment-2",
+      "source_id": "source-1",
+      "packet_id": "packet-1",
+      "match_id": "match-1",
+      "run_id": "run-1",
+      "condition_id": "condition-1",
+      "conditions": {
+        "game": null,
+        "build": null,
+        "environment": null,
+        "profile": null,
+        "recognizer": null,
+        "knowledge": null,
+        "policy": null,
+        "adapter": null,
+        "team": null,
+        "controller": null,
+        "coaching": null
+      },
+      "included": true,
+      "reason": "Declared review window",
+      "started_at": "2026-01-01T00:00:00Z",
+      "cutoff_at": "2026-01-01T00:30:00Z",
+      "window_outcome": "win",
+      "eventual_outcome": "win",
+      "eventual_at": "2026-01-01T00:20:00Z",
+      "setup_failure": null,
+      "placement": 1,
+      "rounds": null,
+      "displayed_timer": null,
+      "wall_seconds": null,
+      "active_seconds": null,
+      "usage": {
+        "scope": null,
+        "tokens": null,
+        "cost": null,
+        "currency": null
+      },
+      "coaching_interventions": null,
+      "evidence_availability": "partial"
+    }
+  ]
+}

@@ -65,6 +65,7 @@ REQUIRED_WHEEL_PATHS = (
     "desktop/run_checkpoint.py",
     "desktop/learning_records.py",
     "desktop/record_bundles.py",
+    "desktop/corpus.py",
     "desktop/config/xrdp.ini.template",
     "security/security_steps.py",
     "smb/samba_steps.py",
@@ -185,6 +186,13 @@ def _smoke_desktop_cli(launcher: Path, work_dir: Path, environment: dict[str, st
         raise RuntimeError("Installed record validator lost freshness/authority boundaries")
     request("desktop", "evidence", "records", "create", str(source),
             "--output", str(folder / "records"), "--json", expected=1)
+    corpus_source = folder / "corpus-input.json"
+    corpus_source.write_bytes((ROOT / "docs/examples/learning-records/corpus.json").read_bytes())
+    corpus = request("desktop", "evidence", "corpus", str(corpus_source), "--source", "source-1", str(source),
+                     "--output", str(folder / "corpus"), "--json")
+    summary = json.loads(Path(corpus["artifact"]).read_text())
+    if summary["groups"][0]["starts"] != 1 or summary["groups"][0]["eventual"]["counts"]["win"] != 1:
+        raise RuntimeError("Installed corpus summary lost deduplicated match outcomes")
 
     instructions = folder / "instructions.md"
     text = "Bounded instructions α\n" * 300

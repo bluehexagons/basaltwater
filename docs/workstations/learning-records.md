@@ -129,6 +129,8 @@ Consumers should adopt these exact fields and grammar, record schema version,
 producer commit and fixture hashes, and preserve both tested repository commits.
 The [compatibility receipt](../examples/learning-records/compatibility.json)
 pins the initial producer commit, fixture hashes and supported command grammar.
-Corpus aggregation, recognizers, conditional execution, coach dispatch and live
+The [version-1 corpus extension](learning-corpus.md) adds closed-corpus validation
+and grouped summaries while preserving the record graph schema and fixtures.
+Recognizers, conditional execution, coach dispatch and live
 game qualification remain separate assignments in the
 [handoff plan](../plans/game-testing-handoffs/README.md).

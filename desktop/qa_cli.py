@@ -6,6 +6,11 @@ import argparse
 
 
 def add_qa_parser(commands: argparse._SubParsersAction, evidence: argparse._SubParsersAction) -> None:
+    corpus = evidence.add_parser("corpus", help="Offline closed-corpus validation and condition-aware summaries")
+    corpus.add_argument("source", help="Version-1 corpus manifest JSON")
+    corpus.add_argument("--source", dest="sources", nargs=2, action="append", default=[], metavar=("SOURCE_ID", "RECORDS_JSON"))
+    corpus.add_argument("--output", help="New private directory outside Git")
+    corpus.add_argument("--json", action="store_true")
     records = evidence.add_parser("records", help="Offline immutable observation/decision/coach bundles; no input authority")
     record_ops = records.add_subparsers(dest="records_command", required=True)
     create = record_ops.add_parser("create")
@@ -86,6 +91,15 @@ def add_qa_parser(commands: argparse._SubParsersAction, evidence: argparse._SubP
 
 
 def run_qa_command(args: argparse.Namespace) -> dict:
+    if args.desktop_command == "evidence" and args.evidence_command == "corpus":
+        from desktop import corpus
+        try:
+            inputs = dict(args.sources)
+            if len(inputs) != len(args.sources):
+                raise ValueError("Duplicate corpus source ID")
+            return corpus.create(args.source, inputs, args.output)
+        except (OSError, ValueError, RuntimeError) as exc:
+            return getattr(exc, "receipt", {"error": str(exc), "partial": False, "input_authority": False})
     if args.desktop_command == "evidence" and args.evidence_command == "records":
         from desktop import record_bundles
         try:

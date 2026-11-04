@@ -13,7 +13,7 @@ use the same GL milestone IDs.
 | Assignment | State / prerequisite | Deliverable |
 | --- | --- | --- |
 | [BW-GL02A: private records](records.md) | Implemented offline; adoption pending | Version-1 packet contract, validators, pinned artifact creation and offline CLI |
-| [BW-GL06A: corpus summaries](corpus.md) | After BW-GL02A contract merges | Deduplicated condition-aware outcome summaries and review inputs |
+| [BW-GL06A: corpus summaries](corpus.md) | Implemented offline; adoption pending | Deduplicated condition-aware outcome summaries and review inputs |
 | [BW-GL04A: local perception](perception.md) | Synthetic prototype ready; real-profile acceptance waits for GT-GL04A data | Read-only recognizer interface, one bounded detector and held-out report |
 | [BW-GL05A: conditional execution](execution.md) | After records/perception contracts; live adoption waits for qualification | Effect-verified executor/event wait with partial receipts and fail-stop tests |
 

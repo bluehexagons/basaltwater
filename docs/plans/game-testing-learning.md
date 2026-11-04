@@ -2,7 +2,8 @@
 
 **Implement an offline evidence contract before adding a game-playing loop.**
 BW-GL02A now implements the [version-1 offline record contract](../workstations/learning-records.md).
-The remaining runtime facilities below are planned and none are live-qualified.
+BW-GL06A implements [closed-corpus review](../workstations/learning-corpus.md).
+Perception and conditional execution remain planned; none are live-qualified.
 Existing [game-testing tools](../workstations/game-testing.md)
 remain usable. No helper restart, model call, game input or system refresh is part
 of this planning increment.
