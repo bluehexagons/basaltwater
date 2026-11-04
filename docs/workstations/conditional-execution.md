@@ -116,8 +116,9 @@ Waits record request/capture/completion timestamps and actual start-to-start gap
 including capture latency; configured cadence is the delay between captures.
 After a successful replacement, only this call's oldest frame/metadata files are
 evicted to its declared ring size. Failed captures preserve the previous frame
-plus any issue media. Retention dispositions stay in the receipt. Unknown scenes,
-cancellation and deadline return control; a wait timeout is never a game loss.
+plus any issue media. Retention dispositions stay in the receipt, including
+incomplete eviction and the exact files already removed. Unknown/unexpected
+scenes, cancellation and deadline return control; a wait timeout is never a game loss.
 
 ## Disposable application qualification, after refresh
 

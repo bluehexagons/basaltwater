@@ -93,6 +93,8 @@ class _Run:
         name = f"capture-{index}"
         entry = {"index": index, "requested": stamp(), "started_seconds": self.now() - self.started,
                  "retention": "pending", "frame": name + ".png", "metadata": name + ".json"}
+        previous = self.report["captures"][-1] if index else None
+        entry["gap_seconds"] = entry["started_seconds"] - previous["started_seconds"] if previous else None
         self.report["captures"].append(entry)
         try:
             snapshot = self.controller.observe(self.folder / entry["frame"], self.deadline, maximum)
@@ -146,8 +148,6 @@ class _Run:
             self.write(entry["metadata"], {key: value for key, value in snapshot.items() if key != "frame"})
             entry.update(retention="retained", sha256=frame["sha256"], captured_at=packet["captured_at"],
                          completed_seconds=self.now() - self.started)
-            previous = self.report["captures"][-2] if index else None
-            entry["gap_seconds"] = entry["started_seconds"] - previous["started_seconds"] if previous else None
             self.retained.append(entry)
             return snapshot, entry
         except (OSError, ValueError, RuntimeError, KeyError, TypeError, subprocess.SubprocessError, KeyboardInterrupt) as exc:
@@ -270,8 +270,10 @@ def wait(plan, controller, *, output=None, now=time.monotonic, cancelled=lambda:
             # the previous frame plus any issue media written by the adapter.
             while len(run.retained) > plan["retain_frames"]:
                 old = run.retained.pop(0)
+                old.update(retention="eviction-incomplete", evicted_artifacts=[])
                 for key in ("frame", "metadata"):
                     (run.folder / old[key]).unlink()
+                    old["evicted_artifacts"].append(old[key])
                 old["retention"] = "evicted-ring"
             branch = run.scene(observed)
             if branch:

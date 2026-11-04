@@ -285,6 +285,23 @@ class ConditionalTests(unittest.TestCase):
                 if mode == "lost":
                     self.assertTrue((Path(result["bundle"]) / "capture-0.png").exists())
 
+    def test_wait_partial_eviction_records_actual_file_disposition(self):
+        controller = Controller(["red", "blue"])
+        original = Path.unlink
+        def unlink(path, *args, **kwargs):
+            if path.name == "capture-0.json":
+                raise OSError("metadata removal failed")
+            return original(path, *args, **kwargs)
+        with patch.object(Path, "unlink", autospec=True, side_effect=unlink):
+            result = conditional.wait(self.wait_plan(), controller, output=str(self.root / "wait"), sleep=lambda _: None)
+        old = result["captures"][0]
+        self.assertEqual(old["retention"], "eviction-incomplete")
+        self.assertEqual(old["evicted_artifacts"], ["capture-0.png"])
+        self.assertTrue((Path(result["bundle"]) / "capture-1.png").exists())
+        self.assertTrue((Path(result["bundle"]) / "capture-0.json").exists())
+        self.assertEqual(controller.inputs, [])
+        self.assertIn("error", result)
+
     def test_schema_bounds_no_embedded_authority_and_cli_offline(self):
         for key, value in (("schema_version", True), ("generation", "injected"), ("steps", [])):
             plan = copy.deepcopy(self.plan)
