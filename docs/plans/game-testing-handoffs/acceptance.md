@@ -44,7 +44,7 @@ identify each bounded milestone and its parent provides the feature's base.
 No workers, watchers, live desktop jobs, model calls or helper/system changes
 were created by these assignments.
 
-The final affected checks passed: **38 focused learning tests**, **810 desktop
+The initial delivery's affected checks passed: **38 focused learning tests**, **810 desktop
 tests** through `make check-fast SUITE=desktop`, and the installed-wheel check.
 The full `make check-ci` run passed static/brand/package/wheel stages and ran
 9482 tests with two skipped, but remained non-green with **2 failures and
@@ -57,6 +57,16 @@ were preserved, not changed by the learning implementation. The final wait
 eviction regression also passed the affected fast/artifact checks after that
 full run; no full-suite pass is claimed. The repository's full CI environment
 remains the documented Debian environment in the contributor guide.
+
+The follow-up review fixed exact held-out field-name handling (including spaces)
+and incomplete/duplicate recognition fields incorrectly passing delta comparison.
+The executor now checks this recognition completeness before dispatch as well as
+after input; completed delivery remains separate from an unknown effect. Delta
+source references are copied so later result mutation cannot alter the delta.
+Regression acceptance passed **41 focused learning tests**, **813 desktop tests**,
+and installed-wheel checks. No contract/fixture versions changed and no native
+session was accessed. The earlier full-suite baseline failures remain separate;
+the full suite was not repeated for these focused fixes.
 
 ## Consuming-project adoption
 

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "kind": "learning-compatibility",
-  "producer_commit": "2e3bef9d5b7e084104edcb7ede35198711a09e33",
+  "producer_commit": "939106eba86245367de27dd1632df7ee432278f4",
   "feature_commits": {
     "BW-GL02A": "20167cd3453fad9f8a0ea6dc7ea11d0f0d21d45c",
     "BW-GL06A": "96e926bac29f876a7c7d205696f2039a4bec5840",
