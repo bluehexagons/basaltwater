@@ -120,6 +120,9 @@ class _Run:
                     or result.get("frame_id") != frame["id"] or result.get("source_sha256") != frame["sha256"]
                     or [{key: field[key] for key in ("name", "status", "value", "sources")} for field in result["fields"]] != packet["fields"]):
                 raise ValueError("Unusable or drifting recognition")
+            # Reject missing/duplicate profile fields before granting a target,
+            # as well as when comparing the post-input effect below.
+            perception.field_delta(result, result)
             geometry = [capture.get(key) for key in ("geometry", "image_origin", "image_geometry")]
             if geometry != [frame["geometry"], frame["origin"], [frame["width"], frame["height"]]]:
                 raise ValueError("Capture/packet geometry mismatch")

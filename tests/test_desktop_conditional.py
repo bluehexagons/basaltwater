@@ -176,6 +176,36 @@ class ConditionalTests(unittest.TestCase):
                 self.assertNotEqual(result["steps"][0]["effect"], "verified")
                 self.assertTrue((Path(result["bundle"]) / "step-0-dispatch.json").exists())
 
+    def test_missing_post_capture_field_cannot_verify_effect_or_dispatch_again(self):
+        self.two_steps()
+        controller = Controller(["red", "blue"])
+        extra = copy.deepcopy(controller.profile["fields"][0])
+        extra["name"] = "anchor"
+        for template in extra["templates"]:
+            controller.templates["anchor-" + template["id"]] = controller.templates[template["id"]]
+            template["id"] = "anchor-" + template["id"]
+        controller.profile["fields"].append(extra)
+        def missing(snapshot, index):
+            if index == 1:
+                snapshot["packet"]["fields"].pop()
+                snapshot["recognition"]["fields"].pop()
+        controller.change = missing
+        result = self.execute(controller)
+        self.assertEqual(len(controller.inputs), 1)
+        self.assertEqual(result["steps"][0]["input_delivery"], "completed")
+        self.assertEqual(result["steps"][0]["effect"], "unknown")
+        self.assertEqual(result["steps"][1]["status"], "not-attempted")
+        self.assertIn("field set", result["error"])
+        controller.count = 0
+        controller.inputs.clear()
+        def missing_before(snapshot, index):
+            snapshot["packet"]["fields"].pop()
+            snapshot["recognition"]["fields"].pop()
+        controller.change = missing_before
+        result = conditional.execute(self.plan, controller, output=str(self.root / "before"))
+        self.assertEqual(controller.inputs, [])
+        self.assertEqual(result["steps"][0]["status"], "refused")
+
     def test_deadline_cancellation_storage_and_durable_intent_failure(self):
         for mode in ("deadline", "cancel", "storage", "intent", "post-persistence"):
             controller = Controller(["red", "blue"])

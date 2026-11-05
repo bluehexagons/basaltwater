@@ -19,6 +19,8 @@ profile, templates)`, returning `(result, literal_crop_bytes_by_field)`.
 `desktop.record_bundles.read_packet(manifest, packet_id, frame_id)` supplies a
 verified packet/frame pair without a live lease. `perception.field_delta(old,
 new)` reports changed field evidence; mismatched settings/drift refuse comparison.
+Missing/duplicate fields, unsupported versions and absent drift/profile metadata
+are rejected rather than reported as unchanged. Returned delta sources are copies.
 Unknown values stay null; a field change makes no assertion of semantic progress.
 
 The profile is strict JSON, at most 64 KiB, with exactly these fields:
@@ -81,7 +83,8 @@ A held-out dataset is strict JSON of at most 64 KiB with exactly
 text IDs each; held-out runs are nonempty and disjoint from calibration. Bind
 exactly the held-out runs to verified record bundles. Each sample has exactly
 unique text `id`, `run_id`, `packet_id`, `frame_id`, `case`, and `expected` (one
-nullable text value per profile field). There are 1–32 samples with at most
+nullable text value per profile field). Field names, including spaces, are exact
+object keys rather than split words. There are 1–32 samples with at most
 32 MiB combined encoded frames, all from bound packet run IDs. Duplicate frame
 bytes fail so repeated images cannot inflate coverage. Every held-out run must
 have a sample. Profile bytes must match the frozen hash; templates are already

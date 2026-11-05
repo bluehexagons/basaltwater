@@ -145,7 +145,25 @@ def field_delta(previous, current):
     for result in (previous, current):
         if not isinstance(result, dict) or result.get("kind") != "region-recognition":
             raise ValueError("Delta requires recognition results")
-        contract.sequence(result.get("fields"), 4)
+        contract.bounded(result)
+        if type(result.get("schema_version")) is not int or result["schema_version"] != 1 or type(result.get("drift")) is not bool:
+            raise ValueError("Delta requires version-one results with explicit drift")
+        profile = result.get("settings")
+        validate_profile(profile)
+        expected = {field["name"] for field in profile["fields"]}
+        names = set()
+        for field in contract.sequence(result.get("fields"), 4):
+            if not isinstance(field, dict) or not {"name", "status", "value", "sources"} <= field.keys():
+                raise ValueError("Delta requires canonical field evidence")
+            contract.text(field["name"])
+            if field["name"] in names:
+                raise ValueError("Duplicate delta field")
+            names.add(field["name"])
+            if field["status"] not in ("observed", "unknown") or (field["value"] is None) != (field["status"] == "unknown"):
+                raise ValueError("Invalid recognition field status/value")
+            contract.sequence(field["sources"], 8)
+        if names != expected:
+            raise ValueError("Delta field set differs from profile")
     comparable = (not previous.get("drift") and not current.get("drift")
                   and previous.get("detector") == current.get("detector") == DETECTOR
                   and previous.get("settings") == current.get("settings"))
@@ -154,8 +172,8 @@ def field_delta(previous, current):
     before = {field["name"]: field for field in previous["fields"]}
     changes = []
     for field in current["fields"]:
-        prior = before.get(field["name"])
-        if prior is None or (prior["status"], prior["value"]) != (field["status"], field["value"]):
-            changes.append({"name": field["name"], "before": None if prior is None else prior["value"],
-                            "after": field["value"], "status": field["status"], "sources": field["sources"]})
+        prior = before[field["name"]]
+        if (prior["status"], prior["value"]) != (field["status"], field["value"]):
+            changes.append({"name": field["name"], "before": prior["value"],
+                            "after": field["value"], "status": field["status"], "sources": copy.deepcopy(field["sources"])})
     return {"comparable": True, "changes": changes, "semantic_progress": "not-asserted", "input_authority": False}

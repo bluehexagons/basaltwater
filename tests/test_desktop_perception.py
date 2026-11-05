@@ -105,6 +105,22 @@ class PerceptionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "hash"):
             self.recognize()
 
+    def test_delta_rejects_missing_duplicate_and_incomplete_evidence(self):
+        prior = self.recognize()[0]
+        for mutate in (lambda row: row.update(fields=[]),
+                       lambda row: row["fields"].append(copy.deepcopy(row["fields"][0])),
+                       lambda row: row.pop("drift"), lambda row: row.pop("settings"),
+                       lambda row: row.update(schema_version=True),
+                       lambda row: row["fields"][0].update(value=None)):
+            current = copy.deepcopy(prior)
+            mutate(current)
+            with self.subTest(mutate=mutate), self.assertRaises(ValueError):
+                perception.field_delta(prior, current)
+        current = self.recognize(self.blue)[0]
+        delta = perception.field_delta(prior, current)
+        current["fields"][0]["sources"].clear()
+        self.assertTrue(delta["changes"][0]["sources"])
+
     def bundle(self, name, images):
         packet = copy.deepcopy(self.packet)
         packet["frames"] = [self.frame(identifier, data) for identifier, data in images.items()]
@@ -172,6 +188,24 @@ class PerceptionTests(unittest.TestCase):
             if expected == 0:
                 self.assertEqual(result["fields"][0]["value"], "red")
                 self.assertEqual(Path(result["artifact"]).stat().st_mode & 0o777, 0o600)
+
+    def test_heldout_field_names_with_spaces_remain_exact_keys(self):
+        self.profile["fields"][0]["name"] = "game scene"
+        artifact = self.bundle("spaced", {"red": self.red})
+        profile, paths = self.assets()
+        dataset = {"schema_version": 1, "kind": "region-heldout", "id": "spaced-field",
+                   "profile_sha256": hashlib.sha256(Path(profile).read_bytes()).hexdigest(),
+                   "calibration_runs": [], "heldout_runs": ["run-1"],
+                   "samples": [{"id": "one", "run_id": "run-1", "packet_id": "packet-1", "frame_id": "red",
+                                "case": "normal", "expected": {"game scene": "red"}}]}
+        source = self.root / "dataset.json"
+        source.write_text(json.dumps(dataset))
+        result = perception_reports.evaluate(str(source), {"run-1": artifact}, profile, paths)
+        self.assertEqual(result["metrics"]["game scene"]["correct"], 1)
+        dataset["samples"][0]["expected"] = {"game": "red", "scene": "red"}
+        source.write_text(json.dumps(dataset))
+        with self.assertRaisesRegex(ValueError, "field names"):
+            perception_reports.evaluate(str(source), {"run-1": artifact}, profile, paths)
 
     def test_partial_write_retains_inputs_and_no_completion_marker(self):
         artifact = self.bundle("input", {"frame-1": self.red})

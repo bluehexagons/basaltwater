@@ -99,7 +99,8 @@ def evaluate(dataset_source, bundles, profile_source, paths, output=None):
         contract.keys(sample, "id run_id packet_id frame_id case expected")
         for name in ("id", "run_id", "packet_id", "frame_id", "case"):
             contract.text(sample[name])
-        contract.keys(sample["expected"], " ".join(sorted(fields)))
+        if not isinstance(sample["expected"], dict) or set(sample["expected"]) != fields:
+            raise ValueError("Expected exactly the profile's field names")
         for value in sample["expected"].values():
             if value is not None:
                 contract.text(value)
