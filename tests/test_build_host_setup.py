@@ -244,7 +244,7 @@ class BuildHostSetupUnitTests(unittest.TestCase):
             "/safe/file": SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_uid=0, st_gid=0),
         }
         with patch.object(setup, "validate_filesystem_path"), \
-             patch("os.stat", side_effect=lambda path, **_kwargs: info[str(path)]):
+             patch.object(Path, "lstat", autospec=True, side_effect=lambda path: info[str(path)]):
             self.assertEqual(setup._trusted_path("/safe/file").st_uid, 0)
             info["/safe"].st_uid = 12345
             with self.assertRaisesRegex(ValueError, "not controlled by root"):

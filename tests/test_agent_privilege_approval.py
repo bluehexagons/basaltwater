@@ -58,7 +58,12 @@ class ApprovalTests(unittest.TestCase):
         combined.update(headers or {})
         connection = http.client.HTTPConnection(*self.server.server_address, timeout=5)
         self.addCleanup(connection.close)
-        connection.request(method, path or self.path, body, combined)
+        try:
+            connection.request(method, path or self.path, body, combined)
+        except BrokenPipeError:
+            # A header-only rejection may close before the body is sent.
+            # Read and assert that response without retrying the request.
+            pass
         response = connection.getresponse()
         return response.status, dict(response.getheaders()), response.read().decode()
 
@@ -355,7 +360,12 @@ class IntegratedApprovalTests(ApprovalTests):
         connection.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         connection.sock.settimeout(5)
         connection.sock.connect(self.server.server_address)
-        connection.request(method, path or self.path, body, combined)
+        try:
+            connection.request(method, path or self.path, body, combined)
+        except BrokenPipeError:
+            # The Unix listener can reject headers before receiving the body.
+            # Keep the rejection response and never replay an approval POST.
+            pass
         response = connection.getresponse()
         return response.status, dict(response.getheaders()), response.read().decode()
 

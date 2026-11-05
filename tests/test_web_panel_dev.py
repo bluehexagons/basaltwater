@@ -363,6 +363,7 @@ class PanelDevelopmentTests(unittest.TestCase):
             panel_dev.private_directory(linked)
         public = self.directory / "public"
         public.mkdir(mode=0o755)
+        public.chmod(0o755)
         with self.assertRaises(ValueError):
             panel_dev.private_directory(public)
 

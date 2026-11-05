@@ -166,6 +166,7 @@ class BuildPolicyDraftTests(unittest.TestCase):
             drafts.write_drafts(str(output), builder, dict(target, max_records=0))
         self.assertFalse(output.exists())
         output.mkdir(mode=0o755)
+        output.chmod(0o755)
         with self.assertRaisesRegex(ValueError, "0700"):
             drafts.write_drafts(str(output), builder, target)
         output.chmod(0o700)

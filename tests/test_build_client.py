@@ -810,6 +810,7 @@ class BuildHostClientTests(unittest.TestCase):
     def test_destination_parent_must_be_private_and_no_follow(self) -> None:
         public = self.root / "public"
         public.mkdir(mode=0o755)
+        public.chmod(0o755)
         destination = public / "bundle.bin"
         fake = FakePopen(server(lambda *_args: 0))
         with patch.object(build_client.subprocess, "Popen", side_effect=fake):

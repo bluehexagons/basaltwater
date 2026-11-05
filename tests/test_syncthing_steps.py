@@ -231,6 +231,7 @@ class SyncthingShareRootTest(unittest.TestCase):
 
     def test_unmanaged_nonempty_root_requires_explicit_preparation(self) -> None:
         os.mkdir(self.root, 0o755)
+        os.chmod(self.root, 0o755)
         with open(os.path.join(self.root, ".hidden-data"), "w") as stream:
             stream.write("unmanaged data")
         for uid, gid, mode in (
@@ -251,6 +252,7 @@ class SyncthingShareRootTest(unittest.TestCase):
 
     def test_verified_fresh_mount_allows_only_metadata_and_empty_recovery_directory(self) -> None:
         os.mkdir(self.root, 0o755)
+        os.chmod(self.root, 0o755)
         with open(os.path.join(self.root, ".basaltwater-storage.json"), "w") as stream:
             stream.write("mount marker checked by the mocked mount verifier")
         os.mkdir(os.path.join(self.root, "lost+found"), 0o700)
@@ -262,6 +264,7 @@ class SyncthingShareRootTest(unittest.TestCase):
 
     def test_mount_declaration_does_not_authorize_unmanaged_data(self) -> None:
         os.mkdir(self.root, 0o755)
+        os.chmod(self.root, 0o755)
         self.config.storage_mounts = [["data", self.root, "ext4", "empty"]]
         for relative in ("foreign-data", "lost+found/recovered-data"):
             with self.subTest(relative=relative):
@@ -284,6 +287,7 @@ class SyncthingShareRootTest(unittest.TestCase):
 
     def test_inaccessible_ancestor_or_root_aborts_setup_before_stop_or_config_changes(self) -> None:
         os.mkdir(self.root, 0o770)
+        os.chmod(self.root, 0o770)
         for failed_probe in (0, 1, 2):
             with (
                 self.subTest(failed_probe=failed_probe),

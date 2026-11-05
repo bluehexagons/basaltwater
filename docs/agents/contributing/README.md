@@ -195,6 +195,13 @@ When running those tests from a CachyOS workstation, fixtures must mock the
 target distribution, package-manager discovery, and account privileges. A
 Debian test must not accidentally enter the local CachyOS setup path or inspect
 and remove files from the developer's host.
+When mocking `sys.flags`, preserve the interpreter's other flags and override
+only the flag under test; standard libraries such as Python 3.14's argparse
+also consult that global object. Mock `Path.lstat` directly when testing its
+callers rather than relying on which OS function a Python version uses beneath
+it. Executable-search fixtures must provide their own required tools and an
+isolated PATH: an invalid fixture executable can otherwise fall through to a
+real workstation installation.
 Register new test modules in the appropriate `TEST_SUITE_PATTERNS` entry in
 `run_tests.py`; the default suite checks that every discovered module belongs
 to a domain suite.

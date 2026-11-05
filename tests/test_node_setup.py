@@ -72,6 +72,7 @@ class TestNodeSetup(unittest.TestCase):
             home = Path(directory)
             bin_dir = home / "bin"
             bin_dir.mkdir()
+            (bin_dir / "python3").symlink_to(sys.executable)
             nvm = home / "nvm.sh"
             nvm.write_text(
                 "nvm() { :; }\nnode() { echo v24.22.1; }\nnpm() { :; }\n"
@@ -81,7 +82,7 @@ class TestNodeSetup(unittest.TestCase):
             def execute(_username, _home, command, **options):
                 return subprocess.run(
                     ["/bin/bash", "--noprofile", "--norc", "-c", command],
-                    env={"HOME": directory, "PATH": str(bin_dir) + os.pathsep + os.defpath},
+                    env={"HOME": directory, "PATH": str(bin_dir)},
                     cwd=directory, text=True, capture_output=True, timeout=10,
                     check=options.get("check", True),
                 )

@@ -314,6 +314,7 @@ class BuildAdmissionTests(unittest.TestCase):
     def test_private_parent_and_nofollow_file_checks(self) -> None:
         public = self.root / "public"
         public.mkdir(mode=0o755)
+        public.chmod(0o755)
         with self.assertRaises(ValueError):
             DeploymentAdmissionStore(public / "admission.json", clock=self.clock)
 

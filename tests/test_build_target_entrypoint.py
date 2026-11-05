@@ -78,6 +78,12 @@ def stdio_channels():
 
 
 class BuildTargetEntrypointTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # Preserve flags consulted by argparse while varying only isolation.
+        self.other_flags = {name: getattr(sys.flags, name)
+                            for name in dir(sys.flags)
+                            if not name.startswith("_") and name != "isolated"}
+
     def test_config_is_detached_strict_bounded_and_rejects_overlap(self) -> None:
         original = config()
         parsed = build_target.parse_config(original)
@@ -262,7 +268,7 @@ class BuildTargetEntrypointTests(unittest.TestCase):
     def test_invocation_rejects_nonroot_nonisolated_or_wrong_original_command_early(self) -> None:
         stderr = StringIO()
         with patch.object(build_target.os, "geteuid", return_value=0), \
-             patch.object(build_target.sys, "flags", SimpleNamespace(isolated=1)), \
+             patch.object(build_target.sys, "flags", SimpleNamespace(isolated=1, **self.other_flags)), \
              patch.object(build_target, "_trusted_code") as trusted, \
              patch.object(build_target, "load_config") as loader, \
              patch.object(build_target.sys, "stderr", stderr), \
@@ -271,7 +277,7 @@ class BuildTargetEntrypointTests(unittest.TestCase):
             trusted.assert_not_called()
             loader.assert_not_called()
             with patch.dict(os.environ, {"SSH_ORIGINAL_COMMAND": build_target.SSH_COMMAND}), \
-                 patch.object(build_target.sys, "flags", SimpleNamespace(isolated=0)):
+                 patch.object(build_target.sys, "flags", SimpleNamespace(isolated=0, **self.other_flags)):
                 self.assertEqual(build_target.main(["--serve", "--principal", "alice@example"]), 1)
             with patch.object(build_target.os, "geteuid", return_value=1000):
                 self.assertEqual(build_target.main(["--serve", "--principal", "alice@example"]), 1)
@@ -293,7 +299,7 @@ class BuildTargetEntrypointTests(unittest.TestCase):
             return configured
 
         with patch.object(build_target.os, "geteuid", return_value=0), \
-             patch.object(build_target.sys, "flags", SimpleNamespace(isolated=1)), \
+             patch.object(build_target.sys, "flags", SimpleNamespace(isolated=1, **self.other_flags)), \
              patch.object(build_target, "_trusted_code") as trusted_code, \
              patch.object(build_target, "_trusted_libraries") as trusted_libraries, \
              patch.object(build_target, "require_platform") as require_platform, \
@@ -482,7 +488,7 @@ class BuildTargetEntrypointTests(unittest.TestCase):
     def test_unexpected_failure_emits_only_fixed_stderr_text(self) -> None:
         stderr = StringIO()
         with patch.object(build_target.os, "geteuid", return_value=0), \
-             patch.object(build_target.sys, "flags", SimpleNamespace(isolated=1)), \
+             patch.object(build_target.sys, "flags", SimpleNamespace(isolated=1, **self.other_flags)), \
              patch.object(build_target, "_trusted_code"), \
              patch.object(build_target, "_trusted_libraries"), \
              patch.object(build_target, "require_platform"), \
@@ -496,7 +502,7 @@ class BuildTargetEntrypointTests(unittest.TestCase):
 
     def test_busy_or_held_enrollment_refuses_before_configuration_load(self) -> None:
         with patch.object(build_target.os, "geteuid", return_value=0), \
-             patch.object(build_target.sys, "flags", SimpleNamespace(isolated=1)), \
+             patch.object(build_target.sys, "flags", SimpleNamespace(isolated=1, **self.other_flags)), \
              patch.object(build_target, "_trusted_code"), \
              patch.object(build_target, "_trusted_libraries"), \
              patch.object(build_target, "require_platform"), \

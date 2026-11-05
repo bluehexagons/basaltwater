@@ -41,6 +41,12 @@ def request() -> dict:
 
 
 class BuildHostEntrypointTest(unittest.TestCase):
+    def setUp(self) -> None:
+        # Replacing sys.flags also affects argparse and other standard libraries.
+        self.other_flags = {name: getattr(build_host.sys.flags, name)
+                            for name in dir(build_host.sys.flags)
+                            if not name.startswith("_") and name != "isolated"}
+
     def test_config_is_detached_and_rejects_invalid_privileged_settings(self):
         original = config()
         normalized = build_host.parse_config(original)
@@ -187,7 +193,7 @@ class BuildHostEntrypointTest(unittest.TestCase):
 
     def test_nonisolated_or_wrong_ssh_command_fails_before_project_or_config_loading(self):
         with patch.object(build_host.os, "geteuid", return_value=0), \
-             patch.object(build_host.sys, "flags", SimpleNamespace(isolated=1)), \
+             patch.object(build_host.sys, "flags", SimpleNamespace(isolated=1, **self.other_flags)), \
              patch.object(build_host, "_trusted_code") as trusted, \
              patch.object(build_host, "load_config") as loader, \
              patch.dict(os.environ, {"SSH_ORIGINAL_COMMAND": "bash"}), \
@@ -195,14 +201,14 @@ class BuildHostEntrypointTest(unittest.TestCase):
             self.assertEqual(build_host.main(["--serve", "--principal", "controller"]), 1)
             trusted.assert_not_called()
             loader.assert_not_called()
-            with patch.object(build_host.sys, "flags", SimpleNamespace(isolated=0)):
+            with patch.object(build_host.sys, "flags", SimpleNamespace(isolated=0, **self.other_flags)):
                 self.assertEqual(build_host.main(["--worker"]), 1)
             loader.assert_not_called()
 
     def test_exact_forced_command_passes_only_its_fixed_principal_to_service(self):
         configured = config()
         with patch.object(build_host.os, "geteuid", return_value=0), \
-             patch.object(build_host.sys, "flags", SimpleNamespace(isolated=1)), \
+             patch.object(build_host.sys, "flags", SimpleNamespace(isolated=1, **self.other_flags)), \
              patch.object(build_host, "_trusted_code"), \
              patch.object(build_host, "_trusted_libraries"), \
              patch.object(build_host, "require_platform"), \
@@ -285,15 +291,15 @@ class BuildHostEntrypointTest(unittest.TestCase):
              patch.dict(os.environ, {}, clear=True):
             for arguments in (inspect, settle, prune, release, ["--inspect-capacity"]):
                 with patch.object(build_host.os, "geteuid", return_value=1000), \
-                     patch.object(build_host.sys, "flags", SimpleNamespace(isolated=1)):
+                     patch.object(build_host.sys, "flags", SimpleNamespace(isolated=1, **self.other_flags)):
                     self.assertEqual(build_host.main(arguments), 1)
                 with patch.object(build_host.os, "geteuid", return_value=0), \
-                     patch.object(build_host.sys, "flags", SimpleNamespace(isolated=0)):
+                     patch.object(build_host.sys, "flags", SimpleNamespace(isolated=0, **self.other_flags)):
                     self.assertEqual(build_host.main(arguments), 1)
                 for original in ("", build_host.SSH_COMMAND, "bash"):
                     with patch.dict(os.environ, {"SSH_ORIGINAL_COMMAND": original}), \
                          patch.object(build_host.os, "geteuid", return_value=0), \
-                         patch.object(build_host.sys, "flags", SimpleNamespace(isolated=1)):
+                         patch.object(build_host.sys, "flags", SimpleNamespace(isolated=1, **self.other_flags)):
                         self.assertEqual(build_host.main(arguments), 1)
             trusted.assert_not_called()
             loader.assert_not_called()
@@ -302,7 +308,7 @@ class BuildHostEntrypointTest(unittest.TestCase):
         configured = config()
         identifier, revision = "a" * 32, "b" * 64
         with patch.object(build_host.os, "geteuid", return_value=0), \
-             patch.object(build_host.sys, "flags", SimpleNamespace(isolated=1)), \
+             patch.object(build_host.sys, "flags", SimpleNamespace(isolated=1, **self.other_flags)), \
              patch.object(build_host, "_trusted_code"), \
              patch.object(build_host, "_trusted_libraries"), \
              patch.object(build_host, "require_platform"), \
@@ -334,7 +340,7 @@ class BuildHostEntrypointTest(unittest.TestCase):
     def test_capacity_mode_is_local_and_passes_only_loaded_configuration(self):
         configured = config()
         with patch.object(build_host.os, "geteuid", return_value=0), \
-             patch.object(build_host.sys, "flags", SimpleNamespace(isolated=1)), \
+             patch.object(build_host.sys, "flags", SimpleNamespace(isolated=1, **self.other_flags)), \
              patch.object(build_host, "_trusted_code"), \
              patch.object(build_host, "_trusted_libraries"), \
              patch.object(build_host, "require_platform"), \
@@ -390,7 +396,7 @@ class BuildHostEntrypointTest(unittest.TestCase):
                 with self.subTest(previous=previous, failure=failure), \
                      patch.object(build_host.sys, "dont_write_bytecode", previous), \
                      patch.object(build_host.os, "geteuid", return_value=0), \
-                     patch.object(build_host.sys, "flags", SimpleNamespace(isolated=1)), \
+                     patch.object(build_host.sys, "flags", SimpleNamespace(isolated=1, **self.other_flags)), \
                      patch.object(build_host, "_trusted_code"), \
                      patch.object(build_host, "_trusted_libraries"), \
                      patch.object(build_host, "require_platform"), \
@@ -412,7 +418,7 @@ class BuildHostEntrypointTest(unittest.TestCase):
     def test_local_retention_passes_only_configured_roots_and_exact_id_revision(self):
         configured = config()
         with patch.object(build_host.os, "geteuid", return_value=0), \
-             patch.object(build_host.sys, "flags", SimpleNamespace(isolated=1)), \
+             patch.object(build_host.sys, "flags", SimpleNamespace(isolated=1, **self.other_flags)), \
              patch.object(build_host, "_trusted_code"), \
              patch.object(build_host, "_trusted_libraries"), \
              patch.object(build_host, "require_platform"), \

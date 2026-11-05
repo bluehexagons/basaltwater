@@ -934,6 +934,7 @@ class BuildSourceTest(unittest.TestCase):
     def test_public_destination_parent_is_rejected(self):
         public = self.root / "public"
         public.mkdir(mode=0o755)
+        public.chmod(0o755)
         destination = public / "snapshot"
         with self.assertRaisesRegex(ValueError, "private"):
             create_source_snapshot(str(self.repository), str(destination), runner=self.git)

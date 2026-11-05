@@ -209,6 +209,7 @@ class BuildArtifactsTest(unittest.TestCase):
     def test_public_parent_and_symlink_parent_cannot_receive_artifacts(self):
         public = self.root / "public"
         public.mkdir(mode=0o755)
+        public.chmod(0o755)
         with self.assertRaisesRegex(ValueError, "private"):
             create_artifact(str(self.workspace), self.request, str(public / "bundle"))
         alias = self.root / "alias"
