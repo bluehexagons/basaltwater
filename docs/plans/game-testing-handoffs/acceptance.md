@@ -1,12 +1,16 @@
 # Basaltwater learning handoff acceptance
 
 All four assignments in the [index](README.md) have source implementations and
-offline acceptance. Native/game qualification is separate and has not run.
+offline acceptance. A subsequent refresh enabled
+[bounded native application qualification](../../testing/conditional-cachyos.md);
+game and additional native boundaries remain pending.
 The [machine-readable compatibility receipt](../../examples/learning-records/learning-compatibility.json)
 pins the integrated runtime producer, individual feature commits, contract
 versions, synthetic fixture digests and actual CLI grammar. The initial
 [records-only receipt](../../examples/learning-records/compatibility.json) is
 preserved as historical evidence; its deferred list describes that earlier point.
+Both JSON receipts retain their original qualification states; the dated native
+report above records the later installation/helper comparison and live checks.
 
 ## Delivered scope
 
@@ -55,8 +59,9 @@ builder tests and the node baseline fixture finding the workstation's installed
 pnpm after its invalid fixture executable. These existing portability failures
 were preserved, not changed by the learning implementation. The final wait
 eviction regression also passed the affected fast/artifact checks after that
-full run; no full-suite pass is claimed. The repository's full CI environment
-remains the documented Debian environment in the contributor guide.
+full run; no full-suite pass was claimed at that checkpoint. The repository's
+full CI environment remains the documented Debian environment in the contributor
+guide.
 
 The follow-up review fixed exact held-out field-name handling (including spaces)
 and incomplete/duplicate recognition fields incorrectly passing delta comparison.
@@ -67,6 +72,31 @@ Regression acceptance passed **41 focused learning tests**, **813 desktop tests*
 and installed-wheel checks. No contract/fixture versions changed and no native
 session was accessed. The earlier full-suite baseline failures remain separate;
 the full suite was not repeated for these focused fixes.
+
+The post-refresh review reproduced the earlier **2 failures and 15 errors** on
+Python 3.14 and corrected the fixtures: preserve unrelated interpreter flags when
+varying isolation, mock `Path.lstat` at its public boundary, and isolate the pnpm
+executable-search PATH from installed workstation tools. All 96 tests in the
+four affected modules then passed. These corrections change test isolation,
+not builder admission or workstation package configuration.
+
+The first full post-refresh run also exposed directory-mode fixtures that relied
+on a permissive umask: this session's `0077` made their intended public or
+unprepared directories private instead. Explicit fixture chmod now preserves
+the intended permission/adoption checks without changing the runner's umask.
+All 271 tests in the eleven affected modules passed with `0077`.
+
+The rerun exposed an intermittent approval-test client race: the server can
+reject forged headers and close before the client sends the request body. The
+test clients now read and assert the rejection response after `BrokenPipeError`,
+without replaying the request. All 49 approval tests passed; forced body-send
+failures also retained the real rejection responses on both TCP and Unix
+listeners. No production approval behavior changed.
+
+Final post-refresh `make check-ci` passed compilation, documentation, brand,
+package metadata, installed-wheel checks and **9486 tests run, two skipped**,
+with branch coverage reporting. The 96 interpreter/search fixtures also passed
+under Python 3.13. Private logs retain the intermediate failures and final pass.
 
 ## Consuming-project adoption
 

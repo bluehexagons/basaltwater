@@ -1,7 +1,9 @@
 # Bounded conditional execution and event waits
 
-BW-GL05A provides source and mocked acceptance for CachyOS. Native application
-and game qualification have **not** run. It uses existing enabled control and
+BW-GL05A provides source and mocked acceptance for CachyOS, plus
+[bounded disposable-app qualification](../testing/conditional-cachyos.md).
+Game qualification and additional native boundaries remain pending.
+It uses existing enabled control and
 observation-bound input; it never starts, refreshes or grants a helper session.
 Other platforms need an adapter for their actual authority/receipt contract.
 
@@ -122,7 +124,9 @@ scenes, cancellation and deadline return control; a wait timeout is never a game
 
 ## Disposable application qualification, after refresh
 
-This is a recipe for a separately authorized session, not a live acceptance claim:
+This is a recipe for a separately authorized session. The
+[dated qualification](../testing/conditional-cachyos.md) records the subset
+already exercised and its remaining boundaries:
 
 1. Record installed source/helper revisions and current consent/control state in
    a private preflight bundle. Refresh only at an owner-selected safe checkpoint.
@@ -144,6 +148,7 @@ This is a recipe for a separately authorized session, not a live acceptance clai
    pair. A subsequent game trial needs its own scope, thresholds and outcome
    mapping; preserve original run clocks and both repositories' source commits.
 
-Native portal timing, compositor scaling, app focus/animation, real transport
-interruption, input release under interruption and game semantics remain untested
-here. Mocked acceptance does not establish these properties on the workstation.
+The dated qualification covers one native profile/crop and current monitor
+mapping. Other scaling/layouts, app focus/animation, real transport interruption,
+input release under interruption and game semantics remain unqualified.
+Mocked acceptance does not establish those properties on the workstation.
