@@ -2,8 +2,9 @@
 
 All four assignments in the [index](README.md) have source implementations and
 offline acceptance. A subsequent refresh enabled
-[bounded native application qualification](../../testing/conditional-cachyos.md);
-game and additional native boundaries remain pending.
+[bounded native application qualification](../../testing/conditional-cachyos.md)
+and an owner-authorized game-menu/playability pilot. Broader game-profile
+acceptance and additional native boundaries remain pending.
 The [machine-readable compatibility receipt](../../examples/learning-records/learning-compatibility.json)
 pins the integrated runtime producer, individual feature commits, contract
 versions, synthetic fixture digests and actual CLI grammar. The initial

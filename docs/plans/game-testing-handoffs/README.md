@@ -1,10 +1,10 @@
 # Game-testing implementation handoffs
 
 **All four Basaltwater assignments have source implementations and synthetic or
-mocked acceptance, plus [bounded native application checks](../../testing/conditional-cachyos.md).**
+mocked acceptance, plus [bounded native application and game-pilot checks](../../testing/conditional-cachyos.md).**
 See the [record contract and CLI](../../workstations/learning-records.md)
-and the deliverable links below. Game qualification, consuming-project adoption
-and additional native boundaries remain separate. These briefs are
+and the deliverable links below. Broader game-profile qualification,
+consuming-project adoption and additional native boundaries remain separate. These briefs are
 scope/acceptance references, not running jobs. Read the repository's `AGENTS.md`,
 contributor guide, this page and the assigned brief; follow links as needed rather
 than loading every work package. The [architecture plan](../game-testing-learning.md)
@@ -21,7 +21,7 @@ for the completed source scope, pinned commits/fixtures and remaining qualificat
 | [BW-GL02A: private records](records.md) | Implemented offline; adoption pending | Version-1 packet contract, validators, pinned artifact creation and offline CLI |
 | [BW-GL06A: corpus summaries](corpus.md) | Implemented offline; adoption pending | Deduplicated condition-aware outcome summaries and review inputs |
 | [BW-GL04A: local perception](perception.md) | Implemented and tested synthetically; real-profile acceptance waits for GT-GL04A data | Read-only recognizer interface, one bounded detector and held-out report |
-| [BW-GL05A: conditional execution](execution.md) | Implemented with mocked authority and bounded native app checks; game qualification pending | [Effect-verified executor/event wait](../../workstations/conditional-execution.md) with partial receipts and fail-stop tests |
+| [BW-GL05A: conditional execution](execution.md) | Implemented with mocked authority, bounded native app checks and a game-menu pilot; broader game-profile acceptance pending | [Effect-verified executor/event wait](../../workstations/conditional-execution.md) with partial receipts and fail-stop tests |
 
 No generic model scheduler or game strategy engine is assigned. Coach request/
 reply/disposition records belong to BW-GL02A; coach orchestration remains in the

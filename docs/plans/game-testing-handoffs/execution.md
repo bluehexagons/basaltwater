@@ -2,8 +2,9 @@
 
 **Implemented with merged records/perception contracts and mocked acceptance.**
 See the [API, CLI and qualification recipe](../../workstations/conditional-execution.md).
-The [dated native checks](../../testing/conditional-cachyos.md) qualify a bounded
-disposable application; game and additional native boundaries remain pending. Read the
+The [dated native checks](../../testing/conditional-cachyos.md) cover a bounded
+disposable application and an owner-authorized game-menu pilot. Broader
+game-profile acceptance and additional native boundaries remain pending. Read the
 [index](README.md), [GL-05 design](../game-testing-learning.md#gl-05-local-observeactverify-batches),
 current observation/input contracts and their tests. Live game adoption is a later
 consuming-project assignment, not part of implementation acceptance here.

@@ -1,8 +1,9 @@
 # Bounded conditional execution and event waits
 
 BW-GL05A provides source and mocked acceptance for CachyOS, plus
-[bounded disposable-app qualification](../testing/conditional-cachyos.md).
-Game qualification and additional native boundaries remain pending.
+[bounded disposable-app qualification](../testing/conditional-cachyos.md) and a
+[game-menu pilot](../testing/conditional-cachyos.md#owner-authorized-steam-game-pilot).
+Broader game-profile acceptance and additional native boundaries remain pending.
 It uses existing enabled control and
 observation-bound input; it never starts, refreshes or grants a helper session.
 Other platforms need an adapter for their actual authority/receipt contract.
