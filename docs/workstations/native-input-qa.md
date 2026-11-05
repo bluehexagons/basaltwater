@@ -73,6 +73,37 @@ geometry and age, but has no authoritative compositor focus identity guard.
 Confirm focus before each bounded action and inspect the result. AT-SPI inventory
 cannot close that race; screenshot freshness is not a focus guarantee.
 
+## Client-disconnect release checks
+
+For an authorized CachyOS native session, use a disposable app that logs only
+its own synthetic key/button presses, releases, auto-repeat and focus events:
+
+1. Record helper/source provenance, existing enabled control and current capture
+   geometry. Inspect a fresh capture, map coordinates and verify focus with one
+   baseline click and short key chord. Preserve shared applications and settings.
+2. Launch each held-input request in a separate client process with a fresh
+   observation. Wait for an actual app press before disconnecting that client;
+   elapsed time alone does not establish dispatch. Include symbolic and physical
+   chords, a pointer hold and a drag. Terminate only the owned client, preserving
+   the app, helper and portal. Never replay the interrupted operation.
+3. Retain during/after helper status and app event times. Check matching final
+   releases, reversed chord release order, stopped motion and modifier-free
+   recovery. Ignore auto-repeat release/press pairs when checking final release.
+   Keyboard pending counts cannot establish pointer or global physical state.
+4. Separately interrupt paced synthetic text and observe a bounded quiet interval
+   after cancellation. Record the partial prefix; do not infer zero delivery.
+5. Change focus between disposable controls during a hold and identify which
+   control receives final releases. A release at the new focus does not clear
+   application-maintained pressed state at the old control automatically.
+6. Close the probe normally, verify its process exited, then finish and verify
+   evidence. Expected uncertain delivery makes recorder health non-green even
+   when all image hashes match; retain that distinction and independent app proof.
+
+The [dated results](../testing/conditional-cachyos.md#client-disconnect-and-widget-focus-qualification)
+qualify client disconnection and within-app widget focus only. Testing human
+takeover, session expiry or helper shutdown needs its own explicitly authorized
+setup and restoration; these checks do not change persistent permission state.
+
 ## Evidence, advice and closeout
 
 Use the existing evidence recorder and offline hash verification. Inspect a

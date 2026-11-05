@@ -109,3 +109,50 @@ That integrity result does not establish image meaning or save persistence.
 Real-profile held-out acceptance, full-match outcome/strategy evaluation, save
 persistence, interruption/takeover/release behavior and other display layouts or
 platforms remain separate checks. No consuming repository was changed.
+
+## Client-disconnect and widget-focus qualification
+
+A further authorized disposable-app run on 2026-11-05 used controller checkout
+`3e012e40` and the same `744205cc` running helper. The native Wayland Qt probe
+logged its own press/release, auto-repeat and focus events with monotonic times.
+It observed no other application's input. Fresh monitor captures supplied
+single-use observations for each input; captured coordinates were mapped to
+the current monitor before the baseline click. Control state, permission,
+generation and display layout were preserved throughout.
+
+For each disconnect case, a separate installed CLI client sent one operation.
+After the probe logged its first press, a read-only helper status was saved and
+only that client was terminated with SIGTERM. The probe and helper stayed alive.
+Each case ran once; no interrupted input was replayed.
+
+| Boundary | Observed result |
+| --- | --- |
+| Symbolic Shift+A, requested five-second hold | App received both presses, then reverse-order releases within one second of the first press; helper status went from two pending symbolic presses with Shift to zero |
+| Physical evdev Shift+A, requested five-second hold | Same application press/release pairing; helper status went from two pending physical presses with Shift to zero |
+| Left pointer button, requested five-second hold | App received one press and one release within one second of the press |
+| Left-button drag, requested five-second duration | App received held motion followed by release before the endpoint; no completion or placement effect was claimed |
+| Paced 60-character synthetic text | Three press/release pairs arrived before cancellation; no additional app events during the following half-second observation |
+| Widget focus change during a one-second Shift+A hold | Presses reached the original widget; repeats and final releases reached the second widget; helper reported completed input |
+| Recovery after interrupted operations and focus change | A fresh plain A had no modifiers and a fresh click had one press/release pair |
+
+The widget-focus case demonstrates delivery following the application's current
+focus, not automatic cancellation or a compositor focus guard. Consumers must
+handle focus loss in their own pressed-state bookkeeping; successful helper
+release does not prove the original widget received a release. Cross-application
+focus loss, physical keyboard state, other input providers, human takeover,
+session expiry, helper termination and portal/bus loss were not tested here.
+Pointer release was established by app events, not keyboard-only helper counts.
+
+The recorder finalized with 24 events and no truncation. All 12 recorded PNGs
+passed byte verification, but verification correctly returned nonzero and
+`healthy:false` for five intentionally uncertain input events. Their receipts
+retained `input-dispatch` / `input_delivery:unknown` and client-disconnection
+details. Independent app evidence established releases without rewriting those
+receipts or promoting interrupted operations to completed delivery/effect.
+
+The probe exited normally with return code zero and its PID disappeared. The
+helper remained enabled with no pending injected keys or named modifiers and no
+reported backend failure. Probe source, event log, captures, during/after status
+and interrupted-client results remain private outside Git. No game was launched
+and no Basaltwater runtime defect was established by this run. See the
+[repeatable release-check procedure](../workstations/native-input-qa.md#client-disconnect-release-checks).

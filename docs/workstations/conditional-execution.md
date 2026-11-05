@@ -150,6 +150,9 @@ already exercised and its remaining boundaries:
    mapping; preserve original run clocks and both repositories' source commits.
 
 The dated qualification covers one native profile/crop and current monitor
-mapping. Other scaling/layouts, app focus/animation, real transport interruption,
-input release under interruption and game semantics remain unqualified.
-Mocked acceptance does not establish those properties on the workstation.
+mapping, plus [client-disconnect release and widget-focus checks](../testing/conditional-cachyos.md#client-disconnect-and-widget-focus-qualification).
+Those release checks use the ordinary input CLI, not interrupted conditional
+plans. Other scaling/layouts, cross-application focus, animation, conditional-plan
+transport interruption, takeover/expiry, helper/portal loss and broader game
+semantics remain unqualified. Mocked acceptance does not establish those
+properties on the workstation.
