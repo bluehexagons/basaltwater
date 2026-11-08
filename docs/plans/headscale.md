@@ -44,10 +44,10 @@ basaltw setup agent_vm agent.example.com --tailscale office
 basaltw headscale onboarding office
 ```
 
-Keep `--tailscale-login-server URL` as an explicit alternative to `--tailscale
-NAME`, with conflicting selections rejected. The onboarding command prints a
-shareable HTTPS join-page URL and optionally its QR code. A new device needs
-only the official Tailscale app, not Basaltwater:
+Keep `--tailscale-login-server URL` as an explicit alternative to
+`--tailscale NAME`, with conflicting selections rejected. The onboarding command
+prints a shareable HTTPS join-page URL and optionally its QR code. A new device
+needs only the official Tailscale app, not Basaltwater:
 
 1. Open the join page, reachable before joining the network. Choose Windows,
    macOS, Linux, iOS or Android and follow official installation links.
@@ -65,6 +65,12 @@ Ordinary personal devices retain their user identity; service tags and
 short-lived preauthenticated keys belong to unattended machine enrollment.
 Keep administrative approval authenticated and separate from public instructions;
 the existing T3 pairing portal does not grant Headscale enrollment authority.
+
+Follow the [enrollment and onboarding security contract](headscale-enrollment.md)
+for public/LAN page visibility, SSO provisioning, native approval, machine-key
+handoff and revocation. The preferred personal-device flow uses an existing
+OIDC provider; setup must explicitly select administrator approval when none is
+configured. Both modes retain separate network access policy.
 
 ## Milestones
 
@@ -104,6 +110,8 @@ the existing T3 pairing portal does not grant Headscale enrollment authority.
    reruns do not leak keys, duplicate enrollment or remove recovery access.
    Qualify guided enrollment on Windows, macOS, Linux, iOS and Android separately,
    including pre-join page access, approval/SSO denial and device revocation.
+   Verify onboarding-origin isolation, restricted enrollment identities, secret
+   handling and revocation under the enrollment contract before declaring it ready.
 
 4. **Recovery and qualification.** Add consistent backups of configuration,
    SQLite data and private keys, a documented restore procedure, and controlled
