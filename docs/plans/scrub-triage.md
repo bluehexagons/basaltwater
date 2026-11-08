@@ -1,7 +1,8 @@
 # Web-panel scrub triage and disposition
 
-Status: Implemented with offline regression coverage; live deployment remains
-unqualified. Extend the existing **Shares & Data → Scrubs & findings**
+Status: Implemented with offline regressions and selected installed Debian
+qualification on 2026-11-08; see the [native evidence and remaining boundaries](../testing/evidence.md#storage-triage-and-native-filesystems).
+Extend the existing **Shares & Data → Scrubs & findings**
 view with bounded bulk triage and reviewed file disposition. Single-file verify,
 repair, restore and accept already use the panel's approval flow; this plan adds
 bulk management for findings where isolating or removing the file is the chosen

@@ -1,7 +1,8 @@
 # Testing status
 
-**Snapshot: 2026-11-03 UTC.** Includes selected native shared build/CI host
-qualification and earlier retained evidence. The owner's stack setup rerun
+**Snapshot: 2026-11-08 UTC.** Includes selected native storage triage/filesystem
+and shared build/CI host qualification, plus earlier retained evidence. The owner's
+stack setup rerun
 indicates **basic setup functionality only: not all features were tested**. It covers selected
 Debian/Proxmox server and coding-VM commands, a partial CachyOS refresh and basic
 native Windows setup with Godot and T3 Code. Exact tested revisions were not
@@ -96,6 +97,13 @@ controller rerun and guest reboot, preserving independently approved read-only
 shares, paused routines, identities, credentials and exact bytes. It fixes lost
 browser opt-outs and refresh's incorrect requirement for saved Samba passwords;
 other profiles and interruption/power-loss cases remain separate.
+
+The [storage follow-up](evidence.md#storage-triage-and-native-filesystems)
+qualifies selected verify/quarantine/delete batches, durable history and mirror
+protection, real ext4/Btrfs/XFS observations and guest reboot persistence. It fixes
+failed staged recovery recording the wrong file identity, then verifies a separately
+approved restoration. Native XFS online scrub remains unavailable on the test
+kernel; these HTTP/worker checks do not add browser qualification.
 
 A separate fresh Debian guest at `176caeff62ad` also passed a real approved
 leaf-package upgrade, separately approved no-op, native APT index failure and

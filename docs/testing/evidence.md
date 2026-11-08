@@ -1,7 +1,7 @@
 # Dated testing evidence summaries
 
-Reconciled 2026-11-03 UTC from retained private reports, the owner's stack setup
-rerun report, subsequent native CachyOS T3 and SDL/OpenGL application observations,
+Reconciled through 2026-11-08 UTC from retained private reports, the owner's stack
+setup rerun report, subsequent native CachyOS T3 and SDL/OpenGL application observations,
 installed native Windows checks, current Shares & Data qualification,
 package-changing Admin and Proxmox inventory qualification, and automated checks.
 These sanitized summaries supplement the
@@ -233,6 +233,37 @@ fixes. These checks do not constitute a new full CI or release-candidate pass.
 Use [Continue testing on Proxmox](continuing.md) for subsequent bounded batches.
 The Proxmox root panel is not the non-root guest approval environment required
 by [Shares & Data](../services/shares-data.md).
+
+### Storage triage and native filesystems
+
+**2026-11-08 UTC; fresh owned Debian 13 QEMU guest, normal public `agent_vm`
+setup at `2bc879f7`, followed by normal setup with recovery fix `4569eb7f`.**
+The non-root operator used independently authenticated main and approval panels.
+Source receipts and relevant installed module hashes matched the clean controller.
+TLS certificate and hostname verification remained enabled. These are actual
+HTTP forms, root workers and native filesystem checks, without a new browser run.
+
+| Check level | Observed result | Qualification boundary |
+| --- | --- | --- |
+| **Installed filesystem observations** | The sandboxed root exporter and actual panel reported ext4, Btrfs and XFS loop-image mounts, escaped spaces and a read-only bind over a writable filesystem. ext4 retained count and timestamps matched history seeded offline in the disposable image. Btrfs device counters, absent scrub history and a real completed read-only native scrub record rendered correctly; omitted `unverified_errors` remained unavailable | Clean single-device Btrfs, with no hardware fault injection. Seeded ext4 history qualifies the metadata/warning path, not detection of a live I/O failure. Other filesystem types, partial-device records and scheduled native scrubs remain unqualified |
+| **Installed triage workflows at `2bc879f7`** | Two-file verify, quarantine and permanent-delete batches passed exact review, independent approval and correlated per-file worker outcomes. Dirty verification retained findings. Incorrect delete confirmation was rejected. Changing one reviewed file caused both disposition items to be skipped before effects; source bytes remained present | One configured task on the guest's ext4 root. Interruption, larger batches and overlapping-task refusal retain automated coverage only; power loss remains unqualified |
+| **Installed preservation at `4569eb7f`** | Quarantine retained corrupt bytes privately; deletion removed only its reviewed source bytes. Retained parity still verified known-good copies. Actual supervised mirrors preserved disposed paths and excluded quarantine; a subsequently verified healthy replacement did not release mirror protection. Fast maintenance excluded quarantine and retained disposition history. Older root-only batch records survived newer jobs, and replay of an earlier batch was refused | Guest-local mirrors, without hard-mounted network storage or automatic evidence pruning. Retained records do not make interrupted work resumable |
+| **Installed recovery fix at `4569eb7f`** | A failed staged repair originally overwrote the finding's live identity with its candidate identity, incorrectly blocking restoration as `file_changed`. The fix retains the reviewed live identity on both staged failure paths. Normal deployment, another failed native repair and a separately approved restoration recovered the exact original bytes. A varied-byte fixture also passed approved repair and independent verification | Debian PAR2 0.8.1 separately reproduced repair failure on the repeated-byte fixture. Its `repairable` estimate is not a successful reconstruction. Original live bytes and failed workspaces were retained. Eighty-four focused tests, syntax and documentation checks passed; concurrent live edits still block recovery |
+| **Installed native disposition components** | Actual PAR2 findings on Btrfs and XFS supported quarantine through the installed helper, preserving the inode, device and corrupt-byte hash even with parity on another filesystem | Direct installed component calls under the storage lock, separate from the ext4 HTTP/approval workflow. This guest kernel refused `xfs_scrub -n` because online metadata scrubbing was unavailable; only XFS observations and quarantine are qualified |
+| **Installed reboot persistence** | An owned-guest reboot preserved saved setup, credentials/PKI, operator identity, source, file/parity bytes, dispositions, durable batch records and terminal requests. Packaged services, direct panel-socket HTTP and verified HTTPS/auth checks passed. An unattended exporter published a fresh valid snapshot and rearmed its future timer deadline | Native images were cleanly unmounted and their loop devices detached before reboot; they were not declared persistent mounts. No manual export or timer override occurred during post-boot observation. No host reboot, off-host recovery or interrupted operation was tested |
+
+Initial harness assertions and the original failed requests remain in private
+evidence. The security monitor recorded expected initial retention gaps and
+fixture module activity; its subsequent ordinary check succeeded. No uncertain
+mutation was replayed and no server rate/quota policy was relaxed.
+
+Cleanup retained all nine terminal approval records, four durable batch records,
+failed workspaces, findings, parity and an integrity-checked online broker backup.
+Intentionally unresolved fixture findings remain recorded. Private evidence was
+archived, and the owned guest was stopped with autostart disabled and an offline
+snapshot. Existing guest configurations/states/running PIDs and host boot/mounts
+matched baseline; no hypervisor tasks, guest locks or failed host units remained.
+Same-node retention does not qualify off-host recovery.
 
 ## Package-changing Admin update
 
