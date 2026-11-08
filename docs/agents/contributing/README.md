@@ -125,9 +125,13 @@ extra requires aiohttp 3.14.5 or newer, excluding versions affected by the
 and [aiohttp security fixes](https://github.com/aio-libs/aiohttp/releases/tag/v3.14.4).
 Target services use distribution-managed packages and their security updates.
 
-Routine CI uses Python 3.13 in Debian Trixie. Branch and release workflows run
-[`scripts/run_debian_ci.py`](../../../scripts/run_debian_ci.py) on a hosted
-runner. It tries Docker's official Debian image from
+Routine CI uses Python 3.13 in Debian Trixie. Branch and release test jobs run
+[`scripts/run_debian_ci.py`](../../../scripts/run_debian_ci.py) on an
+`ubuntu-24.04` hosted runner. The Python and Node tool-cache binaries run inside
+Trixie, so keep their runtime ABI compatible with its glibc; the wrapper checks
+Python's `sqlite3`, `ssl` and `termios` imports before installing dependencies.
+Requalify those imports before changing the runner image. The wrapper tries
+Docker's official Debian image from
 [public ECR](https://gallery.ecr.aws/docker/library/debian), Google's
 [Docker Hub cache](https://docs.cloud.google.com/artifact-registry/docs/pull-cached-dockerhub-images),
 then Docker Hub, with a two-minute bound per pull. This keeps registry fallback

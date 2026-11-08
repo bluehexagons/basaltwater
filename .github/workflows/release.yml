@@ -11,7 +11,9 @@ permissions:
 jobs:
   test:
     name: Python ${{ matrix.python-version }} (Debian Trixie)
-    runs-on: ubuntu-latest
+    # Tool-cache Python and Node are mounted into Debian Trixie; keep their
+    # runtime ABI compatible with the container's glibc.
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:

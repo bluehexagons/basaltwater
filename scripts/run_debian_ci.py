@@ -37,6 +37,7 @@ ci_phase python-venv "$BASALTWATER_CI_PYTHON" -m venv /opt/basaltwater-ci-python
 export PATH=/opt/basaltwater-ci-python/bin:"$BASALTWATER_CI_NODE_DIR":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export PIP_DISABLE_PIP_VERSION_CHECK=1
 python3 --version
+ci_phase python-runtime-smoke python3 -c 'import sqlite3, ssl, termios'
 node --version
 ci_phase python-dependencies python3 -m pip install '.[dev,completion]'
 """
