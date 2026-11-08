@@ -77,6 +77,12 @@ staging. Repair and restore reject multiply hard-linked targets because replacin
 one name would leave the other names pointing at the old contents; separate the
 link deliberately before recovering it. Acceptance does not replace source data.
 
+`repairable` is PAR2's estimate, not a successful repair. A repair can still fail
+its staged reconstruction or independent verification. Failed candidates remain
+in the recovery workspace; the live file and parity stay intact. The finding
+retains the reviewed live file identity so a separately reviewed restoration can
+proceed if that file has not changed. Otherwise verify the live file again first.
+
 Staging retains the original file before changing the live copy. If reading
 that original fails, repair, restore, and acceptance stop with an I/O error,
 even when an independent backup is readable. For example, Btrfs checksum

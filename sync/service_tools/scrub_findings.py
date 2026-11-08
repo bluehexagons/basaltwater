@@ -432,6 +432,9 @@ def remediate(file_path: str, directory: str, database: str, redundancy: int,
         outcome = examine(candidate, work, work_db, repair=True)
         if outcome["category"] != "healthy":
             outcome["recovery"] = recovery
+            # The candidate was never published. Keep the reviewed live
+            # identity so a later recovery can pass its freshness check.
+            outcome["file_identity"] = before
             report.record(relative, outcome)
             return outcome
     else:
@@ -442,6 +445,7 @@ def remediate(file_path: str, directory: str, database: str, redundancy: int,
     outcome = examine(candidate, work, work_db)
     outcome["recovery"] = recovery
     if outcome["category"] != "healthy":
+        outcome["file_identity"] = before
         report.record(relative, outcome)
         return outcome
     if (file_identity(file_path) != before or parity_before != [file_identity(path) for path in parity]

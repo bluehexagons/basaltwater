@@ -14,7 +14,9 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
+from common.service_tools import data_job
 from lib import scrub_cli
+from lib.data_actions import finding_revision
 from lib.runtime_config import RuntimeConfig
 from sync.service_tools import scrub_findings as findings, scrub_manage, scrub_par2, storage_ops
 
@@ -157,14 +159,51 @@ class TestFindings(unittest.TestCase):
     def test_failed_restore_preserves_live_file_and_parity(self):
         backup = self.root / "backup"
         backup.write_bytes(b"incorrect backup")
+        identity = findings.file_identity(str(self.file))
         with self.run_par2(2):
             outcome = findings.remediate(*self.args, 10, "restore", backup=str(backup))
         self.assertEqual(outcome["category"], "unrepairable")
+        self.assertEqual(outcome["file_identity"], identity)
+        self.assertEqual(self.report().data["files"]["data.bin"]["file_identity"], identity)
         self.assertEqual(self.file.read_bytes(), b"damaged")
         self.assertEqual(self.parity.read_bytes(), b"old-parity")
         recovery = Path(outcome["recovery"])
         self.assertEqual((recovery / "original/data.bin").read_bytes(), b"damaged")
         self.assertEqual((recovery / "parity/data.bin.par2").read_bytes(), b"old-parity")
+
+    def test_failed_staged_repair_allows_reviewed_restore_but_never_adopts_live_changes(self):
+        backup = self.root / "backup"
+        backup.write_bytes(b"restored")
+        saved = {"scrub_specs": [[str(self.source), str(self.database), "10%", "weekly"]]}
+        for failed_step in ("repair", "verify"):
+            for changed in (False, True):
+                with self.subTest(failed_step=failed_step, changed=changed):
+                    self.file.write_bytes(b"damaged")
+                    identity = findings.file_identity(str(self.file))
+
+                    def run(command, **kwargs):
+                        if changed:
+                            self.file.write_bytes(b"concurrent edit")
+                        return subprocess.CompletedProcess(command, 5 if command[1] == failed_step else 0)
+
+                    with patch.object(findings.subprocess, "run", side_effect=run):
+                        outcome = findings.remediate(*self.args, 10, "repair", reviewed_identity=identity)
+                    self.assertEqual(outcome["category"], "repair_failed")
+                    entry = self.report().data["files"]["data.bin"]
+                    self.assertEqual(entry["file_identity"], identity)
+                    parameters = {"action": "restore", "directory": str(self.source), "database": str(self.database),
+                                  "file": str(self.file), "backup": str(backup), "finding": finding_revision(entry),
+                                  "job_id": "a" * 32}
+                    with patch.object(scrub_manage, "validate_mounts_for_operation", return_value=(True, "")), self.run_par2(0):
+                        if changed:
+                            with self.assertRaisesRegex(data_job.DataJobRejected, "file_changed"):
+                                data_job.recover(parameters, saved)
+                            self.assertEqual(self.file.read_bytes(), b"concurrent edit")
+                        else:
+                            result, code = data_job.recover(parameters, saved)
+                            self.assertEqual(code, 0)
+                            self.assertEqual(result["category"], "healthy")
+                            self.assertEqual(self.file.read_bytes(), b"restored")
 
     def test_verified_restore_retains_evidence_and_resolves(self):
         backup = self.root / "backup"
