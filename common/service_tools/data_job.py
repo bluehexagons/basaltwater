@@ -25,7 +25,7 @@ from lib.operation_state import OperationStateStore
 from lib.privilege_execution import ENVIRONMENT
 from lib.privilege_policy import protected_path
 from lib.runtime_config import RuntimeConfig
-from sync.service_tools.scrub_findings import ADVICE, Findings, file_identity
+from sync.service_tools.scrub_findings import ADVICE, Findings, file_identity, examine, dispose, disposition_preflight
 from sync.service_tools.scrub_manage import execute, selected_jobs
 from sync.service_tools.storage_ops import LOCK_FILE, OperationLock
 
@@ -106,10 +106,21 @@ def _record() -> dict:
     except FileNotFoundError:
         return {}
     protected_path(DATA_STATE)
-    value = read_json_file(DATA_STATE, max_bytes=16384)
-    if not isinstance(value, dict) or set(value) != {"parameters", "status", "category", "failure", "started", "finished"}:
+    value = read_json_file(DATA_STATE, max_bytes=65536)
+    if not isinstance(value, dict) or set(value) not in ({"parameters", "status", "category", "failure", "started", "finished"}, {"parameters", "status", "category", "failure", "started", "finished", "items"}):
         raise ValueError("Invalid data job result")
     validate_data_action(value["parameters"])
+    if "items" in value:
+        if (not isinstance(value["items"], list) or len(value["items"]) != len(value["parameters"].get("items", []))):
+            raise ValueError("Invalid batch results")
+        for selected, item in zip(value["parameters"]["items"], value["items"]):
+            if (not isinstance(item, dict) or set(item) != {"file", "finding", "status", "category", "failure", "started", "finished", "destination"}
+                    or item["file"] != selected["file"] or item["finding"] != selected["finding"]
+                    or item["status"] not in {"pending", "running", "completed", "skipped", "failed", "unresolved"}
+                    or item["failure"] not in FAILURES
+                    or item["category"] not in {"", "healthy", "quarantine", "delete", *ADVICE}
+                    or not isinstance(item["destination"], str)):
+                raise ValueError("Invalid batch item result")
     if (value["status"] not in RESULTS or value["category"] not in {"", "healthy", *ADVICE}
             or value["failure"] not in FAILURES
             or type(value["started"]) not in {int, float}
@@ -128,6 +139,14 @@ def job_status() -> dict:
             raise ValueError("Data job changed during observation")
         if after.get("status") == "running" and active in {"inactive", "failed"}:
             after.update(status="interrupted", failure="job_interrupted")
+            _interrupt_items(after)
+        if "items" in after:
+            # Keep socket status within MAX_MESSAGE even at the parameter byte
+            # limit. Paths/revisions are already in parameters.items; detailed
+            # quarantine destinations remain in the durable root-only record.
+            after["items"] = [{"index": index, **{key: item[key] for key in
+                                ("status", "category", "failure", "started", "finished")}}
+                              for index, item in enumerate(after["items"])]
         return {"unit_state": active, "latest": after,
                 "blocked": _setup_blocked(),
                 "available": active != "unavailable" and can_manage_system_services()}
@@ -158,6 +177,71 @@ def recover(parameters: dict, saved: dict) -> tuple[dict, int]:
     return execute(args, config)
 
 
+def _interrupt_items(value: dict) -> None:
+    for item in value.get("items", []):
+        if item["status"] in {"running", "pending"}:
+            item.update(status="unresolved" if item["status"] == "running" else "skipped",
+                        failure="job_interrupted", finished=time.time())
+
+
+def recover_batch(parameters: dict, saved: dict, value: dict) -> None:
+    """Preflight all reviewed identities, then persist each boundary without replay."""
+    config = RuntimeConfig.from_dict(saved)
+    directory, database = parameters["directory"], parameters["database"]
+
+    def check(item: dict) -> dict:
+        args = SimpleNamespace(action=parameters["action"], directory=directory, database=database,
+                               file=item["file"], backup=None)
+        selected_jobs(config, args)
+        report = Findings(directory, database)
+        relative = os.path.relpath(item["file"], directory)
+        entry = report.data["files"].get(relative, {})
+        if entry.get("state") != "open" or not secrets.compare_digest(finding_revision(entry), item["finding"]):
+            raise DataJobRejected("finding_changed")
+        if "file_identity" not in entry:
+            raise DataJobRejected("identity_unavailable")
+        if entry["file_identity"] != file_identity(item["file"]):
+            raise DataJobRejected("file_changed")
+        if parameters["action"] != "verify":
+            if report.disposition_blocked(relative, entry["file_identity"]):
+                raise DataJobRejected("execution_rejected")
+            disposition_preflight(item["file"], directory, database, parameters["job_id"])
+        return entry
+
+    try:
+        for item in value["items"]:
+            check(item)
+    except (OSError, ValueError, RuntimeError) as exc:
+        reason = str(exc) if isinstance(exc, DataJobRejected) else "execution_rejected"
+        for item in value["items"]:
+            item.update(status="skipped", failure=reason, finished=time.time())
+        raise DataJobRejected(reason) from exc
+    for item in value["items"]:
+        try:
+            entry = check(item)
+        except (OSError, ValueError, RuntimeError) as exc:
+            item.update(status="skipped", failure=str(exc) if isinstance(exc, DataJobRejected) else "execution_rejected", finished=time.time())
+            write_json_atomic(DATA_STATE, value, mode=0o600)
+            continue
+        item.update(status="running", started=time.time())
+        write_json_atomic(DATA_STATE, value, mode=0o600)
+        try:
+            if parameters["action"] == "verify":
+                result = examine(item["file"], directory, database, reviewed_identity=entry["file_identity"])
+                Findings(directory, database).record(os.path.relpath(item["file"], directory), result)
+            else:
+                result = dispose(item["file"], directory, database, parameters["action"],
+                                 entry["file_identity"], parameters["job_id"])
+            item.update(status="completed", category=result["category"], destination=result.get("destination", ""))
+        except (OSError, ValueError, RuntimeError):
+            item.update(status="failed" if parameters["action"] == "verify" else "unresolved", failure="execution_rejected")
+        finally:
+            item["finished"] = time.time()
+            write_json_atomic(DATA_STATE, value, mode=0o600)
+    succeeded = all(item["status"] == "completed" and item["category"] in {"healthy", "delete", "quarantine"} for item in value["items"])
+    value.update(status="succeeded" if succeeded else "findings")
+
+
 def run_action(parameters: dict) -> int:
     parameters = validate_data_action(parameters)
     if os.geteuid() != 0 or not can_manage_system_services():
@@ -175,6 +259,16 @@ def run_action(parameters: dict) -> int:
             protected_path(DATA_STATE)
         value = {"parameters": parameters, "status": "running", "started": time.time(),
                  "finished": None, "category": "", "failure": ""}
+        if "items" in parameters:
+            # An exclusive durable claim outlives the single latest-result slot.
+            claim = _payload_path(parameters["job_id"]) + ".claimed"
+            descriptor = os.open(claim, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            os.fsync(descriptor)
+            os.close(descriptor)
+            from lib.atomic_io import _fsync_directory
+            _fsync_directory(os.path.dirname(claim))
+            value["items"] = [{**item, "status": "pending", "category": "", "failure": "",
+                               "started": None, "finished": None, "destination": ""} for item in parameters["items"]]
         write_json_atomic(DATA_STATE, value, mode=0o600)
         try:
             # Match routine edits: setup ownership precedes the storage lock,
@@ -186,11 +280,14 @@ def run_action(parameters: dict) -> int:
                     saved = load_setup_config()
                     if saved is None:
                         raise ValueError("Saved setup unavailable")
-                    result, code = recover(parameters, saved)
-            category = result.get("category")
-            if category not in {"healthy", *ADVICE}:
-                raise ValueError("Unexpected recovery result")
-            value.update(status="succeeded" if code == 0 and category == "healthy" else "findings", category=category)
+                    if "items" in parameters:
+                        recover_batch(parameters, saved, value)
+                    else:
+                        result, code = recover(parameters, saved)
+                        category = result.get("category")
+                        if category not in {"healthy", *ADVICE}:
+                            raise ValueError("Unexpected recovery result")
+                        value.update(status="succeeded" if code == 0 and category == "healthy" else "findings", category=category)
         except DataJobRejected as exc:
             value.update(status="failed", failure=str(exc))
         except (OSError, ValueError, RuntimeError):
@@ -199,6 +296,14 @@ def run_action(parameters: dict) -> int:
             value.update(status="interrupted", failure="job_interrupted")
             raise
         finally:
+            if value["status"] == "interrupted":
+                _interrupt_items(value)
+            elif value["status"] == "failed":
+                for item in value.get("items", []):
+                    if item["status"] == "pending":
+                        item.update(status="skipped", failure=value["failure"], finished=time.time())
+                    elif item["status"] == "running":
+                        item.update(status="unresolved", failure=value["failure"], finished=time.time())
             value["finished"] = time.time()
             write_json_atomic(DATA_STATE, value, mode=0o600)
         return 0 if value["status"] == "succeeded" else 1

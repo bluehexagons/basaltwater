@@ -371,7 +371,7 @@ def validate_sync_integrity(
     mounted_roots: frozenset[str] | None = None,
 ) -> SyncIntegrity:
     """Reject parity destinations and collect precautions for recorded findings."""
-    from sync.service_tools.scrub_findings import Findings
+    from sync.service_tools.scrub_findings import Findings, QUARANTINE_DIR
     from lib.validation import validate_scrub_specs
 
     def overlaps(first: Path, second: Path) -> bool:
@@ -380,6 +380,8 @@ def validate_sync_integrity(
     validate_sync_paths(source, destination)
     validate_scrub_specs(config.scrub_specs)
     source_path, destination_path = Path(source).resolve(), Path(destination).resolve()
+    if QUARANTINE_DIR in source_path.parts or QUARANTINE_DIR in destination_path.parts:
+        raise ValueError("Sync endpoints cannot traverse quarantine")
     excluded_paths: set[str] = set()
     warnings: list[str] = []
     copy_new_only = False
@@ -397,8 +399,11 @@ def validate_sync_integrity(
             if not valid:
                 raise RuntimeError(error)
             report = Findings(directory, database)
-            for relative in report.data["files"]:
-                if not report.active(relative):
+            protected = {*report.data["files"], *report.data.get("dispositions", {})}
+            if report.data.get("dispositions") or os.path.lexists(root / QUARANTINE_DIR):
+                protected.add(QUARANTINE_DIR)
+            for relative in protected:
+                if relative != QUARANTINE_DIR and not report.active(relative) and not report.disposed(relative):
                     continue
                 affected = root / relative
                 for endpoint in (source_path, destination_path):
@@ -410,6 +415,10 @@ def validate_sync_integrity(
                         raise ValueError(f"Finding covers the sync root: {affected}")
         except (OSError, ValueError, RuntimeError) as exc:
             copy_new_only = True
+            for endpoint in (source_path, destination_path):
+                quarantine = root / QUARANTINE_DIR
+                if quarantine.is_relative_to(endpoint) and quarantine != endpoint:
+                    excluded_paths.add(quarantine.relative_to(endpoint).as_posix())
             warnings.append(f"Cannot read complete integrity findings for {directory}: {exc}")
     if excluded_paths:
         sample = ", ".join(sorted(excluded_paths)[:5])

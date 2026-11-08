@@ -157,6 +157,8 @@ def operation_plan(policy: dict, uid: int, operation: str, parameters: object) -
         mode = "approve"
         argv = data_dispatch_argv(parameters)
         effect = DATA_ACTIONS[parameters["action"]][1] + " Run once independently of the panel with a six-hour limit. A changed finding or file is rejected; dispatch does not prove recovery."
+        if "items" in parameters:
+            effect += f" Exact reviewed batch: {len(parameters['items'])} files. Interrupted items require a fresh individual review; no automatic replay."
     elif operation == "data.routine":
         parameters = validate_routine_action(parameters)
         mode = "approve"

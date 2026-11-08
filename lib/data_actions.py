@@ -14,6 +14,9 @@ DATA_HELPER = "/opt/basaltwater/common/service_tools/data_job.py"
 DATA_STATE = "/var/lib/basaltwater-privilege-broker/data-job.json"
 DATA_UNIT = "basaltwater-data-management.service"
 DATA_TIMEOUT = 6 * 60 * 60
+BATCH_LIMIT = 10
+BATCH_MAX_BYTES = 10000
+BATCH_ACTIONS = {"verify", "quarantine", "delete"}
 HEX_ID = re.compile(r"[a-f0-9]{32}\Z")
 HEX_DIGEST = re.compile(r"[a-f0-9]{64}\Z")
 DATA_ACTIONS = {
@@ -21,6 +24,8 @@ DATA_ACTIONS = {
     "repair": ("Repair file", "Reconstruct one staged file using existing parity, verify it, retain originals and publish the verified candidate."),
     "restore": ("Restore file", "Stage the selected independent copy, verify it against existing parity, retain originals and publish only a verified candidate."),
     "accept": ("Accept current content", "Establish this file's current content as the new parity baseline. Existing parity will no longer identify earlier damage. Only accept content you have independently confirmed is correct; originals and parity are retained."),
+    "quarantine": ("Quarantine corrupt files", "Move the reviewed files into private quarantine; retain parity and protect mirror copies."),
+    "delete": ("Permanently delete files", "Permanently remove the reviewed source bytes; retain parity, disposition history and mirror protection."),
 }
 
 
@@ -36,9 +41,28 @@ def _path(value: object) -> str:
 
 def validate_data_action(value: object) -> dict:
     """Validate public parameters identically before review and execution."""
+    if isinstance(value, dict) and "items" in value:
+        if set(value) != {"action", "directory", "database", "items", "job_id"}:
+            raise ValueError("Invalid batch data action fields")
+        if not isinstance(value["action"], str) or value["action"] not in BATCH_ACTIONS:
+            raise ValueError("Unknown batch data action")
+        if not isinstance(value["items"], list) or not 1 <= len(value["items"]) <= BATCH_LIMIT:
+            raise ValueError("Select between 1 and 10 files")
+        seen = set()
+        for item in value["items"]:
+            if not isinstance(item, dict) or set(item) != {"file", "finding"}:
+                raise ValueError("Invalid batch item fields")
+            validate_data_action({key: value[key] for key in ("directory", "database", "job_id")} |
+                                 {"action": "verify", "backup": "", **item})
+            if item["file"] in seen:
+                raise ValueError("Duplicate batch file")
+            seen.add(item["file"])
+        if len(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()) > BATCH_MAX_BYTES:
+            raise ValueError("Batch parameters exceed 10000 bytes; select fewer files")
+        return json.loads(json.dumps(value))
     if not isinstance(value, dict) or set(value) != {"action", "directory", "database", "file", "backup", "finding", "job_id"}:
         raise ValueError("Invalid data action fields")
-    if not isinstance(value["action"], str) or value["action"] not in DATA_ACTIONS:
+    if not isinstance(value["action"], str) or value["action"] not in {"verify", "repair", "restore", "accept"}:
         raise ValueError("Unknown data action")
     for field in ("directory", "database", "file"):
         _path(value[field])

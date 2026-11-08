@@ -29,7 +29,7 @@ from lib.validation import validate_filesystem_path
 from lib.disk_utils import estimate_operation_duration
 from lib.progress_utils import ProgressTracker, ProgressMessage
 from lib.atomic_io import _fsync_directory, write_json_atomic
-from sync.service_tools.scrub_findings import Findings, METADATA_DIR, examine, remediate, file_identity
+from sync.service_tools.scrub_findings import Findings, METADATA_DIR, QUARANTINE_DIR, examine, remediate, file_identity
 from sync.service_tools.parity_sets import locate, publish, protected_files
 
 PAR2_EXTENSION = ".par2"
@@ -66,6 +66,10 @@ def _scan_tree(directory: str, excluded: tuple[str, ...] = ()) -> list[tuple[str
 
     entries = []
     for root, dirs, files in os.walk(directory, onerror=fail):
+        # Never inventory retained corrupt bytes, even with a nested mount/root.
+        if QUARANTINE_DIR in dirs:
+            _confined_path(os.path.join(root, QUARANTINE_DIR), directory)
+            dirs.remove(QUARANTINE_DIR)
         for names, expected_type in ((dirs, stat.S_ISDIR), (files, stat.S_ISREG)):
             for name in names:
                 path = os.path.join(root, name)
@@ -136,6 +140,15 @@ def create_par2(
     if Path(relative_path).parts[0] == METADATA_DIR:
         raise ValueError(f"{METADATA_DIR} is reserved for scrub metadata")
     par2_base, par2_files = locate(file_path, directory, database)
+    report = Findings(directory, database)
+    if report.disposed(relative_path):
+        # Reappearing bytes must be verified against retained evidence, never
+        # silently adopted even when parity has since gone missing.
+        if not report.active(relative_path):
+            report.record(relative_path, {"category": "changed_unverified",
+                                         "evidence": "File appeared at a disposed path; fresh verification required",
+                                         "file_identity": file_identity(file_path)})
+        return True
     
     # Enhanced validation
     try:
@@ -294,7 +307,7 @@ def _record_missing_files(
     failed: list[str] = []
     report = Findings(directory, database)
     for relative in protected_files(database):
-        if relative in existing_files:
+        if relative in existing_files or report.disposed(relative):
             continue
         try:
             locate(os.path.join(directory, relative), directory, database)
@@ -323,7 +336,7 @@ def _record_missing_files(
                 relative_data = relative_par2[:-len(PAR2_EXTENSION)]
             else:
                 relative_data = relative_par2
-            if relative_data in existing_files:
+            if relative_data in existing_files or report.disposed(relative_data):
                 continue
             if report.active(relative_data):
                 log(f"Preserving parity for unresolved finding: {relative_data}", log_file)
@@ -367,7 +380,7 @@ def verify_repair(file_path: str, directory: str, database: str, log_file: str) 
     report.record(relative_path, outcome)
     if outcome["category"] == "healthy":
         return VERIFY_OK
-    if outcome["category"] == "repairable" and not outcome.get("content_change_uncertain"):
+    if outcome["category"] == "repairable" and not outcome.get("content_change_uncertain") and not report.disposed(relative_path):
         outcome = remediate(file_path, directory, database, 1, "repair")
         if outcome["category"] == "healthy":
             log(f"✓ Repaired: {relative_path}; originals: {outcome['recovery']}", log_file)
@@ -549,14 +562,15 @@ def scrub_directory(directory: str, database: str, redundancy: int, log_file: st
                         files_skipped_empty += 1
                         # Existing parity can diagnose a file truncated to zero.
                         # Never replace it with parity for the empty contents.
-                        if verify and parity_files:
+                        disposed = Findings(directory, database).disposed(relative_path)
+                        if verify and (parity_files or disposed):
                             outcome = verify_repair(file_path, directory, database, log_file)
                             files_verified += 1
                             if outcome == VERIFY_REPAIRED:
                                 files_repaired += 1
                             elif outcome == VERIFY_UNREPAIRABLE:
                                 files_unrepairable.append(relative_path)
-                        elif parity_files:
+                        elif parity_files or disposed:
                             if not create_par2(file_path, directory, database, redundancy, log_file,
                                                operation_logger=operation_logger):
                                 raise OSError("Could not record possible truncation")
