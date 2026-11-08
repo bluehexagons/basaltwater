@@ -3,9 +3,9 @@
 Status: proposed implementation contract for the [Headscale plan](headscale.md).
 These enrollment commands and onboarding services are not implemented yet.
 
-For provider choices and the proposed Pocket ID qualification, see the
-[self-hosted SSO assessment](headscale-sso.md). Existing OIDC providers remain
-supported by the design; hosting a provider is optional follow-up scope.
+Initial enrollment uses Headscale's native administrator approval and machine
+keys. OIDC integration and provider qualification are deferred; the
+[self-hosted SSO assessment](headscale-sso.md) retains research for later work.
 
 ## Public instructions and private administration
 
@@ -45,31 +45,17 @@ cannot issue keys or approve devices, and T3 pairing credentials grant no access
 1. **Choose the network and policy.** Resolve the saved server name to its
    stable record and HTTPS endpoint. Establish recovery access and a restrictive
    Headscale policy before admitting clients; grant only intended service access
-   and explicitly authorize service-tag ownership. Select personal-device SSO
-   or administrator approval explicitly. Never fall back to open enrollment
-   after an authentication failure.
-2. **Provision personal-device SSO when available.** Use an existing OIDC
-   provider. Register a confidential client with the exact Headscale callback
-   `https://vpn.example.com/oidc/callback`; configure issuer, client ID and a
-   private service-readable secret through the supported secret-file mechanism
-   for the pinned release. Enable PKCE S256 and enforce MFA at the provider.
-   Require an explicit allowed-user list or allowed-group filter; keep verified
-   email requirements where email is used. Validate needed claims with an
-   allowed and a denied test account before publishing onboarding instructions.
-3. **Keep identity and access separate.** Let native OIDC enrollment create or
-   resolve the user's identity. Bind network policy to stable provider identities
-   using policy groups where useful; do not infer trust from a device name or
-   user-editable display name. OIDC group claims filter enrollment and are not
-   directly usable as Headscale policy groups. Provider or authentication-mode
-   changes require an explicit identity migration plan.
-4. **Offer native administrator approval without SSO.** Create a Headscale user
+   and explicitly authorize service-tag ownership. Personal devices require
+   native administrator approval. Never fall back to open enrollment after an
+   approval failure. User identity and network access grants remain separate.
+2. **Use native administrator approval.** Create a Headscale user
    per person. The user installs the official client, selects the custom server
    and initiates browser registration. Through an authenticated channel, verify
    the intended person and exact pending authentication ID before approving that
    request for that user with Headscale's CLI. Hostname alone is insufficient.
    Expired or failed requests restart native registration; do not distribute a
    shared reusable key or invent a separate invitation-token system.
-5. **Automate managed machines separately.** After target preflight, an explicitly
+3. **Automate managed machines separately.** After target preflight, an explicitly
    authorized administrator/controller issues a short-lived, single-use
    preauthenticated key carrying only the approved service tags. Deliver it over
    authenticated private transport and use the client's supported secret-file or
@@ -77,22 +63,21 @@ cannot issue keys or approve devices, and T3 pairing credentials grant no access
    setup serialization, logs and artifacts; remove temporary secret files after
    use. Preserve the client's durable identity with appropriate permissions.
    On uncertain completion, inspect enrollment before issuing another key.
-6. **Verify and manage the lifecycle.** Check the enrolled node's server,
+4. **Verify and manage the lifecycle.** Check the enrolled node's server,
    identity, tags and intended access, including a denied-service probe. Ordinary
    reruns preserve valid enrollment. Set and document device reauthentication
    policy separately from key expiry. Offboarding blocks future enrollment and
    explicitly revokes/removes existing nodes and affected access grants. Revoking
-   a bootstrap key or changing an IdP group alone is not verified node removal;
+   a bootstrap key alone is not verified node removal;
    confirm loss of access and retain an independent administrative recovery path.
 
 ## Acceptance
 
 - Public or source-restricted instructions are reachable before enrollment and
   expose only intended content; the static site cannot read administrative state.
-- SSO permits only configured identities; denied/missing claims, failed MFA and
-  expired/replayed callbacks do not register devices. Administrator approval
-  binds the exact pending request to the verified intended user.
-- Both personal-device modes preserve user ownership; machine keys cannot assign
+- Administrator approval binds the exact pending request to the verified
+  intended user; denied, expired or replayed approvals do not register devices.
+- Personal devices preserve user ownership; machine keys cannot assign
   unauthorized tags. Single-use, expiry and uncertain-completion paths preserve
   identity and reveal no credentials in process arguments, logs or saved state.
 - Allowed services work and denied services stay blocked. Revocation is verified

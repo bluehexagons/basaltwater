@@ -54,9 +54,8 @@ needs only the official Tailscale app, not Basaltwater:
 2. Copy the server URL into the app's custom-server setting, or use the supplied
    platform-specific login command. A QR code opens instructions; it does not
    promise automatic app configuration on every platform.
-3. Sign in through an explicitly configured OIDC provider with allowed-user or
-   group restrictions. Without OIDC, an administrator approves the pending
-   device against the intended user using Headscale's native registration flow.
+3. Initiate Headscale's native browser registration. An administrator verifies
+   the person and approves that exact pending device for the intended user.
 4. Confirm connection and test an allowed resource. Provide clear pending,
    expired and denied guidance, plus administrator device revocation.
 
@@ -67,15 +66,34 @@ Keep administrative approval authenticated and separate from public instructions
 the existing T3 pairing portal does not grant Headscale enrollment authority.
 
 Follow the [enrollment and onboarding security contract](headscale-enrollment.md)
-for public/LAN page visibility, SSO provisioning, native approval, machine-key
-handoff and revocation. The preferred personal-device flow uses an existing
-OIDC provider; setup must explicitly select administrator approval when none is
-configured. Both modes retain separate network access policy.
+for public/LAN page visibility, native approval, machine-key handoff and
+revocation. Initial enrollment uses native administrator approval for personal
+devices and single-use preauthenticated keys for unattended machines. Network
+access policy remains separate from registration.
 
-The [self-hosted SSO assessment](headscale-sso.md) recommends qualifying Pocket ID
-first as an optional managed provider while preserving existing OIDC providers
-and native approval. It does not establish runtime qualification or add provider
-hosting to the initial milestone.
+SSO integration, provider hosting and a custom identity provider are deferred.
+The [self-hosted SSO assessment](headscale-sso.md) preserves research for a later
+decision; it is not an active qualification task.
+
+## Decisions to settle
+
+- **Access policy:** define the initial user/groups, service tags and permitted
+  destinations/ports. Proposed default: explicit user-to-service grants, with
+  peer-device and server-to-server access requiring separate rules.
+- **Administrative interface:** proposed first delivery uses Headscale's native
+  CLI over authenticated SSH, including user creation, exact-request approval
+  and device revocation. Basaltwater management wrappers and web approval can
+  follow; named server discovery remains part of the initial setup interface.
+- **Relay dependency:** proposed first delivery retains the upstream default
+  Tailscale DERP map and leaves embedded DERP off. Requiring self-hosted relays
+  would bring relay hosting and connectivity qualification into the first scope.
+- **DNS and lifetime:** proposed default leaves client DNS unchanged. Make
+  enrollment-key lifetime and device reauthentication separate explicit settings;
+  settle defaults against the pinned Headscale/client behavior before coding.
+- **Deployment inputs:** choose the server profile/architecture, public control
+  and onboarding hostnames, page visibility, administrative SSH identity and
+  backup destination before live qualification. Keep real endpoints and account
+  details in private configuration. These inputs need not block initial code.
 
 ## Milestones
 
@@ -108,13 +126,13 @@ hosting to the initial milestone.
    explicit operation to change control servers or leave. Define a restrictive
    Headscale policy and reconcile only requested host service access, accounting
    for Tailscale's own firewall behavior. Deliver the join page and native
-   administrator approval path, plus optional existing-provider OIDC with PKCE
-   and explicit identity restrictions; no bundled identity provider is required.
+   administrator approval path. SSO configuration and provider management are
+   outside this milestone.
    **Acceptance:** two disposable clients can reach allowed services while
    denied traffic remains blocked; expired keys, interrupted joins and setup
    reruns do not leak keys, duplicate enrollment or remove recovery access.
    Qualify guided enrollment on Windows, macOS, Linux, iOS and Android separately,
-   including pre-join page access, approval/SSO denial and device revocation.
+   including pre-join page access, denied/expired approval and device revocation.
    Verify onboarding-origin isolation, restricted enrollment identities, secret
    handling and revocation under the enrollment contract before declaring it ready.
 
@@ -140,8 +158,8 @@ use disposable systems for the acceptance above.
 ## Later scope
 
 Configurable MagicDNS, embedded DERP, subnet routers, exit nodes, full
-administrative panel controls, bundled identity-provider setup and broader
-managed-client platform support follow the initial deliverable.
+administrative panel controls, OIDC integration, identity-provider setup and
+broader managed-client platform support follow the initial deliverable.
 Embedded DERP requires public UDP 3478 and separate relay
 qualification; do not imply that hosting Headscale makes relays self-hosted.
 

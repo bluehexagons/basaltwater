@@ -1,15 +1,18 @@
 # Self-hosted SSO for Headscale
 
-Status: research recommendation; no provider has been deployed or qualified by
-this work. Supports the [Headscale plan](headscale.md) and
+Status: deferred research; the current decision is to use Headscale's native
+administrator approval and machine keys. OIDC integration, managed provider
+qualification and custom SSO are outside the initial delivery. No provider has
+been deployed or qualified by this work. Supports the [Headscale plan](headscale.md) and
 [enrollment contract](headscale-enrollment.md). Findings use upstream
 documentation reviewed on 2026-11-08; recheck the chosen release before coding.
 
 ## Recommendation and Basaltwater fit
 
-Keep Headscale's OIDC interface provider-independent and support existing
-identity providers first. Qualify **Pocket ID** as the first optional managed
-provider for small deployments using passkeys. Prefer **Authelia** when operators
+If SSO work is reopened, keep Headscale's OIDC interface provider-independent and
+support existing identity providers first. Consider qualifying **Pocket ID** as
+the first optional managed provider for small deployments using passkeys.
+Prefer **Authelia** when operators
 want file/LDAP-backed accounts and configuration-managed authentication; evaluate
 **Authentik** for richer administration and application integration. Continue to
 offer Headscale's native administrator-approved registration without an IdP.
@@ -57,7 +60,7 @@ Upstream main-software licenses are
 identifies MIT core code and separate enterprise/documentation terms. Review the
 exact bundled artifacts and dependencies before any distribution integration.
 
-## Pocket ID qualification design
+## Deferred Pocket ID qualification design
 
 1. **Install independently.** Pin and verify an upstream binary, run a dedicated
    systemd service behind Nginx and keep its database on local storage. Use a
