@@ -108,3 +108,34 @@ class ScrubTriagePanelTests(unittest.TestCase):
                                      {"path": "/srv/data/one", "revision": "a" * 64}, "CSRF")
         self.assertNotIn('value="delete"', body)
         self.assertNotIn('value="quarantine"', body)
+
+    def test_batch_summary_counts_all_states_without_repeating_target_list(self):
+        _, parameters = self.manager.prepare(self.fields(action="verify", count=7))
+        states = ("pending", "running", "completed", "skipped", "failed", "unresolved")
+        latest = {"parameters": parameters, "status": "running", "started": 1, "finished": None,
+                  "items": [{"index": index, "status": state,
+                             "category": "unrepairable" if state == "completed" else ""}
+                            for index, state in enumerate(states)]}
+        body = actions.render_status({**status(), "latest": latest}, "CSRF")
+        self.assertIn("1 pending · 1 running · 1 completed · 1 skipped · 1 failed · 2 unresolved", body)
+        self.assertIn("verification can still report damage", body)
+        self.assertIn("completed · unrepairable", body)
+        for index in range(7):
+            self.assertEqual(body.count(f"/srv/data/{index}&lt;x&gt;.bin"), 1)
+        self.assertNotIn('<button>', body)
+
+    def test_reviews_and_activity_link_to_exact_root_and_parity_pair(self):
+        fields = {**self.fields(), "database": "/srv/parity<&>"}
+        ticket, parameters = self.manager.prepare(fields)
+        scope = task_key(parameters["directory"], parameters["database"])
+        link = f'/shares-data?view=scrubs&amp;scope={scope}#findings-heading'
+        review = actions.render_saved_review(ticket, parameters, "CSRF")
+        self.assertIn(f'href="{link}">Cancel review', review)
+        latest = {"parameters": parameters, "status": "interrupted", "started": 1, "finished": 2}
+        body = actions.render_status({**status(), "latest": latest,
+                                      "requests": [{"id": "c" * 32, "parameters": parameters,
+                                                    "state": "dispatched", "created": 1}]}, "CSRF")
+        self.assertEqual(body.count(f'href="{link}"'), 2)
+        self.assertIn("/srv/parity&lt;&amp;&gt;", body)
+        self.assertNotIn("/srv/parity<&>", body)
+        self.assertNotEqual(scope, task_key(parameters["directory"], "/srv/other-parity"))

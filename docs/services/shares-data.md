@@ -224,8 +224,14 @@ line. Permanent deletion removes source bytes; it retains the finding/dispositio
 history, parity and mirror protection.
 
 **Activity & approvals** lists each file as pending, running, completed, skipped,
-failed or unresolved. The whole selection is checked before effects, and each
-file is checked again before acting. Changed entries are skipped. Interruption
+failed or unresolved, with a count for each state. Completed means the action
+finished; a completed verification can still report damage. Missing item results
+are shown as unresolved. Activity identifies the scrub root and parity directory
+and links back to that exact task's findings. Cancelling a recovery review also
+returns to its selected task.
+
+The whole selection is checked before effects, and each file is checked again
+before acting. Changed entries are skipped. Interruption
 can leave partial completion or an unresolved action. Inspect actual state and
 individually review remaining files; batches are never replayed automatically.
 Findings below still follow the five-minute export.

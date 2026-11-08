@@ -9,6 +9,7 @@ import threading
 import time
 
 from common.service_tools.web_panel_admin import _review_url, _timestamp
+from common.service_tools.web_panel_findings import task_key
 from common.service_tools.web_panel_templates import render_heading
 from lib.data_actions import BATCH_LIMIT, DATA_ACTIONS, HEX_ID, validate_data_action
 from lib.privilege_client import exchange
@@ -180,6 +181,22 @@ def _targets(parameters: dict) -> str:
         '<li>' + html.escape(item["file"]) + '</li>' for item in parameters["items"]) + '</ol>'
 
 
+def _findings_url(parameters: dict) -> str:
+    if parameters.get("directory") and parameters.get("database"):
+        return '/shares-data?view=scrubs&scope=' + task_key(parameters["directory"], parameters["database"]) + '#findings-heading'
+    return '/shares-data?view=scrubs'
+
+
+def _task_context(parameters: dict) -> str:
+    facts = ''.join('<div><dt>' + label + '</dt><dd>' + html.escape(parameters[key]) + '</dd></div>'
+                    for key, label in (("directory", "Scrub root"), ("database", "Parity directory"))
+                    if parameters.get(key))
+    if not facts:
+        return ''
+    return ('<dl class="job-facts">' + facts + '</dl><p><a href="'
+            + html.escape(_findings_url(parameters), quote=True) + '">Browse this task’s findings</a></p>')
+
+
 def render_saved_review(ticket: str, parameters: dict, csrf: str) -> str:
     action = parameters["action"]
     label, effect = DATA_ACTIONS[action]
@@ -197,7 +214,7 @@ def render_saved_review(ticket: str, parameters: dict, csrf: str) -> str:
 <p>This creates a single-use request. Open its approval review to approve or deny the exact action. The worker rejects a changed finding or file and shares the storage operation lock. Jobs have a six-hour limit; dispatch is separate from completion.</p>
 <p>Batches report each file separately. Interrupted or uncertain work is never replayed automatically. Inspect outcomes and individually review remaining files before retrying.</p>
 <form method="post" action="/actions/data/submit" class="data-recovery-form">{csrf}<input type="hidden" name="ticket" value="{html.escape(ticket, quote=True)}">{confirmation}<button>Create recovery approval request</button></form>
-<a href="/shares-data?view=scrubs">Cancel review</a></section>'''
+<a href="{html.escape(_findings_url(parameters), quote=True)}">Cancel review</a></section>'''
 
 
 def render_status(status: dict, csrf: str) -> str:
@@ -212,13 +229,23 @@ def render_status(status: dict, csrf: str) -> str:
         parameters = latest.get("parameters", {})
         label = DATA_ACTIONS.get(parameters.get("action"), ("Recovery job", ""))[0]
         result = latest.get("status", "unavailable")
-        body += f'<article class="event"><h3>{escape(label)}</h3><p><span class="badge">{escape(result)}</span></p>' + _targets(parameters)
+        body += f'<article class="event"><h3>{escape(label)}</h3><p><span class="badge">{escape(result)}</span></p>' + _task_context(parameters)
         if "items" in parameters:
             outcomes = {item["index"]: item for item in latest.get("items", []) if type(item.get("index")) is int}
+            states = ("pending", "running", "completed", "skipped", "failed", "unresolved")
+            counts = dict.fromkeys(states, 0)
+            for index in range(len(parameters["items"])):
+                state = outcomes.get(index, {}).get("status", "unresolved")
+                counts[state if state in counts else "unresolved"] += 1
+            summary = ' · '.join(f'{counts[state]} {state}' for state in states if counts[state])
+            body += f'<p><strong>{len(parameters["items"])} reviewed files</strong>: {summary}.</p>'
+            body += '<p>Completed means the action finished; verification can still report damage. Unresolved means the result needs inspection.</p>'
             body += '<ol aria-label="Per-file outcomes">'
             for index, item in enumerate(parameters["items"]):
                 outcome = outcomes.get(index, {})
                 state = outcome.get("status", "unresolved")
+                if state not in counts:
+                    state = "unresolved"
                 body += f'<li><strong>{escape(item["file"])}</strong>: {escape(state)}'
                 if category := outcome.get("category"):
                     body += ' · ' + escape(category.replace("_", " "))
@@ -226,6 +253,8 @@ def render_status(status: dict, csrf: str) -> str:
                     body += '<p>' + escape(FAILURE_LABELS.get(failure, "Inspect before retrying.")) + '</p>'
                 body += '</li>'
             body += '</ol><p>Partial or interrupted batches are never replayed. Inspect unresolved items; individually review remaining files before retrying.</p>'
+        else:
+            body += _targets(parameters)
         body += f'<p class="event-meta">Started: {_timestamp(latest.get("started"))} · Finished: {_timestamp(latest.get("finished")) if latest.get("finished") is not None else "Not recorded"}</p>'
         if category := latest.get("category"):
             body += f'<p>Recorded result: {escape(category.replace("_", " "))}</p>'
@@ -239,7 +268,7 @@ def render_status(status: dict, csrf: str) -> str:
         parameters = row.get("parameters", {})
         label = DATA_ACTIONS.get(parameters.get("action"), ("Recovery request", ""))[0]
         state = row.get("state", "unavailable")
-        body += f'<article class="event"><h3>{escape(label)}</h3>' + _targets(parameters) + f'<p>Approval request: <strong>{escape(state)}</strong></p>'
+        body += f'<article class="event"><h3>{escape(label)}</h3>' + _task_context(parameters) + _targets(parameters) + f'<p>Approval request: <strong>{escape(state)}</strong></p>'
         body += f'<p class="event-meta">Requested: {_timestamp(row.get("created"))}</p>'
         if state in {"pending", "approved"}:
             body += f'<p class="event-meta">Approval expires: {_timestamp(row.get("expires"))}</p>'
