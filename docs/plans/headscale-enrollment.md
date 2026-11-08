@@ -3,6 +3,10 @@
 Status: proposed implementation contract for the [Headscale plan](headscale.md).
 These enrollment commands and onboarding services are not implemented yet.
 
+For provider choices and the proposed Pocket ID qualification, see the
+[self-hosted SSO assessment](headscale-sso.md). Existing OIDC providers remain
+supported by the design; hosting a provider is optional follow-up scope.
+
 ## Public instructions and private administration
 
 Default to a static HTTPS onboarding site at `join.example.com`, served by Nginx

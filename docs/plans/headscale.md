@@ -72,6 +72,11 @@ handoff and revocation. The preferred personal-device flow uses an existing
 OIDC provider; setup must explicitly select administrator approval when none is
 configured. Both modes retain separate network access policy.
 
+The [self-hosted SSO assessment](headscale-sso.md) recommends qualifying Pocket ID
+first as an optional managed provider while preserving existing OIDC providers
+and native approval. It does not establish runtime qualification or add provider
+hosting to the initial milestone.
+
 ## Milestones
 
 1. **Configuration and setup contracts.** Add focused configuration helpers,
