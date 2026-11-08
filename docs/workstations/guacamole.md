@@ -9,7 +9,7 @@ unsupported.
 ## Install and open
 
 ```bash
-basaltw setup agent_vm 192.168.1.50 agent \
+basaltw setup agent_vm 192.168.1.50 agent --agent-tool codex \
   --web-panel --ssl --web-panel-password "$PANEL_PASSWORD" \
   --guacamole --password "$RDP_PASSWORD"
 ```

@@ -22,7 +22,7 @@ PLUGIN = PluginDefinition(
         order=33,
         default_auto_restart=False,
         default_auto_restart_force_days=0,
-        default_agent_tools=("gh", "codex"),
+        default_agent_tools=("gh",),
         step_builder="plugins.cachyos:build_cachyos_steps",
     ),),
 )

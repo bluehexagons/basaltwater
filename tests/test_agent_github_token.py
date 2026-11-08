@@ -26,7 +26,7 @@ TOKEN = "github_pat_fixture_only"
 class GitHubSetupTokenTests(unittest.TestCase):
     def _args(self, *options: str):
         parser = create_setup_argument_parser("test")
-        return parser.parse_args(["192.0.2.41", "agent", *options])
+        return parser.parse_args(["192.0.2.41", "agent", "--agent-tool", "codex", *options])
 
     def _config(self, *options: str, profile: str = "agent_vm") -> SetupConfig:
         with patch("lib.system_utils.get_local_timezone", return_value="UTC"):

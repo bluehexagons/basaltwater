@@ -41,8 +41,8 @@ of workstation setup.
 Use the existing desktop account. Preview an explicit selection, then apply it:
 
 ```fish
-basaltw setup agent_cachyos localhost --dry-run --godot --node
-basaltw setup agent_cachyos localhost --godot --node
+basaltw setup agent_cachyos localhost --agent-tool codex --dry-run --godot --node
+basaltw setup agent_cachyos localhost --agent-tool codex --godot --node
 ```
 
 Add only the requested tool flags. Existing optional selections are preserved
@@ -54,7 +54,7 @@ use `basaltw refresh --dry-run` and then `basaltw refresh`. Refresh merges
 supported selection changes; finish active work before an update that may
 restart selected services.
 
-For remote setup, use `basaltw setup agent_cachyos HOST USER`; the target must
+For remote setup, use `basaltw setup agent_cachyos HOST USER --agent-tool PROVIDER`; the target must
 already accept SSH for its existing non-root desktop account. Review the
 [remote development guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos-development.md)
 for controller setup, desktop-session limits, and service commissioning.
@@ -66,8 +66,9 @@ bounded and runs only during setup/refresh; there is no CachyOS cleanup timer.
 See the [CachyOS maintenance guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos-maintenance.md)
 for cleanup and diagnostics.
 
-Codex and GitHub CLI are defaults; other coding agents require explicit
-selection. Keep existing credentials and provider configuration. Use normal
+GitHub CLI is included by default. Select at least one coding provider explicitly
+with `--agent-tool codex`, `--agent-tool claude`, or `--agent-tool opencode`.
+Keep existing credentials and provider configuration. Use normal
 provider login for authentication. `--node` installs the system runtime, while
 `basaltw node install` prepares user-local NVM and applies a project's committed
 Node pin without rerunning full setup. Do not change a project's runtime merely

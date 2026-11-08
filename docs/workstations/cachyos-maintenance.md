@@ -490,10 +490,10 @@ Finish active work before switching:
 
 ```fish
 # Web → desktop: install/verify the package, then disable the managed web service
-basaltw setup agent_cachyos localhost --t3code-desktop
+basaltw setup agent_cachyos localhost --t3code-desktop --agent-tool codex
 
 # Desktop → web: quit the desktop app first to free its listening port
-basaltw setup agent_cachyos localhost --web-interface t3code
+basaltw setup agent_cachyos localhost --web-interface t3code --agent-tool codex
 ```
 
 Desktop mode disables only the Basaltwater-owned user service and retains its
@@ -543,7 +543,7 @@ The generic VM T3 pairing and update commands do not manage this unit. For a
 deliberate runtime update, finish active work and rerun setup as yourself:
 
 ```fish
-basaltw setup agent_cachyos localhost --web-interface t3code
+basaltw setup agent_cachyos localhost --web-interface t3code --agent-tool codex
 ```
 
 Keep your selected host, port, and workspace options when rerunning. Each T3
@@ -682,7 +682,7 @@ their options, so refresh cannot recover them from installed packages. For
 example, to establish the desktop selection:
 
 ```fish
-basaltw setup agent_cachyos localhost --t3code-desktop --node --python --git-lfs
+basaltw setup agent_cachyos localhost --t3code-desktop --node --python --git-lfs --agent-tool codex
 ```
 
 To add software without repeating your saved flags, use:

@@ -922,9 +922,8 @@ class SetupConfig:
                 raise ValueError("--t3code-ready cannot be combined with --no-web-interface")
             ready_tools = list(self.agent_tools or [])
             removed_tools = set(self.agent_tools_removed or [])
-            for tool in ("gh", "codex"):
-                if tool not in removed_tools and tool not in ready_tools:
-                    ready_tools.append(tool)
+            if "gh" not in removed_tools and "gh" not in ready_tools:
+                ready_tools.append("gh")
             self.agent_tools = ready_tools or None
             ready_interfaces = list(self.web_interfaces or [])
             if "t3code" not in ready_interfaces:
@@ -1194,6 +1193,16 @@ class SetupConfig:
             if enabled:
                 tools.append(name)
         return tools
+
+    def validate_agent_provider_selection(self) -> None:
+        """Require an explicit provider before applying an agent setup."""
+        if (self.system_type.startswith("agent_") or self.t3code_ready) and not any((
+            self.install_codex, self.install_claude, self.install_opencode,
+        )):
+            raise ValueError(
+                "Agent setup requires at least one provider: "
+                "--agent-tool codex, claude, or opencode"
+            )
 
     def has_agent_features(self) -> bool:
         """Return whether this setup declares an agent-oriented workload."""

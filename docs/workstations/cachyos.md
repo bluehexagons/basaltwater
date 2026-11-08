@@ -37,7 +37,7 @@ sh -c '
   trap cleanup EXIT
   curl -fsSL --max-time 120 https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh -o "$installer" &&
   sh "$installer" "$@"
-' sh --local-setup agent_cachyos \
+' sh --local-setup agent_cachyos --agent-tool codex \
   --node --python --git-lfs
 ```
 
@@ -84,7 +84,7 @@ sh -c '
   trap cleanup EXIT
   curl -fsSL --max-time 120 https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh -o "$installer" &&
   sh "$installer" "$@"
-' sh --local-setup agent_cachyos \
+' sh --local-setup agent_cachyos --agent-tool codex \
   --t3code-desktop --node --python --git-lfs
 ```
 
@@ -117,11 +117,11 @@ by setup, typically `/home/USER/.local/bin/codex`. Use
 ## Pick the options you need
 
 Append options to `--local-setup agent_cachyos` in the installer command, or to
-`basaltw setup agent_cachyos localhost` after the launcher is installed.
+`basaltw setup agent_cachyos localhost` after the launcher is installed. Select a provider explicitly with `--agent-tool`.
 
 | Need | Options |
 | --- | --- |
-| Extra agents | `--agent-tool opencode`, `--agent-tool claude`; repeatable. Defaults are `gh,codex`. Use `--no-agent-tool NAME` to omit a default for this run. |
+| Coding providers | `--agent-tool codex`, `--agent-tool claude`, `--agent-tool opencode`; repeatable. Select at least one; no provider is selected by default. GitHub CLI is included unless omitted with `--no-agent-tool gh`. |
 | Node, Python, Go, or Git LFS | `--node`, `--python`, `--go`, `--git-lfs` |
 | Native game and Animator development | `--game-dev`, `--node-versions` ([Antistatic workflow](cachyos-game-development.md)) |
 | Godot, media, or graphics diagnostics | `--godot`, `--av-tools`, `--gl-tools` (drivers are never installed) |
@@ -143,15 +143,15 @@ Examples:
 
 ```fish
 # Game and media workstation with an additional coding agent
-basaltw setup agent_cachyos localhost \
+basaltw setup agent_cachyos localhost --agent-tool codex \
   --agent-tool opencode --node --python --git-lfs --godot \
   --av-tools --gl-tools
 
 # Gaming and game streaming on the trusted LAN
-basaltw setup agent_cachyos localhost --gaming --sunshine --moonlight --lan-access
+basaltw setup agent_cachyos localhost --gaming --sunshine --moonlight --lan-access --agent-tool codex
 
 # Preview a plan without installing packages or changing files
-basaltw setup agent_cachyos localhost --node --python --dry-run
+basaltw setup agent_cachyos localhost --node --python --dry-run --agent-tool codex
 ```
 
 Application options install native packages from the configured CachyOS
@@ -228,7 +228,7 @@ fingerprint through a trusted local channel, copy the key, then test ordinary
 port-22 access before the window expires:
 
 ```fish
-basaltw setup agent_cachyos localhost --ssh --ssh-password-window 15 --lan-access
+basaltw setup agent_cachyos localhost --ssh --ssh-password-window 15 --lan-access --agent-tool codex
 ssh-copy-id -p 2222 USER@WORKSTATION_PRIVATE_IP
 ssh USER@WORKSTATION_PRIVATE_IP
 ```
@@ -271,8 +271,8 @@ Remote setup is useful when a controller is separate from the workstation and
 the target already has reachable SSH and a non-root desktop account:
 
 ```fish
-basaltw setup agent_cachyos WORKSTATION_PRIVATE_IP USER --godot --node --dry-run
-basaltw setup agent_cachyos WORKSTATION_PRIVATE_IP USER --godot --node
+basaltw setup agent_cachyos WORKSTATION_PRIVATE_IP USER --godot --node --dry-run --agent-tool codex
+basaltw setup agent_cachyos WORKSTATION_PRIVATE_IP USER --godot --node --agent-tool codex
 ```
 
 The controller does not create accounts, enable KDE autologin, or copy
@@ -299,7 +299,7 @@ Add webhook targets to your initial setup selection to receive its completion
 or failure result. For example, after installing the launcher:
 
 ```fish
-basaltw setup agent_cachyos localhost --t3code-desktop --node --python --git-lfs \
+basaltw setup agent_cachyos localhost --t3code-desktop --node --python --git-lfs --agent-tool codex \
   --notify webhook 'https://hooks.example.net/infra' \
   --notification-level normal --notification-strict-https
 ```
@@ -336,12 +336,13 @@ For an existing setup, see [notification maintenance](cachyos-maintenance.md#web
 
 ## Codex-only agent setup
 
-Codex is the only coding agent installed by default. GitHub CLI (`gh`) is also
-selected for GitHub operations; Claude and OpenCode require explicit flags.
+No coding provider is installed by default. Select one or more with
+`--agent-tool codex,claude,opencode`. GitHub CLI (`gh`) remains selected for
+GitHub operations; `--no-agent-tool gh` omits it.
 For Codex with T3 desktop, use:
 
 ```fish
-basaltw setup agent_cachyos localhost --t3code-desktop
+basaltw setup agent_cachyos localhost --t3code-desktop --agent-tool codex
 ```
 
 Add `--no-agent-tool gh` if you also want to omit GitHub CLI. Codex and T3
@@ -379,7 +380,7 @@ The desktop installer above selects the
 If you installed only the launcher, apply your first desktop selection with:
 
 ```fish
-basaltw setup agent_cachyos localhost --t3code-desktop
+basaltw setup agent_cachyos localhost --t3code-desktop --agent-tool codex
 ```
 
 The flag is currently supported only by `agent_cachyos`, not Debian profiles or
@@ -468,7 +469,7 @@ Add `--web-interface t3code` to the [quick-start installer](#quick-start),
 or configure the default loopback service with the installed launcher:
 
 ```fish
-basaltw setup agent_cachyos localhost --web-interface t3code
+basaltw setup agent_cachyos localhost --web-interface t3code --agent-tool codex
 systemctl --user status basaltwater-cachyos-t3.service
 ```
 
@@ -561,7 +562,7 @@ workstation's private LAN address. Find that address with `ip -4 addr`, then
 choose that address in your first web-service setup:
 
 ```fish
-basaltw setup agent_cachyos localhost --web-interface t3code \
+basaltw setup agent_cachyos localhost --web-interface t3code --agent-tool codex \
   --web-interface-host 192.168.1.50 --web-interface-port 3773
 systemctl --user status basaltwater-cachyos-t3.service
 "$HOME/.local/share/basaltwater/cachyos-t3/bin/t3" pair --base-dir "$HOME/.local/share/basaltwater/cachyos-t3/data"
@@ -578,7 +579,7 @@ the VM pairing broker or configure a gateway.
 If you need LAN access, include its policy in your initial selection:
 
 ```fish
-basaltw setup agent_cachyos localhost --t3code-desktop --node --python --git-lfs --lan-access
+basaltw setup agent_cachyos localhost --t3code-desktop --node --python --git-lfs --lan-access --agent-tool codex
 ```
 
 This explicitly opts into UFW management. It installs UFW if missing, enables

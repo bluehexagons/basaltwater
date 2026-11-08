@@ -23,7 +23,30 @@ class CachyosRemoteTests(unittest.TestCase):
         cls.parser, _, _ = basaltwater.create_basaltwater_parser()
 
     def args(self, *options: str):
-        return self.parser.parse_args(["setup", "agent_cachyos", "desktop.lan", "alice", *options])
+        return self.parser.parse_args([
+            "setup", "agent_cachyos", "desktop.lan", "alice", "--agent-tool", "codex", *options,
+        ])
+
+    def test_cli_requires_provider_before_upload_even_for_dry_run(self):
+        for selection in ([], ["--agent-tool", "gh"],
+                          ["--agent-tool", "codex", "--no-agent-tool", "codex"]):
+            for plan in ([], ["--dry-run"]):
+                with self.subTest(selection=selection, plan=plan), \
+                        patch.object(remote, "_ssh") as ssh, \
+                        patch.object(remote, "_source_archive") as bundle, \
+                        contextlib.redirect_stdout(io.StringIO()) as output:
+                    args = self.parser.parse_args([
+                        "setup", "agent_cachyos", "desktop.lan", "alice", *selection, *plan,
+                    ])
+                    self.assertEqual(basaltwater.run_setup_command(args), 1)
+                self.assertIn("at least one provider", output.getvalue())
+                ssh.assert_not_called()
+                bundle.assert_not_called()
+
+    def test_claude_only_controller_configuration(self):
+        config = remote.controller_config(self.args("--no-agent-tool", "codex", "--agent-tool", "claude"))
+        self.assertEqual(config.selected_agent_tools(), ["gh", "claude"])
+        self.assertIsNone(config.agent_auth_source)
 
     def test_controller_defaults_and_explicit_opt_out(self):
         self.assertTrue(remote.controller_config(self.args()).install_ssh)

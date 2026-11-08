@@ -447,7 +447,12 @@ try {
             $agentTools += $tool
         }
     }
-    if ($Profile -eq 'agent_windows') { $agentTools = @(@('gh', 'codex') + $agentTools | Select-Object -Unique) }
+    if ($Profile -eq 'agent_windows') {
+        $agentTools = @(@('gh') + $agentTools | Select-Object -Unique)
+        if (-not $Resume -and -not @($agentTools | Where-Object { $_ -in @('codex', 'claude', 'opencode') }).Count) {
+            throw 'Agent setup requires -AgentTool codex, claude, or opencode; no provider is selected by default.'
+        }
+    }
     if ($Plan) {
         if ($Profile -eq 'agent_windows') {
             Write-Host 'Plan: install stable PowerShell 7 if missing, then run native setup in PowerShell 7.'

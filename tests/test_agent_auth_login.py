@@ -381,7 +381,7 @@ class SetupLoginTests(unittest.TestCase):
         parser = create_setup_argument_parser('test')
         for tool in ('gh', 'claude', 'opencode', 'codex'):
             with self.subTest(tool=tool):
-                args = parser.parse_args(['vm.example', 'agent', '--agent-tool', tool,
+                args = parser.parse_args(['vm.example', 'agent', '--agent-tool', 'codex', '--agent-tool', tool,
                                           '--agent-auth-file', tool, '/fake/credential'])
                 config = SetupConfig.from_args(args, 'agent_code_vm')
                 validate_agent_git_settings(config)
@@ -391,7 +391,7 @@ class SetupLoginTests(unittest.TestCase):
     def test_explicit_login_combines_with_other_provider_files_only(self):
         parser = create_setup_argument_parser('test')
         for tool in ('claude', 'codex'):
-            args = parser.parse_args(['vm.example', 'agent', '--agent-tool', tool,
+            args = parser.parse_args(['vm.example', 'agent', '--agent-tool', 'codex', '--agent-tool', tool,
                                       '--agent-auth', 'login', '--agent-auth-file', tool, '/fake/credential'])
             config = SetupConfig.from_args(args, 'agent_vm')
             self.assertEqual(config.agent_auth_source, 'login')
@@ -404,7 +404,7 @@ class SetupLoginTests(unittest.TestCase):
     def test_codex_opt_outs_preserve_github_default(self):
         parser = create_setup_argument_parser('test')
         for options in (['--agent-auth', 'none'], ['--no-agent-tool', 'codex', '--agent-tool', 'claude']):
-            config = SetupConfig.from_args(parser.parse_args(['vm.example', 'agent', *options]), 'agent_code_vm')
+            config = SetupConfig.from_args(parser.parse_args(['vm.example', 'agent', '--agent-tool', 'codex', *options]), 'agent_code_vm')
             validate_agent_git_settings(config)
             self.assertIsNone(config.agent_auth_source)
             self.assertEqual(config.git_auth_source, 'active')
@@ -413,7 +413,7 @@ class SetupLoginTests(unittest.TestCase):
 
     def test_login_only_profile_does_not_stage_or_read_controller_credentials(self):
         parser = create_setup_argument_parser('test')
-        config = SetupConfig.from_args(parser.parse_args(['vm.example', 'agent']), 'agent_vm')
+        config = SetupConfig.from_args(parser.parse_args(['vm.example', 'agent', '--agent-tool', 'codex']), 'agent_vm')
         self.assertFalse(config.copy_agent_keys)
         with tempfile.TemporaryDirectory() as directory, patch.object(setup_common, '_local_user_home', return_value=directory), patch.object(setup_common, '_active_git_identity', return_value={}) as identity, patch.object(setup_common, '_stage_github_auth') as github:
             setup_common.prepare_agent_payload(config, directory)
@@ -434,12 +434,12 @@ class SetupLoginTests(unittest.TestCase):
     def test_profile_is_subscription_first_and_remote_execution_is_noninteractive_by_default(self):
         parser = create_setup_argument_parser('test')
         for profile in ('agent_vm', 'agent_workstation', 'agent_code_vm'):
-            config = SetupConfig.from_args(parser.parse_args(['vm.example', 'agent']), profile)
+            config = SetupConfig.from_args(parser.parse_args(['vm.example', 'agent', '--agent-tool', 'codex']), profile)
             self.assertEqual(config.agent_auth_source, 'login', profile)
             restored = SetupConfig.from_dict(config.host, profile, config.to_dict())
             self.assertEqual(restored.agent_auth_source, 'login', profile)
         remote = create_setup_argument_parser('remote', for_remote=True)
-        args = remote.parse_args(['--system-type', 'agent_code_vm', '--username', 'agent'])
+        args = remote.parse_args(['--system-type', 'agent_code_vm', '--username', 'agent', '--agent-tool', 'codex'])
         args.host = 'vm.example'
         self.assertIsNone(SetupConfig.from_args(args, 'agent_code_vm').agent_auth_source)
 

@@ -196,9 +196,13 @@ public class HealthGuiFixture {
         $minimal = [pscustomobject]@{ Profile = 'agent_windows'; Revision = 'b' * 40; Phase = 'complete' }
         $script:Probes = @(); $script:BrokenCodex = $false
         Assert-True (Get-NativeWorkstationHealth $minimal).Healthy 'Legacy state without optional selections failed'
-        Assert-True ($script:Probes.Count -eq 7) 'Default Git Bash/provider runtime dependencies were omitted or optional runtimes required'
+        Assert-True ($script:Probes.Count -eq 4) 'Unselected providers or runtimes were required'
         $minimal | Add-Member NoteProperty Node $false
-        $minimal | Add-Member NoteProperty AgentTool @('gh', 'codex')
+        $minimal | Add-Member NoteProperty AgentTool @('claude')
+        $script:Probes = @()
+        $report = Get-NativeWorkstationHealth $minimal
+        Assert-True ($report.Healthy -and @($report.Checks | Where-Object { $_.Name -in @('codex', 'node', 'npm') }).Count -eq 0) 'Claude-only health required Codex or npm'
+        $minimal.AgentTool = @('gh', 'codex')
         $script:MissingNpm = $true
         $report = Get-NativeWorkstationHealth $minimal
         Assert-True (-not $report.Healthy -and @($report.Checks | Where-Object { $_.Name -eq 'npm' -and $_.State -eq 'missing' }).Count -eq 1) 'Implicit npm dependency failure was reported healthy'

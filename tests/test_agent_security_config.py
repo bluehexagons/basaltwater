@@ -29,7 +29,7 @@ class TestAgentSecurityConfig(unittest.TestCase):
         ):
             with self.subTest(flags=flags):
                 args = controller.parse_args(
-                    ["192.0.2.10", "agent", "--machine", "vm", "--timezone", "UTC",
+                    ["192.0.2.10", "agent", "--agent-tool", "codex", "--machine", "vm", "--timezone", "UTC",
                      "--password", "test-desktop-password", *flags]
                 )
                 original = SetupConfig.from_args(args, "agent_code_vm")

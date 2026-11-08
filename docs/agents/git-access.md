@@ -60,7 +60,7 @@ hidden prompt and select the named credential:
 ```bash
 basaltw credentials set agent-1-github
 
-basaltw setup agent_vm 10.23.0.50 agent \
+basaltw setup agent_vm 10.23.0.50 agent --agent-tool codex \
   --git-access read --git-auth-credential agent-1-github \
   --repo https://github.com/example/private-project.git
 ```
@@ -130,7 +130,7 @@ HTTPS origin:
 ```bash
 basaltw credentials set agent-git
 
-basaltw setup agent_vm 10.23.0.50 agent \
+basaltw setup agent_vm 10.23.0.50 agent --agent-tool codex \
   --git-access read-write \
   --git-credential https://10.23.0.40:3000 agent-git \
   --git-ca-certificate https://10.23.0.40:3000 \

@@ -28,7 +28,7 @@ class CachyOSSetupTests(unittest.TestCase):
 
     def config(self, *options):
         return cachyos_config_from_args(self.parser.parse_args(
-            ["setup", "agent_cachyos", "localhost", "human", *options]))
+            ["setup", "agent_cachyos", "localhost", "human", "--agent-tool", "codex", *options]))
 
     def test_default_plan_is_only_local_tooling(self):
         config = self.config()
@@ -53,7 +53,7 @@ class CachyOSSetupTests(unittest.TestCase):
         ]
         for options in cases:
             with self.subTest(options=options), patch("remote_setup.run_cachyos_setup") as execute:
-                args = self.parser.parse_args(["setup", "agent_cachyos", "localhost", "human", *options])
+                args = self.parser.parse_args(["setup", "agent_cachyos", "localhost", "human", "--agent-tool", "codex", *options])
                 self.assertEqual(basaltwater.run_setup_command(args), 1)
                 execute.assert_not_called()
 
@@ -67,7 +67,7 @@ class CachyOSSetupTests(unittest.TestCase):
             with self.subTest(host=host):
                 with self.assertRaisesRegex(ValueError, "private IPv4"):
                     cachyos_config_from_args(self.parser.parse_args([
-                        "setup", "agent_cachyos", "localhost", "human",
+                        "setup", "agent_cachyos", "localhost", "human", "--agent-tool", "codex",
                         "--web-interface", "t3code", "--web-interface-host", host,
                     ]))
 
@@ -133,7 +133,7 @@ class CachyOSSetupTests(unittest.TestCase):
         from lib.arg_parser import create_setup_argument_parser
         parser = create_setup_argument_parser("test", for_remote=True, allow_steps=True)
         config = cachyos_config_from_args(parser.parse_args(
-            ["--system-type", "agent_cachyos", "--username", "human"]), for_remote=True)
+            ["--system-type", "agent_cachyos", "--username", "human", "--agent-tool", "codex"]), for_remote=True)
         self.assertEqual(config, self.config())
 
     def test_dry_run_never_invokes_steps_or_system_probes(self):

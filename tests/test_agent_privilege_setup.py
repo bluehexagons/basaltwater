@@ -350,7 +350,8 @@ class PasswordCLITests(unittest.TestCase):
             self.enterContext(patch(name, side_effect=AssertionError("Unexpected system action: " + name)))
 
     def run_command(self, command, *flags):
-        positionals = ["agent_vm", "vm.example", "agent"] if command == "setup" else ["vm.example", "agent"]
+        positionals = (["agent_vm", "vm.example", "agent", "--agent-tool", "codex"]
+                       if command == "setup" else ["vm.example", "agent"])
         args = self.parser.parse_args([command, *positionals, "--timezone", "UTC", *flags])
         run = run_setup_command if command == "setup" else run_patch_command
         return run(args)

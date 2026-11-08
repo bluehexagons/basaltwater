@@ -232,11 +232,11 @@ function Get-NativeAgentSkillNames([string]$Source) {
 function Invoke-NativeAgentSetup {
     [CmdletBinding()]
     param([Parameter(Mandatory=$true)][string]$Source,
-          [string[]]$AgentTool = @('gh', 'codex'), [switch]$Node, [switch]$Python,
+          [string[]]$AgentTool = @(), [switch]$Node, [switch]$Python,
           [switch]$Go, [switch]$NodeVersions, [switch]$GameDev, [switch]$ShaderTools, [switch]$Godot, [switch]$Sunshine,
           [string]$StorageRoot = '',
           [switch]$T3CodeDesktop, [switch]$Plan)
-    $selected = @('gh', 'codex')
+    $selected = @('gh')
     foreach ($selection in $AgentTool) {
         foreach ($tool in $selection.Split(',') | ForEach-Object { $_.Trim().ToLowerInvariant() }) {
             if ($tool -notin @('gh', 'codex', 'claude', 'opencode')) { throw "Unsupported native agent tool: $tool" }
@@ -244,6 +244,9 @@ function Invoke-NativeAgentSetup {
         }
     }
     $AgentTool = @($selected | Select-Object -Unique)
+    if (-not @($AgentTool | Where-Object { $_ -in @('codex', 'claude', 'opencode') }).Count) {
+        throw 'Agent setup requires -AgentTool codex, claude, or opencode; no provider is selected by default.'
+    }
     $Source = [IO.Path]::GetFullPath($Source)
     $skillNames = @(Get-NativeAgentSkillNames $Source)
     . (Join-Path $Source 'windows\Cli.Common.ps1')
@@ -340,6 +343,6 @@ function Invoke-NativeAgentSetup {
     }
     Install-NativeCli -Source $Source -Plan:$Plan
     Install-NativeShellIntegration -Source $Source -StorageRoot $StorageRoot -Plan:$Plan
-    Write-Host 'Verify in a new terminal: basaltw --help; git --version; gh auth status; codex login status.'
+    Write-Host 'Verify in a new terminal: basaltw --help; git --version; gh auth status. Authenticate each selected provider separately.'
     Write-Host 'Set your Git user.name/user.email if missing; select the local Windows connection in T3 Code.'
 }

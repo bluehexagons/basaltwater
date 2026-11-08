@@ -8,6 +8,21 @@ is Codex-only. Claude Code provider execution has not been qualified. This plan
 defines the compliance gate and test work before any wider execution support is
 considered.
 
+## Ready for attended testing
+
+Agent setup now requires an explicit provider selection. `--agent-tool claude`
+selects Claude without installing Codex or starting Codex authentication;
+`--t3code-ready` also respects this selection. GitHub CLI remains a profile
+utility default. Existing saved provider selections remain explicit on replay.
+Windows uses `-AgentTool claude` with the same selection requirement.
+
+Offline regressions cover Claude-only setup/remote/saved configuration and
+non-secret environment-override diagnostics through `agent auth status`.
+Follow the [attended test procedure](../agents/agent-authentication.md#claude-code-attended-testing)
+in a disposable single-user environment. These changes do not qualify provider
+execution or enable Claude in unattended task workers. The terms and native
+qualification work below remains open.
+
 ## Current implementation
 
 | Area | Current behavior | Evidence |

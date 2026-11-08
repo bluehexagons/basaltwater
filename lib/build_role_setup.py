@@ -23,7 +23,9 @@ def setup_config_with_saved_build_roles(
     it as a newly supplied policy file. Never inherit transient credentials.
     """
     if cached is None or cached.system_type != args.system_type:
-        return SetupConfig.from_args(args, args.system_type)
+        config = SetupConfig.from_args(args, args.system_type)
+        config.validate_agent_provider_selection()
+        return config
     selected = argparse.Namespace(**vars(args))
 
     def inherit(field: str, value: object) -> None:

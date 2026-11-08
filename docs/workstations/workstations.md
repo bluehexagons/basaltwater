@@ -13,7 +13,7 @@ profile with `--control-plane` and select the agent tools you need (GitHub CLI
 and Codex CLI in this example). [Install the launcher](../getting-started/installation.md) first:
 
 ```bash
-sudo basaltw setup agent_workstation localhost "$USER" \
+sudo basaltw setup agent_workstation localhost "$USER" --agent-tool codex \
   --control-plane --desktop xfce --rdp --rdp-existing-password
 ```
 
@@ -46,7 +46,7 @@ distribution. The server, pairing, and update model is documented in
 | `workstation_desktop` | Desktop, Firefox ESR, and CLI tools |
 | `pc_dev` | Desktop, Firefox ESR, LibreOffice, SMB client packages, Remmina, and CLI tools |
 | `workstation_dev` | Desktop, Firefox ESR, and CLI tools including Neovim |
-| `agent_workstation` | Developer workstation defaults plus GitHub CLI and Codex |
+| `agent_workstation` | Developer workstation defaults plus GitHub CLI; explicit provider required |
 | `agent_code_vm` | Agent workstation plus Geany, T3 Code web, RDP, pairing, and read-write Git/auth defaults |
 
 The default desktop is XFCE. All workstation profiles use Debian's Firefox ESR
@@ -106,7 +106,7 @@ These choices do not enable language runtimes or change desktop/RDP settings.
 
 ```bash
 # Add to your usual graphical VM setup command, retaining its other options
-basaltw setup agent_code_vm 10.0.0.25 agent --lan-access \
+basaltw setup agent_code_vm 10.0.0.25 agent --lan-access --agent-tool codex \
   --inkscape --gimp --av-tools
 
 # Optional painting, sound and video editors
@@ -122,13 +122,13 @@ Add Blender to your usual setup command, retaining its other desired options:
 
 ```bash
 # Graphical Debian coding VM
-basaltw setup agent_code_vm 10.0.0.25 agent --blender --lan-access
+basaltw setup agent_code_vm 10.0.0.25 agent --blender --lan-access --agent-tool codex
 
 # Headless Debian rendering host
-basaltw setup agent_vm 10.0.0.24 agent --blender
+basaltw setup agent_vm 10.0.0.24 agent --blender --agent-tool codex
 
 # Existing CachyOS KDE desktop; run as its desktop user, without sudo
-basaltw setup agent_cachyos localhost --blender
+basaltw setup agent_cachyos localhost --blender --agent-tool codex
 ```
 
 Preview a command with `--dry-run` before applying it. On Debian, the selection
@@ -151,7 +151,7 @@ without a desktop or RDP, use `agent_vm`. Add only the language runtimes your
 projects need:
 
 ```bash
-basaltw setup agent_vm 10.0.0.24 agent \
+basaltw setup agent_vm 10.0.0.24 agent --agent-tool codex \
   --node --python --go --agent-config active \
   --git-access read --repo https://github.com/user/project.git
 ```
@@ -175,7 +175,7 @@ capacity, project language runtimes, browser fallback, and network access
 remain operator choices:
 
 ```bash
-basaltw setup agent_code_vm 10.0.0.25 agent \
+basaltw setup agent_code_vm 10.0.0.25 agent --agent-tool codex \
   --provision-on pve1 --name agent-1 \
   --image-storage local \
   --memory 4G --cores 4 \
@@ -223,7 +223,7 @@ including SSH-only sessions and checks that must continue while the T3 Code
 application is closed:
 
 ```bash
-basaltw setup agent_code_vm 10.0.0.25 agent \
+basaltw setup agent_code_vm 10.0.0.25 agent --agent-tool codex \
   --browser-automation playwright
 ```
 
@@ -238,7 +238,7 @@ For a graphical Debian workstation, keep the default desktop profile, select
 XFCE for the RDP session, and restrict RDP to the management network:
 
 ```bash
-basaltw setup agent_workstation 10.0.0.25 agent \
+basaltw setup agent_workstation 10.0.0.25 agent --agent-tool codex \
   --control-plane --desktop xfce --rdp \
   --password "$RDP_PASSWORD" --rdp-source 10.0.0.0/24 \
   --agent-config active \

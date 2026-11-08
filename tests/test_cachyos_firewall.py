@@ -38,7 +38,7 @@ class FirewallTests(unittest.TestCase):
 
     def config(self, *options):
         return cachyos_config_from_args(self.parser.parse_args([
-            "setup", "agent_cachyos", "localhost", "human", *options,
+            "setup", "agent_cachyos", "localhost", "human", "--agent-tool", "codex", *options,
         ]))
 
     def test_explicit_sources_roundtrip_and_no_lan_is_supported(self):

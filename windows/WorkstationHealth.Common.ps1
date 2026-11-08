@@ -81,15 +81,14 @@ function Get-NativeWorkstationHealth {
     $checks.Add([pscustomobject]@{ Name = 'setup'; State = $(if ($complete) { 'ok' } else { 'failed' });
         Command = $null; Detail = "Saved setup phase: $($Saved.Phase)." })
     $selected = { param($Name) return $Saved.PSObject.Properties[$Name] -and [bool]$Saved.$Name }
-    $tools = @('git', 'git-bash', 'gh', 'codex', 'pwsh')
+    $tools = @('git', 'git-bash', 'gh', 'pwsh')
     if ($Saved.PSObject.Properties['AgentTool']) {
         foreach ($tool in $Saved.AgentTool) {
             if ($tool -notin @('gh', 'codex', 'claude', 'opencode')) { throw 'Unsupported provider in saved Windows setup' }
             $tools += $tool
         }
     }
-    # Codex is part of every native profile and setup installs npm providers
-    # even when the explicit Node selection is false or absent in older state.
+    # Setup installs npm providers' runtime even without explicit Node selection.
     if ((& $selected 'Node') -or 'codex' -in $tools -or 'opencode' -in $tools) { $tools += @('node', 'npm') }
     if ((& $selected 'Python') -or (& $selected 'GameDev')) { $tools += @('uv', 'python') }
     if ((& $selected 'Go') -or (& $selected 'GameDev')) { $tools += 'go' }

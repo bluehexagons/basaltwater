@@ -29,7 +29,7 @@ class MusicToolsTests(unittest.TestCase):
         omitted = parser.parse_args(["vm.example", "agent"])
         self.assertIsNone(omitted.install_musescore)
         for flag, enabled in (("--musescore", True), ("--no-musescore", False)):
-            args = parser.parse_args(["vm.example", "agent", flag])
+            args = parser.parse_args(["vm.example", "agent", "--agent-tool", "codex", flag])
             config = SetupConfig.from_args(args, "agent_code_vm")
             self.assertEqual(config.install_musescore, enabled)
             restored = SetupConfig.from_dict(config.host, config.system_type, config.to_dict())
@@ -95,7 +95,7 @@ class MusicToolsTests(unittest.TestCase):
 
     def test_audio_bundle_is_optional_deduplicated_and_persisted_as_packages(self):
         parser = create_setup_argument_parser("test")
-        args = parser.parse_args(["vm.example", "agent", "--apt-install", "sox",
+        args = parser.parse_args(["vm.example", "agent", "--agent-tool", "codex", "--apt-install", "sox",
                                   "--audio-tools", "--audio-tools"])
         self.assertEqual(args.apt_packages, ["sox", "libsox-fmt-all", "alsa-utils", "pulseaudio-utils"])
         config = SetupConfig.from_args(args, "agent_code_vm")
@@ -154,7 +154,7 @@ class MusicToolsTests(unittest.TestCase):
 
     def test_pdf_bundle_deduplicates_and_round_trips_without_selecting_other_media(self):
         parser = create_setup_argument_parser("test")
-        args = parser.parse_args(["vm.example", "agent", "--apt-install", "poppler-utils", "--pdf-tools", "--pdf-tools"])
+        args = parser.parse_args(["vm.example", "agent", "--agent-tool", "codex", "--apt-install", "poppler-utils", "--pdf-tools", "--pdf-tools"])
         self.assertEqual(args.apt_packages, ["poppler-utils"])
         config = SetupConfig.from_args(args, "agent_code_vm")
         saved = SetupConfig.from_dict(config.host, config.system_type, config.to_dict())
@@ -163,7 +163,7 @@ class MusicToolsTests(unittest.TestCase):
         self.assertIn("--apt-install poppler-utils", saved.to_setup_command())
         self.assertFalse(config.install_av_tools)
         self.assertFalse(config.install_musescore)
-        baseline = SetupConfig.from_args(parser.parse_args(["vm.example", "agent"]), "agent_code_vm")
+        baseline = SetupConfig.from_args(parser.parse_args(["vm.example", "agent", "--agent-tool", "codex"]), "agent_code_vm")
         self.assertEqual(config.include_desktop, baseline.include_desktop)
         self.assertEqual(remote.parse_args(["--pdf-tools"]).apt_packages, ["poppler-utils"])
         self.assertIsNone(parser.parse_args(["vm.example", "agent"]).apt_packages)

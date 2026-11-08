@@ -79,7 +79,7 @@ and Start Menu development shell.
 Open PowerShell as the account that will use these tools and paste:
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.ps1))) -Profile agent_windows -Node -Python
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.ps1))) -Profile agent_windows -AgentTool codex -Node -Python
 ```
 
 Append `-Plan` to preview, `-Sunshine` for Moonlight desktop streaming, or

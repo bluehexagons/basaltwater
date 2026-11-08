@@ -34,9 +34,10 @@ settings used by an existing session.
 
 ## What setup installs and configures
 
-Agent VM and workstation profiles normally select GitHub CLI and Codex. Claude
-Code and OpenCode are opt-in agent tools. Vendor installers and the managed
-updater supply the CLIs; provider configuration is reconciled before a selected T3
+Agent VM and workstation profiles select GitHub CLI. Choose one or more
+providers explicitly with `--agent-tool codex`, `--agent-tool claude`, or
+`--agent-tool opencode`. Vendor installers and the managed updater supply the
+CLIs; provider configuration is reconciled before a selected T3
 Code interface starts. Model selection, reasoning effort, authentication, and
 permissions retain their existing configuration.
 

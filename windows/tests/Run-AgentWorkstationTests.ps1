@@ -236,7 +236,8 @@ try {
     $global:AgentInstallerTestNeedsShell = $false
     $global:AgentInstallerTestShellOptions = $null
     try {
-        $splitPlan = & (Join-Path $repo 'install.ps1') -Profile agent_windows -StorageDrive f: -Plan 6>&1 | Out-String
+        Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -Plan } 'requires -AgentTool'
+        $splitPlan = & (Join-Path $repo 'install.ps1') -Profile agent_windows -AgentTool codex -StorageDrive f: -Plan 6>&1 | Out-String
         Assert-True ($splitPlan -match 'F:\\Basaltwater\\cache\\npm') 'Checkout setup did not resolve the drive-based layout'
         Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -StorageDrive F -StorageRoot 'F:\custom' -Plan } 'Choose StorageDrive or StorageRoot'
         foreach ($revision in @(('a' * 40), ('b' * 40), ('c' * 40), ('d' * 40))) {
@@ -319,12 +320,12 @@ function Invoke-NativeAgentSetup {
             [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
         try {
             foreach ($profile in @('agent_windows', 'server_wsl')) {
-                Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile $profile } 'Another Windows setup'
+                Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile $profile -AgentTool codex } 'Another Windows setup'
             }
             Assert-True ($global:AgentInstallerTestRequests.Count -eq 0) 'Locked fresh setup resolved source before taking the lock'
             Assert-True (-not (Test-Path -LiteralPath (Join-Path $lockDirectory 'windows-setup.json'))) 'Locked fresh setup wrote state'
         } finally { $held.Dispose() }
-        Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -Channel dev -Node -Python -GameDev -ShaderTools -Godot -Sunshine -StorageRoot 'F:\coding with spaces' } 'interrupted native setup'
+        Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -AgentTool codex -Channel dev -Node -Python -GameDev -ShaderTools -Godot -Sunshine -StorageRoot 'F:\coding with spaces' } 'interrupted native setup'
         Assert-True ($global:AgentInstallerTestRequests[-1] -match '/commits/main$') 'Dev channel did not resolve main'
         $nativeStatePath = Join-Path $env:LOCALAPPDATA 'Basaltwater\windows-setup.json'
         $nativeState = Get-Content -LiteralPath $nativeStatePath -Raw | ConvertFrom-Json
@@ -380,7 +381,7 @@ function Invoke-NativeAgentSetup {
         } finally { $held.Dispose() }
         Assert-True ($global:AgentInstallerTestCalls[-1].Node -and $global:AgentInstallerTestCalls[-1].Python -and
             $global:AgentInstallerTestCalls[-1].Desktop) 'Native resume lost the saved tools/desktop defaults'
-        Assert-True ('codex' -in $global:AgentInstallerTestCalls[-1].Tools) 'Native default provider was not saved'
+        Assert-True ('codex' -in $global:AgentInstallerTestCalls[-1].Tools) 'Selected native provider was not saved'
         $beforeRuntimePlan = (Get-FileHash -LiteralPath $nativeStatePath).Hash
         & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -Go -AgentTool claude -Node:$false -Python:$false -T3CodeDesktop:$false -Plan
         $selected = $global:AgentInstallerTestCalls[-1]
@@ -499,7 +500,7 @@ function Invoke-NativeAgentSetup {
         $savedInstallerLocal = $env:LOCALAPPDATA
         try {
             $env:LOCALAPPDATA = Join-Path $temporary 'fresh old source account'
-            Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -GameDev } 'Selected source does not support'
+            Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -AgentTool codex -GameDev } 'Selected source does not support'
             Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'Basaltwater\windows-setup.json'))) 'Unsupported source was saved as an installation'
         } finally { $env:LOCALAPPDATA = $savedInstallerLocal }
         Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -BuildServer -Plan } 'not available with agent_windows'
@@ -616,12 +617,17 @@ function Invoke-NativeAgentSetup {
     $script:AddedPaths = @(); $script:NpmCalls = @(); $script:NpmExit = 0
     $script:VersionExit = 0; $script:FailPackage = $false
     $script:UvCalls = @(); $script:UvExit = 0
+    Assert-Throws { Invoke-NativeAgentSetup -Source $repo -Plan } 'requires -AgentTool'
+    Invoke-NativeAgentSetup -Source $repo -AgentTool claude -Plan
+    Assert-True ($script:NpmCalls.Count -eq 0) 'Claude-only plan selected npm providers'
     Invoke-NativeAgentSetup -Source $repo -AgentTool 'gh,codex,claude,opencode' -Node -Python -Go -NodeVersions -T3CodeDesktop -Sunshine -Plan
     Assert-True ($script:EnsureCalls -eq 0 -and $script:Packages.Count -eq 0) 'Plan invoked a package manager'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.claude'))) 'Plan changed the fake home'
     Invoke-NativeAgentSetup -Source $repo -AgentTool 'gh,codex,claude,opencode' -Node -Python -Go -NodeVersions -T3CodeDesktop
     Assert-True ($script:Packages.Count -eq 8) 'Fresh setup missed a selected native package'
     Assert-True ($script:NpmCalls.Count -eq 2) 'Fresh setup missed npm providers'
+    Invoke-NativeAgentSetup -Source $repo -AgentTool claude
+    Assert-True ($script:NpmCalls.Count -eq 2) 'Claude-only setup installed Codex or OpenCode'
     Assert-True ($script:NpmCalls[0] -contains '--prefix') 'npm install was not scoped to the user prefix'
     Assert-True (Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.claude\skills\basaltwater-subagents\references\t3-orchestration.md')) 'Claude supporting resources were not copied'
     Assert-True (Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.agents\skills\basaltwater-windows-workspace\SKILL.md')) 'Windows workspace guidance was not installed'
@@ -632,10 +638,10 @@ function Invoke-NativeAgentSetup {
     Push-Location -LiteralPath $pinnedProject
     try {
         $env:UV_PYTHON = '3.11'
-        Invoke-NativeAgentSetup -Source $repo -Python
+        Invoke-NativeAgentSetup -Source $repo -AgentTool codex -Python
         Assert-True ($env:UV_PYTHON -eq '3.11' -and $script:UvCalls[-2] -contains '--default') 'Host setup changed the caller Python request'
         $script:UvExit = 23
-        Assert-Throws { Invoke-NativeAgentSetup -Source $repo -Python } 'Python installation failed'
+        Assert-Throws { Invoke-NativeAgentSetup -Source $repo -AgentTool codex -Python } 'Python installation failed'
         Assert-True ($env:UV_PYTHON -eq '3.11') 'Python failure lost the caller request'
     } finally {
         $script:UvExit = 0
@@ -643,16 +649,16 @@ function Invoke-NativeAgentSetup {
         Pop-Location
     }
     $script:Packages = @(); $script:NpmCalls = @()
-    Invoke-NativeAgentSetup -Source $repo -T3CodeDesktop
+    Invoke-NativeAgentSetup -Source $repo -AgentTool codex -T3CodeDesktop
     Assert-True ($script:Packages.Count -eq 4 -and $script:NpmCalls.Count -eq 1 -and
         $script:Packages -contains 'T3Tools.T3Code') 'Rerun skipped selected package/provider updates'
     $script:VersionExit = 9
-    Assert-Throws { Invoke-NativeAgentSetup -Source $repo } 'version check failed'
+    Assert-Throws { Invoke-NativeAgentSetup -Source $repo -AgentTool codex } 'version check failed'
     $script:VersionExit = 0
     $script:Tools.Remove('codex'); $script:NpmExit = 23
-    Assert-Throws { Invoke-NativeAgentSetup -Source $repo } 'npm installation failed'
+    Assert-Throws { Invoke-NativeAgentSetup -Source $repo -AgentTool codex } 'npm installation failed'
     $script:Tools = @{}; $script:FailPackage = $true
-    Assert-Throws { Invoke-NativeAgentSetup -Source $repo } 'simulated package failure'
+    Assert-Throws { Invoke-NativeAgentSetup -Source $repo -AgentTool codex } 'simulated package failure'
     Assert-Throws { Invoke-NativeAgentSetup -Source $repo -AgentTool unsupported -Plan } 'Unsupported native agent tool'
     Write-Host 'Native agent workstation tests passed.'
 } finally {

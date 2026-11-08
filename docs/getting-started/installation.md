@@ -29,7 +29,7 @@ updates and desktop configuration to you. The Debian examples below configure
 a broader host stack and do not apply to CachyOS.
 For Codex with T3 Code's native desktop package, follow the
 [complete CachyOS desktop installer example](../workstations/cachyos.md#install-with-t3-code-desktop).
-It uses `--local-setup agent_cachyos --t3code-desktop` as the desktop user,
+It uses `--local-setup agent_cachyos --t3code-desktop` with `--agent-tool codex` as the desktop user,
 without running the installer under `sudo`.
 
 ## Prerequisites
@@ -84,7 +84,7 @@ Open PowerShell as the intended account and copy the entire block:
     $installer = Join-Path $env:TEMP ("basaltwater-" + [guid]::NewGuid() + ".ps1")
     try {
         Invoke-WebRequest 'https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.ps1' -UseBasicParsing -OutFile $installer -TimeoutSec 120 -ErrorAction Stop
-        powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer -Profile agent_windows -Node -Python
+        powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer -Profile agent_windows -AgentTool codex -Node -Python
         if ($LASTEXITCODE -ne 0) { throw "Windows workstation setup failed (exit code $LASTEXITCODE)." }
     } finally {
         Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
@@ -181,7 +181,7 @@ sh -c '
   trap cleanup EXIT
   curl -fsSL --max-time 120 https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh -o "$installer" &&
   sudo sh "$installer" "$@"
-' sh --user "$USER" --local-setup agent_workstation \
+' sh --user "$USER" --local-setup agent_workstation --agent-tool codex \
     --control-plane --desktop xfce --rdp --rdp-existing-password
 ```
 
@@ -199,10 +199,11 @@ configured rate-limited firewall rule. See [XRDP](../workstations/xrdp.md) for c
 firewall details.
 
 The `agent_vm`, `agent_workstation`, and `agent_code_vm` profiles default to
-GitHub CLI and Codex. `--agent-tool` values add to those defaults and accept
-comma-separated lists; use `--no-agent-tool` to remove a default. The
+GitHub CLI. No provider is selected by default. Agent setup requires at least
+one of `--agent-tool codex`, `--agent-tool claude`, or `--agent-tool opencode`.
+Values accept comma-separated lists; use `--no-agent-tool` to remove a default. The
 `agent_code_vm` profile additionally defaults to Geany, T3 Code, RDP, T3
-pairing, read-write Git, active GitHub auth, and target-owned Codex login. It
+pairing, read-write Git, active GitHub auth, and target-owned login when Codex is selected. It
 does not assume a management network; add `--lan-access`, `--access-source`, or service-specific
 source flags explicitly. Node.js is installed automatically because T3 Code
 requires it. Playwright remains available explicitly with

@@ -541,7 +541,7 @@ class DesktopRefreshTests(unittest.TestCase):
             with self.subTest(option=option):
                 parser, _, _ = basaltwater.create_basaltwater_parser()
                 config = cachyos_config_from_args(parser.parse_args(
-                    ["setup", "agent_cachyos", "localhost", "human", *option]))
+                    ["setup", "agent_cachyos", "localhost", "human", "--agent-tool", "codex", *option]))
                 functions = [function for _, function in build_cachyos_steps(config)]
                 install = (cachyos_steps.install_cachyos_t3_desktop if config.t3code_desktop
                            else cachyos_steps.install_cachyos_t3)

@@ -444,7 +444,7 @@ class CodexLifecycleTests(unittest.TestCase):
         import basaltwater
         from lib.cachyos import cachyos_config_from_args, preflight_cachyos
         parser, _, _ = basaltwater.create_basaltwater_parser()
-        config = cachyos_config_from_args(parser.parse_args(["setup", "agent_cachyos", "localhost", "human"]))
+        config = cachyos_config_from_args(parser.parse_args(["setup", "agent_cachyos", "localhost", "human", "--agent-tool", "codex"]))
         owner = type("Owner", (), {"pw_dir": str(self.home), "pw_uid": 1000})()
         with patch("lib.cachyos.is_cachyos", return_value=True), \
                 patch("lib.cachyos.platform.machine", return_value="x86_64"), \

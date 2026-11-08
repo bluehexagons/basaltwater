@@ -11,7 +11,7 @@ Choose your software before the first setup. Add these flags after
 or preview the complete selection if you installed only the launcher:
 
 ```fish
-basaltw setup agent_cachyos localhost --t3code-desktop --node --python --git-lfs \
+basaltw setup agent_cachyos localhost --t3code-desktop --node --python --git-lfs --agent-tool codex \
   --godot --material-maker --blender --gimp --inkscape --krita --remmina \
   --sunshine --moonlight --lan-access --etcher --butler --steamcmd --dry-run
 ```

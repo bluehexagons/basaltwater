@@ -84,6 +84,36 @@ Run subscription login again to switch back to your ChatGPT account.
 See OpenAI's [authentication guide](https://learn.chatgpt.com/docs/auth) for
 account requirements and billing modes.
 
+## Claude Code attended testing
+
+Select Claude explicitly; no coding provider is installed by default:
+
+```bash
+basaltw setup agent_vm HOST USER --agent-tool claude --dry-run
+basaltw setup agent_vm HOST USER --agent-tool claude
+basaltw agent auth status HOST USER --tool claude --json
+```
+
+As the intended account holder, open a terminal on the target and run `claude`
+to authenticate. Use `/status` to confirm the account and billing route before
+an attended turn in a synthetic repository. Exercise reading, one small edit,
+approval, cancellation, and a new session after setup refreshes skills/settings.
+Use `/logout` afterward when retiring the disposable environment.
+
+Auth status inventories the standard credential file and reports the names of
+nonempty Claude credential, endpoint, config-directory, and cloud-platform
+environment overrides visible to its remote SSH process. Values are never
+reported and Claude is never launched by this diagnostic. A missing standard
+credential file can be valid for another auth route. This does not inspect a
+running T3 service's environment or resolve project settings and key helpers.
+Verify those in the actual provider session. For subscription testing, clear
+API credentials and cloud/endpoint overrides in that session and confirm
+`/status`; never infer billing from file presence. See Anthropic's
+[authentication guidance](https://code.claude.com/docs/en/authentication).
+
+Basaltwater's `agent auth login` command remains Codex-specific. Saved and
+scheduled tasks remain Codex-only; the Claude test is attended terminal use.
+
 ## Supported files
 
 | Tool | Target path |
@@ -117,7 +147,7 @@ Authentication defaults are independent for each provider:
 Codex login and another provider's file import can be combined:
 
 ```bash
-basaltw setup agent_vm HOST USER --agent-tool claude \
+basaltw setup agent_vm HOST USER --agent-tool codex,claude \
   --agent-auth login --agent-auth-file claude /run/secrets/claude.json \
   --git-access read --git-auth active
 ```

@@ -47,7 +47,9 @@ def controller_config(args: argparse.Namespace) -> SetupConfig:
     copied.ssh_key = None
     if getattr(copied, "install_ssh", None) is None:
         copied.install_ssh = True
-    return cachyos_config_from_args(copied)
+    config = cachyos_config_from_args(copied)
+    config.validate_agent_provider_selection()
+    return config
 
 
 def _identity_path(value: str | None) -> str | None:

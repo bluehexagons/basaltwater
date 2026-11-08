@@ -25,7 +25,7 @@ from plugins.workstation import build_workstation_steps
 
 TOKEN = "0123456789abcdef0123456789abcdef"
 PROFILE = [
-    "setup", "agent_code_vm", "192.168.0.42", "agent",
+    "setup", "agent_code_vm", "192.168.0.42", "agent", "--agent-tool", "codex",
     "--provision-on", "192.168.0.2", "--name", "agent",
     "--password", "test-only user password",
     "--device-pairing-password", "test-only pairing password",

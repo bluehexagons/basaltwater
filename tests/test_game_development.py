@@ -34,7 +34,7 @@ class GameDevelopmentTests(unittest.TestCase):
         stack.enter_context(patch.object(steps, "is_dry_run", return_value=False))
         stack.enter_context(patch("sys.stdout", new_callable=io.StringIO))
         self.config = SetupConfig(host="vm.example", username="human", system_type="agent_code_vm",
-                                  include_desktop=True, install_game_dev=True)
+                                  agent_tools=["codex"], include_desktop=True, install_game_dev=True)
 
     def test_flag_roundtrips_and_uses_the_debian_builder(self):
         config = SetupConfig.from_dict("vm.example", "agent_code_vm", self.config.to_dict())

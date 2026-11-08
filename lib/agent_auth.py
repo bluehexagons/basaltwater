@@ -191,6 +191,13 @@ if tool == 'codex' and credential['present']:
         }}
 
 authentication = None
+environment_overrides = []
+if tool == 'claude':
+    environment_overrides = [name for name in (
+        'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL',
+        'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_USE_BEDROCK',
+        'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY',
+    ) if os.environ.get(name)]
 if tool == 'gh' and tool_path and credential['present']:
     result = subprocess.run(
         [tool_path, 'auth', 'status', '--hostname', {host_literal}],
@@ -207,6 +214,7 @@ print(json.dumps({{
     'path': tool_path,
     'credential': credential,
     'authentication': authentication,
+    'environment_overrides': environment_overrides,
 }}))
 """
 
@@ -368,6 +376,11 @@ def run_agent_auth_status(args: Any) -> int:
             auth_detail = "; authentication passed"
         elif auth is False:
             auth_detail = "; authentication failed"
+        if result.get("tool") == "claude":
+            auth_detail += "; verify account and billing with /status in Claude Code"
+            overrides = result.get("environment_overrides", [])
+            if overrides:
+                auth_detail += "; environment overrides: " + ", ".join(overrides)
         if result.get("tool") == "codex" and isinstance(credential, dict):
             details = credential.get("details")
             if isinstance(details, dict):

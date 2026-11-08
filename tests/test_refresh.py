@@ -204,6 +204,7 @@ class DebianRefreshTests(unittest.TestCase):
             with self.subTest(profile=profile):
                 config = SetupConfig(host="localhost", username="human", system_type=profile,
                                      machine_type="hardware",
+                                     agent_tools=["codex"] if profile.startswith("agent_") else [],
                                      git_access="read-write" if profile == "agent_code_vm" else "none")
                 if config.enable_rdp:
                     config.rdp_existing_password = True

@@ -40,7 +40,7 @@ Proposed commands (not yet implemented):
 
 ```bash
 basaltw headscale add office --url https://vpn.example.com
-basaltw setup agent_vm agent.example.com --tailscale office
+basaltw setup agent_vm agent.example.com --tailscale office --agent-tool codex
 basaltw headscale onboarding office
 ```
 

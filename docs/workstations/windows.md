@@ -25,7 +25,7 @@ It installs the standard tools above,
 plus Node.js LTS and Python/uv:
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.ps1))) -Profile agent_windows -Node -Python
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.ps1))) -Profile agent_windows -AgentTool codex -Node -Python
 ```
 
 Append optional flags to the same command:
@@ -70,7 +70,7 @@ installing packages, changing PATH or writing skills. An existing installation
 uses its saved source and selections for the preview; a fresh one uses the checkout:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Profile agent_windows -Node -Python -Plan
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Profile agent_windows -AgentTool codex -Node -Python -Plan
 ```
 
 Omitting `-Plan` follows the normal pinned-source installation flow. Use
@@ -83,8 +83,10 @@ or installs the current stable Python when none is managed. It ignores the
 invoking project's version files/configuration and temporarily clears
 `UV_PYTHON` for host selection, restoring that process value even on failure.
 It does not replace another installation. Select project Python pins separately.
-`-Go` selects Go. `-AgentTool claude,opencode` adds providers to GitHub CLI and
-Codex. npm installations use the current account's `%APPDATA%\npm` prefix and
+`-Go` selects Go. No coding provider is installed by default; new setup requires
+`-AgentTool codex`, `-AgentTool claude`, or `-AgentTool opencode` (comma-separated
+combinations are supported). GitHub CLI remains a utility default.
+npm installations use the current account's `%APPDATA%\npm` prefix and
 invoke `npm.cmd`, avoiding PowerShell's script-policy restriction on `npm.ps1`.
 Tool discovery follows PATH order for `.exe` and `.cmd` commands, so an updated
 npm shim can take precedence over an older desktop-bundled executable later
@@ -349,7 +351,7 @@ The CLI reports setup failures through its exit code, including restart needs.
 native Windows application/task interface. Linux controller, server and agent
 subcommands remain unavailable on Windows.
 `refresh`/`info`/`doctor` require the pinned installation created by
-`install.ps1 -Profile agent_windows`. Existing
+`install.ps1 -Profile agent_windows -AgentTool PROVIDER`. Existing
 PCs without the launcher can use the same current installer download with
 `-Profile agent_windows`; existing selections are retained automatically.
 

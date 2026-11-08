@@ -357,7 +357,7 @@ contract, unattended job ownership, exact-text review, recovery and limits.
 | Type | Description |
 |------|-------------|
 | `control_plane` | Debian infrastructure control plane with administrator tools |
-| `agent_vm` | Headless agent coding VM; defaults to GitHub CLI and Codex |
+| `agent_vm` | Headless agent coding VM; GitHub CLI default, explicit coding provider required |
 | `agent_workstation` | Graphical agent coding workstation; adds Firefox ESR |
 | `agent_code_vm` | Full graphical agent VM with T3 Code and Geany; Playwright is opt-in |
 | `agent_cachyos` | Coding tools for an existing CachyOS KDE workstation; supports local setup and remote-controller setup over SSH |
@@ -828,7 +828,7 @@ normal port-22 access before it expires. The existing account password is
 used only for this one-shot window:
 
 ```fish
-basaltw setup agent_cachyos localhost --ssh --ssh-password-window 15 --lan-access
+basaltw setup agent_cachyos localhost --ssh --ssh-password-window 15 --lan-access --agent-tool codex
 ssh-copy-id -p 2222 USER@WORKSTATION_PRIVATE_IP
 ssh USER@WORKSTATION_PRIVATE_IP
 ```
@@ -892,10 +892,12 @@ workstation subset documented in [CachyOS](../workstations/cachyos.md). `agent_v
 recommended terminal-only profile,
 `agent_workstation` adds a desktop and Firefox ESR, and `agent_code_vm` adds
 the common T3 Code web service, Geany, RDP, private source ranges, protected T3
-pairing, read-write Git, active GitHub auth, and target-owned Codex login. Playwright remains an explicit
+pairing, read-write Git, active GitHub auth, and target-owned login when Codex is selected. Playwright remains an explicit
 fallback through `--browser-automation playwright` for SSH-only or standalone
 Codex and OpenCode sessions.
-All three default to GitHub CLI and Codex. `--agent-tool` values add to those
+All three default to GitHub CLI. Select at least one coding provider explicitly
+with `--agent-tool codex`, `--agent-tool claude`, or `--agent-tool opencode`.
+`--agent-tool` values add to those
 defaults and accept comma-separated lists; use `--no-agent-tool` to remove a
 default. The full profile does not choose Proxmox capacity. It installs Node.js
 automatically for T3 Code, while Go and other project runtimes remain optional.
@@ -948,12 +950,12 @@ See [`browser-automation.md`](../agents/browser-automation.md) for the separate
 Playwright runtime, MCP registration, and browser security model.
 
 For a headless T3 Code VM without selecting a broader profile, use
-`--t3code-ready`. It adds GitHub CLI and Codex, read-write Git, the T3 web
+`--t3code-ready`. It adds GitHub CLI, read-write Git, the T3 web
 service, and protected pairing. Credentials remain opt-in through the normal
 `--git-auth` and `--agent-auth` options.
 
 ```bash
-basaltw setup agent_vm 10.0.0.10 agentuser \
+basaltw setup agent_vm 10.0.0.10 agentuser --agent-tool codex \
   --agent-config active \
   --git-access read --repo https://github.com/user/my_codebase.git
 ```
@@ -994,15 +996,15 @@ sudo basaltw setup workstation_dev localhost "$USER" \
 
 | Flag | Description |
 |------|-------------|
-| `--t3code-ready` | Add the headless T3 Code-ready profile: GitHub CLI, Codex, read-write Git, T3 web service, and protected pairing |
+| `--t3code-ready` | Add GitHub CLI, read-write Git, T3 web service, and protected pairing; requires explicit provider selection |
 | `--nopasswd` / `--no-nopasswd` | Retain or remove unrestricted passwordless sudo for the VM setup identity; capability opt-in |
 | `--privilege-broker` / `--no-privilege-broker` | Re-enable or disable the web panel's default approval engine; see [Privilege approvals](../agents/privilege-approvals.md) |
 | `--approval-panel [PORT]` / `--no-approval-panel` | Enable or remove a separately authenticated standalone HTTPS panel at the managed host (port 9444 by default); main-panel approvals remain available when only this listener is removed |
 | `--approval-panel-password [PASSWORD]` | Assign or rotate the standalone panel password; omitting the value prompts privately and the stored setup command excludes the password hash. Alias: `--privilege-broker-password`. A command-line value may appear in shell history and process arguments. |
 | `--harden-agent` / `--no-harden-agent` | Apply or remove administrator/root-equivalent supplementary-group restrictions and the stricter agent policy |
 | `--harden-user` / `--no-harden-user` | Apply or remove the password lock, private home, sensitive system-data/device-group restrictions, SSH forwarding/user-rc restrictions, and disabled lingering; enabling implies agent hardening and is incompatible with RDP |
-| `--agent-tool TOOL[,TOOL...]` | Add one or more provider tools (`gh`, `codex`, `claude`, or `opencode`) to profile defaults |
-| `--no-agent-tool TOOL[,TOOL...]` | Disable one or more profile-default provider tools |
+| `--agent-tool TOOL[,TOOL...]` | Select tools (`gh`, `codex`, `claude`, or `opencode`); agent setups require at least one coding provider; repeat or comma-separate |
+| `--no-agent-tool TOOL[,TOOL...]` | Disable one or more default or saved agent tools |
 | `--web-interface INTERFACE` | Install an explicit headless web interface; currently `t3code`; CachyOS uses its local user service |
 | `--t3code-desktop` | Latest CachyOS only: install or check/update `t3code-bin` through the default Shelly CLI (paru/yay if absent), preserving package-review prompts; disable the Basaltwater web service and preserve data; mutually exclusive with `--web-interface` |
 | `--web-interface-host IP` | Bind address for the selected web interface; managed VM/server defaults to loopback or `0.0.0.0` with a source, while CachyOS accepts loopback or an explicit private IPv4 |
@@ -1073,7 +1075,7 @@ also deduplicated into a final `Run notes:` section so important non-fatal
 issues are easy to find without scanning the full transcript.
 
 Agent tools are selected with repeatable or comma-separated `--agent-tool`
-flags. The three agent profiles provide the narrow `gh` plus `codex` default;
+flags. The agent profiles default to `gh` only; coding providers are explicit;
 supplied tools add to that set, while `--no-agent-tool` removes selected
 defaults. Other profiles retain no implicit agents. Add unrelated packages with
 `--apt-install`, and add runtimes with their individual flags. `--godot` works

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import shlex
 import unittest
+from unittest.mock import patch
 from argparse import Namespace
 
 from lib.arg_parser import add_setup_arguments, create_setup_argument_parser
@@ -21,12 +22,46 @@ def _setup_args(**overrides: object) -> Namespace:
         "desktop": None,
         "install_office": None,
         "enable_rdp": None,
+        "agent_tools": ["codex"],
     }
     values.update(overrides)
     return Namespace(**values)
 
 
 class TestAgentProfiles(unittest.TestCase):
+    def test_cli_rejects_missing_provider_before_target_work(self) -> None:
+        import basaltwater
+
+        parser, _, _ = basaltwater.create_basaltwater_parser()
+        args = parser.parse_args(["setup", "agent_vm", "192.0.2.10", "agent", "--dry-run"])
+        with patch.object(basaltwater, "_load_cached_provisioning_metadata") as target:
+            self.assertEqual(basaltwater.run_setup_command(args), 1)
+        target.assert_not_called()
+
+    def test_agent_setups_require_explicit_providers(self) -> None:
+        for profile in ("agent_vm", "agent_workstation", "agent_cachyos"):
+            with self.subTest(profile=profile):
+                config = SetupConfig.from_args(_setup_args(agent_tools=None), profile)
+                self.assertEqual(config.selected_agent_tools(), ["gh"])
+                with self.assertRaisesRegex(ValueError, "at least one provider"):
+                    config.validate_agent_provider_selection()
+
+    def test_claude_only_roundtrips_without_codex_login_or_install(self) -> None:
+        parser = create_setup_argument_parser("test", for_remote=True)
+        for profile in ("agent_vm", "agent_workstation", "agent_code_vm", "server_dev"):
+            config = SetupConfig.from_args(_setup_args(agent_tools=["claude"], t3code_ready=True), profile)
+            config.validate_agent_provider_selection()
+            self.assertEqual(config.selected_agent_tools(), ["gh", "claude"])
+            self.assertIsNone(config.agent_auth_source)
+            saved = SetupConfig.from_dict(config.host, profile, config.to_dict())
+            args = parser.parse_args(shlex.split(" ".join(saved.to_remote_args())))
+            args.host = config.host
+            remote = SetupConfig.from_args(args, profile)
+            self.assertEqual(remote.selected_agent_tools(), ["gh", "claude"])
+            names = [name for name, _ in get_steps_for_system_type(remote)]
+            self.assertIn("Installing Claude Code", names)
+            self.assertNotIn("Installing Codex CLI", names)
+
     def test_blender_is_opt_in_for_debian_server_and_workstation_profiles(self) -> None:
         from desktop.apps_steps import install_blender
 
@@ -50,7 +85,7 @@ class TestAgentProfiles(unittest.TestCase):
     def test_blender_flag_round_trips_through_setup_and_remote_parsers(self) -> None:
         parser = argparse.ArgumentParser()
         add_setup_arguments(parser, include_system_type=True)
-        args = parser.parse_args(["agent_vm", "192.0.2.10", "agent", "--blender"])
+        args = parser.parse_args(["agent_vm", "192.0.2.10", "agent", "--agent-tool", "codex", "--blender"])
         config = SetupConfig.from_args(args, args.system_type)
         command = shlex.split(" ".join(config.to_setup_command()))
         restored_args = parser.parse_args(command[2:])
@@ -65,13 +100,13 @@ class TestAgentProfiles(unittest.TestCase):
         disabled = parser.parse_args(["agent_vm", "192.0.2.10", "agent", "--blender", "--no-blender"])
         self.assertFalse(SetupConfig.from_args(disabled, disabled.system_type).install_blender)
 
-    def test_agent_vm_defaults_to_github_cli_and_codex(self) -> None:
+    def test_agent_vm_installs_explicit_codex_with_github_cli(self) -> None:
         config = SetupConfig.from_args(_setup_args(), "agent_vm")
 
         self.assertEqual(config.selected_agent_tools(), ["gh", "codex"])
         self.assertTrue(config.include_cli_tools)
         self.assertFalse(config.include_desktop)
-        self.assertNotIn("--agent-tool", " ".join(config.to_setup_command()))
+        self.assertIn("--agent-tool codex", " ".join(config.to_setup_command()))
         self.assertIn("--agent-tool gh", config.to_remote_args())
         self.assertIn("--agent-tool codex", config.to_remote_args())
 
@@ -269,7 +304,7 @@ class TestAgentProfiles(unittest.TestCase):
             "agent_vm",
         )
 
-        self.assertEqual(config.selected_agent_tools(), ["gh", "codex", "claude", "opencode"])
+        self.assertEqual(config.selected_agent_tools(), ["gh", "claude", "opencode"])
         command = " ".join(config.to_setup_command())
         self.assertIn("--agent-tool claude", command)
         self.assertIn("--agent-tool opencode", command)
@@ -282,7 +317,7 @@ class TestAgentProfiles(unittest.TestCase):
             "agent_vm",
         )
 
-        self.assertEqual(config.selected_agent_tools(), ["codex", "opencode"])
+        self.assertEqual(config.selected_agent_tools(), ["opencode"])
         self.assertIn("--no-agent-tool gh", " ".join(config.to_setup_command()))
 
     def test_empty_agent_tool_list_keeps_profile_defaults(self) -> None:
@@ -291,7 +326,7 @@ class TestAgentProfiles(unittest.TestCase):
             "agent_vm",
         )
 
-        self.assertEqual(config.selected_agent_tools(), ["gh", "codex"])
+        self.assertEqual(config.selected_agent_tools(), ["gh"])
 
     def test_saved_agent_profile_restores_defaults_when_tools_are_missing(self) -> None:
         config = SetupConfig.from_dict(
@@ -300,7 +335,7 @@ class TestAgentProfiles(unittest.TestCase):
             {"username": "agent"},
         )
 
-        self.assertEqual(config.selected_agent_tools(), ["gh", "codex"])
+        self.assertEqual(config.selected_agent_tools(), ["gh"])
 
     def test_saved_agent_code_vm_restores_capability_defaults(self) -> None:
         config = SetupConfig.from_dict(
@@ -308,6 +343,7 @@ class TestAgentProfiles(unittest.TestCase):
             "agent_code_vm",
             {
                 "username": "agent",
+                "agent_tools": ["gh", "codex"],
                 "include_desktop": True,
                 "include_cli_tools": True,
                 "include_workstation_dev_apps": True,

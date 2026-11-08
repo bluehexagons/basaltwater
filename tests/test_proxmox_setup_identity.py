@@ -98,6 +98,8 @@ class ProxmoxSetupIdentityTest(unittest.TestCase):
                         ["--ci-repository", "example/project", "--ci-allowed-user", "operator"]
                         if profile == "server_github_runner" else []
                     )
+                    if profile.startswith("agent_"):
+                        flags.extend(["--agent-tool", "codex"])
                     args = self.parser.parse_args([
                         "setup", profile, "192.0.2.10", *([username] if username else []),
                         "--timezone", "UTC", *flags,

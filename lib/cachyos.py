@@ -189,6 +189,7 @@ def validate_cachyos_config(config: SetupConfig) -> None:
 def preflight_cachyos(config: SetupConfig) -> None:
     """Read-only checks; dry-run plans can also be generated on the CI host."""
     validate_cachyos_config(config)
+    config.validate_agent_provider_selection()
     from lib.cachyos_ssh_policy import resolve_ssh_policy
 
     target_is_cachyos = is_cachyos()

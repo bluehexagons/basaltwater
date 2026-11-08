@@ -150,7 +150,7 @@ For unfamiliar packages or unattended builds, prefer a fresh VM and enable the
 hardened posture at creation:
 
 ```bash
-basaltw setup agent_vm 10.0.0.40 agent \
+basaltw setup agent_vm 10.0.0.40 agent --agent-tool codex \
   --provision-on pve1 \
   --harden-user \
   --git-access read \

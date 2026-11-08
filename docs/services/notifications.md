@@ -44,7 +44,7 @@ completion and failure, including setup repeated by `refresh`. It rejects
 Include targets in your initial selection:
 
 ```fish
-basaltw setup agent_cachyos localhost --node --python --git-lfs \
+basaltw setup agent_cachyos localhost --node --python --git-lfs --agent-tool codex \
   --notify webhook 'https://hooks.example.net/infra' \
   --notification-level normal --notification-strict-https
 ```

@@ -55,7 +55,7 @@ class CachyOSRefreshTests(unittest.TestCase):
 
     def config(self, *options):
         return cachyos_config_from_args(self.parser.parse_args([
-            "setup", "agent_cachyos", "localhost", "human", *options,
+            "setup", "agent_cachyos", "localhost", "human", "--agent-tool", "codex", *options,
         ]))
 
     def run_refresh(self, *options, dry_run=False):

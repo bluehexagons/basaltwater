@@ -36,7 +36,7 @@ PLUGIN = PluginDefinition(
             description="Headless agent coding VM",
             order=38,
             include_cli_tools=True,
-            default_agent_tools=("gh", "codex"),
+            default_agent_tools=("gh",),
             default_agent_auth_source="login",
             step_builder="plugins.server:build_server_steps",
         ),

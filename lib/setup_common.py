@@ -1669,6 +1669,7 @@ def setup_main(system_type: str, description: str, success_msg_fn: Callable[[Set
         return 1
     
     config = SetupConfig.from_args(args, system_type)
+    config.validate_agent_provider_selection()
 
     if not validate_username(config.username):
         print(f"Error: Invalid username: {config.username}")

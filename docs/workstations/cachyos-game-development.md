@@ -15,7 +15,7 @@ already installed, preview your first development selection in fish as the
 normal desktop account, without `sudo`:
 
 ```fish
-basaltw setup agent_cachyos localhost --t3code-desktop \
+basaltw setup agent_cachyos localhost --t3code-desktop --agent-tool codex \
   --node --python --go --godot --git-lfs --game-dev --blender --dry-run
 ```
 

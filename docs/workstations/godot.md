@@ -7,14 +7,14 @@ operator contract.
 
 ```bash
 # Graphical editor on an agent workstation
-basaltw setup agent_workstation 192.168.1.40 agent --godot
+basaltw setup agent_workstation 192.168.1.40 agent --godot --agent-tool codex
 
 # Headless editor/runtime on an SSH-only agent VM
-basaltw setup agent_vm 192.168.1.41 agent --godot
+basaltw setup agent_vm 192.168.1.41 agent --godot --agent-tool codex
 ssh agent@192.168.1.41 'godot --headless --version'
 
 # Web export and itch.io/Steam publishing tools
-basaltw setup agent_workstation 192.168.1.42 agent \
+basaltw setup agent_workstation 192.168.1.42 agent --agent-tool codex \
   --godot-bundle web \
   --godot-bundle publishing
 ```
