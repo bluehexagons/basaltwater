@@ -35,9 +35,18 @@ class BtrfsPanelTests(unittest.TestCase):
         return path
 
     def scrub(self, identifiers=("1",), finished=1, canceled=0):
+        # Synthetic values using scrub_write_file's v1 on-disk field layout:
+        # https://github.com/kdave/btrfs-progs/blob/master/cmds/scrub.c
+        # unverified_errors is present in the live ioctl, not this writer.
+        fields = {"data_extents_scrubbed": 0, "tree_extents_scrubbed": 0,
+                  "data_bytes_scrubbed": 0, "tree_bytes_scrubbed": 0,
+                  "read_errors": 0, "csum_errors": 0, "verify_errors": 0, "no_csum": 0,
+                  "csum_discards": 0, "super_errors": 0, "malloc_errors": 0,
+                  "uncorrectable_errors": 3, "corrected_errors": 2, "last_physical": 0,
+                  "t_start": 100, "t_resumed": 0, "duration": 10, "canceled": canceled, "finished": finished}
         path = self.state / ("scrub.status." + FSID)
         path.write_text("scrub status:1\n" + ''.join(
-            f"{FSID}:{device}|finished:{finished}|canceled:{canceled}|t_start:100|corrected_errors:2|uncorrectable_errors:3|unverified_errors:0\n"
+            f"{FSID}:{device}" + ''.join(f"|{key}:{value}" for key, value in fields.items()) + "\n"
             for device in identifiers))
         return path
 
@@ -60,6 +69,8 @@ class BtrfsPanelTests(unittest.TestCase):
         self.assertIn("Recorded device errors", body)
         self.assertIn("Devices in record: 1 of 2", body)
         self.assertIn("Uncorrectable: 3", body)
+        self.assertIn("Unverified: Unavailable", body)
+        self.assertIsNone(value["filesystems"][0]["scrub"]["unverified_errors"])
         self.assertIn("PAR2", body)
         self.assertIn("do not prove current health", body)
         self.assertNotIn("<button", body)
@@ -97,6 +108,87 @@ class BtrfsPanelTests(unittest.TestCase):
             self.assertFalse(btrfs.collect_btrfs()["available"])
         self.scrub().write_bytes(b"x" * 65537)
         self.assertEqual(btrfs.collect_btrfs()["filesystems"][0]["scrub"]["state"], "unavailable")
+
+    def test_missing_optional_metrics_are_unknown_and_metadata_errors_remain_visible(self):
+        self.device()
+        path = self.scrub()
+        path.write_text(path.read_text().replace("verify_errors:0", "verify_errors:4").replace("malloc_errors:0", "malloc_errors:2"))
+        value = btrfs.collect_btrfs()
+        body = btrfs.render_btrfs(btrfs.validate_btrfs(value))
+        self.assertEqual(value["filesystems"][0]["scrub"]["state"], "completed")
+        self.assertIn("recorded metadata errors", body)
+        self.assertIn("memory allocation failures; results may be incomplete", body)
+        self.assertIn("Header verification errors</dt><dd>4", body)
+        path.write_text(path.read_text().replace("|read_errors:0", ""))
+        value = btrfs.collect_btrfs()
+        self.assertIsNone(value["filesystems"][0]["scrub"]["errors"]["read_errors"])
+        self.assertIn("Read errors</dt><dd>Unavailable", btrfs.render_btrfs(value))
+
+    def test_optional_unverified_metric_is_not_confused_with_verify_errors(self):
+        self.device()
+        path = self.scrub()
+        path.write_text(path.read_text().replace("|uncorrectable_errors:3", "|uncorrectable_errors:0")
+                        .replace("|verify_errors:0", "|verify_errors:5|unverified_errors:7"))
+        value = btrfs.collect_btrfs()
+        body = btrfs.render_btrfs(btrfs.validate_btrfs(value))
+        self.assertIn("Unverified: 7", body)
+        self.assertIn("Recorded intermittent read errors", body)
+        self.assertNotIn("recorded unresolved errors", body)
+        self.assertEqual(value["filesystems"][0]["scrub"]["errors"]["verify_errors"], 5)
+
+    def test_overflowing_device_counter_does_not_hide_other_devices_or_native_record(self):
+        path = self.device(errors=2**64)
+        self.device("2", errors=7)
+        self.scrub(("1", "2"))
+        value = btrfs.collect_btrfs()
+        btrfs.validate_btrfs(value)
+        row = value["filesystems"][0]
+        self.assertIsNone(row["devices"][0]["counters"])
+        self.assertEqual(row["devices"][1]["counters"]["corruption_errs"], 7)
+        self.assertEqual(row["scrub"]["state"], "completed")
+        path.write_text(path.read_text().replace(str(2**64), str(2**64 - 1)))
+        self.assertEqual(btrfs.collect_btrfs()["filesystems"][0]["devices"][0]["counters"]["corruption_errs"], 2**64 - 1)
+        path = self.state / ("scrub.status." + FSID)
+        path.write_text(path.read_text().replace("|corrected_errors:2", f"|corrected_errors:{2**64}"))
+        value = btrfs.collect_btrfs()
+        btrfs.validate_btrfs(value)
+        self.assertEqual(value["filesystems"][0]["scrub"]["state"], "unavailable")
+
+    def test_previous_exports_remain_readable_and_invalid_optional_metrics_fail_closed(self):
+        self.device()
+        self.scrub()
+        value = btrfs.collect_btrfs()
+        del value["filesystems"][0]["scrub"]["errors"]
+        value["filesystems"][0]["scrub"]["unverified_errors"] = 0
+        btrfs.validate_btrfs(value)
+        self.assertIn("Unverified: 0", btrfs.render_btrfs(value))
+        for errors in ({"private": "PRIVATE"}, {key: True for key in btrfs.SCRUB_ERRORS}):
+            with self.subTest(errors=errors):
+                value["filesystems"][0]["scrub"]["errors"] = errors
+                self.assertIn("inventory unavailable", btrfs.render_btrfs(value))
+                self.assertNotIn("PRIVATE", btrfs.render_btrfs(value))
+
+    def test_native_metric_types_bounds_and_device_ids_are_validated(self):
+        self.device()
+        self.scrub()
+        value = btrfs.collect_btrfs()
+        for key, invalid in (("devices_recorded", True), ("devices_recorded", 0),
+                             ("corrected_errors", None), ("uncorrectable_errors", -1),
+                             ("unverified_errors", True), ("corrected_errors", 2**64)):
+            with self.subTest(key=key, invalid=invalid):
+                bad = copy.deepcopy(value)
+                bad["filesystems"][0]["scrub"][key] = invalid
+                with self.assertRaises(ValueError):
+                    btrfs.validate_btrfs(bad)
+        bad = copy.deepcopy(value)
+        bad["filesystems"][0]["devices"][0]["id"] = str(2**64)
+        with self.assertRaises(ValueError):
+            btrfs.validate_btrfs(bad)
+        self.device(str(2**64))
+        value = btrfs.collect_btrfs()
+        btrfs.validate_btrfs(value)
+        self.assertEqual(value["filesystems"][0]["devices"], [])
+        self.assertEqual(value["filesystems"][0]["scrub"]["state"], "unavailable")
 
     def test_invalid_native_export_does_not_hide_par2_or_render_injected_text(self):
         self.device()

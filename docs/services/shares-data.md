@@ -263,8 +263,18 @@ after recovery. Missing counters are unavailable, including on kernels without
 the sysfs statistics interface; they are never assumed to be zero.
 
 Native scrub records show recorded completion, cancellation or unfinished work,
-device coverage, and corrected, uncorrectable and unverified error counts. An
-unfinished record does not establish that work is currently running. Records
+device coverage, and corrected and uncorrectable error counts. Retained status
+files can omit the **unverified** count even when live tools support it; the panel
+shows **Unavailable**, never an assumed zero. Unverified errors, when recorded,
+describe intermittent reads that succeeded on recheck and are distinguished from
+uncorrectable errors. Expand **Native scrub error details** for recorded read,
+checksum, header verification, superblock and memory allocation counts. Missing
+detail fields remain unavailable; recorded allocation failures warn that results
+may be incomplete. The parser follows the
+[upstream retained status writer](https://github.com/kdave/btrfs-progs/blob/master/cmds/scrub.c),
+which differs from the live ioctl/CLI output.
+
+An unfinished record does not establish that work is currently running. Records
 can cover selected devices only. Missing, malformed or unsupported records are
 reported separately from PAR2 findings. The inventory supports sixteen mounted
 filesystems and sixty-four devices per filesystem; exceeding a bound marks the
@@ -297,8 +307,12 @@ the kernel journal. Bind mounts can repeat one filesystem. The dashboard's
 The five-minute exporter reads only bounded kernel metadata, without traversing
 mount paths or probing devices. It supports ext2/3/4, XFS, F2FS, Btrfs, ZFS,
 bcachefs, JFS, ReiserFS, FAT/exFAT, native NTFS, ISO9660 and UDF mount records.
-Network, FUSE and virtual mounts are excluded. At most 64 mounts are shown;
-additional records are counted. Unreadable or oversized mount metadata is
+Network, FUSE and virtual mounts are excluded. At most 64 mounts are shown,
+prioritizing the root mount and read-only mounts; additional records are counted.
+The collapsed mount list shows how many displayed mounts are read-only.
+Malformed records and unrepresentable names are omitted and counted with an
+explicit incomplete-inventory notice, preserving other valid mounts. They never
+produce an empty-inventory claim. Unreadable or oversized mount metadata is
 unavailable, independently of ext4 history, Btrfs and PAR2 reports.
 
 For up to 64 **ext4 driver devices**, the panel reads the retained filesystem

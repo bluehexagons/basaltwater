@@ -49,10 +49,10 @@ class FilesystemPanelTests(unittest.TestCase):
         run.assert_not_called()
         stat_call.assert_not_called()
         statvfs.assert_not_called()
-        self.assertEqual([row["fstype"] for row in value["mounts"]], ["xfs", "f2fs", "ext4"])
-        self.assertEqual([row["read_only"] for row in value["mounts"]], [True, False, True])
-        self.assertEqual(value["mounts"][-1]["target"], "/srv/shared files")
-        self.assertEqual(value["mounts"][1]["target"], r"/srv/literal\040")
+        self.assertEqual([row["fstype"] for row in value["mounts"]], ["xfs", "ext4", "f2fs"])
+        self.assertEqual([row["read_only"] for row in value["mounts"]], [True, True, False])
+        self.assertEqual(value["mounts"][1]["target"], "/srv/shared files")
+        self.assertEqual(value["mounts"][2]["target"], r"/srv/literal\040")
         self.assertNotIn("PRIVATE", json.dumps(value))
         self.assertNotIn("SECRET", json.dumps(value))
         filesystems.validate_filesystem_snapshot(value)
@@ -94,9 +94,13 @@ class FilesystemPanelTests(unittest.TestCase):
             with self.subTest(raw=raw):
                 self.mountinfo.write_text(raw)
                 value = filesystems.collect_filesystem_snapshot()
-                self.assertFalse(value["available"])
+                self.assertTrue(value["available"])
+                self.assertEqual(value["rejected_mounts"], 1)
                 self.assertTrue(value["ext4_available"])
                 self.assertEqual(value["ext4"][0]["errors_count"], 7)
+                body = filesystems.render_filesystem_snapshot(value)
+                self.assertIn("Inventory is incomplete", body)
+                self.assertNotIn("No supported local filesystem mounts", body)
         self.mountinfo.unlink()
         value = filesystems.collect_filesystem_snapshot()
         self.assertFalse(value["available"])
@@ -104,6 +108,37 @@ class FilesystemPanelTests(unittest.TestCase):
             self.assertTrue(filesystems.collect_filesystem_snapshot()["ext4_available"])
         with patch.object(filesystems.os, "scandir", side_effect=PermissionError):
             self.assertFalse(filesystems.collect_filesystem_snapshot()["ext4_available"])
+
+    def test_unrepresentable_mount_does_not_hide_other_mounts_and_read_only_summary_is_visible(self):
+        self.mountinfo.write_text(self.mount("xfs", target="/srv/read-only", super_options="ro")
+                                  + self.mount("ext4", target="/srv/data")
+                                  + self.mount(target=r"/srv/unrepresentable\011name"))
+        value = filesystems.collect_filesystem_snapshot()
+        filesystems.validate_filesystem_snapshot(value)
+        self.assertEqual(len(value["mounts"]), 2)
+        self.assertEqual(value["rejected_mounts"], 1)
+        body = filesystems.render_filesystem_snapshot(value)
+        self.assertIn("1 malformed or unsupported-name mount records omitted", body)
+        summary = body.split("<summary>", 1)[1].split("</summary>", 1)[0]
+        self.assertIn("2 shown", summary)
+        self.assertIn("1 read-only", summary)
+        self.assertIn("/srv/data", body)
+        self.assertIn("Read-only mounts may be intentional", body)
+
+    def test_mount_limit_keeps_root_and_read_only_records_and_supports_previous_exports(self):
+        self.mountinfo.write_text(''.join(self.mount(target=f"/srv/data{i}") for i in range(4))
+                                  + self.mount(target="/", options="rw")
+                                  + self.mount(target="/z-last", options="ro"))
+        with patch.object(filesystems, "MAX_MOUNTS", 2):
+            value = filesystems.collect_filesystem_snapshot()
+            self.assertEqual([row["target"] for row in value["mounts"]], ["/", "/z-last"])
+            self.assertEqual(value["omitted_mounts"], 4)
+            del value["rejected_mounts"]
+            filesystems.validate_filesystem_snapshot(value)
+            self.assertIn("1 read-only", filesystems.render_filesystem_snapshot(value))
+            value["rejected_mounts"] = True
+            with self.assertRaises(ValueError):
+                filesystems.validate_filesystem_snapshot(value)
 
     def test_inventory_bounds_and_symlinked_device_fail_closed(self):
         self.mountinfo.write_text(''.join(self.mount(target=f"/srv/data{i}") for i in range(4)))

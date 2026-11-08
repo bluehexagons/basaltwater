@@ -52,30 +52,40 @@ def _unescape(value: str) -> str:
     return re.sub(r"\\([0-7]{3})", lambda match: ESCAPES.get(match[1], match[0]), value)
 
 
-def _mounts() -> tuple[list[dict], int]:
-    rows = []
+def _mount(line: str) -> dict | None:
+    before, after = line.split(" - ", 1)
+    fields, filesystem = before.split(), after.split()
+    if len(fields) < 6 or len(filesystem) != 3:
+        raise ValueError("Invalid mount record")
+    if filesystem[0] not in LOCAL_TYPES:
+        return None
+    if not DEVICE_ID.fullmatch(fields[2]):
+        raise ValueError("Invalid mount device")
+    target = _text(_unescape(fields[4]), 4096)
+    validate_filesystem_path(target)
+    if not os.path.isabs(target):
+        raise ValueError("Invalid mount target")
+    mount_mode = set(fields[5].split(",")) & {"ro", "rw"}
+    super_mode = set(filesystem[2].split(",")) & {"ro", "rw"}
+    if len(mount_mode) != 1 or len(super_mode) != 1:
+        raise ValueError("Invalid mount access mode")
+    return {"target": target, "source": _text(_unescape(filesystem[1]), 1024),
+            "fstype": filesystem[0], "device": fields[2],
+            "read_only": "ro" in mount_mode or "ro" in super_mode}
+
+
+def _mounts() -> tuple[list[dict], int, int]:
+    rows, rejected = [], 0
     for line in _read(MOUNTINFO, MAX_BYTES).splitlines():
-        before, after = line.split(" - ", 1)
-        fields, filesystem = before.split(), after.split()
-        if len(fields) < 6 or len(filesystem) != 3:
-            raise ValueError("Invalid mount record")
-        if filesystem[0] not in LOCAL_TYPES:
+        try:
+            row = _mount(line)
+        except ValueError:
+            rejected += 1
             continue
-        if not DEVICE_ID.fullmatch(fields[2]):
-            raise ValueError("Invalid mount device")
-        target = _text(_unescape(fields[4]), 4096)
-        validate_filesystem_path(target)
-        if not os.path.isabs(target):
-            raise ValueError("Invalid mount target")
-        mount_mode = set(fields[5].split(",")) & {"ro", "rw"}
-        super_mode = set(filesystem[2].split(",")) & {"ro", "rw"}
-        if len(mount_mode) != 1 or len(super_mode) != 1:
-            raise ValueError("Invalid mount access mode")
-        rows.append({"target": target, "source": _text(_unescape(filesystem[1]), 1024),
-                     "fstype": filesystem[0], "device": fields[2],
-                     "read_only": "ro" in mount_mode or "ro" in super_mode})
-    rows.sort(key=lambda row: (row["target"] != "/", row["target"], row["device"]))
-    return rows[:MAX_MOUNTS], max(0, len(rows) - MAX_MOUNTS)
+        if row is not None:
+            rows.append(row)
+    rows.sort(key=lambda row: (row["target"] != "/", not row["read_only"], row["target"], row["device"]))
+    return rows[:MAX_MOUNTS], max(0, len(rows) - MAX_MOUNTS), rejected
 
 
 def _ext4() -> list[dict]:
@@ -110,9 +120,10 @@ def _ext4() -> list[dict]:
 
 def collect_filesystem_snapshot() -> dict:
     """Read PID 1's mount table and sysfs only; never stat mount paths or run tools."""
-    value = {"available": False, "mounts": [], "omitted_mounts": 0, "ext4_available": False, "ext4": []}
+    value = {"available": False, "mounts": [], "omitted_mounts": 0, "rejected_mounts": 0,
+             "ext4_available": False, "ext4": []}
     try:
-        value["mounts"], value["omitted_mounts"] = _mounts()
+        value["mounts"], value["omitted_mounts"], value["rejected_mounts"] = _mounts()
         value["available"] = True
     except (OSError, ValueError, UnicodeError):
         pass
@@ -125,9 +136,11 @@ def collect_filesystem_snapshot() -> dict:
 
 
 def validate_filesystem_snapshot(value: object) -> dict:
-    if (not isinstance(value, dict) or set(value) != {"available", "mounts", "omitted_mounts", "ext4_available", "ext4"}
+    keys = {"available", "mounts", "omitted_mounts", "ext4_available", "ext4"}
+    if (not isinstance(value, dict) or set(value) not in (keys, keys | {"rejected_mounts"})
             or any(type(value[key]) is not bool for key in ("available", "ext4_available"))
             or type(value["omitted_mounts"]) is not int or not 0 <= value["omitted_mounts"] <= MAX_BYTES
+            or type(value.get("rejected_mounts", 0)) is not int or not 0 <= value.get("rejected_mounts", 0) <= MAX_BYTES
             or not isinstance(value["mounts"], list) or len(value["mounts"]) > MAX_MOUNTS
             or not isinstance(value["ext4"], list) or len(value["ext4"]) > MAX_EXT4):
         raise ValueError("Invalid filesystem snapshot")
@@ -170,13 +183,17 @@ def render_filesystem_snapshot(value: dict | None) -> str:
         data = validate_filesystem_snapshot(value)
     except (ValueError, TypeError):
         return body + '<p class="empty">Filesystem observations unavailable. Check or update the snapshot exporter.</p></section>'
-    body += '<p>Exported mount types and access modes. These observations do not verify file contents. See <a href="/">Mounted storage on the dashboard</a> for space and inode usage.</p>'
+    body += '<p>Exported mount types and access modes. These observations do not verify file contents. See <a href="/#filesystems-heading">Mounted storage on the dashboard</a> for space and inode usage.</p>'
     if not data["available"]:
         body += '<p class="empty">Host mount inventory unavailable.</p>'
+    elif not data["mounts"] and data.get("rejected_mounts"):
+        body += '<p class="empty">No usable local mount records are available. Inventory is incomplete.</p>'
     elif not data["mounts"]:
         body += '<p>No supported local filesystem mounts were observed.</p>'
     if data["mounts"]:
-        body += '<details><summary>Local mounts and access modes</summary><ul class="data-list">'
+        read_only = sum(row["read_only"] for row in data["mounts"])
+        mode_summary = f' · <span class="badge warning">{read_only} read-only</span>' if read_only else ''
+        body += f'<details><summary>Local mounts and access modes · {len(data["mounts"])} shown{mode_summary}</summary><ul class="data-list">'
         for row in data["mounts"]:
             mode = '<span class="badge warning">Read-only mount</span>' if row["read_only"] else 'Read/write mount'
             body += (f'<li class="event"><h3><code>{html.escape(row["target"])}</code></h3>'
@@ -184,6 +201,8 @@ def render_filesystem_snapshot(value: dict | None) -> str:
         body += '</ul></details>'
     if data["omitted_mounts"]:
         body += f'<p>{data["omitted_mounts"]} additional local mounts omitted; inspect the host mount table for the complete inventory.</p>'
+    if data.get("rejected_mounts"):
+        body += f'<p class="empty">{data["rejected_mounts"]} malformed or unsupported-name mount records omitted. Inventory is incomplete.</p>'
     body += '<p class="data-notice">Read-only mounts may be intentional. An unexpected change needs investigation in the kernel journal. Bind mounts can repeat the same filesystem. Network, FUSE and virtual mounts are excluded; this view does not probe mount paths.</p>'
     body += '<h3>ext4 retained error history</h3>'
     if not data["ext4_available"]:

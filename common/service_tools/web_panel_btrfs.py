@@ -17,6 +17,9 @@ MAX_DEVICES = 64
 UUID = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\Z")
 COUNTERS = ("write_errs", "read_errs", "flush_errs", "corruption_errs", "generation_errs")
 SCRUB_COUNTERS = ("corrected_errors", "uncorrectable_errors", "unverified_errors")
+SCRUB_ERRORS = {"read_errors": "Read errors", "csum_errors": "Checksum errors",
+                "verify_errors": "Header verification errors", "super_errors": "Superblock errors",
+                "malloc_errors": "Memory allocation errors"}
 
 
 def _read(path: str, limit: int = 65536) -> str:
@@ -52,7 +55,8 @@ def _numbers(text: str, separator: str | None = None) -> dict[str, int]:
     values = {}
     for field in text.split("|") if separator else text.splitlines():
         pair = field.split(separator) if separator else field.split()
-        if len(pair) != 2 or pair[0] in values or not re.fullmatch(r"[0-9]{1,20}", pair[1]):
+        if (len(pair) != 2 or pair[0] in values or not re.fullmatch(r"[0-9]{1,20}", pair[1])
+                or int(pair[1]) > 2**64 - 1):
             raise ValueError("Invalid Btrfs counters")
         values[pair[0]] = int(pair[1])
     return values
@@ -73,14 +77,21 @@ def _scrub(fsid: str, devices: list[str]) -> dict:
         if uuid != fsid or device not in devices or device in rows:
             raise ValueError("Mismatched native scrub record")
         row = _numbers(fields, ":")
-        if (not all(key in row for key in (*SCRUB_COUNTERS, "finished", "canceled", "t_start"))
+        # btrfs-progs' v1 retained writer omits unverified_errors, even though
+        # the live ioctl and CLI can report it. Do not infer zero from absence.
+        if (not all(key in row for key in ("corrected_errors", "uncorrectable_errors", "finished", "canceled", "t_start"))
                 or not row["t_start"] or row["finished"] not in {0, 1} or row["canceled"] not in {0, 1}):
             raise ValueError("Incomplete native scrub record")
         rows[device] = row
     state = ("cancelled" if any(row["canceled"] for row in rows.values()) else
              "completed" if all(row["finished"] for row in rows.values()) else "unfinished")
+
+    def total(key: str) -> int | None:
+        return sum(row[key] for row in rows.values()) if all(key in row for row in rows.values()) else None
+
     return {"state": state, "devices_recorded": len(rows),
-            **{key: sum(row[key] for row in rows.values()) for key in SCRUB_COUNTERS}}
+            **{key: total(key) for key in SCRUB_COUNTERS},
+            "errors": {key: total(key) for key in SCRUB_ERRORS}}
 
 
 def collect_btrfs() -> dict:
@@ -96,7 +107,7 @@ def collect_btrfs() -> dict:
             result["filesystems"].append(row)
             try:
                 devices = _entries(os.path.join(SYSFS, fsid, "devinfo"), MAX_DEVICES)
-                if not devices or any(not re.fullmatch(r"[1-9][0-9]{0,19}", device) for device in devices):
+                if not devices or any(not re.fullmatch(r"[1-9][0-9]{0,19}", device) or int(device) > 2**64 - 1 for device in devices):
                     raise ValueError("Invalid Btrfs devices")
                 for device in devices:
                     counters = None
@@ -135,6 +146,7 @@ def validate_btrfs(value: object) -> dict:
         for device in row["devices"]:
             if (not isinstance(device, dict) or set(device) != {"id", "counters"}
                     or not isinstance(device["id"], str) or not re.fullmatch(r"[1-9][0-9]{0,19}", device["id"])
+                    or int(device["id"]) > 2**64 - 1
                     or device["id"] in device_ids):
                 raise ValueError("Invalid Btrfs device")
             device_ids.add(device["id"])
@@ -146,10 +158,25 @@ def validate_btrfs(value: object) -> dict:
         if not isinstance(scrub, dict) or scrub.get("state") not in {"not_recorded", "unavailable", "completed", "cancelled", "unfinished"}:
             raise ValueError("Invalid native scrub state")
         keys = {"state"} if scrub["state"] in {"not_recorded", "unavailable"} else {"state", "devices_recorded", *SCRUB_COUNTERS}
-        if set(scrub) != keys or any(type(scrub[key]) is not int or not 0 <= scrub[key] <= MAX_DEVICES * (2**64 - 1) for key in keys - {"state"}):
+        if "errors" in scrub and "devices_recorded" in keys:
+            keys.add("errors")
+        if set(scrub) != keys:
             raise ValueError("Invalid native scrub counters")
-        if "devices_recorded" in scrub and not 1 <= scrub["devices_recorded"] <= len(device_ids):
-            raise ValueError("Invalid native scrub coverage")
+        if "devices_recorded" in scrub:
+            if type(scrub["devices_recorded"]) is not int or not 1 <= scrub["devices_recorded"] <= len(device_ids):
+                raise ValueError("Invalid native scrub coverage")
+            for key in SCRUB_COUNTERS:
+                n = scrub[key]
+                if key == "unverified_errors" and n is None:
+                    continue
+                if type(n) is not int or not 0 <= n <= scrub["devices_recorded"] * (2**64 - 1):
+                    raise ValueError("Invalid native scrub counters")
+        if "errors" in scrub:
+            errors = scrub["errors"]
+            if (not isinstance(errors, dict) or set(errors) != set(SCRUB_ERRORS)
+                    or any(n is not None and (type(n) is not int or not 0 <= n <= scrub["devices_recorded"] * (2**64 - 1))
+                           for n in errors.values())):
+                raise ValueError("Invalid native scrub error details")
     return value
 
 
@@ -186,9 +213,24 @@ def render_btrfs(value: dict | None) -> str:
                   "unfinished": "Unfinished record; current activity unknown"}
         body += '<p><strong>' + labels[scrub["state"]] + '</strong></p>'
         if "devices_recorded" in scrub:
-            if scrub["uncorrectable_errors"] or scrub["unverified_errors"]:
+            if scrub["uncorrectable_errors"]:
                 body += '<p><span class="badge warning">Native scrub recorded unresolved errors</span></p>'
-            body += f'<p>Devices in record: {scrub["devices_recorded"]} of {len(row["devices"])}. Corrected: {scrub["corrected_errors"]} · Uncorrectable: {scrub["uncorrectable_errors"]} · Unverified: {scrub["unverified_errors"]}.</p>'
+            if scrub["unverified_errors"]:
+                body += '<p><span class="badge warning">Recorded intermittent read errors</span></p>'
+            unverified = scrub["unverified_errors"] if scrub["unverified_errors"] is not None else "Unavailable"
+            body += f'<p>Devices in record: {scrub["devices_recorded"]} of {len(row["devices"])}. Corrected: {scrub["corrected_errors"]} · Uncorrectable: {scrub["uncorrectable_errors"]} · Unverified: {unverified}.</p>'
+            if unverified == "Unavailable":
+                body += '<p>Retained status files may omit unverified errors; absence is not zero.</p>'
+            errors = scrub.get("errors")
+            if errors:
+                if errors["malloc_errors"]:
+                    body += '<p class="badge warning">Native scrub recorded memory allocation failures; results may be incomplete.</p>'
+                if errors["verify_errors"] or errors["super_errors"]:
+                    body += '<p class="badge warning">Native scrub recorded metadata errors.</p>'
+                body += '<details><summary>Native scrub error details</summary><dl class="job-facts">'
+                for key, label in SCRUB_ERRORS.items():
+                    body += f'<div><dt>{label}</dt><dd>{errors[key] if errors[key] is not None else "Unavailable"}</dd></div>'
+                body += '</dl></details>'
         body += '</article>'
     return body + ('<p>Device counters retain historical errors. Zero counters or a completed record do not prove current health. '
         'Records can cover only selected devices and do not confirm a currently running scrub. '
