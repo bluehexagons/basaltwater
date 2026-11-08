@@ -249,6 +249,42 @@ valid findings. Use `basaltw scrub status HOST` for controller inspection and
 `--all` for resolved findings. See [scrub recovery](../storage/scrub-recovery.md)
 for evidence, staged repair and recovery decisions.
 
+## Inspect Btrfs filesystem health
+
+**Overview** and **Scrubs & findings** show a separate Btrfs health section,
+including hosts without PAR2 tasks. Match its filesystem UUIDs to mount points
+with `findmnt -t btrfs -o TARGET,UUID` on the host. The five-minute exporter reads
+kernel metadata and retained native scrub records; opening the panel runs no
+Btrfs command or filesystem scan.
+
+Each device shows retained write, read, flush, corruption and generation error
+counters. Nonzero counters are highlighted and retain historical failures even
+after recovery. Missing counters are unavailable, including on kernels without
+the sysfs statistics interface; they are never assumed to be zero.
+
+Native scrub records show recorded completion, cancellation or unfinished work,
+device coverage, and corrected, uncorrectable and unverified error counts. An
+unfinished record does not establish that work is currently running. Records
+can cover selected devices only. Missing, malformed or unsupported records are
+reported separately from PAR2 findings. The inventory supports sixteen mounted
+filesystems and sixty-four devices per filesystem; exceeding a bound marks the
+affected inventory unavailable.
+
+Btrfs checks filesystem data and metadata checksums; PAR2 checks configured file
+contents against retained parity. Native repair needs a good replica; single-copy
+data has none. NODATASUM file data is not checksummed by native scrub. Snapshots
+and reflinks share blocks and are not independent backups. Neither zero device
+counters nor a completed native record prove current health.
+
+The separate **Storage** usage diagnostic sums file allocation metadata. Reflinks
+and snapshots can count shared extents more than once, so its directory estimates
+do not establish unique physical usage or space reclaimable by deleting files.
+
+Use the [native scrub guide](../storage/storage-operations.md#btrfs-filesystem-scrub)
+to inspect or explicitly run native scrub through the administrator command line.
+The panel does not start, schedule, cancel or resume native scrubs, reset device
+counters, or perform balance, conversion or filesystem repair operations.
+
 ## Persist panel changes and controller configuration
 
 Approved share and routine changes survive panel/host restarts in the target's

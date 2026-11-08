@@ -30,6 +30,7 @@ class StorageSnapshotTests(unittest.TestCase):
         self.config = {"scrub_specs": [[str(self.data), str(self.db), "10%", "weekly"]]}
         self.report = Findings(str(self.data), str(self.db))
         self.samba_installed = False
+        self.enterContext(patch.object(storage, "collect_btrfs", return_value={"available": True, "filesystems": []}))
         self.enterContext(patch.object(storage.shutil, "which", side_effect=lambda _command: "/usr/sbin/smbd" if self.samba_installed else None))
 
     def collect(self):

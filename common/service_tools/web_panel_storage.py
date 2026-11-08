@@ -19,6 +19,7 @@ from lib.data_actions import HEX_DIGEST, finding_revision
 from lib.samba_accounts import validate_account_snapshot
 from lib.samba_shares import validate_share_snapshot
 from lib.storage_routines import validate_routine_snapshot
+from common.service_tools.web_panel_btrfs import collect_btrfs, validate_btrfs
 
 SNAPSHOT_PATH = os.path.join(WEB_PANEL_AUDIT_DIR, "storage.json")
 MAX_JOBS = 8
@@ -59,6 +60,7 @@ def collect_storage_snapshot(*, catalog_path: str | None = None) -> dict:
             return result
         result["samba_installed"] = shutil.which("smbd") is not None
         result["inventory"] = configuration_inventory(saved)
+        result["btrfs"] = collect_btrfs()
         from smb.account_management import collect_account_snapshot
         result["samba"] = collect_account_snapshot(saved)
         from smb.share_management import collect_share_snapshot
@@ -169,6 +171,10 @@ def load_storage_snapshot(path: str = SNAPSHOT_PATH, *, now: datetime | None = N
                 _timestamp(finding.get("last_checked"))
                 if "revision" in finding and (not isinstance(finding["revision"], str) or not HEX_DIGEST.fullmatch(finding["revision"])):
                     raise ValueError("Invalid finding revision")
+        try:
+            data["btrfs"] = validate_btrfs(data.get("btrfs"))
+        except (ValueError, TypeError):
+            data["btrfs"] = {"available": False, "filesystems": []}
         try:
             data["inventory"] = validate_inventory(data.get("inventory"))
         except (ValueError, TypeError):

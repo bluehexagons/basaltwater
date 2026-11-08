@@ -162,10 +162,11 @@ def render_storage_usage(state, base_style: str, view: str = "areas") -> str:
         content += '<div class="storage-metrics">' + "".join((
             _metric("Root used", _size(capacity["used_bytes"]) if capacity else "Unavailable", "Filesystem capacity"),
             _metric("Root available", _size(capacity["available_bytes"]) if capacity else "Unavailable", "Usable by this account"),
-            _metric("Observed allocation", _size(observed), "Lower bound from inspected entries"),
+            _metric("Observed allocation", _size(observed), "Sum of inspected entry allocations"),
             _metric("Files inspected", f'{report["files_scanned"]:,}', f'{report["duration_seconds"]:.1f}s · {report["entries_scanned"]:,} entries'),
         )) + '</div>'
         content += _capacity(report) + _breakdown(report, view)
+        content += '<p class="storage-footnote">On Btrfs and other filesystems with shared extents, reflinks and snapshots can count the same blocks more than once in file allocation estimates. These totals are not unique physical usage or space that deleting a directory would reclaim. Use filesystem-specific tools to inspect shared and exclusive usage.</p>'
         issues = "".join(f'<li>{_escape(issue)}</li>' for issue in report.get("issues", []))
         content += f'''<details class="storage-notes"{" open" if issues else ""}><summary>Coverage &amp; measurement notes{f" · {len(report.get('issues', []))} notices" if issues else ""}</summary>
 <p>Scan recorded at <time>{_escape(report["generated_at"])}</time>. Limits: {limits["duration_seconds"]:g} seconds and {limits["entry_limit"]:,} entries.</p>
