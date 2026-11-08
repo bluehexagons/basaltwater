@@ -11,7 +11,7 @@ Open **Administration → Shares & Data** on the machine you want to manage.
 
 The main link opens **Overview**. Samba is hidden when the exporter confirms
 `smbd` is absent. Empty mirror and scrub views are hidden from navigation when
-there are no declarations, reports or retained activity. Setup templates remain
+there are no declarations, reports, native Btrfs/ext4 observations or retained activity. Setup templates remain
 available to create the first task. Unavailable inventory is shown as unknown,
 rather than being treated as empty. Older exporters use their saved Samba
 selection until updated.
@@ -284,6 +284,44 @@ Use the [native scrub guide](../storage/storage-operations.md#btrfs-filesystem-s
 to inspect or explicitly run native scrub through the administrator command line.
 The panel does not start, schedule, cancel or resume native scrubs, reset device
 counters, or perform balance, conversion or filesystem repair operations.
+
+## Inspect other Linux filesystems
+
+**Overview → Linux filesystems** and **Scrubs & findings** show local mount points,
+filesystem types, sources, device numbers and read-only/read/write modes from
+PID 1's mount table. This avoids the panel service's sandbox-only read-only bind
+mounts. Read-only mode can be intentional; an unexpected change warrants checking
+the kernel journal. Bind mounts can repeat one filesystem. The dashboard's
+**Mounted storage** section already reports capacity and inode usage.
+
+The five-minute exporter reads only bounded kernel metadata, without traversing
+mount paths or probing devices. It supports ext2/3/4, XFS, F2FS, Btrfs, ZFS,
+bcachefs, JFS, ReiserFS, FAT/exFAT, native NTFS, ISO9660 and UDF mount records.
+Network, FUSE and virtual mounts are excluded. At most 64 mounts are shown;
+additional records are counted. Unreadable or oversized mount metadata is
+unavailable, independently of ext4 history, Btrfs and PAR2 reports.
+
+For up to 64 **ext4 driver devices**, the panel reads the retained filesystem
+error count and first/last error times from sysfs. Nonzero counts are highlighted.
+Match kernel names such as `dm-0` to mount device numbers using
+`lsblk -o NAME,MAJ:MIN,FSTYPE,MOUNTPOINTS`; device-mapper aliases may differ.
+Unavailable counters and timestamps are labelled individually, including on
+older kernels. Zero counts do not establish current health; history can remain
+after a problem is resolved. The panel neither resets counters nor reads raw
+superblocks. Exceeding the device bound makes ext4 inventory unavailable.
+
+| Filesystem | Administrator inspection |
+| --- | --- |
+| ext2/ext3/ext4 | Plan `e2fsck` checks with the filesystem unmounted; use rescue mode for the root filesystem. Mounted results are unreliable. |
+| XFS | Where supported, `xfs_scrub -n MOUNTPOINT` checks mounted filesystem metadata without repairs or optimizations. It does not compare file contents with known checksums. Run `xfs_repair` only with the filesystem unmounted. |
+| Other local filesystems | Mount observations and dashboard usage are available; native integrity status is not collected. Use the filesystem's own administrator tools and documentation. |
+
+These are inspection hints, not panel actions. The panel does not install tools,
+start native checks, change mount settings or perform filesystem repairs.
+Native metadata checks, retained error history and PAR2 content verification
+cover different evidence. Consult the upstream [e2fsck manual](https://man7.org/linux/man-pages/man8/e2fsck.8.html)
+and [XFS scrub manual](https://man7.org/linux/man-pages/man8/xfs_scrub.8.html)
+when planning maintenance.
 
 ## Persist panel changes and controller configuration
 

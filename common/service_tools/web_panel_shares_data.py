@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlencode
 
 from common.service_tools import web_panel_storage as storage
 from common.service_tools.web_panel_btrfs import render_btrfs
+from common.service_tools.web_panel_filesystems import render_filesystem_snapshot
 from common.service_tools.web_panel_findings import MAX_PAGE, PAGE_SIZE, load_findings, task_key
 from common.service_tools.web_panel_templates import render_document, render_heading
 from sync.service_tools.scrub_findings import ADVICE
@@ -148,7 +149,8 @@ def _visible_views(snapshot: dict, routine_status: dict, recovery_status: dict) 
             or not control.get("available") and not inventory.get("available")):
         visible.add("routines")
     if (snapshot.get("jobs") or snapshot.get("omitted_jobs") or any(row["kind"] == "scrub" for row in rows)
-            or snapshot.get("btrfs", {}).get("filesystems")):
+            or snapshot.get("btrfs", {}).get("filesystems")
+            or (snapshot.get("filesystems") or {}).get("ext4")):
         visible.add("scrubs")
     # Retained approval/worker history can outlive a removed declaration.
     for request in routine_status.get("requests", []):
@@ -185,7 +187,7 @@ def _overview(snapshot: dict, visible: set[str]) -> str:
                  str(len(snapshot["jobs"]) + snapshot["omitted_jobs"]))
         findings = sum(job["open_count"] for job in snapshot["jobs"])
         attention = sum(job["status"] in {"unavailable", "never_scanned", "incomplete"} for job in snapshot["jobs"])
-        description = f'PAR2 file checks: {findings} open findings in the exported summary. {attention} reports unavailable, incomplete or awaiting a full scan. Native Btrfs health is shown separately.'
+        description = f'PAR2 file checks: {findings} open findings in the exported summary. {attention} reports unavailable, incomplete or awaiting a full scan. Native filesystem observations are shown separately.'
         if snapshot["omitted_jobs"]:
             description += f' {snapshot["omitted_jobs"]} more tasks are outside this summary; open the scrub view for complete task health.'
         summaries.append(("scrubs", count, description))
@@ -358,7 +360,7 @@ def _task_health(snapshot: dict, catalog: dict, query: dict) -> str:
 
 def _scrubs(snapshot: dict, query: dict[str, str], host: str, *, csrf: str = "", controls: bool = False) -> str:
     body = render_heading("Scrubs & findings", "security", heading_id="scrubs-heading")
-    body += '<p>These tasks and findings use PAR2 to check individual files. Native Btrfs filesystem health is shown separately below.</p>'
+    body += '<p>These tasks and findings use PAR2 to check individual files. Native filesystem observations are shown separately below.</p>'
     jobs = snapshot["jobs"]
     if not jobs and not query.get("scope"):
         return body + '<p class="empty">No scrub integrity reports in this snapshot. Newly saved tasks appear after the next export; active tasks create reports when they run.</p>'
@@ -474,11 +476,11 @@ def render_shares_data(state, style: str, query: dict[str, str], *, review: str 
     if snapshot.get("available"):
         links = []
         if view == "overview":
-            links = [("data-overview", "Summary"), ("data-setup", "Set up a task"), ("btrfs-health", "Btrfs health")]
+            links = [("data-overview", "Summary"), ("data-setup", "Set up a task"), ("filesystem-observations", "Linux filesystems"), ("btrfs-health", "Btrfs health")]
         elif view == "shares":
             links = [("samba-heading", "Shares"), ("samba-accounts", "Accounts and passwords")]
         elif view == "scrubs":
-            links = [("btrfs-health", "Btrfs health")]
+            links = [("filesystem-observations", "Linux filesystems"), ("btrfs-health", "Btrfs health")]
             if snapshot.get("jobs"):
                 links = [("findings-heading", "Browse findings"), ("scrub-health", "Task health"), *links]
             if snapshot.get("routine_management", {}).get("available"):
@@ -522,7 +524,8 @@ def render_shares_data(state, style: str, query: dict[str, str], *, review: str 
         body += f'<p class="data-notice">Snapshot: {html.escape(_date(snapshot["generated_at"]))}. Exported every five minutes. Refreshing this page reads the latest export.</p>'
         inventory = snapshot.get("inventory", {"available": False})
         if view == "overview":
-            body += _overview(snapshot, visible) + _setup_templates(editing_reason=routine_reason) + render_btrfs(snapshot.get("btrfs"))
+            body += (_overview(snapshot, visible) + _setup_templates(editing_reason=routine_reason)
+                     + render_filesystem_snapshot(snapshot.get("filesystems")) + render_btrfs(snapshot.get("btrfs")))
         elif view == "shares":
             controls = (share_manager is not None and not shares.unavailable_reason(share_status)
                         and snapshot.get("share_management", {}).get("available") is True)
@@ -556,7 +559,7 @@ def render_shares_data(state, style: str, query: dict[str, str], *, review: str 
                 body += '<p class="data-notice">Scrub editing needs a complete supported export of the configuration and pause controls. Existing integrity reports remain available.</p>'
             if editing:
                 body += reports
-            body += render_btrfs(snapshot.get("btrfs"))
+            body += render_filesystem_snapshot(snapshot.get("filesystems")) + render_btrfs(snapshot.get("btrfs"))
     return render_document(title=f'Shares & Data · {state.manifest["host"]}', style=style + STYLE,
                            header=header, content=body, navigation=state.navigation("shares-data"),
                            footer='<footer><a href="/admin">Admin controls</a><span>Configuration and recorded integrity · no automatic refresh</span></footer>')

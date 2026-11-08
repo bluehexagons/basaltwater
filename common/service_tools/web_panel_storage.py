@@ -20,6 +20,7 @@ from lib.samba_accounts import validate_account_snapshot
 from lib.samba_shares import validate_share_snapshot
 from lib.storage_routines import validate_routine_snapshot
 from common.service_tools.web_panel_btrfs import collect_btrfs, validate_btrfs
+from common.service_tools.web_panel_filesystems import collect_filesystem_snapshot, validate_filesystem_snapshot
 
 SNAPSHOT_PATH = os.path.join(WEB_PANEL_AUDIT_DIR, "storage.json")
 MAX_JOBS = 8
@@ -61,6 +62,7 @@ def collect_storage_snapshot(*, catalog_path: str | None = None) -> dict:
         result["samba_installed"] = shutil.which("smbd") is not None
         result["inventory"] = configuration_inventory(saved)
         result["btrfs"] = collect_btrfs()
+        result["filesystems"] = collect_filesystem_snapshot()
         from smb.account_management import collect_account_snapshot
         result["samba"] = collect_account_snapshot(saved)
         from smb.share_management import collect_share_snapshot
@@ -175,6 +177,10 @@ def load_storage_snapshot(path: str = SNAPSHOT_PATH, *, now: datetime | None = N
             data["btrfs"] = validate_btrfs(data.get("btrfs"))
         except (ValueError, TypeError):
             data["btrfs"] = {"available": False, "filesystems": []}
+        try:
+            data["filesystems"] = validate_filesystem_snapshot(data.get("filesystems"))
+        except (ValueError, TypeError):
+            data["filesystems"] = None
         try:
             data["inventory"] = validate_inventory(data.get("inventory"))
         except (ValueError, TypeError):

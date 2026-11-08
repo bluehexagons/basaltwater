@@ -22,6 +22,7 @@ from lib.shares_data_inventory import MAX_ROUTINES, MAX_SHARES
 class CompleteFindingBrowserTests(unittest.TestCase):
     def setUp(self):
         self.enterContext(patch.object(storage, "collect_btrfs", return_value={"available": True, "filesystems": []}))
+        self.enterContext(patch.object(storage, "collect_filesystem_snapshot", return_value=None))
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
