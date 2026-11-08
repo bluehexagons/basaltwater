@@ -217,6 +217,24 @@ class TriageTests(unittest.TestCase):
             observed = data_job.job_status()["latest"]
         self.assertEqual([item["status"] for item in observed["items"]], ["unresolved", "skipped"])
 
+    def test_fresh_verification_of_replacement_survives_daily_maintenance(self):
+        self.assertEqual(data_job.run_action(self.value), 0)
+        self.paths[0].write_bytes(b"verified replacement")
+        healthy = {"category": "healthy", "file_identity": findings.file_identity(str(self.paths[0]))}
+        with patch.object(scrub_par2, "examine", return_value=healthy):
+            self.assertEqual(scrub_par2.verify_repair(str(self.paths[0]), str(self.source), str(self.database),
+                                                    str(self.root / "log")), scrub_par2.VERIFY_OK)
+        with patch.object(scrub_par2.subprocess, "run") as run:
+            self.assertTrue(scrub_par2.create_par2(str(self.paths[0]), str(self.source), str(self.database),
+                                                  10, str(self.root / "log")))
+            self.assertFalse(self.report().active("one"))
+            self.assertTrue(self.report().disposed("one"))
+            self.paths[0].write_bytes(b"another unverified replacement")
+            self.assertTrue(scrub_par2.create_par2(str(self.paths[0]), str(self.source), str(self.database),
+                                                  10, str(self.root / "log")))
+            self.assertTrue(self.report().active("one"))
+            run.assert_not_called()
+
     def test_full_scan_does_not_reopen_absence_or_create_reinserted_baseline(self):
         self.assertEqual(data_job.run_action(self.value), 0)
         with patch.object(scrub_par2, "create_operation_logger", return_value=Mock()), patch.object(scrub_par2, "log"), patch.object(scrub_par2.subprocess, "run") as run:

@@ -144,10 +144,13 @@ def create_par2(
     if report.disposed(relative_path):
         # Reappearing bytes must be verified against retained evidence, never
         # silently adopted even when parity has since gone missing.
-        if not report.active(relative_path):
+        entry = report.data["files"].get(relative_path, {})
+        identity = file_identity(file_path)
+        verified = entry.get("category") == "healthy" and entry.get("file_identity") == identity
+        if not report.active(relative_path) and not verified:
             report.record(relative_path, {"category": "changed_unverified",
                                          "evidence": "File appeared at a disposed path; fresh verification required",
-                                         "file_identity": file_identity(file_path)})
+                                         "file_identity": identity})
         return True
     
     # Enhanced validation
