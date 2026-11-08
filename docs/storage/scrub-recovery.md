@@ -128,6 +128,18 @@ protection is not supported by these controls. Do not remove the scrub declarati
 to bypass it. Inspect per-file worker results before individually reviewing any
 remaining files after interruption.
 
+The panel shows the latest worker result. Each new batch also retains a root-only
+JSON record at
+`/var/lib/basaltwater-privilege-broker/data-payload-JOB_ID.json.claimed`, containing
+its reviewed parameters, per-file outcomes and quarantine destinations. Inspect
+this record as an administrator when a newer job has replaced the panel result.
+An unfinished record can still say `running` or `pending`; it is not a resumable
+queue or proof of completion. Compare it with the worker and disposition report.
+An empty claim can come from an older worker or interrupted initialization; it
+does not establish whether effects occurred. Claims prevent replay even when
+initialization fails; never remove them to retry a job. Records are retained
+without automatic pruning and may contain private file paths.
+
 Reports are stored at `DATABASE/.basaltwater-scrub/findings.json`. The metadata
 directory name is reserved. Original files, original parity, staged candidates,
 and an operation manifest are retained in private `recovery-*` directories

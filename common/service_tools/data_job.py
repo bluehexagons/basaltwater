@@ -185,6 +185,17 @@ def _interrupt_items(value: dict) -> None:
                         failure="job_interrupted", finished=time.time())
 
 
+def _save_record(value: dict) -> None:
+    """Keep batch evidence after the latest-result slot moves to another job."""
+    if "items" in value:
+        claim = _payload_path(value["parameters"]["job_id"]) + ".claimed"
+        protected_path(claim)
+        # Save the permanent record first. A failed evidence write must stop
+        # processing, even when the panel's latest slot could still be written.
+        write_json_atomic(claim, value, mode=0o600)
+    write_json_atomic(DATA_STATE, value, mode=0o600)
+
+
 def recover_batch(parameters: dict, saved: dict, value: dict) -> None:
     """Preflight all reviewed identities, then persist each boundary without replay."""
     config = RuntimeConfig.from_dict(saved)
@@ -232,10 +243,10 @@ def recover_batch(parameters: dict, saved: dict, value: dict) -> None:
             entry = check(item)
         except (OSError, ValueError, RuntimeError) as exc:
             item.update(status="skipped", failure=str(exc) if isinstance(exc, DataJobRejected) else "execution_rejected", finished=time.time())
-            write_json_atomic(DATA_STATE, value, mode=0o600)
+            _save_record(value)
             continue
         item.update(status="running", started=time.time())
-        write_json_atomic(DATA_STATE, value, mode=0o600)
+        _save_record(value)
         try:
             if parameters["action"] == "verify":
                 result = examine(item["file"], directory, database, reviewed_identity=entry["file_identity"])
@@ -248,7 +259,7 @@ def recover_batch(parameters: dict, saved: dict, value: dict) -> None:
             item.update(status="failed" if parameters["action"] == "verify" else "unresolved", failure="execution_rejected")
         finally:
             item["finished"] = time.time()
-            write_json_atomic(DATA_STATE, value, mode=0o600)
+            _save_record(value)
     succeeded = all(item["status"] == "completed" and item["category"] in {"healthy", "delete", "quarantine"} for item in value["items"])
     value.update(status="succeeded" if succeeded else "findings")
 
@@ -274,13 +285,15 @@ def run_action(parameters: dict) -> int:
             # An exclusive durable claim outlives the single latest-result slot.
             claim = _payload_path(parameters["job_id"]) + ".claimed"
             descriptor = os.open(claim, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-            os.fsync(descriptor)
-            os.close(descriptor)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
             from lib.atomic_io import _fsync_directory
             _fsync_directory(os.path.dirname(claim))
             value["items"] = [{**item, "status": "pending", "category": "", "failure": "",
                                "started": None, "finished": None, "destination": ""} for item in parameters["items"]]
-        write_json_atomic(DATA_STATE, value, mode=0o600)
+        _save_record(value)
         try:
             # Match routine edits: setup ownership precedes the storage lock,
             # and spans fresh configuration loading through the entire recovery.
@@ -316,7 +329,7 @@ def run_action(parameters: dict) -> int:
                     elif item["status"] == "running":
                         item.update(status="unresolved", failure=value["failure"], finished=time.time())
             value["finished"] = time.time()
-            write_json_atomic(DATA_STATE, value, mode=0o600)
+            _save_record(value)
         return 0 if value["status"] == "succeeded" else 1
 
 

@@ -53,6 +53,9 @@ class TriageTests(unittest.TestCase):
     def result(self):
         return json.loads(self.state.read_text())
 
+    def archive(self, job_id=None):
+        return Path(data_job._payload_path(job_id or self.value["job_id"]) + ".claimed")
+
     def test_contract_exact_bounded_and_detached(self):
         validated = validate_data_action(self.value)
         validated["items"][0]["file"] = "changed"
@@ -156,12 +159,61 @@ class TriageTests(unittest.TestCase):
         with patch.object(data_job, "dispose", side_effect=stop), self.assertRaises(KeyboardInterrupt):
             data_job.run_action(self.value)
         self.assertEqual([item["status"] for item in self.result()["items"]], ["unresolved", "skipped"])
+        self.assertEqual(json.loads(self.archive().read_text()), self.result())
         with self.assertRaises(ValueError):
             data_job.run_action(self.value)
         # Even after another job occupies the latest slot, the durable claim remains.
         self.state.unlink()
         with self.assertRaises(FileExistsError):
             data_job.run_action(self.value)
+
+    def test_batch_results_survive_another_job_in_the_latest_slot(self):
+        self.assertEqual(data_job.run_action(self.value), 0)
+        archived = self.archive()
+        original = self.result()
+        self.assertEqual(json.loads(archived.read_text()), original)
+        self.assertEqual(archived.stat().st_mode & 0o777, 0o600)
+        self.paths[0].write_bytes(b"replacement")
+        self.report().record("one", {"category": "unrepairable", "file_identity": findings.file_identity(str(self.paths[0]))})
+        self.value.update(action="verify", job_id="b" * 32,
+                          items=[{"file": str(self.paths[0]), "finding": finding_revision(self.report().data["files"]["one"])}])
+        with patch.object(data_job, "examine", return_value={"category": "healthy"}):
+            self.assertEqual(data_job.run_action(self.value), 0)
+        self.assertEqual(self.result()["parameters"]["job_id"], "b" * 32)
+        self.assertEqual(json.loads(archived.read_text()), original)
+        self.assertTrue(all(Path(item["destination"]).is_file() for item in original["items"]))
+
+    def test_failed_initial_archive_write_prevents_effects_and_replay(self):
+        write = data_job.write_json_atomic
+        def fail_archive(path, *args, **kwargs):
+            if str(path).endswith(".claimed"):
+                raise OSError("evidence unavailable")
+            return write(path, *args, **kwargs)
+        with patch.object(data_job, "write_json_atomic", side_effect=fail_archive), patch.object(data_job, "dispose") as dispose:
+            with self.assertRaises(OSError):
+                data_job.run_action(self.value)
+            dispose.assert_not_called()
+        self.assertTrue(all(path.exists() for path in self.paths))
+        self.assertFalse(self.state.exists())
+        with self.assertRaises(FileExistsError):
+            data_job.run_action(self.value)
+
+    def test_archive_failure_after_move_stops_remaining_items(self):
+        write = data_job.write_json_atomic
+        failed = False
+        def fail_once(path, value, **kwargs):
+            nonlocal failed
+            if str(path).endswith(".claimed") and value["items"][0]["status"] == "completed" and not failed:
+                failed = True
+                raise OSError("evidence write interrupted")
+            return write(path, value, **kwargs)
+        with patch.object(data_job, "write_json_atomic", side_effect=fail_once):
+            self.assertEqual(data_job.run_action(self.value), 1)
+        self.assertTrue(failed)
+        self.assertFalse(self.paths[0].exists())
+        self.assertTrue(self.paths[1].exists())
+        self.assertEqual([item["status"] for item in self.result()["items"]], ["completed", "skipped"])
+        self.assertEqual(json.loads(self.archive().read_text()), self.result())
 
     def test_quarantine_retains_relative_path_parity_and_excludes_inventory(self):
         (self.database / "one.par2").write_bytes(b"parity evidence")
