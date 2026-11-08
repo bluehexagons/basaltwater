@@ -1,3 +1,5 @@
 self-hosted-runner:
   labels:
     - basaltwater-wsl
+    # Hosted GA label; actionlint 1.7.12 has not added it to its built-in list.
+    - ubuntu-26.04

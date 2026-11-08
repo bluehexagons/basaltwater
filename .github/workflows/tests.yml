@@ -16,6 +16,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  latest-package:
+    name: Latest platform packaging / Python 3.15 (Ubuntu 26.04)
+    # Exercise current Linux/Python packaging natively. Ubuntu's Python builds
+    # cannot be mounted into Trixie when they require a newer glibc.
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.15'
+
+      - name: Install build tooling
+        run: python3 -m pip install --disable-pip-version-check build
+
+      - name: Check package metadata and installed wheel
+        run: make package-check artifact-check
+
   test:
     name: ${{ matrix.check-name }} / Node ${{ matrix.node-version }} (Debian Trixie)
     # Tool-cache Python and Node are mounted into Debian Trixie; keep their

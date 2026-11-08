@@ -130,7 +130,15 @@ Routine CI uses Python 3.13 in Debian Trixie. Branch and release test jobs run
 `ubuntu-24.04` hosted runner. The Python and Node tool-cache binaries run inside
 Trixie, so keep their runtime ABI compatible with its glibc; the wrapper checks
 Python's `sqlite3`, `ssl` and `termios` imports before installing dependencies.
-Requalify those imports before changing the runner image. The wrapper tries
+Ubuntu 26.04's tool-cache Python can require glibc 2.42 (including its
+`termios` extension), which Trixie does not provide. Keep the Debian test host
+on 24.04 until compatible Python builds are available or interpreter provisioning
+is moved inside Debian. Branch CI separately builds, installs and smoke-tests
+the wheel natively on Ubuntu 26.04 with Python 3.15, so current platform
+packaging stays covered without mixing runtime ABIs. Release wheel packaging
+uses `ubuntu-latest`; Debian release tests retain the compatible host.
+Requalify the runtime imports inside Debian before changing that host image.
+The wrapper tries
 Docker's official Debian image from
 [public ECR](https://gallery.ecr.aws/docker/library/debian), Google's
 [Docker Hub cache](https://docs.cloud.google.com/artifact-registry/docs/pull-cached-dockerhub-images),
