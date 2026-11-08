@@ -11,7 +11,7 @@ from common.service_tools import web_panel_storage as storage
 from common.service_tools.web_panel_findings import MAX_PAGE, PAGE_SIZE, load_findings, task_key
 from common.service_tools.web_panel_templates import render_document, render_heading
 from sync.service_tools.scrub_findings import ADVICE
-from common.service_tools.web_panel_data_actions import recovery_form, render_status, unavailable_reason
+from common.service_tools.web_panel_data_actions import batch_checkbox, batch_form, recovery_form, render_status, unavailable_reason
 from common.service_tools import web_panel_samba as samba
 from common.service_tools import web_panel_share_actions as shares
 from common.service_tools import web_panel_routine_actions as routines
@@ -403,14 +403,20 @@ def _scrubs(snapshot: dict, query: dict[str, str], host: str, *, csrf: str = "",
     if not findings and selection_available:
         body += '<p class="empty">No recorded findings match these filters in this snapshot.</p>'
     elif findings:
-        body += f'<p class="count">Showing {offset + 1}–{min(offset + PAGE_SIZE, total)} of {total} matching findings in this snapshot</p><ul class="data-list">'
+        body += f'<p class="count">Showing {offset + 1}–{min(offset + PAGE_SIZE, total)} of {total} matching findings in this snapshot</p>'
+        bulk = controls and bool(query.get("scope")) and selection_available
+        if bulk:
+            body += batch_form(selected, csrf)
+        elif controls:
+            body += '<p class="data-notice">Choose “Browse this task’s findings” in Task health to select files for bulk triage.</p>'
+        body += '<ul class="data-list">'
         visible = findings if complete else findings[offset:offset + PAGE_SIZE]
         for job, finding in visible:
             command = ["basaltw", "scrub", "inspect", host, "--directory", job["directory"]]
             if job.get("database"):
                 command += ["--database", job["database"]]
             command += ["--file", finding["path"]]
-            body += f'''<li class="event data-finding"><h3>{html.escape(finding["path"])}</h3>
+            body += f'''<li class="event data-finding"><h3>{html.escape(finding["path"])}</h3>{batch_checkbox(finding) if bulk and finding.get("revision") else ''}
 <p class="event-meta">Scrub root: {html.escape(job["directory"])}</p>
 <p><span class="badge warning">{html.escape(finding["category"].replace("_", " "))}</span></p>
 <p>{html.escape(ADVICE.get(finding["category"], "Inspect the recorded evidence before changing data."))}</p>

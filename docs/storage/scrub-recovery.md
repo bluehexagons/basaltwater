@@ -96,6 +96,32 @@ require existing parity so a candidate cannot silently become a new baseline.
 
 ## Persistence, locking, and recovery copies
 
+### Reviewed file disposition in the panel
+
+The [Shares & Data triage controls](../services/shares-data.md#triage-selected-findings)
+support batches of up to ten findings from one scrub task: verify, quarantine or
+permanently delete. Exact paths and one action are reviewed before a separate
+approval. Deletion requires the displayed `DELETE N FILES` confirmation. Repair,
+restore and acceptance stay individual operations.
+
+Quarantine retains corrupt bytes under the source root's private, root-owned
+`.basaltwater-quarantine` directory. An operation directory preserves the source
+relative path with a `.corrupt` suffix. An existing directory needs the recognized
+ownership marker and mode 0700; it is never silently adopted. Disposition requires
+a regular file with one hard link on the source root's filesystem and Linux
+`renameat2` support. Deletion first moves the reviewed inode privately, rechecks
+it, then unlinks it. An uncertain move or deletion retains a durable intent and
+requires inspection rather than replay.
+
+Disposition history remains in `findings.json`, independently of later finding
+resolution. Original parity is retained. Missing disposed paths do not become
+ordinary missing-file findings; reappearing bytes require fresh verification and
+never silently establish a baseline. Quarantine is excluded from inventory and
+mirror traversal. Existing mirror copies remain protected; releasing this
+protection is not supported by these controls. Do not remove the scrub declaration
+to bypass it. Inspect per-file worker results before individually reviewing any
+remaining files after interruption.
+
 Reports are stored at `DATABASE/.basaltwater-scrub/findings.json`. The metadata
 directory name is reserved. Original files, original parity, staged candidates,
 and an operation manifest are retained in private `recovery-*` directories

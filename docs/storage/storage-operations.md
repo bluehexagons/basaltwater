@@ -267,7 +267,15 @@ attempting to restore an unreadable file.
 `--scrub DIRECTORY DATABASE_PATH REDUNDANCY FREQUENCY` uses `par2` to create
 redundancy files, verify protected files, and repair corruption when possible.
 Missing protected files are recorded and their parity retained: absence alone
-does not prove an intentional deletion. `REDUNDANCY` is an integer
+does not prove an intentional deletion. Explicitly reviewed quarantine/deletion
+in [Shares & Data](../services/shares-data.md#triage-selected-findings) records a
+distinct disposition and retains parity and mirror protection. Later scans skip
+missing disposed paths; new bytes at the original path require fresh verification.
+The private `.basaltwater-quarantine` subtree is excluded from scrub inventory
+and mirror traversal. Source disposition never authorizes deleting mirror copies;
+protection remains until separately reviewed, and these controls provide no release
+action. Keep the scrub configured to retain its protections.
+`REDUNDANCY` is an integer
 percentage from `1%` through `100%`. Empty files are skipped because par2 cannot
 create useful parity for them. Fast maintenance flags an empty file with existing
 parity as a possible truncation; full scrubs verify it against that baseline.

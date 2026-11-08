@@ -196,7 +196,41 @@ or changed file identities. A missing-file scan records absence as its reviewed
 identity; a file appearing afterward blocks recovery. Verify older findings
 without an identity before recovery. Verification that still detects damage
 reports **findings**, not success.
-No bulk acceptance, deletion or unattended remediation is provided.
+Acceptance, repair and restoration remain file-specific.
+
+## Triage selected findings
+
+Choose **Task health → Browse this task’s findings**, then apply category and path
+filters. Select up to ten visible findings and choose **Verify selected files**,
+**Quarantine as corrupt (recommended)** or **Permanently delete selected files**.
+Selection clears when changing pages or filters; it never includes hidden matches.
+Long paths can require a smaller batch to fit the review limit.
+
+**Review selected findings** lists every exact path and one action. Quarantine
+requires `CHANGE FILE`; permanent deletion has its own review and requires
+`DELETE N FILES`, with the displayed count in place of `N`. Create the request,
+then independently approve its exact batch on the approval page. Verify has no
+typed confirmation. No batch can accept a new parity baseline.
+
+Quarantine atomically moves source files into a recognized root-owned, mode-0700
+`.basaltwater-quarantine` directory on the source filesystem, preserving relative
+paths under unique operation directories with `.corrupt` names. Both disposition
+actions reject symlinks, multiple hard links, cross-filesystem sources and unsafe
+or unrecognized quarantine directories. Permanent deletion removes source bytes;
+it retains the finding/disposition history, parity and mirror protection.
+
+**Activity & approvals** lists each file as pending, running, completed, skipped,
+failed or unresolved. The whole selection is checked before effects, and each
+file is checked again before acting. Changed entries are skipped. Interruption
+can leave partial completion or an unresolved action. Inspect actual state and
+individually review remaining files; batches are never replayed automatically.
+Findings below still follow the five-minute export.
+
+Disposed paths do not reopen as ordinary missing files on later scans. A new
+file appearing there requires fresh verification against retained parity.
+Quarantine content is excluded from scrubs and mirrors. Mirror copies remain
+protected even after later healthy verification; this feature provides no mirror
+protection release control. Keep the scrub declaration to retain these safeguards.
 
 A recorded scan does not verify later file changes. Missing mounts, unreadable
 reports and unsupported metadata show incomplete/unavailable results rather than

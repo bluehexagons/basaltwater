@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import html
+import json
 import secrets
 import threading
 import time
 
 from common.service_tools.web_panel_admin import _review_url, _timestamp
 from common.service_tools.web_panel_templates import render_heading
-from lib.data_actions import DATA_ACTIONS, HEX_ID, validate_data_action
+from lib.data_actions import BATCH_LIMIT, DATA_ACTIONS, HEX_ID, validate_data_action
 from lib.privilege_client import exchange
 
 FAILURE_LABELS = {
@@ -49,7 +50,16 @@ class PanelData:
         except (OSError, ValueError, RuntimeError):
             return {"error": "Recovery status is unavailable. Check or update the approval service before submitting work."}
 
-    def prepare(self, fields: dict[str, str]) -> tuple[str, dict]:
+    def prepare(self, fields: dict) -> tuple[str, dict]:
+        if "items" in fields:
+            if isinstance(fields["items"], list) and fields["items"][:1] == [""]:
+                fields = {**fields, "items": fields["items"][1:]}
+            if not isinstance(fields["items"], list) or not 1 <= len(fields["items"]) <= BATCH_LIMIT:
+                raise ValueError(f"Select between 1 and {BATCH_LIMIT} files")
+            try:
+                fields = {**fields, "items": [json.loads(item) for item in fields["items"]]}
+            except (TypeError, ValueError, RecursionError) as exc:
+                raise ValueError("Invalid selected finding; refresh and select again") from exc
         parameters = validate_data_action({**fields, "job_id": secrets.token_hex(16)})
         with self.lock:
             self.tickets = {key: value for key, value in self.tickets.items() if value[1] > time.monotonic()}
@@ -69,7 +79,7 @@ class PanelData:
 
     def submit(self, ticket: str, confirmation: str) -> None:
         parameters = self.reviewed(ticket)
-        required = "ACCEPT CURRENT CONTENT" if parameters["action"] == "accept" else "CHANGE FILE" if parameters["action"] != "verify" else ""
+        required = confirmation_phrase(parameters)
         if confirmation != required:
             raise ValueError("Type the exact confirmation phrase shown in the review")
         status = self.snapshot()
@@ -108,7 +118,7 @@ def recovery_form(job: dict, finding: dict, csrf: str, submitted: dict | None = 
     identifier = secrets.token_hex(8)
     selected = (submitted or {}).get("action", "verify")
     backup = html.escape((submitted or {}).get("backup", ""), quote=True)
-    options = ''.join(f'<option value="{key}"{" selected" if key == selected else ""}>{html.escape(label)}</option>' for key, (label, _effect) in DATA_ACTIONS.items())
+    options = ''.join(f'<option value="{key}"{" selected" if key == selected else ""}>{html.escape(label)}</option>' for key, (label, _effect) in DATA_ACTIONS.items() if key not in {"quarantine", "delete"})
     fields = {"directory": job["directory"], "database": job["database"], "file": finding["path"], "finding": finding["revision"]}
     hidden = ''.join(f'<input type="hidden" name="{key}" value="{html.escape(value, quote=True)}">' for key, value in fields.items())
     return f'''<form method="post" action="/actions/data/review" class="data-recovery-form">{csrf}{hidden}
@@ -125,6 +135,8 @@ def render_review(manager: PanelData, fields: dict[str, str], csrf: str) -> str:
 
 def render_failed_review(fields: dict, csrf: str) -> str:
     """Preserve editable recovery inputs only for a valid file/finding identity."""
+    if "items" in fields:
+        raise ValueError("Refresh and select the remaining files again")
     value = validate_data_action({**fields, "action": "verify", "backup": "", "job_id": secrets.token_hex(16)})
     return ('<section class="event data-review" aria-labelledby="recovery-inputs">'
             + render_heading("Correct recovery inputs", "security", heading_id="recovery-inputs")
@@ -133,18 +145,55 @@ def render_failed_review(fields: dict, csrf: str) -> str:
                             {"path": value["file"], "revision": value["finding"]}, csrf, fields) + '</section>')
 
 
+def confirmation_phrase(parameters: dict) -> str:
+    if "items" in parameters and parameters["action"] == "delete":
+        return f'DELETE {len(parameters["items"])} FILES'
+    return "ACCEPT CURRENT CONTENT" if parameters["action"] == "accept" else "CHANGE FILE" if parameters["action"] != "verify" else ""
+
+
+def batch_form(job: dict, csrf: str) -> str:
+    hidden = ''.join(f'<input type="hidden" name="{key}" value="{html.escape(job[key], quote=True)}">'
+                     for key in ("directory", "database"))
+    options = ''.join(f'<option value="{key}">{label}</option>' for key, label in
+                      (("verify", "Verify selected files"), ("quarantine", "Quarantine as corrupt (recommended)"),
+                       ("delete", "Permanently delete selected files")))
+    return f'''<form id="scrub-batch" method="post" action="/actions/data/review" class="event data-recovery-form">
+{csrf}{hidden}<input type="hidden" name="items" value="">
+<h3>Triage selected findings</h3><p>Select up to {BATCH_LIMIT} findings on this page. Selection clears when you change filters or pages. Review every path before requesting approval.</p>
+<label for="batch-action">Action for all selected files</label><select id="batch-action" name="action">{options}</select>
+<p>Quarantine retains corrupt bytes privately. Permanent deletion removes source bytes. Both retain parity, history and mirror protection. Repair, restore and acceptance require individual review.</p>
+<button>Review selected findings</button></form>'''
+
+
+def batch_checkbox(finding: dict) -> str:
+    value = html.escape(json.dumps({"file": finding["path"], "finding": finding["revision"]}), quote=True)
+    return (f'<label class="share-user"><input type="checkbox" form="scrub-batch" name="items" value="{value}">'
+            f'Select <span>{html.escape(finding["path"])}</span></label>')
+
+
+def _targets(parameters: dict) -> str:
+    if "items" not in parameters:
+        return '<p>' + html.escape(parameters.get("file", "")) + '</p>'
+    return f'<p>{len(parameters["items"])} reviewed files</p><ol>' + ''.join(
+        '<li>' + html.escape(item["file"]) + '</li>' for item in parameters["items"]) + '</ol>'
+
+
 def render_saved_review(ticket: str, parameters: dict, csrf: str) -> str:
     action = parameters["action"]
     label, effect = DATA_ACTIONS[action]
-    required = "ACCEPT CURRENT CONTENT" if action == "accept" else "CHANGE FILE" if action != "verify" else ""
+    if "items" in parameters and action == "verify":
+        label = "Verify selected files"
+    required = confirmation_phrase(parameters)
     confirmation = (f'<label for="recovery-confirm">Type <code>{required}</code> to confirm</label><input id="recovery-confirm" name="confirmation" required autocomplete="off">'
                     if required else '<input type="hidden" name="confirmation" value="">')
     facts = ''.join(f'<div><dt>{label}</dt><dd>{html.escape(parameters[key])}</dd></div>'
                     for label, key in (("File", "file"), ("Scrub root", "directory"), ("Parity directory", "database"), ("Independent copy", "backup"))
-                    if parameters[key])
+                    if parameters.get(key))
+    targets = _targets(parameters) if "items" in parameters else ""
     return f'''<section class="event data-review" aria-labelledby="recovery-review">{render_heading("Review: " + label, "security", heading_id="recovery-review")}
-<p>{html.escape(effect)}</p><dl class="job-facts">{facts}</dl>
+<p>{html.escape(effect)}</p>{targets}<dl class="job-facts">{facts}</dl>
 <p>This creates a single-use request. Open its approval review to approve or deny the exact action. The worker rejects a changed finding or file and shares the storage operation lock. Jobs have a six-hour limit; dispatch is separate from completion.</p>
+<p>Batches report each file separately. Interrupted or uncertain work is never replayed automatically. Inspect outcomes and individually review remaining files before retrying.</p>
 <form method="post" action="/actions/data/submit" class="data-recovery-form">{csrf}<input type="hidden" name="ticket" value="{html.escape(ticket, quote=True)}">{confirmation}<button>Create recovery approval request</button></form>
 <a href="/shares-data?view=scrubs">Cancel review</a></section>'''
 
@@ -161,7 +210,20 @@ def render_status(status: dict, csrf: str) -> str:
         parameters = latest.get("parameters", {})
         label = DATA_ACTIONS.get(parameters.get("action"), ("Recovery job", ""))[0]
         result = latest.get("status", "unavailable")
-        body += f'<article class="event"><h3>{escape(label)}</h3><p><span class="badge">{escape(result)}</span></p><p>{escape(parameters.get("file", ""))}</p>'
+        body += f'<article class="event"><h3>{escape(label)}</h3><p><span class="badge">{escape(result)}</span></p>' + _targets(parameters)
+        if "items" in parameters:
+            outcomes = {item["index"]: item for item in latest.get("items", []) if type(item.get("index")) is int}
+            body += '<ol aria-label="Per-file outcomes">'
+            for index, item in enumerate(parameters["items"]):
+                outcome = outcomes.get(index, {})
+                state = outcome.get("status", "unresolved")
+                body += f'<li><strong>{escape(item["file"])}</strong>: {escape(state)}'
+                if category := outcome.get("category"):
+                    body += ' · ' + escape(category.replace("_", " "))
+                if failure := outcome.get("failure"):
+                    body += '<p>' + escape(FAILURE_LABELS.get(failure, "Inspect before retrying.")) + '</p>'
+                body += '</li>'
+            body += '</ol><p>Partial or interrupted batches are never replayed. Inspect unresolved items; individually review remaining files before retrying.</p>'
         body += f'<p class="event-meta">Started: {_timestamp(latest.get("started"))} · Finished: {_timestamp(latest.get("finished")) if latest.get("finished") is not None else "Not recorded"}</p>'
         if category := latest.get("category"):
             body += f'<p>Recorded result: {escape(category.replace("_", " "))}</p>'
@@ -175,7 +237,7 @@ def render_status(status: dict, csrf: str) -> str:
         parameters = row.get("parameters", {})
         label = DATA_ACTIONS.get(parameters.get("action"), ("Recovery request", ""))[0]
         state = row.get("state", "unavailable")
-        body += f'<article class="event"><h3>{escape(label)}</h3><p>{escape(parameters.get("file", ""))}</p><p>Approval request: <strong>{escape(state)}</strong></p>'
+        body += f'<article class="event"><h3>{escape(label)}</h3>' + _targets(parameters) + f'<p>Approval request: <strong>{escape(state)}</strong></p>'
         body += f'<p class="event-meta">Requested: {_timestamp(row.get("created"))}</p>'
         if state in {"pending", "approved"}:
             body += f'<p class="event-meta">Approval expires: {_timestamp(row.get("expires"))}</p>'

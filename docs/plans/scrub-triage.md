@@ -1,10 +1,18 @@
 # Web-panel scrub triage and disposition
 
-Status: Proposed. Extend the existing **Shares & Data → Scrubs & findings**
+Status: Implemented with offline regression coverage; live deployment remains
+unqualified. Extend the existing **Shares & Data → Scrubs & findings**
 view with bounded bulk triage and reviewed file disposition. Single-file verify,
 repair, restore and accept already use the panel's approval flow; this plan adds
 bulk management for findings where isolating or removing the file is the chosen
 integrity decision.
+
+Implementation limits: ten selected visible findings from one task per batch,
+10,000 canonical parameter bytes, and the existing six-hour worker deadline.
+Selection clears on navigation. Quarantine requires Linux `renameat2` and the
+source root's filesystem; permanent deletion uses the same private staging before
+unlinking. Mirror protection release is intentionally unavailable and remains a
+separate future reviewed operation.
 
 ## Scope
 

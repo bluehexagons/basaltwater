@@ -2528,14 +2528,19 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def _handle_data_action(self, path: str, values: dict[str, list[str]]) -> None:
+        batch = path.endswith("/review") and "items" in values
         expected = ({"action", "directory", "database", "file", "backup", "finding"} if path.endswith("/review")
                     else {"ticket", "confirmation"} if path.endswith("/submit") else {"id"})
-        if set(values) != expected | {"csrf"} or any(len(entries) != 1 for entries in values.values()):
+        if batch:
+            expected = {"action", "directory", "database", "items"}
+        if (set(values) != expected | {"csrf"}
+                or any(len(entries) != 1 for key, entries in values.items() if not (batch and key == "items"))):
             self._send(HTTPStatus.BAD_REQUEST, "Invalid recovery action\n", "text/plain")
             return
         csrf = f'<input type="hidden" name="csrf" value="{html.escape(self.state.csrf_token, quote=True)}">'
         try:
-            fields = {key: entries[0] for key, entries in values.items() if key != "csrf"}
+            fields = {key: entries if batch and key == "items" else entries[0]
+                      for key, entries in values.items() if key != "csrf"}
             if path.endswith("/review"):
                 if reason := data_unavailable(self.state.data.snapshot()):
                     raise ValueError(reason)
