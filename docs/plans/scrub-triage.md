@@ -11,8 +11,10 @@ Implementation limits: ten selected visible findings from one task per batch,
 10,000 canonical parameter bytes, and the existing six-hour worker deadline.
 Selection clears on navigation. Quarantine requires Linux `renameat2` and the
 source root's filesystem; permanent deletion uses the same private staging before
-unlinking. Mirror protection release is intentionally unavailable and remains a
-separate future reviewed operation.
+unlinking. Disposition rejects files covered by another configured scrub task
+or inside any configured parity database; coordinating dispositions across
+multiple reports is unsupported. Mirror protection release is intentionally
+unavailable and remains a separate future reviewed operation.
 
 ## Scope
 

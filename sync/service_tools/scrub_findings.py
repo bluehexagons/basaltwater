@@ -152,7 +152,8 @@ def disposition_preflight(path: str, directory: str, database: str, job_id: str 
     from sync.service_tools.scrub_par2 import _confined_path
 
     _confined_path(path, directory)
-    if Path(path).is_relative_to(database) or QUARANTINE_DIR in Path(os.path.relpath(path, directory)).parts:
+    if (Path(path).is_relative_to(database)
+            or {METADATA_DIR, QUARANTINE_DIR}.intersection(Path(os.path.relpath(path, directory)).parts)):
         raise ValueError("Reserved disposition path")
     info = os.lstat(path)
     if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:

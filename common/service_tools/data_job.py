@@ -8,6 +8,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 import fcntl
 import os
+from pathlib import Path
 import secrets
 import signal
 import subprocess
@@ -27,10 +28,10 @@ from lib.privilege_policy import protected_path
 from lib.runtime_config import RuntimeConfig
 from sync.service_tools.scrub_findings import ADVICE, Findings, file_identity, examine, dispose, disposition_preflight
 from sync.service_tools.scrub_manage import execute, selected_jobs
-from sync.service_tools.storage_ops import LOCK_FILE, OperationLock
+from sync.service_tools.storage_ops import LOCK_FILE, OperationLock, resolve_scrub_database_path
 
 RESULTS = {"running", "succeeded", "findings", "failed", "interrupted"}
-FAILURES = {"", "storage_busy", "setup_recovery_required", "finding_changed", "file_changed", "identity_unavailable", "execution_rejected", "job_interrupted"}
+FAILURES = {"", "storage_busy", "setup_recovery_required", "finding_changed", "file_changed", "identity_unavailable", "overlapping_scrubs", "reserved_path", "execution_rejected", "job_interrupted"}
 
 
 class DataJobRejected(ValueError):
@@ -203,6 +204,16 @@ def recover_batch(parameters: dict, saved: dict, value: dict) -> None:
         if entry["file_identity"] != file_identity(item["file"]):
             raise DataJobRejected("file_changed")
         if parameters["action"] != "verify":
+            # Disposition updates one report. Reject other protecting tasks,
+            # including paused ones, rather than leave their evidence stale.
+            path = Path(item["file"])
+            for root, parity, _redundancy, _interval in config.scrub_specs:
+                root = os.path.normpath(root)
+                parity = resolve_scrub_database_path(root, parity)
+                if path.is_relative_to(parity):
+                    raise DataJobRejected("reserved_path")
+                if path.is_relative_to(root) and (root, parity) != (directory, database):
+                    raise DataJobRejected("overlapping_scrubs")
             if report.disposition_blocked(relative, entry["file_identity"]):
                 raise DataJobRejected("execution_rejected")
             disposition_preflight(item["file"], directory, database, parameters["job_id"])

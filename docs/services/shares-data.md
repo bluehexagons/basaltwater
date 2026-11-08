@@ -216,8 +216,12 @@ Quarantine atomically moves source files into a recognized root-owned, mode-0700
 `.basaltwater-quarantine` directory on the source filesystem, preserving relative
 paths under unique operation directories with `.corrupt` names. Both disposition
 actions reject symlinks, multiple hard links, cross-filesystem sources and unsafe
-or unrecognized quarantine directories. Permanent deletion removes source bytes;
-it retains the finding/disposition history, parity and mirror protection.
+or unrecognized quarantine directories. They also reject reserved scrub metadata,
+files inside any configured parity database and files covered by overlapping
+scrub tasks, including paused tasks. Verification remains available for overlapping
+tasks; coordinate recovery across their reports through the administrator command
+line. Permanent deletion removes source bytes; it retains the finding/disposition
+history, parity and mirror protection.
 
 **Activity & approvals** lists each file as pending, running, completed, skipped,
 failed or unresolved. The whole selection is checked before effects, and each

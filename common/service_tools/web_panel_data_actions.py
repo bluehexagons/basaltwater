@@ -19,6 +19,8 @@ FAILURE_LABELS = {
     "finding_changed": "The finding changed after review. Refresh the findings before reviewing it again.",
     "file_changed": "The file changed after its recorded check. Verify it again before recovery.",
     "identity_unavailable": "This older finding has no file identity. Verify it again before recovery.",
+    "overlapping_scrubs": "Another scrub task covers this file. Quarantine and deletion require one protecting task; verification remains available. Coordinate recovery across the reports through the administrator command line.",
+    "reserved_path": "The file is inside a configured parity database and cannot be quarantined or deleted as source data.",
     "execution_rejected": "Recovery could not complete. Inspect setup activity, configured mounts and the scrub report through the controller before retrying.",
     "job_interrupted": "The worker stopped without a confirmed result. Inspect the file and report before retrying.",
 }

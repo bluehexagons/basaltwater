@@ -90,6 +90,53 @@ class TriageTests(unittest.TestCase):
         self.assertTrue(all(path.exists() for path in self.paths))
         self.assertEqual(self.result()["failure"], "finding_changed")
 
+    def test_overlapping_scrubs_reject_disposition_before_any_effects(self):
+        for index, directory in enumerate((self.source, self.root, self.source / "nested")):
+            if index == 2:
+                directory.mkdir()
+                self.paths[1] = self.paths[1].rename(directory / "two")
+                self.report().record("nested/two", {"category": "unrepairable", "file_identity": findings.file_identity(str(self.paths[1]))})
+                self.value["items"][1] = {"file": str(self.paths[1]), "finding": finding_revision(self.report().data["files"]["nested/two"])}
+            self.saved["scrub_specs"] = [self.saved["scrub_specs"][0],
+                                          [str(directory), str(self.root / "other-parity"), "10%", "weekly"]]
+            for action in ("quarantine", "delete"):
+                with self.subTest(directory=directory, action=action):
+                    self.value.update(action=action, job_id=f"{index * 2 + (action == 'delete'):032x}")
+                    with patch.object(data_job, "dispose", return_value={"category": action}) as dispose:
+                        self.assertEqual(data_job.run_action(self.value), 1)
+                        dispose.assert_not_called()
+                    self.assertEqual(data_job._record()["failure"], "overlapping_scrubs")
+                    self.assertEqual([item["status"] for item in self.result()["items"]], ["skipped"] * 2)
+                    self.assertTrue(all(path.exists() for path in self.paths))
+
+    def test_overlapping_scrubs_still_allow_verification(self):
+        self.saved["scrub_specs"].append([str(self.source), str(self.root / "other-parity"), "10%", "weekly"])
+        self.value["action"] = "verify"
+        with patch.object(data_job, "examine", return_value={"category": "healthy"}) as examine:
+            self.assertEqual(data_job.run_action(self.value), 0)
+        self.assertEqual(examine.call_count, 2)
+
+    def test_disposition_cannot_remove_another_tasks_parity(self):
+        self.saved["scrub_specs"].append([str(self.root / "other-source"), str(self.source), "10%", "weekly"])
+        with patch.object(data_job, "dispose", return_value={"category": "quarantine"}) as dispose:
+            self.assertEqual(data_job.run_action(self.value), 1)
+            dispose.assert_not_called()
+        self.assertEqual(data_job._record()["failure"], "reserved_path")
+        self.assertTrue(all(path.exists() for path in self.paths))
+
+    def test_disjoint_scrub_does_not_block_disposition(self):
+        self.saved["scrub_specs"].append([str(self.root / "other-source"), str(self.root / "other-parity"), "10%", "weekly"])
+        self.assertEqual(data_job.run_action(self.value), 0)
+
+    def test_disposition_rejects_reserved_scrub_metadata(self):
+        metadata = self.source / findings.METADATA_DIR
+        metadata.mkdir()
+        path = metadata / "manifest.json"
+        path.write_bytes(b"metadata")
+        with self.assertRaisesRegex(ValueError, "Reserved disposition path"):
+            findings.disposition_preflight(str(path), str(self.source), str(self.database))
+        self.assertEqual(path.read_bytes(), b"metadata")
+
     def test_per_item_race_preserves_partial_results(self):
         dispose = data_job.dispose
         def race(*args):

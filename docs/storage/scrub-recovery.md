@@ -113,6 +113,12 @@ a regular file with one hard link on the source root's filesystem and Linux
 it, then unlinks it. An uncertain move or deletion retains a durable intent and
 requires inspection rather than replay.
 
+Disposition rejects reserved scrub metadata, every configured parity database,
+and files covered by more than one configured scrub task, including paused tasks.
+Selecting one task does not override these safeguards: disposition updates only
+one report. Verification remains available; coordinate recovery across overlapping
+tasks through the administrator command line.
+
 Disposition history remains in `findings.json`, independently of later finding
 resolution. Original parity is retained. Missing disposed paths do not become
 ordinary missing-file findings; reappearing bytes require fresh verification and
