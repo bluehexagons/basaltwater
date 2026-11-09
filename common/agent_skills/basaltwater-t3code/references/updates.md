@@ -98,6 +98,11 @@ Basaltwater and rerun the saved setup command to apply the readiness fix.
 
 ## Release tracks and archive layout
 
+Stable 0.1.8 retains the same protocol/layout and administrative pairing
+contract. See the [release integration](release-0.1.8.md) for component evidence
+and remaining live qualification. Provider discovery updates do not authorize
+changing the owner's provider/model or release track.
+
 Stable 0.1.7 retains service-state protocol 3 and the standalone archive layout.
 An installed version can differ from the running service: upstream records
 `runtime/.restart-pending` when activation remains outstanding. Setup checks
@@ -156,6 +161,30 @@ override is required. The desktop release also updates Electron for its Brotli
 security fix; updating a server does not update a separately installed client.
 See the [archive builder](https://github.com/pingdotgg/t3code/blob/v0.1.5/scripts/build-cli-archive.ts)
 and [desktop release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.5).
+
+## 0.1.8 service environment and maintenance
+
+The upstream launcher reads `service.env` under its T3 home at startup. Values
+override inherited environment values except `PATH`, `T3CODE_HOME`,
+`T3_BOOT_SERVICE_UNIT` and `T3_SERVICE_LAUNCHER_CONTEXT`. Inspect its relevant
+non-secret keys when managed host/port behavior differs from the systemd
+drop-in: `T3CODE_HOST` and `T3CODE_PORT` there can override the inherited
+Basaltwater values. Keep the configured bind/source allowlist consistent;
+do not copy the file into diagnostics or remove unrelated owner settings.
+An explicit `T3CODE_HOST` takes precedence over upstream's LAN setting.
+Changes require an arranged service restart, not merely selecting a version.
+
+**Settings → Maintenance → Reclaim** is offline database repair: it stops
+agents and the server, rebuilds the database and restarts it. Arrange downtime
+and a private recovery copy first. Free-space requirements include about twice
+the live data across the temporary directory and the database filesystem, plus
+WAL growth/headroom. Use native `t3 doctor --dry-run --base-dir PATH` to inspect
+another environment. Native `t3 doctor --fix` runs recommended repairs and can
+stop a matching installed service; it is different from `basaltw agent doctor
+--fix`. A manually started server or desktop must be stopped first. Never add
+reclamation or legacy-database deletion to routine cache cleanup. Preserve
+custom base directories and migration compatibility blocks. Source:
+[service environment and repair](https://github.com/pingdotgg/t3code/blob/v0.1.8/docs/user/background-service.md).
 
 ## Refresh from a T3 terminal
 

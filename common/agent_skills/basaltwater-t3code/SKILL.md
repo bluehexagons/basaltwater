@@ -68,9 +68,9 @@ Read only the route needed:
   compatibility blocks. Before a first upgrade from pre-0.1.0, also read
   [thread migration](references/thread-migration.md).
   Startup migration can take 30 minutes; inspect before interrupting/retrying.
-- **Preparing for the next stable release:** [0.1.8 forward review](references/next-release.md).
-  These are pinned nightly observations and qualification work, not stable
-  behavior or authorization to switch tracks, restart services, or enable features.
+- **Stable 0.1.8 compatibility and changed workflows:** [release integration](references/release-0.1.8.md).
+  Includes fresh-session schedules, `/clear`, inherited side-chat permissions,
+  provider recommendations, and component-check limits.
 - **Delegation/worktrees:** `basaltwater-subagents`. Use T3 workspace binding
   before starting editors; shell `cd` does not rebind a thread.
 - **Linked environments:** [operations](references/operations.md#linked-environments)

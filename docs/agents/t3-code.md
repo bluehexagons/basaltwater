@@ -132,23 +132,23 @@ credential contents, use `basaltw agent support-bundle`.
 
 ## Stable feature baseline
 
-As checked on **2026-11-04**, GitHub's latest stable release is **0.1.7**.
+As checked on **2026-11-09**, GitHub's latest stable release is **0.1.8**.
 Check AUR/WinGet availability and the installed desktop version separately. It retains
 the stable Orchestrator V2
 introduced in 0.1.0 and service-state protocol 3. Keep the
 server and every connected desktop client on compatible V2 releases; mobile
-requires the 2.0 app. See the [upstream release notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.7)
+requires the 2.0 app. See the [upstream release notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.8)
 and [V2 migration notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.0).
 
 The release's recommended provider versions are Codex **0.159+**, Claude Code
-**2.1.280+**, Grok **1.0.13+**, OpenCode 2 **2.0.18+**, and Pi **1.0+**.
-The [provider compatibility manifest](https://github.com/pingdotgg/t3code/blob/v0.1.7/apps/server/src/provider/model-manifest.json)
-also marks Codex 0.156+ and Pi 0.80.5+ supported; distinguish recommended
+**2.1.301+**, Grok **1.0.13+**, OpenCode 2 **2.0.18+**, and Pi **1.0+**.
+The [provider compatibility manifest](https://github.com/pingdotgg/t3code/blob/v0.1.8/apps/server/src/provider/model-manifest.json)
+also marks Codex 0.156+, Claude Code 2.1.280+ and Pi 0.80.5+ supported; distinguish recommended
 versions from minimum support. Inspect **Settings → Providers** for the selected account,
 binary, version, and readiness. Setup manages only selected Basaltwater
 providers; T3's additional Pi, Muse Code, Cursor SDK, and ACP Registry choices
 do not imply that Basaltwater installed, authenticated, or qualified them.
-Antigravity now recommends **1.4.1**, with 1.3.0 and 1.1.1 also supported;
+Antigravity recommends **1.4.5 or 1.4.1**, with 1.3.0 and 1.1.1 also supported;
 0.1.5 adds Claude/GPT model discovery and thinking controls to that integration.
 This does not qualify it as a Basaltwater-managed provider.
 
@@ -214,6 +214,31 @@ See the [usage guide](https://github.com/pingdotgg/t3code/blob/v0.1.5/docs/user/
 
 ### Agent workflow integration
 
+The 0.1.8 stable review retains service-state protocol 3, `activeVersion`,
+the standalone archive/native-module layout, and all 16 administrative pairing
+permissions. No runtime adapter change is needed. On Debian 13 x64, the
+GitHub-digest-verified Linux archives passed disposable fresh 0.1.8 startup and
+a 0.1.7-to-0.1.8 upgrade through Basaltwater's output filter. Checks covered
+version, embedded native PTY, HTTP 200, administrative pairing, bootstrap-session
+revocation, signal forwarding/shutdown, and SQLite integrity. A host-CLI project
+fixture survived the upgrade; migrations advanced from 79 to 80. No live shared
+service was changed. These are component checks, not full setup/systemd lifecycle,
+authenticated provider/terminal, or native-client qualification.
+
+The shared [0.1.8 client workflows](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-018-client-workflows)
+cover `/clear`, private secret cards, optional API text generators and settlement.
+Side chats now inherit parent permissions/model/effort from their first reply.
+Schedules expose `freshSession: true` through MCP for one retained thread with a
+new provider session per run; the stored `threadMode` is not an MCP parameter.
+Use self-contained prompts and durable checkpoints. Native provider discovery
+refreshes the catalog, including Fable 5.2; preserve explicit selections and the
+[Sol/Opus recommendations](../../common/agent_skills/basaltwater-subagents/references/model-selection.md).
+Direct API text generators have separate credentials/billing from subscriptions.
+See the [release integration](../../common/agent_skills/basaltwater-t3code/references/release-0.1.8.md)
+for tagged contracts and qualification limits, and
+[service environment/maintenance](../../common/agent_skills/basaltwater-t3code/references/updates.md#018-service-environment-and-maintenance)
+for `service.env` precedence and offline database reclamation.
+
 The 0.1.7 source review retains service-state protocol 3, the standalone archive
 and native-module layout, provider recommendations, and the pairing helper's
 CLI session grant contract. Setup now distinguishes a repointed runtime from
@@ -253,8 +278,9 @@ Stable 0.1.6 adds these workflows to the existing integration:
 - **Side chats:** `/side` or `/btw`, or **Side chat** in the right panel's **+**
   menu, asks a question with the thread's context while its work continues.
   It shares the thread's folder; it is not an isolated editing worktree.
-  The first reply asks before commands or edits; later replies use the chosen
-  composer permission mode. **Bring back** transfers the discussion with the
+  In current 0.1.8, the first reply inherits the parent composer's permissions,
+  model and effort; existing side chats retain their own settings after parent
+  changes. **Bring back** transfers the discussion with the
   next main-thread message while that thread is idle.
 - **Project organization:** pin projects in pickers or **Settings → Projects**.
   Archive there to hide a project from pickers while retaining files, threads,
@@ -330,7 +356,7 @@ The shared installed skills now route T3 agents to its native orchestration:
 | Editing isolation | Select `delegate_task` worktree isolation or an explicit top-level thread workspace before starting work. T3 owns its worktree binding and cleanup; Basaltwater commands manage their own ownership records. A shell `cd` does not rebind a thread. |
 | Conversation/context | Fork and merge-back transfer context separately from Git integration. Provider switches can carry command output, filenames, and plans as budgeted historical text; native tool state, reasoning, and attachments are not replayed. Read omitted history in bounded pages. |
 | Queues and recovery | Choose queue versus steering explicitly and inspect pending messages before retrying. Persistent queues wait for user resume after restart; interrupted-turn auto-continuation and usage-reset resume have separate controls. |
-| Recurring work | Choose T3 schedules for work returning to a T3 thread, or Basaltwater tasks for independent Codex execution and bounded goals. `schedule_task` updates by ID. 0.1.4 also exposes `run_scheduled_task_now` with `taskId` for authorized immediate runs; dispatch is not completion. Bound runs follow current thread settings; fresh-thread MCP tasks use remote `main` worktrees. Inspect stored model/workspace settings in the task UI. Filter/deduplicate webhooks before provider work. Use one scheduler per job. |
+| Recurring work | Choose T3 schedules for work returning to a T3 thread, or Basaltwater tasks for independent Codex execution and bounded goals. `schedule_task` updates by ID and supports `freshSession` in 0.1.8. `run_scheduled_task_now` uses `taskId` for authorized immediate runs; dispatch is not completion. Bound runs follow current thread settings; unbound MCP tasks resolve the primary remote's default branch with `main`/`master` fallbacks. Inspect stored model/workspace settings in the task UI. Filter/deduplicate webhooks before provider work. Use one scheduler per job. |
 | Pull requests | Register PRs through `link_pull_request`. For requested monitoring, watch once, yield for wakeups, then unwatch before handoff. Watches persist across wakes. Read existing guides without starting a model run; generation is optional and uses project guide settings. Check head SHA/staleness alongside diff review and checks. |
 | Project actions | Reuse canonical project commands through imported `t3.json` actions. Set worktree setup `async: false` when it must finish before the agent starts. Preserve project/environment overrides and inspect settle actions before cleanup. |
 | Visual results | Use `html_preview` then `html_render` for useful interactive charts, diagrams, comparisons, or mockups. T3 embeds local images and publishes a sandboxed thread artifact; it does not deploy the project or verify its behavior. |
@@ -350,7 +376,8 @@ provides the project-action and visual-reply routes. For deliberate outside-agen
 access, use T3's OAuth `/mcp` integration described in the
 [operations reference](../../common/agent_skills/basaltwater-t3code/references/operations.md#outside-agents).
 It does not automatically connect independent Basaltwater tasks or give them a
-thread's tools. Outside OAuth grants default to read only; `T3-Mode-Limit` may
+thread's tools. Outside OAuth approval without a code starts at read only;
+0.1.8's app-connection wizard retains the chosen grant. `T3-Mode-Limit` may
 narrow their modes, never widen them. Use returned thread `link` values verbatim:
 current native links include environment and thread IDs, while outside OAuth
 clients receive browser URLs. Stable 0.1.4's `t3_thread_launch` accepts a stable
@@ -367,10 +394,10 @@ separate from Basaltwater's owned-worktree ancestry checks and cache maintenance
 
 ### Stable feature qualification
 
-The shared [client workflow reference](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-017-client-workflows)
+The shared [client workflow reference](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-018-client-workflows)
 ships in the existing project-development bundle on Debian, CachyOS, native
 Windows, and Ubuntu WSL. The shared scheduling reference also covers 0.1.7's
-one-time triggers. No additional skill catalog entry is needed.
+one-time triggers and 0.1.8's fresh-session mode. No additional skill catalog entry is needed.
 
 On Debian, rerun the saved setup or use `sudo basaltw refresh` to reconcile
 stable T3 and deliver updated skills; inspect the independent refresh and
@@ -395,15 +422,16 @@ blocked step. Mocked tests and service HTTP readiness cannot qualify these paths
 
 | Case | Required evidence |
 | --- | --- |
-| Providers and migration | Fresh 0.1.7 setup, 0.1.6-to-0.1.7 upgrade, and V1-to-V2 copy migration with matching client, selected Codex/Claude combinations, private recovery copy, pairing permissions, authenticated provider turn, and terminal. Qualify OpenCode 2 separately before claiming support. |
+| Providers and migration | Fresh 0.1.8 setup, 0.1.7-to-0.1.8 upgrade, and V1-to-V2 copy migration with matching client, selected Codex/Claude combinations, private recovery copy, pairing permissions, authenticated provider turn, and terminal. Qualify OpenCode 2 separately before claiming support. |
 | 0.1.6 workflows | Side-chat permission modes and idle Bring back, project pin/archive/unarchive across connected checkouts, local/merge commit review, optional 1Password resolution with missing/locked CLI failures, and server/agent priorities under pressure. Test service protection/undo separately on a disposable Debian host. |
 | 0.1.7 workflows | Parent-visible local/linked-child approvals reach the correct request; copied thread links open only for authorized recipients; one-time schedules respect offsets and do not repeat; usage filters apply before model mapping per environment; model/effort markers match changes; tagged-thread hiding does not stop work. Test managed-policy defaults/locks, cap enforcement, invalid-policy startup refusal and loaded-policy freshness on disposable hosts. Test direct preview-open targets only when exposed. |
+| 0.1.8 workflows | Verify `/clear` resets provider context while retaining visible history, and Restart agent session reloads guidance without that reset. Check inherited first-reply side-chat settings, fresh-session schedules and two-save task moves, existing schedule migration/run history, private secret-card/reference/file delivery with synthetic secrets and failure/cancellation paths, API generator routing/billing consent, HTML file input, delayed child-result wakeups and actual model reporting. Check `service.env` precedence, custom base-dir retention, offline Reclaim/disk refusal, and opt-in `stopOnSettle` with automatic settlement. Qualify outside-agent wizard grants/revocation and matching mobile/desktop clients separately. |
 | Project promotion and release tracks | Promote a stopped No project folder in place; retain its files, all associated threads and schedules, then initialize Git. Exercise a deliberate Stable/Nightly switch on disposable installations, including offline/unsupported machines, incompatible or unreadable databases, and an incomplete switch whose requested track differs from its running version. Preserve database compatibility refusals. |
 | Delegation | Same-provider and cross-provider child results, explicit model/options, fresh review rounds, async wake, nested completion state, pending question, cancellation, and restart interruption without duplicated work. |
 | Linked environments | On deliberately linked disposable peers, verify beta gates on both sides, server reachability/trust, read-only and narrower-mode denials, repository matching, missing/ambiguous project selection, remote result/restart/cancel, rejected worktree isolation/attachments, thread links, launch retry deduplication, expiry and peer revocation. Confirm forgetting a link does not claim to stop remote edits. |
 | Workspace/context | Child worktree starts from committed local base; blocking setup completes before the first turn, while async setup is checked before dependent work. Uncommitted edits stay in parent. Explicit launch/handoff binding works, historical context stays distinguishable from native tool state, and cleanup/settle actions preserve unrelated work. |
 | Queues and limits | Queue order and attachments survive restart, queue awaits user resume, steering reaches the intended turn, auto-continuation is controlled, and usage-limit/reset recovery does not duplicate edits. |
-| Scheduling | Interval and server-time fixed schedules, current-thread and requested fresh-thread binding, safe model/options, unified update/pause/resume/delete, UI and MCP run-now results/permission denials, and restart recovery. Confirm bound runs follow current thread settings and MCP-created fresh runs use remote `main` plus stored task settings. For webhooks, signature rejection, private secret entry, filters, replay/coalescing and missing keys, stale deliveries, and caller/Connect URL eligibility. |
+| Scheduling | Interval and server-time fixed schedules, current-thread and requested fresh-thread binding, one-thread fresh sessions, safe model/options, unified update/pause/resume/delete, UI and MCP run-now results/permission denials, and restart recovery. Confirm bound runs follow current thread settings and MCP-created unbound runs resolve the primary remote's default branch with `main`/`master` fallbacks, using stored task settings until bound. Check local-only and nonstandard-default repositories too. For webhooks, signature rejection, private secret entry, filters, replay/coalescing and missing keys, stale deliveries, and caller/Connect URL eligibility. |
 | PR workflow | Link all stack layers, receive checks/comment/conflict wakeups without polling, unwatch on handoff, and read review-guide results/staleness. Do not merge as a side effect of monitoring. |
 | Client and gateway | Update/reboot readiness, direct/private and Connect access, gateway TLS, preview attachment and recording transfer, and optional offline webhook storage only when deliberately selected. |
 | Visual and outside-agent workflows | T3 Chrome cold-start/host diagnostics, narrow/light/dark HTML preview and local image embedding, readable text, private file secret delivery/expiry, deliberate OAuth grant/revocation, and opt-in device alerts. Record any browser validation gap separately from successful HTML publication. |

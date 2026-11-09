@@ -69,13 +69,19 @@ basaltw agent doctor --tool codex --capability t3code --capability host --record
 
 Basaltwater's readiness/rollback history belongs to updates through
 Basaltwater; T3 updates do not create these records automatically.
+Stable 0.1.8 recognizes mise-managed provider installations and updates them
+through mise. Preserve the owning installer rather than adding a second global
+installation. Refresh discovery in **Settings → Providers** and inspect the
+reported executable/version; a catalog entry alone does not establish readiness.
+See the [upstream mise fix](https://github.com/pingdotgg/t3code/pull/21524).
 
 ## 0.1.6 conversation, project, and credential workflows
 
 Use `/side` or `/btw` for an owner's side question, or **Side chat** in the right
 panel's **+** menu. It carries the main thread's context and shares its folder
-while that thread continues working. Its first reply asks before commands or
-edits; later replies follow its composer permission mode. Keep concurrent edits
+while that thread continues working. In 0.1.8 it starts with the parent's
+composer model, effort and permissions, including the first reply. Existing
+side chats keep their own settings when the parent changes. Keep concurrent edits
 in explicitly bound worktrees. **Bring back** includes the discussion with the
 next main-thread message while the main thread is idle. Side chats are not
 delegated task receipts or a replacement for `delegate_task`.
@@ -96,7 +102,11 @@ and account access. Do not install/enroll it or replace existing authentication
 incidentally. This configuration is separate from `request_secret`, which
 remains the private agent input route with one-use references/file delivery.
 
-Contracts: [side chats](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/thread-sidebar.md#side-chats),
+For 0.1.8's private cards, headless secret providers, `/clear` and optional API
+generators, read the shared
+[client workflows](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-018-client-workflows).
+
+Contracts: [side chats](https://github.com/pingdotgg/t3code/blob/v0.1.8/docs/user/thread-sidebar.md#side-chats),
 [project organization](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/project-settings.md#pin-and-archive-projects),
 [commit review](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/source-control.md),
 and [1Password driver](https://github.com/pingdotgg/t3code/blob/v0.1.6/packages/secret-provider-onepassword/src/server/driver.ts).
@@ -141,13 +151,19 @@ TLS/authentication policy and upstream assets.
 ## Outside agents
 
 An independent agent can deliberately connect through T3's OAuth MCP endpoint
-at the environment's `/mcp` route. Copy the URL from **Settings → Environments**
-and approve only a sign-in you initiated, with the access level the task needs.
+at the environment's `/mcp` route. In 0.1.8, **Connect another app (MCP)** in
+the command palette or **Settings → Sharing & access** guides app selection,
+access level and URL setup. Approve only a sign-in you initiated, with the
+access level the task needs. Wizard codes last five minutes and grant only
+the level chosen there.
 Use HTTPS or host-local loopback for sign-in; a cloud-hosted agent needs an
 internet-reachable route such as T3 Connect. A private LAN/tailnet URL alone does
 not supply that reachability. Revoke an unused grant through **Sharing & access**.
 
-Outside OAuth access defaults to **Read only**. Supervised through full access
+Without a code, OAuth approval starts at **Read only**; wizard codes retain
+their selected grant. Another code can default to **Auto** or a lower policy
+ceiling, so inspect the displayed access rather than assuming read only.
+Supervised through full access
 also permits starting, messaging, and stopping threads subject to the granted
 mode ceiling. `T3-Mode-Limit: <runtimeMode>/<interactionMode>` can narrow an
 OAuth request further; it cannot expand the grant and is ignored for injected
@@ -158,7 +174,7 @@ This is separate from T3's injected thread tools and Basaltwater's task MCP.
 Installation does not connect terminal/panel agents automatically. External
 access does not make them delegated children of this thread or transfer its
 browser attachment. Do not register an outside agent or enable public access as
-an incidental repair. Use the [tagged outside-agent guide](https://github.com/pingdotgg/t3code/blob/v0.1.4/docs/user/outside-agents.md)
+an incidental repair. Use the [tagged outside-agent guide](https://github.com/pingdotgg/t3code/blob/v0.1.8/docs/user/outside-agents.md)
 when that integration is requested.
 
 ## Linked environments

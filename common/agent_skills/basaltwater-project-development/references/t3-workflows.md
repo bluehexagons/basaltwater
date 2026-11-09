@@ -2,7 +2,7 @@
 
 Use these integrations when the active T3 session exposes the relevant tools.
 Follow its injected instructions and live schemas. This reference follows
-[stable 0.1.7](https://github.com/pingdotgg/t3code/releases/tag/v0.1.7).
+[stable 0.1.8](https://github.com/pingdotgg/t3code/releases/tag/v0.1.8).
 
 ## Establish the execution environment
 
@@ -55,8 +55,9 @@ repository, provider, credentials, and installed skills.
 
 - Start a side question with `/side` or `/btw`, or **Side chat** in the right
   panel's **+** menu. It inherits context and shares the thread's folder while
-  the main thread continues. Its first reply asks before commands or edits;
-  later replies use its composer permission mode. Use bound worktrees for
+  the main thread continues. In 0.1.8 it inherits the parent's composer model,
+  effort and permissions from the first reply; later parent changes do not
+  change an existing side chat. Inspect its own composer. Use bound worktrees for
   concurrent edits. **Bring back** includes the discussion with the next
   main-thread message while that thread is idle. It does not create a delegated
   task receipt or merge Git changes.
@@ -74,7 +75,7 @@ repository, provider, credentials, and installed skills.
   variable does not enable the compiled UI. Continue using `request_secret`
   for private agent input with one-use references or file delivery.
 
-Contracts: [side chats](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/thread-sidebar.md#side-chats),
+Contracts: [side chats](https://github.com/pingdotgg/t3code/blob/v0.1.8/docs/user/thread-sidebar.md#side-chats),
 [project organization](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/project-settings.md#pin-and-archive-projects),
 [commit review](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/source-control.md),
 and [1Password resolution](https://github.com/pingdotgg/t3code/blob/v0.1.6/packages/secret-provider-onepassword/src/server/driver.ts).
@@ -122,6 +123,45 @@ Contracts: [approvals](https://github.com/pingdotgg/t3code/blob/v0.1.7/docs/user
 [model history](https://github.com/pingdotgg/t3code/blob/v0.1.7/apps/web/src/components/chat/V2LifecycleRow.tsx),
 and [tag settings](https://github.com/pingdotgg/t3code/blob/v0.1.7/packages/contracts/src/settings.ts).
 
+## Shared 0.1.8 client workflows
+
+- **Context reset:** send `/clear` alone to start a fresh provider session in
+  the same thread. Earlier conversation and diffs stay visible, but are not
+  supplied to the new session. Save a durable checkpoint before a deliberate
+  reset. Compaction retains a summary; **Restart agent session** reloads the
+  session's guidance and preserves conversation context. Do not substitute
+  `/clear` for a skill reload or assume it erases retained history.
+- **Private secrets:** call `request_secret` for the private card. Use its
+  one-use `secretRef` with a supported T3 tool, or `delivery: "file"` for a
+  command. Read that owner-only file inside the command without printing the
+  value; it expires after about 24 hours. A configured secret provider can
+  answer the card with a reference. The request card works even when the
+  preview **Settings → Secrets** page is absent. Headless 1Password access
+  needs service-account or Connect authentication on the server, not an
+  unattended desktop approval. Private sudo entry does not expand the task's
+  authority or replace Basaltwater's privilege approval route.
+- **Optional text generators:** Settings can select a direct OpenAI, Anthropic,
+  OpenRouter or compatible API route for titles, branch names, commit/PR text
+  and transcript cleanup. It needs separate API credentials/billing and can
+  send the staged diff to that endpoint. A coding subscription does not cover
+  those requests automatically. Preserve the existing agent route unless the
+  owner chooses a generator; PR review guides still use a coding agent.
+- **Thread state:** default automatic settlement includes seven days of
+  inactivity. Inspect **Settings → Threads**, per-thread **Auto-settle
+  behavior**, project settle actions and worktree retention before relying on
+  a thread staying active. Pending work/input blocks automatic settlement;
+  snoozing an existing question leaves it unanswered. Pinning does not prevent
+  settlement, and an open PR protects against inactivity only when configured.
+
+Fresh-session schedules use the [scheduling reference](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-subagents/references/t3-scheduling.md).
+Preserve explicit model selections as discovery refreshes; new catalog entries
+do not override the shared Sol/Opus cost guidance.
+
+Contracts: [composer](https://github.com/pingdotgg/t3code/blob/v0.1.8/docs/user/composer.md),
+[secrets](https://github.com/pingdotgg/t3code/blob/v0.1.8/docs/user/secrets.md),
+[text generation](https://github.com/pingdotgg/t3code/blob/v0.1.8/docs/user/text-generation.md),
+and [thread state](https://github.com/pingdotgg/t3code/blob/v0.1.8/docs/user/thread-sidebar.md).
+
 ## Project commands and worktree setup
 
 Keep the project's native build, test, and development commands canonical.
@@ -153,8 +193,15 @@ Settling is separate from merging Git changes and may make a worktree eligible
 for configured automatic cleanup. A script's `previewUrl` is a desktop-build
 feature; use the browser skill's server-tab workflow for remote automation.
 
-Contract: [project file schema](https://github.com/pingdotgg/t3code/blob/v0.1.6/packages/contracts/src/t3ProjectFile.ts)
-and [settings and cleanup](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/project-settings.md).
+In 0.1.8, `stopOnSettle: true` can stop an action's terminal and child processes
+when its thread settles. It applies to commands started through that action;
+provider shell commands retain their provider's lifecycle. Inspect this setting
+alongside `runOnSettle`, including automatic settlement, before starting a
+long-lived command. Do not add it to existing actions incidentally.
+
+Contract: [project file schema](https://github.com/pingdotgg/t3code/blob/v0.1.8/packages/contracts/src/t3ProjectFile.ts),
+[settle actions](https://github.com/pingdotgg/t3code/blob/v0.1.8/docs/user/thread-sidebar.md),
+and [settings and cleanup](https://github.com/pingdotgg/t3code/blob/v0.1.8/docs/user/project-settings.md).
 
 ## Visual replies
 
@@ -164,6 +211,10 @@ Call `html_preview`, inspect the screenshot and console output, fix relevant
 errors, then publish with `html_render` using the measured content height and
 the live tool's theme/layout rules. Check a narrow viewport when relevant.
 Follow the session's instruction for the accompanying final reply.
+
+Stable 0.1.8 also accepts `path` with an absolute `.html` file path in both
+tools. Follow the live schema and retain the file when an export is useful;
+a file on disk alone does not publish an inline result.
 
 Local image paths are embedded when published; remote URLs remain remote
 dependencies. Keep needed images local and exclude private material from the
@@ -180,5 +231,5 @@ automation stack or disable the sandbox to repair an HTML preview. If preview
 is unavailable, report that validation gap; publishing itself does not require
 Chrome. Independent terminal tasks do not inherit these tools or rendered pages.
 
-Contracts: [visual replies](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/html-renders.md)
-and [HTML tools](https://github.com/pingdotgg/t3code/blob/v0.1.6/apps/server/src/mcp/toolkits/html/tools.ts).
+Contracts: [visual replies](https://github.com/pingdotgg/t3code/blob/v0.1.8/docs/user/html-renders.md)
+and [HTML tools](https://github.com/pingdotgg/t3code/blob/v0.1.8/apps/server/src/mcp/toolkits/html/tools.ts).

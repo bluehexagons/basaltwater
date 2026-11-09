@@ -1,7 +1,7 @@
 # T3 Code scheduling
 
 Use this reference when authorized deferred or recurring work should run through
-T3 Code. This reference follows stable 0.1.7; inspect the connected
+T3 Code. This reference follows stable 0.1.8; inspect the connected
 environment's live tools before acting. No scheduler grants additional scope,
 publication authority, or permission to exceed the user's cost limits.
 
@@ -55,8 +55,9 @@ tasks before retrying an uncertain creation.
 
 By default, runs bind to the current thread when the selected project matches.
 This suits orchestration: each trigger returns here for deduplication and child
-delegation. Set `bindToCurrentThread: false` only when the user wants a fresh
-top-level thread for each run. Inspect the resulting project and thread binding.
+delegation. With `freshSession` omitted/false, `bindToCurrentThread: false`
+creates a fresh top-level thread for each run. Inspect the resulting project
+and thread binding.
 In 0.1.4, a bound run follows the thread's current provider, model, options, and
 runtime/interaction modes when dispatched. The task's stored settings seed
 fresh threads only; they do not pin a bound thread's execution settings.
@@ -64,20 +65,42 @@ Inspect both the binding and the current thread settings. Before changing that
 thread to fast service, `max`, `ultra`, or broader permission modes, pause its
 unattended schedules or ensure the change stays within the user's authorization.
 Creation inherits the caller's model selection; updates preserve the stored
-selection. The 0.1.4 MCP inputs cannot set model/options or a custom workspace,
+selection. The 0.1.8 MCP inputs cannot set model/options or a custom workspace,
 and task summaries omit those settings. Inspect/edit the task in T3's scheduled
 task settings when those details matter; do not claim MCP verified them.
 
-Fresh-thread tasks created through MCP use a worktree from `main` with
-`startFromOrigin: true`. They do not continue the caller's feature branch or
-uncommitted changes. Check that the remote/base exists and use the supported
-task settings surface for another base. Inspect the resulting workspace before
-dependent work, especially when rebinding an existing task.
+In 0.1.8, unbound tasks created through MCP use a worktree with
+`startFromOrigin: true`. Base resolution prefers the primary remote's recorded
+default branch, then its `main`/`master`; next it tries local `main`/`master`,
+with `main` as the final fallback. They do not continue the caller's feature
+branch or uncommitted changes. Check that the selected remote/base exists and
+use the supported task settings surface for another base. Inspect the resulting
+workspace before dependent work, especially when rebinding an existing task.
+
+Stable 0.1.8 adds `freshSession: true` to `schedule_task`: runs share one thread
+but reset the provider session each time, without earlier runs' context. With
+`bindToCurrentThread: false`, the first run creates that retained thread.
+Use a self-contained prompt, durable checkpoint location and explicit success
+criteria. Do not rely on earlier conversation turns for authority or progress.
+For example, update an existing task's session behavior with:
+
+```json
+{"scheduledTaskId":"TASK_ID","freshSession":true}
+```
+
+The stored/UI modes are `new_thread`, `continue`, and `fresh_session`; MCP
+accepts `bindToCurrentThread` and `freshSession`, not `threadMode`. Migration 080
+maps existing bound schedules to `continue` and unbound schedules to `new_thread`.
+Omitted update fields preserve the mode. Moving an already-bound task to a new
+retained thread requires two saves: first `bindToCurrentThread: false` to
+unbind it, then `freshSession: true`. The combined change is rejected. Pause
+the task while making that authorized move, verify each save, then restore its
+intended enabled state. Inspect the destination workspace and settings again.
 
 Use `list_scheduled_tasks` to verify ID, enabled state, cadence, next run, and
-project/thread binding. In 0.1.4, `schedule_task` also updates an existing task
-when passed `scheduledTaskId`; omitted fields stay unchanged. For example,
-pause with:
+project/thread binding and, in 0.1.8, `freshSession`. `schedule_task` also updates
+an existing task when passed `scheduledTaskId`; omitted fields stay unchanged.
+For example, pause with:
 
 ```json
 {"scheduledTaskId":"TASK_ID","enabled":false}
@@ -161,10 +184,11 @@ storage is a separate Connect choice with its own data-retention implications;
 do not enable it incidentally. Inspect and remove authorized external hooks
 when retiring a workflow, rather than leaving senders targeting a deleted task.
 
-Upstream baseline: [0.1.7 release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.7),
-[schedule contract](https://github.com/pingdotgg/t3code/blob/v0.1.7/packages/contracts/src/scheduledTask.ts),
-[scheduling tools](https://github.com/pingdotgg/t3code/blob/v0.1.7/apps/server/src/mcp/toolkits/orchestrator/tools.ts),
+Upstream baseline: [0.1.8 release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.8),
+[schedule contract](https://github.com/pingdotgg/t3code/blob/v0.1.8/packages/contracts/src/scheduledTask.ts),
+[MCP input and result](https://github.com/pingdotgg/t3code/blob/v0.1.8/packages/contracts/src/orchestratorMcp.ts),
+[scheduling tools](https://github.com/pingdotgg/t3code/blob/v0.1.8/apps/server/src/mcp/toolkits/orchestrator/tools.ts),
 [run-now tool](https://github.com/pingdotgg/t3code/blob/v0.1.6/apps/server/src/mcp/toolkits/thread/tools.ts),
-[MCP binding and caller limits](https://github.com/pingdotgg/t3code/blob/v0.1.6/apps/server/src/mcp/OrchestratorMcpService.ts),
+[MCP binding and caller limits](https://github.com/pingdotgg/t3code/blob/v0.1.8/apps/server/src/mcp/OrchestratorMcpService.ts),
 and [webhook settings](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/project-settings.md#webhook-automations).
 The active T3 tool schemas govern available schedule and signature fields.

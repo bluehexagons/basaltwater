@@ -2,7 +2,7 @@
 
 Follow T3's injected orchestration instructions and active tool schemas first.
 This reference adds Basaltwater workspace, cost, and context boundaries; use
-only the section needed. The baseline is stable 0.1.7. Terminal agents do not
+only the section needed. The baseline is stable 0.1.8. Terminal agents do not
 gain T3 tools merely because T3 is installed.
 
 ## Discovery and delegation fallback
@@ -133,6 +133,12 @@ harness's help. Within-provider model changes usually retain the native session.
 historical behavior, then inspect the current model selection and options before
 launching work; a history marker does not establish current settings or cost.
 
+Stable 0.1.8's `/clear`, sent alone, starts a fresh provider session in the same
+thread without earlier conversation context. Retained history/diffs remain
+visible. Save a durable checkpoint before an authorized reset; use **Restart
+agent session** for a guidance reload. Fresh-session schedules likewise need
+self-contained prompts and durable progress rather than prior runs' context.
+
 Read bounded `t3_thread_read` pages/cursors; retrieve long text only as needed.
 Select fields before emitting tool results. For an authorized cross-project
 thread inventory, 0.1.4 accepts `t3_thread_list` with `allProjects: true` and
@@ -180,7 +186,8 @@ joined; inspect that run before retrying. Check the completed guide against
 `currentHeadSha` and `stale` before citing it. Guides supplement actual diff,
 checks, and unresolved findings.
 
-Upstream: [0.1.7 release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.7),
+Upstream: [0.1.8 release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.8),
+[session reset](https://github.com/pingdotgg/t3code/blob/v0.1.8/docs/user/composer.md),
 [child approvals](https://github.com/pingdotgg/t3code/blob/v0.1.7/docs/user/permission-modes.md),
 [thread sharing](https://github.com/pingdotgg/t3code/blob/v0.1.7/docs/user/prompt-links.md#share-a-thread),
 [tagged orchestration reference](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/orchestration-v2/orchestrator-mcp-server.md),
