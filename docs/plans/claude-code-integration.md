@@ -8,6 +8,32 @@ is Codex-only. Claude Code provider execution has not been qualified. This plan
 defines the compliance gate and test work before any wider execution support is
 considered.
 
+## Experimental task gate
+
+`--experimental-claude-tasks` records an explicit setup opt-in for restricted
+Claude task integrations. It defaults to off, is saved with the setup, and is
+forwarded to target setup. `--no-experimental-claude-tasks` revokes the saved
+opt-in. It is separate from `--claude`, which selects the terminal installation.
+An ordinary patch preserves the saved choice. Every opted-in setup summary,
+including dry runs and saved reruns, warns about the support and billing limits.
+
+This gate currently enables no executor. Saved and unattended tasks remain
+Codex-only in the CLI, API, MCP, panel, and worker regardless of this setting.
+Future restricted Claude task choices must remain hidden and rejected without
+the opt-in; the flag alone is insufficient to enable an unimplemented mode.
+It neither obtains Anthropic approval nor configures credentials or billing.
+Operators must have appropriate Anthropic pre-approval or an authorized API
+route for uses that require it, and accept separate API-rate charges when using
+that route.
+
+Restricted Claude task support is **highly experimental and untested with live
+Claude**. Only basic offline code tests are planned for these integrations;
+live unattended or API-billed qualification is not planned. Support only models
+and modes that fit straightforward native provider features and existing
+Basaltwater infrastructure. Reject unsupported settings rather than adding
+bespoke model, permission, session, billing, or recovery systems for Claude.
+Any future executor remains a separate implementation decision.
+
 ## Ready for attended testing
 
 Agent setup now requires an explicit provider selection. `--claude`
@@ -114,10 +140,10 @@ execution remains Codex-only.
    exercise read, edit, approval, cancellation, and context settings, then log
    out and remove test state. Keep private account and raw session evidence out
    of Git.
-7. **Qualify commercial execution separately if approved.** Use an isolated
-   API credential with a deliberately small spend limit and no consumer-plan
-   OAuth. Verify explicit cost selection, usage reporting, exhaustion behavior,
-   cancellation and retries without exceeding the limit. Do not treat
+7. **Keep restricted execution experimental.** No live unattended or API-billed
+   testing is planned. Use basic offline tests and disclose the missing live
+   coverage during setup and in operator guidance. Any later live qualification
+   requires a separate decision and authorized credentials/budget. Do not treat
    Basaltwater's local token budget as a provider-side dollar cap.
 8. **Update operator guidance and qualification records.** Document supported
    authentication and execution modes, exclusions, billing boundaries, and
@@ -136,8 +162,9 @@ execution remains Codex-only.
 - Native attended testing proves the account holder can use the intended
   terminal workflow with the correct billing mode and without exposing private
   project data.
-- Any API-backed executor passes its independent policy, cost, task-boundary,
-  and recovery checks before it is offered in product surfaces.
+- Any later restricted executor requires the explicit setup gate and offline
+  boundary tests, and discloses highly experimental support and absent live
+  testing wherever offered. Unsupported modes remain unavailable.
 - Documentation and the coverage map state the tested revisions, evidence type,
   and remaining provider/account boundaries.
 

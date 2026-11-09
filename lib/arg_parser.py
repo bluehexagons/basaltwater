@@ -949,6 +949,16 @@ def add_setup_arguments(
                         help="Install Codex CLI; combine with --claude and --opencode as needed")
     parser.add_argument("--claude", dest="agent_tools", action="append_const", const="claude",
                         help="Install Claude Code")
+    parser.add_argument(
+        "--experimental-claude-tasks",
+        action=argparse.BooleanOptionalAction,
+        default=None if not for_remote else False,
+        help=(
+            "Record opt-in for highly experimental, live-untested Claude task support; "
+            "requires appropriate Anthropic approval or separately billed API usage. "
+            "No Claude executor is available yet; tasks remain Codex-only"
+        ),
+    )
     parser.add_argument("--opencode", dest="agent_tools", action="append_const", const="opencode",
                         help="Install OpenCode")
     parser.add_argument(

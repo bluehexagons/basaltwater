@@ -117,6 +117,25 @@ API credentials and cloud/endpoint overrides in that session and confirm
 Basaltwater's `agent auth login` command remains Codex-specific. Saved and
 scheduled tasks remain Codex-only; the Claude test is attended terminal use.
 
+### Experimental task opt-in
+
+Setup accepts `--experimental-claude-tasks` separately from `--claude`. The
+flag records a saved opt-in for restricted Claude task integrations; it does
+**not** enable a Claude executor in this release. Claude remains unavailable
+for saved and unattended tasks, including in executor choices, with or without
+the flag. Normal patches retain the choice; use
+`--no-experimental-claude-tasks` to revoke it.
+
+When opted in, every setup summary (including dry runs and saved reruns) warns
+that support is **highly experimental and untested with live Claude**, with
+basic offline code tests only. The flag grants no Anthropic authorization.
+Restricted uses require appropriate Anthropic pre-approval or authorized API
+usage as applicable; API usage incurs separate charges at API rates. It does
+not select credentials, change billing, or start a provider request. Live
+unattended/API testing is not planned. Only straightforward native models and
+modes are in scope; unsupported Claude cases will not receive bespoke systems.
+See the [integration plan](../plans/claude-code-integration.md#experimental-task-gate).
+
 ## Supported files
 
 | Tool | Target path |

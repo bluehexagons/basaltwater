@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import io
 import os
+import shlex
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -13,6 +16,59 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from lib.config import SetupConfig
 from lib.setup_common import prepare_agent_payload
+from lib.arg_parser import create_setup_argument_parser
+from lib.cache import merge_setup_configs
+from lib.display import print_setup_summary
+from lib.agent_task_api import task_capabilities
+from lib.agent_tasks import validate_task
+
+
+class TestExperimentalClaudeTaskGate(unittest.TestCase):
+    def config(self, *flags, remote=False):
+        parser = create_setup_argument_parser("test", for_remote=remote)
+        arguments = parser.parse_args(list(flags) if remote else ["example.test", "agent", *flags])
+        if remote:
+            arguments.host = "localhost"
+        return SetupConfig.from_args(arguments, "agent_vm")
+
+    def test_gate_round_trips_without_enabling_an_executor(self):
+        for enabled in (False, True):
+            with self.subTest(enabled=enabled), tempfile.TemporaryDirectory() as home:
+                flags = ["--claude"] + (["--experimental-claude-tasks"] if enabled else [])
+                config = self.config(*flags)
+                saved = config.to_dict()
+                self.assertIs(saved["experimental_claude_tasks"], enabled)
+                restored = SetupConfig.from_dict(config.host, config.system_type, saved)
+                remote = self.config(*shlex.split(" ".join(restored.to_remote_args())), remote=True)
+                replay = self.config(*shlex.split(" ".join(restored.to_setup_command()))[5:])
+                self.assertEqual(remote.experimental_claude_tasks is True, enabled)
+                self.assertEqual(replay.experimental_claude_tasks is True, enabled)
+                with patch("sys.stdout", new_callable=io.StringIO) as output:
+                    print_setup_summary(restored)
+                self.assertEqual("Warning: Experimental Claude" in output.getvalue(), enabled)
+                if enabled:
+                    for text in ("highly experimental", "basic code tests only", "API rates", "Codex-only"):
+                        self.assertIn(text, output.getvalue())
+                manager = SimpleNamespace(home=home, available=lambda: False)
+                self.assertEqual(task_capabilities(manager)["executors"], ["codex"])
+                with self.assertRaisesRegex(ValueError, "supports Codex"):
+                    validate_task(dict(title="test", prompt="test", directory=home,
+                                       mode="inspect", executor="claude"), home)
+
+    def test_patch_preserves_or_explicitly_revokes_opt_in(self):
+        current = self.config("--claude", "--experimental-claude-tasks")
+        self.assertTrue(merge_setup_configs(current, self.config()).experimental_claude_tasks)
+        revoked = merge_setup_configs(current, self.config("--no-experimental-claude-tasks"))
+        self.assertFalse(revoked.experimental_claude_tasks)
+        self.assertFalse(revoked.to_dict()["experimental_claude_tasks"])
+        self.assertNotIn("--experimental-claude-tasks", revoked.to_remote_args())
+
+    def test_saved_gate_rejects_non_boolean_values(self):
+        for value in ("true", "false", 1, [], {}):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "must be a boolean"):
+                SetupConfig.from_dict("example.test", "agent_vm", {
+                    "username": "agent", "agent_tools": ["claude"], "experimental_claude_tasks": value,
+                })
 
 
 class TestAgentPayloadPreparation(unittest.TestCase):

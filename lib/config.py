@@ -572,6 +572,7 @@ class SetupConfig:
     install_gh: bool = False
     install_codex: bool = False
     install_claude: bool = False
+    experimental_claude_tasks: Optional[bool] = False
     install_opencode: bool = False
     agent_tools: Optional[StrList] = None
     agent_tools_removed: Optional[StrList] = None
@@ -764,6 +765,8 @@ class SetupConfig:
     _loading_saved_config: InitVar[bool] = field(default=False, kw_only=True)
 
     def __post_init__(self, _loading_saved_config: bool = False) -> None:
+        if self.experimental_claude_tasks is not None and type(self.experimental_claude_tasks) is not bool:
+            raise ValueError("experimental_claude_tasks must be a boolean")
         # Proxmox configures the host's root account; its CLI username is unused.
         # Normalize before identity-dependent defaults, validation and payloads,
         # including when reconstructing older saved controller configurations.
@@ -1609,6 +1612,8 @@ class SetupConfig:
 
         for tool in self.selected_agent_tools():
             args.append(f"--agent-tool {shlex.quote(tool)}")
+        if self.experimental_claude_tasks is True:
+            args.append("--experimental-claude-tasks")
         for tool in self.agent_tools_removed or []:
             args.append(f"--no-agent-tool {shlex.quote(tool)}")
 
@@ -2177,6 +2182,8 @@ class SetupConfig:
             cmd_parts.append(f"--publishing-tool {shlex.quote(tool)}")
 
         selected_agent_tools = self.selected_agent_tools()
+        if self.experimental_claude_tasks is True:
+            cmd_parts.append("--experimental-claude-tasks")
         default_agent_tools = list(system_type_defaults.default_agent_tools)
         for tool in selected_agent_tools:
             if tool not in default_agent_tools:
@@ -2603,6 +2610,7 @@ class SetupConfig:
         ):
             data.pop(legacy_field, None)
         data['agent_tools'] = self.selected_agent_tools() or None
+        data['experimental_claude_tasks'] = self.experimental_claude_tasks is True
         data['agent_tools_removed'] = list(self.agent_tools_removed or []) or None
         # argparse uses None to distinguish an omitted BooleanOptionalAction
         # during patch merges. Persist a concrete boolean once the setup state
@@ -3235,6 +3243,7 @@ class SetupConfig:
                 else None
             ),
             agent_tools=agent_tools,
+            experimental_claude_tasks=_optional_bool_arg(args, 'experimental_claude_tasks'),
             agent_tools_removed=removed_agent_tools or None,
             web_interfaces=web_interfaces,
             t3code_ready=_optional_bool_arg(args, 't3code_ready') is True,

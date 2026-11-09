@@ -414,6 +414,12 @@ def print_setup_summary(config: SetupConfig, description: Optional[str] = None) 
 
     if config.selected_agent_tools():
         print(f"Agent tools: {', '.join(config.selected_agent_tools())}")
+    if config.experimental_claude_tasks is True:
+        print("Warning: Experimental Claude task opt-in is recorded.")
+        print("  Support is highly experimental and untested with live Claude; basic code tests only.")
+        print("  Restricted uses require appropriate Anthropic pre-approval or authorized API usage;")
+        print("  API usage is billed separately at API rates. This flag grants no provider authorization.")
+        print("  No Claude task executor is implemented; saved and unattended tasks remain Codex-only.")
     if config.godot_bundles:
         print(f"Godot bundles: {', '.join(config.godot_bundles)}")
     if config.install_sunshine:
