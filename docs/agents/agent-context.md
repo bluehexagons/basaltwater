@@ -326,6 +326,15 @@ settings. A child CLI process or editing a config file does not prove the
 current thread changed. Do not restart T3 or change shared service environment
 to satisfy a one-thread approval.
 
+In T3 0.1.8, `/clear` sent alone resets context for the next provider session
+in the same thread; earlier conversation and diffs remain visible but are not
+supplied to that session. Save a checkpoint first. Use **Restart agent session**
+to reload guidance, and supported compaction to reduce retained context.
+Neither a reset nor a reload raises the active model's capacity or changes its
+billing route. Fresh-session schedules also need self-contained prompts and
+durable checkpoints. See the
+[T3 client workflows](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-018-client-workflows).
+
 Independent scheduled Codex tasks use the account/system defaults. They cannot
 request interactive approval mid-run; approval must be explicit in the task's
 authorized configuration, and an unavailable override must be reported rather

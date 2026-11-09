@@ -142,6 +142,13 @@ acceptance. Reopen the protected entry to recover a rejected session. Never
 print cookies or credentials. An unpaired browser may log WebSocket auth
 failures while showing the form.
 
+For V2 browser-session diagnostics, inspect `permissions` from the authenticated
+`/api/auth/session` response. Its `scopes` field contains only legacy-compatible
+values; a shorter list there does not prove the granular grant is missing.
+An explicitly empty `permissions` list grants nothing. Keep the response's
+credentials/cookies private and compare the permission names only. See the
+[response contract](https://github.com/pingdotgg/t3code/blob/v0.1.8/packages/contracts/src/auth.ts).
+
 Older v0.0.45 clients may report a Clerk production-key domain error on private
 HTTPS origins. Identify the failing origin and check native pairing separately;
 rejected cloud requests do not establish a gateway, TLS, or local pairing

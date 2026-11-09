@@ -46,6 +46,15 @@ A disposable 0.1.7-to-0.1.8 upgrade passed the same checks and retained a projec
 registered through the host CLI. SQL migrations advanced from **79 to 80**.
 No live service or user database was changed.
 
+A follow-up disposable 0.1.8 check exercised `__service-launcher` through the
+managed command resolver/output filter at Basaltwater `c8099f5b`, using a fixture
+upstream unit and runtime state. It passed HTTP startup, pending-restart marker
+removal, `service.env` port precedence, base-directory preservation and clean shutdown.
+The pairing credential exchanged for a browser cookie with all 16 permissions;
+reuse was rejected and the bootstrap session was revoked. HTTP `scopes` is a
+legacy subset; the full grant is reported in `permissions`. No systemd unit
+was installed or started by these fixture checks.
+
 These component checks do not qualify systemd installation/update/reboot,
 authenticated provider turns or terminals, native clients, Connect, or the new
 UI/scheduling/secret workflows. Complete the

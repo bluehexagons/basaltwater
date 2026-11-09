@@ -43,8 +43,9 @@ For a one-time task, use a future ISO date and time with an explicit UTC offset:
 
 Resolve the user's intended timezone before choosing the instant. The server
 stores it in UTC and rejects an enabled one-time schedule in the past. After
-dispatch, it has no next run; inspect the run result before retrying. A one-time
-trigger is not an automatic retry policy or a guarantee that provider work succeeds.
+its scheduled dispatch, it has no next run; inspect the run result before
+retrying. A one-time trigger is not an automatic retry policy or a guarantee
+that provider work succeeds.
 
 Fixed times use the server's timezone. Resolve a requested local time against
 that server; do not silently substitute the client or agent's timezone.
@@ -108,14 +109,18 @@ For example, pause with:
 
 Resume with the same ID and `enabled: true`. Older sessions may expose a separate
 `update_scheduled_task`; follow the live schema. Use `delete_scheduled_task`
-when removal is requested. Stable 0.1.4 exposes `run_scheduled_task_now` with
-`taskId` (not `scheduledTaskId`) and optional `environmentId` for interval or
-fixed-time tasks; webhook tasks require a delivery. It requires full-access
-runtime and default interaction mode, and the peer's access ceiling still applies.
+when removal is requested. Stable 0.1.8 exposes `run_scheduled_task_now` with
+`taskId` (not `scheduledTaskId`) and optional `environmentId` for interval,
+fixed-time, and one-time tasks; webhook tasks require a delivery. It requires
+full-access runtime and default interaction mode, and the peer's access ceiling
+still applies.
 Use it only for an authorized immediate run; a scheduling-only request does
 not authorize running the prompt now. A non-null `threadId` confirms dispatch,
 not completed provider work; follow the returned link and inspect the thread
-result. A null thread means no run started. Older sessions without this tool
+result. An early manual run of a one-time task does not consume its future
+scheduled run. Inspect `nextRunAt` afterward and pause/delete the task only
+when the owner's requested outcome calls for removing that pending run.
+A null thread means no run started. Older sessions without this tool
 can use the task settings UI when an immediate run is requested. Deletion does not
 undo edits or external work. Report the ID, cadence, next run with timezone,
 and purpose. During a scheduled run, perform its prompt rather than listing
@@ -188,7 +193,8 @@ Upstream baseline: [0.1.8 release](https://github.com/pingdotgg/t3code/releases/
 [schedule contract](https://github.com/pingdotgg/t3code/blob/v0.1.8/packages/contracts/src/scheduledTask.ts),
 [MCP input and result](https://github.com/pingdotgg/t3code/blob/v0.1.8/packages/contracts/src/orchestratorMcp.ts),
 [scheduling tools](https://github.com/pingdotgg/t3code/blob/v0.1.8/apps/server/src/mcp/toolkits/orchestrator/tools.ts),
-[run-now tool](https://github.com/pingdotgg/t3code/blob/v0.1.6/apps/server/src/mcp/toolkits/thread/tools.ts),
+[run-now tool](https://github.com/pingdotgg/t3code/blob/v0.1.8/apps/server/src/mcp/toolkits/thread/tools.ts),
+[manual-run behavior](https://github.com/pingdotgg/t3code/blob/v0.1.8/apps/server/src/scheduledTasks/ScheduledTaskService.ts),
 [MCP binding and caller limits](https://github.com/pingdotgg/t3code/blob/v0.1.8/apps/server/src/mcp/OrchestratorMcpService.ts),
 and [webhook settings](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/project-settings.md#webhook-automations).
 The active T3 tool schemas govern available schedule and signature fields.
