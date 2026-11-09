@@ -31,6 +31,11 @@ commands and qualification limits.
 5. Follow the [T3 Code guide](../agents/t3-code.md) for supported session APIs and
    HTTPS/WebSocket exposure; qualify actual native clients rather than
    maintaining a separate interface design here.
+6. Deliver independent Git/SMB client enrollment by saved server name under the
+   [enrollment design](storage-enrollment.md) and
+   [delivery plan](storage-enrollment-delivery.md). Optional usernames, generated
+   server-owned credentials and cross-controller recovery remain planned;
+   settle repository creation/grants before finalizing that implementation.
 
 These follow-ups are separate from the immediate shared build/CI host.
 
