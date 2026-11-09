@@ -111,6 +111,8 @@ class AgentContextDefaultsTests(unittest.TestCase):
     def test_existing_claude_context_policy_is_not_changed_by_adding_other_defaults(self):
         for value in (
             {"autoCompactWindow": 800_000},
+            {"autoCompactEnabled": False},
+            {"autoCompactEnabled": True},
             {"modelSettings": {"claude-sonnet-5-5": {"autoCompactWindow": 800_000}}},
             {"env": {"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "800000"}},
             {"env": {"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "90"}},
@@ -118,6 +120,7 @@ class AgentContextDefaultsTests(unittest.TestCase):
         ):
             with self.subTest(value=value):
                 path = self.write(".claude/settings.json", json.dumps(value))
+                self.state_path(".claude/settings.json").unlink(missing_ok=True)
                 previous = path.read_bytes()
                 configure_agent_context_defaults(self.config(install_claude=True))
                 self.assertEqual(path.read_bytes(), previous)
@@ -243,22 +246,26 @@ class AgentContextDefaultsTests(unittest.TestCase):
         self.assertNotIn("private-value", self.state_path(".claude/settings.json").read_text())
 
     def test_user_edit_or_removal_stops_managed_refresh_even_if_value_later_matches(self):
-        for remove in (False, True):
-            with self.subTest(remove=remove), tempfile.TemporaryDirectory() as temporary:
+        for edit in ("change", "remove", "disable"):
+            with self.subTest(edit=edit), tempfile.TemporaryDirectory() as temporary:
                 account = SimpleNamespace(pw_dir=temporary, pw_uid=os.getuid(), pw_gid=os.getgid())
                 path = Path(temporary) / ".claude/settings.json"
                 with patch.object(context.pwd, "getpwnam", return_value=account):
                     config = self.config(install_claude=True)
                     configure_agent_context_defaults(config)
                     value = json.loads(path.read_text())
-                    if remove:
+                    if edit == "remove":
                         del value["autoCompactWindow"]
+                    elif edit == "disable":
+                        value["autoCompactEnabled"] = False
                     else:
                         value["autoCompactWindow"] = 800_000
                     path.write_text(json.dumps(value))
                     previous = path.read_bytes()
                     configure_agent_context_defaults(config)
                     self.assertEqual(path.read_bytes(), previous)
+                    state = path.with_name(f".{path.name}.basaltwater-context.json")
+                    self.assertTrue(json.loads(state.read_text())["overridden"])
                     # Restoring an old value is still a user choice after detachment.
                     value["autoCompactWindow"] = 100_000
                     path.write_text(json.dumps(value))

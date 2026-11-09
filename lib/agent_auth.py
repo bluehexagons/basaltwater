@@ -91,6 +91,13 @@ import json, os, shutil, subprocess, sys, tempfile
 relative_path = {path_literal}
 destination = os.path.abspath(os.path.expanduser(os.path.join('~', relative_path)))
 parent = os.path.dirname(destination)
+if {json.dumps(tool)} == 'claude':
+    config_dir = os.environ.get('CLAUDE_CONFIG_DIR')
+    if config_dir and os.path.abspath(config_dir) != parent:
+        raise RuntimeError(
+            'Claude credential rotation requires the standard config directory; '
+            'authenticate in the intended Claude session when using a custom CLAUDE_CONFIG_DIR'
+        )
 
 def ensure_directory(path):
     current = os.path.sep
@@ -195,6 +202,8 @@ environment_overrides = []
 if tool == 'claude':
     environment_overrides = [name for name in (
         'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL',
+        'ANTHROPIC_CUSTOM_HEADERS', 'CLAUDE_CODE_OAUTH_TOKEN',
+        'CLAUDE_CODE_OAUTH_REFRESH_TOKEN', 'CLAUDE_CODE_OAUTH_SCOPES',
         'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_USE_BEDROCK',
         'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY',
     ) if os.environ.get(name)]

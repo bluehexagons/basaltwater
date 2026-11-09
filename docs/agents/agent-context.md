@@ -48,7 +48,8 @@ permissions retain their existing configuration.
 | Ubuntu `server_wsl` | Owned defaults refreshed in the selected Linux user's provider files; Windows-native providers have separate configuration |
 
 Existing user context policies are preserved, including larger budgets,
-disabled auto-compaction, and smaller custom model limits. For a local Codex or
+disabled auto-compaction (including Claude's native `autoCompactEnabled`
+setting), and smaller custom model limits. For a local Codex or
 Claude file without such a policy, setup installs defaults and records ownership
 beside it in
 `.CONFIG_FILENAME.basaltwater-context.json`. This private record contains only
@@ -203,6 +204,7 @@ still require a new review; no fixed default predicts every future price tier.
 Control references: [Codex configuration](https://learn.chatgpt.com/docs/config-file/config-reference),
 [Claude model/context configuration](https://code.claude.com/docs/en/model-config),
 [Claude percentage override](https://code.claude.com/docs/en/env-vars),
+[Claude auto-compaction switch](https://code.claude.com/docs/en/settings-reference#autocompactenabled),
 [OpenCode configuration](https://opencode.ai/docs/config/),
 [OpenCode schema](https://opencode.ai/config.json),
 [OpenCode plugins](https://opencode.ai/docs/plugins/), and the qualified

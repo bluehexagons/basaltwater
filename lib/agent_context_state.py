@@ -30,7 +30,7 @@ def context_projection(value: JSONDict, tool: str) -> JSONDict:
             "model_auto_compact_token_limit", "model_auto_compact_token_limit_scope",
         ) if key in value}
     if tool == "claude":
-        result = {key: value[key] for key in ("autoCompactWindow",) if key in value}
+        result = {key: value[key] for key in ("autoCompactWindow", "autoCompactEnabled") if key in value}
         for key in ("env", "modelSettings"):
             if key in value and not isinstance(value[key], dict):
                 raise ValueError(f"Claude configuration '{key}' must contain an object")

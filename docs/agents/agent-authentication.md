@@ -103,7 +103,10 @@ Use `/logout` afterward when retiring the disposable environment.
 Auth status inventories the standard credential file and reports the names of
 nonempty Claude credential, endpoint, config-directory, and cloud-platform
 environment overrides visible to its remote SSH process. Values are never
-reported and Claude is never launched by this diagnostic. A missing standard
+reported, including OAuth access/refresh tokens and custom authentication
+headers, and Claude is never launched by this diagnostic. See the supported
+[Claude environment variables](https://code.claude.com/docs/en/env-vars).
+A missing standard
 credential file can be valid for another auth route. This does not inspect a
 running T3 service's environment or resolve project settings and key helpers.
 Verify those in the actual provider session. For subscription testing, clear
@@ -123,8 +126,11 @@ scheduled tasks remain Codex-only; the Claude test is attended terminal use.
 | Claude Code | `~/.claude/.credentials.json` |
 | OpenCode | `~/.local/share/opencode/auth.json` |
 
-These are the standard Linux paths used by basaltwater. Supply an explicit
-file when a vendor setting relocates its credential.
+These are the standard Linux target paths used by Basaltwater. An explicit
+source file changes where Basaltwater reads credentials, not the target path.
+Claude file rotation refuses a different `CLAUDE_CONFIG_DIR` visible to the
+remote SSH process before writing anything. For a custom Claude home,
+authenticate in the intended provider session and verify it with `/status`.
 
 Selecting an agent tool does not create authentication. Select tools with
 `--codex`, `--claude`, or `--opencode` and choose credentials separately:
