@@ -162,6 +162,8 @@ recording or old closeouts. Preserve an earlier failed check and link any new
 closeout with `--previous`; never rewrite history or recreate evicted images.
 The integration has offline regression coverage; its next native consuming
 qualification must independently inspect the live wait and recorder receipts.
+Use the [repeatable retention recipe and disposable fixture](../testing/wait-retention.md)
+to collect that separate native evidence.
 
 ## Disposable application qualification, after refresh
 
