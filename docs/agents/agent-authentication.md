@@ -89,8 +89,8 @@ account requirements and billing modes.
 Select Claude explicitly; no coding provider is installed by default:
 
 ```bash
-basaltw setup agent_vm HOST USER --agent-tool claude --dry-run
-basaltw setup agent_vm HOST USER --agent-tool claude
+basaltw setup agent_vm HOST USER --claude --dry-run
+basaltw setup agent_vm HOST USER --claude
 basaltw agent auth status HOST USER --tool claude --json
 ```
 
@@ -127,10 +127,10 @@ These are the standard Linux paths used by basaltwater. Supply an explicit
 file when a vendor setting relocates its credential.
 
 Selecting an agent tool does not create authentication. Select tools with
-`--agent-tool` and choose credentials separately:
+`--codex`, `--claude`, or `--opencode` and choose credentials separately:
 
 ```bash
---agent-tool gh,codex,opencode \
+--agent-tool gh --codex --opencode \
 --agent-auth login
 ```
 
@@ -147,7 +147,7 @@ Authentication defaults are independent for each provider:
 Codex login and another provider's file import can be combined:
 
 ```bash
-basaltw setup agent_vm HOST USER --agent-tool codex,claude \
+basaltw setup agent_vm HOST USER --codex --claude \
   --agent-auth login --agent-auth-file claude /run/secrets/claude.json \
   --git-access read --git-auth active
 ```

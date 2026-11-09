@@ -20,7 +20,7 @@ Start with the [CachyOS installation guide](cachyos.md). Preview the selected
 tools as the existing desktop account, without sudo:
 
 ```fish
-basaltw setup agent_cachyos localhost --t3code-desktop --godot --agent-tool codex \
+basaltw setup agent_cachyos localhost --t3code-desktop --godot --codex \
   --game-dev --git-lfs --sunshine --dry-run
 ```
 
@@ -55,8 +55,8 @@ limits, password modes, and refresh behavior.
 From the controller, preview and apply with the existing desktop username:
 
 ```fish
-basaltw setup agent_cachyos WORKSTATION_PRIVATE_IP USER --godot --node --dry-run --agent-tool codex
-basaltw setup agent_cachyos WORKSTATION_PRIVATE_IP USER --godot --node --agent-tool codex
+basaltw setup agent_cachyos WORKSTATION_PRIVATE_IP USER --godot --node --dry-run --codex
+basaltw setup agent_cachyos WORKSTATION_PRIVATE_IP USER --godot --node --codex
 ```
 
 The preview makes no SSH connection. Apply requires already reachable SSH for

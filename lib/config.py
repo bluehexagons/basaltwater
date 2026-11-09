@@ -1087,7 +1087,7 @@ class SetupConfig:
             if not self.install_codex and not self.install_claude and not self.install_opencode:
                 raise ValueError(
                     "T3 Code requires at least one provider CLI: "
-                    "--agent-tool codex, claude, or opencode"
+                    "--codex, --claude, or --opencode"
                 )
         if self.web_interfaces:
             if self.web_interface_host is None:
@@ -1201,7 +1201,7 @@ class SetupConfig:
         )):
             raise ValueError(
                 "Agent setup requires at least one provider: "
-                "--agent-tool codex, claude, or opencode"
+                "--codex, --claude, or --opencode"
             )
 
     def has_agent_features(self) -> bool:

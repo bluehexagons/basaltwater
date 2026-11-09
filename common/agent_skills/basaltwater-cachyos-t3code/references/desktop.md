@@ -1,6 +1,6 @@
 # T3 desktop setup and updates
 
-`basaltw setup agent_cachyos localhost --t3code-desktop --agent-tool codex` installs missing
+`basaltw setup agent_cachyos localhost --t3code-desktop --codex` installs missing
 `t3code-bin` through current CachyOS's default Shelly CLI
 (`shelly install aur t3code-bin`). For installed packages, setup/refresh checks
 `shelly list-updates aur --json` and runs `shelly update aur t3code-bin` only

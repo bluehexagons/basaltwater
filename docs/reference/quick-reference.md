@@ -38,17 +38,17 @@ these from your local desktop terminal as yourself:
 
 ```bash
 # Preview Codex and the native T3 Code desktop package
-basaltw setup agent_cachyos localhost --t3code-desktop --dry-run --agent-tool codex
+basaltw setup agent_cachyos localhost --t3code-desktop --dry-run --codex
 
 # Apply the selection; missing packages and cache pruning may request sudo
-basaltw setup agent_cachyos localhost --t3code-desktop --agent-tool codex
+basaltw setup agent_cachyos localhost --t3code-desktop --codex
 
 # Inspect desktop prerequisites without launching applications
 basaltw local cachyos-doctor
 ```
 
 These examples explicitly select Codex. GitHub CLI is included by default;
-choose at least one provider with `--agent-tool`.
+choose at least one provider with `--codex`, `--claude`, or `--opencode`.
 See [the CachyOS guide](../workstations/cachyos.md) for optional project tools, cleanup, and
 switching between T3 desktop and web mode. This profile uses direct setup
 reruns; it does not populate the generic saved-host lifecycle above.

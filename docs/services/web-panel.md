@@ -185,7 +185,7 @@ either command; the placeholder is not a usable password. Command-line
 passwords can appear in shell history and to local process inspectors.
 
 ```bash
-basaltw setup agent_vm 192.168.1.50 agent --agent-tool codex \
+basaltw setup agent_vm 192.168.1.50 agent --codex \
   --web-panel \
   --web-panel-password 'REPLACE_WITH_A_UNIQUE_PASSWORD' \
   --ssl
@@ -812,7 +812,7 @@ a sender. It contains a bearer token, so treat it as a credential. The sender
 uses the normal webhook setup:
 
 ```bash
-basaltw setup agent_vm sender.example agent --agent-tool codex \
+basaltw setup agent_vm sender.example agent --codex \
   --notify webhook 'https://PANEL_HOST/api/v1/notifications#TOKEN'
 ```
 

@@ -1079,7 +1079,7 @@ class TestInstallScript(unittest.TestCase):
                 calls = [json.loads(line) for line in Path(log_path).read_text().splitlines()]
                 self.assertEqual(calls[0], ["bootstrap", "--shell", "fish", "--user", "testuser",
                                             "--skip-system-packages"])
-                selection = ["setup", "agent_cachyos", "localhost", "testuser", "--agent-tool", "codex"]
+                selection = ["setup", "agent_cachyos", "localhost", "testuser", "--codex"]
                 if "--t3code-desktop" in example:
                     selection.append("--t3code-desktop")
                 selection.extend(["--node", "--python", "--git-lfs"])
@@ -1129,7 +1129,7 @@ class TestInstallScript(unittest.TestCase):
                     ran = temporary_status == download_status == 0
                     self.assertEqual((root / "ran").exists(), ran)
                     if ran and label.startswith("docs/workstations/cachyos.md"):
-                        expected = ["--local-setup", "agent_cachyos", "--agent-tool", "codex"]
+                        expected = ["--local-setup", "agent_cachyos", "--codex"]
                         if "--t3code-desktop" in example:
                             expected.append("--t3code-desktop")
                         expected.extend(["--node", "--python", "--git-lfs"])

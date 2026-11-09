@@ -945,6 +945,12 @@ def add_setup_arguments(
                         help="Install a Debian VM publishing tool independently of Godot; repeat for butler and steamcmd")
 
     # Agent profiles default only to GitHub CLI; providers are explicit.
+    parser.add_argument("--codex", dest="agent_tools", action="append_const", const="codex",
+                        help="Install Codex CLI; combine with --claude and --opencode as needed")
+    parser.add_argument("--claude", dest="agent_tools", action="append_const", const="claude",
+                        help="Install Claude Code")
+    parser.add_argument("--opencode", dest="agent_tools", action="append_const", const="opencode",
+                        help="Install OpenCode")
     parser.add_argument(
         "--agent-tool",
         dest="agent_tools",
@@ -953,7 +959,7 @@ def add_setup_arguments(
         metavar="TOOL",
         help=(
             "Install comma-separated agent tools; repeat as needed. Agent setups "
-            "require codex, claude, or opencode; no provider is selected by default"
+            "require --codex, --claude, or --opencode; no provider is selected by default"
         ),
     )
     parser.add_argument(
@@ -971,7 +977,7 @@ def add_setup_arguments(
         default=False,
         help=(
             "Enable headless T3 Code with GitHub CLI, read-write Git, and device "
-            "pairing; requires an explicit --agent-tool provider"
+            "pairing; requires --codex, --claude, or --opencode"
         ),
     )
     web_interface_group = parser.add_mutually_exclusive_group()

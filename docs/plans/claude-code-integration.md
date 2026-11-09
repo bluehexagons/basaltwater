@@ -10,7 +10,7 @@ considered.
 
 ## Ready for attended testing
 
-Agent setup now requires an explicit provider selection. `--agent-tool claude`
+Agent setup now requires an explicit provider selection. `--claude`
 selects Claude without installing Codex or starting Codex authentication;
 `--t3code-ready` also respects this selection. GitHub CLI remains a profile
 utility default. Existing saved provider selections remain explicit on replay.

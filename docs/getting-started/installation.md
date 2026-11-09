@@ -29,7 +29,7 @@ updates and desktop configuration to you. The Debian examples below configure
 a broader host stack and do not apply to CachyOS.
 For Codex with T3 Code's native desktop package, follow the
 [complete CachyOS desktop installer example](../workstations/cachyos.md#install-with-t3-code-desktop).
-It uses `--local-setup agent_cachyos --t3code-desktop` with `--agent-tool codex` as the desktop user,
+It uses `--local-setup agent_cachyos --t3code-desktop` with `--codex` as the desktop user,
 without running the installer under `sudo`.
 
 ## Prerequisites
@@ -140,7 +140,7 @@ sh -c '
 ' sh --user "$USER" --local-setup control_plane
 ```
 
-Coding agents are optional; append `--agent-tool codex`, for example, only
+Coding agents are optional; append `--codex`, for example, only
 when wanted. If the orchestration machine is itself a Proxmox VM, add
 `--qemu-guest-agent` before `--local-setup`. The installer then installs the
 guest-agent package and starts and enables its systemd service during
@@ -181,7 +181,7 @@ sh -c '
   trap cleanup EXIT
   curl -fsSL --max-time 120 https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh -o "$installer" &&
   sudo sh "$installer" "$@"
-' sh --user "$USER" --local-setup agent_workstation --agent-tool codex \
+' sh --user "$USER" --local-setup agent_workstation --codex \
     --control-plane --desktop xfce --rdp --rdp-existing-password
 ```
 
@@ -200,8 +200,9 @@ firewall details.
 
 The `agent_vm`, `agent_workstation`, and `agent_code_vm` profiles default to
 GitHub CLI. No provider is selected by default. Agent setup requires at least
-one of `--agent-tool codex`, `--agent-tool claude`, or `--agent-tool opencode`.
-Values accept comma-separated lists; use `--no-agent-tool` to remove a default. The
+one of `--codex`, `--claude`, or `--opencode`.
+Combine these flags to select multiple providers. The general `--agent-tool`
+selector also accepts comma-separated lists; use `--no-agent-tool` to remove a default. The
 `agent_code_vm` profile additionally defaults to Geany, T3 Code, RDP, T3
 pairing, read-write Git, active GitHub auth, and target-owned login when Codex is selected. It
 does not assume a management network; add `--lan-access`, `--access-source`, or service-specific

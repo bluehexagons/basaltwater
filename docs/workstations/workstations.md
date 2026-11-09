@@ -13,7 +13,7 @@ profile with `--control-plane` and select the agent tools you need (GitHub CLI
 and Codex CLI in this example). [Install the launcher](../getting-started/installation.md) first:
 
 ```bash
-sudo basaltw setup agent_workstation localhost "$USER" --agent-tool codex \
+sudo basaltw setup agent_workstation localhost "$USER" --codex \
   --control-plane --desktop xfce --rdp --rdp-existing-password
 ```
 
@@ -23,8 +23,8 @@ VMs and containers. Run it from SSH or a text console with desktop work saved.
 Setup logs out an existing managed desktop automatically; legacy graphical
 sessions require manual logout. It converts access to one shared XRDP desktop;
 console graphical logins are disabled and the existing account password is reused.
-Select only the agents needed with repeatable
-`--agent-tool` flags; language runtimes remain separate explicit options.
+Select only the agents needed with `--codex`, `--claude`, or `--opencode`;
+combine flags for multiple providers. Language runtimes remain separate explicit options.
 
 Agent installation, authentication, and non-secret configuration are separate
 choices. See [Agent authentication](../agents/agent-authentication.md) and
@@ -106,7 +106,7 @@ These choices do not enable language runtimes or change desktop/RDP settings.
 
 ```bash
 # Add to your usual graphical VM setup command, retaining its other options
-basaltw setup agent_code_vm 10.0.0.25 agent --lan-access --agent-tool codex \
+basaltw setup agent_code_vm 10.0.0.25 agent --lan-access --codex \
   --inkscape --gimp --av-tools
 
 # Optional painting, sound and video editors
@@ -122,13 +122,13 @@ Add Blender to your usual setup command, retaining its other desired options:
 
 ```bash
 # Graphical Debian coding VM
-basaltw setup agent_code_vm 10.0.0.25 agent --blender --lan-access --agent-tool codex
+basaltw setup agent_code_vm 10.0.0.25 agent --blender --lan-access --codex
 
 # Headless Debian rendering host
-basaltw setup agent_vm 10.0.0.24 agent --blender --agent-tool codex
+basaltw setup agent_vm 10.0.0.24 agent --blender --codex
 
 # Existing CachyOS KDE desktop; run as its desktop user, without sudo
-basaltw setup agent_cachyos localhost --blender --agent-tool codex
+basaltw setup agent_cachyos localhost --blender --codex
 ```
 
 Preview a command with `--dry-run` before applying it. On Debian, the selection
@@ -151,7 +151,7 @@ without a desktop or RDP, use `agent_vm`. Add only the language runtimes your
 projects need:
 
 ```bash
-basaltw setup agent_vm 10.0.0.24 agent --agent-tool codex \
+basaltw setup agent_vm 10.0.0.24 agent --codex \
   --node --python --go --agent-config active \
   --git-access read --repo https://github.com/user/project.git
 ```
@@ -159,8 +159,8 @@ basaltw setup agent_vm 10.0.0.24 agent --agent-tool codex \
 This installs GitHub CLI, Codex, and the selected runtimes without the broader
 control-plane administrator package set. Remove `--agent-config` or `--repo`
 when those inputs are not needed. Use `tmux` for long-running agent sessions
-over SSH. To add another provider, use `--agent-tool opencode` or a
-comma-separated list. Use `--no-agent-tool gh` to remove a profile default.
+over SSH. To add another provider, append `--claude` or `--opencode`.
+Use `--no-agent-tool gh` to remove a profile default.
 Codex and OpenCode receive base workflow skills under `~/.agents/skills`;
 Claude Code receives them under `~/.claude/skills` when selected. The complete
 bundles and ownership rules are described in
@@ -175,14 +175,14 @@ capacity, project language runtimes, browser fallback, and network access
 remain operator choices:
 
 ```bash
-basaltw setup agent_code_vm 10.0.0.25 agent --agent-tool codex \
+basaltw setup agent_code_vm 10.0.0.25 agent --codex \
   --provision-on pve1 --name agent-1 \
   --image-storage local \
   --memory 4G --cores 4 \
   --storage root local-lvm 64G \
   --disk-ssd root --disk-discard root --disk-backup root \
   --lan-access \
-  --agent-tool opencode
+  --opencode
 ```
 
 The image staging pool must be file-based and enable Proxmox `import` or `iso`
@@ -223,7 +223,7 @@ including SSH-only sessions and checks that must continue while the T3 Code
 application is closed:
 
 ```bash
-basaltw setup agent_code_vm 10.0.0.25 agent --agent-tool codex \
+basaltw setup agent_code_vm 10.0.0.25 agent --codex \
   --browser-automation playwright
 ```
 
@@ -238,7 +238,7 @@ For a graphical Debian workstation, keep the default desktop profile, select
 XFCE for the RDP session, and restrict RDP to the management network:
 
 ```bash
-basaltw setup agent_workstation 10.0.0.25 agent --agent-tool codex \
+basaltw setup agent_workstation 10.0.0.25 agent --codex \
   --control-plane --desktop xfce --rdp \
   --password "$RDP_PASSWORD" --rdp-source 10.0.0.0/24 \
   --agent-config active \
@@ -250,8 +250,8 @@ This adds the selected agent tools, Playwright browser automation, Firefox ESR,
 administrator tools, and the selected repository. Neovim is part of the CLI
 bundle; add `--editor geany` or `--editor vscode` only when the VM needs a
 graphical development editor.
-Repeat `--agent-tool` for any combination
-of `gh`, `codex`, `claude`, and `opencode`. Install a graphical T3 Code client
+Combine `--codex`, `--claude`, and `--opencode` for the providers you need;
+`--agent-tool gh` selects GitHub CLI on profiles without that default. Install a graphical T3 Code client
 separately when needed. The RDP password is
 the target Unix
 account's password; provide it through a secret-sourced environment variable,

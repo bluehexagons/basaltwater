@@ -39,7 +39,7 @@ sudo authority. The user can still approve a supported maintenance action from
 their own device.
 
 ```bash
-basaltw setup agent_vm 192.168.1.50 agent --agent-tool codex \
+basaltw setup agent_vm 192.168.1.50 agent --codex \
   --agent-config active \
   --git-access read \
   --repo https://github.com/example/project.git \
@@ -66,7 +66,7 @@ for the supported actions, service allowlists, recovery path, and policy rules.
 
 `agent_code_vm` is the complete graphical profile: it includes T3 Code, Geany,
 RDP, protected T3 pairing, read-write Git, active GitHub auth, and GitHub CLI.
-Select providers explicitly with `--agent-tool`; selected Codex gets target-owned
+Select providers explicitly with `--codex`, `--claude`, or `--opencode`; selected Codex gets target-owned
 login. Add OpenCode and Playwright when the project
 needs those tools. This example includes approvals in the web panel and also
 installs the standalone approval page with its independent password.
@@ -79,7 +79,7 @@ basaltw setup agent_code_vm 192.168.1.60 agent \
   --provision-on pve1 --name full-agent-1 \
   --memory 8G --cores 4 --storage root local-lvm 64G \
   --password "$RDP_PASSWORD" \
-  --agent-tool codex,opencode \
+  --codex --opencode \
   --browser-automation playwright \
   --lan-access \
   --web-panel 9443 --ssl \
@@ -125,7 +125,7 @@ basaltw setup agent_code_vm 192.168.1.70 maintainer \
   --provision-on pve1 --name maintenance-agent-1 \
   --memory 8G --cores 4 --storage root local-lvm 64G \
   --password "$RDP_PASSWORD" \
-  --agent-tool codex,opencode \
+  --codex --opencode \
   --browser-automation playwright \
   --lan-access \
   --nopasswd
@@ -143,7 +143,7 @@ Use a fresh VM for untrusted dependencies or repository analysis that does not
 need interactive browser, plugin, credential, or elevation features:
 
 ```bash
-basaltw setup agent_vm 192.168.1.80 evaluator --agent-tool codex \
+basaltw setup agent_vm 192.168.1.80 evaluator --codex \
   --provision-on pve1 --name evaluation-agent-1 \
   --harden-user \
   --git-access read \

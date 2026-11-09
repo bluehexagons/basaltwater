@@ -29,6 +29,29 @@ def _setup_args(**overrides: object) -> Namespace:
 
 
 class TestAgentProfiles(unittest.TestCase):
+    def test_simple_provider_flags_combine_and_roundtrip(self) -> None:
+        parser = create_setup_argument_parser("test")
+        for flags, expected in (
+            (["--claude"], ["gh", "claude"]),
+            (["--codex", "--claude", "--opencode"], ["gh", "codex", "claude", "opencode"]),
+            (["--claude", "--agent-tool", "opencode,claude", "--codex", "--claude"],
+             ["gh", "codex", "claude", "opencode"]),
+        ):
+            with self.subTest(flags=flags):
+                args = parser.parse_args(["192.0.2.10", "agent", *flags])
+                config = SetupConfig.from_args(args, "agent_vm")
+                config.validate_agent_provider_selection()
+                self.assertEqual(config.selected_agent_tools(), expected)
+                saved = SetupConfig.from_dict(config.host, config.system_type, config.to_dict())
+                remote_parser = create_setup_argument_parser("remote", for_remote=True)
+                remote_args = remote_parser.parse_args(shlex.split(" ".join(saved.to_remote_args())))
+                remote_args.host = config.host
+                self.assertEqual(SetupConfig.from_args(remote_args, "agent_vm").selected_agent_tools(), expected)
+        self.assertIsNone(parser.parse_args(["192.0.2.10", "agent"]).agent_tools)
+        removed = parser.parse_args(["192.0.2.10", "agent", "--claude", "--no-agent-tool", "claude"])
+        with self.assertRaisesRegex(ValueError, "at least one provider"):
+            SetupConfig.from_args(removed, "agent_vm").validate_agent_provider_selection()
+
     def test_cli_rejects_missing_provider_before_target_work(self) -> None:
         import basaltwater
 

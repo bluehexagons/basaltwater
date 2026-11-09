@@ -828,7 +828,7 @@ normal port-22 access before it expires. The existing account password is
 used only for this one-shot window:
 
 ```fish
-basaltw setup agent_cachyos localhost --ssh --ssh-password-window 15 --lan-access --agent-tool codex
+basaltw setup agent_cachyos localhost --ssh --ssh-password-window 15 --lan-access --codex
 ssh-copy-id -p 2222 USER@WORKSTATION_PRIVATE_IP
 ssh USER@WORKSTATION_PRIVATE_IP
 ```
@@ -896,7 +896,7 @@ pairing, read-write Git, active GitHub auth, and target-owned login when Codex i
 fallback through `--browser-automation playwright` for SSH-only or standalone
 Codex and OpenCode sessions.
 All three default to GitHub CLI. Select at least one coding provider explicitly
-with `--agent-tool codex`, `--agent-tool claude`, or `--agent-tool opencode`.
+with `--codex`, `--claude`, or `--opencode`.
 `--agent-tool` values add to those
 defaults and accept comma-separated lists; use `--no-agent-tool` to remove a
 default. The full profile does not choose Proxmox capacity. It installs Node.js
@@ -955,7 +955,7 @@ service, and protected pairing. Credentials remain opt-in through the normal
 `--git-auth` and `--agent-auth` options.
 
 ```bash
-basaltw setup agent_vm 10.0.0.10 agentuser --agent-tool codex \
+basaltw setup agent_vm 10.0.0.10 agentuser --codex \
   --agent-config active \
   --git-access read --repo https://github.com/user/my_codebase.git
 ```
@@ -967,7 +967,7 @@ capacity and project runtimes explicit:
 basaltw setup agent_code_vm 10.0.0.11 agentuser \
   --provision-on pve1 --name agent-1 \
   --memory 4G --cores 4 --storage root local-lvm 32G \
-  --agent-tool opencode --lan-access
+  --opencode --lan-access
 ```
 
 The profile supplies T3 Code, Geany, RDP, read-write Git, active GitHub auth,
@@ -991,7 +991,7 @@ is disabled. Select the agent tools needed (GitHub CLI and Codex here):
 
 ```bash
 sudo basaltw setup workstation_dev localhost "$USER" \
-  --control-plane --agent-tool gh --agent-tool codex --desktop xfce --rdp --rdp-existing-password
+  --control-plane --agent-tool gh --codex --desktop xfce --rdp --rdp-existing-password
 ```
 
 | Flag | Description |
@@ -1003,7 +1003,8 @@ sudo basaltw setup workstation_dev localhost "$USER" \
 | `--approval-panel-password [PASSWORD]` | Assign or rotate the standalone panel password; omitting the value prompts privately and the stored setup command excludes the password hash. Alias: `--privilege-broker-password`. A command-line value may appear in shell history and process arguments. |
 | `--harden-agent` / `--no-harden-agent` | Apply or remove administrator/root-equivalent supplementary-group restrictions and the stricter agent policy |
 | `--harden-user` / `--no-harden-user` | Apply or remove the password lock, private home, sensitive system-data/device-group restrictions, SSH forwarding/user-rc restrictions, and disabled lingering; enabling implies agent hardening and is incompatible with RDP |
-| `--agent-tool TOOL[,TOOL...]` | Select tools (`gh`, `codex`, `claude`, or `opencode`); agent setups require at least one coding provider; repeat or comma-separate |
+| `--codex`, `--claude`, `--opencode` | Select coding providers; combine flags to install more than one; agent setups require at least one |
+| `--agent-tool TOOL[,TOOL...]` | General tool selector (`gh`, `codex`, `claude`, or `opencode`), also accepted by existing saved commands |
 | `--no-agent-tool TOOL[,TOOL...]` | Disable one or more default or saved agent tools |
 | `--web-interface INTERFACE` | Install an explicit headless web interface; currently `t3code`; CachyOS uses its local user service |
 | `--t3code-desktop` | Latest CachyOS only: install or check/update `t3code-bin` through the default Shelly CLI (paru/yay if absent), preserving package-review prompts; disable the Basaltwater web service and preserve data; mutually exclusive with `--web-interface` |
@@ -1074,8 +1075,9 @@ Setup step output remains live while it runs. Marked warnings and errors are
 also deduplicated into a final `Run notes:` section so important non-fatal
 issues are easy to find without scanning the full transcript.
 
-Agent tools are selected with repeatable or comma-separated `--agent-tool`
-flags. The agent profiles default to `gh` only; coding providers are explicit;
+Select coding providers with `--codex`, `--claude`, and/or `--opencode`.
+The general `--agent-tool` selector also accepts repeatable or comma-separated
+values. The agent profiles default to `gh` only; coding providers are explicit;
 supplied tools add to that set, while `--no-agent-tool` removes selected
 defaults. Other profiles retain no implicit agents. Add unrelated packages with
 `--apt-install`, and add runtimes with their individual flags. `--godot` works

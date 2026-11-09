@@ -14,7 +14,7 @@ Retain the complete command used for your existing VM and append these options:
 # --musescore --audio-tools --pdf-tools --av-tools --audacity
 
 # Example plan only: replace the host/account and retain your existing options
-basaltw setup agent_code_vm 10.0.0.25 agent --agent-tool codex \
+basaltw setup agent_code_vm 10.0.0.25 agent --codex \
   --musescore --audio-tools --pdf-tools --av-tools --audacity --dry-run
 ```
 

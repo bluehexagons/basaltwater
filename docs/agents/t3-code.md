@@ -16,7 +16,7 @@ Use either the focused profile:
 
 ```bash
 basaltw setup server_dev vm.example agent \
-  --t3code-ready --agent-tool codex \
+  --t3code-ready --codex \
   --access-source 192.168.1.0/24
 ```
 
@@ -25,7 +25,7 @@ or select the interface and providers explicitly:
 ```bash
 basaltw setup server_dev vm.example agent \
   --agent-tool gh \
-  --agent-tool codex \
+  --codex \
   --web-interface t3code \
   --device-pairing t3code \
   --git-access read-write \
@@ -53,7 +53,7 @@ step when specified; quote the raw error when switching.
 For independent SSH or terminal sessions, request VM-local Chromium explicitly:
 
 ```bash
-basaltw setup agent_code_vm vm.example agent --agent-tool codex \
+basaltw setup agent_code_vm vm.example agent --codex \
   --browser-automation playwright
 ```
 
