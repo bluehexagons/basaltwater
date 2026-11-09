@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from desktop import conditional, conditional_contract, conditional_native, perception, png_regions
+from desktop import conditional, conditional_contract, conditional_native, evidence, perception, png_regions
 from desktop.receipts import DesktopRequestError
 from lib.desktop_cli import add_desktop_subparser, run_desktop_command
 
@@ -331,6 +331,176 @@ class ConditionalTests(unittest.TestCase):
         self.assertTrue((Path(result["bundle"]) / "capture-0.json").exists())
         self.assertEqual(controller.inputs, [])
         self.assertIn("error", result)
+
+    def recorded_wait(self, frames=3):
+        folder = self.root / "recordings"
+        folder.mkdir(mode=0o700)
+        self.enterContext(patch.object(evidence, "_directory", return_value=folder))
+        self.enterContext(patch.object(evidence, "revision", return_value={"commit": None, "dirty": None}))
+        recorder = evidence.Recorder(str(self.root), "generation-1")
+        controller = Controller(["red"] * (frames - 1) + ["blue"])
+        observe = controller.observe
+        def recorded(path, deadline, maximum):
+            snapshot = observe(path, deadline, maximum)
+            snapshot["capture"]["output"] = str(path)
+            recorder.event({"action": "screenshot", "output": str(path)}, snapshot["capture"])
+            return snapshot
+        controller.observe = recorded
+        plan = self.wait_plan()
+        plan["max_frames"] = frames
+        result = conditional.wait(plan, controller, output=str(self.root / "wait"), sleep=lambda _: None)
+        recorder.finish({})
+        self.assertEqual(result["stop"], "predicate-satisfied")
+        self.assertEqual(controller.inputs, [])
+        self.assertEqual(hashlib.sha256(Path(result["artifact"]).read_bytes()).hexdigest(), result["artifact_sha256"])
+        return recorder, result, [[result["artifact"], result["artifact_sha256"]]]
+
+    def repin(self, result, change):
+        path = Path(result["artifact"])
+        document = json.loads(path.read_text())
+        change(document)
+        content = (json.dumps(document) + "\n").encode()
+        path.write_bytes(content)
+        return [[str(path), hashlib.sha256(content).hexdigest()]]
+
+    def test_pinned_wait_evictions_verify_and_closeout_without_rewriting_history(self):
+        recorder, result, pins = self.recorded_wait()
+        original = recorder.path.read_bytes()
+        before = evidence.verify(str(recorder.path))
+        self.assertFalse(before["healthy"])
+        self.assertEqual(before["counts"]["missing"], 2)
+        previous = evidence.closeout(str(recorder.path), extras=[], derivatives=[], output=str(self.root / "before"))
+        after = evidence.verify(str(recorder.path), retention=pins)
+        self.assertTrue(after["healthy"])
+        self.assertEqual(after["counts"], {"verified": 1, "expected_evicted": 2, "missing": 0,
+                                         "mismatched": 0, "unverified": 0, "image_less": 0})
+        self.assertEqual(after["retention_receipts"][0]["expected_evictions"], 2)
+        closeout = evidence.closeout(str(recorder.path), extras=[], derivatives=[], retention=pins,
+                                    previous=previous["artifact"], output=str(self.root / "after"))
+        self.assertEqual(closeout["verification"], after)
+        self.assertFalse(json.loads(Path(previous["artifact"]).read_text())["verification"]["healthy"])
+        self.assertEqual(recorder.path.read_bytes(), original)
+        self.assertFalse(result["partial"])
+
+    def test_retention_cli_verify_and_closeout_stay_offline(self):
+        recorder, _, pins = self.recorded_wait()
+        parser = argparse.ArgumentParser()
+        add_desktop_subparser(parser.add_subparsers(dest="command"))
+        for operation in ("verify", "closeout"):
+            args = ["desktop", "--native", "evidence", operation, str(recorder.path), "--retention", *pins[0], "--json"]
+            if operation == "closeout":
+                args += ["--output", str(self.root / "cli-closeout")]
+            stream = StringIO()
+            with self.subTest(operation=operation), patch("sys.stdout", stream):
+                self.assertEqual(run_desktop_command(parser.parse_args(args)), 0)
+                report = json.loads(stream.getvalue())
+                self.assertTrue((report if operation == "verify" else report["verification"])["healthy"])
+
+    def test_retention_never_hides_unrelated_loss_uncertainty_or_truncation(self):
+        recorder, _, pins = self.recorded_wait()
+        recorder.event({"action": "input"}, None)
+        report = evidence.verify(str(recorder.path), retention=pins)
+        self.assertFalse(report["healthy"])
+        self.assertEqual(report["uncertain_events"], 1)
+        recorder.data["events"].pop()
+        recorder.data["events_truncated"] = True
+        recorder.save()
+        self.assertFalse(evidence.verify(str(recorder.path), retention=pins)["healthy"])
+        recorder.data["events_truncated"] = False
+        recorder.event({"action": "screenshot"}, {"output": str(self.root / "lost.png"),
+                       "artifact_sha256": "f" * 64})
+        report = evidence.verify(str(recorder.path), retention=pins)
+        self.assertFalse(report["healthy"])
+        self.assertEqual(report["counts"]["expected_evicted"], 2)
+        self.assertEqual(report["counts"]["missing"], 1)
+
+    def test_retention_requires_exact_recorder_identity_and_hash(self):
+        recorder, result, _ = self.recorded_wait()
+        for field in ("generation", "control_revision", "observation_id", "sha256", "retention"):
+            def change(document):
+                for entry in document["captures"][:-1]:
+                    if field in ("sha256", "retention"):
+                        entry[field] = "f" * 64 if field == "sha256" else "eviction-incomplete"
+                    else:
+                        entry["capture_identity"][field] = "different"
+            original = Path(result["artifact"]).read_bytes()
+            pins = self.repin(result, change)
+            with self.subTest(field=field):
+                report = evidence.verify(str(recorder.path), retention=pins)
+                self.assertFalse(report["healthy"])
+                self.assertEqual(report["counts"]["missing"], 2)
+            Path(result["artifact"]).write_bytes(original)
+
+    def test_retention_rejects_invalid_or_incomplete_declarations(self):
+        recorder, result, original_pins = self.recorded_wait()
+        changes = {
+            "legacy": lambda doc: doc["captures"][0].pop("capture_identity"),
+            "schema": lambda doc: doc.update(schema_version=True),
+            "plan-pin": lambda doc: doc.update(plan_sha256="f" * 64),
+            "wrong-phase": lambda doc: doc.update(phase="different"),
+            "steps": lambda doc: doc.update(steps=[{}]),
+            "traversal": lambda doc: doc["captures"][0].update(frame="../capture-0.png"),
+            "index": lambda doc: doc["captures"][0].update(index=1),
+            "partial-unlink": lambda doc: doc["captures"][0].update(evicted_artifacts=["capture-0.png"]),
+            "no-replacement": lambda doc: doc["captures"][-1].update(retention="issue-retained"),
+            "too-many-retained": lambda doc: doc["captures"][0].update(retention="retained"),
+        }
+        original = Path(result["artifact"]).read_bytes()
+        for name, change in changes.items():
+            pins = self.repin(result, change)
+            with self.subTest(change=name), self.assertRaises((OSError, ValueError)):
+                evidence.verify(str(recorder.path), retention=pins)
+            Path(result["artifact"]).write_bytes(original)
+        for pins in ([[result["artifact"], "f" * 64]], original_pins * 2, original_pins * 17,
+                     [[None, "f" * 64]], [[result["artifact"]]], "invalid"):
+            with self.subTest(bindings=pins), self.assertRaises(ValueError):
+                evidence.verify(str(recorder.path), retention=pins)
+
+    def test_retention_requires_private_pinned_files_and_later_replacement(self):
+        recorder, result, pins = self.recorded_wait()
+        path = Path(result["artifact"])
+        for mode in ("public", "symlink", "changed", "still-present", "replacement-lost", "replacement-changed"):
+            with self.subTest(mode=mode):
+                if mode == "public":
+                    path.chmod(0o644)
+                    with self.assertRaises(ValueError):
+                        evidence.verify(str(recorder.path), retention=pins)
+                    path.chmod(0o600)
+                elif mode == "symlink":
+                    target = path.with_name("saved.json")
+                    path.rename(target)
+                    path.symlink_to(target)
+                    with self.assertRaises(ValueError):
+                        evidence.verify(str(recorder.path), retention=pins)
+                    path.unlink()
+                    target.rename(path)
+                elif mode == "changed":
+                    content = path.read_bytes()
+                    path.write_bytes(content + b"\n")
+                    with self.assertRaises(ValueError):
+                        evidence.verify(str(recorder.path), retention=pins)
+                    path.write_bytes(content)
+                else:
+                    image = path.parent / ("capture-0.png" if mode == "still-present" else "capture-2.png")
+                    content = image.read_bytes() if image.exists() else None
+                    if mode == "replacement-lost":
+                        image.unlink()
+                    else:
+                        image.write_bytes(b"changed")
+                        image.chmod(0o600)
+                    with self.assertRaises((OSError, ValueError)):
+                        evidence.verify(str(recorder.path), retention=pins)
+                    if content is None:
+                        image.unlink()
+                    else:
+                        image.write_bytes(content)
+                        image.chmod(0o600)
+
+    def test_retention_supports_the_full_wait_capture_bound(self):
+        recorder, _, pins = self.recorded_wait(frames=200)
+        report = evidence.verify(str(recorder.path), retention=pins)
+        self.assertTrue(report["healthy"])
+        self.assertEqual(report["counts"]["expected_evicted"], 199)
 
     def test_schema_bounds_no_embedded_authority_and_cli_offline(self):
         for key, value in (("schema_version", True), ("generation", "injected"), ("steps", [])):

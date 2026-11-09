@@ -162,13 +162,15 @@ def _load_record(path: str) -> dict:
     return data
 
 
-def verify(path: str) -> dict:
+def verify(path: str, *, retention: list[list[str]] | None = None) -> dict:
     """Check recorded capture file bytes without input, finalization or repairs."""
-    return _verify_captures(path, _load_record(path))
+    return _verify_captures(path, _load_record(path), retention=retention)
 
 
-def _verify_captures(path: str, data: dict) -> dict:
-    counts = {"verified": 0, "missing": 0, "mismatched": 0, "unverified": 0, "image_less": 0}
+def _verify_captures(path: str, data: dict, *, retention: list[list[str]] | None = None) -> dict:
+    from desktop import evidence_retention
+    evictions, pins = evidence_retention.load(retention if retention is not None else [])
+    counts = {"verified": 0, "expected_evicted": 0, "missing": 0, "mismatched": 0, "unverified": 0, "image_less": 0}
     uncertain = sum(row.get("outcome") == "uncertain" for row in data["events"])
     problems = []
     for index, row in enumerate(data["events"]):
@@ -194,25 +196,29 @@ def _verify_captures(path: str, data: dict) -> dict:
                 state = "verified" if actual == expected else "mismatched"
                 detail = "PNG file bytes differ from the recorded hash"
             except FileNotFoundError:
-                state, detail = "missing", "Recorded capture is unavailable"
+                if evidence_retention.matches(evictions, result):
+                    state, detail = "expected_evicted", "Pinned wait receipt declares this exact capture evicted"
+                else:
+                    state, detail = "missing", "Recorded capture is unavailable"
             except (OSError, ValueError) as exc:
                 detail = str(exc)[:256]
         counts[state] += 1
-        if state != "verified" and len(problems) < 10:
+        if state not in ("verified", "expected_evicted") and len(problems) < 10:
             problems.append({"event_index": index, "output": output if isinstance(output, str) else None,
                              "state": state, "detail": detail})
     checked = sum(counts.values())
-    failures = checked - counts["verified"]
+    failures = checked - counts["verified"] - counts["expected_evicted"]
     return {"artifact": path, "checked": checked, "counts": counts,
             "healthy": checked > 0 and failures == 0 and uncertain == 0 and not data["events_truncated"],
-            "uncertain_events": uncertain,
+            "uncertain_events": uncertain, "retention_receipts": pins,
             "events_truncated": data["events_truncated"], "finalized": data.get("finalized") is True,
             "problems": problems, "problems_truncated": failures > len(problems),
-            "scope": "Recorded PNG bytes and event uncertainty/truncation only; no game outcome, pixel decoding or task logs verified"}
+            "scope": "Retained PNG bytes, explicitly pinned wait evictions and event uncertainty/truncation only; evicted bytes, game outcome, pixel decoding and task logs not verified"}
 
 
 def closeout(path: str, *, extras: list[str], derivatives: list[str], output: str | None = None,
-             previous: str | None = None, processes: list[list[str]] | None = None) -> dict:
+             previous: str | None = None, processes: list[list[str]] | None = None,
+             retention: list[list[str]] | None = None) -> dict:
     """Save a new inventory receipt; never repair a journal, move media or stop apps."""
     from desktop.qa_artifacts import file_digest, new_bundle, process_identity
 
@@ -240,7 +246,7 @@ def closeout(path: str, *, extras: list[str], derivatives: list[str], output: st
             resource.update(state="unavailable", detail=str(exc)[:300])
         resources.append(resource)
     data = _load_record(path)
-    checked = _verify_captures(path, data)
+    checked = _verify_captures(path, data, retention=retention)
     captures = [row.get("result", {}).get("output") for row in data["events"]
                 if row.get("action") == "screenshot" and isinstance(row.get("result"), dict)]
     originals = sorted({name for name in captures if isinstance(name, str)})

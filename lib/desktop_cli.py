@@ -54,6 +54,8 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     finalizing.add_argument("artifact")
     verifying = evidence_commands.add_parser("verify", help="Check recorded capture files without contacting the desktop or modifying evidence")
     verifying.add_argument("artifact")
+    verifying.add_argument("--retention", nargs=2, action="append", default=[], metavar=("RECEIPT", "SHA256"),
+                           help="Explicitly pinned wait receipt for intentional ring evictions; repeat up to 16")
     verifying.add_argument("--json", action="store_true")
     for command in (finishing, finalizing):
         command.add_argument("--task", action="append", default=[], help="Also attach a pre-existing development task; repeat as needed")
@@ -243,7 +245,7 @@ def run_desktop_command(args: argparse.Namespace) -> int:
             from desktop.evidence import finalize, verify
             operation = args.evidence_command
             if operation == "verify":
-                result = verify(args.artifact)
+                result = verify(args.artifact, retention=args.retention)
             elif operation == "finalize":
                 result = finalize(args.artifact, tasks=args.task, renderer=args.renderer)
             else:

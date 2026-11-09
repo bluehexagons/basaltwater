@@ -109,6 +109,10 @@ receipt exists. Never execute the plan again to recover an uncertain step.
 A completed input with a missing post-capture remains delivery `completed` and
 effect `unknown`. The receipt retains deltas, capture references, error/partial
 state, elapsed time and explicit unasserted match completion/game outcome.
+New receipts also bind the exact `plan.json` bytes with `plan_sha256` and retain
+each successful capture's helper generation, control revision and observation ID.
+The returned result includes `artifact_sha256` for the final receipt bytes; keep
+that pin with the run ledger, separately from the receipt itself.
 If final persistence fails, JSON returns `artifact:null`, the bundle path and a
 persistence error; earlier intent/evidence remain. Errors before bundle creation
 return `partial:false`; later errors retain the partial bundle. CLI exits nonzero
@@ -122,6 +126,42 @@ evicted to its declared ring size. Failed captures preserve the previous frame
 plus any issue media. Retention dispositions stay in the receipt, including
 incomplete eviction and the exact files already removed. Unknown/unexpected
 scenes, cancellation and deadline return control; a wait timeout is never a game loss.
+
+### Verify a recorded wait's ring evictions
+
+The recorder still references captures removed by a wait's bounded ring. To
+distinguish these from unexplained losses, explicitly supply the wait receipt
+and its previously retained `artifact_sha256` when checking the recorder:
+
+```text
+basaltw desktop --native evidence verify CANONICAL_RECORDING --retention /absolute/private/wait/receipt.json SHA256 --json
+basaltw desktop --native evidence closeout CANONICAL_RECORDING --retention /absolute/private/wait/receipt.json SHA256 --output NEW_PRIVATE_DIRECTORY --json
+```
+
+Both commands are offline. Repeat `--retention RECEIPT SHA256` for at most 16
+waits. Without bindings, missing images keep their existing failing behavior.
+Each receipt must be a private owned regular file (at most 256 KiB), under a
+private owned bundle directory with no symlink/parent traversal. Its pinned
+plan must validate as a zero-input `event-wait` in the same run/match/phase.
+The verifier requires canonical capture filenames, both frame and metadata
+declared fully removed, matching recorder path/hash/helper identity, and a later
+retained replacement whose private PNG bytes still match their hash within the
+plan's frame budget. Incomplete evictions cannot justify a missing PNG.
+
+`counts.expected_evicted` records matching missing captures separately from
+`counts.verified`; it does **not** mean the evicted bytes remain available or
+their pixels were inspected. `healthy` accepts these explicit dispositions but
+still fails for other missing, changed, unverified or image-less captures,
+uncertain events and recorder truncation. Invalid bindings are errors, never
+blanket waivers. Keep retained outcome/issue evidence independently of the ring.
+
+Pins supplied by the owner establish selected provenance, not independent
+attestation that a receipt is truthful. Legacy receipts lacking plan pins or
+capture identities cannot justify historical losses. Neither command edits the
+recording or old closeouts. Preserve an earlier failed check and link any new
+closeout with `--previous`; never rewrite history or recreate evicted images.
+The integration has offline regression coverage; its next native consuming
+qualification must independently inspect the live wait and recorder receipts.
 
 ## Disposable application qualification, after refresh
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import subprocess
 import time
@@ -46,6 +47,7 @@ class _Run:
         self.tokens, self.retained = set(), []
         self.identity, self.geometry, self.profile = None, None, None
         self.report = {"schema_version": 1, "kind": "conditional-receipt", "plan_id": plan["id"],
+            "plan_sha256": hashlib.sha256(_json(self.plan)).hexdigest(),
             "run_id": plan["run_id"], "match_id": plan["match_id"], "phase": plan["phase"],
             "started": stamp(), "captures": [], "steps": [], "stop": "unknown",
             "match_completion": "not-asserted", "game_outcome": "not-asserted", "partial": True}
@@ -150,6 +152,7 @@ class _Run:
                 raise ValueError("Unknown state revision")
             self.write(entry["metadata"], {key: value for key, value in snapshot.items() if key != "frame"})
             entry.update(retention="retained", sha256=frame["sha256"], captured_at=packet["captured_at"],
+                         capture_identity={key: capture[key] for key in ("generation", "control_revision", "observation_id")},
                          completed_seconds=self.now() - self.started)
             self.retained.append(entry)
             return snapshot, entry
@@ -179,7 +182,8 @@ class _Run:
         except (OSError, ValueError, RuntimeError) as exc:
             self.report.update(partial=True, persistence_error=str(exc), error="Receipt persistence failed: " + str(exc))
             return {**self.report, "bundle": str(self.folder), "artifact": None}
-        return {**self.report, "bundle": str(self.folder), "artifact": str(path)}
+        return {**self.report, "bundle": str(self.folder), "artifact": str(path),
+                "artifact_sha256": hashlib.sha256(data).hexdigest()}
 
 
 def execute(plan, controller, *, output=None, now=time.monotonic, cancelled=lambda: False):

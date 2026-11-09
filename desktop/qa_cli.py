@@ -78,6 +78,8 @@ def add_qa_parser(commands: argparse._SubParsersAction, evidence: argparse._SubP
     start.add_argument("--json", action="store_true")
     closeout = evidence.add_parser("closeout", help="Save a new read-only inventory/verification receipt; never stop apps or delete media")
     closeout.add_argument("artifact")
+    closeout.add_argument("--retention", nargs=2, action="append", default=[], metavar=("RECEIPT", "SHA256"),
+                          help="Explicitly pinned wait receipt for intentional ring evictions; repeat up to 16")
     closeout.add_argument("--extra", action="append", default=[], help="Extra PNG capture outside the recorder; repeat up to 50")
     closeout.add_argument("--derived", action="append", default=[], help="Literal crop manifest; repeat up to 16")
     closeout.add_argument("--previous", help="Preserve a previous closeout receipt when rechecking restored evidence")
@@ -185,7 +187,7 @@ def run_qa_command(args: argparse.Namespace, *, backend=None) -> dict:
     if args.desktop_command == "evidence" and args.evidence_command == "closeout":
         from desktop.evidence import closeout
         return closeout(args.artifact, extras=args.extra, derivatives=args.derived, output=args.output,
-                        previous=args.previous, processes=args.process)
+                        previous=args.previous, processes=args.process, retention=args.retention)
     if args.desktop_command == "audio":
         from desktop import audio_capture, audio_analysis
         if args.audio_command == "sources":
