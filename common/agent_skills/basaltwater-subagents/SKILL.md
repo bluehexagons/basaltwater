@@ -15,18 +15,30 @@ for catalog inspection; presence does not prove session access.
 
 ## Choose and brief a worker
 
-Use the live session's provider/model catalog and option descriptors. Start
-with Luna for provisional, bounded work such as classification, documentation,
+Use the live session's provider/model catalog and option descriptors. Prefer
+available subscription usage; verify authentication, quota, and whether a model
+requires separately billed credits. Compare acceptance, latency, retries and
+parent rework as well as allowance consumption. API prices are a fallback
+comparison, not subscription charges. Read
+[current model choices](references/model-selection.md#current-workload-choices)
+when choosing across providers or considering Terra or specialist escalation.
+
+Start with Luna for provisional, bounded work such as classification, documentation,
 small fixes, focused tests, and app-script or export validation. Use medium by
 default for these tasks. Explicit deterministic, trivial tasks may use low when
 their inputs and checks are narrow. Use high or xhigh for Luna only when the
 task has concrete complexity that warrants it. Use Sol high for broad coding,
-integration, ambiguous cross-file work, and reviews; use Astra only for a
-justified specialist task. These are guidance suggestions, not performance
-proof: retain project policy and record actual outcomes. Choose standard service.
+integration, ambiguous cross-file work, and reviews. Sol and Claude Opus are
+the recommended higher-end frontier choices on subscriptions. Astra and Fable
+are discouraged for general use: their extra cost usually buys too little gain.
+Consider them only for a specific unmet need with evidence of benefit. These
+are guidance suggestions, not performance proof: retain project policy and
+record actual outcomes. Choose standard service.
 Never autonomously select or inherit fast service (including Codex `priority`),
 `max`, or `ultra`; honor explicit confirmed user selections. Apply settings
-through the tool and check the returned provider, model, and options.
+through the tool and check the returned provider, model, and options. Active
+session instructions govern inherited settings and tool choice; this guidance
+does not authorize delegation or changing a user-selected model.
 
 For a Luna assignment, name one bounded deliverable, its owned files or checks,
 and observable acceptance criteria. Suitable active work includes a small,

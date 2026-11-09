@@ -5,15 +5,82 @@ under Windows Subsystem for Linux (WSL). The commands below use Bash or fish
 syntax; run them in the corresponding Linux shell and use the actual project
 path for that environment.
 
+## Subscription cost and performance
+
+Reviewed **2026-11-09**. Prefer an available subscription route when its included
+usage covers the task. Check the active login/billing route, remaining allowance,
+reset time, and model access before comparing candidates. A subscription is not
+unlimited: parallel workers consume allowance too, and paid credits or an API
+key can introduce additional charges. Do not switch authentication, buy credits,
+or enable overage merely to obtain a recommended model.
+
+Optimize for an accepted result within the user's time and usage budget. Sol
+and Opus are the recommended higher-end frontier choices and are reasonably
+affordable through subscriptions. Astra and Fable are discouraged for general
+use: their extra cost typically yields too little improvement. This is the
+maintained project recommendation, not a claim of a universal benchmark result.
+Reserve either for a specific unmet need with evidence that the benefit
+justifies the cost; do not automatically escalate just because it is available.
+
+A stronger included model can cost less overall when it avoids failed attempts
+and parent rework; a cheaper worker helps only when its result passes review.
+Compare acceptance, elapsed time, retries, rework and allowance consumption.
+Keep dollar costs unknown without billing telemetry. Do not divide a monthly
+subscription price into an invented per-task charge or mix API estimates and
+subscription observations as if they were the same measurement.
+
+[Codex pricing](https://learn.chatgpt.com/docs/pricing) lists approximate Plus
+and Standard Business local-message ranges per five hours: Luna 350–3,000,
+Terra 35–285, Sol 15–160, Astra 5–45. These overlap and depend on task/context;
+they indicate relative allowance pressure, not measured speed or a fixed number
+of worker jobs. Local and cloud usage share allowance; check the live dashboard.
+For Claude, check `/model` and the account's usage display: Fable can require
+separate credits even with a subscription. See
+[Claude billing and model access](https://code.claude.com/docs/en/model-config).
+
+## Current workload choices
+
+These are starting hypotheses for evaluation, not a benchmark ranking. Exact
+IDs and supported settings must come from the active tool. Preserve an explicit
+user choice and project evidence; availability in public docs is insufficient.
+
+| Workload | Candidate | Tradeoff |
+| --- | --- | --- |
+| Bounded extraction, classification, small edits, named checks | GPT-6 Luna; Claude Haiku 5.5 | Low allowance pressure and latency; give narrow inputs and observable checks |
+| Writing, image/screen interpretation, app work | GPT-6.1 Terra | Efficient middle option; evaluate coding separately rather than assume Sol-level coding performance |
+| Broad coding, integration, substantive review | GPT-6.1 Sol | Recommended higher-end coding choice; start at high for this workload |
+| Routine Claude coding and focused review | Claude Sonnet 5.5 | Faster option with lower usage than Opus; use project outcomes to decide whether it suffices |
+| Difficult debugging, architecture, long agentic coding and review | Claude Opus 5.5 | Recommended higher-end Claude choice; subscription affordability makes it practical when stronger reasoning helps |
+| Exceptional unmet need with demonstrated gain | GPT-6 Astra; Claude Fable 5.2 | Discouraged for general use; require a concrete benefit over Sol/Opus and check separate credit billing |
+
+Provider sources: [OpenAI model roles](https://learn.chatgpt.com/docs/models),
+[Terra capabilities](https://developers.openai.com/api/docs/models/gpt-6.1-terra),
+[Claude coding guidance](https://support.claude.com/en/articles/14552983-models-usage-and-limits-in-claude-code),
+and [Claude model comparison](https://platform.claude.com/docs/en/models/overview).
+These sources describe different workloads; they do not establish a universal
+cross-provider winner. Check fresh provider evidence after releases, then run
+representative project trials before changing a proven policy.
+
+For API fallback, standard uncached input/output USD per million tokens are
+Luna $0.10/$0.50, Terra $1/$5, Sol $2/$10, Astra $10/$50; Claude Haiku 5.5
+$0.10/$0.50 up to 100K input, Sonnet 5.5 $2/$10, Opus 5.5 $4/$20, and Fable
+5.2 $8/$40. These omit caches, reasoning volume, tools and context surcharges.
+See [context and pricing boundaries](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/agent-context.md)
+for exact model sources, long-prompt rates and client limits. A large inherited
+history can erase the savings of a cheap subagent; send a bounded fresh brief
+when the interface supports it. Leave headroom for tool results and output.
+
+## OpenAI selector defaults
+
 Use OpenAI models currently exposed by the session. Luna is a provisional
 starting point at `medium` for bounded classification, extraction, documentation,
 small fixes, focused tests, and app-script or export validation. Explicit,
 deterministic trivial work may use `low` when inputs and verification are
 straightforward. Use Luna `high` or `xhigh` only for a concrete complex task.
 Keep broad coding, integration, ambiguous cross-file changes, and substantive
-reviews on Sol `high`; use Astra only when a specialist capability has a stated
-benefit. These suggestions are not performance proof. Preserve existing project
-policy, check the live session, and record actual outcomes. A small independent
+reviews on Sol `high`; use Astra only for an exceptional unmet need with evidence
+of benefit over Sol/Opus. These suggestions are not performance proof. Preserve
+existing project policy, check the live session, and record actual outcomes. A small independent
 task does not need the parent's model.
 
 Check that the exact model **and the delegation tool** expose the chosen
@@ -40,6 +107,14 @@ limitation and perform a small task locally when delegation would waste cost.
 If the interface fixes workers to fast service or cannot honor a required
 standard tier, report that limit and use a supported standard-service session.
 Never imply that a recommendation changes the running session or tool settings.
+
+The local selector currently accepts OpenAI entries with Luna/Sol/Astra roles.
+Its shipped seed covers those three coding choices; it does not rank Claude,
+model subscription allowances, or discover Terra automatically. Use the table
+above and runtime capabilities for those decisions. Do not relabel Terra as Sol
+solely to satisfy a schema or treat the selector's API estimate as a subscription
+recommendation. Changing selector roles or billing support is a separate code
+change requiring validation.
 
 ## Project policy and outcomes
 

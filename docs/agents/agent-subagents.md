@@ -96,13 +96,24 @@ merge, validation, and removal in one example.
 
 The shared subagent skill also ships
 [model selection and learning](../../common/agent_skills/basaltwater-subagents/references/model-selection.md).
+The [current workload choices](../../common/agent_skills/basaltwater-subagents/references/model-selection.md#current-workload-choices)
+were reviewed **2026-11-09**. Prefer available included subscription usage and
+compare allowance consumption, latency, acceptance and parent rework. Sol and
+Opus are the recommended higher-end frontier models, both reasonably affordable
+on subscriptions. Astra and Fable are discouraged for general use because their
+extra cost usually brings too little gain; reserve them for an exceptional unmet
+need with evidence of benefit. Terra is a middle option for writing, vision and
+app work; Sonnet and Haiku offer lighter Claude alternatives. Check exact IDs,
+billing route and the actual delegation interface before selecting any model.
+
 Start with Luna at medium for bounded classification, documentation, small
 fixes, focused tests, and app-script or export validation. Explicit deterministic
 trivial work may use low with straightforward checks. Use Luna high or xhigh
 only when concrete complexity justifies it. Keep broad coding, integration,
-ambiguous cross-file tasks, and reviews on Sol high; use Astra only for a
-justified specialist task. These are provisional suggestions, not performance
-proof; preserve existing project policy and record actual outcomes. Give each
+ambiguous cross-file tasks, and reviews on Sol high; use Astra only for an
+exceptional unmet need with evidence of benefit over Sol/Opus. These are
+provisional suggestions, not performance proof; preserve existing project policy
+and record actual outcomes. Give each
 worker clear ownership and acceptance criteria. Do not assign competing control
 of a desktop/app session, and do not blindly time out and relaunch desktop
 mutations. Verify the exact model and effort supported by the current session. Use standard service and
@@ -144,12 +155,14 @@ bounded Luna classes start at medium; broad coding/review starts at Sol high.
 Initialization preserves older project policies and explicit operator choices.
 An empty eligible set returns nonzero and a null selection.
 
-The starter catalog is dated **2026-10-09**, with standard API token rates and
+The starter catalog is dated **2026-11-09**, with standard API token rates and
 reasoning support checked against the
 [OpenAI model catalog](https://developers.openai.com/api/docs/models) and
 [reasoning guide](https://developers.openai.com/api/docs/guides/reasoning).
 Those are estimates for comparison, not a quote for a subscription account or
-a guarantee that a particular tool exposes the same models. The workload
+a guarantee that a particular tool exposes the same models. The selector covers
+OpenAI Luna/Sol/Astra roles; it does not model subscription allowance or rank
+Claude and Terra. Use the shared guidance for those choices. The workload
 defaults apply the task/cost tradeoffs described by
 [OpenAI model selection](https://developers.openai.com/api/docs/guides/model-selection).
 Review the seed on initialization, after model releases or pricing/access

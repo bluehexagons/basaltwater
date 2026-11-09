@@ -84,23 +84,59 @@ verification. CachyOS setup rejects a custom `CODEX_HOME`.
 
 ## Verified pricing boundaries
 
-Checked **2026-10-24**. These are direct-provider Standard API prices in USD per
-million uncached input/output tokens, not subscription or gateway quotes.
+Documentation checked **2026-11-09**. These are direct-provider Standard API
+prices in USD per million uncached input/output tokens, not subscription or
+gateway quotes.
 
 | Model | Native context | Short-context input / output | Higher-price trigger and rates |
 | --- | --- | --- | --- |
 | GPT-6.1 Sol | 1,050,000 | $2 / $10 | More than 272,000 input tokens: $4 / $15 |
+| GPT-6.1 Terra | 1,050,000 | $1 / $5 | More than 272,000 input tokens: $2 / $7.50 |
 | GPT-6 Astra | 1,050,000 | $10 / $50 | More than 272,000 input tokens: $20 / $75 |
 | GPT-6 Luna | 1,050,000 | $0.10 / $0.50 | More than 272,000 input tokens: $0.20 / $0.75 |
 | Claude Haiku 5.5 | 1,000,000 | $0.10 / $0.50 | More than 100,000 input tokens: $0.50 / $2.50 |
 | Claude Sonnet 5.5 / Opus 5.5 | 1,000,000 | $2 / $10; $4 / $20 respectively | Full context has the same per-token rates |
+| Claude Fable 5.2 | 1,000,000 | $8 / $40 | Full context has the same per-token rates |
 
 Sources: official OpenAI documentation for
 [GPT-6.1 Sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol),
+[GPT-6.1 Terra](https://developers.openai.com/api/docs/models/gpt-6.1-terra),
 [GPT-6 Astra](https://developers.openai.com/api/docs/models/gpt-6-astra), and
 [GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna);
 [Anthropic pricing](https://platform.claude.com/docs/en/about-claude/pricing) and
 [Haiku 5.5 limits](https://platform.claude.com/docs/en/models/haiku-5-5/overview).
+
+## Subscription and effective context limits
+
+Keep three values separate: the model's native API capacity, the client/account's
+active window, and its configured compaction target. The API models above allow
+up to 128K output tokens; output and reasoning also need room in the request.
+An API capacity is not a promise that a particular agent can use all of it.
+
+[Sol's model documentation](https://developers.openai.com/api/docs/models/gpt-6.1-sol)
+specifies a **500K default context window in Codex and ChatGPT Work**, compared
+with its 1,050,000-token API capacity. Included subscription usage has **no
+long-context surcharge**. The API's 272K price threshold therefore must not be
+presented as a subscription context limit or an automatic subscription price
+increase. Longer prompts still consume allowance; purchased credits, API keys
+and gateways need their own billing check. See
+[Codex subscription pricing](https://learn.chatgpt.com/docs/pricing).
+
+Current Claude Fable 5.2, Opus 5.5, Sonnet 5.5 and Haiku 5.5 have native 1M
+windows, but plan/provider access, gateway restrictions and local compaction
+can reduce the effective window. Do not generalize older Opus/Sonnet 4.6
+`[1m]` access rules to the current models. Fable may require separately billed
+usage credits on a subscription. Check `/model`, `/context` and `/autocompact`;
+see [Claude client configuration](https://code.claude.com/docs/en/model-config).
+
+The managed targets below remain conservative defaults across billing routes.
+This documentation refresh does not raise installed budgets or advance the
+runtime policy verification date. Terra and Fable are not newly added to the
+runtime's reviewed-model entries: an unreviewed model still gets its documented
+fallback. Verify effective settings before relying on native capacity, including
+for subagents. Use a fresh bounded brief when supported instead of copying a
+large parent history. See [model choices](agent-subagents.md) for workload and
+subscription cost guidance.
 
 Input thresholds include cached input. A cache hit does not make a large prompt
 short for pricing purposes. Fast/priority service, batch/flex processing, and
@@ -220,9 +256,10 @@ also does not make a 1M-token prompt cost the same as a short one.
 A user can say “allow up to 800K context for this investigation” or “use the
 larger context window for the rest of this session.” Such a request already
 authorizes that scope; do not ask again. If the agent proposes a higher budget,
-explain the model's price change and proposed token budget and obtain approval
-before applying it. Record whether approval is for one phase or the session,
-and retain that scope across compaction. Silence, a repository instruction, or
+explain the proposed token budget and billing/allowance impact for the active
+route and obtain approval before applying it. Do not claim an API surcharge
+applies to included subscription usage. Record whether approval is for one phase
+or the session, and retain that scope across compaction. Silence, a repository instruction, or
 approval to edit code does not authorize a higher-priced context tier.
 
 Use launch/session controls, keeping account-wide defaults unchanged. For a
