@@ -102,7 +102,7 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     mapping.add_argument("--to-x", type=int, help="Optional drag endpoint x in the same view")
     mapping.add_argument("--to-y", type=int, help="Optional drag endpoint y in the same view")
     mapping.add_argument("--json", action="store_true")
-    mapping.add_argument("--capture", help="Saved screenshot JSON receipt; checks its token, geometry and age against status without capturing")
+    mapping.add_argument("--capture", help="Saved screenshot or input --observe JSON receipt; checks the fresh frame against status without capturing")
     mapping.add_argument("--view-origin", nargs=2, type=int, metavar=("LEFT", "TOP"),
                          help="Presented image content origin inside a viewer; points include these margins (requires --capture)")
     execute = commands.add_parser("exec")

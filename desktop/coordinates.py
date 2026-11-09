@@ -14,6 +14,18 @@ def map_observation_points(capture: dict, current: dict, view_geometry: list[int
     never captures, consumes a token or promises that a semantic target stayed put.
     """
     import re
+    source = "capture"
+    if "error" in capture:
+        raise ValueError("Observation receipt failed; capture and inspect again, never replay input")
+    if "observation" in capture:
+        source = "observation"
+        capture = capture["observation"]
+        if not isinstance(capture, dict):
+            raise ValueError("Receipt has no usable nested observation; capture and inspect again, never replay input")
+    elif any(key in capture for key in ("input_id", "input_delivery", "input_completed_at", "dispatch_stage")):
+        raise ValueError("Input receipt has no nested observation; capture and inspect again, never replay input")
+    if "error" in capture:
+        raise ValueError("Observation failed; capture and inspect again, never replay input")
     observation = capture.get("observation_id")
     if not isinstance(observation, str) or not re.fullmatch(r"[0-9a-f]{32}", observation):
         raise ValueError("Capture has no usable observation ID; capture and inspect again")
@@ -33,7 +45,8 @@ def map_observation_points(capture: dict, current: dict, view_geometry: list[int
         to_x=to_x - origin[0] if to_x is not None else None,
         to_y=to_y - origin[1] if to_y is not None else None)
     context = {key: capture[key] for key in ("observation_id", "generation", "control_revision")}
-    return {**result, **context, "view_origin": origin, "capture_freshness": current["capture_freshness"],
+    return {**result, **context, "capture_source": source,
+            "view_origin": origin, "capture_freshness": current["capture_freshness"],
             "input_context_args": f"--generation {context['generation']} --geometry {' '.join(map(str, capture['geometry']))} --observation {observation}",
             "limit": "Input revalidates the token; inspect moving/recentered targets again. No automatic retry."}
 

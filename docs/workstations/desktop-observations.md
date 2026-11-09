@@ -84,6 +84,14 @@ basaltw desktop --native map-point --capture /absolute/private/frame.json \
   --view-geometry 1200 800 --view-origin 20 30 --x 620 --y 430
 ```
 
+`--capture` also accepts the complete JSON receipt from `input --observe`.
+Inspect the PNG in its nested `observation`, then pass the full receipt to
+`map-point`; `capture_source: observation` confirms that selection. The top-level
+input token is consumed and is never a fallback. A missing, failed or stale nested
+frame requires another capture and inspection, never replay of the completed input.
+Omit `--output` on screenshots and `input --observe` to generate a unique private
+PNG path. Retain the returned path rather than reusing a round-based filename.
+
 `--view-geometry` is the presented image content size; `--view-origin` is its
 top-left offset inside the viewer (default zero). Points include that offset.
 Both drag endpoints use the same transform. The read-only status comparison
@@ -140,6 +148,13 @@ uncertain and are never rewritten. Windows worker stage parity remains separate
 work; a new client cannot infer it from old Linux or Windows strings. Restart a
 Debian desktop session normally after installing updated worker code; updating
 the client alone cannot add stages to an already running old worker.
+
+Offline verification includes `uncertain_by_action` and up to ten
+`uncertain_event_details` with zero-based journal indices, action, reason,
+dispatch stage and delivery when recorded. Its truncation flag indicates more
+uncertain entries. These diagnostics do not infer delivery from action names or
+error wording, change journal classifications, or make an unhealthy record healthy.
+Inspect the original private journal at those indices for additional context.
 
 Existing input without `--observation` retains its platform-specific checks:
 Debian geometry/revision checks, CachyOS latest-capture age checks, and Windows

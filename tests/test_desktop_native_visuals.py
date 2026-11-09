@@ -38,7 +38,9 @@ class CaptureCoordinateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder, patch.object(native, "status", return_value=current), \
                 patch.object(native, "request", return_value={"input_delivery": "completed"}) as request:
             path = Path(folder) / "frame.json"
-            path.write_text(json.dumps(capture))
+            # The action token is consumed; only the nested frame may authorize mapping.
+            path.write_text(json.dumps({"observation_id": "d" * 32, "input_delivery": "completed",
+                                        "observation": capture}))
             output = StringIO()
             with redirect_stdout(output):
                 code = desktop_cli.run_desktop_command(parser.parse_args(["desktop", "--native", "map-point", "--capture", str(path),
@@ -46,6 +48,7 @@ class CaptureCoordinateTests(unittest.TestCase):
             self.assertEqual(code, 0)
             request.assert_not_called()
             result = json.loads(output.getvalue())
+            self.assertEqual(result["capture_source"], "observation")
             action = ["desktop", "--native", "input", *shlex.split(result["input_context_args"]),
                       "click", *shlex.split(result["input_args"]), "--button", "1"]
             with redirect_stdout(StringIO()):
@@ -95,6 +98,27 @@ class CaptureCoordinateTests(unittest.TestCase):
         self.assertEqual(result["input_args"], "--x 1000 --y 750 --to-x 1500 --to-y 1000")
         self.assertEqual(result["scale"], [1.25, 1.25])
         self.assertFalse(result["input_sent"])
+
+    def test_post_input_mapping_never_falls_back_to_action_context(self):
+        capture = {"observation_id": "a" * 32, "generation": "b" * 32, "control_revision": "c" * 32,
+                   "geometry": [2400, 1600], "image_origin": [100, 200], "image_geometry": [800, 600]}
+        current = {**capture, "state": "running", "capture_freshness": {"fresh": True}}
+        receipt = {**capture, "input_delivery": "completed", "observation": capture}
+        mapped = map_observation_points(receipt, current, [400, 300], 200, 150, to_x=399, to_y=299)
+        self.assertEqual(mapped["input_coordinates"], {"x": 500, "y": 500, "to_x": 898, "to_y": 798})
+        # Even a top-level token matching status cannot rescue a failed/stale nested frame.
+        for nested in (None, [], "invalid", {}, {**capture, "error": "failed"},
+                       {**capture, "observation_id": "d" * 32}, {**capture, "control_revision": "old"},
+                       {**capture, "image_geometry": [400, 300]}):
+            with self.subTest(nested=nested), self.assertRaises(ValueError):
+                map_observation_points({**receipt, "observation": nested}, current, [400, 300], 1, 1)
+        for failed in ({**capture, "input_delivery": "completed"},
+                       {**capture, "input_id": "d" * 32},
+                       {**receipt, "error": "failed observation"}):
+            with self.subTest(failed=failed), self.assertRaisesRegex(ValueError, "never replay"):
+                map_observation_points(failed, current, [400, 300], 1, 1)
+        with self.assertRaisesRegex(ValueError, "expired"):
+            map_observation_points(receipt, {**current, "capture_freshness": {"fresh": False}}, [400, 300], 1, 1)
 
     def test_crop_origin_scaling_rounding_and_edges(self) -> None:
         for point, expected in (((0, 0), (100, 200)), ((200, 150), (500, 500)), ((399, 299), (898, 798))):
@@ -200,7 +224,31 @@ class NativeCanvasTests(unittest.TestCase):
         result = verify(str(recorder.path))
         self.assertEqual(result["counts"]["image_less"], 1)
         self.assertEqual(result["uncertain_events"], 2)
+        self.assertEqual(result["uncertain_by_action"], {"input": 1, "screenshot": 1})
+        self.assertEqual(result["uncertain_event_details"][0], {
+            "event_index": 1, "action": "input", "reason": unknown.exception.receipt["reason"],
+            "dispatch_stage": "input-dispatch", "input_delivery": "unknown"})
+        self.assertEqual(result["uncertain_event_details"][1]["action"], "screenshot")
+        self.assertFalse(result["uncertain_event_details_truncated"])
         self.assertFalse(result["healthy"])
+
+    def test_uncertain_diagnostics_are_bounded_allowlisted_and_read_only(self):
+        with patch("desktop.evidence.revision", return_value={}):
+            recorder = Recorder(str(self.home), self.session.generation)
+        for index in range(12):
+            recorder.event({"action": "control"}, {"error": "private detail", "reason": "x" * 200})
+        before = recorder.path.read_bytes()
+        report = verify(str(recorder.path))
+        self.assertEqual(report["uncertain_events"], 12)
+        self.assertEqual(report["uncertain_by_action"], {"control": 12})
+        self.assertEqual(len(report["uncertain_event_details"]), 10)
+        self.assertTrue(report["uncertain_event_details_truncated"])
+        self.assertEqual(report["uncertain_event_details"][-1], {
+            "event_index": 9, "action": "control", "reason": "x" * 128,
+            "dispatch_stage": None, "input_delivery": None})
+        self.assertNotIn("private detail", json.dumps(report))
+        self.assertEqual(recorder.path.read_bytes(), before)
+        self.assertFalse(report["healthy"])
 
     def test_duplicate_recorder_exposes_existing_handle_and_capacity(self):
         with patch("desktop.evidence.revision", return_value={}):
