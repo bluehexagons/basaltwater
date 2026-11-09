@@ -1,5 +1,5 @@
 # Makefile for Basaltwater development tasks
-.PHONY: check check-fast check-ci test test-verbose browser-test panel-dev coverage help clean compile docs-check brand-check package-check artifact-check
+.PHONY: check check-fast check-ci test test-verbose browser-test panel-dev coverage help clean compile dev-check docs-check brand-check package-check artifact-check
 
 SUITE ?=
 TEST ?=
@@ -21,6 +21,7 @@ help:
 	@echo "  make test TEST=name    Run specific test file (e.g., TEST=test_scrub_par2)"
 	@echo "  make test SUITE=web    Run a named suite; space-separated suites may be combined"
 	@echo "  make compile           Check all Python files compile"
+	@echo "  make dev-check         Check selected Python and development modules"
 	@echo "  make docs-check        Check CLI documentation and local Markdown links"
 	@echo "  make brand-check       Check generated identity assets are current"
 	@echo "  make package-check     Check package launcher metadata"
@@ -48,7 +49,7 @@ check: $(FULL_CHECKS) test
 check-ci: $(FULL_CHECKS) coverage
 
 # Use smoke tests by default; explicit selections replace that default.
-check-fast: compile docs-check package-check
+check-fast: dev-check compile docs-check package-check
 	@python3 run_tests.py $(if $(strip $(TEST_SELECTION)),$(TEST_SELECTION),--suite smoke) $(TEST_ARGS)
 
 docs-check:
@@ -65,7 +66,7 @@ artifact-check:
 	@python3 scripts/check_wheel_artifact.py
 
 # Run all tests, or combine explicit modules and domain suites.
-test:
+test: dev-check
 	@python3 run_tests.py $(TEST_SELECTION) $(TEST_ARGS)
 
 # Explicit developer-machine qualification. No payload downloads or package
@@ -78,22 +79,22 @@ panel-dev:
 
 # Run the default suite with reproducible branch coverage reporting. The
 # optional dev dependency is intentionally separate from the normal check.
-coverage:
+coverage: dev-check
 	python3 -m coverage erase
 	python3 -m coverage run --branch --source=. --omit='tests/*,build/*,dist/*,.venv/*,*/__pycache__/*' run_tests.py --durations 10
 	python3 -m coverage report --show-missing
 
 # Run all tests with verbose output
-test-verbose:
+test-verbose: dev-check
 	@python3 run_tests.py -v $(TEST_SELECTION) $(TEST_ARGS)
 
-# Check all Python files compile
+# Dependency discovery never installs packages or changes the runtime.
+dev-check:
+	@python3 scripts/check_development.py dependencies
+
+# Check maintained Python only, preserving managed applications and dependencies.
 compile:
-	@echo "Checking Python compilation..."
-	@find . \( -path "./.git" -o -path "./build" -o -path "./dist" -o -path "./.venv" \
-		-o -name "__pycache__" -o -name "*.egg-info" \) -prune \
-		-o -name "*.py" -print0 | xargs -0 python3 -m py_compile
-	@echo "All Python files compile successfully"
+	@python3 scripts/check_development.py compile
 
 # Clean Python cache files
 clean:

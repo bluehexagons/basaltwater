@@ -67,6 +67,7 @@ checks; it includes wheel building and coverage:
 python3 -m venv .venv
 .venv/bin/python -m pip install '.[dev,completion]'
 source .venv/bin/activate  # In fish: source .venv/bin/activate.fish
+make dev-check
 make check-fast
 ```
 
@@ -93,6 +94,19 @@ Use `make check-ci` for that broad validation or when CI is unavailable.
 
 Use the project's environment rather than installing development dependencies
 into CachyOS's or Debian's system Python.
+
+`make dev-check` reports the selected Python executable and missing development
+modules before tests start. Fast checks, test targets and coverage run it
+automatically. It checks module discoverability, not installed version ranges;
+install the declared extras to resolve those ranges. It never installs packages.
+Standalone compilation and documentation checks still need only the standard
+library; direct `run_tests.py` selections remain available for such focused checks.
+
+`make compile` excludes managed `cachyos-t3` application payloads, `node_modules`,
+build/output/cache trees, egg metadata and virtual environments (including custom
+names containing `pyvenv.cfg`). It skips symlinks instead of compiling external
+trees. Syntax errors in maintained source still fail the command. No Git metadata
+is required, so the same boundary works in a source archive.
 
 The Python documentation checks also run on native Windows with Python 3.11+
 from the repository root (use `python3` instead of `python` where appropriate):

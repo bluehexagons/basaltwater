@@ -5,13 +5,64 @@ from __future__ import annotations
 import contextlib
 import io
 import os
+from pathlib import Path
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import run_tests
+from scripts import check_development
+
+
+class TestDevelopmentChecks(unittest.TestCase):
+    def test_compile_excludes_payloads_but_rejects_maintained_syntax_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for folder in ("cachyos-t3/releases/app", "lib/node_modules/package",
+                           "build", "artifacts", "environment"):
+                path = root / folder
+                path.mkdir(parents=True)
+                (path / "legacy.py").write_text('print "Python 2"\n')
+            (root / "environment/pyvenv.cfg").write_text("home = /example\n")
+            (root / "lib/maintained.py").write_text("value = 1\n")
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                self.assertEqual(check_development.compile_sources(root), 0)
+                self.assertIn("Compiled 1 maintained", output.getvalue())
+                (root / "lib/maintained.py").write_text("invalid syntax !\n")
+                self.assertEqual(check_development.compile_sources(root), 1)
+                self.assertIn("maintained.py", output.getvalue())
+
+    @unittest.skipIf(os.name == "nt", "Symlink privileges vary on Windows")
+    def test_compile_does_not_follow_external_source_links(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            root = parent / "checkout"
+            root.mkdir()
+            external = parent / "external"
+            external.mkdir()
+            (external / "bad.py").write_text("invalid syntax !\n")
+            (root / "linked").symlink_to(external, target_is_directory=True)
+            (root / "linked.py").symlink_to(external / "bad.py")
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(check_development.compile_sources(root), 0)
+            self.assertFalse((external / "__pycache__").exists())
+
+    def test_dependency_check_reports_missing_modules_and_recovery(self) -> None:
+        for missing in (True, False):
+            with self.subTest(missing=missing):
+                output = io.StringIO()
+                with (patch.object(check_development.importlib.util, "find_spec",
+                                   side_effect=lambda name: None if missing and name == "aiohttp" else object()),
+                      contextlib.redirect_stdout(output), contextlib.redirect_stderr(output)):
+                    self.assertEqual(check_development.main(["dependencies"]), int(missing))
+                self.assertIn(sys.executable, output.getvalue())
+                if missing:
+                    self.assertIn("Missing development modules: aiohttp", output.getvalue())
+                    self.assertIn(".[dev,completion]", output.getvalue())
 
 
 class TestRunTestsSuites(unittest.TestCase):
