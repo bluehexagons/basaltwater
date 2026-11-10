@@ -33,6 +33,32 @@ generic pilot cap is not a substitute for a completion unit. At a hard cap,
 save the current state and report unfinished unless an authorized extension
 arrives. An extension continues the same match ID and history.
 
+## Expect experiments during learning
+
+In a declared learning phase, expect the controller to exercise a priority unknown
+mechanic at a safe opportunity. The brief names a question, predicted visible
+effect, expendable resources, maximum incremental spend/attempts and protected
+assets. A small learning cost can be authorized without proving immediate strategic
+benefit. Preservation of saves, accounts and shared services does not prohibit
+ordinary roster changes or in-game spending inside that budget.
+
+Record question, current state, prediction, bounded action, observed effect and
+next adjustment in one compact entry. Separate planned, attempted without effect,
+verified and blocked. After two misses, diagnose before repeating; a changed
+hypothesis may justify another bounded attempt. Continue useful ordinary play when
+the mechanic remains blocked. Never replay unknown delivery or manufacture a new
+match for coverage. A win is not required for useful learning, and a written
+rationale alone does not demonstrate a control.
+
+Owner-authorized hints can amend an active learning match. Retain the original
+packet/history and record actual advice processing time, coach model/prior context,
+experiment budget, intervention limit, cooldown, reply validity and fallback.
+Label play assisted from that boundary; sending a message does not establish when
+it was read. Keep one desktop controller, original clocks and Start allowance.
+Coaches read immutable artifacts; advice must be checked against fresh state.
+Evaluation retains its declared assistance and performance conditions. A single
+match before/after hints does not establish their causal benefit.
+
 ## Refresh the baseline after changes
 
 Begin a new game with discovery questions about its controls, configuration,
