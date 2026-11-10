@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import ExitStack
+import os
 from pathlib import Path
 import shlex
 from subprocess import CompletedProcess
@@ -204,6 +205,56 @@ class SoftwareTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             aur.package_version("../../bad")
         self.run.assert_not_called()
+
+    def test_foreign_owned_shelly_checkout_stops_before_helper_execution(self):
+        checkout = self.home / ".cache/Shelly/butler"
+        metadata = checkout / ".git"
+        metadata.mkdir(parents=True)
+        keep = checkout / "PKGBUILD"
+        keep.write_text("local edits")
+        actual_stat = Path.stat
+        for foreign in (checkout, metadata):
+            def checkout_stat(path, *args, **kwargs):
+                info = actual_stat(path, *args, **kwargs)
+                if path == foreign:
+                    fields = list(info)
+                    fields[4] = os.getuid() + 1
+                    return os.stat_result(fields)
+                return info
+
+            for operation in (
+                lambda: software.preflight_software(self.config("--butler")),
+                lambda: aur.update_command(self.home, "butler"),
+                lambda: aur.install_package(["/usr/bin/shelly", "install", "aur", "butler"], self.home),
+            ):
+                with self.subTest(foreign=foreign, operation=operation), \
+                        patch.object(Path, "stat", checkout_stat), \
+                        self.assertRaisesRegex(RuntimeError, "root-owned checkout"):
+                    operation()
+        self.assertFalse(any(command[0] == "/usr/bin/shelly" for command, _ in self.events))
+        self.assertEqual(keep.read_text(), "local edits")
+        software.preflight_software(self.config("--butler"))
+
+    def test_shelly_checkout_checks_selected_package_and_rejects_unsafe_paths(self):
+        checkout = self.home / ".cache/Shelly/butler"
+        checkout.parent.mkdir(parents=True)
+        outside = self.home / "personal"
+        outside.mkdir()
+        checkout.symlink_to(outside, target_is_directory=True)
+        # A different package's cache does not prevent this selection.
+        aur.install_command(self.home, "steamcmd")
+        with self.assertRaisesRegex(ValueError, "Unsafe Shelly AUR checkout"):
+            software.preflight_software(self.config("--butler"))
+        self.assertTrue(checkout.is_symlink())
+        checkout.unlink()
+        checkout.mkdir()
+        metadata = checkout / ".git"
+        metadata.write_text("keep")
+        with self.assertRaisesRegex(ValueError, "Unsafe Shelly AUR checkout"):
+            software.preflight_software(self.config("--butler"))
+        self.assertEqual(metadata.read_text(), "keep")
+        self.assertEqual(list(outside.iterdir()), [])
+        self.assertFalse(any(command[0] == "/usr/bin/shelly" for command, _ in self.events))
 
     def test_doctor_reports_source_variant_and_publishing_without_launching_them(self):
         from lib import cachyos_doctor as doctor

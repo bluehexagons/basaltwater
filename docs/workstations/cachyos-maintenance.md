@@ -312,12 +312,35 @@ desktop user before retrying:
 pacman -Q shelly
 shelly config get AurUrl
 ls -ld -- "$HOME/.cache" "$HOME/.cache/Shelly"
+ls -ld -- "$HOME/.cache/Shelly/t3code-bin" "$HOME/.cache/Shelly/t3code-bin/.git"
 ```
 
 If the Shelly cache directory is root-owned, repair only that directory after
 confirming it is the normal user cache and not a symlink or shared location.
 Do not recursively change ownership across the home directory or delete
 checkouts that may contain edits.
+
+The package checkout and its `.git` directory can remain root-owned even when
+the `Shelly` parent belongs to the desktop user. Git then reports **detected
+dubious ownership**, which Shelly may reduce to `DownloadFailed`. Setup checks
+the selected package's checkout directories before invoking Shelly, including
+both default and absolute `XDG_CACHE_HOME` locations. It reports the affected
+path without changing ownership or Git's trust settings.
+
+For a confirmed root-owned `t3code-bin` cache, inspect the checkout tree for
+symlinks, shared locations, and nested mounts first. Then repair only its
+root-owned entries as the desktop user:
+
+```fish
+sudo chown --recursive --no-dereference --preserve-root --from=0:0 -- \
+  (id -u):(id -g) "$HOME/.cache/Shelly/t3code-bin"
+git -C "$HOME/.cache/Shelly/t3code-bin" status -sb
+```
+
+Use the affected package and cache path reported by setup; an absolute
+`XDG_CACHE_HOME` override may place it elsewhere. Keep any local packaging
+edits for review. A global `safe.directory` exception does not repair write
+access, so it is not the recovery procedure.
 
 To inspect source connectivity without building or installing, clone into a
 new temporary directory with the same configured AUR base URL:

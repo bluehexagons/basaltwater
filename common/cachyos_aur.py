@@ -31,7 +31,9 @@ def install_command(home: Path, package: str) -> list[str]:
     package = validate_arch_package_name(package)
     executable = shutil.which("shelly", path=_tool_path(home))
     if executable:
-        return [_package_owned_helper(executable), "install", "aur", package]
+        helper = _package_owned_helper(executable)
+        prepare_cache(home, package=package)
+        return [helper, "install", "aur", package]
     for name in ("paru", "yay"):
         executable = shutil.which(name, path=_tool_path(home))
         if executable:
@@ -63,8 +65,6 @@ def update_command(home: Path, package: str) -> list[str] | None:
     command = install_command(home, package)
     helper = command[0]
     shelly = Path(helper).name == "shelly"
-    if shelly:
-        prepare_cache(home)
     query = ([helper, "list-updates", "aur", "--json"] if shelly else
              [helper, "-Qua", "--quiet", "--color", "never"])
     try:
@@ -92,13 +92,15 @@ def update_command(home: Path, package: str) -> list[str] | None:
     return [helper, "update", "aur", package] if shelly else command
 
 
-def prepare_cache(home: Path, *, create: bool = False) -> None:
+def prepare_cache(home: Path, *, package: str | None = None, create: bool = False) -> None:
     """Prepare user-owned caches before Shelly elevates and runs Git as us.
 
     Shelly 3.1.6 creates its cache as root, then drops privileges for Git.
     Check both XDG and default locations because elevation may drop XDG.
     Existing caches are never deleted, chowned, or recursively repaired.
     """
+    if package is not None:
+        package = validate_arch_package_name(package)
     roots = [home / ".cache"]
     configured = os.environ.get("XDG_CACHE_HOME", "")
     if configured and Path(configured).is_absolute() and Path(configured) not in roots:
@@ -125,6 +127,22 @@ def prepare_cache(home: Path, *, create: bool = False) -> None:
                 "Repair that directory's ownership/permissions before retrying; "
                 "a root-owned Shelly cache can cause its generic download error."
             )
+        if package is not None:
+            checkout = cache / package
+            for path in (checkout, checkout / ".git"):
+                if path.is_symlink() or (path.exists() and not path.is_dir()):
+                    raise ValueError(f"Unsafe Shelly AUR checkout directory: {path}")
+                if path.exists() and (path.stat().st_uid != os.getuid() or
+                                      not os.access(path, os.W_OK | os.X_OK)):
+                    raise RuntimeError(
+                        f"Shelly AUR checkout is not writable/owned by this user: {path}. "
+                        f"Inspect with: ls -ld -- {shlex.quote(str(checkout))} "
+                        f"{shlex.quote(str(checkout / '.git'))}. "
+                        "A root-owned checkout can cause Git's dubious ownership error "
+                        "even when the Shelly cache parent is user-owned. Repair only "
+                        "the affected checkout after inspection; see "
+                        "docs/workstations/cachyos-maintenance.md (AUR download failures)."
+                    )
         if create:
             _directory(cache)
 
@@ -132,7 +150,7 @@ def prepare_cache(home: Path, *, create: bool = False) -> None:
 def install_package(command: list[str], home: Path) -> None:
     shelly = Path(command[0]).name == "shelly"
     if shelly:
-        prepare_cache(home, create=True)
+        prepare_cache(home, package=command[-1], create=True)
     try:
         # Keep stdin/stdout/stderr attached for review, build, and sudo prompts.
         run(command, interactive=True)
