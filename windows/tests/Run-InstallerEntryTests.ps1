@@ -47,7 +47,7 @@ function Get-PSDrive { return [pscustomobject]@{ Free = 100GB } }
 function Invoke-RestMethod { throw 'Plan tried to download source' }
 function Invoke-WebRequest { throw 'Plan tried to download source' }
 '@)
-    $plan = & ([scriptblock]::Create($safe)) -Profile agent_windows -Node -GameDev -ShaderTools -Godot -Sunshine -StorageDrive F: -Plan 6>&1 | Out-String
+    $plan = & ([scriptblock]::Create($safe)) -Profile agent_windows -AgentTool codex -Node -GameDev -ShaderTools -Godot -Sunshine -StorageDrive F: -Plan 6>&1 | Out-String
     Assert-True ($plan -match 'Sunshine: True' -and $plan -match 'Game dev: True' -and $plan -match 'F:\\Basaltwater') 'Pasted installer did not forward optional feature flags'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $temporary 'Basaltwater\windows-setup.json'))) 'Downloaded preview wrote saved setup'
 

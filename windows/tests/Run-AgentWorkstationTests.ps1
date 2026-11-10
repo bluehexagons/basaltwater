@@ -459,10 +459,10 @@ function Invoke-NativeAgentSetup {
         $savedFreshLocal = $env:LOCALAPPDATA
         try {
             $env:LOCALAPPDATA = Join-Path $temporary 'fresh split account'
-            Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -StorageDrive X } 'healthy mounted NTFS'
+            Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -AgentTool codex -StorageDrive X } 'healthy mounted NTFS'
             Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'Basaltwater\windows-setup.json'))) 'Fresh invalid storage created saved selections'
             $beforeFreshRequests = $global:AgentInstallerTestRequests.Count
-            & (Join-Path $repo 'install.ps1') -Profile agent_windows -StorageDrive F: -Channel dev -Version release-test -NoRestartT3
+            & (Join-Path $repo 'install.ps1') -Profile agent_windows -AgentTool codex -StorageDrive F: -Channel dev -Version release-test -NoRestartT3
             Assert-True ($global:AgentInstallerTestRequests[-1] -match '/commits/release-test$') 'Version did not override the channel'
             $freshState = Get-Content -LiteralPath (Join-Path $env:LOCALAPPDATA 'Basaltwater\windows-setup.json') -Raw | ConvertFrom-Json
             Assert-True ($freshState.Phase -eq 'complete' -and $freshState.StorageRoot -eq 'F:\Basaltwater') 'Fresh drive-based setup did not complete with saved storage'
