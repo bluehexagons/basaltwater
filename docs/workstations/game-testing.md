@@ -140,6 +140,14 @@ or send meaningless input to spend time. A transitional first frame calls for
 another observation at the declared cadence; repeated equal pixels alone do
 not establish a frozen capture. Apply the stuck-state threshold before recovery.
 
+Prepare and exercise the capture-and-open path before a time-sensitive window.
+Save the compact screenshot receipt, read its returned `output` path, and open
+that local PNG with the controller's image viewer. This needs no browser base64
+helper such as `btoa`. After End Turn, prioritize the next observation over
+prose or tool construction. A failed capture script establishes no observation;
+record the actual gap and any missed combat rather than reconstructing it from
+the next shop or cumulative result screen.
+
 Input rejects expired captures (60 seconds by default), wrong geometry and
 changed generations. Recapture and re-plan after rejection. When input completed
 but its follow-up capture failed, retain the completion result and capture again;
@@ -227,6 +235,22 @@ All workers share the original clocks and attempt limits. Report elapsed wall
 time once and aggregate worker time separately when available.
 
 ## Retain and verify evidence
+
+Keep controller-local `evidence run` clocks separate from the screenshot recorder.
+Create and append run events through the CLI, using its returned artifact path,
+absolute artifact references and bounded notes. Use `policy` for changed timing
+limits; checkpoints record observations. Inspect `show` after creation and at
+context transfers. Do not handwrite, append JSON to, shorten or normalize the
+canonical ledger to make it validate. Preserve a rejected record and failed
+receipt; record a linked new segment and explicit timing gap if continuation is
+necessary. If a ledger was already edited, disclose the edits and retained
+before/after evidence. Successful validation cannot establish untouched history.
+
+On context recovery, compare the dispatch timestamp and its state cutoff with
+later input receipts and the latest checkpoint. An original zero-Start brief
+can correctly precede a Start made in that same assignment. Continue the counted
+match; do not treat the historical brief as authority for another Start or claim
+a contradiction without checking chronology.
 
 Choose durable private storage outside Git for each run, with enough space and
 a declared retention window. Record actual locations privately. `--save-output`
