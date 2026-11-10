@@ -125,6 +125,13 @@ crop and inspect it at a known size. The aid cannot infer viewer transforms,
 verify scene/focus, select a target or validate freshness. Image presentation
 resizing and desktop logical scaling are separate transforms.
 
+Retain the map result with the semantic target, actual presented dimensions and
+source capture identity, then link the input receipt ID. Standalone native input
+receipts may omit source/destination coordinates; the evidence recorder's input
+event retains monitor points/endpoints and the input ID. Consult that existing
+event when diagnosing a miss. Neither completed delivery nor equal post-action
+pixels identify the intended target or prove a sale/turn effect.
+
 ## Observe, act, verify during play
 
 Before every shop action or other scene-dependent interaction, confirm current
