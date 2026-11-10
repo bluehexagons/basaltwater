@@ -9,7 +9,7 @@ $savedMode = $env:BASALTWATER_HEALTH_FIXTURE_MODE
 $savedPid = $env:BASALTWATER_HEALTH_FIXTURE_PID
 New-Item -ItemType Directory -Path $temporary | Out-Null
 try {
-    $batch = Join-Path $temporary ('version & ' + [char]0x03bb + "'s.cmd")
+    $batch = Join-Path $temporary ('version & %PATH% ! (test) ' + [char]0x03bb + "'s.cmd")
     Set-Content -LiteralPath $batch -Encoding ASCII -Value '@echo off', 'echo batch-version', 'exit /b 0'
     $result = Invoke-NativeHealthProbe $batch
     Assert-True ($result.State -eq 'ok' -and $result.Detail -eq 'batch-version') 'Batch/Unicode/punctuation version probe failed'
@@ -26,6 +26,21 @@ public class HealthProbeFixture {
     public static int Main(string[] args) {
         string mode = Environment.GetEnvironmentVariable("BASALTWATER_HEALTH_FIXTURE_MODE");
         if (mode == "fail") { Console.Error.WriteLine("private vendor diagnostic"); return 23; }
+        if (mode == "flood") {
+            string chunk = new string('x', 8192);
+            for (int i = 0; i < 2048; i++) { Console.Out.Write(chunk); Console.Error.Write(chunk); }
+            return 0;
+        }
+        if (mode == "orphan") {
+            var info = new System.Diagnostics.ProcessStartInfo();
+            info.FileName = System.Reflection.Assembly.GetExecutingAssembly().Location;
+            info.UseShellExecute = false; info.CreateNoWindow = true;
+            info.EnvironmentVariables["BASALTWATER_HEALTH_FIXTURE_MODE"] = "hang";
+            using (var child = System.Diagnostics.Process.Start(info)) {
+                while (!File.Exists(Environment.GetEnvironmentVariable("BASALTWATER_HEALTH_FIXTURE_PID"))) Thread.Sleep(10);
+            }
+            return 0;
+        }
         if (mode == "hang") {
             File.WriteAllText(Environment.GetEnvironmentVariable("BASALTWATER_HEALTH_FIXTURE_PID"),
                 System.Diagnostics.Process.GetCurrentProcess().Id.ToString());
@@ -45,6 +60,20 @@ public class HealthProbeFixture {
     $result = Invoke-NativeHealthProbe $fixture
     Assert-True ($result.State -eq 'failed' -and $result.Detail -match '23' -and
         ($result | ConvertTo-Json) -notmatch 'private vendor diagnostic') 'Failed probe lost its exit code or exposed stderr'
+    $env:BASALTWATER_HEALTH_FIXTURE_MODE = 'flood'
+    $result = Invoke-NativeHealthProbe $fixture
+    Assert-True ($result.State -eq 'ok' -and $result.Detail -ceq ('x' * 512)) 'Flooded probe failed to drain both streams with bounded retained output'
+    # Call the collector directly too: it must drain all input while retaining
+    # only the bounded first line, rather than truncating after full buffering.
+    $reader = New-Object IO.StringReader("`n  fixture-version  `r`nignored")
+    try { Assert-True ([Basaltwater.HealthOutput]::Drain($reader).GetAwaiter().GetResult() -eq 'fixture-version') 'First-line output changed' }
+    finally { $reader.Dispose() }
+    $env:BASALTWATER_HEALTH_FIXTURE_MODE = 'orphan'
+    $env:BASALTWATER_HEALTH_FIXTURE_PID = Join-Path $temporary 'orphan.pid'
+    $result = Invoke-NativeHealthProbe $fixture
+    Assert-True ($result.State -eq 'failed') 'Inherited pipes were reported healthy before descendant cleanup'
+    $probeId = [int][IO.File]::ReadAllText($env:BASALTWATER_HEALTH_FIXTURE_PID)
+    Assert-True (-not (Get-Process -Id $probeId -ErrorAction SilentlyContinue)) 'Descendant survived an exited version wrapper'
     $env:BASALTWATER_HEALTH_FIXTURE_MODE = 'hang'
     $env:BASALTWATER_HEALTH_FIXTURE_PID = Join-Path $temporary 'probe.pid'
     $result = Invoke-NativeHealthProbe $fixture -TimeoutSeconds 1

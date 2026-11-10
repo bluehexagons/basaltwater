@@ -426,7 +426,12 @@ setup to repair them. Intentionally disabling login startup also fails that chec
 
 `doctor` runs no installers or sign-in commands and does not change saved
 setup, PATH, skills or storage configuration. Each executable probe has a
-30-second timeout; a hung probe's Windows process tree is terminated. It keeps
+30-second timeout. Vendor code starts only after its hidden wrapper joins an
+owned Windows Job Object; remaining descendants are terminated and their exit
+is verified on success, failure and timeout, including when the vendor root
+exits before its output pipes close. Cleanup has a separate five-second bound;
+unconfirmed cleanup fails the check. Output is drained while retaining at most
+512 characters from the first nonblank line; stderr is discarded. It keeps
 checking other tools after a failed version probe. `--json` returns a schema-1
 report with `Healthy` and named `Checks` containing `State`, `Command` and
 `Detail`; it exports no arbitrary saved-state fields or vendor stderr.

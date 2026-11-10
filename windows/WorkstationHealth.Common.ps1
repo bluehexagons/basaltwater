@@ -1,4 +1,34 @@
 <# Read-only native workstation checks; no installer or authentication commands. #>
+function Import-NativeHealthOutputType {
+    if ('Basaltwater.HealthOutput' -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.Text;
+using System.Threading.Tasks;
+namespace Basaltwater {
+    public static class HealthOutput {
+        public static async Task<string> Drain(TextReader reader) {
+            var text = new StringBuilder(512);
+            var buffer = new char[4096];
+            bool started = false, ended = false;
+            int count;
+            while ((count = await reader.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false)) != 0) {
+                for (int i = 0; i < count; i++) {
+                    char c = buffer[i];
+                    if (!started && Char.IsWhiteSpace(c)) continue;
+                    started = true;
+                    if (c == '\r' || c == '\n') ended = true;
+                    if (!ended && text.Length < 512) text.Append(c);
+                }
+            }
+            return text.ToString().TrimEnd();
+        }
+    }
+}
+'@
+}
+
 function Invoke-NativeHealthProbe {
     param([string]$Command,
           [ValidateSet('--version', 'version', 'i', '--headless --version')][string]$Arguments = '--version',
@@ -7,47 +37,76 @@ function Invoke-NativeHealthProbe {
         return [pscustomobject]@{ State = 'missing'; Command = $null; Detail = 'Not found; open a fresh terminal or reconcile setup.' }
     }
     $process = New-Object Diagnostics.Process
+    $job = $null; $gate = $null; $started = $false
+    $result = [pscustomobject]@{ State = 'failed'; Command = $Command; Detail = 'Version probe could not complete; check the executable and its process cleanup.' }
     $info = New-Object Diagnostics.ProcessStartInfo
-    $info.FileName = $Command
-    $info.Arguments = $Arguments
+    # Gate the wrapper before executing vendor code, so descendants inherit
+    # containment even when the vendor's root exits before its pipes close.
+    $gateName = 'Local\BasaltwaterHealth-' + [guid]::NewGuid().ToString('N')
+    $literal = $Command.Replace("'", "''")
+    $target = $literal; $targetArguments = $Arguments
     if ([IO.Path]::GetExtension($Command) -in @('.cmd', '.bat')) {
-        # A literal PowerShell string preserves spaces, Unicode and punctuation
-        # without interpolating a discovered path into cmd.exe syntax.
-        $literal = $Command.Replace("'", "''")
-        $code = "& '$literal' $Arguments; exit " + '$LASTEXITCODE'
-        $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($code))
-        $info.FileName = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-        $info.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ' + $encoded
-        $info.EnvironmentVariables.Remove('PSModulePath')
+        # Expand the quoted path once from a child-only variable. This preserves
+        # literal percent/exclamation text without CALL or delayed expansion.
+        $info.EnvironmentVariables['BASALTWATER_HEALTH_COMMAND'] = $Command
+        $target = (Join-Path $env:SystemRoot 'System32\cmd.exe').Replace("'", "''")
+        $targetArguments = '/d /v:off /s /c ""%BASALTWATER_HEALTH_COMMAND%" ' + $Arguments + '"'
     }
+    # Inherit raw output handles instead of PowerShell's line-buffered native
+    # pipeline, which could itself buffer an arbitrarily long vendor line.
+    $code = "`$ErrorActionPreference = 'Stop'; `$gate = [Threading.EventWaitHandle]::OpenExisting('$gateName'); try { if (-not `$gate.WaitOne(30000)) { exit 1 } } finally { `$gate.Dispose() }; " +
+        "`$info = New-Object Diagnostics.ProcessStartInfo; `$info.FileName = '$target'; `$info.Arguments = '$targetArguments'; `$info.UseShellExecute = `$false; `$info.CreateNoWindow = `$true; `$info.RedirectStandardOutput = `$true; `$info.RedirectStandardError = `$true; " +
+        '$probe = [Diagnostics.Process]::Start($info); try { $stdout = $probe.StandardOutput.BaseStream.CopyToAsync([Console]::OpenStandardOutput()); $stderr = $probe.StandardError.BaseStream.CopyToAsync([Console]::OpenStandardError()); $probe.WaitForExit(); if (-not $stdout.Wait(5000) -or -not $stderr.Wait(5000)) { exit 1 }; exit $probe.ExitCode } finally { $probe.Dispose() }'
+    $info.FileName = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $info.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -OutputFormat Text -EncodedCommand ' +
+        [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($code))
+    $info.EnvironmentVariables.Remove('PSModulePath')
     $info.UseShellExecute = $false
     $info.CreateNoWindow = $true
     $info.RedirectStandardOutput = $true
     $info.RedirectStandardError = $true
     $process.StartInfo = $info
     try {
+        . (Join-Path $PSScriptRoot 'GitHubRunner.Common.ps1')
+        Import-RunnerJobType
+        Import-NativeHealthOutputType
+        $gate = [Threading.EventWaitHandle]::new($false, 'ManualReset', $gateName)
         if (-not $process.Start()) { throw 'Could not start version probe' }
-        $output = $process.StandardOutput.ReadToEndAsync()
+        $started = $true
+        $job = [Basaltwater.ProcessJob]::new($process.Handle)
+        $output = [Basaltwater.HealthOutput]::Drain($process.StandardOutput)
         # Discard stderr: vendor diagnostics can contain sensitive configuration.
         $errors = $process.StandardError.BaseStream.CopyToAsync([IO.Stream]::Null)
+        $null = $gate.Set()
         if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-            & taskkill.exe /PID $process.Id /T /F 2>$null | Out-Null
-            if ($LASTEXITCODE -ne 0 -or -not $process.WaitForExit(5000)) {
-                throw 'Version probe timed out; process cleanup could not be confirmed'
+            $result.State = 'timed-out'; $result.Detail = "Version probe exceeded $TimeoutSeconds seconds."
+        } else {
+            if (-not $output.Wait(5000) -or -not $errors.Wait(5000)) { throw 'Version probe output did not close' }
+            if ($process.ExitCode -ne 0) {
+                $result.Detail = "Version probe exited with code $($process.ExitCode)."
+            } else {
+                $version = $output.GetAwaiter().GetResult()
+                if (-not $version) { $version = 'Version probe exited successfully.' }
+                $result.State = 'ok'; $result.Detail = $version
             }
-            return [pscustomobject]@{ State = 'timed-out'; Command = $Command; Detail = "Version probe exceeded $TimeoutSeconds seconds." }
         }
-        if (-not $output.Wait(5000) -or -not $errors.Wait(5000)) { throw 'Version probe output did not close' }
-        if ($process.ExitCode -ne 0) {
-            return [pscustomobject]@{ State = 'failed'; Command = $Command; Detail = "Version probe exited with code $($process.ExitCode)." }
+    } catch { $result.State = 'failed' }
+    finally {
+        try {
+            if ($job) { $job.TerminateAndWait(5000) }
+            elseif ($started -and -not $process.HasExited) {
+                $process.Kill()
+                if (-not $process.WaitForExit(5000)) { throw 'Probe wrapper did not stop' }
+            }
+        } catch {
+            $result.State = 'failed'; $result.Detail = 'Version probe process cleanup could not be confirmed.'
+        } finally {
+            if ($job) { $job.Dispose() }
+            if ($gate) { $gate.Dispose() }
+            $process.Dispose()
         }
-        $version = ($output.GetAwaiter().GetResult().Trim() -split '\r?\n')[0]
-        if ($version.Length -gt 512) { $version = $version.Substring(0, 512) }
-        if (-not $version) { $version = 'Version probe exited successfully.' }
-        return [pscustomobject]@{ State = 'ok'; Command = $Command; Detail = $version }
-    } catch {
-        return [pscustomobject]@{ State = 'failed'; Command = $Command; Detail = 'Version probe could not complete; check the executable and its process cleanup.' }
-    } finally { $process.Dispose() }
+    }
+    return $result
 }
 
 function Get-NativeT3DesktopHealth {
