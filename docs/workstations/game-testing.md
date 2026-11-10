@@ -153,6 +153,13 @@ changed generations. Recapture and re-plan after rejection. When input completed
 but its follow-up capture failed, retain the completion result and capture again;
 never replay an uncertain purchase or placement blindly.
 
+A no-repeat rule for turn submission applies during Ready/combat/transitions or
+while delivery/effect is unresolved. It is not a lifetime limit on that button.
+When fresh evidence confirms a click missed and the same actionable shop/turn
+remains, correct the target mapping, make one bounded attempt and verify its
+effect. Later turns have their own commitment. Retain the missed action and
+recovery; do not classify ordinary correction as another match Start.
+
 ### Keep decisions inside the capture window
 
 Native `status --json` and full/compact screenshots include `capture_freshness`:
