@@ -109,10 +109,13 @@ An explicit empty `-StorageRoot` is rejected; it cannot clear a saved selection
 while leaving the account's cache settings on the old drive.
 
 The resolved root explicitly selects account-level `FNM_DIR`, `UV_CACHE_DIR`,
-`npm_config_cache`, `GOMODCACHE`, `GOCACHE` and `VCPKG_DEFAULT_BINARY_CACHE`.
+`npm_config_cache`, `GOMODCACHE`, `GOCACHE`, `VCPKG_DEFAULT_BINARY_CACHE`,
+`TEMP` and `TMP`. The temporary directory is used by this account's new
+processes and installers that honor these variables; system services and
+applications with their own temporary paths can still use C:.
 It creates `repos` for new checkouts and places a newly installed VS Build Tools
 instance under `tools\vs2022`. Existing installations, repositories and caches
-are not moved or deleted. Existing values for these six variables are replaced
+are not moved or deleted. Existing values for these variables are replaced
 by this explicit selection. Restart T3 and terminals to inherit them.
 Keep the drive connected and its letter stable whenever using these tools.
 
@@ -124,6 +127,7 @@ For `-StorageDrive F:`, the layout is:
 | `F:\Basaltwater\cache\npm`, `cache\uv` | JavaScript and Python download caches |
 | `F:\Basaltwater\cache\go-mod`, `cache\go-build` | Go modules and build cache |
 | `F:\Basaltwater\cache\vcpkg` | Native dependency binary cache |
+| `F:\Basaltwater\temp` | Account temporary files for applications that honor TEMP or TMP |
 | `F:\Basaltwater\repos` | New project checkouts |
 | `F:\Basaltwater\tools\vs2022` | A newly installed VS Build Tools instance |
 

@@ -36,6 +36,7 @@ function Get-NativeStorageLayout {
     return [ordered]@{
         FNM_DIR = 'node'; UV_CACHE_DIR = 'cache\uv'; npm_config_cache = 'cache\npm'
         GOMODCACHE = 'cache\go-mod'; GOCACHE = 'cache\go-build'; VCPKG_DEFAULT_BINARY_CACHE = 'cache\vcpkg'
+        TEMP = 'temp'; TMP = 'temp'
     }
 }
 

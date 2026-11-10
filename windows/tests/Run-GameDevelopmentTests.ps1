@@ -209,8 +209,10 @@ $env:VCPKG_ROOT = 'C:\VS\bundled-vcpkg'
         Set-NativeDevelopmentStorage $root -Plan
         Assert-True ($script:StorageWrites.Count -eq 0 -and -not (Test-Path -LiteralPath $root)) 'Storage plan wrote directories/environment'
         Set-NativeDevelopmentStorage $root
-        Assert-True ($script:StorageWrites.Count -eq 6 -and
-            $script:StorageWrites.FNM_DIR -eq (Join-Path $root 'node')) 'Storage selection lost runtime/cache paths'
+        Assert-True ($script:StorageWrites.Count -eq 8 -and
+            $script:StorageWrites.FNM_DIR -eq (Join-Path $root 'node') -and
+            $script:StorageWrites.TEMP -eq (Join-Path $root 'temp') -and
+            $script:StorageWrites.TMP -eq (Join-Path $root 'temp')) 'Storage selection lost runtime/cache/temp paths'
         Assert-True (Test-Path -LiteralPath (Join-Path $root 'repos') -PathType Container) 'New workspace root was not prepared'
         function Get-NativeStorageVariable($name) { return $script:StorageWrites[$name] }
         Assert-NativeDevelopmentStorage $root
