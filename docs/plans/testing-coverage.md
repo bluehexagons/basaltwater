@@ -1,6 +1,7 @@
 # Test coverage and next checks
 
-Updated 2026-11-08 UTC from selected storage triage/filesystem and shared build/CI
+Updated 2026-11-11 UTC with Debian offline media qualification, and selected
+storage triage/filesystem and shared build/CI
 host qualification,
 retained live evidence and the owner's stack setup rerun
 report, native CachyOS T3 and SDL/OpenGL application checks, current Shares & Data
@@ -56,6 +57,7 @@ installations; optional combinations need their own checks.
 
 | Area | Selected coverage | Important gaps |
 | --- | --- | --- |
+| Debian offline audio/video | Using analysis implementation `c764264f` with the corrected rotation fixture, native Debian 13 / FFmpeg 7.1.5 WAV/FLAC/Ogg/MP4/WebM fixtures pass silent/no-audio, Unicode/space paths, VFR, verified rotation, offset audio, packet-derived timing, malformed/playlist/truncated refusal, deadline and actual decoder cancellation/cleanup checks. The installed launcher works outside the checkout. CPU audio trim/gain/fades, video trim/scale and concatenated exports pass duration and decoded boundary checks. A separate 30-second 720p/30 fps H.264/AAC encode and analysis pass; see the [operator guide and measured envelope](../workstations/media-analysis.md) | Samples and metrics do not establish perceived quality or sync. Editor UI/project exchange, physical playback/capture, HDR, GPU acceleration, 1080p/120-second throughput, CachyOS and Windows remain separate qualification. Speech recognition is deferred; resource limits are not a decoder sandbox |
 | Owner-reported stack setup rerun | Basic success reported for selected server, host and coding-VM commands, partial CachyOS refresh and native Windows Godot/T3 Code setup. Starting one initially stopped coding VM explicitly succeeded; see [sanitized selections](../testing/evidence.md#owner-reported-stack-setup-rerun) | Not all features tested; no supplied exact source revisions or separate service/application, registration/job, notification, reboot or recovery results. No broad feature or release qualification |
 | Agent setup and tools | Fresh setup, populated reruns, reboot, separate Codex enrollment, managed skills and selected developer/container tools; owner-reported basic `agent_code_vm` reruns with smaller/broader tools and separate-home variants | Other agent profiles/providers, browser/pairing enrollment and optional combinations; the owner report does not qualify individual tools or populated-home migration |
 | CachyOS T3 desktop | Native packaged desktop 0.1.6-1 and Codex conversation/shell-tool workflow work after owner-reported manual reopen. Logs reproduce premature refresh reopen while the old backend owns the T3 home. At `bf0eb670`, read-only discovery captures the live backend; 42 focused tests and the 2,107-test agent selection pass, with static checks; see [dated evidence](../testing/evidence.md#cachyos-t3-desktop-recovery) | Original automatic reopen failed. The corrected worker has not completed a live shutdown/relaunch; fresh installation, AUR update, interactive terminal UI, pairing/Connect, other providers, KDE login and reboot remain unqualified. Doctor inventory is not application QA |

@@ -122,10 +122,24 @@ python3 scripts/qualify_media.py --output /absolute/private/new-media-run
 This opt-in script creates synthetic fixtures, an editable JSON recipe with its
 linked source, exports and analysis receipts. It verifies silent/no-audio,
 Unicode/space paths, VFR, rotation, offset audio, packet-derived timing,
-malformed/playlist/truncated input refusal, deadline failure and short CPU
+malformed/playlist/truncated input refusal, deadline failure, real Ctrl-C child
+cleanup and short CPU
 trim/fade/scale/concatenation outputs. It records elapsed/child CPU time, largest
 child RSS and retained bytes. Largest-child RSS is cumulative across the run,
 not total guest memory or aggregate concurrent usage. The script is a native
 qualification command, separate from mocked automated tests. See the
 [coverage map](../plans/testing-coverage.md) for measured scope and remaining
 platform boundaries.
+
+On Debian 13 x86-64 with FFmpeg 7.1.5, the synthetic 2–4 second, 640×360 suite
+completed analysis in under one second per valid fixture. Its two-second audio
+and scaled-video exports and four-second concatenated delivery each finished
+in under one second. Decoded RGB boundary comparisons passed a mean absolute
+error ceiling of 10/255; this is a synthetic structural check, not perceptual
+quality assessment. The retained fixture/export/analysis set occupied under
+7 MiB. A separate 30-second 1280×720/30 fps H.264/AAC fixture encoded with
+`libx264 -preset veryfast -threads 1` in about 11 seconds and analyzed in about
+7 seconds; the largest observed child RSS across those operations was under
+170 MiB. These are single-run observations on a shared VM, with warm caches
+uncontrolled. They establish a small CPU workload envelope, not real-time,
+whole-guest memory, 1080p/120-second throughput or tail-latency guarantees.

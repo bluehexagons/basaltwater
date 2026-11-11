@@ -51,7 +51,8 @@ def qualify(output: str) -> dict:
     no_audio = ffmpeg("no-audio.mp4", video + ["-t", "2"] + encode)
     vfr = ffmpeg("vfr.mp4", video + ["-t", "4", "-vf", "select='if(lt(t,2),1,not(mod(n,3)))'", "-fps_mode", "vfr"] + encode)
     offset = ffmpeg("offset.mp4", video + ["-itsoffset", "0.5"] + audio + ["-t", "4"] + encode)
-    rotated = ffmpeg("rotated.mp4", ["-i", str(source), "-c", "copy", "-metadata:s:v:0", "rotate=90", "-movflags", "+faststart"])
+    rotated = ffmpeg("rotated.mp4", ["-display_rotation:v:0", "90", "-i", str(source), "-c", "copy",
+                                      "-movflags", "+faststart"])
     unknown = ffmpeg("unknown.webm", video + ["-t", "2", "-c:v", "libvpx-vp9", "-threads", "1", "-live", "1"])
     # Editable production recipe, with linked original retained alongside it.
     recipe = {"source": source.name, "trim_seconds": [1, 3], "gain_db": -3,
@@ -105,6 +106,21 @@ def qualify(output: str) -> dict:
             assert result["audio"]["status"] == "missing"
         if fixture == offset:
             assert float(result["metadata"]["streams"][1]["start_time"]) >= .45
+        if fixture == rotated:
+            assert result["metadata"]["streams"][0]["side_data_list"][0]["rotation"] == 90
+            image = (root / (fixture.name + "-analysis") / "frame-0.png").read_bytes()
+            assert int.from_bytes(image[16:20], "big") < int.from_bytes(image[20:24], "big")
+        if fixture == unknown:
+            assert result["timing"]["duration_basis"] == "packet span"
+        if fixture == vfr:
+            probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_packets",
+                                    "-show_entries", "packet=pts_time", "-of", "json", str(vfr)],
+                                   capture_output=True, timeout=15, check=True)
+            timestamps = sorted(float(p["pts_time"]) for p in json.loads(probe.stdout)["packets"])
+            gaps = [b - a for a, b in zip(timestamps, timestamps[1:])]
+            assert max(gaps) > min(gaps) * 2
+            for frame in result["frames"]:
+                assert -.001 <= frame["decoded_pts_seconds"] - frame["requested_seconds"] <= .13
         if fixture in (trimmed_audio, trimmed, delivery):
             expected_duration = 4 if fixture == delivery else 2
             assert abs(result["timing"]["duration_seconds"] - expected_duration) < .1
