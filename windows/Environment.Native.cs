@@ -1,14 +1,54 @@
-// Read-only display configuration. Loaded only by the bounded metadata worker.
+// Read-only display and power configuration. Loaded by the bounded metadata worker.
 using System;
+using System.ComponentModel;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+
+[assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
 
 namespace Basaltwater.EnvironmentInfo {
 public sealed class Display {
     public string Id; public int X,Y,Width,Height; public bool Primary;
     public uint? RefreshRateHz; public int? ScalePercent;
 }
+public sealed class PowerStatus {
+    public bool? AcOnline, BatteryPresent, BatterySaver;
+    public int? BatteryPercent;
+}
 public static class Native {
+    [StructLayout(LayoutKind.Sequential)] struct SystemPowerStatus {
+        public byte AcLineStatus,BatteryFlag,BatteryLifePercent,SystemStatusFlag;
+        public uint BatteryLifeTime,BatteryFullLifeTime;
+    }
+    [DllImport("powrprof.dll")] static extern uint PowerGetActiveScheme(IntPtr root,out IntPtr scheme);
+    [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr memory);
+    [DllImport("kernel32.dll",SetLastError=true)]
+    [return: MarshalAs(UnmanagedType.Bool)] static extern bool GetSystemPowerStatus(out SystemPowerStatus status);
+    public static string ActivePowerScheme() {
+        IntPtr scheme=IntPtr.Zero;
+        try {
+            uint status=PowerGetActiveScheme(IntPtr.Zero,out scheme);
+            if(status!=0) throw new Win32Exception((int)status,"Active power scheme unavailable");
+            if(scheme==IntPtr.Zero) throw new Exception("Active power scheme returned no GUID");
+            return ((Guid)Marshal.PtrToStructure(scheme,typeof(Guid))).ToString("D");
+        } finally {
+            if(scheme!=IntPtr.Zero) LocalFree(scheme);
+        }
+    }
+    static PowerStatus ConvertPowerStatus(byte ac,byte battery,byte percent,byte saver) {
+        var result=new PowerStatus();
+        if(ac<=1) result.AcOnline=ac==1;
+        if(battery!=255) result.BatteryPresent=(battery&128)==0;
+        if(percent<=100 && result.BatteryPresent!=false) result.BatteryPercent=percent;
+        if(saver<=1) result.BatterySaver=saver==1;
+        return result;
+    }
+    public static PowerStatus SystemPower() {
+        SystemPowerStatus status;
+        if(!GetSystemPowerStatus(out status))
+            throw new Win32Exception(Marshal.GetLastWin32Error(),"System power status unavailable");
+        return ConvertPowerStatus(status.AcLineStatus,status.BatteryFlag,status.BatteryLifePercent,status.SystemStatusFlag);
+    }
     [StructLayout(LayoutKind.Sequential)] struct Rect { public int Left,Top,Right,Bottom; }
     [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)] struct MonitorInfo {
         public uint Size; public Rect Bounds,Work; public uint Flags;

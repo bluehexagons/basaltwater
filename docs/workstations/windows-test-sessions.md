@@ -99,8 +99,9 @@ The evidence index records project and worker-source revision/dirty state,
 selected executable/PowerShell/Node paths, available file versions and Windows
 version. Missing checkout/version information stays unknown. A bounded
 [host environment report](windows-environment.md) now records GPU/driver and
-display geometry, mode refresh and scaling where available. Failed sections
-remain unknown without blocking dispatch; per-window DPI and HDR are uncollected.
+display geometry, mode refresh, scaling and read-only power-plan/AC/battery
+evidence where available. Failed sections remain unknown without blocking
+dispatch; per-window DPI, HDR and effective power-mode overlays are uncollected.
 Captured metadata describes submission time, not a pinned source snapshot.
 
 New runs retain `target.json` for the actual native executable identity/observed

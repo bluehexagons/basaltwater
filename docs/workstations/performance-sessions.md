@@ -84,6 +84,17 @@ percentages are lifetime averages, not utilization over the recipe interval.
 No command lines or full environments are collected. Private process names
 and device evidence still need review before sharing.
 
+`workload_limits` reuses `basaltw agent resources --json`: current observer CPU
+affinity, visible inherited cgroup CPU quota and memory limits, guest/workload
+CPU/memory/I/O pressure, and scoped cgroup memory accounting. This remains useful
+on Debian VMs without cpufreq, GPU or thermal interfaces. A visible CPU budget is
+an upper bound, not a worker-count recommendation or the hypervisor's allocation.
+Hidden cgroup ancestors remain explicitly incomplete. Pressure and cumulative
+memory events can include other work sharing the cgroup; compare events only
+within the same recorded counter epoch. These observations do not measure host
+oversubscription, CPU steal time or whole-guest peak memory, and a recipe that
+changes its own affinity/cgroup needs its own observations.
+
 Unavailable files, unsupported sensors and missing/failed/timed-out tools stay
 nullable with observation issues or incomplete inventory flags. Each external
 probe has a three-second deadline and 16 KiB output cap. Sysfs observations are
@@ -129,3 +140,20 @@ cleanup. Preserve other owners' processes and profile changes during these tests
 Use project-owned fixtures and thresholds for timing and
 [linear PFM comparisons](visual-comparisons.md#compare-linear-hdr-pfm-captures).
 Passing mocked checks does not establish native CachyOS or hardware acceptance.
+
+A disposable Debian VM process fixture has checked contention refusal, status
+and reuse after exit zero, exit seven, timeout and SIGTERM. Redirected-output
+helpers stopped on each path; process-exit acknowledgement was bounded to two
+seconds after signalling. This used a temporary registry and owned CPU sleepers,
+not real GPU profiling, power-profile holds or cross-account/host coordination.
+
+On native Windows, use [supervised project tasks and test sessions](windows-test-sessions.md)
+and their existing Job Object cleanup. Linux reservations stay within the selected
+account/environment; they do not coordinate native Windows tasks, other WSL
+distributions or other hosts. The Linux power-profile wrapper is not a Windows
+power-policy hold. Windows sessions retain [host power-plan/AC/battery evidence](windows-environment.md)
+during preparation; capture a new environment report around a measurement when
+conditions may have changed. These are observations, not a native Windows
+power-profile hold or a GPU resource reservation. Coordinate profiling across
+Windows, WSL and other users explicitly, and retain project-owned renderer and
+performance assertions on each target.

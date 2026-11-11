@@ -18,6 +18,7 @@ if __name__ == "__main__" and not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from lib.agent_probe import run_probe
+from lib.agent_resources import inspect_workload_limits
 from lib.atomic_io import write_json_atomic
 from lib.streamed_process import caller_process_group, run_streamed
 from lib.validation import validate_filesystem_path, validate_no_control_characters
@@ -62,7 +63,7 @@ def _entries(path: Path, pattern: str, limit: int = 128) -> tuple[list[Path], bo
         return [], False
 
 
-def performance_snapshot(*, sys_root: Path = Path("/sys")) -> dict:
+def performance_snapshot(*, sys_root: Path = Path("/sys"), proc_root: Path = Path("/proc")) -> dict:
     """Read snapshots, not peak temperatures or an assertion of exclusive load."""
     policies, cpu_complete = _entries(sys_root / "devices/system/cpu/cpufreq", r"policy[0-9]+")
     cpu = [{"policy": policy.name, **{name: _text(policy / name) for name in (
@@ -84,6 +85,7 @@ def performance_snapshot(*, sys_root: Path = Path("/sys")) -> dict:
         "gpu_busy_percent", "pp_dpm_sclk", "pp_dpm_mclk",
     )}} for card in cards]
     result = {"schema_version": 1, "recorded_at": datetime.now(timezone.utc).isoformat(),
+              "workload_limits": inspect_workload_limits(proc_root=str(proc_root)),
               "cpu_policies": cpu, "cpu_inventory_complete": cpu_complete,
               "temperatures": temperatures, "thermal_inventory_complete": thermal_complete,
               "gpu_sysfs": gpu_sysfs, "gpu_inventory_complete": gpu_complete,

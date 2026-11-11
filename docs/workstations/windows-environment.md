@@ -1,6 +1,6 @@
 # Windows test environment evidence
 
-`basaltw desktop environment --json` reads host graphics and display configuration
+`basaltw desktop environment --json` reads host graphics, display and power configuration
 without screenshots, input, window enumeration, project execution or preference
 changes. It uses an isolated Windows PowerShell worker with an eight-second
 execution deadline and bounded response size. It can be used independently of
@@ -13,9 +13,9 @@ basaltw desktop environment --json
 ```
 
 The command returns `ok` plus `result`, whose `State` is `available`, `partial`
-or `unavailable`. `available` means both inventory queries completed, including
-possibly empty inventories. `partial` retains a successful section alongside
-errors from the other; missing sections are null. Exit 0 means available/partial
+or `unavailable`. `available` means all three sections completed, including
+possibly empty graphics/display inventories. `partial` retains successful data
+alongside section errors; missing values are null. Exit 0 means available/partial
 inventory, and exit 1 means the worker/report is unavailable or the request is
 invalid. A partial report is not a full qualification pass. Worker timeout is
 reported as unavailable, never as a guessed hardware configuration.
@@ -34,7 +34,8 @@ Old evidence files remain unchanged and may contain no hardware data.
 | --- | --- |
 | `Graphics` | Controller name, driver version, vendor and text-truncation flag |
 | `Displays` | Device name, physical-pixel desktop rectangle, primary flag, integer mode refresh rate and API scale percentage |
-| Explicitly uncollected | Per-window DPI, HDR state, the application's selected renderer GPU and VRR/scanout timing |
+| `Power` | Active power-plan GUID, AC online status, battery presence/percentage, battery-saver state and independent query errors |
+| Explicitly uncollected | Per-window DPI, HDR state, the application's selected renderer GPU, VRR/scanout timing, power-mode overlay, CPU/GPU clocks and temperatures |
 
 The graphics query uses [Win32_VideoController](https://learn.microsoft.com/en-us/windows/win32/cimwin32prov/win32-videocontroller)
 and retains selected properties only. This is an inventory of controllers, not
@@ -60,6 +61,18 @@ diagnostics and [qualification procedure](windows-qualification.md) for them.
 The display section requires an interactive account session; graphics inventory
 can still succeed independently when display discovery fails.
 
+Power queries use [PowerGetActiveScheme](https://learn.microsoft.com/en-us/windows/win32/api/powersetting/nf-powersetting-powergetactivescheme)
+and [GetSystemPowerStatus](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getsystempowerstatus).
+The allocated scheme GUID is released after reading. Each query can succeed
+independently; `Power.State` distinguishes `available`, `partial` and `unavailable`.
+Unknown AC/battery values stay null; an absent battery has no charge percentage.
+Only the GUID is retained, without user-defined plan names or preference changes.
+The active plan does not identify the effective power-mode overlay, processor
+energy preferences, throttling or achieved frequency. A VM's report describes
+the guest configuration, not its hypervisor's power policy or host contention.
+Compare like-for-like power conditions and collect effective policy and workload
+timing in the project's own benchmark when needed.
+
 ## Evidence handling
 
 Keep full reports private alongside the test's source/runtime receipts. Capture
@@ -75,4 +88,15 @@ cleanup and retained evidence. The full native suite and PowerShell 5.1/7
 contracts passed. Contracts cover section failures, bounds, unknown driver
 defaults and unavailable probes without hardware calls. Multiple-monitor,
 locked-session and physical display-change scenarios remain separate acceptance
-work; no HDR/per-window DPI measurement is claimed.
+work; no HDR/per-window DPI measurement is claimed. The later power-evidence
+extension has mocked PowerShell 7 contracts and C# compilation/conversion
+coverage on Debian. Its real Windows APIs, Windows PowerShell 5.1 and retained
+test-session evidence still need native qualification; the earlier graphics/display
+qualification does not establish those new cases.
+
+For that follow-up, run `windows/tests/Run-EnvironmentTests.ps1` in native
+Windows PowerShell 5.1 and PowerShell 7, then inspect the public
+`basaltw desktop environment --json` result and a disposable session's retained
+`HostEnvironment.Power`. Check the observed plan against the account's current
+configuration, and keep missing battery/status data unknown. No plan change or
+shared-desktop interruption is needed for these read-only checks.
