@@ -81,6 +81,15 @@ preview, following the session's browser-testing policy.
 
 ## Sound effects and short video
 
+For bounded offline Debian inspection use `basaltw-media INPUT --output NEW_DIRECTORY`
+(or `python3 -m lib.media_cli` from a checkout). It reports stream metadata,
+timestamped PNG samples, a labelled SVG contact sheet, levels/loudness and
+silence in a private versioned bundle. Read the
+[Debian media guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/media-analysis.md)
+for supported inputs, resource limits, CPU production recipes and qualification.
+Require a complete manifest before using results; samples do not verify quality
+or audio/video sync. Existing native capture consent and WAV limits still apply.
+
 For Audacity, save AUP3 then export the required audio format. Check trim points,
 fades, peak/clipping levels, channel count, sample rate and loop continuity.
 Retain an uncompressed working source to avoid repeated lossy re-encoding.

@@ -1,7 +1,11 @@
 # Audio and video analysis and production
 
-Status: proposed; the milestones below are not claims of implemented or
-qualified support. This plan extends [multimedia bundles issue #25](https://github.com/bluehexagons/basaltwater/issues/25)
+Status: Debian offline analysis and bounded CPU production implemented; native
+qualification and remaining platform boundaries are recorded in the
+[Debian media guide](../workstations/media-analysis.md) and
+[coverage map](testing-coverage.md). CachyOS GPU/editor and Windows milestones
+remain separate; optional speech recognition is deferred without a demonstrated
+need. This plan extends [multimedia bundles issue #25](https://github.com/bluehexagons/basaltwater/issues/25)
 and complements [native QA evidence](../workstations/native-qa-evidence.md)
 and [Windows game testing](windows-game-testing.md).
 
