@@ -158,16 +158,21 @@ TLS/authentication policy and upstream assets.
 ## Outside agents
 
 An independent agent can deliberately connect through T3's OAuth MCP endpoint
-at the environment's `/mcp` route. In 0.1.8, **Connect another app (MCP)** in
+at the environment's `/mcp` route. In 0.1.9, **Use T3 Code in another app (MCP)** in
 the command palette or **Settings → Sharing & access** guides app selection,
-access level and URL setup. Approve only a sign-in you initiated, with the
-access level the task needs. Wizard codes last five minutes and grant only
-the level chosen there.
+access level and URL setup. Over T3 Connect, sign in on the hosted T3 web app
+with the account linked to that environment, inspect the agent/return address
+and choose the required access level. No copied pairing code is needed.
+**Use a sign-in code instead** opens the environment's own page. Older
+environments use the wizard's one-use, five-minute code with its chosen grant.
+Approve only a sign-in you initiated.
 Use HTTPS or host-local loopback for sign-in; a cloud-hosted agent needs an
 internet-reachable route such as T3 Connect. A private LAN/tailnet URL alone does
 not supply that reachability. Revoke an unused grant through **Sharing & access**.
 
-Without a code, OAuth approval starts at **Read only**; wizard codes retain
+On the environment's own page, an existing browser session needs access-management
+permission to approve without a code. Code-free approval starts at **Read only**;
+inspect the displayed level on either approval route. Wizard codes retain
 their selected grant. Another code can default to **Auto** or a lower policy
 ceiling, so inspect the displayed access rather than assuming read only.
 Supervised through full access
@@ -181,7 +186,8 @@ This is separate from T3's injected thread tools and Basaltwater's task MCP.
 Installation does not connect terminal/panel agents automatically. External
 access does not make them delegated children of this thread or transfer its
 browser attachment. Do not register an outside agent or enable public access as
-an incidental repair. Use the [tagged outside-agent guide](https://github.com/pingdotgg/t3code/blob/v0.1.8/docs/user/outside-agents.md)
+an incidental repair. Use the
+[0.1.9 outside-agent guide](https://github.com/pingdotgg/t3code/blob/v0.1.9/docs/user/outside-agents.md)
 when that integration is requested.
 
 ## Linked environments

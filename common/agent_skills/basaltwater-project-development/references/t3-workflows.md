@@ -2,7 +2,7 @@
 
 Use these integrations when the active T3 session exposes the relevant tools.
 Follow its injected instructions and live schemas. This reference follows
-[stable 0.1.8](https://github.com/pingdotgg/t3code/releases/tag/v0.1.8).
+[stable 0.1.9](https://github.com/pingdotgg/t3code/releases/tag/v0.1.9).
 
 ## Establish the execution environment
 
@@ -161,6 +161,43 @@ Contracts: [composer](https://github.com/pingdotgg/t3code/blob/v0.1.8/docs/user/
 [secrets](https://github.com/pingdotgg/t3code/blob/v0.1.8/docs/user/secrets.md),
 [text generation](https://github.com/pingdotgg/t3code/blob/v0.1.8/docs/user/text-generation.md),
 and [thread state](https://github.com/pingdotgg/t3code/blob/v0.1.8/docs/user/thread-sidebar.md).
+
+## Shared 0.1.9 client workflows
+
+- **Attachment sending:** ordinary messages can be submitted while files upload;
+  delivery waits for preparation to finish. A pending send is not a completed
+  provider request. Retry/remove failed uploads and reattach interrupted files
+  after a reload. Question answers and approval redirects still require ready
+  attachments. The tagged composer manual retains older wording here; the
+  release and composer implementation describe the changed ordinary-send path.
+- **Claude approvals:** an MCP app can be allowed for the current Claude
+  session. Inspect the app and requested action before choosing that broader
+  grant. A session grant does not change the task's authorization or managed
+  policy. Do not assume it survives a fresh provider session.
+- **OpenCode goals:** OpenCode **2.2.5+** supports `/goal`, mirrors native goal
+  state across clients, and projects native todo updates into checklists.
+  `/goal` alone reads status; `clear` removes it and `pause`/`resume` control
+  execution. Stopping its goal pauses it. Use only for requested goal work;
+  this does not migrate Basaltwater's managed OpenCode 1.x installation or
+  schedule an independent task. The general 2.0.18 provider recommendation
+  does not establish native-goal support.
+- **Review and accessibility:** PR links preserve their comment, diff-line,
+  checks or commit destination. Keep those anchors when sharing a specific
+  review location. A link does not qualify checks/reviews for the latest head.
+  GitLab merged-MR revert is available for an authorized revert operation.
+  Background-command details expose status/output and subagent navigation;
+  inspect the final result before claiming completion. Screen-reader turn
+  announcements and a bindable regenerate-title shortcut are client features;
+  preserve the owner's preferences.
+- **Connect agent sign-in:** the hosted approval page can use the account
+  linked to the environment without a code. Follow the operations skill's
+  [outside-agent route](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-t3code/references/operations.md#outside-agents)
+  for grants, reachability, local fallback and revocation.
+
+Contracts: [release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.9),
+[composer implementation](https://github.com/pingdotgg/t3code/blob/v0.1.9/apps/web/src/components/chat/ChatComposer.tsx),
+[goals](https://github.com/pingdotgg/t3code/blob/v0.1.9/docs/user/composer.md#goals),
+and [Claude session approvals](https://github.com/pingdotgg/t3code/pull/33707).
 
 ## Project commands and worktree setup
 

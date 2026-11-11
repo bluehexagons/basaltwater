@@ -98,6 +98,13 @@ Basaltwater and rerun the saved setup command to apply the readiness fix.
 
 ## Release tracks and archive layout
 
+Stable 0.1.9 retains protocol 3, the standalone archive layout and the
+administrative pairing contract. Its database adds migration 81; retain
+upstream downgrade/preflight checks. Failed downloads now identify the step,
+HTTP status and download host. Diagnose that failure before retrying instead
+of treating it as a native-module failure. See the
+[release integration](release-0.1.9.md) for evidence and changed workflows.
+
 Stable 0.1.8 retains the same protocol/layout and administrative pairing
 contract. See the [release integration](release-0.1.8.md) for component evidence
 and remaining live qualification. Provider discovery updates do not authorize

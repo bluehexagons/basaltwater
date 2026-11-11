@@ -132,17 +132,17 @@ credential contents, use `basaltw agent support-bundle`.
 
 ## Stable feature baseline
 
-As checked on **2026-11-09**, GitHub's latest stable release is **0.1.8**.
+As checked on **2026-11-11**, GitHub's latest stable release is **0.1.9**.
 Check AUR/WinGet availability and the installed desktop version separately. It retains
 the stable Orchestrator V2
 introduced in 0.1.0 and service-state protocol 3. Keep the
 server and every connected desktop client on compatible V2 releases; mobile
-requires the 2.0 app. See the [upstream release notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.8)
+requires the 2.0 app. See the [upstream release notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.9)
 and [V2 migration notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.0).
 
 The release's recommended provider versions are Codex **0.159+**, Claude Code
 **2.1.301+**, Grok **1.0.13+**, OpenCode 2 **2.0.18+**, and Pi **1.0+**.
-The [provider compatibility manifest](https://github.com/pingdotgg/t3code/blob/v0.1.8/apps/server/src/provider/model-manifest.json)
+The [provider compatibility manifest](https://github.com/pingdotgg/t3code/blob/v0.1.9/apps/server/src/provider/model-manifest.json)
 also marks Codex 0.156+, Claude Code 2.1.280+ and Pi 0.80.5+ supported; distinguish recommended
 versions from minimum support. Inspect **Settings → Providers** for the selected account,
 binary, version, and readiness. Setup manages only selected Basaltwater
@@ -213,6 +213,27 @@ hidden rows retain their keyboard shortcuts. Setup preserves these UI choices.
 See the [usage guide](https://github.com/pingdotgg/t3code/blob/v0.1.5/docs/user/usage.md).
 
 ### Agent workflow integration
+
+The 0.1.9 review confirms compatible service protocol/runtime layout and
+administrative pairing. Its digest-verified Linux x64 archive passed disposable
+fresh-home HTTP startup through the managed filter, embedded native-PTY loading,
+administrative pairing with bootstrap-session revocation, signal forwarding and
+SQLite integrity checks. A disposable 0.1.8-to-0.1.9 upgrade passed the same
+checks and advanced from 80 to 81 migrations. The focused integration suite
+passed 244 tests. No runtime adapter change was required. See the
+[0.1.9 integration](../../common/agent_skills/basaltwater-t3code/references/release-0.1.9.md)
+for contracts and qualification limits. The new database migration is 81;
+preserve upstream downgrade checks.
+
+The shared [0.1.9 client workflows](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-019-client-workflows)
+cover sending ordinary messages during attachment upload, Claude MCP session
+approvals, OpenCode native goals, anchored PR links, GitLab merged-MR revert,
+background command details and screen-reader announcements. OpenCode goals
+require **2.2.5+**, independently of the general 2.0.18 recommendation. This
+does not migrate the managed OpenCode installation. Connect now offers hosted
+account approval for outside-agent sign-in without a copied code; use the
+[outside-agent route](../../common/agent_skills/basaltwater-t3code/references/operations.md#outside-agents)
+for access selection, local fallback and revocation.
 
 The 0.1.8 stable review retains service-state protocol 3, `activeVersion`,
 the standalone archive/native-module layout, and all 16 administrative pairing
@@ -377,7 +398,9 @@ access, use T3's OAuth `/mcp` integration described in the
 [operations reference](../../common/agent_skills/basaltwater-t3code/references/operations.md#outside-agents).
 It does not automatically connect independent Basaltwater tasks or give them a
 thread's tools. Outside OAuth approval without a code starts at read only;
-0.1.8's app-connection wizard retains the chosen grant. `T3-Mode-Limit` may
+0.1.9 adds hosted approval through the environment's linked Connect account;
+the environment-local code/browser route remains available. The wizard retains
+the chosen grant. `T3-Mode-Limit` may
 narrow their modes, never widen them. Use returned thread `link` values verbatim:
 current native links include environment and thread IDs, while outside OAuth
 clients receive browser URLs. Stable 0.1.4's `t3_thread_launch` accepts a stable
@@ -394,7 +417,7 @@ separate from Basaltwater's owned-worktree ancestry checks and cache maintenance
 
 ### Stable feature qualification
 
-The shared [client workflow reference](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-018-client-workflows)
+The shared [client workflow reference](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-019-client-workflows)
 ships in the existing project-development bundle on Debian, CachyOS, native
 Windows, and Ubuntu WSL. The shared scheduling reference also covers 0.1.7's
 one-time triggers and 0.1.8's fresh-session mode. No additional skill catalog entry is needed.
@@ -422,10 +445,11 @@ blocked step. Mocked tests and service HTTP readiness cannot qualify these paths
 
 | Case | Required evidence |
 | --- | --- |
-| Providers and migration | Fresh 0.1.8 setup, 0.1.7-to-0.1.8 upgrade, and V1-to-V2 copy migration with matching client, selected Codex/Claude combinations, private recovery copy, pairing permissions, authenticated provider turn, and terminal. Qualify OpenCode 2 separately before claiming support. |
+| Providers and migration | Fresh 0.1.9 setup, 0.1.8-to-0.1.9 upgrade, and V1-to-V2 copy migration with matching client, selected Codex/Claude combinations, private recovery copy, pairing permissions, authenticated provider turn, and terminal. Qualify OpenCode 2 separately before claiming support. |
 | 0.1.6 workflows | Side-chat permission modes and idle Bring back, project pin/archive/unarchive across connected checkouts, local/merge commit review, optional 1Password resolution with missing/locked CLI failures, and server/agent priorities under pressure. Test service protection/undo separately on a disposable Debian host. |
 | 0.1.7 workflows | Parent-visible local/linked-child approvals reach the correct request; copied thread links open only for authorized recipients; one-time schedules respect offsets and do not repeat; usage filters apply before model mapping per environment; model/effort markers match changes; tagged-thread hiding does not stop work. Test managed-policy defaults/locks, cap enforcement, invalid-policy startup refusal and loaded-policy freshness on disposable hosts. Test direct preview-open targets only when exposed. |
 | 0.1.8 workflows | Verify `/clear` resets provider context while retaining visible history, and Restart agent session reloads guidance without that reset. Check inherited first-reply side-chat settings, fresh-session schedules and two-save task moves, existing schedule migration/run history, private secret-card/reference/file delivery with synthetic secrets and failure/cancellation paths, API generator routing/billing consent, HTML file input, delayed child-result wakeups and actual model reporting. Check `service.env` precedence, custom base-dir retention, offline Reclaim/disk refusal, and opt-in `stopOnSettle` with automatic settlement. Qualify outside-agent wizard grants/revocation and matching mobile/desktop clients separately. |
+| 0.1.9 workflows | Verify Connect account approval, environment-local code/browser fallback, selected grants and revocation. Check ordinary send during uploads plus failure/reload recovery and question/approval attachment blocking. Verify Claude MCP session grants and fresh-session behavior, OpenCode 2.2.5+ goal status/pause/resume/clear and cross-client synchronization, anchored PR links, an explicitly requested GitLab revert, background command results and screen-reader announcements. Qualify provider status checks without mise downloads and safe default-branch PR creation separately. |
 | Project promotion and release tracks | Promote a stopped No project folder in place; retain its files, all associated threads and schedules, then initialize Git. Exercise a deliberate Stable/Nightly switch on disposable installations, including offline/unsupported machines, incompatible or unreadable databases, and an incomplete switch whose requested track differs from its running version. Preserve database compatibility refusals. |
 | Delegation | Same-provider and cross-provider child results, explicit model/options, fresh review rounds, async wake, nested completion state, pending question, cancellation, and restart interruption without duplicated work. |
 | Linked environments | On deliberately linked disposable peers, verify beta gates on both sides, server reachability/trust, read-only and narrower-mode denials, repository matching, missing/ambiguous project selection, remote result/restart/cancel, rejected worktree isolation/attachments, thread links, launch retry deduplication, expiry and peer revocation. Confirm forgetting a link does not claim to stop remote edits. |
