@@ -1,11 +1,11 @@
-# Debian file media analysis and CPU production
+# Linux file media analysis and production
 
 Use `basaltw-media INPUT --output NEW_DIRECTORY` after installing the Python
 package, or `python3 -m lib.media_cli INPUT --output NEW_DIRECTORY` from a checkout.
-This is an offline Debian CLI, independent of desktop sessions and the existing
+This is an offline Debian and CachyOS CLI, independent of desktop sessions and the existing
 native WAV capture/analysis API. `basaltw agent manifest --json` discovers
 FFmpeg/ffprobe. Existing opt-in `--av-tools` supplies them; a minimal manual
-installation is Debian's `ffmpeg` and `util-linux` (for `prlimit`). Keep their
+installation is `ffmpeg` and `util-linux` (for `prlimit`) from the distribution. Keep their
 distribution security updates current. No all-media bundle or default editor
 selection is added.
 
@@ -148,3 +148,48 @@ quality assessment. The retained fixture/export/analysis set occupied under
 170 MiB. These are single-run observations on a shared VM, with warm caches
 uncontrolled. They establish a small CPU workload envelope, not real-time,
 whole-guest memory, 1080p/120-second throughput or tail-latency guarantees.
+
+## CachyOS GPU qualification
+
+The same 18-fixture CPU/file-analysis qualification passes natively on CachyOS
+with FFmpeg 9.0.2. This qualifies the Linux analyzer there without changing its
+limits or the native WAV evidence/capture API. The retained synthetic set is
+under 8 MiB; decoded boundary comparisons pass the same 10/255 ceiling.
+
+Run the separate, opt-in GPU recipe as an unprivileged desktop user:
+
+```bash
+python3 scripts/qualify_media_gpu.py --backend vaapi --device /dev/dri/renderD128 \
+  --output /absolute/private/new-arc-run
+# On a separately available NVIDIA target, select its CUDA device explicitly:
+python3 scripts/qualify_media_gpu.py --backend cuda --device 0 \
+  --output /absolute/private/new-nvidia-run
+```
+
+Use the actual accessible render node, discovered locally; do not assume every
+system assigns the same node. No driver installation, package update, device
+recording or audio routing occurs. The script creates a trusted four-second
+1280×720/30 fps H.264/AAC source, a CPU transcode and separate hardware encode,
+decode and scale exports. Decode requires hardware output frames and an explicit
+download; scaling requires `scale_vaapi` or `scale_cuda` on hardware frames.
+Missing backends fail visibly rather than silently choosing software. CPU
+results remain separate when a GPU operation fails. Each successful export must
+pass full bounded analysis, stream dimensions/audio and duration within 0.1 s.
+This does not check perceptual quality or codec parity between the backends.
+
+Private logs, literal command arguments, per-command elapsed/child CPU time,
+cumulative largest child RSS, output bytes and analysis receipts stay in the new
+bundle. A complete `qualification.json` and exit 0 require all four exports.
+Each command has a 180-second deadline with process-group cleanup, 120 CPU
+seconds, 8 GiB address space (GPU mappings need more than the software analyzer)
+and a 64 MiB output-file limit; captured logs are bounded to 2 MiB. These limits
+are for trusted synthetic production, not a sandbox or general untrusted input
+route. New directories refuse overwrites; remove only owned evidence when no
+longer needed. The script never retries or changes backend on failure.
+
+Intel Arc with iHD 26.3.5 and FFmpeg 9.0.2 passes all four exports and their
+analysis. This establishes VA-API H.264 encode/decode and GPU scaling only.
+NVIDIA/CUDA execution and accelerated editor timeline effects remain unqualified;
+the CUDA recipe is supplied for that separate target. Editor project round trips,
+proxies, titles and consuming-player review require the native workflow in the
+[CachyOS handoff](../plans/audio-video-cachyos-handoff.md).

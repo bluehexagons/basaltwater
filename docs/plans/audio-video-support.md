@@ -1,10 +1,11 @@
 # Audio and video analysis and production
 
-Status: Debian offline analysis and bounded CPU production implemented; native
+Status: Debian and CachyOS offline analysis and bounded CPU production implemented; native
 qualification and remaining platform boundaries are recorded in the
-[Debian media guide](../workstations/media-analysis.md) and
-[coverage map](testing-coverage.md). CachyOS GPU/editor and Windows milestones
-remain separate; optional speech recognition is deferred without a demonstrated
+[Linux media guide](../workstations/media-analysis.md) and
+[coverage map](testing-coverage.md). Intel Arc VA-API H.264 encode/decode and
+GPU scaling pass the new opt-in qualification runner. Editor timeline effects,
+NVIDIA and Windows milestones remain separate; optional speech recognition is deferred without a demonstrated
 need. The [CachyOS handoff](audio-video-cachyos-handoff.md) gives the next agent
 the setup, baseline and production acceptance sequence. This plan extends
 [multimedia bundles issue #25](https://github.com/bluehexagons/basaltwater/issues/25)

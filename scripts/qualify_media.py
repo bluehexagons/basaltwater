@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run opt-in native Debian media fixtures and CPU production in a new private directory."""
+"""Run opt-in Linux media fixtures and CPU production in a new private directory."""
 
 from __future__ import annotations
 

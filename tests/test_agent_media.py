@@ -11,9 +11,49 @@ from unittest.mock import patch
 from types import SimpleNamespace
 
 from lib import media_cli
+from scripts import qualify_media_gpu
 
 
 class MediaTests(unittest.TestCase):
+    def test_gpu_qualification_requires_hardware_frames(self):
+        for backend, device, frame_format, codec in (("vaapi", "/dev/dri/renderD128", "vaapi", "h264_vaapi"),
+                                                     ("cuda", "0", "cuda", "h264_nvenc")):
+            with self.subTest(backend=backend):
+                commands = qualify_media_gpu.backend_commands(backend, device, "clip with spaces.mp4")
+                self.assertIn(codec, commands["encode"])
+                decode = commands["decode"]
+                self.assertEqual(decode[decode.index("-hwaccel_output_format") + 1], frame_format)
+                self.assertIn("hwdownload,format=nv12", decode)
+                self.assertIn(f"scale_{frame_format}", " ".join(commands["scale"]))
+
+    def test_gpu_failure_is_retained_without_hiding_cpu_success(self):
+        with tempfile.TemporaryDirectory() as parent:
+            output = Path(parent) / "new"
+
+            def execute(argv, **kwargs):
+                self.assertEqual(kwargs["timeout"], 180)
+                if "-version" in argv:
+                    return subprocess.CompletedProcess(argv, 0, "synthetic version", "")
+                if "-init_hw_device" in argv:
+                    raise subprocess.TimeoutExpired(argv, 180)
+                Path(argv[-1]).write_bytes(b"synthetic video")
+                return subprocess.CompletedProcess(argv, 0, "", "")
+
+            analysis = {"status": "complete", "audio": {"status": "complete"},
+                        "timing": {"duration_seconds": 4}, "metadata": {"streams": [
+                            {"codec_type": "video", "width": 1280, "height": 720}]}}
+            with patch.object(qualify_media_gpu, "run_captured", side_effect=execute), \
+                    patch.object(qualify_media_gpu, "inspect", return_value=analysis):
+                result = qualify_media_gpu.qualify(str(output), "cuda", "0")
+            self.assertEqual(result["status"], "incomplete")
+            self.assertEqual(result["outcomes"]["cpu"]["status"], "complete")
+            for name in ("encode", "decode", "scale"):
+                self.assertEqual(result["outcomes"][name]["status"], "failed")
+            self.assertEqual(json.loads((output / "qualification.json").read_text()), result)
+            self.assertEqual((output / "qualification.json").stat().st_mode & 0o777, 0o600)
+            with self.assertRaises(FileExistsError):
+                qualify_media_gpu.qualify(str(output), "cuda", "0")
+
     def test_snapshot_and_container_guards(self):
         with tempfile.TemporaryDirectory() as root:
             source = Path(root) / "音 sample.wav"

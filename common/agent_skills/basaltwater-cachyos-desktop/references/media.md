@@ -72,6 +72,15 @@ for the layered source. Inspect exports at the consuming application's scale.
 
 ## Sound and short video
 
+For bounded offline metadata, timestamped frame/contact sheets and audio
+measurements, use `basaltw-media` or `python3 -m lib.media_cli` from a checkout.
+The [Linux media guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/media-analysis.md)
+owns limits, trusted CPU production recipes and native qualification commands.
+`scripts/qualify_media_gpu.py` separately exercises CPU and explicit VA-API/CUDA
+encode, decode and GPU scaling with synthetic media and private receipts.
+Intel Arc VA-API has native evidence; CUDA/NVIDIA needs a separate target run.
+Neither file analysis nor FFmpeg GPU scaling qualifies editor timeline effects.
+
 Audacity preserves AUP3 sources; exports need explicit range, format, sample rate
 and channels. Inspect the actual document and any Welcome dialog rather than
 acting on a splash title. Use accessible Effect/Fading and Export Audio controls

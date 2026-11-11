@@ -1,4 +1,4 @@
-"""Bounded offline media inspection for Debian; no desktop or capture required."""
+"""Bounded offline media inspection for Debian and CachyOS; no desktop required."""
 
 from __future__ import annotations
 
