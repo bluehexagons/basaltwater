@@ -25,13 +25,15 @@ MAX_IMAGE_PIXELS = 16 * 1024 * 1024
 
 
 def add_visuals_parser(commands: argparse._SubParsersAction) -> None:
-    parser = commands.add_parser("visuals", help="Check project rendering, compare PNGs or capture Git revisions")
+    parser = commands.add_parser("visuals", help="Check project rendering, compare PNG/PFM images or capture Git revisions")
     actions = parser.add_subparsers(dest="visuals_command", required=True)
     compare = actions.add_parser("compare", help="Build a self-contained before/after viewer")
     compare.add_argument("before")
     compare.add_argument("after")
     compare.add_argument("--before-settings")
     compare.add_argument("--after-settings")
+    compare.add_argument("--exposure", type=float, default=0.0, help="PFM viewing exposure in stops, -32 through 32 (default 0)")
+    compare.add_argument("--relative-floor", type=float, default=1e-6, help="PFM relative-error denominator floor (default 1e-6; not an acceptance threshold)")
     batch = actions.add_parser("batch", help="Build a review gallery from a project-owned capture manifest")
     batch.add_argument("manifest", help="Version 1 batch JSON; image paths are relative to this file")
     batch.add_argument("--allow-incompatible", action="store_true", help="Retain mismatched pairs for side-by-side inspection only")
@@ -130,6 +132,10 @@ def _write_viewer(directory: str, before: dict, after: dict) -> dict:
 
 
 def compare_captures(args: argparse.Namespace) -> dict:
+    if any(os.path.splitext(path)[1].lower() == ".pfm" for path in (args.before, args.after)):
+        from lib.visual_compare_pfm import compare_pfm
+
+        return compare_pfm(args)
     before = _image(args.before, _settings(args.before_settings))
     after = _image(args.after, _settings(args.after_settings))
     directory = _directory(args.output, "compare-" + uuid.uuid4().hex[:12])

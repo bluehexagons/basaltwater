@@ -160,7 +160,7 @@ when automating it, or open it on the managed native desktop when that is the
 requested surface. A viewer intended for the T3 client needs an explicitly
 requested managed publication because its browser cannot read VM-local files.
 
-Individual comparisons and batch galleries default to **T3 compact**, with
+PNG comparisons and batch galleries default to **T3 compact**, with
 neutral dark panels, smaller controls and metadata collapsed below each image.
 Expand **Before metadata** or **After metadata** to inspect the full records;
 choose **Roomy** in Layout for larger spacing. Compatibility warnings and manual
@@ -193,6 +193,49 @@ its limits explicitly. Do not invent missing metadata or report the refused
 strict check as passed. If runtime observations are missing, repair the project
 harness and recapture. Keep randomized scenes or unsettled presentation out of
 whole-image equality claims unless the fixture controls them.
+
+### Compare linear HDR PFM captures
+
+Use two `.pfm` files for linear HDR comparisons:
+
+```bash
+basaltw agent visuals compare before.pfm after.pfm \
+  --exposure -2 --relative-floor 0.000001 --json
+```
+
+The PFM reader supports RGB `PF` and grayscale `Pf`, little- and big-endian
+float32 samples, bottom-to-top rows, comments in the header and a finite,
+nonzero scale. The scale's sign selects byte order; its magnitude multiplies
+samples. Negative and HDR values are retained. NaN, Infinity, scale overflow,
+truncated payloads and trailing payload bytes fail before output creation.
+Inputs must be regular files with no final symlink. Each file is bounded to
+16 MiB, 16 megapixels and 16384 pixels per side; the header is limited to
+4096 bytes. The byte limit also bounds decoded sample storage.
+
+`comparison.json` records hashes, dimensions, channels, scale, sample range,
+finite-value checks and linear error metrics: mean/max absolute error, root
+mean square error, mean/max relative error and changed sample count. Metrics
+include every channel, using **before** as the reference. Relative error is
+`abs(after - before) / max(abs(before), relative_floor)`; `--relative-floor`
+must be finite and positive and controls behavior near zero. It is a numerical
+denominator floor, not a rendering acceptance threshold. Unrepresentable
+metrics fail explicitly. Equal dimensions and channel counts are required for
+metrics, overlays and differences; mismatches retain side-by-side viewing and
+record unavailable metrics. PNG/PFM mixed pairs are refused.
+
+The standalone PFM viewer provides synchronized scroll, zoom, a 50% linear
+overlay, absolute linear differences and exposure from -32 through 32 stops.
+`--exposure` sets its initial exposure. Display multiplies linear values by
+`2^exposure`, clamps to `[0, 1]`, then encodes sRGB; negative values display
+black and bright values clip. Exposure changes presentation only. Metrics
+always use the original scaled linear samples. The tool assumes the project
+provided linear samples in matching color spaces; PFM has no color profile.
+
+No error metric selects pass/fail. Projects own rendering tolerances, fixture
+interpretation and acceptance, including any future Antistatic policy. A
+successful command means comparison evidence was generated. Batch galleries
+and managed revision capture continue to accept PNGs; project recipes can
+produce PFM pairs and invoke `visuals compare` separately.
 
 ## Review a batch
 

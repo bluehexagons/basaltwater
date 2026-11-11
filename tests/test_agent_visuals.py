@@ -9,6 +9,7 @@ from io import StringIO
 import json
 import os
 from pathlib import Path
+import shutil
 import struct
 import subprocess
 import tempfile
@@ -19,6 +20,7 @@ import zlib
 from lib import agent_cli, agent_visuals, agent_workspace
 from lib.remote_utils import CommandTimeoutError
 from lib.visual_evidence import verify_receipt
+from lib import visual_compare_pfm
 
 
 def png_bytes(width: int = 2, height: int = 2, color: tuple = (20, 80, 120, 255)) -> bytes:
@@ -259,6 +261,168 @@ class TestAgentVisuals(unittest.TestCase):
             args.before = str(self.root / "missing.png")
             self.assertEqual(agent_cli.run_agent_command(args), 1)
         self.assertFalse(json.loads(output.getvalue())["ok"])
+
+
+class TestPFMComparisons(unittest.TestCase):
+    def setUp(self) -> None:
+        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.before = self.root / "before.pfm"
+        self.after = self.root / "after.pfm"
+        self.parser = argparse.ArgumentParser()
+        agent_cli.add_agent_subparser(self.parser.add_subparsers(dest="command"))
+
+    def write_pfm(self, path, samples, *, width=2, height=1, channels=1, scale=-1):
+        magic = "PF" if channels == 3 else "Pf"
+        header = f"{magic}\n# synthetic fixture\n{width} {height}\n{scale}\n".encode()
+        path.write_bytes(header + struct.pack(("<" if scale < 0 else ">") + "f" * len(samples), *samples))
+
+    def args(self, *extra):
+        return self.parser.parse_args(["agent", "visuals", "compare", str(self.before), str(self.after),
+                                       "--output", str(self.root / "comparison"), *extra])
+
+    def test_endianness_scale_channels_and_row_orientation(self) -> None:
+        for channels in (1, 3):
+            for scale in (-2, 2):
+                with self.subTest(channels=channels, scale=scale):
+                    samples = list(range(1, 4 * channels + 1))
+                    self.write_pfm(self.before, samples, height=2, channels=channels, scale=scale)
+                    metadata, values = visual_compare_pfm.read_pfm(str(self.before), {})
+                    expected = samples[2 * channels:] + samples[:2 * channels]
+                    self.assertEqual(list(values), [value * 2 for value in expected])
+                    self.assertEqual(metadata["channels"], channels)
+                    self.assertTrue(metadata["finite_samples"])
+
+    def test_linear_metrics_and_exposure_are_independent(self) -> None:
+        self.write_pfm(self.before, [0, 2])
+        self.write_pfm(self.after, [1, 4])
+        result = agent_visuals.compare_captures(self.args("--exposure", "-2", "--relative-floor", "0.5"))
+        metrics = result["metrics"]
+        self.assertEqual(metrics["mean_absolute_error"], 1.5)
+        self.assertEqual(metrics["max_absolute_error"], 2)
+        self.assertEqual(metrics["mean_relative_error"], 1.5)
+        self.assertEqual(metrics["max_relative_error"], 2)
+        self.assertAlmostEqual(metrics["root_mean_square_error"], 2.5 ** 0.5)
+        self.assertEqual(metrics["changed_samples"], 2)
+        self.assertEqual(result["acceptance"], "project-owned")
+        self.assertEqual(result["view"]["exposure_stops"], -2)
+        persisted = json.loads((self.root / "comparison/comparison.json").read_text())
+        self.assertEqual(persisted, result)
+        self.assertEqual(Path(result["viewer"]).stat().st_mode & 0o777, 0o600)
+        self.assertEqual(Path(result["viewer"]).parent.stat().st_mode & 0o777, 0o700)
+        (self.root / "comparison").rename(self.root / "first")
+        second = agent_visuals.compare_captures(self.args("--exposure", "4", "--relative-floor", "0.5"))
+        self.assertEqual(second["metrics"], metrics)
+
+    def test_identical_negative_and_hdr_values_remain_linear(self) -> None:
+        for path in (self.before, self.after):
+            self.write_pfm(path, [-4, 1000])
+        result = agent_visuals.compare_captures(self.args())
+        self.assertEqual(result["metrics"]["max_absolute_error"], 0)
+        self.assertEqual(result["metrics"]["changed_samples"], 0)
+        self.assertEqual(result["before"]["minimum"], -4)
+        self.assertEqual(result["before"]["maximum"], 1000)
+
+    def test_nonfinite_samples_and_scale_overflow_fail_before_output(self) -> None:
+        self.write_pfm(self.after, [0, 1])
+        for value, scale in ((float("nan"), -1), (float("inf"), -1), (-float("inf"), -1), (3e38, -1e300)):
+            with self.subTest(value=value, scale=scale):
+                self.write_pfm(self.before, [0, value], scale=scale)
+                with self.assertRaisesRegex(ValueError, "non-finite"):
+                    agent_visuals.compare_captures(self.args())
+                self.assertFalse((self.root / "comparison").exists())
+
+    def test_invalid_headers_payloads_and_bounds(self) -> None:
+        for content in (b"P6\n1 1\n-1\n1234", b"Pf\n0 2\n-1\n", b"Pf\n16385 1\n-1\n",
+                        b"Pf\n1 1\n0\n1234", b"Pf\n1 1\nnan\n1234", b"Pf\n1 1\ninf\n1234",
+                        b"Pf\n1 1\n-1\n123", b"Pf\n1 1\n-1\n12345", b"Pf\n2\n-1\n",
+                        b"Pf\n" + b"#" * 4096 + b"\n", b"Pf\n1 1\n-1"):
+            with self.subTest(content=content[:40]):
+                self.before.write_bytes(content)
+                with self.assertRaises(ValueError):
+                    visual_compare_pfm.read_pfm(str(self.before), {})
+        self.write_pfm(self.before, [0, 1])
+        with patch.object(visual_compare_pfm, "MAX_PFM_BYTES", 8), self.assertRaisesRegex(ValueError, "exceeds"):
+            visual_compare_pfm.read_pfm(str(self.before), {})
+        with patch.object(visual_compare_pfm, "MAX_PFM_PIXELS", 1), self.assertRaisesRegex(ValueError, "dimensions"):
+            visual_compare_pfm.read_pfm(str(self.before), {})
+
+    def test_links_and_nonregular_files_are_refused(self) -> None:
+        self.write_pfm(self.after, [0, 1])
+        self.before.symlink_to(self.after)
+        with self.assertRaises(OSError):
+            visual_compare_pfm.read_pfm(str(self.before), {})
+        self.before.unlink()
+        os.mkfifo(self.before)
+        with self.assertRaisesRegex(ValueError, "regular"):
+            visual_compare_pfm.read_pfm(str(self.before), {})
+
+    def test_incompatible_dimensions_or_channels_have_no_metrics(self) -> None:
+        self.write_pfm(self.before, [0, 1])
+        for samples, width, channels in (([0], 1, 1), ([0] * 6, 2, 3)):
+            with self.subTest(channels=channels):
+                self.write_pfm(self.after, samples, width=width, channels=channels)
+                result = agent_visuals.compare_captures(self.args())
+                self.assertIsNone(result["metrics"])
+                self.assertIn("incompatible", result["comparison_status"])
+                (self.root / "comparison").rename(self.root / f"incompatible-{channels}")
+
+    def test_invalid_view_options_mixed_formats_and_metric_overflow(self) -> None:
+        self.write_pfm(self.before, [0, 1])
+        self.write_pfm(self.after, [1, 2])
+        for options in (("--exposure", "nan"), ("--exposure", "33"), ("--relative-floor", "0"),
+                        ("--relative-floor", "inf"), ("--relative-floor", "5e-324")):
+            with self.subTest(options=options), self.assertRaises(ValueError):
+                agent_visuals.compare_captures(self.args(*options))
+        args = self.args()
+        args.after = str(self.root / "after.png")
+        with self.assertRaisesRegex(ValueError, "PFM with PFM"):
+            agent_visuals.compare_captures(args)
+        self.assertFalse((self.root / "comparison").exists())
+
+    def test_pfm_metadata_cannot_inject_scripts(self) -> None:
+        self.write_pfm(self.before, [0, 1])
+        self.write_pfm(self.after, [0, 1])
+        settings = self.root / "settings.json"
+        settings.write_text(json.dumps({"scene": "</script><script>bad()</script>"}))
+        result = agent_visuals.compare_captures(self.args("--before-settings", str(settings)))
+        html = Path(result["viewer"]).read_text()
+        self.assertNotIn("</script><script>bad()", html)
+        self.assertIn(r"\u003c/script>", html)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js unavailable")
+    def test_viewer_exposure_difference_and_overlay_use_linear_values(self) -> None:
+        self.write_pfm(self.before, [0.25, 2])
+        self.write_pfm(self.after, [0.5, 4])
+        result = agent_visuals.compare_captures(self.args())
+        html = Path(result["viewer"]).read_text()
+        payload = html.split('id="data">', 1)[1].split('</script>', 1)[0]
+        script = html.split('<script>\n', 1)[1].split('</script>', 1)[0]
+        harness = r'''
+const assert = require('node:assert/strict');
+const elements = Object.create(null), frames = Object.create(null);
+global.document = {getElementById(id) {
+  if (!elements[id]) elements[id] = {value:'100',style:{},options:[],addEventListener(){},
+    getContext(){return {createImageData(w,h){return {data:new Uint8ClampedArray(w*h*4)}},
+      putImageData(image){frames[id]=image.data}}}};
+  return elements[id];
+}};
+document.getElementById('data').textContent = process.argv[1];
+document.getElementById('mode').value = 'after';
+'''
+        assertions = r'''
+assert.equal(frames.before[0], 137);
+assert.equal(frames.after[0], 188);
+get('mode').value='difference'; paint();
+assert.equal(frames.after[0],137);
+get('exposure').value='-1'; paint();
+assert.equal(frames.after[0],99);
+get('mode').value='overlay'; get('exposure').value='0'; paint();
+assert.equal(frames.after[0],165);
+assert.equal(display(-1,0),0); assert.ok(Math.abs(display(2,0)-255)<1e-10);
+'''
+        completed = subprocess.run([shutil.which("node"), "-e", harness + script + assertions, payload],
+                                   capture_output=True, text=True, timeout=10, check=False)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
 
 
 if __name__ == "__main__":
