@@ -7,6 +7,7 @@ import os
 import json
 from pathlib import Path
 import stat
+from statistics import median
 
 from desktop.qa_artifacts import clock, new_bundle, stamp
 from lib.atomic_io import read_json_file, write_json_atomic
@@ -106,6 +107,33 @@ def _save(path: Path, data: dict) -> None:
     write_json_atomic(str(path), data, mode=0o600)
 
 
+def _interval_summary(rows: list[dict], end: int) -> dict:
+    """Attribute elapsed intervals to the phase/state established by their left event."""
+    phases: dict[str, dict] = {}
+    gaps = []
+    suspended = False
+    for index, row in enumerate(rows):
+        if row["event"] in ("suspend", "resume"):
+            suspended = row["event"] == "suspend"
+        right = rows[index + 1]["monotonic_ns"] if index + 1 < len(rows) else end
+        seconds = (right - row["monotonic_ns"]) / 10**9
+        phase = phases.setdefault(row["phase"], {"wall_seconds": 0.0, "owner_wait_seconds": 0.0,
+                                               "declared_active_wall_seconds": 0.0})
+        phase["wall_seconds"] += seconds
+        phase["owner_wait_seconds"] += seconds if suspended else 0
+        phase["declared_active_wall_seconds"] += 0 if suspended else seconds
+        if index + 1 < len(rows):
+            gaps.append({"from_index": index, "to_index": index + 1, "phase": row["phase"],
+                         "seconds": seconds, "owner_wait": suspended})
+    values = [gap["seconds"] for gap in gaps]
+    return {"phase_times": phases,
+            "event_gaps": {"count": len(gaps), "median_seconds": median(values) if values else None,
+                           "max_seconds": max(values) if values else None,
+                           "longest": sorted(gaps, key=lambda gap: gap["seconds"], reverse=True)[:3],
+                           "scope": "Completed ledger-event intervals, including recorded owner waits; not action latency or model time."},
+            "context_changes": sum(row["event"] == "context" for row in rows)}
+
+
 def _summary(data: dict, observed: dict) -> dict:
     rows = data["events"]
     comparable = bool(data["clock"].get("boot_id")) and data["clock"] == clock()
@@ -148,6 +176,7 @@ def _summary(data: dict, observed: dict) -> dict:
             "hard_limit_reached": wall >= hard_seconds if hard_seconds is not None else None,
             "hard_limit_seconds": hard_seconds, "observed_active_work_seconds": None,
             "model_reasoning_seconds": None, "tokens": None, "cost": None,
+            **_interval_summary(rows, end),
             "limit": "Declared active wall includes game/tool/coordination gaps. Controller enforces limits; no scheduler or input authority."}
 
 

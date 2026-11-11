@@ -97,6 +97,22 @@ approval pause. The controller must honor hard limits, human takeover and the
 task's continuation policy; this offline ledger does not enforce desktop input
 admission. Follow the active orchestration policy for delegates and reminders.
 
+Use `show` rather than dumping the full ledger into each continuation. Its compact
+`phase_times` attributes each interval to the phase established by its left event,
+with wall, recorded owner-wait and declared active wall seconds separately. Write
+phase checkpoints at actual setup/play/cleanup boundaries; these labels are
+controller observations, not automatic scene detection. Repeated phase labels
+are combined. The final open interval counts through the current observation;
+a finished record stops at its finish event, including on later reads.
+
+`event_gaps` reports completed ledger intervals: count, median, maximum and at
+most three longest intervals with event indices and owner-wait state.
+`context_changes` counts explicit context events. Gaps include reasoning, tools,
+game animations, coordination and recorded waits; they are neither action latency
+nor model inference time. Sparse checkpoints cannot identify which component was
+slow. A new boot remains unsupported and produces no derived phase/gap timing.
+This controller-only reporting needs an updated CLI, not a helper restart.
+
 To remove an earlier hard limit, first verify that the effective owner instruction
 explicitly authorizes open-ended completion of the SAME match. If that authority
 is absent or ambiguous, do not clear the limit; resolve the brief with the owner.
