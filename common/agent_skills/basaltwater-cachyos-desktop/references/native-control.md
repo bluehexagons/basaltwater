@@ -150,8 +150,12 @@ Native failures preserve `reason`, `dispatch_stage` and `input_delivery`.
 when observation fails; `unknown` requires inspection without replay. Older
 helpers/journals cannot prove these stages from a generic error. See the
 [failure receipt contract](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/desktop-observations.md#native-input-failure-receipts).
-Status also exposes recorder capacity and its existing artifact; a duplicate
-start reports that handle without creating another recorder.
+Status and action replies expose recorder capacity and its existing artifact;
+`headroom: low` recommends rotation with 50 events remaining. A duplicate start
+reports that handle without creating another recorder. Follow the
+[complete rotation example](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/desktop-evaluation.md#rotate-a-recording-at-a-safe-checkpoint):
+different recordings belong in the same run ledger; `closeout --previous` only
+links checks of the same recording.
 For long evaluations, link explicit recorder segments to `desktop evidence run`
 checkpoints under the same match clocks. Record owner waits and timing changes
 explicitly; check due reviews in the controller's normal loop. `evidence closeout`
@@ -219,6 +223,11 @@ stream-relative PTS; receipt/PTS are not compositor presentation or proof of
 application readiness. A stalled/static stream may time out. Capture failure
 preserves input completion: inspect and recapture; never replay the input.
 Use `screenshot --next-frame --compact` for a separate bounded observation.
+For one inspected input and two delayed captures, use the tested
+[short observation recipe](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/short-observation-sequences.md).
+It retains completed input, partial capture results and actual timing without
+automatic replay. Screenshot `after_ms` delays belong to the Linux JSON sequence,
+not standalone screenshot flags or Windows keyboard sequences.
 Compact output retains path, generation, geometry, timestamps, pixel hash and
 `changed` (null for the first comparison); full screenshot/status/doctor output
 remains available. Pixel equality is not an application liveness assertion.
@@ -295,6 +304,15 @@ resetting unrelated input services. Close only disposable test windows and keep
 desktop captures/logs private.
 
 ## Human control and shutdown
+
+`basaltw desktop --native handoff` opens the human control window from the local
+KDE session, even while the helper is stopped or agents are blocked. Keep
+`--native` before `handoff`; the bare command addresses Debian XRDP. Opening the
+window neither stops an agent's loop nor transfers ownership or changes permission.
+Relinquish your own action loop separately; only the human's UI choice or an
+explicitly authorized control request changes persistent permission. Spawn success
+does not establish window visibility. See the
+[handoff distinction](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/desktop-control.md#handoff-is-not-a-permission-change).
 
 Check `status.agent_control`: `enabled` permits authorized task input without
 asking to unpause or obtaining a lease. `human-override` and `disabled` block

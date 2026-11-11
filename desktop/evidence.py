@@ -97,9 +97,19 @@ class Recorder:
         write_json_atomic(str(self.path), self.data, mode=0o600)
 
     def capacity(self) -> dict:
-        return {"events": len(self.data["events"]), "event_limit": EVENT_LIMIT,
-                "remaining_events": EVENT_LIMIT - len(self.data["events"]),
-                "events_truncated": self.data["events_truncated"]}
+        remaining = max(0, EVENT_LIMIT - len(self.data["events"]))
+        threshold = max(1, EVENT_LIMIT // 10)
+        state = ("truncated" if self.data["events_truncated"] else "full" if remaining == 0
+                 else "low" if remaining <= threshold else "available")
+        result = {"artifact": str(self.path), "events": len(self.data["events"]), "event_limit": EVENT_LIMIT,
+                  "remaining_events": remaining, "events_truncated": self.data["events_truncated"],
+                  "headroom": state, "rotation_recommended": state != "available",
+                  "warning_at_remaining_events": threshold}
+        if state != "available":
+            result["warning"] = ("Recorder history is truncated; preserve uncertainty. " if state == "truncated" else "") + (
+                "At a safe checkpoint, finish this recording, start a new segment and link both in the same run ledger. "
+                "closeout --previous is only for rechecking the same recording.")
+        return result
 
     def event(self, payload: dict, result: dict | None):
         action = payload.get("action")
@@ -312,7 +322,7 @@ def closeout(path: str, *, extras: list[str], derivatives: list[str], output: st
         validate_filesystem_path(previous, must_exist=True)
         prior = read_json_file(previous, max_bytes=4 * 1024 * 1024)
         if not isinstance(prior, dict) or prior.get("kind") != "desktop-closeout" or prior.get("recording") != path:
-            raise ValueError("Previous closeout must describe the same recording")
+            raise ValueError("--previous must be a closeout.json for the SAME recording; link different recording segments with evidence run checkpoint --artifact")
         previous_receipt = {"artifact": previous, "sha256": file_digest(Path(previous))}
     receipt = {"schema_version": 1, "kind": "desktop-closeout", "created": stamp(), "recording": path,
                "ownership": {"project": data["project"], "generation": data.get("generation"),

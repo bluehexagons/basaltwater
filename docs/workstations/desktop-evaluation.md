@@ -129,11 +129,51 @@ This offline change needs an updated controller CLI, with no desktop-helper rest
 
 Native status includes the active recorder artifact and remaining capacity. A
 duplicate recorder start returns its existing artifact and starts no extra job.
-At a safe checkpoint, finish/finalize the current recording, then start another
-and attach both segment paths to the SAME run ledger with `checkpoint --artifact`
-(repeat as needed). This links segments without resetting match clocks. Rotation
-is explicit, with a possible observation gap; it is not an automatic streaming
-journal or atomic recorder replacement.
+Updated helpers also attach `evidence_capacity` to action replies and compact
+captures. `headroom: low` and `rotation_recommended: true` start at 50 remaining
+events out of 500. `full` means no headroom; a further recorded action marks
+history `truncated`. A warning does not cancel completed input or rotate silently.
+Check headroom before each short batch: the observation-pair recipe uses three
+recorded events (one input, two capture attempts), and other launches/inputs can
+consume space too. Leave room for those operations; do not wait until 499/500.
+Old helpers without these fields still need explicit status checks and safe refresh.
+
+### Rotate a recording at a safe checkpoint
+
+Use one existing run ledger for the match. Substitute the exact recording paths
+returned by start/finish; the filenames below illustrate two different segments.
+
+```bash
+basaltw desktop --native status --json
+basaltw desktop --native evidence finish --json
+basaltw desktop --native evidence verify /absolute/private/segment-a.json --json
+basaltw desktop --native evidence closeout /absolute/private/segment-a.json \
+  --output /absolute/private/segment-a-closeout --json
+basaltw desktop --native evidence start --project /absolute/project --json
+basaltw desktop evidence run checkpoint /absolute/private/run/run.json \
+  --artifact /absolute/private/segment-a.json \
+  --artifact /absolute/private/segment-a-closeout/closeout.json \
+  --artifact /absolute/private/segment-b.json \
+  --note 'Rotated recording at a safe checkpoint; gap between finish and start' --json
+```
+
+Read every command's status before continuing. `finish` freezes and finalizes the
+journal; if its collection fails, retain the artifact and use `evidence finalize`
+on that same path. Verification failure is retained evidence, never a reason to
+replay input or rewrite history. A closeout receipt is saved even when verification
+is unhealthy. Record the failure and, if continuing is within scope, the explicit
+rotation gap and uncertainty in the ledger. `start` returns the new segment's real
+artifact; link that path after confirming it started. Finish/verify/closeout that
+segment at its own safe endpoint. Rotation preserves original match clocks and
+does not stop the application, restart the helper or change permission. It is
+manual, with an observation gap rather than an atomic recorder replacement.
+
+### Recheck the same recording
+
+`closeout --previous` links repeated checks of **the same recording**. It does
+not link segment A to segment B. Pass the prior `closeout.json` file, not its
+directory or the recording itself. Different recordings and their closeouts
+belong in `run checkpoint --artifact`, as above.
 
 ```bash
 basaltw desktop --native evidence closeout /absolute/private/recording-segment.json \

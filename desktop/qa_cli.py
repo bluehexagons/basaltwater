@@ -77,12 +77,12 @@ def add_qa_parser(commands: argparse._SubParsersAction, evidence: argparse._SubP
                                 help="Explicitly remove the hard limit with a source note; grants no permission. Omission keeps the current limit")
     start.add_argument("--json", action="store_true")
     closeout = evidence.add_parser("closeout", help="Save a new read-only inventory/verification receipt; never stop apps or delete media")
-    closeout.add_argument("artifact")
+    closeout.add_argument("artifact", help="Recording JSON artifact returned by evidence start/finish; not a directory or closeout receipt")
     closeout.add_argument("--retention", nargs=2, action="append", default=[], metavar=("RECEIPT", "SHA256"),
                           help="Explicitly pinned wait receipt for intentional ring evictions; repeat up to 16")
     closeout.add_argument("--extra", action="append", default=[], help="Extra PNG capture outside the recorder; repeat up to 50")
     closeout.add_argument("--derived", action="append", default=[], help="Literal crop manifest; repeat up to 16")
-    closeout.add_argument("--previous", help="Preserve a previous closeout receipt when rechecking restored evidence")
+    closeout.add_argument("--previous", help="Prior closeout.json for the SAME recording; different recording segments belong in evidence run checkpoint --artifact")
     closeout.add_argument("--process", nargs=2, action="append", default=[], metavar=("PID", "START_TICKS"),
                           help="Read-only exact process identity check; never claims normal exit or stops an active match")
     closeout.add_argument("--output")

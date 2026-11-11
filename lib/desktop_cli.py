@@ -22,6 +22,11 @@ class _NativeBackendAction(argparse.Action):
                 action.help = argparse.SUPPRESS
 
 
+class _RecipeUsageError(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        parser.error(self.const)
+
+
 def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     parser = subparsers.add_parser("desktop", help="Use the shared Debian desktop or opt in to native CachyOS automation")
     parser.add_argument("--native", action=_NativeBackendAction, nargs=0, default=False,
@@ -63,8 +68,15 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     for command in (recording, finishing, finalizing):
         command.add_argument("--json", action="store_true")
     for name in ("status", "stop", "logout", "windows", "doctor", "handoff", "revoke"):
-        command = commands.add_parser(name)
+        help_args = ({"help": "Open the human control window; changes no permission. KDE: desktop --native handoff",
+                      "description": "Open the human control window without transferring ownership or changing agent permission. "
+                                     "On CachyOS use: basaltw desktop --native handoff"} if name == "handoff" else {})
+        command = commands.add_parser(name, **help_args)
         command.add_argument("--json", action="store_true")
+        if name == "handoff":
+            command.add_argument("--native", action=_RecipeUsageError, nargs=0, dest="misplaced_native",
+                                 default=argparse.SUPPRESS, help=argparse.SUPPRESS,
+                                 const="Place --native before handoff: basaltw desktop --native handoff")
         if name == "windows":
             command.add_argument("--save-output", action="store_true", help="Save full JSON privately and print a bounded preview")
     wake = commands.add_parser("wake", help="Native KDE: wake sleeping displays without keyboard/pointer input; requires enabled agent control")
@@ -137,9 +149,12 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     launch = commands.add_parser("launch-status")
     launch.add_argument("launch")
     launch.add_argument("--generation", required=True)
-    sequence = commands.add_parser("sequence", help="Run up to 20 short JSON actions while agent control remains enabled")
+    sequence = commands.add_parser("sequence", help="Run up to 20 JSON actions within 20 seconds; screenshot after_ms delays total at most 5000 ms")
     sequence.add_argument("path")
     sequence.add_argument("--generation", required=True)
+    sequence.add_argument("--save-output", action="store_true", help="Retain all completion/failure/timing receipts privately and return their artifact path")
+    sequence.add_argument("--json", action=_RecipeUsageError, nargs=0, help=argparse.SUPPRESS,
+                         const="sequence already emits JSON; omit --json, or use --save-output to retain full receipts privately")
     control = commands.add_parser("control")
     control.add_argument("operation", choices=("enabled", "human-override", "disabled"))
     control.add_argument("--human-approved", action="store_true", help="Confirm explicit human approval for this state change; a desktop task alone is insufficient")
@@ -225,13 +240,18 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                 raise ValueError("Selected-monitor coordinate mapping requires --native")
             from desktop.coordinates import map_capture_points, map_observation_points
             if args.capture:
+                if args.geometry is not None or args.crop is not None:
+                    raise ValueError("--capture supplies geometry/crop; omit --geometry and --crop. Pass the saved JSON receipt, not its PNG")
                 from lib.atomic_io import read_json_file
                 validate_filesystem_path(args.capture, must_exist=True)
-                capture = read_json_file(args.capture, max_bytes=65536)
+                if Path(args.capture).is_dir() or Path(args.capture).suffix.lower() == ".png":
+                    raise ValueError("map-point --capture needs the saved JSON receipt (frame.json), not the PNG or a directory")
+                try:
+                    capture = read_json_file(args.capture, max_bytes=65536)
+                except ValueError as exc:
+                    raise ValueError("map-point --capture needs the saved JSON receipt (frame.json), not the PNG or a directory") from exc
                 if not isinstance(capture, dict):
                     raise ValueError("Expected a screenshot JSON receipt")
-                if args.geometry is not None or args.crop is not None:
-                    raise ValueError("--capture supplies geometry/crop; omit --geometry and --crop")
                 result = map_observation_points(capture, backend.status(), args.view_geometry, args.x, args.y,
                     view_origin=args.view_origin, to_x=args.to_x, to_y=args.to_y)
             else:
@@ -273,7 +293,8 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 start_new_session=True,
             )
-            result = {"pid": process.pid, "control_window_requested": True, "desktop_preserved": True}
+            result = {"pid": process.pid, "control_window_requested": True, "window_visibility": "unverified",
+                      "ownership_transferred": False, "permission_changed": False, "desktop_preserved": True}
         elif command == "start":
             if backend is runtime:
                 if args.remember or args.session_seconds != 0:
@@ -418,12 +439,7 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                     observation_output = None
                     if args.observe:
                         observation_output = str(Path(args.output).absolute()) if args.output else client.artifact_path()
-                        validate_filesystem_path(observation_output, check_writable=True)
-                        observation_path = Path(observation_output)
-                        if observation_path.suffix.lower() != ".png" or observation_path.exists() or observation_path.is_symlink():
-                            raise ValueError("Observation requires a new PNG path")
-                        if not observation_path.parent.is_dir():
-                            raise ValueError("Observation output requires an existing parent directory")
+                        client.validate_capture_output(observation_output)
                     payload.update({name: getattr(args, name) for name in ("generation", "geometry", "kind", "key", "text", "x", "y", "button")})
                     payload["codes"] = getattr(args, "codes", None)
                     client.validate_keycodes(payload)
@@ -458,11 +474,19 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                         or (result.get("state") == "stopped" and bool(result.get("last_failure"))))
         if getattr(args, "save_output", False):
             from desktop.observations import save_observation
-            result = save_observation(result)
+            try:
+                result = save_observation(result)
+            except (OSError, ValueError, RuntimeError) as exc:
+                result = {**result, "error": result.get("error", "Could not retain the result artifact; inspect receipts before further action"),
+                          "output_save_error": str(exc)}
+                exit_code = 1
         print(json.dumps(result, indent=2))
         return exit_code
     except (OSError, ValueError, RuntimeError, KeyError, subprocess.SubprocessError) as exc:
         result = getattr(exc, "receipt", {"error": str(exc)})
+        if args.desktop_command == "handoff" and backend is runtime:
+            result = {**result, "backend": "debian-xrdp", "permission_changed": False,
+                      "hint": "On CachyOS/KDE use 'basaltw desktop --native handoff' from the local graphical session. Opening the window does not transfer ownership or change permission."}
         if args.desktop_command == "input" and "input_delivery" not in result:
             from desktop.receipts import input_failure
             result = input_failure(exc, {"generation": args.generation}, stage="before-input")

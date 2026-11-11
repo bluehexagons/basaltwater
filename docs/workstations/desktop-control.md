@@ -22,9 +22,29 @@ Open **Agent Desktop Control** from KDE's application menu on CachyOS, or
 **Shared Desktop Control** on XRDP. These launchers also work while agents are
 blocked; they do not change permission until the human selects an action.
 Its return to enabled is approved when the human chooses that timer.
+
+## Handoff is not a permission change
+
 From the local KDE terminal, `basaltw desktop --native handoff` opens the same
 control window even with a stopped backend or blocked agents. Opening the
-window does not start a portal or change permission.
+window does not start a portal, transfer input ownership or change permission.
+The reply acknowledges a spawn request; visibility is unverified until observed.
+These are three separate actions:
+
+1. Open the human control window with `handoff`.
+2. Relinquish agent ownership by stopping your own action loop and handing over
+   the current application/task/evidence state. Opening a window does not stop
+   another worker or an already-running sequence.
+3. Change persistent agent permission only through the human's control-window
+   choice or an explicitly authorized `control ... --human-approved` request.
+
+Use `basaltw desktop --native handoff --json` on CachyOS, with `--native` before
+`handoff`. Bare `basaltw desktop handoff` selects Debian XRDP even on KDE; “Shared
+desktop is not configured” refers to that backend, not a missing KDE capability.
+Inspect the invoked installation/source if the explicit native route is missing;
+do not provision XRDP, enable agents, start a portal or restart a match to open
+the window. On Debian use `basaltw desktop handoff`; Windows uses its distinct
+[`desktop control`](windows-desktop.md) UI and pause contract.
 
 Closing the window, selecting observation, losing a browser connection, stopping
 the native helper, or restarting a backend never changes this durable permission.

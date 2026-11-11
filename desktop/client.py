@@ -31,6 +31,19 @@ def artifact_path() -> str:
     return str(directory / f"desktop-{time.time_ns()}-{secrets.token_hex(4)}.png")
 
 
+def validate_capture_output(output: str) -> str:
+    """Check a new PNG location before input, without reserving or overwriting it."""
+    if not isinstance(output, str):
+        raise ValueError("Capture output must be a new absolute PNG path string; omit output to generate one")
+    validate_filesystem_path(output, check_writable=True)
+    path = Path(output)
+    if not path.is_absolute() or path.suffix.lower() != ".png" or path.exists() or path.is_symlink():
+        raise ValueError("Capture requires a new absolute PNG path; omit output to generate a unique private path")
+    if not path.parent.is_dir():
+        raise ValueError("Capture output requires an existing parent directory")
+    return output
+
+
 def validate_window_wait_options(*, timeout: float, exclude_titles: list[str] | tuple[str, ...] | None = None,
                                  stable_seconds: float = 0) -> tuple[str, ...]:
     """Validate optional readiness filters before launching or polling."""
@@ -221,6 +234,8 @@ def validate_text_delay(payload: dict[str, Any]) -> None:
     if delay is None:
         return
     if payload.get("action") != "input" or payload.get("kind") != "text":
+        if payload.get("action") == "screenshot":
+            raise ValueError("Sequence screenshots use after_ms; delay_ms applies only to text input")
         raise ValueError("Typing delay applies only to text input")
     text = payload.get("text")
     if not isinstance(text, str) or len(text) > 1024 or "\0" in text:
@@ -435,6 +450,8 @@ def run_sequence(path: str, generation: str, *, backend=runtime) -> dict[str, An
     steps = json.loads(Path(path).read_text())
     if not isinstance(steps, list) or not 1 <= len(steps) <= 20:
         raise ValueError("Desktop sequences require 1 to 20 actions")
+    outputs = set()
+    delayed_ms = 0
     for step in steps:
         if (not isinstance(step, dict) or step.get("action") not in ("input", "window", "screenshot", "windows")
                 or any(key in step for key in ("generation", "control_revision", "lease"))):
@@ -446,6 +463,25 @@ def run_sequence(path: str, generation: str, *, backend=runtime) -> dict[str, An
         validate_observation_option(step)
         if step.get("action") == "screenshot":
             validate_capture_max_age(step.get("max_age_seconds", 60))
+            delay = step.get("after_ms", 0)
+            if type(delay) is not int or not 0 <= delay <= 5000:
+                raise ValueError("Screenshot after_ms must be an integer from 0 through 5000")
+            delayed_ms += delay
+            if delayed_ms > 5000:
+                raise ValueError("Sequence capture delays must total at most 5000 ms")
+            if type(step.get("next_frame", False)) is not bool:
+                raise ValueError("Screenshot next_frame must be a boolean")
+            if step.get("next_frame", False) is not False and backend is runtime:
+                raise ValueError("Subsequent-frame capture requires --native; omit next_frame on Debian")
+            output = step.get("output")
+            if output is None:
+                output = artifact_path()
+            step["output"] = validate_capture_output(output)
+            if Path(output).resolve() in outputs:
+                raise ValueError("Each sequence capture needs a different new PNG path")
+            outputs.add(Path(output).resolve())
+        elif "after_ms" in step:
+            raise ValueError("after_ms applies only to sequence screenshots")
         validate_capture_crop(step, backend=backend)
         if step.get("kind") == "keycode" and backend is runtime:
             raise ValueError("Physical keycodes require the native desktop backend")
@@ -460,26 +496,53 @@ def run_sequence(path: str, generation: str, *, backend=runtime) -> dict[str, An
     if any(step.get("observation_id") is not None for step in steps) and "observation-input" not in current.get("input_capabilities", []):
         raise ValueError("Helper does not support observation-bound input; update and restart it at a safe checkpoint")
     results = []
-    deadline = time.monotonic() + 20
+    timings = []
+    started = time.monotonic()
+    deadline = started + 20
+
+    def finish_timing():
+        timing.update(finished_monotonic_ns=time.monotonic_ns(),
+                      elapsed_ms=(time.monotonic() - step_started) * 1000)
+        timings.append(timing)
+
     try:
         for step in steps:
+            step_started = time.monotonic()
+            timing = {"action": step["action"], "started_monotonic_ns": time.monotonic_ns(),
+                      "since_sequence_start_ms": (step_started - started) * 1000,
+                      "requested_delay_ms": step.get("after_ms", 0)}
             if time.monotonic() >= deadline:
                 raise RuntimeError("Desktop sequence exceeded its 20-second budget")
+            delay_started = time.monotonic()
+            if step.get("after_ms"):
+                time.sleep(min(step["after_ms"] / 1000, remaining_seconds(deadline)))
+            timing["actual_delay_ms"] = (time.monotonic() - delay_started) * 1000
+            remaining_seconds(deadline)
             observed = backend.status()
             if observed.get("generation") != generation or observed.get("control_revision") != revision:
                 raise RuntimeError("Desktop control changed during the sequence; observe before retrying")
             if observed.get("agent_control") != "enabled":
                 raise RuntimeError("Agent desktop control is " + str(observed.get("agent_control")))
-            result = send_action({**step, "generation": generation, "control_revision": revision}, deadline=deadline, backend=backend)
+            timing["request_started_monotonic_ns"] = time.monotonic_ns()
+            request = {key: value for key, value in step.items() if key != "after_ms"}
+            result = send_action({**request, "generation": generation, "control_revision": revision}, deadline=deadline, backend=backend)
+            if step["action"] == "screenshot" and step.get("next_frame") and result.get("initial_frame_skipped") is not True:
+                result = {**result, "error": "Backend did not confirm subsequent-frame capture; inspect before further input"}
+            finish_timing()
             if "error" in result:
                 return {"generation": generation, "error": result["error"], "completed": len(results),
-                        "results": results, "failed_action_index": len(results), "failed_action": result}
+                        "results": results, "timings": timings,
+                        "failed_action_index": len(results), "failed_action": result}
+            if step["action"] == "screenshot":
+                from desktop.observations import compact_capture
+                result = compact_capture(result)
             results.append(result)
-        return {"generation": generation, "completed": len(results), "results": results}
+        return {"generation": generation, "completed": len(results), "results": results, "timings": timings}
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         # send_action wraps unstructured input transport errors. Plain errors
         # here are validation/deadline/control refusals before this step's input.
         failure = (dict(exc.receipt) if isinstance(exc, DesktopRequestError) else
                    input_failure(exc, step) if step["action"] == "input" else {"error": str(exc)})
+        finish_timing()
         return {"generation": generation, "error": str(exc), "completed": len(results), "results": results,
-                "failed_action_index": len(results), "failed_action": failure}
+                "timings": timings, "failed_action_index": len(results), "failed_action": failure}

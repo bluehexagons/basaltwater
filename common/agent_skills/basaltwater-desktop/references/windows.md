@@ -25,9 +25,14 @@ For a brief, already-observed interaction, `desktop sequence /absolute/steps.jso
 Omit generation and control metadata inside steps. The CLI uses one observed
 control revision; a human intervention invalidates the remaining actions.
 Input requires current full-desktop geometry, window actions require identity,
-and screenshots require an explicit new output path. Errors report the completed
-prefix; there is no rollback or automatic retry. Keep waits and slow application
-work outside sequences.
+and screenshots can omit `output` to generate unique private PNG paths. Explicit
+paths must be new PNGs under existing writable parents; all are checked before
+input. Errors retain the completed prefix and failed action; never replay input
+to repair a later observation. Screenshot-only `after_ms` delays are 0–5000 ms,
+total at most 5000 ms within the 20-second sequence budget. The result retains
+actual timing. Use `--save-output` for a private result JSON and short preview.
+See the [one-input/two-capture recipe](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/short-observation-sequences.md).
+Keep slow application work outside sequences.
 
 Run `desktop doctor` for session, dependency and XRDP service diagnostics. It
 does not start or restart anything and does not capture user content. A healthy

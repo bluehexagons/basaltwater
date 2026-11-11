@@ -188,6 +188,12 @@ use paced text without `--observation`, then verify the delivered text.
 
 ## Planner and operator workflow
 
+For one inspected input followed by two delayed captures, use the
+[bounded observation recipe](short-observation-sequences.md). It retains the
+completed prefix and actual timing when a later capture fails; never replay
+input to repair evidence. Linux sequence JSON and native Windows keyboard
+sequences are separate command contracts.
+
 Keep strategic reasoning outside the short action loop. A planner can use
 high reasoning and a compact checkpoint: phase/turn, resources, board,
 objective, previous verified effect and unresolved uncertainty. It returns

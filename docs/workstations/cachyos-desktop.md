@@ -70,6 +70,10 @@ It is installed with the skill; use it for exact procedures and limits.
 
 ## Post-input observations
 
+For a short transition without reasoning between captures, use the
+[one-input/two-observation recipe](short-observation-sequences.md). It adds bounded
+delays to existing sequences and retains completed input if capture fails.
+
 After inspecting a fresh capture and confirming focus, use its actual generation,
 dimensions and coordinates:
 
@@ -201,6 +205,10 @@ values, argv and portal credentials. It caps events at 500 and task attachments
 at 50 and reports truncation; only this helper's desktop actions are observed.
 Process snapshots can still be running or unverified and are not proof of
 completion. Git lookup is bounded; unavailable revisions remain null.
+Action replies expose recorder headroom and recommend rotation with 50 events
+remaining. Follow the [complete segment rotation example](desktop-evaluation.md#rotate-a-recording-at-a-safe-checkpoint);
+different recordings link in the run ledger. `closeout --previous` only links
+rechecks of the same recording.
 
 Finishing freezes the journal before collecting task status outside the portal
 request budget. If interrupted, or if the helper stops, use the saved path from

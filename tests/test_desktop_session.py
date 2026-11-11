@@ -579,14 +579,16 @@ class DesktopProductivityTests(unittest.TestCase):
                        {"agent_control": "human-override"}, {"agent_control": "disabled"}):
             with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
                 path = Path(directory) / "steps.json"
-                path.write_text(json.dumps([{"action": "screenshot", "output": "/private/first.png"},
+                output = str(Path(directory) / "first.png")
+                path.write_text(json.dumps([{"action": "screenshot", "output": output},
                                             {"action": "windows"}]))
                 request.reset_mock()
+                request.return_value = {"output": output}
                 with patch.object(runtime, "status", side_effect=[before, before, {**before, **change}]):
                     result = client.run_sequence(str(path), "g")
                 self.assertEqual(result["completed"], 1)
                 self.assertIn("error", result)
-                request.assert_called_once_with({"action": "screenshot", "output": "/private/first.png",
+                request.assert_called_once_with({"action": "screenshot", "output": output,
                                                 "generation": "g", "control_revision": "r", "deadline": ANY})
 
     @patch.object(runtime, "request")

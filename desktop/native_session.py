@@ -501,6 +501,8 @@ class NativeSession:
             if self.evidence:
                 try:
                     self.evidence.event(payload, result)
+                    if result is not None:
+                        result["evidence_capacity"] = self.evidence.capacity()
                 except (OSError, ValueError, RuntimeError):
                     # A completed input must never look like a retryable failure
                     # merely because recording ran out of disk space.

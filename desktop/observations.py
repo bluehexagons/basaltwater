@@ -81,7 +81,7 @@ def compact_capture(result: dict) -> dict:
         "observation_id", "coordinate_space", "window",
         "pixel_sha256", "artifact_sha256", "frame_received_at", "frame_received_monotonic_ns", "frame_pts_ns",
         "initial_frame_skipped", "capture_freshness", "last_input", "error", "reason", "dispatch_stage",
-        "input_delivery", "input_id", "evidence_error") if key in result}
+        "input_delivery", "input_id", "evidence_error", "evidence_capacity") if key in result}
 
 
 def save_observation(result: dict) -> dict:
@@ -104,7 +104,7 @@ def save_observation(result: dict) -> dict:
             "counts": {},
             "preview": {},
         }
-        for key in ("generation", "pid", "root", "truncated", "coverage", "condition", "state", "error"):
+        for key in ("generation", "pid", "root", "truncated", "coverage", "condition", "state", "error", "completed", "failed_action_index"):
             value = result.get(key)
             if key in result and isinstance(value, (str, int, float, bool, type(None))):
                 summary[key] = value[:512] if isinstance(value, str) else value
@@ -119,6 +119,11 @@ def save_observation(result: dict) -> dict:
                  if isinstance((value := item.get(field)), (str, int))}
                 for item in items[:3] if isinstance(item, dict)
             ]
+        if isinstance(result.get("results"), list):
+            summary["counts"]["results"] = len(result["results"])
+        if isinstance(result.get("failed_action"), dict):
+            summary["failed_action"] = {key: result["failed_action"][key] for key in
+                ("reason", "dispatch_stage", "input_delivery", "input_id") if key in result["failed_action"]}
         return summary
     except BaseException:
         shutil.rmtree(directory)
