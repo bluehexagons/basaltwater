@@ -14,7 +14,7 @@ import unittest
 from unittest.mock import Mock, patch
 from urllib.parse import urlencode
 
-from common.service_tools.privilege_approval import ApprovalServer, PanelApprovalServer, render_queue
+from common.service_tools.privilege_approval import ApprovalHandler, ApprovalServer, PanelApprovalServer, render_queue
 from common.service_tools.privilege_broker import Broker
 from common.service_tools import web_panel_approval
 from common.web_panel_steps import build_web_panel_manifest
@@ -396,6 +396,55 @@ class IntegratedApprovalTests(ApprovalTests):
         self.assertEqual(status, 409)
         self.assertIn(f'<a href="{self.path}">Check request status</a>', content)
         self.assertIn('<a href="/approvals">All requests</a>', content)
+
+    def test_rejected_origin_consumes_split_form_before_closing_proxy_connection(self):
+        body = urlencode(self.form()).encode()
+        reading = threading.Event()
+        original_setup = ApprovalHandler.setup
+
+        def observe_read(handler):
+            original_setup(handler)
+            reader = handler.rfile
+            handler.rfile = Mock(wraps=reader)
+
+            def read(length):
+                reading.set()
+                return reader.read(length)
+
+            handler.rfile.read.side_effect = read
+
+        with patch.object(ApprovalHandler, "setup", observe_read), socket.socket(socket.AF_UNIX) as connection:
+            connection.settimeout(5)
+            connection.connect(self.server.server_address)
+            connection.sendall((f"POST {self.path} HTTP/1.1\r\nHost: vm.example\r\n"
+                                "X-Basaltwater-User: operator\r\nOrigin: null\r\n"
+                                "Content-Type: application/x-www-form-urlencoded\r\n"
+                                f"Content-Length: {len(body)}\r\n\r\n").encode())
+            self.assertTrue(reading.wait(2), "A bounded form must be consumed before an origin rejection closes the socket")
+            connection.sendall(body)
+            response = http.client.HTTPResponse(connection)
+            response.begin()
+            self.assertEqual(response.status, 409)
+            self.assertIn("Approval was not confirmed", response.read().decode())
+        self.assertEqual(self.broker.status(self.request["id"])["state"], "pending")
+        self.runner.assert_not_called()
+
+    def test_truncated_form_cannot_authorize_even_with_complete_fields(self):
+        body = urlencode(self.form()).encode()
+        with socket.socket(socket.AF_UNIX) as connection:
+            connection.settimeout(5)
+            connection.connect(self.server.server_address)
+            connection.sendall((f"POST {self.path} HTTP/1.1\r\nHost: vm.example\r\n"
+                                f"X-Basaltwater-User: operator\r\nOrigin: {self.origin}\r\n"
+                                "Content-Type: application/x-www-form-urlencoded\r\n"
+                                f"Content-Length: {len(body) + 1}\r\n\r\n").encode() + body)
+            connection.shutdown(socket.SHUT_WR)
+            response = http.client.HTTPResponse(connection)
+            response.begin()
+            self.assertEqual(response.status, 409)
+            response.read()
+        self.assertEqual(self.broker.status(self.request["id"])["state"], "pending")
+        self.runner.assert_not_called()
 
     def test_invalid_request_path_has_only_safe_recovery_link(self):
         status, _, content = self.call("POST", path='//evil.example/<script>', body="", headers={

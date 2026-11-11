@@ -278,15 +278,20 @@ class ApprovalHandler(BaseHTTPRequestHandler):
             direct_action = admin_action(self.path) if self.path.startswith(ADMIN_PREFIX) else None
             if direct_action is None:
                 request_id = self.request_id()
-            if self.headers.get_all("Origin") != [self.approval_origin]:
-                raise ValueError("Cross-origin approval rejected")
             if (self.headers.get_all("Content-Type") != ["application/x-www-form-urlencoded"]
                 or self.headers.get_all("Transfer-Encoding") is not None or len(self.headers.get_all("Content-Length") or []) != 1):
                 raise ValueError("Invalid form")
             length = int(self.headers["Content-Length"])
             if not 0 < length <= 2048:
                 raise ValueError("Invalid form size")
-            form = parse_qs(self.rfile.read(length).decode("utf-8"), strict_parsing=True, max_num_fields=3)
+            # Consume the bounded body before rejecting its origin. Closing a
+            # Unix proxy connection with unread data can reset the response.
+            body = self.rfile.read(length)
+            if len(body) != length:
+                raise ValueError("Incomplete approval form")
+            form = parse_qs(body.decode("utf-8"), strict_parsing=True, max_num_fields=3)
+            if self.headers.get_all("Origin") != [self.approval_origin]:
+                raise ValueError("Cross-origin approval rejected")
             if direct_action is not None:
                 request = approve_review(self.server, direct_action, form)
                 self.respond(303, "", location="/requests/" + request["id"])

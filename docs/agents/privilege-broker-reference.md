@@ -105,6 +105,9 @@ unauthenticated request feed. Login failures are globally limited to 20 per
 minute on the standalone listener; integrated routes use the panel's Nginx
 login throttling and fail2ban policy. Keep access source-restricted: flooding can affect availability.
 Approval origins support DNS names, IPv4 literals, and bracketed IPv6 literals.
+Authenticated forms with valid bounded framing are read completely before origin
+rejection, so an unread body cannot reset the rejection response on the Unix
+proxy connection. A truncated body cannot authorize an action.
 Controller-to-target arguments carry the effective approval hostname, including
 an explicit override. IPv4 CIDR setup targets such as `10.0.0.20/16` use the
 address `10.0.0.20` for approvals; the prefix remains part of setup metadata.
