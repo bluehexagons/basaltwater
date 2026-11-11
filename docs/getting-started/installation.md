@@ -388,6 +388,13 @@ unmanaged existing directories. Successful installs record
 installations require the [intermediate-version cutover](../migration-guide.md) first;
 the installer refuses to create a parallel namespace beside an old installation.
 
+Reinstallation preserves private channel state alongside the source-owned
+`.basaltwater/cleanup.json` policy. The policy follows the selected source;
+local edits to it are refused like other source changes. Other tracked files
+under `.basaltwater` still cause a managed-data refusal. If an older installer
+rejects a clean checkout solely because this policy is tracked, download the
+current installer and rerun the same command.
+
 Activation failures and HUP/INT/TERM interruptions restore the previous source
 tree. The installer keeps staged or failed source alongside it for inspection
 and prints recovery paths if restoration fails. SIGKILL or power loss cannot

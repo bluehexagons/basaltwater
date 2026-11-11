@@ -145,9 +145,15 @@ class TestInstallScript(unittest.TestCase):
             "GIT_COMMITTER_NAME": "basaltwater tests",
             "GIT_COMMITTER_EMAIL": "tests@example.invalid",
         })
+        policy = Path(source_root, ".basaltwater", "cleanup.json")
+        policy.parent.mkdir()
+        policy.write_text('{"version": 1, "rules": []}\n', encoding="utf-8")
+        Path(source_root, ".gitignore").write_text(
+            "/.basaltwater/*\n!/.basaltwater/cleanup.json\n", encoding="utf-8",
+        )
         for git_args in [
             ["git", "init", "--initial-branch=main", source_root],
-            ["git", "-C", source_root, "add", "basaltwater.py"],
+            ["git", "-C", source_root, "add", "basaltwater.py", ".gitignore", ".basaltwater/cleanup.json"],
             ["git", "-C", source_root, "commit", "-m", "fixture"],
             ["git", "-C", source_root, "tag", "v1.0.0"],
         ]:
@@ -885,6 +891,87 @@ class TestInstallScript(unittest.TestCase):
             )
             self.assertNotEqual(changed_source.returncode, 0)
             self.assertIn("local changes", changed_source.stderr)
+
+    def test_cachyos_reinstall_updates_policy_and_preserves_private_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _home, log_path, environment = self._create_fixture(directory)
+            environment.update(BASALTWATER_TEST_NON_ROOT="1", BASALTWATER_TEST_OS_ID="cachyos")
+            target = Path(directory, "installed")
+            command = ["sh", INSTALL_SCRIPT, "--install-dir", str(target)]
+            first = subprocess.run(command + ["--channel", "branch-main"],
+                                   env=environment, text=True, capture_output=True, timeout=20)
+            self.assertEqual(first.returncode, 0, first.stderr)
+            state = target / ".basaltwater"
+            (state / "nested").mkdir(mode=0o700)
+            for name in (".session", "nested/private.json"):
+                (state / name).write_text("retained private fixture", encoding="utf-8")
+                (state / name).chmod(0o600)
+            policy = Path(environment["BASALTWATER_REPOSITORY_URL"], ".basaltwater/cleanup.json")
+            updated = '{"version": 1, "rules": [], "instructions": "updated fixture"}\n'
+            policy.write_text(updated, encoding="utf-8")
+            subprocess.run([
+                "git", "-C", environment["BASALTWATER_REPOSITORY_URL"],
+                "-c", "user.name=basaltwater tests", "-c", "user.email=tests@example.invalid",
+                "commit", "-am", "Update fixture cleanup policy",
+            ], check=True, capture_output=True, text=True)
+
+            result = subprocess.run(command + ["--local-setup", "agent_cachyos", "--codex", "--audio-tools"],
+                                    env=environment, text=True, capture_output=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((state / "cleanup.json").read_text(encoding="utf-8"), updated)
+            self.assertFalse((state / ".basaltwater").exists())
+            for name in (".session", "nested/private.json"):
+                self.assertEqual((state / name).read_text(encoding="utf-8"), "retained private fixture")
+                self.assertEqual((state / name).stat().st_mode & 0o777, 0o600)
+            self.assertEqual(json.loads((state / "channel.json").read_text())["channel"], "branch-main")
+            self.assertEqual((state / "managed-install").read_text(), "basaltwater-v1\n")
+            clean = subprocess.run(["git", "-C", str(target), "status", "--porcelain"],
+                                   check=True, capture_output=True, text=True)
+            self.assertEqual(clean.stdout, "")
+            calls = [json.loads(line) for line in Path(log_path).read_text().splitlines()]
+            self.assertEqual(calls[-1], ["setup", "agent_cachyos", "localhost", "testuser", "--codex", "--audio-tools"])
+            backup = Path(glob.glob(str(target) + ".backup.*")[0])
+            self.assertNotEqual((backup / ".basaltwater/cleanup.json").read_text(), updated)
+
+    def test_reinstall_refuses_local_cleanup_policy_changes(self):
+        for change in ("unstaged", "staged", "deleted"):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
+                _home, log_path, environment = self._create_fixture(directory)
+                target = Path(directory, "installed")
+                command = ["sh", INSTALL_SCRIPT, "--install-dir", str(target)]
+                subprocess.run(command, env=environment, check=True, capture_output=True, timeout=20)
+                policy = target / ".basaltwater/cleanup.json"
+                if change == "deleted":
+                    policy.unlink()
+                else:
+                    policy.write_text("local policy change", encoding="utf-8")
+                if change == "staged":
+                    subprocess.run(["git", "-C", str(target), "add", ".basaltwater/cleanup.json"],
+                                   check=True, capture_output=True)
+                Path(log_path).unlink()
+                result = subprocess.run(command, env=environment, text=True, capture_output=True, timeout=20)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("local changes", result.stderr)
+                self.assertFalse(Path(log_path).exists())
+                self.assertEqual(glob.glob(str(target) + ".backup.*"), [])
+                self.assertEqual(policy.exists(), change != "deleted")
+                if policy.exists():
+                    self.assertEqual(policy.read_text(), "local policy change")
+
+    def test_reinstall_still_refuses_tracked_private_channel_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _home, log_path, environment = self._create_fixture(directory)
+            target = Path(directory, "installed")
+            command = ["sh", INSTALL_SCRIPT, "--install-dir", str(target)]
+            subprocess.run(command, env=environment, check=True, capture_output=True, timeout=20)
+            subprocess.run(["git", "-C", str(target), "add", "-f", ".basaltwater/channel.json"],
+                           check=True, capture_output=True)
+            Path(log_path).unlink()
+            result = subprocess.run(command, env=environment, text=True, capture_output=True, timeout=20)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("managed data path is tracked", result.stderr)
+            self.assertFalse(Path(log_path).exists())
+            self.assertEqual(glob.glob(str(target) + ".backup.*"), [])
 
     def test_channel_option_checks_out_release_tag(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -728,14 +728,21 @@ fi
 
 if [ -e "$INSTALL_DIR" ] && [ -d "$INSTALL_DIR/.git" ]; then
     for data_name in .basaltwater state deployments worktrees cachyos-t3; do
-        if [ -n "$(git -C "$INSTALL_DIR" ls-files -- "$data_name")" ]; then
+        tracked_data=$(git -C "$INSTALL_DIR" ls-files -- "$data_name")
+        # The cleanup policy is source-owned; all other files here are private
+        # installation state and must never be tracked by the source repository.
+        if [ "$data_name" = .basaltwater ] && [ "$tracked_data" = .basaltwater/cleanup.json ]; then
+            continue
+        fi
+        if [ -n "$tracked_data" ]; then
             fail "managed data path is tracked by the source repository: $data_name"
         fi
     done
     existing_changes=$(git -C "$INSTALL_DIR" status --porcelain -- . \
         ':(exclude).basaltwater' ':(exclude)state' \
         ':(exclude)cachyos-t3' ':(exclude)deployments' ':(exclude)worktrees')
-    if [ -n "$existing_changes" ]; then
+    policy_changes=$(git -C "$INSTALL_DIR" status --porcelain --untracked-files=no -- .basaltwater/cleanup.json)
+    if [ -n "$existing_changes$policy_changes" ]; then
         fail "existing install has local changes; commit or stash them before reinstalling"
     fi
 fi
@@ -889,9 +896,16 @@ if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR/state" ]; then
     fi
 fi
 if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR/.basaltwater" ]; then
-    if ! cp -a "$BACKUP_DIR/.basaltwater" "$INSTALL_DIR/.basaltwater"; then
-        fail "could not preserve existing channel state"
-    fi
+    mkdir -p "$INSTALL_DIR/.basaltwater"
+    for state_path in "$BACKUP_DIR/.basaltwater"/* \
+        "$BACKUP_DIR/.basaltwater"/.[!.]* "$BACKUP_DIR/.basaltwater"/..?*; do
+        [ -e "$state_path" ] || [ -L "$state_path" ] || continue
+        # Keep the policy from the selected source, not the previous checkout.
+        [ "${state_path##*/}" != cleanup.json ] || continue
+        if ! cp -a "$state_path" "$INSTALL_DIR/.basaltwater/"; then
+            fail "could not preserve existing channel state"
+        fi
+    done
 fi
 for data_name in deployments worktrees cachyos-t3; do
     if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR/$data_name" ]; then
