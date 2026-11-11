@@ -131,6 +131,7 @@ TOOLS = (
     "magick", "convert", "identify", "exiftool",
     "pdfinfo", "pdftoppm", "pdftotext",
     "sox", "soxi", "arecord", "aplay", "amidi", "aconnect", "pactl", "paplay", "parecord",
+    "aseqdump", "pw-cli", "pw-dump", "pw-top", "pw-play", "pw-record", "wpctl",
     *MUSESCORE_EXECUTABLES,
     "rg", "jq", "aws", "basaltwater-web", "basaltwater-playwright-mcp", "firefox", "firefox-esr", "butler", "steamcmd", *DESKTOP_APPLICATIONS,
 )

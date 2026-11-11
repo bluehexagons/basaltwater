@@ -83,7 +83,7 @@ and the existing CachyOS desktop.
 | LibreOffice | `--office`; `pc_dev` selects it by default | Use the existing desktop's package manager |
 | Remmina | Included with `pc_dev`; otherwise `--apt-install remmina` with desired plugins | `--remmina` includes common desktop plugins |
 | Media conversion and metadata | `--av-tools`: ImageMagick, FFmpeg/ffprobe, ExifTool | `--av-tools`: native equivalents |
-| Audio/MIDI inspection and signal processing | `--audio-tools`: SoX, ALSA utilities, PulseAudio clients; saved APT selections | Use existing desktop package management |
+| Audio/MIDI inspection and signal processing | `--audio-tools`: SoX, ALSA utilities, PulseAudio clients; saved APT selections | `--audio-tools`: native SoX, ALSA/MIDI and PulseAudio-compatible clients; verifies existing KDE PipeWire/WirePlumber clients |
 | PDF metadata, text extraction and page rendering | `--pdf-tools`: Poppler utilities; saved APT selections | Use existing desktop package management |
 | OpenGL diagnostics and tracing | `--gl-tools`: Mesa utilities, apitrace | `--gl-tools`: native equivalents |
 | Other native creative apps | Repeat `--apt-install PACKAGE` for packages available in the configured Debian repositories | `--scribus`, `--kdenlive`, `--ardour`, `--lmms`, `--freecad`, `--kicad`, `--obs` |

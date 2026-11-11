@@ -68,6 +68,14 @@ CACHYOS_AUTOMATION_PACKAGES = (
     "gst-plugin-pipewire", "gtk3", "libxkbcommon", "libkscreen",
 )
 CACHYOS_AV_COMMANDS = ("ffmpeg", "ffprobe", "magick", "exiftool")
+CACHYOS_AUDIO_PACKAGES = ("sox", "alsa-utils", "libpulse")
+# PipeWire/WirePlumber belong to the existing KDE installation. Check their
+# clients without installing/replacing audio servers or changing user routing.
+CACHYOS_AUDIO_COMMANDS = (
+    "sox", "soxi", "aplay", "arecord", "amidi", "aconnect", "aseqdump",
+    "pactl", "paplay", "parecord", "pw-cli", "pw-dump", "pw-top",
+    "pw-play", "pw-record", "wpctl",
+)
 CACHYOS_GL_COMMANDS = ("glxinfo", "vulkaninfo", "apitrace")
 CACHYOS_REMMINA_PACKAGES = ("freerdp", "libvncserver", "spice-gtk", "gtk-vnc", "libsecret")
 
@@ -230,6 +238,8 @@ def cachyos_packages(config: SetupConfig) -> list[str]:
         commands += [("godot", "godot")]
     if config.install_av_tools:
         commands += [("ffmpeg", "ffmpeg"), ("magick", "imagemagick"), ("exiftool", "perl-image-exiftool")]
+    if config.install_audio_tools:
+        packages.extend(CACHYOS_AUDIO_PACKAGES)
     if config.install_gl_tools:
         commands += [("glxinfo", "mesa-utils"), ("vulkaninfo", "vulkan-tools"), ("apitrace", "apitrace")]
     if config.install_game_dev:
@@ -478,6 +488,7 @@ def report_cachyos_readiness(config: SetupConfig) -> None:
         print("  Git LFS: filters present; custom filters and remote transfers require a project test")
     for enabled, commands in (
         (config.install_av_tools, CACHYOS_AV_COMMANDS),
+        (config.install_audio_tools, CACHYOS_AUDIO_COMMANDS),
         (config.install_gl_tools, CACHYOS_GL_COMMANDS),
     ):
         if enabled:

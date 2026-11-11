@@ -223,6 +223,7 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
                 CACHYOS_AUTOMATION_PACKAGES, CACHYOS_DESKTOP_PACKAGES,
                 CACHYOS_SYSADMIN_PACKAGES, CACHYOS_AV_COMMANDS, CACHYOS_GL_COMMANDS,
                 CACHYOS_REMMINA_PACKAGES, desktop_automation_requested,
+                CACHYOS_AUDIO_PACKAGES, CACHYOS_AUDIO_COMMANDS,
             )
             from common.cachyos_software import selected_software
             from common.cachyos_development import (
@@ -292,6 +293,8 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
                     selected_packages[package] = True
             if config.install_sysadmin_tools:
                 selected_packages.update({package: True for _, package in CACHYOS_SYSADMIN_PACKAGES})
+            if config.install_audio_tools:
+                selected_packages.update({package: True for package in CACHYOS_AUDIO_PACKAGES})
             if config.install_remmina:
                 selected_packages.update({package: True for package in CACHYOS_REMMINA_PACKAGES})
             native_commands = [command for field, command, _ in CACHYOS_DESKTOP_PACKAGES
@@ -299,6 +302,7 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
             native_commands.extend(command for command, _ in selected_software(config))
             for enabled, selected_commands in (
                 (config.install_av_tools, CACHYOS_AV_COMMANDS),
+                (config.install_audio_tools, CACHYOS_AUDIO_COMMANDS),
                 (config.install_gl_tools, CACHYOS_GL_COMMANDS),
                 (config.install_sysadmin_tools, tuple(command for command, _ in CACHYOS_SYSADMIN_PACKAGES)),
                 (config.install_sunshine, ("sunshine",)),

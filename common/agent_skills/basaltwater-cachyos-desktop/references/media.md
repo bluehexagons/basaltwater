@@ -5,6 +5,15 @@ before version-sensitive actions. Choose Inkscape for vector geometry, GIMP
 for raster cleanup, Krita for painting/sprites/textures, Audacity for sound
 touch-ups and Shotcut/Kdenlive for video timelines. `--av-tools` supplies
 FFmpeg/ffprobe, ImageMagick 7's `magick` and ExifTool on CachyOS.
+`--audio-tools` adds native SoX, ALSA/MIDI utilities and PulseAudio-compatible
+clients while preserving the default KDE PipeWire/WirePlumber stack. Setup and
+`basaltw local cachyos-doctor --json` check those commands and the existing `pw-cli`,
+`pw-dump`, `pw-top`, `pw-play`, `pw-record` and `wpctl` without recording or
+changing routing. Use `wpctl status`, `pw-dump` or `pactl list short sources`
+only when session/device inspection is needed; their output is private operational
+state. Recording, playback, volume/default-device changes and MIDI connections
+must follow the task's authorized scope. Command presence does not qualify
+physical audio, plugin formats or latency.
 
 Preserve SVG/XCF/KRA/AUP3/MLT editable task copies and linked resources. Export
 delivery files separately, wait for completion, reopen sources and exports,

@@ -26,18 +26,45 @@ selection; do not start setup just to inspect readiness.
 | Selection | Debian | Existing CachyOS desktop |
 | --- | --- | --- |
 | `--musescore` / `--no-musescore` | Native `musescore3`; version supplied by the configured Debian release | Native `musescore`; executable `mscore` |
-| `--audio-tools` | Expands to saved `--apt-install` selections: `sox`, `libsox-fmt-all`, `alsa-utils`, `pulseaudio-utils` | Unsupported; select native packages with the desktop's normal package manager |
+| `--audio-tools` | Expands to saved `--apt-install` selections: `sox`, `libsox-fmt-all`, `alsa-utils`, `pulseaudio-utils` | Saved native selection: `sox`, `alsa-utils`, `libpulse`; checks the existing KDE PipeWire/WirePlumber clients |
 | `--pdf-tools` | Expands to saved `--apt-install poppler-utils`: `pdfinfo`, `pdftoppm`, `pdftotext` | Unsupported; select native packages with the desktop's normal package manager |
 | `--av-tools` | FFmpeg/ffprobe, ImageMagick, ExifTool | Native equivalents |
 | `--audacity` | Native audio editor | Native audio editor |
 
 The audio and PDF bundles deduplicate their packages, preserve explicit APT
 selections and round-trip through setup/remote arguments and saved state.
-They have no `--no-audio-tools` or `--no-pdf-tools` switch: packages are ordinary
-APT selections after expansion. Removing a selection does not uninstall packages.
+They have no `--no-audio-tools` or `--no-pdf-tools` switch. Debian packages are
+ordinary APT selections after expansion; CachyOS retains the audio flag for
+`basaltw refresh`. Omitting the flag on a patch preserves its saved selection.
+Removing a selection does not uninstall packages.
 The audio bundle installs
 clients and processing tools, not an audio daemon, virtual device, default
 routing policy, MIDI permission change or SoundFont bundle.
+
+For an existing default CachyOS KDE desktop, append `--audio-tools` to the
+existing setup command, for example:
+
+```bash
+basaltw setup agent_cachyos localhost agent --codex --audio-tools --av-tools --dry-run
+```
+
+Use the actual desktop account and retain the rest of the existing setup options.
+The native additions are [SoX](https://archlinux.org/packages/extra/x86_64/sox/),
+[ALSA/MIDI utilities](https://archlinux.org/packages/extra/x86_64/alsa-utils/files/)
+and [PulseAudio clients from libpulse](https://archlinux.org/packages/extra/x86_64/libpulse/files/).
+Readiness and `basaltw local cachyos-doctor --json` check `sox`, `soxi`, ALSA/MIDI
+clients, `pactl`/playback/recording clients and the existing `pw-cli`, `pw-dump`,
+`pw-top`, `pw-play`, `pw-record` and `wpctl`. The latter come from the default
+desktop's [PipeWire](https://archlinux.org/packages/extra/x86_64/pipewire/files/),
+[PipeWire audio](https://archlinux.org/packages/extra/x86_64/pipewire-audio/files/)
+and [WirePlumber](https://archlinux.org/packages/extra/x86_64/wireplumber/files/)
+packages. Setup installs only missing requested utility packages; it does not
+install/replace audio servers, start recording or change services/routing. If
+the default desktop clients are absent, readiness fails with the missing command;
+inspect the desktop's original audio installation instead of changing it silently.
+Presence-only checks do not qualify playback, physical devices, MIDI delivery,
+SoX format plugins or latency. Native CachyOS package/device qualification remains
+separate from Debian-hosted mocked tests.
 
 MuseScore follows the native package policy even with `--flatpak`; failures stop
 the requested setup step. `--no-musescore` disables the saved install selection

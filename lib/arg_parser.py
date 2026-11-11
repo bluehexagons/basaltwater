@@ -792,8 +792,6 @@ def add_setup_arguments(
          "Install rootless Podman and its user-namespace/network/storage helpers (Debian APT setup)"),
         ("--debug-tools", ("gdb", "strace", "valgrind", "ccache", "ninja-build"),
          "Install native debugging and build-cache tools (Debian APT setup)"),
-        ("--audio-tools", ("sox", "libsox-fmt-all", "alsa-utils", "pulseaudio-utils"),
-         "Install SoX and audio/MIDI inspection clients (Debian APT setup; no audio routing changes)"),
         ("--pdf-tools", ("poppler-utils",),
          "Install PDF metadata, text extraction and page rendering tools (Debian APT setup)"),
     ):
@@ -801,6 +799,8 @@ def add_setup_arguments(
             flag, dest="apt_packages", action=AptToolBundleAction,
             nargs=0, const=packages, help=description,
         )
+    parser.add_argument("--audio-tools", dest="install_audio_tools", action="store_true", default=None,
+                        help="Install native audio processing and inspection clients (Debian or CachyOS KDE; preserves routing)")
     parser.add_argument("--flatpak-install", dest="flatpak_packages",
                        action="append",
                        metavar="PACKAGE",

@@ -29,7 +29,7 @@ _LAN_NETWORKS = tuple(ipaddress.ip_network(value) for value in (
 _OPTIONS = {
     "host", "username", "system_type", "dry_run", "machine_type",
     "agent_tools", "no_agent_tools", "install_node", "install_python",
-    "install_go", "install_git_lfs", "install_av_tools", "install_gl_tools",
+    "install_go", "install_git_lfs", "install_av_tools", "install_gl_tools", "install_audio_tools",
     "install_node_versions", "install_game_dev",
     "install_godot", "install_sunshine", "install_moonlight", "install_gaming",
     "install_obs", "install_blender", "install_kdenlive", "install_krita",

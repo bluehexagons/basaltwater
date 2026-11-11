@@ -542,6 +542,7 @@ class SetupConfig:
     install_python: bool = False
     install_data_analysis_tools: bool = False
     install_av_tools: bool = False
+    install_audio_tools: Optional[bool] = False
     install_gl_tools: bool = False
     install_godot: bool = False
     install_sunshine: bool = False
@@ -765,6 +766,15 @@ class SetupConfig:
     _loading_saved_config: InitVar[bool] = field(default=False, kw_only=True)
 
     def __post_init__(self, _loading_saved_config: bool = False) -> None:
+        if self.install_audio_tools is not None and type(self.install_audio_tools) is not bool:
+            raise ValueError("install_audio_tools must be a boolean")
+        if self.system_type != "agent_cachyos":
+            if self.install_audio_tools:
+                self.apt_packages = list(dict.fromkeys([
+                    *(self.apt_packages or []), "sox", "libsox-fmt-all", "alsa-utils", "pulseaudio-utils",
+                ]))
+            # Debian retains the existing ordinary-package persistence contract.
+            self.install_audio_tools = False
         if self.experimental_claude_tasks is not None and type(self.experimental_claude_tasks) is not bool:
             raise ValueError("experimental_claude_tasks must be a boolean")
         # Proxmox configures the host's root account; its CLI username is unused.
@@ -1553,6 +1563,8 @@ class SetupConfig:
 
         if self.install_av_tools:
             args.append("--av-tools")
+        if self.install_audio_tools:
+            args.append("--audio-tools")
 
         if self.install_gl_tools:
             args.append("--gl-tools")
@@ -2124,6 +2136,8 @@ class SetupConfig:
 
         if self.install_av_tools:
             cmd_parts.append("--av-tools")
+        if self.install_audio_tools:
+            cmd_parts.append("--audio-tools")
 
         if self.install_gl_tools:
             cmd_parts.append("--gl-tools")
@@ -2619,6 +2633,7 @@ class SetupConfig:
             self.install_data_analysis_tools
         )
         data['install_av_tools'] = bool(self.install_av_tools)
+        data['install_audio_tools'] = bool(self.install_audio_tools)
         data['install_gl_tools'] = bool(self.install_gl_tools)
         data['install_node_versions'] = bool(self.install_node_versions)
         data['install_game_dev'] = bool(self.install_game_dev)
@@ -3205,6 +3220,7 @@ class SetupConfig:
                 args, 'install_data_analysis_tools', False
             ),
             install_av_tools=getattr(args, 'install_av_tools', False),
+            install_audio_tools=_optional_bool_arg(args, 'install_audio_tools'),
             install_gl_tools=getattr(args, 'install_gl_tools', False),
             install_godot=getattr(args, 'install_godot', False),
             install_sunshine=getattr(args, 'install_sunshine', False) is True,

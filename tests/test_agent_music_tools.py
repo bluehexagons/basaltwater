@@ -97,22 +97,67 @@ class MusicToolsTests(unittest.TestCase):
         parser = create_setup_argument_parser("test")
         args = parser.parse_args(["vm.example", "agent", "--agent-tool", "codex", "--apt-install", "sox",
                                   "--audio-tools", "--audio-tools"])
-        self.assertEqual(args.apt_packages, ["sox", "libsox-fmt-all", "alsa-utils", "pulseaudio-utils"])
         config = SetupConfig.from_args(args, "agent_code_vm")
+        self.assertEqual(config.apt_packages, ["sox", "libsox-fmt-all", "alsa-utils", "pulseaudio-utils"])
         saved = SetupConfig.from_dict(config.host, config.system_type, config.to_dict())
         remote = create_setup_argument_parser("remote", for_remote=True)
         self.assertEqual(remote.parse_args(shlex.split(" ".join(saved.to_remote_args()))).apt_packages,
-                         args.apt_packages)
+                         config.apt_packages)
         self.assertIsNone(parser.parse_args(["vm.example", "agent"]).apt_packages)
         self.assertFalse(config.rdp_audio)
         self.assertTrue(all("--apt-install " + package in saved.to_setup_command()
-                            for package in args.apt_packages))
+                            for package in config.apt_packages))
         cachyos_parser = argparse.ArgumentParser()
         add_setup_arguments(cachyos_parser, include_system_type=True)
         with self.assertRaisesRegex(ValueError, "apt_packages"):
             cachyos.cachyos_config_from_args(cachyos_parser.parse_args(
-                ["agent_cachyos", "localhost", "agent", "--audio-tools"],
+                ["agent_cachyos", "localhost", "agent", "--apt-install", "sox"],
             ))
+
+    def test_cachyos_audio_selection_replays_and_preserves_omission(self):
+        parser = argparse.ArgumentParser()
+        add_setup_arguments(parser, include_system_type=True)
+        # Profile selection must not depend on argument order.
+        for argv in (["agent_cachyos", "localhost", "agent", "--audio-tools", "--audio-tools"],
+                     ["--audio-tools", "agent_cachyos", "localhost", "agent"]):
+            config = cachyos.cachyos_config_from_args(parser.parse_args(argv))
+            self.assertTrue(config.install_audio_tools)
+            self.assertIsNone(config.apt_packages)
+            saved = SetupConfig.from_dict(config.host, config.system_type, config.to_dict())
+            replay = cachyos.cachyos_config_from_args(parser.parse_args(shlex.split(" ".join(saved.to_setup_command()))[2:]))
+            self.assertTrue(replay.install_audio_tools)
+            remote = create_setup_argument_parser("remote", for_remote=True)
+            restored = cachyos.cachyos_config_from_args(remote.parse_args(shlex.split(" ".join(saved.to_remote_args()))),
+                                                       for_remote=True)
+            self.assertTrue(restored.install_audio_tools)
+            omitted = cachyos.cachyos_config_from_args(parser.parse_args(["agent_cachyos", "localhost", "agent"]))
+            self.assertIsNone(omitted.install_audio_tools)
+            self.assertTrue(merge_setup_configs(saved, omitted).install_audio_tools)
+            with patch.object(cachyos_steps, "_home", return_value=Path("/task/home")), \
+                    patch.object(cachyos_steps.shutil, "which", return_value="/usr/bin/existing"):
+                packages = cachyos_steps.cachyos_packages(saved)
+                baseline = cachyos_steps.cachyos_packages(omitted)
+            self.assertEqual([p for p in packages if p not in baseline], ["sox", "alsa-utils", "libpulse"])
+            self.assertFalse(saved.include_desktop)
+            self.assertFalse(saved.rdp_audio)
+
+    def test_cachyos_audio_readiness_checks_presence_without_audio_execution(self):
+        config = SetupConfig(host="localhost", username="agent", system_type="agent_cachyos",
+                             agent_tools=[], install_audio_tools=True)
+        for missing in (None, "soxi", "pw-record", "wpctl"):
+            with self.subTest(missing=missing), \
+                    patch.object(cachyos_steps, "_home", return_value=Path("/task/home")), \
+                    patch.object(cachyos_steps.shutil, "which", side_effect=lambda name, **kw:
+                                 None if name == missing else "/usr/bin/" + name), \
+                    patch.object(cachyos_steps, "_user_run", return_value=subprocess.CompletedProcess(
+                        [], 0, "version\n", "")) as run, redirect_stdout(StringIO()):
+                if missing:
+                    with self.assertRaisesRegex(RuntimeError, missing):
+                        cachyos_steps.report_cachyos_readiness(config)
+                else:
+                    cachyos_steps.report_cachyos_readiness(config)
+                self.assertTrue(all(Path(call.args[0][0]).name not in cachyos_steps.CACHYOS_AUDIO_COMMANDS
+                                    for call in run.call_args_list))
 
     def test_discovery_resolves_each_alias_for_requirements_recipes_and_launches_without_execution(self):
         for native in (False, True):

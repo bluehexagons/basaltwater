@@ -93,6 +93,20 @@ mean one existing CLI or runtime can be used unchanged on all three platforms.
 
 ## Initial implementation decisions
 
+- CachyOS now accepts opt-in `--audio-tools` for native SoX, ALSA/MIDI and
+  PulseAudio-compatible clients, with presence checks for the default KDE
+  PipeWire/WirePlumber tools. Preserve the owner's audio services and routing;
+  package selection and mocked tests do not establish native audio readiness.
+  See [music tooling](../workstations/music-development.md).
+- Future Windows tooling should start with opt-in FFmpeg/ffprobe installation
+  and discovery (including preinstalled tools), followed by a bounded native
+  file-analysis adapter using the versioned result contract. Qualify executable
+  provenance, updates, private storage and process cancellation on Windows;
+  the Debian analyzer's Linux locking/resource limits cannot be reused unchanged.
+  Add device/application-audio diagnostics only for a demonstrated debugging
+  workflow. No Windows implementation or additional Python dependency is added
+  by the CachyOS audio-tools selection.
+
 - Start with debugging clips and game audio as the foundation, while allowing
   other media within the same contract. Build editing and delivery workflows on
   that foundation. Prioritize local files,
