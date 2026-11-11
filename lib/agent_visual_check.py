@@ -12,6 +12,7 @@ import time
 import uuid
 
 from lib.agent_environment import inspect_environment
+from lib.agent_graphics import graphics_environment
 from lib.agent_visuals import _directory, _settings, _settings_unchanged
 from lib.atomic_io import write_json_atomic
 from lib.remote_utils import is_dry_run, run
@@ -19,11 +20,6 @@ from lib.streamed_process import run_streamed
 from lib.validation import validate_filesystem_path
 
 
-GRAPHICS_ENVIRONMENT = (
-    "XDG_SESSION_TYPE", "DISPLAY", "WAYLAND_DISPLAY", "SDL_VIDEODRIVER",
-    "SDL_RENDER_DRIVER", "LIBGL_ALWAYS_SOFTWARE", "GALLIUM_DRIVER",
-    "MESA_LOADER_DRIVER_OVERRIDE", "DRI_PRIME", "QT_QPA_PLATFORM",
-)
 ARCH_GRAPHICS_PACKAGES = (
     "mesa", "libglvnd", "vulkan-intel", "vulkan-radeon", "nvidia-utils",
     "sdl3", "sdl3_image", "mesa-utils", "xorg-server-xvfb", "xorg-xauth",
@@ -42,7 +38,7 @@ def host_context(environment: dict[str, str]) -> dict:
     context = {
         "system": platform.system(), "kernel": platform.release(),
         "architecture": platform.machine(),
-        "graphics_environment": {key: environment[key] for key in GRAPHICS_ENVIRONMENT if key in environment},
+        "graphics_environment": graphics_environment(environment),
         "graphics_packages": {}, "package_observation": "unavailable",
     }
     try:

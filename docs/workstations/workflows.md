@@ -31,8 +31,12 @@ platform's sandbox policy, actual renderer and performance evidence explicit.
 
 For a backend prerequisite check, explicitly run `basaltw agent graphics doctor
 --context display --json` or `--context xvfb --require-software --json`.
-GLX context creation does not verify a project frame. EGL/Vulkan/offscreen checks
-belong in the project's harness, recording the actual renderer. See
+For EGL, use `--backend egl --context offscreen` (the inherited default display)
+or `--backend egl --context surfaceless` (explicit Mesa surfaceless platform).
+`--expect-renderer SUBSTRING` and `--require-software` assert the observed
+renderer; inherited GPU selectors are reported separately. Context creation
+does not verify a project frame. Project EGL/Vulkan/offscreen checks still
+record and assert their actual renderer. See [graphics diagnostics](graphics-diagnostics.md) and
 [rendering evidence](../../common/agent_skills/basaltwater-cachyos-desktop/references/rendering.md).
 
 The software GLX doctor checks `xvfb-run --help` once and uses atomic `-d`

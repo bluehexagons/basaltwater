@@ -7,9 +7,10 @@ from contextlib import redirect_stdout
 from io import StringIO
 import json
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from lib import agent_graphics as graphics
+from lib import agent_egl_probe as egl_probe
 from lib.agent_cli import add_agent_subparser, run_agent_command
 from lib.agent_probe import ProbeResult
 
@@ -125,5 +126,103 @@ class GraphicsTests(unittest.TestCase):
         args = parser.parse_args(["agent", "graphics", "doctor", "--context", "xvfb", "--require-software", "--json"])
         with patch.object(graphics, "inspect_graphics_context", return_value={"healthy": False}) as inspect, redirect_stdout(output := StringIO()):
             self.assertEqual(run_agent_command(args), 1)
-        inspect.assert_called_once_with("xvfb", require_software=True)
+        inspect.assert_called_once_with("xvfb", require_software=True, backend="glx", expect_renderer=None)
         self.assertEqual(json.loads(output.getvalue()), {"healthy": False})
+
+    def test_egl_uses_observed_renderer_despite_software_selectors(self):
+        for renderer, expected in (("NVIDIA Example GPU", False), ("llvmpipe (LLVM)", True)):
+            with self.subTest(renderer=renderer), patch.dict(graphics.os.environ, {
+                "LIBGL_ALWAYS_SOFTWARE": "1", "GALLIUM_DRIVER": "llvmpipe", "__GLX_VENDOR_LIBRARY_NAME": "nvidia",
+                "__EGL_VENDOR_LIBRARY_FILENAMES": "/example/vendor.json", "TOKEN": "private",
+            }), patch.object(graphics, "run_probe", return_value=ProbeResult(json.dumps({
+                "renderer": renderer, "opengl_version": "4.6", "egl_vendor": "Example", "egl_version": "1.5", "client_api": "OpenGL",
+            }))) as probe:
+                result = graphics.inspect_graphics_context("offscreen", backend="egl", require_software=True, expect_renderer="LLVMPIPE")
+            self.assertEqual(result["healthy"], expected)
+            self.assertEqual(result["renderer_matches"], expected)
+            self.assertTrue(result["context_created"])
+            self.assertEqual(result["egl_vendor"], "Example")
+            self.assertEqual(result["inherited_selectors"]["__GLX_VENDOR_LIBRARY_NAME"], "nvidia")
+            self.assertNotIn("TOKEN", result["inherited_selectors"])
+            self.assertEqual(probe.call_args.args[0][-1], "offscreen")
+            self.assertIn("-I", probe.call_args.args[0])
+            self.assertEqual(probe.call_args.kwargs["env"]["LIBGL_ALWAYS_SOFTWARE"], "1")
+            self.assertFalse(result["rendering_verified"])
+            self.assertFalse(result["hardware_profiling_qualified"])
+
+    def test_egl_failures_and_invalid_requests_never_fall_back_to_glx(self):
+        for response, issue in ((ProbeResult('{"issue":"egl_initialize_failed"}'), "egl_initialize_failed"),
+                                (ProbeResult("invalid"), "egl_probe_invalid"),
+                                (ProbeResult("{}"), "context_creation_unverified"),
+                                (ProbeResult(issue="probe_timeout"), "probe_timeout")):
+            with self.subTest(issue=issue), patch.object(graphics, "run_probe", return_value=response) as probe:
+                result = graphics.inspect_graphics_context("surfaceless", backend="egl")
+            self.assertFalse(result["healthy"])
+            self.assertEqual(result["issues"], [issue])
+            probe.assert_called_once()
+        for context, backend, expectation in (("offscreen", "glx", None), ("xvfb", "egl", None), ("display", "glx", ""), ("display", "glx", "bad\n")):
+            with self.subTest(context=context), patch.object(graphics, "run_probe") as probe, self.assertRaises(ValueError):
+                graphics.inspect_graphics_context(context, backend=backend, expect_renderer=expectation)
+            probe.assert_not_called()
+
+    def test_selector_reporting_bounds_values_without_collecting_other_environment(self):
+        self.assertEqual(graphics.graphics_environment({"DRI_PRIME": "x" * 2000, "EGL_PLATFORM": "bad\n", "SECRET": "no"}),
+                         {"DRI_PRIME": "x" * 1024, "EGL_PLATFORM": "<invalid>"})
+
+
+class EGLProbeTests(unittest.TestCase):
+    def setUp(self):
+        self.egl = MagicMock()
+        self.enterContext(patch.object(egl_probe.C, "CDLL", return_value=self.egl))
+        self.egl.eglGetDisplay.return_value = 11
+        self.egl.eglCreatePbufferSurface.return_value = 22
+        self.egl.eglCreateContext.return_value = 33
+        self.egl.eglInitialize.side_effect = self.initialize
+        self.egl.eglChooseConfig.side_effect = self.choose
+        self.egl.eglGetProcAddress.return_value = 44
+        self.egl.eglQueryString.side_effect = lambda display, key: b"EGL_MESA_platform_surfaceless EGL_EXT_platform_base" if key == 0x3055 else b"Example vendor"
+        self.gl = lambda key: b"llvmpipe" if key == 0x1F01 else b"4.6 Mesa"
+        self.enterContext(patch.object(egl_probe.C, "CFUNCTYPE", return_value=lambda address: self.gl))
+
+    def initialize(self, display, major, minor):
+        major._obj.value, minor._obj.value = 1, 5
+        return 1
+
+    def choose(self, display, attributes, config, limit, count):
+        config._obj.value, count._obj.value = 55, 1
+        self.assertEqual(list(attributes)[:4], [0x3033, 1, 0x3040, 8])
+        return 1
+
+    def test_pbuffer_queries_gl_renderer_and_releases_every_egl_object(self):
+        result = egl_probe.probe_context("offscreen")
+        self.assertEqual(result["renderer"], "llvmpipe")
+        self.assertEqual(result["egl_version"], "1.5")
+        self.egl.eglGetDisplay.assert_called_once_with(None)
+        self.egl.eglBindAPI.assert_called_once_with(0x30A2)
+        self.egl.eglMakeCurrent.assert_any_call(11, 22, 22, 33)
+        self.egl.eglMakeCurrent.assert_called_with(11, None, None, None)
+        self.egl.eglDestroyContext.assert_called_once_with(11, 33)
+        self.egl.eglDestroySurface.assert_called_once_with(11, 22)
+        self.egl.eglTerminate.assert_called_once_with(11)
+
+    def test_context_failure_still_destroys_surface_and_terminates_display(self):
+        self.egl.eglCreateContext.return_value = None
+        with self.assertRaisesRegex(egl_probe.EGLFailure, "egl_context_creation_failed"):
+            egl_probe.probe_context("offscreen")
+        self.egl.eglDestroyContext.assert_not_called()
+        self.egl.eglDestroySurface.assert_called_once_with(11, 22)
+        self.egl.eglTerminate.assert_called_once_with(11)
+
+    def test_explicit_surfaceless_needs_extension_and_never_uses_default_display(self):
+        self.egl.eglQueryString.side_effect = None
+        self.egl.eglQueryString.return_value = b"unrelated"
+        with self.assertRaisesRegex(egl_probe.EGLFailure, "egl_surfaceless_unsupported"):
+            egl_probe.probe_context("surfaceless")
+        self.egl.eglGetDisplay.assert_not_called()
+        platform = MagicMock(return_value=11)
+        self.egl.eglQueryString.return_value = b"EGL_MESA_platform_surfaceless EGL_EXT_platform_base"
+        with patch.object(egl_probe.C, "CFUNCTYPE", side_effect=[lambda address: platform, lambda address: self.gl]):
+            result = egl_probe.probe_context("surfaceless")
+        self.assertEqual(result["renderer"], "llvmpipe")
+        platform.assert_called_once_with(0x31DD, None, None)
+        self.egl.eglGetDisplay.assert_not_called()

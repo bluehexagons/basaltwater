@@ -469,8 +469,12 @@ The option checks the observed renderer; it does not force a driver.
 
 Mesa's [renderer environment variables](https://docs.mesa3d.org/envvars.html)
 configure requests such as `LIBGL_ALWAYS_SOFTWARE=1` and `GALLIUM_DRIVER=llvmpipe`;
-their presence is not renderer evidence. This probe checks GLX only. A project
-using SDL offscreen/EGL must report and assert its own actual SDL driver and
+their presence is not renderer evidence. Add `--backend egl --context offscreen`
+to probe the implementation's default EGL display with an OpenGL pbuffer, or
+`--backend egl --context surfaceless` for the explicit Mesa surfaceless platform.
+`--expect-renderer SUBSTRING` asserts the actual renderer in either backend.
+See [EGL diagnostics and inherited GPU selectors](../workstations/graphics-diagnostics.md).
+A project using SDL offscreen/EGL must report and assert its own actual SDL driver and
 GL renderer, even if the GLX probe passes. Fixtures that override the driver
 to offscreen do not become X11 fixtures by running them inside Xvfb.
 `rendering_verified` stays false until a project renders and checks a frame.
