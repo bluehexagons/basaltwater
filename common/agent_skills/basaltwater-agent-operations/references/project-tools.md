@@ -33,6 +33,11 @@ with an agreed `--resource gpu:all`, `--build-output PATH`, `--owner` and option
 agents under one Linux account; the foreground command owns their lifetime.
 Read [workstation measurement coordination](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/performance-sessions.md)
 for cleanup, output-root agreement and scope limits.
+Declared recipe checks can opt into `--performance-session` or
+`--power-profile performance|power-saver` to retain CPU power preferences,
+GPU clocks, temperatures and competing-process snapshots. Profile holds use
+`powerprofilesctl launch` for the command's lifetime; project performance and
+rendering acceptance remain project-owned.
 
 Blender is optional on Debian agent hosts: setup `--blender` selects the
 configured Debian release's APT package, including on headless `agent_vm`.

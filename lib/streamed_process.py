@@ -42,6 +42,7 @@ def run_streamed(
     discard_stderr: bool = False,
     on_input_request: Callable[[str], bytes | None] | None = None,
     pass_fds: tuple[int, ...] = (),
+    cleanup_group_on_exit: bool = False,
 ) -> int:
     """Relay UTF-8 output while feeding stdin, without unbounded pipe waits.
 
@@ -50,6 +51,8 @@ def run_streamed(
     Interactive children retain the controlling terminal (for SSH passphrase
     prompts via /dev/tty), while stdin remains reserved for the payload. Only
     interactive callers may omit the deadline to allow time for a prompt.
+    Disposable wrappers may request group cleanup even after normal exit;
+    this requires an isolated group and also removes pipe-detached helpers.
     """
     bound = _validate_timeout(timeout)
     if on_input_request is not None and not interactive:
@@ -60,6 +63,8 @@ def run_streamed(
         raise ValueError("Streaming requires a finite deadline")
     deadline = time.monotonic() + bound if bound is not None else None
     isolated = not interactive and not _CALLER_OWNS_GROUP.get()
+    if cleanup_group_on_exit and not isolated:
+        raise ValueError("Unconditional group cleanup requires an isolated command")
     process = subprocess.Popen(
         command, stdin=subprocess.PIPE if input_data is not None or on_input_request is not None else subprocess.DEVNULL,
         stdout=subprocess.PIPE,
@@ -133,9 +138,12 @@ def run_streamed(
             if remaining is not None and remaining <= 0:
                 raise CommandTimeoutError(_command_text(command), bound)
             try:
-                return process.wait(timeout=remaining)
+                returncode = process.wait(timeout=remaining)
             except subprocess.TimeoutExpired as exc:
                 raise CommandTimeoutError(_command_text(command), bound) from exc
+            if cleanup_group_on_exit:
+                _terminate_timed_out_process(process, isolated=True)
+            return returncode
     except BaseException:
         # Interactive SSH shares the caller's process group. Never signal that
         # group on cancellation or callback failure: it includes the caller.

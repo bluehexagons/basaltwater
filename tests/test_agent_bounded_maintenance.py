@@ -70,6 +70,24 @@ class BoundedMaintenanceTests(unittest.TestCase):
         self.assertEqual([call.args[1] for call in kill.call_args_list], [signal.SIGTERM, signal.SIGKILL])
         self.assertTrue(output.closed)
 
+    def test_disposable_wrapper_cleans_group_after_success_or_nonzero_exit(self):
+        for returncode in (0, 17):
+            output, _held = self.pipe(b"done\n")
+            process = MagicMock(pid=123, stdin=None, stdout=output, stderr=None)
+            process.wait.return_value = returncode
+            with self.subTest(returncode=returncode), patch.object(streamed_process.subprocess, "Popen", return_value=process) as start, \
+                    patch("lib.remote_utils.os.killpg") as kill:
+                code = streamed_process.run_streamed(["fixture"], timeout=1, on_output=lambda text: None,
+                                                    cleanup_group_on_exit=True, pass_fds=(42,))
+            self.assertEqual(code, returncode)
+            self.assertEqual([call.args[1] for call in kill.call_args_list], [signal.SIGTERM, signal.SIGKILL])
+            self.assertEqual(start.call_args.kwargs["pass_fds"], (42,))
+            self.assertTrue(start.call_args.kwargs["start_new_session"])
+        with streamed_process.caller_process_group(), self.assertRaisesRegex(ValueError, "isolated command"), \
+                patch.object(streamed_process.subprocess, "Popen") as start:
+            streamed_process.run_streamed(["fixture"], timeout=1, on_output=lambda text: None, cleanup_group_on_exit=True)
+        start.assert_not_called()
+
     def test_cleanup_output_overflow_is_reported_without_retry_or_partial_output(self):
         error = streamed_process.CommandOutputLimitError("Command output exceeded 262144 bytes")
         with patch.object(cleanup_maintenance, "run_captured", side_effect=error) as root, \

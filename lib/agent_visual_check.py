@@ -13,8 +13,9 @@ import uuid
 
 from lib.agent_environment import inspect_environment
 from lib.agent_graphics import graphics_environment
+from lib.agent_reservations import termination_cleanup
 from lib.agent_visuals import _directory, _settings, _settings_unchanged
-from lib.atomic_io import write_json_atomic
+from lib.atomic_io import read_json_file, write_json_atomic
 from lib.remote_utils import is_dry_run, run
 from lib.streamed_process import run_streamed
 from lib.validation import validate_filesystem_path
@@ -89,6 +90,7 @@ def host_context(environment: dict[str, str]) -> dict:
     return context
 
 
+@termination_cleanup()
 def check_recipe(args: argparse.Namespace) -> dict:
     """Execute exactly one reviewed declaration; its exit status defines success."""
     if type(args.timeout) is not int or not 1 <= args.timeout <= 3600:
@@ -132,9 +134,24 @@ def check_recipe(args: argparse.Namespace) -> dict:
         "verification": {"status": "unverified"},
         "log_limit_bytes": LOG_LIMIT, "log_truncated": False,
     }
+    performance = None
+    profile = getattr(args, "power_profile", None)
+    if getattr(args, "performance_session", False) or profile:
+        performance = {"schema_version": 1, "requested_profile": profile, "before": None, "after": None,
+                       "active_observation": os.path.join(directory, "performance-active.json"),
+                       "scope": "point-in-time-snapshots; no peak or exclusivity assertion"}
+        report["performance"] = os.path.join(directory, "performance.json")
     write_json_atomic(report_path, report)
     started = time.monotonic()
     try:
+        argv = recipe["argv"]
+        if performance is not None:
+            from lib.agent_performance import performance_argv, performance_snapshot
+
+            performance["before"] = performance_snapshot()
+            write_json_atomic(report["performance"], performance)
+            argv = performance_argv(argv, directory, args.timeout, profile)
+            report["execution_command"] = argv
         snapshot = {"manifest": manifest, "host": host_context(environment)}
         write_json_atomic(environment_path, snapshot)
         descriptor = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -150,13 +167,16 @@ def check_recipe(args: argparse.Namespace) -> dict:
                 if len(retained) < len(encoded):
                     report["log_truncated"] = True
 
-            returncode = run_streamed(
-                recipe["argv"], cwd=cwd, env=environment, timeout=args.timeout,
-                on_output=record_output,
-            )
+            returncode = run_streamed(argv, cwd=cwd, env=environment, timeout=args.timeout,
+                                      on_output=record_output, cleanup_group_on_exit=performance is not None)
         report["returncode"] = returncode
         if returncode != 0:
             raise RuntimeError(f"Project recipe exited with status {returncode}; inspect {log_path}")
+        if performance is not None:
+            active = read_json_file(performance["active_observation"], max_bytes=2 * 1024 * 1024)
+            if (not isinstance(active, dict) or active.get("schema_version") != 1
+                    or (profile and active.get("power_profile") != profile)):
+                raise ValueError("Performance session did not retain the expected active observation")
         if not _settings_unchanged(settings_path, settings):
             raise RuntimeError("Project recipe changed the recorded settings; refusing inconsistent evidence")
         if args.verify_evidence or args.require_artifact_kind:
@@ -171,6 +191,16 @@ def check_recipe(args: argparse.Namespace) -> dict:
         report.update(status="failed", error=str(exc))
     except KeyboardInterrupt:
         report.update(status="interrupted", error="Project visual check interrupted")
+    if performance is not None:
+        from lib.agent_performance import performance_snapshot
+
+        try:
+            performance["after"] = performance_snapshot()
+            write_json_atomic(report["performance"], performance)
+        except (OSError, ValueError, RuntimeError) as exc:
+            report.update(ok=False, status="failed", error=f"Performance evidence failed: {exc}")
+        except KeyboardInterrupt:
+            report.update(ok=False, status="interrupted", error="Performance evidence collection interrupted")
     report["elapsed_seconds"] = round(time.monotonic() - started, 3)
     report["finished_at"] = datetime.now(timezone.utc).isoformat()
     write_json_atomic(report_path, report)

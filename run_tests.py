@@ -267,6 +267,7 @@ TEST_SUITES: dict[str, list[str]] = {
     # primary CI job still runs every Python and JavaScript test with coverage.
     "node": [
         "tests.test_agent_visual_batch",
+        "tests.test_agent_visuals",
         "tests.test_agent_context_plugin",
         "tests.test_web_guacamole_browser",
         "tests.test_web_panel_ca",

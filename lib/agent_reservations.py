@@ -75,8 +75,11 @@ def _record(path: Path) -> dict | None:
         value = read_json_file(str(path), max_bytes=1024 * 1024)
     except FileNotFoundError:
         return None
-    if value is not None and (not isinstance(value, dict) or value.get("version") != 1):
+    if (not isinstance(value, dict) or type(value.get("version")) is not int or value["version"] != 1
+            or not isinstance(value.get("owner"), str) or not isinstance(value.get("run_id"), str)):
         raise ValueError("Invalid reservation metadata; preserve it for inspection")
+    _label(value["owner"], "Recorded owner")
+    _label(value["run_id"], "Recorded run ID")
     return value
 
 
@@ -179,9 +182,10 @@ def run_reservations_command(args: argparse.Namespace) -> int:
             validate_no_control_characters(argument, "Command argument")
         if is_dry_run():
             raise ValueError("Reservation run requires execution")
-        with termination_cleanup(), reserve(keys, owner=args.owner, run_id=args.run_id or uuid.uuid4().hex) as (record, descriptors):
+        run_id = args.run_id if args.run_id is not None else uuid.uuid4().hex
+        with termination_cleanup(), reserve(keys, owner=args.owner, run_id=run_id) as (record, descriptors):
             print(json.dumps({"reservation": record}), file=sys.stderr, flush=True)
-            code = run_streamed(command, timeout=args.timeout, pass_fds=descriptors,
+            code = run_streamed(command, timeout=args.timeout, pass_fds=descriptors, cleanup_group_on_exit=True,
                                 on_output=lambda chunk: print(chunk, end="", flush=True))
         return code if code >= 0 else 128 - code
     except TimeoutError as exc:

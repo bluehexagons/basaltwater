@@ -72,11 +72,12 @@ class ReservationTests(unittest.TestCase):
         with self.assertRaises(OSError):
             reservations.reservation_status(["gpu:all"])
         lock.unlink()
-        metadata.write_text("{invalid")
-        with self.assertRaises(ValueError):
-            with reservations.reserve(["gpu:all"], owner="worker", run_id="trial"):
-                self.fail()
-        self.assertEqual(metadata.read_text(), "{invalid")
+        for payload in ("{invalid", "null", '{"version":1}', '{"version":true,"owner":"a","run_id":"b"}'):
+            metadata.write_text(payload)
+            with self.subTest(payload=payload), self.assertRaises(ValueError):
+                with reservations.reserve(["gpu:all"], owner="worker", run_id="trial"):
+                    self.fail()
+            self.assertEqual(metadata.read_text(), payload)
 
     def test_cli_passes_descriptors_literal_argv_and_exit_status(self):
         parser = argparse.ArgumentParser()

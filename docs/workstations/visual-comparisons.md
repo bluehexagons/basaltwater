@@ -88,6 +88,12 @@ below. Use `--output` for the active ignored project artifact directory. Neither
 setup, refresh, doctor nor manifest automatically runs these checks. For native
 capture backend selection, see [CachyOS game development](cachyos-game-development.md#capture-backends-and-post-refresh-checks).
 
+For performance recipes, opt in with `--performance-session` or explicitly
+request `--power-profile performance|power-saver` for a command-scoped hold.
+See [performance sessions](performance-sessions.md) for power preferences,
+clock/thermal/workload snapshots, reservations, cleanup and measurement scope.
+Project scripts retain all performance and image acceptance thresholds.
+
 ## Gate captures on runtime and build evidence
 
 Both `visuals check` and `visuals capture` accept `--verify-evidence`.
@@ -232,7 +238,7 @@ always use the original scaled linear samples. The tool assumes the project
 provided linear samples in matching color spaces; PFM has no color profile.
 
 No error metric selects pass/fail. Projects own rendering tolerances, fixture
-interpretation and acceptance, including any future Antistatic policy. A
+interpretation and acceptance. A
 successful command means comparison evidence was generated. Batch galleries
 and managed revision capture continue to accept PNGs; project recipes can
 produce PFM pairs and invoke `visuals compare` separately.

@@ -219,6 +219,57 @@ class TestAgentVisualCheck(unittest.TestCase):
         self.assertEqual(marker.read_text(), "preserve")
         self.execute.assert_not_called()
 
+    def test_performance_session_records_before_inside_after_and_keeps_recipe_status(self) -> None:
+        from lib import agent_performance
+
+        def observed(argv, **kwargs):
+            self.assertIn("--expect-profile", argv)
+            self.assertTrue(kwargs["cleanup_group_on_exit"])
+            self.assertEqual(argv[-3:], self.manifest["recipes"]["graphics"]["argv"])
+            (self.output / "performance-active.json").write_text('{"schema_version":1,"power_profile":"performance"}')
+            return 0
+        self.execute.side_effect = observed
+        with patch.object(agent_performance, "performance_snapshot", side_effect=[{"power_profile": "balanced"}, {"power_profile": "balanced"}]), \
+                patch.object(agent_performance.shutil, "which", return_value="/usr/bin/powerprofilesctl"):
+            result = agent_visual_check.check_recipe(self.args("--power-profile", "performance"))
+        self.assertTrue(result["ok"], result)
+        report = json.loads(Path(result["performance"]).read_text())
+        self.assertEqual(report["requested_profile"], "performance")
+        self.assertEqual(report["before"]["power_profile"], "balanced")
+        self.assertEqual(report["after"]["power_profile"], "balanced")
+        self.assertTrue(Path(report["active_observation"]).is_file())
+        self.assertEqual(Path(result["performance"]).stat().st_mode & 0o777, 0o600)
+        self.assertEqual(result["command"], self.manifest["recipes"]["graphics"]["argv"])
+
+    def test_performance_failure_and_timeout_retain_post_session_evidence(self) -> None:
+        from lib import agent_performance
+
+        for index, (error, status) in enumerate(((TimeoutError(), "timed-out"), (KeyboardInterrupt(), "interrupted"), (OSError("launch failed"), "failed"))):
+            args = self.args("--performance-session")
+            args.output = str(self.root / f"performance-{index}")
+            self.execute.side_effect = error
+            with self.subTest(status=status), patch.object(agent_performance, "performance_snapshot", return_value={"power_profile": None}):
+                result = agent_visual_check.check_recipe(args)
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["status"], status)
+            retained = json.loads(Path(result["performance"]).read_text())
+            self.assertEqual(retained["after"], {"power_profile": None})
+
+    def test_performance_observations_are_opt_in_and_missing_active_evidence_fails(self) -> None:
+        from lib import agent_performance
+
+        with patch.object(agent_performance, "performance_snapshot") as snapshot:
+            result = agent_visual_check.check_recipe(self.args())
+        self.assertTrue(result["ok"])
+        snapshot.assert_not_called()
+        self.assertNotIn("performance", result)
+        args = self.args("--performance-session")
+        args.output = str(self.root / "missing-active")
+        with patch.object(agent_performance, "performance_snapshot", return_value={"power_profile": None}):
+            result = agent_visual_check.check_recipe(args)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], "failed")
+
     def test_recipe_directory_validation_rejects_symlink_escape(self) -> None:
         (self.project / "escape").symlink_to(self.root, target_is_directory=True)
         (self.project / agent_environment.PROJECT_FILE).write_text(json.dumps({"version": 1, "recipes": {

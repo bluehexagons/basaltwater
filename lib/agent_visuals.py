@@ -49,6 +49,9 @@ def add_visuals_parser(commands: argparse._SubParsersAction) -> None:
     check.add_argument("--repository", default=".")
     check.add_argument("--settings", help="Non-secret JSON capture settings to retain with the check")
     check.add_argument("--timeout", type=validate_positive_integer, default=600)
+    check.add_argument("--performance-session", action="store_true", help="Retain before/active/after power, temperature, clock and workload snapshots")
+    check.add_argument("--power-profile", choices=("performance", "power-saver"),
+                       help="Hold this profile for the recipe using powerprofilesctl launch; implies --performance-session")
     for action in (capture, check):
         action.add_argument("--verify-evidence", action="store_true", help="Require a runtime settings and build artifact receipt")
         action.add_argument("--require-artifact-kind", action="append", default=[],
