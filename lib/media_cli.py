@@ -1,11 +1,11 @@
-"""Bounded offline media inspection for Debian and CachyOS; no desktop required."""
+"""Bounded offline media inspection for Linux and optional native Windows Python."""
 
 from __future__ import annotations
 
 import argparse
 import base64
 from contextlib import contextmanager
-import fcntl
+from datetime import datetime, timezone
 import hashlib
 import json
 import math
@@ -18,17 +18,24 @@ import subprocess
 import sys
 import time
 
-from desktop.audio_analysis import parse_analysis
-from lib.atomic_io import write_json_atomic
-from lib.streamed_process import run_captured
-from lib.validation import validate_filesystem_path
+if os.name == "nt":
+    from lib.media_windows import (snapshot, parent_lock as _windows_lock,
+                                   validate_path as validate_filesystem_path,
+                                   write_json_atomic, run_captured, private_directory, discover)
+    from lib.media_measurements import parse_analysis
+else:
+    import fcntl
+    from desktop.audio_analysis import parse_analysis
+    from lib.atomic_io import write_json_atomic
+    from lib.streamed_process import run_captured
+    from lib.validation import validate_filesystem_path
 
 
 class UnsupportedMedia(ValueError):
     """Input is outside the qualified self-contained media contract."""
 
 
-def snapshot(source: str, max_bytes: int) -> bytes:
+def _posix_snapshot(source: str, max_bytes: int) -> bytes:
     """Take one bounded immutable snapshot, rejecting special files and changes."""
     validate_filesystem_path(source, must_exist=True)
     fd = os.open(source, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
@@ -42,6 +49,10 @@ def snapshot(source: str, max_bytes: int) -> bytes:
     if identity(before) != identity(after) or len(data) != before.st_size:
         raise ValueError("Input changed during snapshot")
     return data
+
+
+if os.name != "nt":
+    snapshot = _posix_snapshot
 
 
 def demuxer(data: bytes) -> str:
@@ -75,7 +86,10 @@ def inspect(source: str, output: str, *, video: int = 0, audio: int = 0,
         raise ValueError("Invalid limits or stream ordinals")
     validate_filesystem_path(output)
     folder = Path(output).absolute()
-    folder.mkdir(mode=0o700)  # refuses overwrite, including symlinks
+    if os.name == "nt":
+        private_directory(folder)
+    else:
+        folder.mkdir(mode=0o700)  # refuses overwrite, including symlinks
     started = time.monotonic()
     result = {"schema_version": 1, "kind": "file-media-analysis", "status": "incomplete",
               "source": {"name": Path(source).name}, "errors": [], "frames": [],
@@ -86,25 +100,35 @@ def inspect(source: str, output: str, *, video: int = 0, audio: int = 0,
               "limitations": ["Samples do not establish quality, sync, HDR or presentation fidelity.",
                               "No device capture, playback or GPU qualification.",
                               "Pipe input requires streamable self-contained media."]}
+    if os.name == "nt":
+        result["started_utc"] = datetime.now(timezone.utc).isoformat()
+        result["limits"].pop("process_address_mib")
+        result["limits"].update(job_commit_mib=1536, job_cpu_seconds=90, job_processes=8,
+                                captured_output_mib=2, output_bundle_mib=64,
+                                output_disk_check_seconds=.01)
+        result["limitations"].append("Windows disk bounds are polled and may overshoot between checks.")
     try:
-        # One invocation at a time per output parent. The lock is its directory
-        # descriptor, so no writable shared lock file or stale marker is needed.
+        # One invocation per output parent; each platform owns its lock primitive.
         with _parent_lock(folder.parent):
             if shutil.disk_usage(folder.parent).free < 128 * 1024 * 1024:
                 raise OSError("At least 128 MiB free output space required")
             data = snapshot(source, max_mib * 1024 * 1024)
             result["source"].update(sha256=hashlib.sha256(data).hexdigest(), bytes=len(data))
             container = demuxer(data)
-            tools = {name: shutil.which(name) for name in ("ffmpeg", "ffprobe", "prlimit")}
+            tools = (discover() if os.name == "nt" else
+                     {name: shutil.which(name) for name in ("ffmpeg", "ffprobe", "prlimit")})
             if not all(tools.values()):
                 raise RuntimeError("Missing tools: " + ", ".join(k for k, v in tools.items() if not v))
+            if os.name == "nt":
+                result["tool_executables"] = tools
 
             def command(name: str, args: list[str], *, media: bool = True) -> str:
                 remaining = timeout - (time.monotonic() - started)
                 if remaining <= 0:
                     raise TimeoutError("Total media deadline exceeded")
-                argv = [tools["prlimit"], "--as=1610612736", "--fsize=16777216", "--cpu=90", "--",
-                        tools[name], "-hide_banner", "-max_alloc", "67108864"]
+                argv = [tools[name], "-hide_banner", "-max_alloc", "67108864"]
+                if os.name != "nt":
+                    argv = [tools["prlimit"], "--as=1610612736", "--fsize=16777216", "--cpu=90", "--"] + argv
                 if media:
                     argv += ["-protocol_whitelist", "pipe", "-f", container, "-threads", "1"]
                     if container == "mov":
@@ -112,7 +136,8 @@ def inspect(source: str, output: str, *, video: int = 0, audio: int = 0,
                     argv += ["-i", "pipe:0"]
                 completed = run_captured(argv + args, input_data=data if media else None,
                                          timeout=remaining, max_bytes=2 * 1024 * 1024,
-                                         cwd=str(folder), env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"})
+                                         cwd=str(folder), env=(None if os.name == "nt" else
+                                         {"PATH": "/usr/bin:/bin", "LC_ALL": "C"}))
                 if completed.returncode or (name == "ffprobe" and media and completed.stderr.strip()):
                     raise RuntimeError(f"{name} failed: {completed.stderr[-1500:]}")
                 return completed.stdout if name == "ffprobe" or not media else completed.stderr
@@ -160,6 +185,8 @@ def inspect(source: str, output: str, *, video: int = 0, audio: int = 0,
                             and 8000 <= int(stream.get("sample_rate", 0)) <= 192000):
                         raise UnsupportedMedia("Audio must have 1–8 channels at 8–192 kHz")
             prefix = ["-nostdin", "-nostats", "-xerror", "-n", "-t", str(max_seconds), "-filter_threads", "1"]
+            if os.name == "nt":
+                prefix += ["-fs", "16777216"]
             if "video" in selected:
                 stream = selected["video"]
                 video_pts = [finite(p["pts_time"]) for p in packets
@@ -223,6 +250,10 @@ def inspect(source: str, output: str, *, video: int = 0, audio: int = 0,
 
 @contextmanager
 def _parent_lock(parent: Path):
+    if os.name == "nt":
+        with _windows_lock(parent):
+            yield
+        return
     fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -248,6 +279,8 @@ def _contact_sheet(folder: Path, result: dict) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if os.name == "nt":
+        sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source")
     parser.add_argument("--output", required=True, help="New private bundle under an existing parent")
