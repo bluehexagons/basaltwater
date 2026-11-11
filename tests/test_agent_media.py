@@ -95,6 +95,41 @@ class MediaTests(unittest.TestCase):
                     self.assertEqual(outcome["status"], "failed")
                     self.assertIn("audio RMS" if bad_audio else "PSNR", outcome["error"])
 
+    def test_gpu_full_hd_profile_preserves_limits_and_checks_later_samples(self):
+        with tempfile.TemporaryDirectory() as parent:
+            commands = []
+
+            def execute(argv, **kwargs):
+                commands.append(argv)
+                self.assertEqual(kwargs["timeout"], 180)
+                self.assertIn("--as=8589934592", argv)
+                self.assertIn("--fsize=67108864", argv)
+                if "-version" in argv:
+                    return subprocess.CompletedProcess(argv, 0, "synthetic version", "")
+                if "-filter_complex" in argv:
+                    return subprocess.CompletedProcess(argv, 0, "", "[Parsed_psnr_6] PSNR y:40 average:40 min:40 max:40")
+                Path(argv[-1]).write_bytes(b"synthetic video")
+                return subprocess.CompletedProcess(argv, 0, "", "")
+
+            def analyze(source, output):
+                dimensions = (320, 180) if Path(source).stem == "scale" else (1920, 1080)
+                return {"status": "complete", "source": {"sha256": "synthetic"},
+                        "audio": {"status": "complete", "measurements": {"overall": {"rms_dbfs": -21}}},
+                        "timing": {"duration_seconds": 30}, "metadata": {"streams": [
+                            {"codec_type": "video", "width": dimensions[0], "height": dimensions[1]}]}}
+
+            with patch.object(qualify_media_gpu, "run_captured", side_effect=execute), \
+                    patch.object(qualify_media_gpu, "inspect", side_effect=analyze):
+                result = qualify_media_gpu.qualify(str(Path(parent) / "new"), "cuda", "0", profile="full-hd")
+            self.assertEqual(result["status"], "complete")
+            self.assertEqual(result["profile"], "full-hd")
+            self.assertIn("testsrc2=size=1920x1080:rate=30", commands[1])
+            self.assertEqual(commands[1][commands[1].index("-t") + 1], "30")
+            self.assertEqual([s["seconds"] for s in result["outcomes"]["scale"]["decoded_samples"]], [0, 15, 29.9])
+            with self.assertRaises(ValueError):
+                qualify_media_gpu.qualify(str(Path(parent) / "invalid"), "cuda", "0", profile="unbounded")
+            self.assertFalse((Path(parent) / "invalid").exists())
+
     def test_snapshot_and_container_guards(self):
         with tempfile.TemporaryDirectory() as root:
             source = Path(root) / "音 sample.wav"

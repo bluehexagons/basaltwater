@@ -5,6 +5,8 @@ implemented; native qualification and remaining platform boundaries are recorded
 [Linux media guide](../workstations/media-analysis.md) and
 [coverage map](testing-coverage.md). Intel Arc VA-API H.264 encode/decode and
 GPU scaling pass the opt-in qualification runner, including decoded-content checks.
+The native target also passes a 30-second 1080p profile, additional 8/10-bit
+VA-API codec checks, active-GPU cancellation and combined MLT effect/encoding.
 Kdenlive CPU and VA-API exports pass on the native integrated Arc target;
 interactive Movit is unavailable in the tested editor build. NVIDIA and Windows
 milestones remain separate; optional speech recognition is

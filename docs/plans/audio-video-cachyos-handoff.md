@@ -54,6 +54,12 @@ before running native checks, rather than assuming an earlier SHA was tested.
   and proxy links; full-resolution CPU delivery has identical decoded stream
   hashes to the earlier baseline. Merely changing proxy width can reuse the
   old cache; use the guide's task-owned regeneration steps and verify dimensions.
+- The native integrated Arc target also passes the GPU runner's 30-second
+  1080p profile, seven 720p VA-API codec/bit-depth cases with exact full hardware
+  versus software decode parity, and active-GPU deadline/Ctrl-C cleanup.
+  A tagged-stereo MLT mirror/VA-API export preserves 120 frames with both GPU
+  engines observed. Use `real_time=-1` for offline exports: positive mode lost
+  three frames. Keep color/channel interpretation explicit; see the guide.
 
 Raw evidence is private and is not included in Git. On the receiving machine,
 create a new private evidence directory outside the checkout; record the exact

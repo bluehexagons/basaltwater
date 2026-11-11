@@ -56,7 +56,7 @@ def backend_commands(backend: str, device: str, source: str) -> dict[str, list[s
     }
 
 
-def qualify(output: str, backend: str, device: str) -> dict:
+def qualify(output: str, backend: str, device: str, *, profile: str = "smoke") -> dict:
     """Retain private commands, logs, receipts and separate per-operation outcomes."""
     validate_filesystem_path(output)
     if backend not in {"vaapi", "cuda"}:
@@ -65,11 +65,16 @@ def qualify(output: str, backend: str, device: str) -> dict:
         validate_filesystem_path(device, must_exist=True)
     elif not device.isascii() or not device.isdecimal():
         raise ValueError("CUDA device must be a nonnegative ordinal")
+    profiles = {"smoke": (1280, 720, 4), "full-hd": (1920, 1080, 30)}
+    if profile not in profiles:
+        raise ValueError("Profile must be smoke or full-hd")
+    width, height, duration = profiles[profile]
     root = Path(output).absolute()
     root.mkdir(mode=0o700)
     report = {"schema_version": 1, "backend": backend, "device": device,
+              "profile": profile, "width": width, "height": height, "duration_seconds": duration,
               "status": "incomplete", "operations": [],
-              "limitations": ["Synthetic 4-second 720p H.264/AAC workload; single observations.",
+              "limitations": ["Synthetic H.264/AAC workload; single observations, unequal encoder presets/quality.",
                               "GPU frame operations do not qualify editor timeline effects.",
                               "No physical playback, capture, HDR or perceived-quality checks.",
                               "Largest child RSS is cumulative, not aggregate system memory."]}
@@ -103,9 +108,9 @@ def qualify(output: str, backend: str, device: str) -> dict:
     try:
         report["ffmpeg_version"] = run("version", ["ffmpeg", "-version"]).splitlines()[0]
         source = root / "source.mp4"
-        run("source", common + ["-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30",
+        run("source", common + ["-f", "lavfi", "-i", f"testsrc2=size={width}x{height}:rate=30",
                                "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
-                               "-t", "4", "-c:v", "libx264", "-preset", "veryfast", "-threads", "1",
+                               "-t", str(duration), "-c:v", "libx264", "-preset", "veryfast", "-threads", "1",
                                "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart", str(source)])
         reference = inspect(str(source), str(root / "source-analysis"))
         if reference["status"] != "complete":
@@ -125,16 +130,16 @@ def qualify(output: str, backend: str, device: str) -> dict:
                 if analysis["status"] != "complete":
                     raise RuntimeError(f"{name} output analysis incomplete")
                 video = next(s for s in analysis["metadata"]["streams"] if s["codec_type"] == "video")
-                expected = (320, 180) if name == "scale" else (1280, 720)
+                expected = (320, 180) if name == "scale" else (width, height)
                 if ((video["width"], video["height"]) != expected
-                        or abs(analysis["timing"]["duration_seconds"] - 4) > .1
+                        or abs(analysis["timing"]["duration_seconds"] - duration) > .1
                         or analysis["audio"]["status"] != "complete"):
                     raise RuntimeError(f"{name} output stream/duration mismatch")
                 rms = analysis["audio"]["measurements"]["overall"]["rms_dbfs"]
                 if rms is None or not math.isfinite(rms) or abs(rms - reference_rms) > 1:
                     raise RuntimeError(f"{name} audio RMS differs from source by more than 1 dB")
                 samples = []
-                for seconds in (0, 2, 3.9):
+                for seconds in (0, duration / 2, duration - .1):
                     # Both paths decode to the same small software format for
                     # comparison; the measured production operation stays separate.
                     log = run(f"{name}-compare-{seconds}", [
@@ -168,7 +173,9 @@ if __name__ == "__main__":
     parser.add_argument("--output", required=True, help="New private directory under an existing parent")
     parser.add_argument("--backend", required=True, choices=("vaapi", "cuda"))
     parser.add_argument("--device", required=True, help="VA-API render node path or CUDA device ordinal")
+    parser.add_argument("--profile", choices=("smoke", "full-hd"), default="smoke",
+                        help="4-second 720p smoke or 30-second 1080p workload; resource limits stay fixed")
     args = parser.parse_args()
-    result = qualify(args.output, args.backend, args.device)
+    result = qualify(args.output, args.backend, args.device, profile=args.profile)
     print(json.dumps(result, indent=2))
     sys.exit(0 if result["status"] == "complete" else 1)

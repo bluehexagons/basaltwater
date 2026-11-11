@@ -161,6 +161,9 @@ Run the separate, opt-in GPU recipe as an unprivileged desktop user:
 ```bash
 python3 scripts/qualify_media_gpu.py --backend vaapi --device /dev/dri/renderD128 \
   --output /absolute/private/new-arc-run
+# Larger, fixed-envelope workload on the same backend:
+python3 scripts/qualify_media_gpu.py --backend vaapi --device /dev/dri/renderD128 \
+  --profile full-hd --output /absolute/private/new-1080p-run
 # On a separately available NVIDIA target, select its CUDA device explicitly:
 python3 scripts/qualify_media_gpu.py --backend cuda --device 0 \
   --output /absolute/private/new-nvidia-run
@@ -169,13 +172,16 @@ python3 scripts/qualify_media_gpu.py --backend cuda --device 0 \
 Use the actual accessible render node, discovered locally; do not assume every
 system assigns the same node. No driver installation, package update, device
 recording or audio routing occurs. The script creates a trusted four-second
-1280×720/30 fps H.264/AAC source, a CPU transcode and separate hardware encode,
+1280×720/30 fps H.264/AAC source by default (`--profile smoke`). The `full-hd`
+profile uses 30 seconds at 1920×1080/30 fps with the same resource limits and
+320×180 scale target. Both create a CPU transcode and separate hardware encode,
 decode and scale exports. Decode requires hardware output frames and an explicit
 download; scaling requires `scale_vaapi` or `scale_cuda` on hardware frames.
 Missing backends fail visibly rather than silently choosing software. CPU
 results remain separate when a GPU operation fails. Each successful export must
 pass full bounded analysis, stream dimensions/audio and duration within 0.1 s.
-It also compares decoded pictures at 0, 2 and 3.9 seconds, normalized to
+It also compares decoded pictures at the start, midpoint and 0.1 seconds before
+the end (0, 2 and 3.9 seconds for smoke; 0, 15 and 29.9 for full-hd), normalized to
 320×180 YUV420P, requiring PSNR of at least 25 dB against the source. Audio
 RMS must remain within 1 dB of the source and finite. Missing comparison
 summaries, incorrect pictures and lost audio fail qualification. These are
@@ -195,8 +201,18 @@ longer needed. The script never retries or changes backend on failure.
 Integrated Meteor Lake Intel Arc with iHD 26.3.5 and FFmpeg 9.0.2 passes all four
 exports, analysis and decoded comparisons (minimum sampled PSNR about 37 dB;
 audio RMS change below 0.01 dB). This establishes VA-API H.264 encode/decode
-and GPU scaling only.
-NVIDIA/CUDA execution and accelerated editor timeline effects remain unqualified;
+and GPU scaling. The 30-second full-hd profile also passes all four exports,
+analysis and comparisons. Its retained bundle is under 93 MiB; the cumulative
+largest observed child RSS is under 481 MiB, excluding aggregate memory and GPU
+allocations. These are single-run observations, with unequal encoder presets
+and quality settings; they do not establish a speedup or sustained throughput.
+Native deadline and Ctrl-C probes stop an active hardware decode/scale/encode
+pipeline after observed video-engine activity, leaving no owned decoder child.
+A deliberately invalid render device preserves CPU success and fails all
+three hardware paths visibly.
+
+NVIDIA/CUDA execution and interactive editor timeline effects remain unqualified;
 the CUDA recipe is supplied for that separate target. The separate
 [CachyOS editor/GPU guide](cachyos-media.md) records the qualified Kdenlive
-project/proxy/title round trip, muted player review and MLT Movit effect test.
+project/proxy/title round trip, muted player review, additional VA-API codecs
+and MLT Movit effect/hardware-encode tests.

@@ -104,6 +104,56 @@ for H.264 encode, decode and hardware scaling. The native Intel Arc result is
 from integrated Meteor Lake graphics with iHD 26.3.5, not a discrete Arc board.
 Do not extrapolate it to another GPU, codec or driver.
 
+### Additional VA-API codecs
+
+On that same native stack, four-second 1280×720/30 fps fixtures pass hardware
+encoding, complete file analysis and hardware decoding for H.264 8-bit and
+HEVC, AV1 and VP9 at both 8-bit and 10-bit. All 120 decoded frame hashes match
+software decoding at the native resolution and bit depth. Whole-clip picture
+comparisons against the source, normalized to 320×180, pass 25 dB PSNR, and
+copied AAC audio retains its measured RMS. These use CQP/global quality 25;
+equal numeric settings do not establish equal quality between codecs.
+The 10-bit fixtures promote an 8-bit SDR source: they test the format path,
+not original 10-bit detail or HDR fidelity.
+
+To reproduce a Main10 case, use `source.mp4` from the smoke GPU runner above
+and fresh paths in its private task directory:
+
+```bash
+timeout 180 prlimit --as=8589934592 --cpu=120 --fsize=67108864 -- \
+  ffmpeg -nostdin -v error -n -threads 1 -filter_threads 1 \
+  -init_hw_device vaapi=gpu:/dev/dri/renderD128 -filter_hw_device gpu \
+  -i /absolute/private/task/source.mp4 -map 0:v:0 -map 0:a:0 \
+  -vf format=p010le,hwupload -c:v hevc_vaapi -rc_mode CQP -global_quality 25 \
+  -threads 1 -c:a copy /absolute/private/task/hevc-main10.mkv
+basaltw-media /absolute/private/task/hevc-main10.mkv \
+  --output /absolute/private/task/hevc-main10-analysis
+
+timeout 180 prlimit --as=8589934592 --cpu=120 --fsize=67108864 -- \
+  ffmpeg -nostdin -v error -n -threads 1 -filter_threads 1 \
+  -i /absolute/private/task/hevc-main10.mkv -map 0:v:0 -an \
+  -vf format=yuv420p10le -c:v rawvideo -threads 1 -fps_mode passthrough \
+  -f framemd5 /absolute/private/task/software.framemd5
+timeout 180 prlimit --as=8589934592 --cpu=120 --fsize=67108864 -- \
+  ffmpeg -nostdin -v error -n -threads 1 -filter_threads 1 \
+  -init_hw_device vaapi=gpu:/dev/dri/renderD128 -filter_hw_device gpu \
+  -hwaccel vaapi -hwaccel_device gpu -hwaccel_output_format vaapi \
+  -i /absolute/private/task/hevc-main10.mkv -map 0:v:0 -an \
+  -vf hwdownload,format=p010le,format=yuv420p10le -c:v rawvideo -threads 1 \
+  -fps_mode passthrough -f framemd5 /absolute/private/task/hardware.framemd5
+```
+
+Require exactly 120 matching frame data rows (ignore `#` header comments),
+complete analysis, expected codec/pixel format, 1280×720 dimensions and four
+seconds within 0.1 seconds. For 8-bit use `nv12` upload/download and `yuv420p`
+comparison; for AV1 or VP9 choose `av1_vaapi` or `vp9_vaapi`. Verify actual
+decoded bit depth rather than trusting encoder selection. For whole-clip PSNR
+of this known CFR fixture, normalize each branch to `settb=1/30,setpts=N`:
+Matroska's millisecond timestamps otherwise cause frame-pair rounding errors.
+That frame-index alignment is not a general method for unknown or VFR media.
+
+### MLT GPU effects and delivery
+
 MLT's [OpenGL guidance](https://www.mltframework.org/docs/opengl/) describes
 Movit effects and the Qt `qglsl` consumer. The installed MLT automatically uses
 that consumer for an explicit Movit effect. A bounded, trusted synthetic test is:
@@ -113,7 +163,7 @@ timeout 45 prlimit --as=8589934592 --cpu=60 --fsize=16777216 -- \
   melt '/absolute/private/task/音 sample.mp4' in=0 out=95 \
   -attach-clip movit.saturation saturation=0 \
   -consumer avformat:/absolute/private/task/new-desaturated.mp4 \
-  vcodec=libx264 acodec=aac threads=1 real_time=1
+  vcodec=libx264 acodec=aac threads=1 real_time=-1
 ffmpeg -nostdin -v info -i /absolute/private/task/new-desaturated.mp4 \
   -vf signalstats,metadata=print -frames:v 1 -an -f null -
 ```
@@ -125,6 +175,10 @@ alone does not identify a hardware renderer. During the owned `melt` process,
 sample its `/proc/PID/fdinfo/*` DRM records and retain render-engine counter
 deltas with the exact command and driver. A listed plugin or a software OpenGL
 renderer is insufficient. Treat unavailable counters as unverified GPU use.
+Use negative `real_time` for offline delivery: the installed consumer documents
+positive values as allowing frame dropping. A 720p30 mirror/VA-API test with
+`real_time=1` lost three of 120 frames; `real_time=-1` preserved all 120. Count
+decoded frames and inspect boundaries; a successful process exit is insufficient.
 
 The native MLT 7.42.0 test passes with grayscale output and advancing i915 DRM
 render-engine counters in the same process. H.264 delivery encoding here is
@@ -132,6 +186,18 @@ CPU `libx264`; the measured GPU operation is the Movit effect. This is a separat
 MLT render, not evidence that Kdenlive's interactive timeline used Movit.
 MLT also reports an unavailable RtAudio plugin (`librtaudio.so.7`); offline
 exports succeed, but this does not qualify RtAudio playback.
+
+A separate four-second 720p30 `movit.mirror` plus `h264_vaapi` export also
+passes with advancing render- and video-engine counters in the same MLT
+process. Use explicitly BT.709-tagged stereo source media and `real_time=-1`.
+Its 120 frames match the expected horizontal flip structurally (whole-clip
+320×180 RGB PSNR above 36 dB), and audio RMS stays within 0.02 dB of that
+stereo source. This establishes combined GPU effect and hardware encoding in
+MLT, with CPU work still present; it does not establish an all-GPU pipeline.
+An untagged mono fixture is unsuitable for that direct comparison: MLT's color
+interpretation and mono-to-stereo handling changed picture values and audio
+RMS. Preserve input color/channel metadata and compare against the intended
+delivery interpretation rather than assuming pixel or amplitude preservation.
 
 Kdenlive's **Settings → Configure Kdenlive → Playback → GPU processing (Movit)**
 is disabled and unchecked in the tested native build. Its
