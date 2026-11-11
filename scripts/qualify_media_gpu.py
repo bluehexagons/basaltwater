@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 import resource
+import re
 import subprocess
 import sys
 import time
@@ -18,6 +20,17 @@ from lib.atomic_io import write_json_atomic
 from lib.media_cli import inspect
 from lib.streamed_process import run_captured
 from lib.validation import validate_filesystem_path
+
+
+def comparison_psnr(log: str) -> float:
+    """Require one decoded comparison; positive infinity means identical pixels."""
+    values = re.findall(r"\[Parsed_psnr_[^]]+\] PSNR .*?average:([\w.+-]+)", log)
+    if len(values) != 1:
+        raise RuntimeError("Expected one decoded PSNR summary")
+    value = float(values[0])
+    if math.isnan(value) or value < 25:
+        raise RuntimeError("Decoded sample PSNR below 25 dB")
+    return value  # Positive infinity means identical decoded samples.
 
 
 def backend_commands(backend: str, device: str, source: str) -> dict[str, list[str]]:
@@ -82,7 +95,7 @@ def qualify(output: str, backend: str, device: str) -> dict:
         (root / (name + ".log")).write_text(result.stdout + result.stderr, encoding="utf-8")
         if result.returncode:
             raise RuntimeError(f"{name} failed; see {name}.log")
-        return result.stdout
+        return result.stdout + result.stderr
 
     common = ["ffmpeg", "-nostdin", "-hide_banner", "-v", "verbose", "-n", "-threads", "1",
               "-filter_threads", "1"]
@@ -94,6 +107,13 @@ def qualify(output: str, backend: str, device: str) -> dict:
                                "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
                                "-t", "4", "-c:v", "libx264", "-preset", "veryfast", "-threads", "1",
                                "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart", str(source)])
+        reference = inspect(str(source), str(root / "source-analysis"))
+        if reference["status"] != "complete":
+            raise RuntimeError("Synthetic source analysis incomplete")
+        report["source"] = reference["source"]
+        reference_rms = reference["audio"]["measurements"]["overall"]["rms_dbfs"]
+        if reference_rms is None or not math.isfinite(reference_rms):
+            raise RuntimeError("Synthetic source audio RMS unavailable")
         commands = {"cpu": ["-i", str(source), "-c:v", "libx264", "-preset", "veryfast"]}
         commands.update(backend_commands(backend, device, str(source)))
         outcomes = {}
@@ -110,7 +130,25 @@ def qualify(output: str, backend: str, device: str) -> dict:
                         or abs(analysis["timing"]["duration_seconds"] - 4) > .1
                         or analysis["audio"]["status"] != "complete"):
                     raise RuntimeError(f"{name} output stream/duration mismatch")
-                outcomes[name] = {"status": "complete", "bytes": target.stat().st_size}
+                rms = analysis["audio"]["measurements"]["overall"]["rms_dbfs"]
+                if rms is None or not math.isfinite(rms) or abs(rms - reference_rms) > 1:
+                    raise RuntimeError(f"{name} audio RMS differs from source by more than 1 dB")
+                samples = []
+                for seconds in (0, 2, 3.9):
+                    # Both paths decode to the same small software format for
+                    # comparison; the measured production operation stays separate.
+                    log = run(f"{name}-compare-{seconds}", [
+                        "ffmpeg", "-nostdin", "-hide_banner", "-v", "info", "-threads", "1",
+                        "-ss", str(seconds), "-i", str(source), "-threads", "1",
+                        "-ss", str(seconds), "-i", str(target), "-filter_complex_threads", "1",
+                        "-filter_complex", "[0:v]scale=320:180,format=yuv420p,setpts=PTS-STARTPTS[ref];"
+                        "[1:v]scale=320:180,format=yuv420p,setpts=PTS-STARTPTS[out];[ref][out]psnr",
+                        "-an", "-frames:v", "1", "-threads", "1", "-f", "null", "-"])
+                    psnr = comparison_psnr(log)
+                    samples.append({"seconds": seconds, "psnr_db": psnr if math.isfinite(psnr) else None,
+                                    "identical": psnr == math.inf})
+                outcomes[name] = {"status": "complete", "bytes": target.stat().st_size,
+                                  "decoded_samples": samples, "audio_rms_delta_db": rms - reference_rms}
             except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
                 outcomes[name] = {"status": "failed", "error": str(exc)}
         report["outcomes"] = outcomes

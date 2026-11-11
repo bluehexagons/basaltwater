@@ -53,12 +53,39 @@ the complete manifest, H.264/AAC streams, 640×360 dimensions and five-second
 duration (0.1-second mux tolerance). The muted player check verifies visible
 consumption; physical listening remains a separate check. Close only task apps.
 
+For the separately qualified hardware encoder, choose `--render-preset 'VAAPI H264'`
+and another new output path. Inspect the installed preset's encoder definition
+(`vcodec=h264_vaapi` in `export/profiles.xml`) and retain advancing video-engine
+DRM counters from the owned `melt-7` render child. A preset label or H.264 stream
+alone is insufficient evidence of hardware encoding. Keep CPU and hardware
+results separate, including decoded start/middle/end comparisons and audio.
+
+This preset's MP4 lacks a front-loaded index in the tested build. If pipe-based
+analysis fails with partial-file errors, preserve the original and remux the
+trusted task export to a new path before analyzing it:
+
+```bash
+timeout 60 prlimit --as=1610612736 --cpu=60 --fsize=16777216 -- \
+  ffmpeg -nostdin -v error -n -i /absolute/private/task/editor-vaapi.mp4 \
+  -map 0 -c copy -movflags +faststart /absolute/private/task/editor-vaapi-faststart.mp4
+basaltw-media /absolute/private/task/editor-vaapi-faststart.mp4 \
+  --output /absolute/private/task/editor-vaapi-analysis
+```
+
+This is an explicit trusted-file preparation step; it does not relax the
+analyzer's pipe-only input contract. Verify matching decoded stream hashes of
+original and remux with FFmpeg `-map 0 -f streamhash -hash sha256 -` before using
+the copy as evidence for the original.
+
 On native CachyOS, Kdenlive 26.08.3 / MLT 7.42.0 passes this save/quit/reopen,
 linked media, generated proxy, editable title, synchronous CPU render and muted
 MPV review. The proxy used the source's 640-pixel width; downscaled proxy quality
 and long/complex projects are not established. Render analysis reports five
-seconds of video and about 5.013 seconds of audio. This does not qualify GPU
-timeline processing or hardware encoding inside Kdenlive.
+seconds of video and about 5.013 seconds of audio. The separate VA-API preset
+also passes, with advancing same-process i915 video-engine counters, matching
+decoded stream hashes across faststart remux, sampled PSNR above 41 dB against
+the CPU baseline, audio RMS difference below 0.01 dB and muted MPV review.
+These observations do not qualify GPU timeline processing.
 
 ## GPU effects are separate from encoding
 
@@ -96,7 +123,15 @@ MLT render, not evidence that Kdenlive's interactive timeline used Movit.
 MLT also reports an unavailable RtAudio plugin (`librtaudio.so.7`); offline
 exports succeed, but this does not qualify RtAudio playback.
 
-NVIDIA/CUDA execution, discrete-GPU production, Kdenlive interactive GPU effects,
+Kdenlive's **Settings → Configure Kdenlive → Playback → GPU processing (Movit)**
+is disabled and unchecked in the tested native build. Its
+[playback documentation](https://docs.kdenlive.org/en/getting_started/configure_kdenlive/configuration_playback.html)
+states that this option is disabled because of compatibility issues between
+MLT and Movit. Treat interactive Movit as unavailable; use the explicit CPU
+timeline baseline and separately measured MLT effect route above. Do not force
+the config flag, replace libraries or install drivers to manufacture a pass.
+
+NVIDIA/CUDA execution, discrete-GPU production,
 physical playback, HDR and OBS/device capture remain separate acceptance.
 Keep private raw logs, project XML, screenshots, device inventories and exports
 outside Git. No audio services or routing are changed by these checks.

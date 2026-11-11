@@ -42,6 +42,13 @@ before running native checks, rather than assuming an earlier SHA was tested.
   timeline, physical listening/capture, NVIDIA or fresh package installation is
   established. The read-only workstation doctor has zero failed observations;
   this does not turn deferred capabilities into successes.
+- The GPU runner now checks three decoded pictures against the source and
+  finite audio RMS within 1 dB; all four native exports pass. Kdenlive's separate
+  `VAAPI H264` preset also passes with advancing render-child video-engine
+  counters, decoded comparisons against the CPU baseline and muted MPV review.
+  Preserve its original MP4 and use the documented lossless faststart remux
+  before pipe-based analysis. Interactive Movit is disabled in this editor
+  build; retain the explicit CPU timeline fallback and separate MLT effect test.
 
 Raw evidence is private and is not included in Git. On the receiving machine,
 create a new private evidence directory outside the checkout; record the exact

@@ -15,6 +15,17 @@ from scripts import qualify_media_gpu
 
 
 class MediaTests(unittest.TestCase):
+    def test_gpu_decoded_comparison_rejects_missing_or_wrong_picture(self):
+        for value in ("12.5", "nan", "-inf"):
+            with self.subTest(value=value), self.assertRaises(RuntimeError):
+                qualify_media_gpu.comparison_psnr(f"[Parsed_psnr_6] PSNR y:30 average:{value} min:0 max:0")
+        with self.assertRaises(RuntimeError):
+            qualify_media_gpu.comparison_psnr("Output stream was empty")
+        self.assertEqual(qualify_media_gpu.comparison_psnr(
+            "[Parsed_psnr_6] PSNR y:30 average:35.2 min:0 max:0"), 35.2)
+        self.assertEqual(qualify_media_gpu.comparison_psnr(
+            "[Parsed_psnr_6] PSNR y:inf average:inf min:inf max:inf"), float("inf"))
+
     def test_gpu_qualification_requires_hardware_frames(self):
         for backend, device, frame_format, codec in (("vaapi", "/dev/dri/renderD128", "vaapi", "h264_vaapi"),
                                                      ("cuda", "0", "cuda", "h264_nvenc")):
@@ -36,10 +47,13 @@ class MediaTests(unittest.TestCase):
                     return subprocess.CompletedProcess(argv, 0, "synthetic version", "")
                 if "-init_hw_device" in argv:
                     raise subprocess.TimeoutExpired(argv, 180)
+                if "-filter_complex" in argv:
+                    return subprocess.CompletedProcess(argv, 0, "", "[Parsed_psnr_6] PSNR y:40 average:40 min:40 max:40")
                 Path(argv[-1]).write_bytes(b"synthetic video")
                 return subprocess.CompletedProcess(argv, 0, "", "")
 
-            analysis = {"status": "complete", "audio": {"status": "complete"},
+            analysis = {"status": "complete", "source": {"sha256": "synthetic"},
+                        "audio": {"status": "complete", "measurements": {"overall": {"rms_dbfs": -21}}},
                         "timing": {"duration_seconds": 4}, "metadata": {"streams": [
                             {"codec_type": "video", "width": 1280, "height": 720}]}}
             with patch.object(qualify_media_gpu, "run_captured", side_effect=execute), \
@@ -53,6 +67,33 @@ class MediaTests(unittest.TestCase):
             self.assertEqual((output / "qualification.json").stat().st_mode & 0o777, 0o600)
             with self.assertRaises(FileExistsError):
                 qualify_media_gpu.qualify(str(output), "cuda", "0")
+
+    def test_gpu_outputs_must_preserve_picture_and_audio_content(self):
+        for bad_audio in (False, True):
+            with self.subTest(bad_audio=bad_audio), tempfile.TemporaryDirectory() as parent:
+                def execute(argv, **kwargs):
+                    if "-version" in argv:
+                        return subprocess.CompletedProcess(argv, 0, "synthetic version", "")
+                    if "-filter_complex" in argv:
+                        return subprocess.CompletedProcess(argv, 0, "", "[Parsed_psnr_6] PSNR y:12 average:12 min:12 max:12")
+                    Path(argv[-1]).write_bytes(b"synthetic video")
+                    return subprocess.CompletedProcess(argv, 0, "", "")
+
+                def analyze(source, output):
+                    dimensions = (320, 180) if Path(source).stem == "scale" else (1280, 720)
+                    rms = None if bad_audio and Path(source).stem != "source" else -21
+                    return {"status": "complete", "source": {"sha256": "synthetic"},
+                            "audio": {"status": "complete", "measurements": {"overall": {"rms_dbfs": rms}}},
+                            "timing": {"duration_seconds": 4}, "metadata": {"streams": [
+                                {"codec_type": "video", "width": dimensions[0], "height": dimensions[1]}]}}
+
+                with patch.object(qualify_media_gpu, "run_captured", side_effect=execute), \
+                        patch.object(qualify_media_gpu, "inspect", side_effect=analyze):
+                    result = qualify_media_gpu.qualify(str(Path(parent) / "new"), "cuda", "0")
+                self.assertEqual(result["status"], "incomplete")
+                for outcome in result["outcomes"].values():
+                    self.assertEqual(outcome["status"], "failed")
+                    self.assertIn("audio RMS" if bad_audio else "PSNR", outcome["error"])
 
     def test_snapshot_and_container_guards(self):
         with tempfile.TemporaryDirectory() as root:

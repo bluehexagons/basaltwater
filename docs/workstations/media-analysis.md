@@ -175,7 +175,12 @@ download; scaling requires `scale_vaapi` or `scale_cuda` on hardware frames.
 Missing backends fail visibly rather than silently choosing software. CPU
 results remain separate when a GPU operation fails. Each successful export must
 pass full bounded analysis, stream dimensions/audio and duration within 0.1 s.
-This does not check perceptual quality or codec parity between the backends.
+It also compares decoded pictures at 0, 2 and 3.9 seconds, normalized to
+320×180 YUV420P, requiring PSNR of at least 25 dB against the source. Audio
+RMS must remain within 1 dB of the source and finite. Missing comparison
+summaries, incorrect pictures and lost audio fail qualification. These are
+synthetic structural checks, not perceptual quality or codec parity between
+the backends; sparse samples do not establish whole-clip picture correctness.
 
 Private logs, literal command arguments, per-command elapsed/child CPU time,
 cumulative largest child RSS, output bytes and analysis receipts stay in the new
@@ -188,7 +193,9 @@ route. New directories refuse overwrites; remove only owned evidence when no
 longer needed. The script never retries or changes backend on failure.
 
 Integrated Meteor Lake Intel Arc with iHD 26.3.5 and FFmpeg 9.0.2 passes all four
-exports and their analysis. This establishes VA-API H.264 encode/decode and GPU scaling only.
+exports, analysis and decoded comparisons (minimum sampled PSNR about 37 dB;
+audio RMS change below 0.01 dB). This establishes VA-API H.264 encode/decode
+and GPU scaling only.
 NVIDIA/CUDA execution and accelerated editor timeline effects remain unqualified;
 the CUDA recipe is supplied for that separate target. The separate
 [CachyOS editor/GPU guide](cachyos-media.md) records the qualified Kdenlive
