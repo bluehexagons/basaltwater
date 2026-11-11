@@ -23,7 +23,7 @@ from common.service_tools.web_panel_templates import panel_navigation
 from lib.data_actions import DATA_HELPER, DATA_TIMEOUT, finding_revision, validate_data_action
 from lib.operation_state import OperationStateError, OperationStateStore
 from lib.privilege_execution import ExecutionResult
-from lib.privilege_policy import operation_plan
+from lib.privilege_policy import MAX_MESSAGE, canonical, operation_plan
 from sync.service_tools.scrub_findings import Findings, file_identity, remediate
 
 
@@ -99,6 +99,56 @@ class DataActionContractTests(unittest.TestCase):
                 self.assertEqual(privilege_broker.execute(plan).failure, "action_unavailable")
                 stage.assert_not_called()
                 run.assert_not_called()
+
+    def test_large_batches_keep_newest_request_visible_and_cancellable(self):
+        value = {"action": "quarantine", "directory": "/srv/archive", "database": "/srv/parity", "job_id": "a" * 32,
+                 "items": [{"file": "/srv/archive/" + "segment/" * 92 + str(index), "finding": "a" * 64} for index in range(10)]}
+        with tempfile.TemporaryDirectory() as directory:
+            runner = Mock(return_value=ExecutionResult("dispatched", exit_code=0))
+            broker = privilege_broker.Broker(str(Path(directory) / "requests.db"), policy_loader=policy, runner=runner)
+            self.addCleanup(broker.db.close)
+            broker.request(1000, "data.run", value, "First reviewed batch")
+            self.assertTrue(broker.execute_next())
+            newest = broker.request(1000, "data.run", {**value, "job_id": "b" * 32}, "Next reviewed batch")
+            latest = {"parameters": value, "status": "findings", "started": 1, "finished": 2,
+                      "items": [{"index": index, "status": "unresolved", "failure": "read_only"} for index in range(10)]}
+            with patch.object(privilege_broker, "data_job_status", return_value={**status(), "latest": latest}), \
+                 patch.object(privilege_broker, "routine_job_status", return_value=status()):
+                result = broker.dispatch({"action": "data-status"}, 1000)
+            self.assertLessEqual(len((canonical({"ok": True, "result": result}) + "\n").encode()), MAX_MESSAGE)
+            self.assertEqual(result["requests"][0]["id"], newest["id"])
+            self.assertTrue(result["outstanding"])
+            self.assertEqual(result["latest"], latest)
+            body = actions.render_status(result, "CSRF")
+            self.assertIn("Reviewed files: 10", body)
+            self.assertIn("exact paths", body)
+            self.assertIn('/requests/' + newest["id"], body)
+            self.assertIn('name="id" value="' + newest["id"] + '"', body)
+            self.assertNotIn("Worker result for this request", body)
+            self.assertEqual(broker.status(newest["id"], 1000)["plan"]["parameters"]["items"], value["items"])
+            self.assertEqual(broker.cancel(newest["id"], 1000)["state"], "cancelled")
+
+    def test_oversized_legacy_worker_result_does_not_hide_request_or_break_status(self):
+        with tempfile.TemporaryDirectory() as directory:
+            broker = privilege_broker.Broker(str(Path(directory) / "requests.db"), policy_loader=policy)
+            self.addCleanup(broker.db.close)
+            request = broker.request(1000, "data.run", parameters(), "Reviewed repair")
+            # Old/manual workers can write valid single-file parameters larger
+            # than a broker-accepted request; status must still fit the socket.
+            long_path = "/srv/" + "\u4e00" * 900
+            large = {**parameters(), "action": "restore", "directory": long_path,
+                     "database": long_path + "/parity", "file": long_path + "/file", "backup": "/backup/" + "\u4e00" * 900}
+            latest = {"parameters": large, "status": "failed", "failure": "execution_rejected"}
+            validate_data_action(large)
+            with patch.object(privilege_broker, "data_job_status", return_value={**status(), "latest": latest}), \
+                 patch.object(privilege_broker, "routine_job_status", return_value=status()):
+                result = broker.dispatch({"action": "data-status"}, 1000)
+            self.assertLessEqual(len((canonical({"ok": True, "result": result}) + "\n").encode()), MAX_MESSAGE)
+            self.assertEqual(result["requests"][0]["id"], request["id"])
+            self.assertTrue(result["latest_omitted"])
+            self.assertIn("exceeds the activity display limit", actions.render_status(result, "CSRF"))
+            body = actions.render_status({**result, "requests": []}, "CSRF")
+            self.assertNotIn("No recovery requests recorded", body)
 
 
 class DataRecoveryTests(unittest.TestCase):
@@ -193,6 +243,13 @@ class DataRecoveryTests(unittest.TestCase):
             self.assertEqual(self.run_root_job({**self.value, "job_id": "d" * 32}), 1)
         recover.assert_not_called()
         self.assertEqual(json.loads((self.root / "job.json").read_text())["failure"], "storage_busy")
+
+    def test_recovery_space_preflight_reports_no_space_without_staging(self):
+        self.run_job(recover=data_job.recover)
+        with patch("sync.service_tools.scrub_findings.shutil.disk_usage", return_value=SimpleNamespace(free=0)):
+            self.assertEqual(self.run_root_job({**self.value, "action": "accept"}), 1)
+        self.assertEqual(json.loads((self.root / "job.json").read_text())["failure"], "no_space")
+        self.assertFalse(list((self.database / ".basaltwater-scrub").glob("recovery-*")))
 
     def test_interrupted_or_racing_status_never_reports_completion(self):
         record = {"parameters": self.value, "status": "running"}

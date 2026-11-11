@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import os
 import ctypes
+import errno
 import hashlib
+import re
 import shutil
 import stat
 import subprocess
@@ -148,16 +150,35 @@ def _open_directory(path: str) -> int:
         raise
 
 
+def _mount_points() -> frozenset[str]:
+    """Read bounded kernel metadata, including same-device bind mounts."""
+    with open("/proc/self/mountinfo", encoding="utf-8") as stream:
+        data = stream.read(1024 * 1024 + 1)
+    if len(data) > 1024 * 1024 or not data:
+        raise ValueError("Mount table unavailable or too large")
+    points = set()
+    for line in data.splitlines():
+        fields = line.split()
+        if len(fields) < 10 or "-" not in fields[6:] or not fields[4].startswith("/"):
+            raise ValueError("Invalid mount table")
+        points.add(re.sub(r"\\([0-7]{3})", lambda match: chr(int(match[1], 8)), fields[4]))
+    return frozenset(points)
+
+
 def quarantine_root(path: str, directory: str) -> str:
     """Keep atomic moves inside the file's filesystem or Btrfs subvolume.
 
     Btrfs exposes distinct st_dev values for nested subvolumes. Walk only
-    contiguous parents on the source device, never outside the scrub root.
+    contiguous parents on the source device and mount, never outside the scrub
+    root. Device numbers alone cannot identify same-device bind mounts.
     Callers check confinement before inspecting these directories.
     """
     current = Path(path).parent
+    mounts = _mount_points()
     device = os.stat(current, follow_symlinks=False).st_dev
     while current != Path(directory):
+        if str(current) in mounts:
+            break
         parent = current.parent
         if not parent.is_relative_to(directory) or os.stat(parent, follow_symlinks=False).st_dev != device:
             break
@@ -177,7 +198,7 @@ def disposition_preflight(path: str, directory: str, database: str, job_id: str 
         raise ValueError("Disposition requires a regular file with one link")
     local_root = quarantine_root(path, directory)
     if os.stat(local_root, follow_symlinks=False).st_dev != info.st_dev:
-        raise ValueError("Cross-filesystem quarantine is unavailable")
+        raise OSError(errno.EXDEV, "Cross-filesystem quarantine is unavailable")
     if len(os.fsencode(os.path.basename(path) + ".corrupt")) > os.pathconf(local_root, "PC_NAME_MAX"):
         raise ValueError("Quarantine filename is too long")
     quarantine_path = os.path.join(local_root, QUARANTINE_DIR)
@@ -421,7 +442,7 @@ def remediate(file_path: str, directory: str, database: str, redundancy: int,
     needed = 3 * candidate_size + 3 * (parity_size + candidate_size * redundancy // 100) + reserve
     if (shutil.disk_usage(report.root).free < needed
             or (action != 'accept' and shutil.disk_usage(directory).free < candidate_size + reserve)):
-        raise OSError('Insufficient free space for retained recovery copies and atomic publication')
+        raise OSError(errno.ENOSPC, 'Insufficient free space for retained recovery copies and atomic publication')
     recovery = tempfile.mkdtemp(prefix="recovery-", dir=report.root)
     source_tree = os.path.join(recovery, "original")
     original_db = os.path.join(recovery, "parity")

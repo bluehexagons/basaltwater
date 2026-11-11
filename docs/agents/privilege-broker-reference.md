@@ -330,7 +330,14 @@ apply. Acceptance explicitly replaces parity for independently confirmed content
 The protected `data-job.json` contains only the latest job’s public parameters,
 fixed status, result category, failure category and timestamps. `data-status`
 on the requester socket returns this record, unit state and at most ten owned
-recovery requests, trimmed to the transport limit. It never reads NAS data or
+recovery requests. Older rows are trimmed first to meet the transport limit.
+If necessary, the newest row retains its identity, state, execution metadata and
+review URL but replaces exact paths with `target_count` and parameters containing
+only `action` and `job_id`. Full owned request status and review still contain the
+exact parameters, and the request remains cancellable before execution is claimed.
+An oversized worker record is omitted with `latest_omitted: true`; unit and
+outstanding-request gates remain available. Inspect the retained worker record
+through administrator access. The status operation never reads NAS data or
 returns PAR2 output, private evidence, recovery copies or approval authority.
 The worker reports remaining findings separately from successful recovery.
 An unchanged running record observed with an inactive/failed unit becomes

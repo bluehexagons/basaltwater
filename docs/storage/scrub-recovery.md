@@ -112,9 +112,11 @@ visit. Deletion requires the displayed `DELETE N FILES` confirmation. Repair,
 restore and acceptance stay individual operations.
 
 Quarantine retains corrupt bytes under the source root's private, root-owned
-`.basaltwater-quarantine` directory. For files in a nested mount or Btrfs subvolume,
-quarantine lives at that boundary inside the scrub root, keeping moves on the
-file's device. An operation directory preserves the source
+`.basaltwater-quarantine` directory. For files in a nested mount, bind mount or
+Btrfs subvolume, quarantine lives at that boundary inside the scrub root, keeping
+moves within the source mount and device. Mount boundaries come from Linux's
+mount inventory; unavailable or invalid inventory stops disposition before moving
+files. An operation directory preserves the source
 relative path with a `.corrupt` suffix. An existing directory needs the recognized
 ownership marker and mode 0700; it is never silently adopted. Disposition requires
 a regular file with one hard link on a writable filesystem and Linux
@@ -141,7 +143,11 @@ protection is not supported by these controls. Do not remove the scrub declarati
 to bypass it. Inspect per-file worker results before individually reviewing any
 remaining files after interruption.
 
-The panel shows the latest worker result. Each new batch also retains a root-only
+The panel shows the latest worker result and recent requests. Large requests can
+show a file count with a details link instead of repeating every path, keeping the
+current request visible and cancellable before dispatch. A worker result too large
+for the activity response is explicitly marked unavailable there; inspect its
+retained record. Each new batch also retains a root-only
 JSON record at
 `/var/lib/basaltwater-privilege-broker/data-payload-JOB_ID.json.claimed`, containing
 its reviewed parameters, per-file outcomes and quarantine destinations. Inspect

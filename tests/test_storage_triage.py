@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, mock_open, patch
 
 from common.service_tools import data_job
 from lib.data_actions import finding_revision, validate_data_action
@@ -40,6 +40,7 @@ class TriageTests(unittest.TestCase):
         self.enterContext(patch.object(data_job, "_setup_owner", side_effect=lambda: nullcontext()))
         self.enterContext(patch.object(data_job, "can_manage_system_services", return_value=True))
         self.enterContext(patch.object(data_job, "load_setup_config", return_value=self.saved))
+        self.mounts = self.enterContext(patch.object(findings, "_mount_points", return_value=frozenset()))
         original = os.fstat
         def owned(fd):
             fields = list(original(fd))
@@ -273,6 +274,28 @@ class TriageTests(unittest.TestCase):
             self.assertTrue(all(item["failure"] == label for item in self.result()["items"]))
             self.assertNotIn("PRIVATE", self.state.read_text())
 
+    def test_quarantine_stays_inside_same_device_bind_mount(self):
+        nested = self.source / "bound data"
+        nested.mkdir()
+        path = self.paths[0].rename(nested / "one")
+        self.report().record("bound data/one", {"category": "unrepairable", "file_identity": findings.file_identity(str(path))})
+        self.value["items"] = [{"file": str(path), "finding": finding_revision(self.report().data["files"]["bound data/one"])}]
+        self.mounts.return_value = frozenset({str(nested)})
+        self.assertEqual(path.stat().st_dev, self.source.stat().st_dev)
+        self.assertEqual(data_job.run_action(self.value), 0)
+        destination = Path(self.result()["items"][0]["destination"])
+        self.assertTrue(destination.is_relative_to(nested / findings.QUARANTINE_DIR))
+        self.assertEqual(destination.read_bytes(), b"damaged bytes")
+        self.assertFalse((self.source / findings.QUARANTINE_DIR).exists())
+
+    def test_missing_mount_inventory_stops_before_disposition(self):
+        self.mounts.side_effect = OSError("PRIVATE mount inventory unavailable")
+        with patch.object(data_job, "dispose") as dispose:
+            self.assertEqual(data_job.run_action(self.value), 1)
+            dispose.assert_not_called()
+        self.assertTrue(all(path.exists() for path in self.paths))
+        self.assertNotIn("PRIVATE", self.state.read_text())
+
     def test_delete_retains_parity_and_intent_on_ambiguous_failure(self):
         self.value["action"] = "delete"
         (self.database / "one.par2").write_bytes(b"parity")
@@ -420,3 +443,15 @@ class TriageTests(unittest.TestCase):
         self.value["items"][0]["finding"] = finding_revision(self.report().data["files"]["nested/one"])
         self.assertEqual(data_job.run_action(self.value), 0)
         self.assertEqual(len(self.report().data["dispositions"]["nested/one"]["history"]), 1)
+
+
+class QuarantineMountInventoryTests(unittest.TestCase):
+    def test_kernel_escaped_mount_paths_are_decoded(self):
+        table = "20 1 0:7 / / rw - tmpfs none rw\n21 20 0:7 /bound /srv/bound\\040data rw - tmpfs none rw\n"
+        with patch("builtins.open", mock_open(read_data=table)):
+            self.assertEqual(findings._mount_points(), frozenset({"/", "/srv/bound data"}))
+
+    def test_empty_malformed_and_oversized_mount_tables_are_rejected(self):
+        for table in ("", "invalid mount\n", "x" * (1024 * 1024 + 1)):
+            with self.subTest(length=len(table)), patch("builtins.open", mock_open(read_data=table)), self.assertRaises(ValueError):
+                findings._mount_points()

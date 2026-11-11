@@ -435,8 +435,19 @@ class Broker:
                     "execution": json.loads(row["execution"]) if row["execution"] else None,
                     "review_url": policy["origin"] + "/requests/" + row["id"]}
                     for row in rows]
-                while result["requests"] and len(canonical({"ok": True, "result": result}).encode()) > MAX_MESSAGE:
+                while len(result["requests"]) > 1 and len(canonical({"ok": True, "result": result}).encode()) >= MAX_MESSAGE:
                     result["requests"].pop()
+                if result["requests"] and len(canonical({"ok": True, "result": result}).encode()) >= MAX_MESSAGE:
+                    # A large latest result and another exact batch may not fit
+                    # together. Keep the newest request inspectable/cancellable;
+                    # its full targets remain available through request status.
+                    row = result["requests"][0]
+                    parameters = row["parameters"]
+                    row["target_count"] = len(parameters["items"]) if "items" in parameters else 1
+                    row["parameters"] = {key: parameters[key] for key in ("action", "job_id")}
+                if len(canonical({"ok": True, "result": result}).encode()) >= MAX_MESSAGE:
+                    result["latest"] = {}
+                    result["latest_omitted"] = True
             return result
         if not approval and action == "admin-status" and set(message) == {"action"}:
             policy = self.policy_loader()

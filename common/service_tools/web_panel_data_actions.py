@@ -15,9 +15,9 @@ from lib.data_actions import BATCH_LIMIT, DATA_ACTIONS, HEX_ID, validate_data_ac
 from lib.privilege_client import exchange
 
 FAILURE_LABELS = {
-    "read_only": "The file is on a read-only filesystem or snapshot. Quarantine and deletion need a writable source; recover a writable copy or manage the snapshot through the administrator tools.",
+    "read_only": "The filesystem or snapshot is read-only. Recovery needs write access to the source or parity storage. Use a writable copy or manage the snapshot through the administrator tools.",
     "permission_denied": "The filesystem refused access. Check its permissions and mount restrictions before reviewing the action again.",
-    "no_space": "The filesystem has no space or quota available for quarantine metadata and results. Free space before reviewing the action again.",
+    "no_space": "The filesystem has no space or quota available for recovery data or results. Free space before reviewing the action again.",
     "cross_device": "The filesystem refused an atomic move across a mount or subvolume boundary. Inspect the source and quarantine locations before retrying.",
     "storage_busy": "Another storage operation held the lock. No recovery was started.",
     "setup_recovery_required": "An unfinished setup operation needs administrator recovery before file recovery can continue.",
@@ -227,7 +227,9 @@ def render_status(status: dict, csrf: str) -> str:
     if reason := unavailable_reason(status):
         body += f'<p class="data-notice" role="status">{escape(reason)}</p>'
     latest = status.get("latest", {})
-    if not latest and not status.get("requests") and not unavailable_reason(status):
+    if status.get("latest_omitted"):
+        body += '<p class="data-notice">The latest worker result exceeds the activity display limit. Inspect its retained record through the controller.</p>'
+    if not latest and not status.get("latest_omitted") and not status.get("requests") and not unavailable_reason(status):
         body += '<p class="data-notice">No recovery requests recorded. Open a finding below to review verification or recovery.</p>'
     if latest:
         parameters = latest.get("parameters", {})
@@ -272,7 +274,9 @@ def render_status(status: dict, csrf: str) -> str:
         parameters = row.get("parameters", {})
         label = DATA_ACTIONS.get(parameters.get("action"), ("Recovery request", ""))[0]
         state = row.get("state", "unavailable")
-        body += f'<article class="event"><h3>{escape(label)}</h3>' + _task_context(parameters) + _targets(parameters) + f'<p>Dispatch: <strong>{escape(state)}</strong></p>'
+        targets = (f'<p>Reviewed files: {row["target_count"]}. Open request details for exact paths.</p>'
+                   if type(row.get("target_count")) is int and 1 <= row["target_count"] <= BATCH_LIMIT else _targets(parameters))
+        body += f'<article class="event"><h3>{escape(label)}</h3>' + _task_context(parameters) + targets + f'<p>Dispatch: <strong>{escape(state)}</strong></p>'
         body += f'<p class="event-meta">Requested: {_timestamp(row.get("created"))}</p>'
         if state in {"pending", "approved"}:
             body += f'<p class="event-meta">Approval expires: {_timestamp(row.get("expires"))}</p>'

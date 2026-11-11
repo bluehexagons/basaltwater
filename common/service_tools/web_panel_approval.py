@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import html
-from common.service_tools.web_panel_features import MANIFEST, PanelFeatures, unit_installed
+from common.service_tools.web_panel_features import AGENT_TOOLS, MANIFEST, PanelFeatures, unit_installed
 from common.service_tools.web_panel_templates import panel_navigation, render_document
 from lib.atomic_io import read_json_file
 from lib.guacamole_config import SERVICE, SSH_SERVICE
@@ -47,12 +47,15 @@ def configured_panel_features() -> PanelFeatures:
     try:
         manifest = read_json_file(MANIFEST, max_bytes=256 * 1024)
         configured = manifest["features"]
-        selected = configured.get("agent_tools", [])
-        tools = frozenset(selected) if isinstance(selected, list) and all(isinstance(item, str) for item in selected) else frozenset()
+        tools = set()
+        for key, allowed in (("agent_tools", AGENT_TOOLS), ("publishing_tools", {"butler", "steamcmd"})):
+            selected = configured.get(key, [])
+            if isinstance(selected, list) and all(isinstance(item, str) for item in selected):
+                tools.update(allowed.intersection(selected))
         if configured.get("git") is True:
             tools |= {"git"}
         features = PanelFeatures(
-            tools=tools, t3=configured.get("t3_update") is True,
+            tools=frozenset(tools), t3=configured.get("t3_update") is True,
             desktop=unit_installed(SERVICE + ".service", ""),
             console=unit_installed(SSH_SERVICE + ".socket", ""),
             github_runner=unit_installed(RUNNER_SERVICE, ""),

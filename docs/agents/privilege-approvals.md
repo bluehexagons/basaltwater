@@ -162,6 +162,11 @@ and tools. The standalone panel retains its independent credential and origin,
 including when both panels are installed. Request links prefer the main panel
 when it is present; either review surface can decide the same pending request.
 
+Integrated approval pages use the main panel's navigation, including configured
+agent and publishing tools. Setup publishes these non-secret selections in the
+panel manifest so the isolated service does not need access to the operator's
+home directory. Rerun setup to publish missing selections on older installations.
+
 The panel’s [Shares & Data page](../services/shares-data.md) also requests
 `data.run` operations for verification, quarantine, deletion, single-file
 repair, restoration and explicit acceptance. These are automatically authorized

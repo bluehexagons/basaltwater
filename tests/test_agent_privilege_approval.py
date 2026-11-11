@@ -17,6 +17,8 @@ from urllib.parse import urlencode
 from common.service_tools.privilege_approval import ApprovalServer, PanelApprovalServer, render_queue
 from common.service_tools.privilege_broker import Broker
 from common.service_tools import web_panel_approval
+from common.web_panel_steps import build_web_panel_manifest
+from lib.config import SetupConfig
 from lib.privilege_auth import authenticate, password_record
 from lib.privilege_execution import ExecutionResult
 from tests.test_agent_privilege_broker import policy
@@ -419,14 +421,28 @@ class IntegratedApprovalTests(ApprovalTests):
         self.assertEqual(self.post(self.form())[0], 303)
 
     def test_navigation_uses_configured_panel_sections_without_operator_home_access(self):
-        manifest = {"features": {"agent_tools": ["codex"], "git": True, "t3_update": True}}
+        manifest = {"features": {"agent_tools": ["codex"], "publishing_tools": ["butler"], "git": True, "t3_update": True}}
         with patch.object(web_panel_approval, "read_json_file", return_value=manifest), \
              patch.object(web_panel_approval, "unit_installed", return_value=True):
             content = self.call()[2]
-        for target in ("/agents", "/credentials", "/desktop/", "/console/", "/shares-data", "/storage", "/services", "/jobs", "/logs", "/github-runner"):
+        for target in ("/agents", "/credentials", "/publishing", "/desktop/", "/console/", "/shares-data", "/storage", "/services", "/jobs", "/logs", "/github-runner"):
             self.assertIn(f'href="{target}"', content)
         self.assertNotIn("Every decision is recorded", content)
         self.assertEqual(content.count('aria-current="page"'), 2)  # Desktop and mobile menus.
+
+    def test_publishing_navigation_uses_setup_selection_without_home_inspection(self):
+        for selected, expected in (({}, []), ({"publishing_tools": ["steamcmd"]}, ["steamcmd"]),
+                                   ({"godot_bundles": ["publishing"]}, ["butler", "steamcmd"]),
+                                   ({"install_butler": True}, ["butler"]), ({"install_steamcmd": True}, ["steamcmd"])):
+            with self.subTest(selected=selected):
+                profile = "agent_cachyos" if any(key.startswith("install_") for key in selected) else "agent_vm"
+                config = SetupConfig(system_type=profile, host="vm.example", username="operator", **selected)
+                manifest = build_web_panel_manifest(config, ["vm.example"])
+                self.assertEqual(manifest["features"]["publishing_tools"], expected)
+                with patch.object(web_panel_approval, "read_json_file", return_value=manifest), \
+                     patch.object(web_panel_approval, "unit_installed", return_value=False):
+                    pages = web_panel_approval.configured_panel_features().pages
+                self.assertEqual("publishing" in pages, bool(expected))
 
     def test_recovery_review_names_targets_and_keeps_json_in_technical_details(self):
         parameters = {"action": "quarantine", "directory": "/srv/data", "database": "/srv/parity",
