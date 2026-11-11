@@ -35,9 +35,9 @@ timestamps is unsupported. Actual decoded PTS remains the frame's timing evidenc
 The selected video also receives a bounded full decode check. Audio results
 include per-channel/overall sample peak and RMS, integrated
 loudness, estimated true peak and silence intervals at -50 dB for 0.25 seconds.
-Nonfinite signal levels become JSON null (including digital silence); a missing
-measurement key fails the operation. No semantic, perceived-quality, sync,
-physical playback or clipping diagnosis is claimed.
+Nonfinite signal levels become JSON null (including digital silence); missing
+peak/RMS fields for the overall summary or any selected channel fail the operation.
+No semantic, perceived-quality, sync, physical playback or clipping diagnosis is claimed.
 
 ## Limits, privacy and failure handling
 

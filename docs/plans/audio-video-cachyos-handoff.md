@@ -12,8 +12,9 @@ future work; text-to-speech is outside this project.
 The branch `t3/av-support-1` delivers `c764264f` (bounded Debian analyzer),
 `cc8a562a` (timing, rotation, cancellation and CPU qualification) and `a5991bd3`
 (CachyOS `--audio-tools`). The follow-up review fixes sampling against the
-selected video's packet span, covering low-rate, shorter and delayed video, and
-tests the actual refresh-replay path and presence-only doctor behavior. These
+selected video's packet span, covering low-rate, shorter and delayed video,
+rejects incomplete per-channel audio measurements, and tests the actual
+refresh-replay path and presence-only doctor behavior. These
 changes are intended for `main`; record `git rev-parse HEAD` and worktree status
 before running native checks, rather than assuming an earlier SHA was tested.
 

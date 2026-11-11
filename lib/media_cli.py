@@ -197,8 +197,11 @@ def inspect(source: str, output: str, *, video: int = 0, audio: int = 0,
                 log = command("ffmpeg", prefix + ["-map", f"0:{selected['audio']['index']}",
                               "-af", filters, "-f", "null", "-"])
                 measurements = parse_analysis(log, duration)
-                if ("sample_peak_dbfs" not in measurements["overall"]
-                        or "rms_dbfs" not in measurements["overall"]
+                level_keys = {"sample_peak_dbfs", "rms_dbfs"}
+                channel_keys = {str(n) for n in range(1, int(selected["audio"]["channels"]) + 1)}
+                if (not level_keys.issubset(measurements["overall"])
+                        or set(measurements["channels"]) != channel_keys
+                        or any(not level_keys.issubset(levels) for levels in measurements["channels"].values())
                         or measurements["integrated_lufs"] is None):
                     raise RuntimeError("Audio measurement summary incomplete")
                 result["audio"].update(status="complete", filters=filters, measurements=measurements)

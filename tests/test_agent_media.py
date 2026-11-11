@@ -65,7 +65,9 @@ class MediaTests(unittest.TestCase):
     def test_silent_audio_and_missing_video(self):
         metadata = {"streams": [{"index": 0, "codec_type": "audio", "channels": 1, "sample_rate": "48000"}],
                     "packets": [{"pts_time": "0", "duration_time": "2"}]}
-        log = ("[Parsed_astats_0] Overall\n[Parsed_astats_0] Peak level dB: -inf\n"
+        log = ("[Parsed_astats_0] Channel: 1\n[Parsed_astats_0] Peak level dB: -inf\n"
+               "[Parsed_astats_0] RMS level dB: -inf\n"
+               "[Parsed_astats_0] Overall\n[Parsed_astats_0] Peak level dB: -inf\n"
                "[Parsed_astats_0] RMS level dB: -inf\nsilence_start: 0\nsilence_end: 2\n I: -70.0 LUFS\n")
         result = self.run_analysis(metadata, log=log)
         self.assertEqual(result["status"], "complete")
@@ -73,6 +75,18 @@ class MediaTests(unittest.TestCase):
         self.assertIsNone(result["audio"]["measurements"]["overall"]["rms_dbfs"])
         self.assertEqual(result["audio"]["measurements"]["silence_intervals"],
                          [{"start_seconds": 0, "end_seconds": 2}])
+
+    def test_missing_channel_measurements_are_incomplete(self):
+        overall = ("[Parsed_astats_0] Overall\n[Parsed_astats_0] Peak level dB: -1\n"
+                   "[Parsed_astats_0] RMS level dB: -6\n I: -20.0 LUFS\n")
+        channel = "[Parsed_astats_0] Channel: 1\n[Parsed_astats_0] Peak level dB: -1\n"
+        for channels, log in ((1, overall), (1, channel + overall),
+                              (2, channel + "[Parsed_astats_0] RMS level dB: -6\n" + overall)):
+            with self.subTest(channels=channels, log=log):
+                result = self.run_analysis({"format": {"duration": "2"}, "streams": [
+                    {"index": 0, "codec_type": "audio", "channels": channels, "sample_rate": "48000"}]}, log=log)
+                self.assertEqual(result["status"], "incomplete")
+                self.assertIn("measurement summary incomplete", result["errors"][0])
 
     def test_decoded_timestamps_and_missing_audio(self):
         result = self.run_analysis({"format": {"duration": "2"}, "streams": [
