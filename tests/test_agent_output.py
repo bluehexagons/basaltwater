@@ -20,6 +20,10 @@ SPEC = importlib.util.spec_from_file_location("capture_output", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 capture_output = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(capture_output)
+READER_SPEC = importlib.util.spec_from_file_location("read_output", SCRIPT.with_name("read_output.py"))
+assert READER_SPEC is not None and READER_SPEC.loader is not None
+read_output = importlib.util.module_from_spec(READER_SPEC)
+READER_SPEC.loader.exec_module(read_output)
 
 
 class AgentOutputTests(unittest.TestCase):
@@ -230,6 +234,143 @@ class AgentOutputTests(unittest.TestCase):
         self.assertEqual([call.args for call in killpg.call_args_list],
                          [(987, signal.SIGTERM), (987, signal.SIGKILL)])
         self.assertEqual(self.summary(output.getvalue())["status"], "interrupted")
+
+
+class AgentOutputReaderTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.path = self.root / "summary.json"
+        self.record = {"schema_version": 1, "status": "completed", "return_code": 23,
+                       "duration_seconds": 1.5, "stdout_bytes": 0, "stderr_bytes": 0}
+        self.stdout = self.root / "stdout.log"
+        self.stderr = self.root / "stderr.log"
+        self.stdout.write_bytes(b"")
+        self.stderr.write_bytes(b"")
+
+    def inspect(self, *arguments):
+        self.path.write_text(json.dumps(self.record), encoding="utf-8")
+        with patch("sys.stdout", new_callable=io.StringIO) as output, patch("sys.stderr", new_callable=io.StringIO) as error:
+            code = read_output.main([str(self.path), *arguments])
+        return code, json.loads(output.getvalue()) if code == 0 else json.loads(error.getvalue())
+
+    def test_success_and_unfinished_defaults_read_summary_only_without_guessing_liveness(self):
+        self.stdout.unlink()
+        self.stderr.unlink()
+        self.record.update(return_code=0, unrelated_inventory="do-not-load")
+        code, value = self.inspect()
+        self.assertEqual(code, 0)
+        self.assertEqual(value["return_code"], 0)
+        self.assertNotIn("streams", value)
+        self.assertNotIn("unrelated_inventory", value)
+        self.record.update(status="in_progress", return_code=None, duration_seconds=None)
+        code, value = self.inspect()
+        self.assertEqual(code, 0)
+        self.assertEqual(value["status"], "in_progress")
+        self.assertIsNone(value["return_code"])
+        self.assertNotIn("streams", value)
+        self.assertNotIn("running", value)
+
+    def test_failed_command_retains_exit_and_cleanup_evidence_with_shared_unicode_budget(self):
+        self.stdout.write_text("prefix\n" + "日本語" * 10000, encoding="utf-8")
+        self.stderr.write_text("failure\n" + "é" * 10000, encoding="utf-8")
+        self.record.update(stdout_bytes=self.stdout.stat().st_size, stderr_bytes=self.stderr.stat().st_size,
+                           cleanup_error="cleanup uncertain")
+        code, value = self.inspect("--max-bytes", "65", "--scan-bytes", "128")
+        self.assertEqual(code, 0)  # Inspection succeeds; the captured command failed.
+        self.assertEqual(value["return_code"], 23)
+        self.assertEqual(value["cleanup_error"], "cleanup uncertain")
+        streams = value["streams"]
+        self.assertLessEqual(sum(len(item["text"].encode("utf-8")) for item in streams.values()), 65)
+        self.assertTrue(streams["stdout"]["utf8_replaced"])
+        self.assertFalse(streams["stderr"]["utf8_replaced"])
+        for item in streams.values():
+            self.assertTrue(item["text"])
+            self.assertEqual(item["scan_bytes"], 128)
+            self.assertTrue(item["scan_truncated"])
+            self.assertTrue(item["excerpt_truncated"])
+            self.assertFalse(item["changed_during_read"])
+
+    def test_literal_filters_use_only_the_bounded_window_and_preserve_long_line_hits(self):
+        self.stdout.write_text("FAILED old evidence\n" + "noise\n" * 2000 + "FAILED current\ntrace end\n", encoding="utf-8")
+        code, value = self.inspect("--stream", "stdout", "--match", "FAILED", "--match", "trace", "--scan-bytes", "128")
+        self.assertEqual(code, 0)
+        stream = value["streams"]["stdout"]
+        self.assertEqual(stream["text"], "FAILED current\ntrace end\n")
+        self.assertEqual(stream["matched_lines"], 2)
+        self.assertTrue(stream["scan_truncated"])
+        self.assertFalse(stream["excerpt_truncated"])
+        self.stdout.write_text("x" * 100 + "FAILED " + "z" * 500, encoding="utf-8")
+        code, value = self.inspect("--stream", "stdout", "--match", "FAILED", "--max-bytes", "32")
+        self.assertEqual(code, 0)
+        self.assertTrue(value["streams"]["stdout"]["text"].startswith("FAILED "))
+        self.assertTrue(value["streams"]["stdout"]["excerpt_truncated"])
+
+    def test_empty_search_is_scoped_and_small_stream_surrenders_unused_budget(self):
+        self.stdout.write_text("ok", encoding="utf-8")
+        self.stderr.write_text("x" * 100, encoding="utf-8")
+        code, value = self.inspect("--max-bytes", "32")
+        self.assertEqual(code, 0)
+        self.assertEqual(value["streams"]["stdout"]["text"], "ok")
+        self.assertEqual(len(value["streams"]["stderr"]["text"]), 30)
+        code, value = self.inspect("--match", "absent", "--scan-bytes", "10")
+        self.assertEqual(code, 0)
+        self.assertEqual(value["streams"]["stderr"]["matched_lines"], 0)
+        self.assertTrue(value["streams"]["stderr"]["scan_truncated"])
+        self.assertEqual(value["return_code"], 23)
+
+    def test_copied_artifact_uses_adjacent_logs_and_explicit_summary_only_skips_logs(self):
+        self.record["stdout_path"] = str(self.root / "unrelated-private-file")
+        self.record["stderr_path"] = "../unrelated-file"
+        self.stdout.write_text("adjacent evidence", encoding="utf-8")
+        code, value = self.inspect("--stream", "stdout")
+        self.assertEqual(code, 0)
+        self.assertEqual(value["streams"]["stdout"]["text"], "adjacent evidence")
+        self.stdout.unlink()
+        self.stderr.unlink()
+        code, value = self.inspect("--summary-only")
+        self.assertEqual(code, 0)
+        self.assertEqual(value["return_code"], 23)
+        self.assertNotIn("streams", value)
+
+    def test_invalid_summary_and_missing_stream_fail_without_echoing_raw_payload(self):
+        for fields in ({"schema_version": True}, {"schema_version": 2}, {"status": "unknown"},
+                       {"return_code": True}, {"duration_seconds": float("nan")}, {"stderr_bytes": -1},
+                       {"status": "in_progress"}, {"cleanup_error": {"private": "do-not-echo"}}):
+            with self.subTest(fields=fields):
+                original = self.record.copy()
+                self.record.update(fields)
+                code, value = self.inspect()
+                self.assertEqual(code, 1)
+                self.assertIn("inspection_error", value)
+                self.assertNotIn("do-not-echo", json.dumps(value))
+                self.record = original
+        self.stdout.unlink()
+        self.assertEqual(self.inspect("--stream", "stdout")[0], 1)
+
+    def test_oversized_malformed_and_symlink_artifacts_are_refused(self):
+        for payload in (b"x" * 65537, b"not JSON", b"\xff"):
+            self.path.write_bytes(payload)
+            with self.subTest(size=len(payload)), patch("sys.stderr", new_callable=io.StringIO) as error:
+                self.assertEqual(read_output.main([str(self.path)]), 1)
+            self.assertLess(len(error.getvalue()), 1024)
+        target = self.root / "real-summary.json"
+        target.write_text(json.dumps(self.record), encoding="utf-8")
+        self.path.unlink()
+        try:
+            self.path.symlink_to(target)
+        except OSError:
+            self.skipTest("symlink creation unavailable for this account")
+        with patch("sys.stderr", new_callable=io.StringIO) as error:
+            self.assertEqual(read_output.main([str(self.path)]), 1)
+        self.assertIn("symlink", error.getvalue())
+
+    def test_argument_limits_are_enforced_before_reading_artifacts(self):
+        for arguments in (("--max-bytes", "0"), ("--max-bytes", "65537"), ("--scan-bytes", "1048577"),
+                          ("--match", ""), ("--match", "x" * 257), ("--match", "line\n"),
+                          ("--summary-only", "--match", "error")):
+            with self.subTest(arguments=arguments), patch("sys.stderr", new_callable=io.StringIO), self.assertRaises(SystemExit) as failure:
+                read_output.main([str(self.path), *arguments])
+            self.assertEqual(failure.exception.code, 2)
 
 
 if __name__ == "__main__":
