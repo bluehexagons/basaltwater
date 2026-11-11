@@ -233,7 +233,7 @@ function Invoke-NativeAgentSetup {
     [CmdletBinding()]
     param([Parameter(Mandatory=$true)][string]$Source,
           [string[]]$AgentTool = @(), [switch]$Node, [switch]$Python,
-          [switch]$Go, [switch]$NodeVersions, [switch]$GameDev, [switch]$ShaderTools, [switch]$Godot, [switch]$Sunshine,
+          [switch]$Go, [switch]$NodeVersions, [switch]$GameDev, [switch]$ShaderTools, [switch]$Godot, [switch]$Sunshine, [switch]$AvTools,
           [string]$StorageRoot = '',
           [switch]$T3CodeDesktop, [switch]$Plan)
     $selected = @('gh')
@@ -320,6 +320,10 @@ function Invoke-NativeAgentSetup {
     if ($Godot) {
         . (Join-Path $Source 'windows\Godot.Common.ps1')
         Install-NativeGodot -Plan:$Plan
+    }
+    if ($AvTools) {
+        . (Join-Path $Source 'windows\Media.Common.ps1')
+        Install-NativeAvTools -Plan:$Plan
     }
     if ($Sunshine) {
         . (Join-Path $Source 'windows\Sunshine.Common.ps1')

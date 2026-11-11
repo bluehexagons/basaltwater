@@ -77,6 +77,7 @@ Native Windows commands:
   refresh           Update Basaltwater from main and reapply saved selections
   desktop           Native desktop status, observation, control and handoff
   desktop develop   Supervise project tasks, logs and cancellation
+  media             Bounded file inspection (optional Python); media doctor probes AV tools
 
 Refresh options:
   --detach          Return after submission; inspect status/logs separately
@@ -92,6 +93,7 @@ Refresh options:
   --game-dev        Add native game build tools, Python, Go and fnm
   --shader-tools    Add Vulkan SDK shader validation
   --godot           Add the standard Godot editor/CLI
+  --av-tools        Add optional FFmpeg/ffprobe, preserving preinstalled tools
   --sunshine        Add the native Sunshine streaming service (UAC may be required)
   --node-versions   Add fnm for project-selected Node versions
   --storage-root PATH  Select a mounted NTFS directory for development caches
@@ -122,6 +124,11 @@ function Invoke-NativeCli([string[]]$Arguments) {
     }
     $command = $Arguments[0]
     $options = @($Arguments | Select-Object -Skip 1)
+    if ($command -eq 'media') {
+        $source = Get-NativeCliSource
+        . (Join-Path $source 'windows\Media.Common.ps1')
+        return Invoke-NativeMediaCli -Source $source -Arguments $options
+    }
     if ($command -eq 'desktop') {
         if (-not $options.Count -or $options[0] -in @('--help','help','-h')) {
             Write-Host @'
@@ -201,7 +208,7 @@ Tokens do not prove semantic or scene validity. Input without a token keeps its 
         $saved = Read-NativeCliSetup
         $info = [ordered]@{ Platform = 'windows'; Profile = $saved.Profile; Revision = $saved.Revision;
             Source = $saved.Source; Phase = $saved.Phase }
-        foreach ($name in @('AgentTool', 'T3CodeDesktop', 'Node', 'Python', 'Go', 'NodeVersions', 'GameDev', 'ShaderTools', 'Godot', 'Sunshine', 'StorageRoot')) {
+        foreach ($name in @('AgentTool', 'T3CodeDesktop', 'Node', 'Python', 'Go', 'NodeVersions', 'GameDev', 'ShaderTools', 'Godot', 'Sunshine', 'AvTools', 'StorageRoot')) {
             if ($saved.PSObject.Properties[$name]) { $info[$name] = $saved.$name }
         }
         if ($options -contains '--json') { Write-Host ($info | ConvertTo-Json -Depth 4) }
@@ -256,7 +263,7 @@ Tokens do not prove semantic or scene validity. Input without a token keeps its 
     # point that predates automatic native reruns and source updates.
     $forward = @('-Profile', 'agent_windows', '-Resume', '-UpdateSource')
     $switches = @{ '--dry-run' = '-Plan'; '--game-dev' = '-GameDev'; '--shader-tools' = '-ShaderTools';
-                   '--godot' = '-Godot'; '--sunshine' = '-Sunshine'; '--node-versions' = '-NodeVersions';
+                   '--godot' = '-Godot'; '--av-tools' = '-AvTools'; '--sunshine' = '-Sunshine'; '--node-versions' = '-NodeVersions';
                    '--no-restart-t3' = '-NoRestartT3'; '--no-reboot' = '-NoReboot' }
     $values = @{ '--storage-root' = '-StorageRoot'; '--storage-drive' = '-StorageRoot'; '--channel' = '-Channel'; '--version' = '-Version' }
     $storageSelected = $false

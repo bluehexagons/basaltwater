@@ -31,7 +31,7 @@ namespace Basaltwater {
 
 function Invoke-NativeHealthProbe {
     param([string]$Command,
-          [ValidateSet('--version', 'version', 'i', '--headless --version')][string]$Arguments = '--version',
+          [ValidateSet('--version', '-version', 'version', 'i', '--headless --version')][string]$Arguments = '--version',
           [ValidateRange(1, 300)][int]$TimeoutSeconds = 30)
     if (-not $Command) {
         return [pscustomobject]@{ State = 'missing'; Command = $null; Detail = 'Not found; open a fresh terminal or reconcile setup.' }
@@ -168,6 +168,14 @@ function Get-NativeWorkstationHealth {
         $tools += $shaderName
     }
     if (& $selected 'Godot') { $tools += 'godot' }
+    if (& $selected 'AvTools') {
+        . (Join-Path $PSScriptRoot 'Media.Common.ps1')
+        foreach ($name in @('ffmpeg','ffprobe')) {
+            $check = Invoke-NativeHealthProbe (Get-NativeMediaCommand $name) -Arguments '-version' -TimeoutSeconds $TimeoutSeconds
+            $check | Add-Member NoteProperty Name $name
+            $checks.Add($check)
+        }
+    }
     foreach ($name in $tools | Select-Object -Unique) {
         $command = Get-NativeCommand $name
         if ($name -eq 'git-bash') { $command = Get-NativeGitBash }

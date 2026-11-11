@@ -11,6 +11,7 @@ param(
     [switch]$GameDev,
     [switch]$ShaderTools,
     [switch]$Godot,
+    [switch]$AvTools,
     [switch]$Sunshine,
     [string]$StorageRoot = '',
     [string]$StorageDrive = '',
@@ -101,7 +102,7 @@ function Read-State {
         ($saved.PSObject.Properties['Profile'] -and $saved.Profile -ne $Profile)) {
         throw 'Saved setup state does not match this account, profile or source'
     }
-    foreach ($option in @('NodeVersions', 'GameDev', 'ShaderTools', 'Godot', 'Sunshine')) {
+    foreach ($option in @('NodeVersions', 'GameDev', 'ShaderTools', 'Godot', 'Sunshine', 'AvTools')) {
         if (-not $saved.PSObject.Properties[$option]) {
             $saved | Add-Member -NotePropertyName $option -NotePropertyValue $false
         }
@@ -146,7 +147,7 @@ function Get-InstallerResumeOptions([string]$source) {
 function Get-NativeOptionalArguments($selection) {
     $arguments = @{}
     $supported = (Get-Command Invoke-NativeAgentSetup).Parameters
-    foreach ($option in @('NodeVersions', 'GameDev', 'ShaderTools', 'Godot', 'Sunshine', 'StorageRoot')) {
+    foreach ($option in @('NodeVersions', 'GameDev', 'ShaderTools', 'Godot', 'Sunshine', 'AvTools', 'StorageRoot')) {
         if ($selection.PSObject.Properties[$option] -and $selection.$option) {
             if (-not $supported.ContainsKey($option)) { throw "Pinned source lacks $option; rerun the current installer to update Basaltwater." }
             $arguments[$option] = $selection.$option
@@ -156,7 +157,7 @@ function Get-NativeOptionalArguments($selection) {
 }
 
 function Assert-NativeSourceOptions([string]$source, $selection) {
-    $selected = @('NodeVersions', 'GameDev', 'ShaderTools', 'Godot', 'Sunshine', 'StorageRoot') |
+    $selected = @('NodeVersions', 'GameDev', 'ShaderTools', 'Godot', 'Sunshine', 'AvTools', 'StorageRoot') |
         Where-Object { $selection.PSObject.Properties[$_] -and $selection.$_ }
     if (-not $selected) { return }
     $tokens = $null; $errors = $null
@@ -409,7 +410,7 @@ try {
             throw 'StorageRoot cannot be empty; omit it to retain saved storage or select a directory.'
         }
     } else {
-        foreach ($option in @('NodeVersions', 'GameDev', 'ShaderTools', 'Godot', 'Sunshine', 'StorageRoot', 'StorageDrive', 'NoReboot')) {
+        foreach ($option in @('NodeVersions', 'GameDev', 'ShaderTools', 'Godot', 'Sunshine', 'AvTools', 'StorageRoot', 'StorageDrive', 'NoReboot')) {
             if ($PSBoundParameters.ContainsKey($option)) { throw "$option requires agent_windows" }
         }
     }
@@ -467,7 +468,7 @@ try {
                 if ($PSBoundParameters.ContainsKey('AgentTool')) {
                     $agentTools = @(@($preview.AgentTool) + $agentTools | Select-Object -Unique)
                 } else { $agentTools = @($preview.AgentTool) }
-                foreach ($option in @('Node', 'Python', 'Go', 'T3CodeDesktop', 'NodeVersions', 'GameDev', 'ShaderTools', 'Godot', 'Sunshine')) {
+                foreach ($option in @('Node', 'Python', 'Go', 'T3CodeDesktop', 'NodeVersions', 'GameDev', 'ShaderTools', 'Godot', 'Sunshine', 'AvTools')) {
                     if (-not $PSBoundParameters.ContainsKey($option)) { Set-Variable -Name $option -Value $preview.$option }
                 }
                 if (-not $storageSelected) { $StorageRoot = $preview.StorageRoot }
@@ -477,11 +478,11 @@ try {
                 . $nativeHelpers
                 $nativeOptions = Get-NativeOptionalArguments ([pscustomobject]@{
                     NodeVersions = [bool]$NodeVersions; GameDev = [bool]$GameDev;
-                    ShaderTools = [bool]$ShaderTools; Godot = [bool]$Godot; Sunshine = [bool]$Sunshine; StorageRoot = $StorageRoot })
+                    ShaderTools = [bool]$ShaderTools; Godot = [bool]$Godot; AvTools = [bool]$AvTools; Sunshine = [bool]$Sunshine; StorageRoot = $StorageRoot })
                 Invoke-NativeAgentSetup -Source $planSource -AgentTool $agentTools -Node:$Node `
                     -Python:$Python -Go:$Go -T3CodeDesktop:$T3CodeDesktop -Plan @nativeOptions
             } else {
-                Write-Host "Plan: native Windows Git, basaltw, agents $($agentTools -join ', '), shared skills; Node: $Node; Python: $Python; Go: $Go; Node versions: $NodeVersions; Game dev: $GameDev; Shader tools: $ShaderTools; Godot: $Godot; Sunshine: $Sunshine; T3 desktop: $T3CodeDesktop."
+                Write-Host "Plan: native Windows Git, basaltw, agents $($agentTools -join ', '), shared skills; Node: $Node; Python: $Python; Go: $Go; Node versions: $NodeVersions; Game dev: $GameDev; Shader tools: $ShaderTools; Godot: $Godot; AV tools: $AvTools; Sunshine: $Sunshine; T3 desktop: $T3CodeDesktop."
                 if ($StorageRoot) { Write-Host "Development storage: $StorageRoot (mounted NTFS directory; existing data is not moved)" }
             }
             return
@@ -516,7 +517,7 @@ try {
         if ($Profile -eq 'agent_windows') {
             Assert-NativeSourceOptions $resolved.Source ([pscustomobject]@{
                 NodeVersions = [bool]$NodeVersions; GameDev = [bool]$GameDev;
-                ShaderTools = [bool]$ShaderTools; Godot = [bool]$Godot; Sunshine = [bool]$Sunshine; StorageRoot = $StorageRoot })
+                ShaderTools = [bool]$ShaderTools; Godot = [bool]$Godot; AvTools = [bool]$AvTools; Sunshine = [bool]$Sunshine; StorageRoot = $StorageRoot })
         }
         $state = [pscustomobject]@{
             Version = 1
@@ -539,6 +540,7 @@ try {
             GameDev = [bool]$GameDev
             ShaderTools = [bool]$ShaderTools
             Godot = [bool]$Godot
+            AvTools = [bool]$AvTools
             Sunshine = [bool]$Sunshine
             StorageRoot = $StorageRoot
             AgentTool = $agentTools
@@ -560,7 +562,7 @@ try {
     }
     if ($runnerConfig) { $state.GitHubRunner = $runnerConfig; Save-State $state }
     if ($Profile -eq 'agent_windows') {
-        foreach ($option in @('Node', 'Python', 'Go', 'T3CodeDesktop', 'NodeVersions', 'GameDev', 'ShaderTools', 'Godot', 'Sunshine')) {
+        foreach ($option in @('Node', 'Python', 'Go', 'T3CodeDesktop', 'NodeVersions', 'GameDev', 'ShaderTools', 'Godot', 'Sunshine', 'AvTools')) {
             if ($PSBoundParameters.ContainsKey($option)) { $state.$option = [bool](Get-Variable -Name $option -ValueOnly) }
         }
         if ($PSBoundParameters.ContainsKey('AgentTool')) {

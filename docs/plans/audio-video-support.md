@@ -8,8 +8,12 @@ GPU scaling pass the opt-in qualification runner, including decoded-content chec
 The native target also passes a 30-second 1080p profile, additional 8/10-bit
 VA-API codec checks, active-GPU cancellation and combined MLT effect/encoding.
 Kdenlive CPU and VA-API exports pass on the native integrated Arc target;
-interactive Movit is unavailable in the tested editor build. NVIDIA and Windows
-milestones remain separate; optional speech recognition is
+interactive Movit is unavailable in the tested editor build. Windows opt-in
+AV discovery/setup and bounded file inspection are implemented with optional
+Python and native Windows Job/ACL controls; offline tests pass, while native
+FFmpeg installation and the 18-fixture qualification remain pending. See the
+[Windows media guide](../workstations/windows-media.md). NVIDIA and Windows live
+capture/playback/GPU milestones remain separate; optional speech recognition is
 deferred without a demonstrated need. The [CachyOS handoff](audio-video-cachyos-handoff.md) gives the next agent
 the setup, baseline and production acceptance sequence. This plan extends
 [multimedia bundles issue #25](https://github.com/bluehexagons/basaltwater/issues/25)
@@ -28,7 +32,7 @@ Meteor Lake graphics; discrete Arc and NVIDIA still need their own target runs.
 | --- | --- | --- |
 | CachyOS desktop with discrete GPU | Human and agent collaboration, including demanding video production | Opt-in `--av-tools`, Kdenlive, Shotcut, Audacity, Ardour, LMMS and OBS selections and [desktop media guidance](../../common/agent_skills/basaltwater-cachyos-desktop/references/media.md) exist. Qualify actual editing, exchange and GPU workflows. |
 | Debian agent host | File analysis and modest production within measured CPU/software-rendering limits | `--av-tools`, `--audio-tools`, Audacity and Shotcut are opt-in; headless profiles can select applications. The [media workflow](../../common/agent_skills/basaltwater-desktop/references/media.md) covers basic edits. Establish bounded CLI workflows and practical limits. |
-| Native Windows | Simple file analysis for debugging | Define discovery and a supported installation route for FFmpeg/ffprobe; no existing cross-platform media analysis contract is assumed. Live process audio is separate [planned work](windows-game-testing.md). |
+| Native Windows | Simple file analysis for debugging | Opt-in `-AvTools`, native discovery and optional-Python file inspection preserve the version-1 contract with Windows Job/ACL controls. Native decoder qualification remains pending in the [Windows media guide](../workstations/windows-media.md). Live process audio is separate [planned work](windows-game-testing.md). |
 
 The existing CachyOS native audio analyzer is a useful reference, not yet a
 portable API: it accepts bounded WAV input, uses Linux paths and is tied to the
@@ -111,11 +115,13 @@ mean one existing CLI or runtime can be used unchanged on all three platforms.
   PipeWire/WirePlumber tools. Preserve the owner's audio services and routing;
   package selection and mocked tests do not establish native audio readiness.
   See [music tooling](../workstations/music-development.md).
-- Future Windows tooling should start with opt-in FFmpeg/ffprobe installation
-  and discovery (including preinstalled tools), followed by a bounded native
-  file-analysis adapter using the versioned result contract. Qualify executable
-  provenance, updates, private storage and process cancellation on Windows;
-  the Debian analyzer's Linux locking/resource limits cannot be reused unchanged.
+- Windows now offers `-AvTools` / `refresh --av-tools`, preserving separately
+  discovered FFmpeg/ffprobe executables. `basaltw media doctor` needs no Python;
+  file inspection explicitly requires optional Python 3.11+. The inspection core
+  keeps the version-1 contract but replaces Linux imports, snapshot/locking,
+  storage and subprocess supervision with native Windows controls. The native
+  qualification runner must still establish actual decoder/package behavior;
+  installing FFmpeg alone does not port the Linux process dependency graph.
   Add device/application-audio diagnostics only for a demonstrated debugging
   workflow. No Windows implementation or additional Python dependency is added
   by the CachyOS audio-tools selection.

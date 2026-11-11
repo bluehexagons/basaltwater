@@ -100,7 +100,7 @@ function Complete-NativeInterruptedRefresh([string]$Id) {
 }
 
 function ConvertTo-NativeRefreshOptions([string[]]$Arguments) {
-    $switches = @('Resume','UpdateSource','NoUpdateSource','NoRestartT3','NoReboot','Plan','GameDev','ShaderTools','Godot','Sunshine','NodeVersions')
+    $switches = @('Resume','UpdateSource','NoUpdateSource','NoRestartT3','NoReboot','Plan','GameDev','ShaderTools','Godot','Sunshine','AvTools','NodeVersions')
     $values = @('Profile','StorageRoot','Channel','Version')
     $options = @{}
     for ($index = 0; $index -lt $Arguments.Count; $index++) {
