@@ -87,8 +87,16 @@ nothing. It logs only its synthetic button/phase events to a new private JSONL
 file and never collects global keys. In a permitted desktop session, launch:
 
 ```bash
+python3 -c 'import tkinter'
 python3 scripts/desktop_observation_probe.py --log /absolute/private/probe.jsonl
 ```
+
+Check the import before starting a recording or launching the probe. On CachyOS,
+Python can include `tkinter` while its optional `tk` runtime package is absent,
+causing an import failure for `libtk8.6.so`. Install the missing `tk` package
+through the workstation's package-management procedure when authorized; do not
+repair it with a partial repository synchronization. Retain a failed launch and
+its exit status separately from input/capture failures.
 
 For small-control targeting qualification, add `--small-controls`. This places
 adjacent **Advance** and **Decoy** buttons below the phase display. Advance keeps
@@ -189,3 +197,13 @@ not classified as input failure or repaired by overwriting the original capture.
 No shared desktop, helper, account permission or game state was changed. Live KDE
 portal/PipeWire timing, native Windows and fresh-controller targeting remain
 unqualified by this development check.
+
+## CachyOS follow-up, 2026-11-11
+
+The [dated CachyOS qualification](../plans/game-testing-handoffs/next-cycle.md#cachyos-qualification-2026-11-11)
+records native reduced-view/crop targeting, Decoy recovery, normal observation
+pairs, deliberate second-capture collision and manual recorder rotation on
+matching installed CLI/helper startup source. It retains setup failures, timing
+and unhealthy evidence separately. Real human takeover and the native
+low-headroom warning remain unqualified; consuming-game transitions still need
+their own authorized trial. The earlier Debian checks retain their stated scope.
