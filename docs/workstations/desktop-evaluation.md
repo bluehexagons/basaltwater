@@ -74,6 +74,21 @@ Reads validate saved transitions, UTC timestamps and event details as well as
 monotonic ordering. Impossible histories, such as duplicate suspensions or an
 event after finish, fail without rewriting the original file.
 
+Structural validation does not authenticate who wrote earlier events. A later
+successful `show` or `finish` cannot establish that every checkpoint came through
+the CLI. Keep returned receipts and record execution provenance separately from
+arithmetic validity. Never append events with a script or edit saved lateness to
+make the record appear complete. If direct writes are discovered, retain the
+original file and report the affected timing as unqualified; do not silently
+repair history. Independent capture/input timestamps can still support their own
+observations. This distinction does not grant an extra application Start.
+
+When a phase needs a different soft review interval, record a sourced
+`run policy --review-seconds SECONDS --note TEXT` event at its boundary.
+Changing `--phase` on a checkpoint alone retains the preceding review interval.
+Soft review timing and a project's independently observed match-Start anchor are
+separate; retain any difference instead of rewriting timestamps or lateness.
+
 `wall_seconds` is elapsed monotonic time, including explicitly suspended owner
 waits. `declared_active_wall_seconds` excludes only recorded owner waits; it still
 includes game, reasoning, tool and coordination gaps. Host system suspend can
