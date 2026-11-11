@@ -26,6 +26,14 @@ not prove health or authentication. See the
 [environment manifest guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/agent-environment.md)
 or `docs/agents/agent-environment.md` in a Basaltwater checkout.
 
+For shared GPU profiling or build outputs, use `basaltw agent reservations run`
+with an agreed `--resource gpu:all`, `--build-output PATH`, `--owner` and optional
+`--run-id` before the command after `--`. Inspect the same keys with
+`agent reservations status --json`. These advisory locks coordinate cooperating
+agents under one Linux account; the foreground command owns their lifetime.
+Read [workstation measurement coordination](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/performance-sessions.md)
+for cleanup, output-root agreement and scope limits.
+
 Blender is optional on Debian agent hosts: setup `--blender` selects the
 configured Debian release's APT package, including on headless `agent_vm`.
 Normal host package maintenance owns its updates. Check `blender --version`

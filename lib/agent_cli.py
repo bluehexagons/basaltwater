@@ -192,10 +192,12 @@ def add_agent_subparser(subparsers: argparse._SubParsersAction) -> None:
     from lib.agent_containers import add_containers_parser
     from lib.agent_graphics import add_graphics_parser
     from lib.agent_storage_inventory import add_storage_parser
+    from lib.agent_reservations import add_reservations_parser
 
     add_containers_parser(commands)
     add_graphics_parser(commands)
     add_storage_parser(commands)
+    add_reservations_parser(commands)
     resources = commands.add_parser("resources", help="Read-only affinity, cgroup limits and pressure on Linux")
     resources.add_argument("--json", action="store_true")
     doctor = commands.add_parser(
@@ -2821,6 +2823,10 @@ def run_agent_command(args: argparse.Namespace) -> int:
     if args.agent_command == "resources":
         print(json.dumps(inspect_workload_limits(), indent=2))
         return 0
+    if args.agent_command == "reservations":
+        from lib.agent_reservations import run_reservations_command
+
+        return run_reservations_command(args)
     if args.agent_command == "visuals":
         from lib.agent_visuals import run_visuals_command
 
@@ -3052,7 +3058,7 @@ def run_agent_command(args: argparse.Namespace) -> int:
     if args.agent_command != "doctor":
         print(
             "Error: agent command required "
-            "(manifest, browser, containers, graphics, storage, resources, visuals, blender, models, inbox, memory, maintenance-agent, tasks, doctor, update, auth, web, workspace, maintenance, privilege, or support-bundle)"
+            "(manifest, browser, containers, graphics, storage, resources, reservations, visuals, blender, models, inbox, memory, maintenance-agent, tasks, doctor, update, auth, web, workspace, maintenance, privilege, or support-bundle)"
         )
         return 1
 

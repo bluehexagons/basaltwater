@@ -41,6 +41,7 @@ def run_streamed(
     on_error: Callable[[str], None] | None = None,
     discard_stderr: bool = False,
     on_input_request: Callable[[str], bytes | None] | None = None,
+    pass_fds: tuple[int, ...] = (),
 ) -> int:
     """Relay UTF-8 output while feeding stdin, without unbounded pipe waits.
 
@@ -63,7 +64,7 @@ def run_streamed(
         command, stdin=subprocess.PIPE if input_data is not None or on_input_request is not None else subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL if discard_stderr else subprocess.PIPE if on_error is not None else subprocess.STDOUT,
-        bufsize=0, cwd=cwd, env=env, start_new_session=isolated,
+        bufsize=0, cwd=cwd, env=env, start_new_session=isolated, pass_fds=pass_fds,
     )
     offset = 0
     pending_input = input_data or b""
