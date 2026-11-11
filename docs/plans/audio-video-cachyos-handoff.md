@@ -11,11 +11,11 @@ future work; text-to-speech is outside this project.
 
 The branch `t3/av-support-1` delivers `c764264f` (bounded Debian analyzer),
 `cc8a562a` (timing, rotation, cancellation and CPU qualification) and `a5991bd3`
-(CachyOS `--audio-tools`). The follow-up review fixes sampling against the
-selected video's packet span, covering low-rate, shorter and delayed video,
-rejects incomplete per-channel audio measurements, and tests the actual
-refresh-replay path and presence-only doctor behavior. These
-changes are intended for `main`; record `git rev-parse HEAD` and worktree status
+(CachyOS `--audio-tools`). Review commits `da7f50f1` and `bad8274d` fix sampling
+against the selected video's packet span, covering low-rate, shorter and delayed video,
+reject incomplete per-channel audio measurements, and test the actual
+refresh-replay path and presence-only doctor behavior. Start from `main`
+containing those commits; record `git rev-parse HEAD` and worktree status
 before running native checks, rather than assuming an earlier SHA was tested.
 
 - `lib/media_cli.py` implements `python3 -m lib.media_cli` and the wheel's
@@ -25,9 +25,10 @@ before running native checks, rather than assuming an earlier SHA was tested.
   checks the versioned analysis contract, and exercises real cancellation.
   It passed on Debian 13 / FFmpeg 7.1.5 with the review's 18 fixtures, including
   the three new video timing cases. This is separate from mocked unit tests.
-- The earlier branch passed full local `make -j2 check-ci` at `a5991bd3`
-  (9,661 tests, six skipped). That count predates the follow-up review;
-  consult the merge validation for the follow-up revision's checks.
+- The reviewed implementation passed full local `make -j2 check-ci` at
+  `bad8274d` (9,663 tests, six skipped; 82% coverage), including documentation
+  and installed-wheel checks. The final handoff-only documentation update
+  does not change that tested implementation.
 - A 30-second 720p CPU encode/analyze workload passed on Debian; see the
   [measured envelope](../workstations/media-analysis.md). No native CachyOS
   installation, playback, editor project or GPU acceleration is established.
