@@ -31,10 +31,12 @@ def artifact_path() -> str:
     return str(directory / f"desktop-{time.time_ns()}-{secrets.token_hex(4)}.png")
 
 
-def validate_capture_output(output: str) -> str:
+def validate_capture_output(output: str, *, backend=runtime) -> str:
     """Check a new PNG location before input, without reserving or overwriting it."""
     if not isinstance(output, str):
         raise ValueError("Capture output must be a new absolute PNG path string; omit output to generate one")
+    if backend is runtime and any(char in output for char in ("%", "$", "\\")):
+        raise ValueError("Debian screenshot paths cannot contain scrot format characters: %, $, or backslash")
     validate_filesystem_path(output, check_writable=True)
     path = Path(output)
     if not path.is_absolute() or path.suffix.lower() != ".png" or path.exists() or path.is_symlink():
@@ -476,7 +478,7 @@ def run_sequence(path: str, generation: str, *, backend=runtime) -> dict[str, An
             output = step.get("output")
             if output is None:
                 output = artifact_path()
-            step["output"] = validate_capture_output(output)
+            step["output"] = validate_capture_output(output, backend=backend)
             if Path(output).resolve() in outputs:
                 raise ValueError("Each sequence capture needs a different new PNG path")
             outputs.add(Path(output).resolve())
@@ -489,7 +491,12 @@ def run_sequence(path: str, generation: str, *, backend=runtime) -> dict[str, An
             raise ValueError("Drag requires the native desktop backend")
         if step.get("hold_ms") is not None and backend is runtime:
             raise ValueError("Hold duration requires the native desktop backend")
-    current = backend.status()
+    started = time.monotonic()
+    deadline = started + 20
+    current = backend.status(deadline=deadline)
+    remaining_seconds(deadline)
+    if current.get("state") != "running":
+        raise ValueError("Desktop is " + str(current.get("state")) + "; inspect status before running a sequence")
     if current.get("generation") != generation:
         raise ValueError("Desktop session changed; observe again")
     revision = current["control_revision"]
@@ -497,8 +504,6 @@ def run_sequence(path: str, generation: str, *, backend=runtime) -> dict[str, An
         raise ValueError("Helper does not support observation-bound input; update and restart it at a safe checkpoint")
     results = []
     timings = []
-    started = time.monotonic()
-    deadline = started + 20
 
     def finish_timing():
         timing.update(finished_monotonic_ns=time.monotonic_ns(),
@@ -518,7 +523,7 @@ def run_sequence(path: str, generation: str, *, backend=runtime) -> dict[str, An
                 time.sleep(min(step["after_ms"] / 1000, remaining_seconds(deadline)))
             timing["actual_delay_ms"] = (time.monotonic() - delay_started) * 1000
             remaining_seconds(deadline)
-            observed = backend.status()
+            observed = backend.status(deadline=deadline)
             if observed.get("generation") != generation or observed.get("control_revision") != revision:
                 raise RuntimeError("Desktop control changed during the sequence; observe before retrying")
             if observed.get("agent_control") != "enabled":

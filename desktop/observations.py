@@ -124,6 +124,20 @@ def save_observation(result: dict) -> dict:
         if isinstance(result.get("failed_action"), dict):
             summary["failed_action"] = {key: result["failed_action"][key] for key in
                 ("reason", "dispatch_stage", "input_delivery", "input_id") if key in result["failed_action"]}
+        receipts = [result, *result.get("results", [])] if isinstance(result.get("results", []), list) else [result]
+        receipts.append(result.get("failed_action"))
+        for receipt in receipts:
+            if not isinstance(receipt, dict):
+                continue
+            capacity = receipt.get("evidence_capacity")
+            if isinstance(capacity, dict):
+                summary["evidence_capacity"] = {
+                    key: value[:512] if isinstance(value, str) else value
+                    for key in ("artifact", "events", "event_limit", "remaining_events", "events_truncated",
+                                "headroom", "rotation_recommended", "warning_at_remaining_events", "warning")
+                    if isinstance((value := capacity.get(key)), (str, int, float, bool))}
+            if isinstance(receipt.get("evidence_error"), str):
+                summary["evidence_error"] = receipt["evidence_error"][:512]
         return summary
     except BaseException:
         shutil.rmtree(directory)

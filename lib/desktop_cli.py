@@ -324,6 +324,8 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                                          human_approved=args.human_approved)
         elif command == "doctor":
             result = backend.doctor() if backend is not runtime else client.doctor()
+        elif command == "sequence":
+            result = client.run_sequence(args.path, args.generation, backend=backend)
         else:
             current = backend.status()
             if current["state"] != "running":
@@ -388,8 +390,6 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                 result = client.wait_for_window(args.generation or current["generation"], backend=backend,
                     exclude_titles=exclude_titles, stable_seconds=stable_seconds,
                     **{name: getattr(args, name) for name in ("window", "title", "pid", "condition", "timeout")})
-            elif command == "sequence":
-                result = client.run_sequence(args.path, args.generation, backend=backend)
             elif command == "screenshot":
                 from desktop.observations import validate_capture_max_age
                 validate_capture_max_age(args.max_age_seconds)
@@ -419,8 +419,6 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                     path = Path(args.path).absolute()
                     validate_filesystem_path(str(path), must_exist=True)
                     payload.update(action="exec", argv=["xdg-open", str(path.parent if args.reveal else path)], cwd=str(Path.cwd()))
-                elif command == "handoff":
-                    payload.update(action="exec", argv=["/usr/bin/python3", str(Path(runtime.__file__).with_name("handoff.py"))])
                 elif command == "window":
                     payload.update({name: getattr(args, name) for name in
                                     ("generation", "identity", "window", "operation", "x", "y", "width", "height")})
@@ -439,7 +437,7 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                     observation_output = None
                     if args.observe:
                         observation_output = str(Path(args.output).absolute()) if args.output else client.artifact_path()
-                        client.validate_capture_output(observation_output)
+                        client.validate_capture_output(observation_output, backend=backend)
                     payload.update({name: getattr(args, name) for name in ("generation", "geometry", "kind", "key", "text", "x", "y", "button")})
                     payload["codes"] = getattr(args, "codes", None)
                     client.validate_keycodes(payload)
@@ -485,8 +483,11 @@ def run_desktop_command(args: argparse.Namespace) -> int:
     except (OSError, ValueError, RuntimeError, KeyError, subprocess.SubprocessError) as exc:
         result = getattr(exc, "receipt", {"error": str(exc)})
         if args.desktop_command == "handoff" and backend is runtime:
-            result = {**result, "backend": "debian-xrdp", "permission_changed": False,
-                      "hint": "On CachyOS/KDE use 'basaltw desktop --native handoff' from the local graphical session. Opening the window does not transfer ownership or change permission."}
+            result = {**result, "backend": "debian-xrdp", "permission_changed": False}
+            if "Shared desktop is not configured" in str(exc):
+                result["hint"] = "On CachyOS/KDE use 'basaltw desktop --native handoff' from the local graphical session. Opening the window does not transfer ownership or change permission."
+            elif "Unknown desktop action" in str(exc):
+                result["hint"] = "This XRDP supervisor predates the dedicated handoff action. Use the Shared Desktop Control launcher; refresh the supervisor at a safe logout checkpoint."
         if args.desktop_command == "input" and "input_delivery" not in result:
             from desktop.receipts import input_failure
             result = input_failure(exc, {"generation": args.generation}, stage="before-input")

@@ -60,8 +60,12 @@ that command does not attach to XRDP or supply its display environment.
 
 The human can open **Shared Desktop Control** from the application menu and
 choose **Take control** (15 minutes by default, or indefinite), **Enable agents**,
-or **Disable agents**. `desktop handoff` opens the same window while agents are
-enabled. Closing it, disconnecting RDP, logout, and restarting the supervisor
+or **Disable agents**. `desktop handoff` asks the running supervisor to open only
+that fixed UI, including while agents are blocked. It changes no permission and
+does not stop an agent's action loop. A spawn receipt does not establish window
+visibility. An older supervisor may refuse the dedicated action: use the menu
+launcher and refresh at a safe logout checkpoint. Closing the window,
+disconnecting RDP, logout, and restarting the supervisor
 preserve the choice. Ordinary RDP input does not detect human intervention.
 
 Only explicit human approval or UI interaction permits changing the state.
