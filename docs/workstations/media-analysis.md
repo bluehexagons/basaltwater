@@ -2,11 +2,11 @@
 
 Use `basaltw-media INPUT --output NEW_DIRECTORY` after installing the Python
 package, or `python3 -m lib.media_cli INPUT --output NEW_DIRECTORY` from a checkout.
-This is an offline Debian and CachyOS CLI, independent of desktop sessions and the existing
-native WAV capture/analysis API. `basaltw agent manifest --json` discovers
+This is an offline Debian and CachyOS CLI, independent of desktop sessions and
+the existing native WAV capture/analysis API. `basaltw agent manifest --json` discovers
 FFmpeg/ffprobe. Existing opt-in `--av-tools` supplies them; a minimal manual
-installation is `ffmpeg` and `util-linux` (for `prlimit`) from the distribution. Keep their
-distribution security updates current. No all-media bundle or default editor
+installation is `ffmpeg` and `util-linux` (for `prlimit`) from the distribution.
+Keep their distribution security updates current. No all-media bundle or default editor
 selection is added.
 
 The command accepts WAV, FLAC, Ogg, Matroska/WebM and streamable MP4 with an
@@ -187,9 +187,9 @@ are for trusted synthetic production, not a sandbox or general untrusted input
 route. New directories refuse overwrites; remove only owned evidence when no
 longer needed. The script never retries or changes backend on failure.
 
-Intel Arc with iHD 26.3.5 and FFmpeg 9.0.2 passes all four exports and their
-analysis. This establishes VA-API H.264 encode/decode and GPU scaling only.
+Integrated Meteor Lake Intel Arc with iHD 26.3.5 and FFmpeg 9.0.2 passes all four
+exports and their analysis. This establishes VA-API H.264 encode/decode and GPU scaling only.
 NVIDIA/CUDA execution and accelerated editor timeline effects remain unqualified;
-the CUDA recipe is supplied for that separate target. Editor project round trips,
-proxies, titles and consuming-player review require the native workflow in the
-[CachyOS handoff](../plans/audio-video-cachyos-handoff.md).
+the CUDA recipe is supplied for that separate target. The separate
+[CachyOS editor/GPU guide](cachyos-media.md) records the qualified Kdenlive
+project/proxy/title round trip, muted player review and MLT Movit effect test.

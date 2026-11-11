@@ -1,16 +1,21 @@
 # Audio and video analysis and production
 
-Status: Debian and CachyOS offline analysis and bounded CPU production implemented; native
-qualification and remaining platform boundaries are recorded in the
+Status: Debian and CachyOS offline analysis and bounded CPU production
+implemented; native qualification and remaining platform boundaries are recorded in the
 [Linux media guide](../workstations/media-analysis.md) and
 [coverage map](testing-coverage.md). Intel Arc VA-API H.264 encode/decode and
 GPU scaling pass the new opt-in qualification runner. Editor timeline effects,
-NVIDIA and Windows milestones remain separate; optional speech recognition is deferred without a demonstrated
-need. The [CachyOS handoff](audio-video-cachyos-handoff.md) gives the next agent
+NVIDIA and Windows milestones remain separate; optional speech recognition is
+deferred without a demonstrated need. The [CachyOS handoff](audio-video-cachyos-handoff.md) gives the next agent
 the setup, baseline and production acceptance sequence. This plan extends
 [multimedia bundles issue #25](https://github.com/bluehexagons/basaltwater/issues/25)
 and complements [native QA evidence](../workstations/native-qa-evidence.md)
 and [Windows game testing](windows-game-testing.md).
+
+The [CachyOS editor/GPU guide](../workstations/cachyos-media.md) supplies the
+qualified Kdenlive linked-media/proxy/title round trip and CPU export recipe,
+plus a separate native MLT Movit effect check. Current Arc evidence is integrated
+Meteor Lake graphics; discrete Arc and NVIDIA still need their own target runs.
 
 ## Scope and existing capabilities
 

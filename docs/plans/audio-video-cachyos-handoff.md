@@ -1,9 +1,10 @@
 # Audio/video handoff to a CachyOS agent
 
 Continue the [AV plan](audio-video-support.md) on an existing CachyOS KDE desktop.
-The Debian file-analysis and modest CPU-production foundation is implemented.
-The next deliverable is native CachyOS package, file-analysis and editor/GPU
-qualification, starting on Intel Arc and then repeating on NVIDIA. Keep results
+The Debian/CachyOS file-analysis and modest CPU-production foundation is implemented.
+Intel integrated Arc file analysis, VA-API and a Kdenlive project round trip now
+have native evidence; use the [editor/GPU recipe](../workstations/cachyos-media.md).
+The next target is discrete-GPU and NVIDIA qualification. Keep results
 for each target separate. Windows implementation and speech recognition remain
 future work; text-to-speech is outside this project.
 
@@ -19,7 +20,7 @@ containing those commits; record `git rev-parse HEAD` and worktree status
 before running native checks, rather than assuming an earlier SHA was tested.
 
 - `lib/media_cli.py` implements `python3 -m lib.media_cli` and the wheel's
-  `basaltw-media` entrypoint. It is qualified on Debian, uses Linux process limits
+  `basaltw-media` entrypoint. It is qualified on Debian and CachyOS, uses Linux process limits
   and directory locking, and consumes only bounded immutable local input bytes.
 - `scripts/qualify_media.py` creates trusted synthetic fixtures and exports,
   checks the versioned analysis contract, and exercises real cancellation.
@@ -30,8 +31,17 @@ before running native checks, rather than assuming an earlier SHA was tested.
   and installed-wheel checks. The final handoff-only documentation update
   does not change that tested implementation.
 - A 30-second 720p CPU encode/analyze workload passed on Debian; see the
-  [measured envelope](../workstations/media-analysis.md). No native CachyOS
-  installation, playback, editor project or GPU acceleration is established.
+  [measured envelope](../workstations/media-analysis.md).
+- At `f237ecf1`, native CachyOS / FFmpeg 9.0.2 passes all 18 fixture outcomes
+  and separate VA-API encode/decode/scaling exports. Kdenlive 26.08.3 / MLT
+  7.42.0 saves and reopens linked audio/video, a generated proxy and an editable
+  title; its five-second CPU render passes decoded analysis and muted MPV review.
+  A separate MLT Movit desaturation export has grayscale output and advancing
+  same-process DRM render counters. These observations use integrated Meteor
+  Lake Arc / iHD 26.3.5, not a discrete Arc board. No Kdenlive interactive GPU
+  timeline, physical listening/capture, NVIDIA or fresh package installation is
+  established. The read-only workstation doctor has zero failed observations;
+  this does not turn deferred capabilities into successes.
 
 Raw evidence is private and is not included in Git. On the receiving machine,
 create a new private evidence directory outside the checkout; record the exact
@@ -106,9 +116,8 @@ bytes with the script's stated measurement limitations. File analysis passing
 does not qualify devices, perceived sound, HDR or accelerated rendering.
 
 Keep the existing `desktop/audio_analysis.py` native WAV evidence contract and
-capture consent unchanged. Decide whether the Linux file analyzer can become a
-supported CachyOS route only after these native results; do not label it portable
-or extend Windows support from Debian tests alone.
+capture consent unchanged. The Linux file analyzer is now a supported CachyOS
+route for this bounded contract; do not extend Windows support from Linux tests.
 
 ## 3. Qualify editor projects and acceleration
 

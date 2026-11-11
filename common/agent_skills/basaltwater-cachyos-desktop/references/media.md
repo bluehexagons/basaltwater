@@ -80,6 +80,9 @@ owns limits, trusted CPU production recipes and native qualification commands.
 encode, decode and GPU scaling with synthetic media and private receipts.
 Intel Arc VA-API has native evidence; CUDA/NVIDIA needs a separate target run.
 Neither file analysis nor FFmpeg GPU scaling qualifies editor timeline effects.
+Use the [CachyOS editor/GPU recipe](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos-media.md)
+for isolated Kdenlive configuration, linked media/proxies/titles, synchronous
+rendering, muted player review and the separate MLT Movit qualification.
 
 Audacity preserves AUP3 sources; exports need explicit range, format, sample rate
 and channels. Inspect the actual document and any Welcome dialog rather than
