@@ -136,6 +136,12 @@ qualification command, separate from mocked automated tests. See the
 platform boundaries. Continue platform work with the
 [CachyOS handoff](../plans/audio-video-cachyos-handoff.md).
 
+Qualification gates use explicit failures and remain active with `python -O`
+or `PYTHONOPTIMIZE`. A failed media, deadline or cancellation check exits nonzero
+without writing a successful `qualification.json`; partial fixtures remain for
+diagnosis. Offline regressions cover normal and optimized execution using mocked
+media processes. They do not replace the opt-in native qualification above.
+
 On Debian 13 x86-64 with FFmpeg 7.1.5, the synthetic 2–4 second, 640×360 suite
 completed analysis in under one second per valid fixture. Its two-second audio
 and scaled-video exports and four-second concatenated delivery each finished

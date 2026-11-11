@@ -20,6 +20,12 @@ from lib.media_cli import inspect
 from lib.validation import validate_filesystem_path
 
 
+def require(condition: object, message: str) -> None:
+    """Keep qualification gates active even under optimized Python."""
+    if not condition:
+        raise RuntimeError(message)
+
+
 def qualify(output: str) -> dict:
     validate_filesystem_path(output)
     root = Path(output).absolute()
@@ -70,17 +76,17 @@ def qualify(output: str) -> dict:
                      "[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[v][a]", "-filter_complex_threads", "1",
                      "-map", "[v]", "-map", "[a]"] + encode)
     with wave.open(str(trimmed_audio)) as wav:
-        assert wav.getnframes() == 96000
+        require(wav.getnframes() == 96000, "Trimmed audio must contain 96000 frames")
         samples = wav.readframes(wav.getnframes())
-        assert abs(int.from_bytes(samples[:2], "little", signed=True)) < 20
-        assert abs(int.from_bytes(samples[-2:], "little", signed=True)) < 20
+        require(abs(int.from_bytes(samples[:2], "little", signed=True)) < 20, "Audio fade-in endpoint failed")
+        require(abs(int.from_bytes(samples[-2:], "little", signed=True)) < 20, "Audio fade-out endpoint failed")
 
     def decoded_frame(path: Path, seconds: float) -> bytes:
         completed = subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-threads", "1", "-i", str(path),
                                     "-ss", str(seconds), "-vf", "scale=320:180", "-filter_threads", "1",
                                     "-frames:v", "1", "-threads", "1", "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1"],
                                    capture_output=True, timeout=30, check=True)
-        assert len(completed.stdout) == 320 * 180 * 3
+        require(len(completed.stdout) == 320 * 180 * 3, "Decoded RGB frame size mismatch")
         return completed.stdout
 
     # Re-encoded boundaries need a decoded comparison, not just duration tags.
@@ -89,7 +95,7 @@ def qualify(output: str) -> dict:
                                               (trimmed, 0, delivery, 2)):
         a, b = decoded_frame(left, left_time), decoded_frame(right, right_time)
         error = sum(abs(x - y) for x, y in zip(a, b)) / len(a)
-        assert error < 10, error
+        require(error < 10, f"Decoded boundary error exceeds limit: {error}")
         boundary_errors.append(error)
     malformed = root / "malformed.mp4"
     malformed.write_bytes(b"garbage")
@@ -106,40 +112,48 @@ def qualify(output: str) -> dict:
         if (expected and result["status"] != expected) or (not expected and result["status"] == "complete"):
             raise RuntimeError(f"Unexpected {fixture.name}: {result['status']} {result['errors']}")
         if fixture == silent:
-            assert result["audio"]["measurements"]["overall"]["rms_dbfs"] is None
-            assert result["audio"]["measurements"]["silence_intervals"]
+            require(result["audio"]["measurements"]["overall"]["rms_dbfs"] is None,
+                    "Silent fixture has finite RMS")
+            require(result["audio"]["measurements"]["silence_intervals"], "Silent fixture has no silence interval")
         if fixture == no_audio:
-            assert result["audio"]["status"] == "missing"
+            require(result["audio"]["status"] == "missing", "No-audio fixture unexpectedly has audio")
         if fixture in (low_rate, short_video, delayed_video):
             first, last = result["video"]["packet_pts_range_seconds"]
-            assert all(first - .000002 <= frame["requested_seconds"] <= last for frame in result["frames"])
-            assert all(frame["decoded_pts_seconds"] <= last + .000002 for frame in result["frames"])
+            require(all(first - .000002 <= frame["requested_seconds"] <= last for frame in result["frames"]),
+                    "Requested video sample is outside the selected packet span")
+            require(all(frame["decoded_pts_seconds"] <= last + .000002 for frame in result["frames"]),
+                    "Decoded video sample exceeds the selected packet span")
             if fixture == delayed_video:
-                assert first >= .99
+                require(first >= .99, "Delayed video offset was not preserved")
         if fixture == offset:
-            assert float(result["metadata"]["streams"][1]["start_time"]) >= .45
+            require(float(result["metadata"]["streams"][1]["start_time"]) >= .45,
+                    "Audio offset was not preserved")
         if fixture == rotated:
-            assert result["metadata"]["streams"][0]["side_data_list"][0]["rotation"] == 90
+            require(result["metadata"]["streams"][0]["side_data_list"][0]["rotation"] == 90,
+                    "Rotation metadata was not preserved")
             image = (root / (fixture.name + "-analysis") / "frame-0.png").read_bytes()
-            assert int.from_bytes(image[16:20], "big") < int.from_bytes(image[20:24], "big")
+            require(int.from_bytes(image[16:20], "big") < int.from_bytes(image[20:24], "big"),
+                    "Decoded frame was not rotated to portrait")
         if fixture == unknown:
-            assert result["timing"]["duration_basis"] == "packet span"
+            require(result["timing"]["duration_basis"] == "packet span", "Expected packet-derived duration")
         if fixture == vfr:
             probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_packets",
                                     "-show_entries", "packet=pts_time", "-of", "json", str(vfr)],
                                    capture_output=True, timeout=15, check=True)
             timestamps = sorted(float(p["pts_time"]) for p in json.loads(probe.stdout)["packets"])
             gaps = [b - a for a, b in zip(timestamps, timestamps[1:])]
-            assert max(gaps) > min(gaps) * 2
+            require(max(gaps) > min(gaps) * 2, "VFR fixture has no variable packet intervals")
             for frame in result["frames"]:
-                assert -.001 <= frame["decoded_pts_seconds"] - frame["requested_seconds"] <= .13
+                require(-.001 <= frame["decoded_pts_seconds"] - frame["requested_seconds"] <= .13,
+                        "VFR decoded sample exceeds timestamp tolerance")
         if fixture in (trimmed_audio, trimmed, delivery):
             expected_duration = 4 if fixture == delivery else 2
-            assert abs(result["timing"]["duration_seconds"] - expected_duration) < .1
+            require(abs(result["timing"]["duration_seconds"] - expected_duration) < .1,
+                    f"{fixture.name} duration mismatch")
         cases.append({"fixture": fixture.name, "status": result["status"], "elapsed_seconds": result["elapsed_seconds"]})
     deadline = inspect(str(source), str(root / "deadline"), timeout=.001)
-    assert deadline["status"] == "incomplete"
-    assert deadline["elapsed_seconds"] < 5
+    require(deadline["status"] == "incomplete", "Deadline probe did not fail as expected")
+    require(deadline["elapsed_seconds"] < 5, "Deadline probe exceeded cleanup allowance")
     cancel_output = root / "cancelled"
     process = subprocess.Popen([sys.executable, "-m", "lib.media_cli", str(source),
                                 "--output", str(cancel_output)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -162,9 +176,10 @@ def qualify(output: str) -> dict:
                 break
             time.sleep(.005)
         process.communicate(timeout=5)
-        assert decoder_pid is not None, "Did not observe an active decoder for cancellation"
-        assert json.loads((cancel_output / "manifest.json").read_text())["status"] == "cancelled"
-        assert not Path(f"/proc/{decoder_pid}").exists(), "Decoder survived cancellation"
+        require(decoder_pid is not None, "Did not observe an active decoder for cancellation")
+        require(json.loads((cancel_output / "manifest.json").read_text())["status"] == "cancelled",
+                "Cancellation probe did not retain a cancelled manifest")
+        require(not Path(f"/proc/{decoder_pid}").exists(), "Decoder survived cancellation")
     finally:
         if process.poll() is None:
             process.kill()
