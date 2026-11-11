@@ -45,7 +45,7 @@ class DataActionContractTests(unittest.TestCase):
     def test_reviewed_plan_is_typed_and_dispatched_with_a_deadline(self):
         value = parameters()
         plan = operation_plan(policy(), 1000, "data.run", value)
-        self.assertEqual(plan["mode"], "approve")
+        self.assertEqual(plan["mode"], "allow")
         self.assertIn(f"--property=RuntimeMaxSec={DATA_TIMEOUT}", plan["argv"])
         self.assertIn(DATA_HELPER, plan["argv"])
         self.assertEqual(plan["argv"][-1], value["job_id"])
@@ -64,13 +64,14 @@ class DataActionContractTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_data_action({**value, "action": "restore"})
 
-    def test_request_needs_separate_approval_and_status_is_owned_and_bounded(self):
+    def test_confirmed_recovery_is_queued_without_separate_approval_and_status_is_owned(self):
         with tempfile.TemporaryDirectory() as directory:
             runner = Mock(return_value=ExecutionResult("dispatched", exit_code=0))
             broker = privilege_broker.Broker(str(Path(directory) / "requests.db"), policy_loader=policy, runner=runner)
             self.addCleanup(broker.db.close)
             request = broker.request(1000, "data.run", parameters(), "Repair reviewed file")
-            self.assertFalse(broker.execute_next())
+            self.assertEqual(request["state"], "approved")
+            self.assertEqual(request["actor"], "administrator-policy")
             with self.assertRaises(ValueError):
                 broker.request(1000, "data.run", {**parameters(), "job_id": "c" * 32}, "Second repair")
             with patch.object(privilege_broker, "data_job_status", return_value=status()), patch.object(privilege_broker, "routine_job_status", return_value=status()):
@@ -78,7 +79,8 @@ class DataActionContractTests(unittest.TestCase):
                 self.assertEqual(result["requests"][0]["parameters"], parameters())
                 with self.assertRaises(PermissionError):
                     broker.dispatch({"action": "data-status"}, 1001)
-            broker.decide(request["id"], request["digest"], True, "operator")
+            with self.assertRaises(ValueError):
+                broker.decide(request["id"], request["digest"], True, "operator")
             self.assertTrue(broker.execute_next())
             self.assertFalse(broker.execute_next())
             runner.assert_called_once_with(request["plan"])

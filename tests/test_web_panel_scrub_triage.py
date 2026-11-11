@@ -24,12 +24,14 @@ class ScrubTriagePanelTests(unittest.TestCase):
                 "items": ["", *[json.dumps({"file": f"/srv/data/{index}<x>.bin", "finding": "a" * 64})
                                  for index in range(count)]]}
 
-    def test_exact_targets_confirmation_and_independent_approval(self):
+    def test_exact_targets_and_confirmation_start_reviewed_action(self):
         ticket, parameters = self.manager.prepare(self.fields())
         review = actions.render_saved_review(ticket, parameters, "CSRF")
         self.assertIn("DELETE 2 FILES", review)
         self.assertIn("/srv/data/0&lt;x&gt;.bin", review)
         self.assertIn("Permanently remove", review)
+        self.assertIn("No separate approval is needed", review)
+        self.assertIn("<button>Permanently delete files</button>", review)
         with patch.object(actions, "exchange", return_value=status()) as exchange:
             with self.assertRaises(ValueError):
                 self.manager.submit(ticket, "DELETE 1 FILES")

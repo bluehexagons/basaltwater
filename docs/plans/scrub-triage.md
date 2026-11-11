@@ -11,7 +11,7 @@ integrity decision.
 Implementation limits: ten selected visible findings from one task per batch,
 10,000 canonical parameter bytes, and the existing six-hour worker deadline.
 Selection clears on navigation. Quarantine requires Linux `renameat2` and the
-source root's filesystem; permanent deletion uses the same private staging before
+file's filesystem/subvolume; permanent deletion uses the same private staging before
 unlinking. Disposition rejects files covered by another configured scrub task
 or inside any configured parity database; coordinating dispositions across
 multiple reports is unsupported. Mirror protection release is intentionally
@@ -32,7 +32,9 @@ unavailable and remains a separate future reviewed operation.
 
 - Quarantine is the recommended way to remove corrupt content from its active
   path while retaining the file. Move it atomically into a dedicated,
-  root-owned, mode-0700 quarantine directory on the same filesystem. Preserve
+  root-owned, mode-0700 quarantine directory on the same filesystem/subvolume.
+  Nested mount and Btrfs subvolume boundaries use their own quarantine directory
+  inside the scrub root. Read-only sources remain unchanged. Preserve
   its original relative path and use a collision-safe `.corrupt` name. Refuse
   to commandeer an existing unrecognized quarantine directory.
 - Exclude quarantine content from scrub inventory and mirror traversal. Keep
@@ -53,7 +55,8 @@ unavailable and remains a separate future reviewed operation.
   completed moves or deletions. Retain batch parameters and outcomes in root-only
   per-job claim records even after another job replaces the panel's latest result.
 - Permanent deletion gets a separate review listing every path, a count-based
-  typed confirmation, and an independent approval. Explain that source bytes
+  typed confirmation. The broker automatically authorizes the confirmed scrub
+  action without another approval-page interaction. Explain that source bytes
   are removed; keep the finding/disposition history and parity metadata.
 
 ## Acceptance

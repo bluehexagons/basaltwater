@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 from collections.abc import Iterator
 from contextlib import contextmanager
 import fcntl
@@ -31,11 +32,21 @@ from sync.service_tools.scrub_manage import execute, selected_jobs
 from sync.service_tools.storage_ops import LOCK_FILE, OperationLock, resolve_scrub_database_path
 
 RESULTS = {"running", "succeeded", "findings", "failed", "interrupted"}
-FAILURES = {"", "storage_busy", "setup_recovery_required", "finding_changed", "file_changed", "identity_unavailable", "overlapping_scrubs", "reserved_path", "execution_rejected", "job_interrupted"}
+FAILURES = {"", "storage_busy", "setup_recovery_required", "finding_changed", "file_changed", "identity_unavailable", "overlapping_scrubs", "reserved_path", "execution_rejected", "job_interrupted", "read_only", "permission_denied", "no_space", "cross_device"}
 
 
 class DataJobRejected(ValueError):
     """A safe, fixed reason for refusing a stale or conflicting operation."""
+
+
+def _failure(exc: Exception) -> str:
+    if isinstance(exc, DataJobRejected):
+        return str(exc)
+    if isinstance(exc, OSError):
+        return {errno.EROFS: "read_only", errno.EACCES: "permission_denied",
+                errno.EPERM: "permission_denied", errno.ENOSPC: "no_space",
+                errno.EDQUOT: "no_space", errno.EXDEV: "cross_device"}.get(exc.errno, "execution_rejected")
+    return "execution_rejected"
 
 
 def _setup_blocked() -> bool:
@@ -234,7 +245,7 @@ def recover_batch(parameters: dict, saved: dict, value: dict) -> None:
         for item in value["items"]:
             check(item)
     except (OSError, ValueError, RuntimeError) as exc:
-        reason = str(exc) if isinstance(exc, DataJobRejected) else "execution_rejected"
+        reason = _failure(exc)
         for item in value["items"]:
             item.update(status="skipped", failure=reason, finished=time.time())
         raise DataJobRejected(reason) from exc
@@ -242,7 +253,7 @@ def recover_batch(parameters: dict, saved: dict, value: dict) -> None:
         try:
             entry = check(item)
         except (OSError, ValueError, RuntimeError) as exc:
-            item.update(status="skipped", failure=str(exc) if isinstance(exc, DataJobRejected) else "execution_rejected", finished=time.time())
+            item.update(status="skipped", failure=_failure(exc), finished=time.time())
             _save_record(value)
             continue
         item.update(status="running", started=time.time())
@@ -255,8 +266,8 @@ def recover_batch(parameters: dict, saved: dict, value: dict) -> None:
                 result = dispose(item["file"], directory, database, parameters["action"],
                                  entry["file_identity"], parameters["job_id"])
             item.update(status="completed", category=result["category"], destination=result.get("destination", ""))
-        except (OSError, ValueError, RuntimeError):
-            item.update(status="failed" if parameters["action"] == "verify" else "unresolved", failure="execution_rejected")
+        except (OSError, ValueError, RuntimeError) as exc:
+            item.update(status="failed" if parameters["action"] == "verify" else "unresolved", failure=_failure(exc))
         finally:
             item["finished"] = time.time()
             _save_record(value)
@@ -314,8 +325,8 @@ def run_action(parameters: dict) -> int:
                         value.update(status="succeeded" if code == 0 and category == "healthy" else "findings", category=category)
         except DataJobRejected as exc:
             value.update(status="failed", failure=str(exc))
-        except (OSError, ValueError, RuntimeError):
-            value.update(status="failed", failure="execution_rejected")
+        except (OSError, ValueError, RuntimeError) as exc:
+            value.update(status="failed", failure=_failure(exc))
         except BaseException:
             value.update(status="interrupted", failure="job_interrupted")
             raise

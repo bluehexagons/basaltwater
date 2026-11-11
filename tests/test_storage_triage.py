@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 import copy
+import errno
 import hashlib
 import json
 import os
@@ -15,7 +16,7 @@ from unittest.mock import Mock, patch
 from common.service_tools import data_job
 from lib.data_actions import finding_revision, validate_data_action
 from lib.runtime_config import RuntimeConfig
-from sync.service_tools import scrub_findings as findings, scrub_par2, storage_ops
+from sync.service_tools import scrub_findings as findings, scrub_par2, storage_ops, sync_rsync
 
 
 class TriageTests(unittest.TestCase):
@@ -229,6 +230,48 @@ class TriageTests(unittest.TestCase):
         self.assertFalse(any(files for _, _, files in inventory))
         scrub_par2._record_missing_files(str(self.source), str(self.database), set(), str(self.root / "log"))
         self.assertEqual(self.report().data["files"]["one"]["category"], "unrepairable")
+
+    def test_quarantine_stays_inside_nested_subvolume_and_mirrors_exclude_it(self):
+        nested = self.source / "snapshots" / "sample"
+        nested.mkdir(parents=True)
+        path = nested / "one"
+        self.paths[0].rename(path)
+        self.report().record("snapshots/sample/one", {"category": "unrepairable", "file_identity": findings.file_identity(str(path))})
+        self.value["items"] = [{"file": str(path), "finding": finding_revision(self.report().data["files"]["snapshots/sample/one"])}]
+        real_stat = os.stat
+        # Model a Btrfs subvolume's distinct device number, retaining real
+        # temporary-directory rename/fsync/report behavior.
+        def subvolume_stat(candidate, *args, **kwargs):
+            info = real_stat(candidate, *args, **kwargs)
+            if kwargs.get("dir_fd") is None and Path(candidate).is_relative_to(nested):
+                fields = list(info)
+                fields[2] = real_stat(self.source).st_dev + 1
+                return os.stat_result(fields)
+            return info
+        with patch.object(findings.os, "stat", side_effect=subvolume_stat):
+            self.assertEqual(findings.quarantine_root(str(path), str(self.source)), str(nested))
+        with patch.object(findings, "quarantine_root", return_value=str(nested)):
+            self.assertEqual(data_job.run_action(self.value), 0)
+        destination = Path(self.result()["items"][0]["destination"])
+        self.assertTrue(destination.is_relative_to(nested / findings.QUARANTINE_DIR))
+        self.assertEqual(destination.read_bytes(), b"damaged bytes")
+        inventory = scrub_par2._scan_tree(str(self.source))
+        self.assertFalse(any(findings.QUARANTINE_DIR in root for root, _, _ in inventory))
+        for conservative in (False, True):
+            with sync_rsync._rsync_command(str(self.source), str(self.root / "mirror"), (), conservative) as (command, _):
+                self.assertIn('--exclude=' + findings.QUARANTINE_DIR, command)
+
+    def test_filesystem_failure_is_actionable_and_exception_text_stays_private(self):
+        for index, (code, label) in enumerate(((errno.EROFS, "read_only"), (errno.EACCES, "permission_denied"),
+                                              (errno.ENOSPC, "no_space"), (errno.EXDEV, "cross_device"))):
+            self.value["job_id"] = f"{index:032x}"
+            with patch.object(data_job, "disposition_preflight", side_effect=OSError(code, "PRIVATE host evidence")), \
+                 patch.object(data_job, "dispose") as dispose:
+                self.assertEqual(data_job.run_action(self.value), 1)
+                dispose.assert_not_called()
+            self.assertEqual(data_job._record()["failure"], label)
+            self.assertTrue(all(item["failure"] == label for item in self.result()["items"]))
+            self.assertNotIn("PRIVATE", self.state.read_text())
 
     def test_delete_retains_parity_and_intent_on_ambiguous_failure(self):
         self.value["action"] = "delete"

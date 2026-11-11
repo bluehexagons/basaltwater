@@ -163,8 +163,11 @@ including when both panels are installed. Request links prefer the main panel
 when it is present; either review surface can decide the same pending request.
 
 The panel’s [Shares & Data page](../services/shares-data.md) also requests
-individually approved `data.run` operations for single-file verification,
-repair, restoration and explicit acceptance. Review the exact file, configured
+`data.run` operations for verification, quarantine, deletion, single-file
+repair, restoration and explicit acceptance. These are automatically authorized
+after review and confirmation in Shares & Data; no separate approval visit is
+needed. The configured requester can submit these bounded actions without
+decision-socket access. Review the exact file, configured
 scrub root, parity directory and any independent copy. These run in a separate
 worker with a six-hour deadline and a storage lock. `dispatched` reports launch;
 the page shows the worker’s result separately. A changed finding or file requires

@@ -257,9 +257,9 @@ class PanelDevelopmentTests(unittest.TestCase):
         self.assertEqual(self.request(path, fields, headers={"Origin": self.settings["url"]})[0], 409)
         self.assertEqual(len(self.scenario.data["requests"]), 1)
 
-    def test_integrated_request_review_can_decide_a_simulated_data_action(self) -> None:
+    def test_integrated_request_review_can_decide_a_simulated_routine(self) -> None:
         self.serve()
-        request = self.scenario.exchange({"action": "request", "operation": "data.run", "parameters": {"action": "scrub"}})
+        request = self.scenario.exchange({"action": "request", "operation": "data.routine", "parameters": {"action": "run"}})
         path = "/requests/" + request["id"]
         status, _, body = self.request(path)
         self.assertEqual(status, 200)

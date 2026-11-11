@@ -28,6 +28,10 @@ def privilege_request(operation: str, parameters: dict, state: str) -> dict:
             "argv": parameters.get("argv", []) if operation == "command.run" else [],
             "effect": "Simulated privilege request. No host commands or background jobs run.",
             "mode": "approve", "policy_digest": "d" * 64}
+    if operation == "data.run":
+        policy = {"version": 1, "machine": "c" * 32, "origin": "http://127.0.0.1:8765",
+                  "requester_uid": 1000, "ttl_seconds": 3600, "services": {}, "reboot": "approve", "commands": "approve"}
+        plan = operation_plan(policy, 1000, operation, parameters)
     now = time.time()
     return {"id": uuid.uuid4().hex, "digest": digest(plan), "state": state, "action": operation,
             "created": now, "expires": now + 3600, "plan": plan,
