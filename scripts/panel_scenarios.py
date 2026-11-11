@@ -11,6 +11,7 @@ from unittest.mock import patch
 import uuid
 
 from common.service_tools import web_panel_admin as admin
+from common.service_tools import web_panel_approval as approval
 from common.service_tools import web_panel_data_actions as data_actions
 from common.service_tools import web_panel_samba as samba
 from common.service_tools import web_panel_share_actions as share_actions
@@ -131,6 +132,7 @@ class Scenario:
     def install(self) -> None:
         state = self.state
         self.replace(state, "features", return_value=self.features)
+        self.replace(approval, "configured_panel_features", return_value=self.features)
         self.replace(state, "system_overview", return_value=[
             {"label": label, "value": value, "description": "Synthetic development data"}
             for label, value in (("Uptime", "2d 6h"), ("Memory", "94% used" if self.name == "degraded" else "24% used"),
@@ -333,15 +335,16 @@ class Scenario:
                 privilege = [{"id": row["id"], "created": row["created"], "expires": row["created"] + 3600,
                     "state": row["state"], "operation": row.get("plan", {}).get("operation", "admin.run"),
                     "target": "" if row.get("plan", {}).get("operation") == "command.run" else row.get("plan", {}).get("parameters", {}).get("unit", row["action"]),
-                    "execution": None, "review_url": row.get("review_url", "https://127.0.0.1/fixture-approvals/" + row["id"])}
+                    "execution": None, "review_url": row.get("review_url", "/requests/" + row["id"])}
                     for row in records]
                 return {"blocked": {}, "requests": [row for row in records if row.get("plan", {}).get("operation", "admin.run") == "admin.run"],
                         "privilege_requests": privilege, "restartable_services": ["example.service"], "unit_state": "inactive"}
             if message["action"] == "request":
                 if message["operation"] in {"service.restart", "command.run", "data.run", "data.routine", "samba.account", "samba.shares"}:
                     request = privilege_request(message["operation"], message["parameters"],
-                        "failed" if self.name == "degraded" else "pending" if message["operation"] in {"data.run", "data.routine", "samba.account", "samba.shares"} else "succeeded")
-                    request["review_url"] = "https://127.0.0.1/fixture-approvals/" + request["id"]
+                        "failed" if self.name == "degraded" else "dispatched" if message["operation"] == "data.run" else
+                        "pending" if message["operation"] in {"data.routine", "samba.account", "samba.shares"} else "succeeded")
+                    request["review_url"] = "/requests/" + request["id"]
                     self.data["requests"].insert(0, request)
                     self.save()
                     return copy.deepcopy(request)

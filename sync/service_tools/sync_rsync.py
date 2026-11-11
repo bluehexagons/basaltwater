@@ -36,6 +36,7 @@ from lib.mount_utils import validate_smb_connectivity
 from lib.runtime_config import RuntimeConfig
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
+from sync.service_tools.scrub_findings import QUARANTINE_DIR
 
 if TYPE_CHECKING:
     from lib.config import SetupConfig
@@ -263,7 +264,7 @@ def _copy_new_conflicts(source: str, destination: str, protected: tuple[str, ...
             relative = os.path.relpath(os.path.join(root, name), source)
             # Pruning each excluded ancestor also avoids walking unavailable
             # nested mounts while preparing conservative copy mode.
-            if relative in excluded or name in {'.git', '.rsync-partial'}:
+            if relative in excluded or name in {'.git', '.rsync-partial', QUARANTINE_DIR}:
                 dirs.remove(name)
                 continue
             try:
@@ -300,7 +301,8 @@ def _rsync_command(source: str, destination: str, excluded_paths: tuple[str, ...
             options.extend(['--from0', '--exclude-from=-'])
         yield [
             '/usr/bin/rsync', '-av', *options, '--partial', '--mkpath',
-            '--exclude=.git', '--exclude=.rsync-partial', '--info=progress2', '--stats', '--',
+            '--exclude=.git', '--exclude=.rsync-partial', f'--exclude={QUARANTINE_DIR}',
+            '--info=progress2', '--stats', '--',
             f'{source}/', f'{destination}/',
         ], filters if protected_paths else None
 

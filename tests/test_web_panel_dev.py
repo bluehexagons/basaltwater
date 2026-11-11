@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 import threading
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from urllib.parse import urlencode
 
 from common.service_tools import web_panel_service as panel
@@ -107,6 +107,20 @@ class PanelDevelopmentTests(unittest.TestCase):
                 self.assertIn('id="panel-development"', body)
                 self.assertIn("connect-src 'self'", headers["Content-Security-Policy"])
         self.assertFalse(self.state.credential_transport_available())
+
+    def test_browser_disconnect_during_request_read_is_quiet_without_hiding_handler_errors(self) -> None:
+        self.serve()
+        for error in (BrokenPipeError, ConnectionResetError, ValueError):
+            with self.subTest(error=error.__name__):
+                connection = Mock()
+                connection.makefile.return_value.readline.side_effect = error("Request read failed")
+                if error is ValueError:
+                    with self.assertRaisesRegex(ValueError, "Request read failed"):
+                        self.server.RequestHandlerClass(connection, ("127.0.0.1", 12345), self.server)
+                else:
+                    self.server.RequestHandlerClass(connection, ("127.0.0.1", 12345), self.server)
+                connection.sendall.assert_not_called()
+        self.assertEqual(self.request("/")[0], 200)
 
     def test_shares_data_filters_and_navigation_use_the_real_http_handler(self) -> None:
         self.serve()
@@ -257,9 +271,9 @@ class PanelDevelopmentTests(unittest.TestCase):
         self.assertEqual(self.request(path, fields, headers={"Origin": self.settings["url"]})[0], 409)
         self.assertEqual(len(self.scenario.data["requests"]), 1)
 
-    def test_integrated_request_review_can_decide_a_simulated_data_action(self) -> None:
+    def test_integrated_request_review_can_decide_a_simulated_routine(self) -> None:
         self.serve()
-        request = self.scenario.exchange({"action": "request", "operation": "data.run", "parameters": {"action": "scrub"}})
+        request = self.scenario.exchange({"action": "request", "operation": "data.routine", "parameters": {"action": "run"}})
         path = "/requests/" + request["id"]
         status, _, body = self.request(path)
         self.assertEqual(status, 200)

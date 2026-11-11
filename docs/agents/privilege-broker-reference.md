@@ -105,6 +105,9 @@ unauthenticated request feed. Login failures are globally limited to 20 per
 minute on the standalone listener; integrated routes use the panel's Nginx
 login throttling and fail2ban policy. Keep access source-restricted: flooding can affect availability.
 Approval origins support DNS names, IPv4 literals, and bracketed IPv6 literals.
+Authenticated forms with valid bounded framing are read completely before origin
+rejection, so an unread body cannot reset the rejection response on the Unix
+proxy connection. A truncated body cannot authorize an action.
 Controller-to-target arguments carry the effective approval hostname, including
 an explicit override. IPv4 CIDR setup targets such as `10.0.0.20/16` use the
 address `10.0.0.20` for approvals; the prefix remains part of setup metadata.
@@ -291,10 +294,22 @@ The [Shares & Data page](../services/shares-data.md) requests `data.run` with
 exact fields: `action` (`verify`, `repair`, `restore`, `accept`), normalized
 absolute `directory`, `database`, `file`, restore-only `backup` (otherwise empty),
 the exported `finding` revision and a fresh `job_id`. All paths are bounded to
-1,024 characters. Every request requires individual approval and uses the
-existing expiry, policy-digest revalidation, claim and quota rules. At most one
+1,024 characters. Scrub actions use `allow` mode: panel review and confirmation
+submit directly, without a second browser approval. This grants the configured
+requester authority to request these typed actions, including quarantine,
+deletion and acceptance, but no arbitrary command or decision-socket access.
+Existing expiry, policy-digest revalidation, claim and quota rules remain. At most one
 storage request (`data.run` or `data.routine`) may be pending, approved or
 executing at once.
+
+Batch verify, quarantine and deletion use `action`, normalized `directory` and
+`database`, a fresh `job_id`, and up to ten `items` containing exact `file` paths
+and `finding` revisions. Canonical parameters are limited to 10,000 bytes.
+The panel requires `CHANGE FILE` for quarantine and `DELETE N FILES` for deletion.
+All selections are checked before effects, then each item is checked again.
+Disposition stays inside the source filesystem/subvolume, retains parity and
+mirror protection, and cannot change read-only snapshot flags. Batches retain
+durable per-job claims and per-file results and are never replayed automatically.
 
 After claiming execution, the broker writes the approved public parameters to
 a root-only `data-payload-JOB_ID.json` under its state directory. The fixed
@@ -318,7 +333,14 @@ apply. Acceptance explicitly replaces parity for independently confirmed content
 The protected `data-job.json` contains only the latest job’s public parameters,
 fixed status, result category, failure category and timestamps. `data-status`
 on the requester socket returns this record, unit state and at most ten owned
-recovery requests, trimmed to the transport limit. It never reads NAS data or
+recovery requests. Older rows are trimmed first to meet the transport limit.
+If necessary, the newest row retains its identity, state, execution metadata and
+review URL but replaces exact paths with `target_count` and parameters containing
+only `action` and `job_id`. Full owned request status and review still contain the
+exact parameters, and the request remains cancellable before execution is claimed.
+An oversized worker record is omitted with `latest_omitted: true`; unit and
+outstanding-request gates remain available. Inspect the retained worker record
+through administrator access. The status operation never reads NAS data or
 returns PAR2 output, private evidence, recovery copies or approval authority.
 The worker reports remaining findings separately from successful recovery.
 An unchanged running record observed with an inactive/failed unit becomes

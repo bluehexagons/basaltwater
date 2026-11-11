@@ -232,6 +232,13 @@ def build_web_panel_manifest(
     title = config.friendly_name or config.system_hostname or _preferred_host(
         config, identities
     )
+    publishing_tools = set(config.publishing_tools or [])
+    if "publishing" in (config.godot_bundles or []):
+        publishing_tools.update(("butler", "steamcmd"))
+    if config.install_butler:
+        publishing_tools.add("butler")
+    if config.install_steamcmd:
+        publishing_tools.add("steamcmd")
     manifest = {
         "version": 1,
         "title": title,
@@ -243,6 +250,7 @@ def build_web_panel_manifest(
         "features": {
             "approvals": integrated_approvals(config),
             "agent_tools": config.selected_agent_tools(),
+            "publishing_tools": sorted(publishing_tools),
             "git": bool(config.has_agent_features() or config.git_credentials
                         or config.git_ca_pems or config.clear_git_credentials),
             "t3_update": "t3code" in (config.web_interfaces or []),

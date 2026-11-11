@@ -106,18 +106,27 @@ require existing parity so a candidate cannot silently become a new baseline.
 
 The [Shares & Data triage controls](../services/shares-data.md#triage-selected-findings)
 support batches of up to ten findings from one scrub task: verify, quarantine or
-permanently delete. Exact paths and one action are reviewed before a separate
-approval. Deletion requires the displayed `DELETE N FILES` confirmation. Repair,
+permanently delete. Exact paths and one action are reviewed and confirmed in the
+panel; the broker authorizes the request automatically without a separate approval
+visit. Deletion requires the displayed `DELETE N FILES` confirmation. Repair,
 restore and acceptance stay individual operations.
 
 Quarantine retains corrupt bytes under the source root's private, root-owned
-`.basaltwater-quarantine` directory. An operation directory preserves the source
+`.basaltwater-quarantine` directory. For files in a nested mount, bind mount or
+Btrfs subvolume, quarantine lives at that boundary inside the scrub root, keeping
+moves within the source mount and device. Mount boundaries come from Linux's
+mount inventory; unavailable or invalid inventory stops disposition before moving
+files. An operation directory preserves the source
 relative path with a `.corrupt` suffix. An existing directory needs the recognized
 ownership marker and mode 0700; it is never silently adopted. Disposition requires
-a regular file with one hard link on the source root's filesystem and Linux
+a regular file with one hard link on a writable filesystem and Linux
 `renameat2` support. Deletion first moves the reviewed inode privately, rechecks
 it, then unlinks it. An uncertain move or deletion retains a durable intent and
 requires inspection rather than replay.
+
+Read-only snapshots remain read-only. The panel reports read-only storage,
+permission refusals, exhausted space/quota and cross-device moves separately.
+It never changes mount or snapshot flags to force disposition.
 
 Disposition rejects reserved scrub metadata, every configured parity database,
 and files covered by more than one configured scrub task, including paused tasks.
@@ -134,7 +143,11 @@ protection is not supported by these controls. Do not remove the scrub declarati
 to bypass it. Inspect per-file worker results before individually reviewing any
 remaining files after interruption.
 
-The panel shows the latest worker result. Each new batch also retains a root-only
+The panel shows the latest worker result and recent requests. Large requests can
+show a file count with a details link instead of repeating every path, keeping the
+current request visible and cancellable before dispatch. A worker result too large
+for the activity response is explicitly marked unavailable there; inspect its
+retained record. Each new batch also retains a root-only
 JSON record at
 `/var/lib/basaltwater-privilege-broker/data-payload-JOB_ID.json.claimed`, containing
 its reviewed parameters, per-file outcomes and quarantine destinations. Inspect

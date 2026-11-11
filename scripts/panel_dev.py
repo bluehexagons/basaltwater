@@ -145,6 +145,14 @@ def development_handler(state: panel.WebPanelState, settings: dict, generation: 
         def log_message(self, *args) -> None:
             pass
 
+        def handle(self) -> None:
+            try:
+                super().handle()
+            except (BrokenPipeError, ConnectionResetError):
+                # Browsers can close an idle TLS connection during navigation
+                # or worker reload. Keep actual handler failures observable.
+                pass
+
         def authenticated(self) -> bool:
             # Reject browser DNS rebinding and forged proxy identity/transport.
             if self.headers.get("Host") not in {urlsplit(settings["url"]).netloc, "localhost:" + settings["url"].rsplit(":", 1)[1]}:

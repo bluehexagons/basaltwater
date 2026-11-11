@@ -286,7 +286,8 @@ test('approval real form origin, forged token, decision and replay rejection', a
   const submitted = page.waitForResponse(response => response.url() === url && response.request().method() === 'POST');
   await page.getByRole('button', { name: 'Approve once', exact: true }).click();
   expect((await submitted).status()).toBe(303);
-  await expect(page.getByText('This request cannot be approved again.', { exact: false })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Approve once', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Refresh request status', exact: true })).toBeVisible();
   expect((await postForm(page, url, { csrf, digest, decision: 'approve' })).status).toBe(409);
 });
 
@@ -568,7 +569,7 @@ test.describe('admin controls', () => {
     await page.getByRole('button', { name: 'Approve restart host', exact: true }).click();
     await expect(page.locator('.approval-state')).toHaveText('Status: dispatched');
     await page.getByText('Technical details and request context', { exact: true }).click();
-    await expect(page.locator('dd').filter({ hasText: `"action":"${variant}"` })).toBeVisible();
+    await expect(page.locator('dd').filter({ hasText: `"action": "${variant}"` })).toBeVisible();
   });
 
   test('a substituted power action is rejected without a request', async ({ page, developmentServer: dev, diagnostics }) => {
@@ -1211,25 +1212,37 @@ test.describe('Shares & Data', () => {
     diagnostics.allowed.add(dev.url + '/actions/data/submit');
     diagnostics.expectedConsole.push('the server responded with a status of 409');
     const refused = page.waitForResponse(response => response.url() === dev.url + '/actions/data/submit');
-    await review.getByRole('button', { name: 'Create recovery approval request', exact: true }).click();
+    await review.getByRole('button', { name: 'Accept current content', exact: true }).click();
     expect((await refused).status()).toBe(409);
     await expect(page.getByRole('alert')).toContainText('could not be confirmed');
     await expect(review.locator('input[name=ticket]')).toHaveValue(recoveryTicket);
     await review.getByLabel('Type ACCEPT CURRENT CONTENT to confirm', { exact: true }).fill('ACCEPT CURRENT CONTENT');
     diagnostics.allowed.delete(dev.url + '/actions/data/submit');
-    await review.getByRole('button', { name: 'Create recovery approval request', exact: true }).click();
-    await expect(page.getByRole('region', { name: 'Recovery activity', exact: true })).toContainText('pending');
-    await page.getByRole('button', { name: 'Cancel recovery request', exact: true }).click();
+    await review.getByRole('button', { name: 'Accept current content', exact: true }).click();
+    await expect(page.getByRole('region', { name: 'Recovery activity', exact: true })).toContainText('dispatched');
+    await expect(page.getByRole('button', { name: 'Cancel recovery request', exact: true })).toHaveCount(0);
     const firstFinding = page.locator('.data-finding').first();
     await firstFinding.locator('summary').click();
     await firstFinding.getByLabel('Recovery action', { exact: true }).selectOption('verify');
     await firstFinding.getByRole('button', { name: 'Review recovery', exact: true }).click();
-    await page.locator('.data-review').getByRole('button', { name: 'Create recovery approval request', exact: true }).click();
-    await expect(page.getByRole('link', { name: 'Open recovery approval', exact: false }).first()).toBeVisible();
-    await expect(page.getByText('Approval request:', { exact: false }).first()).toContainText('pending');
-    await expect(page.getByRole('button', { name: 'Review recovery', exact: true })).toHaveCount(0);
-    await page.getByRole('button', { name: 'Cancel recovery request', exact: true }).click();
-    await expect(page.getByText('Approval request:', { exact: false }).first()).toContainText('cancelled');
+    await page.locator('.data-review').getByRole('button', { name: 'Verify file', exact: true }).click();
+    await expect(page.getByRole('link', { name: 'Request details', exact: false }).first()).toBeVisible();
+    await expect(page.getByText('Dispatch:', { exact: false }).first()).toContainText('dispatched');
+    await expect(page.getByRole('link', { name: 'Open recovery approval', exact: false })).toHaveCount(0);
+    const activityUrl = page.url();
+    const requestUrl = await page.getByRole('link', { name: 'Request details', exact: false }).first().getAttribute('href');
+    await page.goto(new URL(requestUrl, dev.url).href);
+    await expect(page.getByRole('heading', { name: 'Verify file', exact: true })).toBeVisible();
+    await expect(page.locator('.sidebar').getByRole('link', { name: 'Shares & Data', exact: true })).toBeVisible();
+    await expect(page.locator('.approval-targets')).toContainText('/srv/archive/');
+    await expect(page.getByRole('button', { name: 'Approve once', exact: true })).toHaveCount(0);
+    await page.screenshot({ path: info.outputPath('recovery-request-desktop.png'), fullPage: true });
+    await page.setViewportSize({ width: 320, height: 900 });
+    await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'Recovery request with enlarged text').toBe(true);
+    await page.screenshot({ path: info.outputPath('recovery-request-mobile.png'), fullPage: true });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(activityUrl);
     const draftFinding = page.locator('.data-finding').first();
     await draftFinding.locator('summary').click();
     await draftFinding.getByLabel('Recovery action', { exact: true }).selectOption('restore');

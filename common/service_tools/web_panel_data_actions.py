@@ -1,4 +1,4 @@
-"""Single-use scrub recovery reviews and independently approved requests."""
+"""Single-use scrub recovery reviews and broker-supervised requests."""
 
 from __future__ import annotations
 
@@ -15,6 +15,10 @@ from lib.data_actions import BATCH_LIMIT, DATA_ACTIONS, HEX_ID, validate_data_ac
 from lib.privilege_client import exchange
 
 FAILURE_LABELS = {
+    "read_only": "The filesystem or snapshot is read-only. Recovery needs write access to the source or parity storage. Use a writable copy or manage the snapshot through the administrator tools.",
+    "permission_denied": "The filesystem refused access. Check its permissions and mount restrictions before reviewing the action again.",
+    "no_space": "The filesystem has no space or quota available for recovery data or results. Free space before reviewing the action again.",
+    "cross_device": "The filesystem refused an atomic move across a mount or subvolume boundary. Inspect the source and quarantine locations before retrying.",
     "storage_busy": "Another storage operation held the lock. No recovery was started.",
     "setup_recovery_required": "An unfinished setup operation needs administrator recovery before file recovery can continue.",
     "finding_changed": "The finding changed after review. Refresh the findings before reviewing it again.",
@@ -127,7 +131,7 @@ def recovery_form(job: dict, finding: dict, csrf: str, submitted: dict | None = 
     return f'''<form method="post" action="/actions/data/review" class="data-recovery-form">{csrf}{hidden}
 <label for="recovery-{identifier}">Recovery action</label><select id="recovery-{identifier}" name="action">{options}</select>
 <label for="backup-{identifier}">Independent copy path (restore only)</label><input id="backup-{identifier}" name="backup" value="{backup}" maxlength="1024" placeholder="/path/to/known-good-copy">
-<p>Review creates no host operation. Recovery requires a separate approval. Verify first if the file has changed since this finding was recorded.</p>
+<p>Review the action before starting it. Verify first if the file has changed since this finding was recorded.</p>
 <button>Review recovery</button></form>'''
 
 
@@ -162,7 +166,7 @@ def batch_form(job: dict, csrf: str) -> str:
                        ("delete", "Permanently delete selected files")))
     return f'''<form id="scrub-batch" method="post" action="/actions/data/review" class="event data-recovery-form">
 {csrf}{hidden}<input type="hidden" name="items" value="">
-<h3>Triage selected findings</h3><p>Select up to {BATCH_LIMIT} findings on this page. Selection clears when you change filters or pages. Review every path before requesting approval.</p>
+<h3>Triage selected findings</h3><p>Select up to {BATCH_LIMIT} findings on this page. Selection clears when you change filters or pages. Review every path before starting the action.</p>
 <label for="batch-action">Action for all selected files</label><select id="batch-action" name="action">{options}</select>
 <p>Quarantine retains corrupt bytes privately. Permanent deletion removes source bytes. Both retain parity, history and mirror protection. Repair, restore and acceptance require individual review.</p>
 <button>Review selected findings</button></form>'''
@@ -211,9 +215,9 @@ def render_saved_review(ticket: str, parameters: dict, csrf: str) -> str:
     targets = _targets(parameters) if "items" in parameters else ""
     return f'''<section class="event data-review" aria-labelledby="recovery-review">{render_heading("Review: " + label, "security", heading_id="recovery-review")}
 <p>{html.escape(effect)}</p>{targets}<dl class="job-facts">{facts}</dl>
-<p>This creates a single-use request. Open its approval review to approve or deny the exact action. The worker rejects a changed finding or file and shares the storage operation lock. Jobs have a six-hour limit; dispatch is separate from completion.</p>
+<p>Confirm to start this action. No separate approval is needed. The worker checks that the finding and file still match this review and runs independently for up to six hours.</p>
 <p>Batches report each file separately. Interrupted or uncertain work is never replayed automatically. Inspect outcomes and individually review remaining files before retrying.</p>
-<form method="post" action="/actions/data/submit" class="data-recovery-form">{csrf}<input type="hidden" name="ticket" value="{html.escape(ticket, quote=True)}">{confirmation}<button>Create recovery approval request</button></form>
+<form method="post" action="/actions/data/submit" class="data-recovery-form">{csrf}<input type="hidden" name="ticket" value="{html.escape(ticket, quote=True)}">{confirmation}<button>{html.escape(label)}</button></form>
 <a href="{html.escape(_findings_url(parameters), quote=True)}">Cancel review</a></section>'''
 
 
@@ -223,7 +227,9 @@ def render_status(status: dict, csrf: str) -> str:
     if reason := unavailable_reason(status):
         body += f'<p class="data-notice" role="status">{escape(reason)}</p>'
     latest = status.get("latest", {})
-    if not latest and not status.get("requests") and not unavailable_reason(status):
+    if status.get("latest_omitted"):
+        body += '<p class="data-notice">The latest worker result exceeds the activity display limit. Inspect its retained record through the controller.</p>'
+    if not latest and not status.get("latest_omitted") and not status.get("requests") and not unavailable_reason(status):
         body += '<p class="data-notice">No recovery requests recorded. Open a finding below to review verification or recovery.</p>'
     if latest:
         parameters = latest.get("parameters", {})
@@ -268,7 +274,9 @@ def render_status(status: dict, csrf: str) -> str:
         parameters = row.get("parameters", {})
         label = DATA_ACTIONS.get(parameters.get("action"), ("Recovery request", ""))[0]
         state = row.get("state", "unavailable")
-        body += f'<article class="event"><h3>{escape(label)}</h3>' + _task_context(parameters) + _targets(parameters) + f'<p>Approval request: <strong>{escape(state)}</strong></p>'
+        targets = (f'<p>Reviewed files: {row["target_count"]}. Open request details for exact paths.</p>'
+                   if type(row.get("target_count")) is int and 1 <= row["target_count"] <= BATCH_LIMIT else _targets(parameters))
+        body += f'<article class="event"><h3>{escape(label)}</h3>' + _task_context(parameters) + targets + f'<p>Dispatch: <strong>{escape(state)}</strong></p>'
         body += f'<p class="event-meta">Requested: {_timestamp(row.get("created"))}</p>'
         if state in {"pending", "approved"}:
             body += f'<p class="event-meta">Approval expires: {_timestamp(row.get("expires"))}</p>'
@@ -282,7 +290,8 @@ def render_status(status: dict, csrf: str) -> str:
         elif state == "dispatched":
             body += '<p>This request was dispatched. Its completion is not established by the latest worker record above; inspect the scrub report before retrying.</p>'
         if url := _review_url(row.get("review_url")):
-            body += f'<a class="refresh-link" href="{escape(url, quote=True)}" target="_blank" rel="noopener noreferrer">Open recovery approval ↗</a>'
+            link_label = "Open recovery approval" if state == "pending" else "Request details"
+            body += f'<a class="refresh-link" href="{escape(url, quote=True)}" target="_blank" rel="noopener noreferrer">{link_label} ↗</a>'
         if state in {"pending", "approved"}:
             body += f'<form method="post" action="/actions/data/cancel">{csrf}<input type="hidden" name="id" value="{identifier}"><button>Cancel recovery request</button></form>'
         body += '</article>'

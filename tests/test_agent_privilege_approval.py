@@ -14,8 +14,11 @@ import unittest
 from unittest.mock import Mock, patch
 from urllib.parse import urlencode
 
-from common.service_tools.privilege_approval import ApprovalServer, PanelApprovalServer, render_queue
+from common.service_tools.privilege_approval import ApprovalHandler, ApprovalServer, PanelApprovalServer, render_queue
 from common.service_tools.privilege_broker import Broker
+from common.service_tools import web_panel_approval
+from common.web_panel_steps import build_web_panel_manifest
+from lib.config import SetupConfig
 from lib.privilege_auth import authenticate, password_record
 from lib.privilege_execution import ExecutionResult
 from tests.test_agent_privilege_broker import policy
@@ -394,6 +397,55 @@ class IntegratedApprovalTests(ApprovalTests):
         self.assertIn(f'<a href="{self.path}">Check request status</a>', content)
         self.assertIn('<a href="/approvals">All requests</a>', content)
 
+    def test_rejected_origin_consumes_split_form_before_closing_proxy_connection(self):
+        body = urlencode(self.form()).encode()
+        reading = threading.Event()
+        original_setup = ApprovalHandler.setup
+
+        def observe_read(handler):
+            original_setup(handler)
+            reader = handler.rfile
+            handler.rfile = Mock(wraps=reader)
+
+            def read(length):
+                reading.set()
+                return reader.read(length)
+
+            handler.rfile.read.side_effect = read
+
+        with patch.object(ApprovalHandler, "setup", observe_read), socket.socket(socket.AF_UNIX) as connection:
+            connection.settimeout(5)
+            connection.connect(self.server.server_address)
+            connection.sendall((f"POST {self.path} HTTP/1.1\r\nHost: vm.example\r\n"
+                                "X-Basaltwater-User: operator\r\nOrigin: null\r\n"
+                                "Content-Type: application/x-www-form-urlencoded\r\n"
+                                f"Content-Length: {len(body)}\r\n\r\n").encode())
+            self.assertTrue(reading.wait(2), "A bounded form must be consumed before an origin rejection closes the socket")
+            connection.sendall(body)
+            response = http.client.HTTPResponse(connection)
+            response.begin()
+            self.assertEqual(response.status, 409)
+            self.assertIn("Approval was not confirmed", response.read().decode())
+        self.assertEqual(self.broker.status(self.request["id"])["state"], "pending")
+        self.runner.assert_not_called()
+
+    def test_truncated_form_cannot_authorize_even_with_complete_fields(self):
+        body = urlencode(self.form()).encode()
+        with socket.socket(socket.AF_UNIX) as connection:
+            connection.settimeout(5)
+            connection.connect(self.server.server_address)
+            connection.sendall((f"POST {self.path} HTTP/1.1\r\nHost: vm.example\r\n"
+                                f"X-Basaltwater-User: operator\r\nOrigin: {self.origin}\r\n"
+                                "Content-Type: application/x-www-form-urlencoded\r\n"
+                                f"Content-Length: {len(body) + 1}\r\n\r\n").encode() + body)
+            connection.shutdown(socket.SHUT_WR)
+            response = http.client.HTTPResponse(connection)
+            response.begin()
+            self.assertEqual(response.status, 409)
+            response.read()
+        self.assertEqual(self.broker.status(self.request["id"])["state"], "pending")
+        self.runner.assert_not_called()
+
     def test_invalid_request_path_has_only_safe_recovery_link(self):
         status, _, content = self.call("POST", path='//evil.example/<script>', body="", headers={
             "Origin": self.origin, "Content-Type": "application/x-www-form-urlencoded"})
@@ -416,3 +468,41 @@ class IntegratedApprovalTests(ApprovalTests):
         self.server.origins = {"http://vm.example"}
         self.origin = "http://vm.example"
         self.assertEqual(self.post(self.form())[0], 303)
+
+    def test_navigation_uses_configured_panel_sections_without_operator_home_access(self):
+        manifest = {"features": {"agent_tools": ["codex"], "publishing_tools": ["butler"], "git": True, "t3_update": True}}
+        with patch.object(web_panel_approval, "read_json_file", return_value=manifest), \
+             patch.object(web_panel_approval, "unit_installed", return_value=True):
+            content = self.call()[2]
+        for target in ("/agents", "/credentials", "/publishing", "/desktop/", "/console/", "/shares-data", "/storage", "/services", "/jobs", "/logs", "/github-runner"):
+            self.assertIn(f'href="{target}"', content)
+        self.assertNotIn("Every decision is recorded", content)
+        self.assertEqual(content.count('aria-current="page"'), 2)  # Desktop and mobile menus.
+
+    def test_publishing_navigation_uses_setup_selection_without_home_inspection(self):
+        for selected, expected in (({}, []), ({"publishing_tools": ["steamcmd"]}, ["steamcmd"]),
+                                   ({"godot_bundles": ["publishing"]}, ["butler", "steamcmd"]),
+                                   ({"install_butler": True}, ["butler"]), ({"install_steamcmd": True}, ["steamcmd"])):
+            with self.subTest(selected=selected):
+                profile = "agent_cachyos" if any(key.startswith("install_") for key in selected) else "agent_vm"
+                config = SetupConfig(system_type=profile, host="vm.example", username="operator", **selected)
+                manifest = build_web_panel_manifest(config, ["vm.example"])
+                self.assertEqual(manifest["features"]["publishing_tools"], expected)
+                with patch.object(web_panel_approval, "read_json_file", return_value=manifest), \
+                     patch.object(web_panel_approval, "unit_installed", return_value=False):
+                    pages = web_panel_approval.configured_panel_features().pages
+                self.assertEqual("publishing" in pages, bool(expected))
+
+    def test_recovery_review_names_targets_and_keeps_json_in_technical_details(self):
+        parameters = {"action": "quarantine", "directory": "/srv/data", "database": "/srv/parity",
+                      "job_id": "b" * 32, "items": [{"file": "/srv/data/a<&>.bin", "finding": "a" * 64}]}
+        request = self.broker.request(1000, "data.run", parameters, "Reviewed quarantine")
+        content = self.call(path="/requests/" + request["id"])[2]
+        primary, details = content.split('<details class="approval-details">', 1)
+        self.assertIn("Quarantine corrupt files", primary)
+        self.assertIn("1 reviewed file", primary)
+        self.assertIn("/srv/data/a&lt;&amp;&gt;.bin", primary)
+        self.assertIn("View recovery activity and worker results", primary)
+        self.assertNotIn("job_id", primary)
+        self.assertIn("job_id", details)
+        self.assertNotIn('value="approve"', content)

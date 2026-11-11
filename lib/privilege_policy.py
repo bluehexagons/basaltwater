@@ -154,7 +154,9 @@ def operation_plan(policy: dict, uid: int, operation: str, parameters: object) -
             effect += " Run independently of the panel with a six-hour limit; dispatch does not prove completion."
     elif operation == "data.run":
         parameters = validate_data_action(parameters)
-        mode = "approve"
+        # Scrub actions are confirmed in Shares & Data. Keep broker claims,
+        # validation and supervision without a second human approval step.
+        mode = "allow"
         argv = data_dispatch_argv(parameters)
         effect = DATA_ACTIONS[parameters["action"]][1] + " Run once independently of the panel with a six-hour limit. A changed finding or file is rejected; dispatch does not prove recovery."
         if "items" in parameters:

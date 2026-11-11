@@ -27,6 +27,7 @@ if __name__ == "__main__" and not __package__:
 
 from lib.privilege_auth import authenticate, validate_auth
 from lib.admin_actions import ADMIN_ACTIONS, action_spec
+from lib.data_actions import DATA_ACTIONS
 from lib.privilege_client import exchange
 from lib.privilege_policy import APPROVAL_SOCKET, ID_PATTERN, PANEL_APPROVAL_SOCKET, canonical, load_policy
 from common.service_tools.web_panel_templates import render_favicon
@@ -71,22 +72,38 @@ def csrf(secret: bytes, request: dict, username: str) -> str:
 def render_request(request: dict, token: str, *, integrated: bool = False) -> str:
     escape = lambda value: html.escape(str(value), quote=True)
     plan = request["plan"]
-    expires = datetime.fromtimestamp(request["expires"], timezone.utc).isoformat()
+    expires = datetime.fromtimestamp(request["expires"], timezone.utc).strftime("%d %b %Y, %H:%M UTC")
     title = (ADMIN_ACTIONS.get(plan["parameters"].get("action"), {}).get("title", "Administration job")
              if plan["operation"] == "admin.run" else
+             DATA_ACTIONS[plan["parameters"]["action"]][0] if plan["operation"] == "data.run" else
              {"command.run": "Run privileged command", "service.restart": "Restart service",
               "system.reboot": "Restart host"}.get(plan["operation"], "Review privilege request"))
     listing = "/approvals" if integrated else "/"
     content = f'<p><a href="{listing}">All requests</a></p>'
     content += f'<p class="approval-state" role="status"><strong>Status: {escape(request["state"])}</strong></p>'
-    content += '<p class="notice">' + escape(plan["effect"]) + '</p>'
+    effect = DATA_ACTIONS[plan["parameters"]["action"]][1] if plan["operation"] == "data.run" else plan["effect"]
+    content += '<p class="notice">' + escape(effect) + '</p>'
     # Keep the exact executable arguments visible for general command reviews.
     if plan["operation"] == "command.run":
         content += '<h3>Exact command arguments</h3><pre>' + escape(canonical(plan["argv"])) + '</pre>'
-    elif plan["operation"] != "admin.run":
-        content += '<h3>Action parameters</h3><pre>' + escape(canonical(plan["parameters"])) + '</pre>'
-    content += f'<p class="muted">Approval expires {escape(expires)}.</p>'
-    if request.get("execution"):
+    elif plan["operation"] == "data.run":
+        parameters = plan["parameters"]
+        labels = (("Scrub root", "directory"), ("Parity directory", "database"), ("Independent copy", "backup"))
+        content += '<dl class="approval-facts">' + ''.join(
+            f'<div><dt>{label}</dt><dd>{escape(parameters[key])}</dd></div>'
+            for label, key in labels if parameters.get(key)) + '</dl>'
+        targets = parameters.get("items", [{"file": parameters.get("file", "")}])
+        content += f'<section class="approval-targets"><h2>{len(targets)} reviewed file' + ('s' if len(targets) != 1 else '') + '</h2><ol>'
+        content += ''.join('<li>' + escape(item["file"]) + '</li>' for item in targets) + '</ol></section>'
+        if integrated:
+            content += '<p><a href="/shares-data?view=scrubs#recovery-status">View recovery activity and worker results</a></p>'
+    elif plan["operation"] == "service.restart":
+        content += '<dl class="approval-facts"><div><dt>Service</dt><dd>' + escape(plan["parameters"]["unit"]) + '</dd></div></dl>'
+    elif plan["operation"] != "admin.run" and plan["parameters"]:
+        content += '<h3>Action parameters</h3><pre>' + escape(json.dumps(plan["parameters"], indent=2)) + '</pre>'
+    if request["state"] == "pending":
+        content += f'<p class="muted">Approve before {escape(expires)}.</p>'
+    if request.get("execution") and not (plan["operation"] == "data.run" and request["state"] == "dispatched"):
         execution = request["execution"]
         content += '<p>Exit code: ' + escape(execution["exit_code"]) + ' · ' + escape(execution["failure"] or
                     ("Dispatched; check job status for completion." if request["state"] == "dispatched" else "Completed")) + '</p>'
@@ -97,15 +114,18 @@ def render_request(request: dict, token: str, *, integrated: bool = False) -> st
                     '<button name="decision" value="approve">Approve once</button>'
                     '<button name="decision" value="deny">Deny</button></form>')
     else:
-        content += '<p>This request cannot be approved again. Refresh to see the latest execution status.</p>'
         content += f'<p><a href="/requests/{request["id"]}">Refresh request status</a>'
         if integrated and plan["operation"] == "admin.run":
             content += ' · <a href="/admin?view=activity">View latest maintenance activity</a>'
         content += '</p>'
     fields = [("Machine identity", plan["machine"]), ("Requesting account UID", plan["uid"]),
               ("Operation", plan["operation"]), ("Command", canonical(plan["argv"])),
-              ("Parameters", canonical(plan["parameters"])),
+              ("Parameters", json.dumps(plan["parameters"], indent=2)),
               ("Review window", f'{round(request["expires"] - request["created"])} seconds')]
+    if plan["operation"] == "data.run":
+        fields.append(("Execution rules", plan["effect"]))
+        if execution := request.get("execution"):
+            fields.extend((("Dispatch exit code", execution["exit_code"]), ("Dispatch failure", execution["failure"] or "None")))
     content += '<details class="approval-details"><summary>Technical details and request context</summary><dl>'
     content += ''.join(f'<dt>{escape(label)}</dt><dd>{escape(value)}</dd>' for label, value in fields)
     content += '</dl><p class="notice">Agent-provided explanation (untrusted): ' + escape(request["reason"]) + '</p></details>'
@@ -258,15 +278,20 @@ class ApprovalHandler(BaseHTTPRequestHandler):
             direct_action = admin_action(self.path) if self.path.startswith(ADMIN_PREFIX) else None
             if direct_action is None:
                 request_id = self.request_id()
-            if self.headers.get_all("Origin") != [self.approval_origin]:
-                raise ValueError("Cross-origin approval rejected")
             if (self.headers.get_all("Content-Type") != ["application/x-www-form-urlencoded"]
                 or self.headers.get_all("Transfer-Encoding") is not None or len(self.headers.get_all("Content-Length") or []) != 1):
                 raise ValueError("Invalid form")
             length = int(self.headers["Content-Length"])
             if not 0 < length <= 2048:
                 raise ValueError("Invalid form size")
-            form = parse_qs(self.rfile.read(length).decode("utf-8"), strict_parsing=True, max_num_fields=3)
+            # Consume the bounded body before rejecting its origin. Closing a
+            # Unix proxy connection with unread data can reset the response.
+            body = self.rfile.read(length)
+            if len(body) != length:
+                raise ValueError("Incomplete approval form")
+            form = parse_qs(body.decode("utf-8"), strict_parsing=True, max_num_fields=3)
+            if self.headers.get_all("Origin") != [self.approval_origin]:
+                raise ValueError("Cross-origin approval rejected")
             if direct_action is not None:
                 request = approve_review(self.server, direct_action, form)
                 self.respond(303, "", location="/requests/" + request["id"])
