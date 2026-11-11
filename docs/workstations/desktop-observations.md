@@ -101,6 +101,40 @@ Input revalidates the single-use token; mapping does not reserve or renew it.
 Legacy `map-point --geometry ... --crop ...` remains an offline calculation,
 without freshness validation. Neither route recognizes moving/fanned targets.
 
+### Small consequential controls
+
+Prefer a bounded native crop containing the whole control and enough surrounding
+context to distinguish its neighbors. On CachyOS, for example:
+
+```bash
+basaltw desktop --native screenshot --crop 1000 600 400 300 --compact > /absolute/private/control.json
+basaltw desktop --native map-point --capture /absolute/private/control.json \
+  --view-geometry 400 300 --x 200 --y 150
+```
+
+These fictional dimensions assume the inspected crop was actually presented at
+400 by 300 pixels. Confirm that fact before mapping. The crop's native center
+maps to monitor point `(1200, 750)`; do not add the crop origin again. Copy the
+returned context and point arguments into the input command described above.
+Both drag endpoints must fit inside this same crop.
+
+The PNG dimensions and an image API's original-detail option do not establish
+the outer viewer's presentation size. If that transform is unknown, obtain a
+view whose dimensions can be established before input. A crop-width limit alone
+does not establish it either. Record the actual content dimensions, margins,
+receipt origin/image dimensions, selected point and mapped point privately.
+
+For a synthetic 2400 by 1600 full frame displayed at 1200 by 800, presented
+point `(600, 400)` maps to `(1200, 800)`. Claiming the view is 2400 by 1600
+instead produces `(600, 400)`: valid monitor coordinates that can hit a different
+control. Bounds and token checks cannot detect this caller error. After a visible
+miss, inspect a fresh capture and document the changed transform or target
+explanation before another attempt. Completed delivery alone is no evidence
+that the intended control was activated.
+
+Use the [next-cycle qualification checklist](../plans/game-testing-handoffs/next-cycle.md)
+to exercise reduced views and crops in the disposable probe before gameplay.
+
 ### Native input failure receipts
 
 Updated CachyOS and Debian helpers and clients preserve `reason`, `dispatch_stage`,

@@ -99,6 +99,25 @@ class CaptureCoordinateTests(unittest.TestCase):
         self.assertEqual(result["scale"], [1.25, 1.25])
         self.assertFalse(result["input_sent"])
 
+    def test_wrong_presented_dimensions_can_select_a_valid_different_control(self):
+        capture = {"observation_id": "a" * 32, "generation": "b" * 32, "control_revision": "c" * 32,
+                   "geometry": [2400, 1600], "image_origin": [0, 0], "image_geometry": [2400, 1600]}
+        current = {**capture, "state": "running", "capture_freshness": {"fresh": True}}
+        correct = map_observation_points(capture, current, [1200, 800], 600, 400)
+        wrong = map_observation_points(capture, current, [2400, 1600], 600, 400)
+        self.assertEqual(correct["input_coordinates"], {"x": 1200, "y": 800})
+        self.assertEqual(wrong["input_coordinates"], {"x": 600, "y": 400})
+        # Both are admissible arithmetic. The caller must establish viewer size.
+        self.assertFalse(correct["input_sent"])
+        self.assertFalse(wrong["input_sent"])
+        crop = {**capture, "observation_id": "d" * 32,
+                "image_origin": [1000, 600], "image_geometry": [400, 300]}
+        cropped = map_observation_points(crop, {**current, **crop}, [400, 300], 200, 150)
+        self.assertEqual(cropped["input_coordinates"], {"x": 1200, "y": 750})
+        with self.assertRaisesRegex(ValueError, "within"):
+            map_observation_points(crop, {**current, **crop}, [400, 300], 200, 150,
+                                   to_x=400, to_y=150)
+
     def test_post_input_mapping_never_falls_back_to_action_context(self):
         capture = {"observation_id": "a" * 32, "generation": "b" * 32, "control_revision": "c" * 32,
                    "geometry": [2400, 1600], "image_origin": [100, 200], "image_geometry": [800, 600]}

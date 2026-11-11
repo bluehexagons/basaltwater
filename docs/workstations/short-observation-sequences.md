@@ -90,7 +90,16 @@ file and never collects global keys. In a permitted desktop session, launch:
 python3 scripts/desktop_observation_probe.py --log /absolute/private/probe.jsonl
 ```
 
-Inspect a fresh capture, target **Advance once**, and use the recipe above.
+For small-control targeting qualification, add `--small-controls`. This places
+adjacent **Advance** and **Decoy** buttons below the phase display. Advance keeps
+the same one-shot transition and `button` event. Decoy changes the visible label
+and logs `decoy`, without advancing phases or creating a blocked output. Use
+fresh independent probes for reduced-view and crop tests. Retain any decoy event
+as a visible miss, then reinspect and explain the corrected mapping before
+recovery. Button sizes depend on desktop theme/scaling; inspect actual geometry.
+
+Inspect a fresh capture, target **Advance once** (or **Advance** in small-control
+mode), and use the recipe above.
 The probe shows an immediate amber phase, a blue phase after 300 ms and a green
 phase after 1200 ms. Compare PNGs, probe logs and actual receipt timings; slow
 capture may miss a phase. Reinspect before a second independent input.

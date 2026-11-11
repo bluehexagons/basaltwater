@@ -1,5 +1,10 @@
 # Game-testing implementation handoffs
 
+For the current NC-01–08 follow-up, start with the
+[next-cycle implementation and CachyOS qualification handoff](next-cycle.md).
+The GL assignments below describe earlier delivered contracts, not the remaining
+next-cycle native/adoption work.
+
 **All four Basaltwater assignments have source implementations and synthetic or
 mocked acceptance, plus [bounded native application and game-pilot checks](../../testing/conditional-cachyos.md).**
 See the [record contract and CLI](../../workstations/learning-records.md)

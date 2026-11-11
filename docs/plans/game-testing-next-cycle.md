@@ -1,7 +1,12 @@
 # Game-testing improvement project: next run cycle
 
-**Status: proposal for consideration, November 2026.** Finish the currently
-authorized run and its cleanup, then stop game testing. Prepare tooling and
+**Status: recipe delivery and offline checks; native adoption pending, November 2026.**
+The [current implementation and CachyOS handoff](game-testing-handoffs/next-cycle.md)
+provides NC-01 targeting and NC-03 read/exposure recipes first, with continuation,
+review, closeout and prospective trial checklists for the remaining items. These
+reuse existing contracts; optional generic APIs remain deferred pending measured
+need. Source/offline delivery does not establish native or game acceptance.
+Finish the currently authorized run and its cleanup, then stop game testing. Prepare tooling and
 documentation updates before selecting a fresh set of runs. This document does
 not activate another game, desktop fixture, helper refresh or evaluation phase.
 

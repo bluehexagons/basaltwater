@@ -35,6 +35,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--log", required=True, help="New private JSONL file; logs only synthetic probe events")
     parser.add_argument("--block-output", help="Deliberately create this new PNG path after input to exercise capture failure")
+    parser.add_argument("--small-controls", action="store_true",
+                        help="Show adjacent small Advance/Decoy controls for targeting qualification")
     args = parser.parse_args(argv)
     try:
         log_path = new_path(args.log)
@@ -74,12 +76,23 @@ def main(argv: list[str] | None = None) -> int:
                 root.after(300, lambda: show("Transition phase", "#91c5f6"))
                 root.after(1200, lambda: show("Settled phase", "#96d99e"))
 
+            def decoy():
+                record("decoy")
+                phase.config(text="Decoy selected: reinspect before recovery", bg="#ed9e9e")
+
             def close():
                 record("closed")
                 root.destroy()
 
-            button = tk.Button(root, text="Advance once", command=advance, font=("sans", 16))
-            button.pack(pady=12)
+            if args.small_controls:
+                controls = tk.Frame(root)
+                controls.pack(pady=12)
+                button = tk.Button(controls, text="Advance", command=advance, font=("sans", 10))
+                button.pack(side="left", padx=4)
+                tk.Button(controls, text="Decoy", command=decoy, font=("sans", 10)).pack(side="left", padx=4)
+            else:
+                button = tk.Button(root, text="Advance once", command=advance, font=("sans", 16))
+                button.pack(pady=12)
             tk.Button(root, text="Close probe", command=close).pack(pady=(0, 12))
             root.protocol("WM_DELETE_WINDOW", close)
             root.after(120000, close)

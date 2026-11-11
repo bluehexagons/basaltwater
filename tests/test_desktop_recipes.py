@@ -17,8 +17,42 @@ from unittest.mock import Mock, patch
 from desktop import client, control_state, evidence, native_session, observations
 from desktop.receipts import DesktopRequestError
 from lib import desktop_cli
+from scripts import desktop_observation_probe as probe
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class ObservationProbeTests(unittest.TestCase):
+    def test_small_decoy_does_not_advance_or_block_capture_and_default_is_preserved(self):
+        for small in (False, True):
+            with self.subTest(small=small), tempfile.TemporaryDirectory() as folder:
+                buttons = {}
+                root = Mock()
+                label = Mock()
+                def button(_parent, **kwargs):
+                    buttons[kwargs["text"]] = kwargs["command"]
+                    return Mock()
+                log = Path(folder) / "probe.jsonl"
+                blocked = Path(folder) / "blocked.png"
+                def interact():
+                    if small:
+                        buttons["Decoy"]()
+                        self.assertFalse(blocked.exists())
+                        rows = [json.loads(line) for line in log.read_text().splitlines()]
+                        self.assertEqual([row["event"] for row in rows], ["opened", "decoy"])
+                    buttons["Advance" if small else "Advance once"]()
+                    buttons["Close probe"]()
+                root.mainloop.side_effect = interact
+                tk = Mock(Tk=Mock(return_value=root), Label=Mock(return_value=label), Button=button)
+                with patch.dict("sys.modules", {"tkinter": tk}):
+                    args = ["--log", str(log), "--block-output", str(blocked)]
+                    self.assertEqual(probe.main(args + (["--small-controls"] if small else [])), 0)
+                rows = [json.loads(line) for line in log.read_text().splitlines()]
+                self.assertEqual(sum(row["event"] == "button" for row in rows), 1)
+                self.assertEqual(sum(row["event"] == "decoy" for row in rows), int(small))
+                self.assertTrue(blocked.exists())
+                self.assertEqual(rows[-1]["event"], "closed")
+                root.destroy.assert_called_once()
 
 
 class ObservationRecipeTests(unittest.TestCase):
