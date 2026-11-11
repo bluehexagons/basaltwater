@@ -176,6 +176,44 @@ tokens/cost/model telemetry stays unavailable, never zero. Provider-requested
 settings alone do not establish actual execution. No latency claim follows from
 controller receipt gaps or stream PTS.
 
+## Preparation while another controller owns the desktop
+
+Source review and offline checks can proceed during the existing run. Keep that
+controller responsible for game input, recordings and cleanup. A running thread,
+enabled agent control or an absent game process alone does not establish that
+ownership has been released. Reconcile its private checkpoint and outstanding
+resources before using the shared desktop for disposable qualification.
+
+Check the checkout and installed launcher separately. From the repository root,
+with the existing development environment available:
+
+```bash
+git status -sb
+git rev-parse HEAD
+basaltw agent manifest . --capability workstation --json
+.venv/bin/python basaltwater.py desktop --native preflight --repository "$PWD" \
+  --instruction "$PWD/AGENTS.md" \
+  --instruction "$PWD/docs/plans/game-testing-handoffs/next-cycle.md" \
+  --output /absolute/private/source-preflight --json
+PATH="$PWD/.venv/bin:$PATH" make check-fast SUITE=desktop
+```
+
+Use a new private output directory and retain full receipts outside Git. The
+explicit Python invocation inspects this checkout even when `basaltw` resolves to
+an older managed installation. Preflight's generated continuation commands use
+`basaltw`; if retaining the source route, use the same explicit Python invocation
+with the returned arguments and digest. The two selected instruction files are
+an initial inventory, not the complete required reading closure.
+
+Compare delivered skills against the intended source, rather than accepting an
+installed manifest's comparison against its own older source as current. Preserve
+invoked, managed and worker startup identities independently. Successful preflight
+exit means observations were collected; inspect each check and its unknowns.
+Offline test success qualifies the checkout only. Neither result qualifies the
+installed helper or authorizes a refresh. At the maintenance gate, identify which
+mismatches affect the native cases before selecting updates, then repeat preflight
+and qualification against the actual installed components.
+
 ## CachyOS agent's execution order
 
 1. Inspect source revision/dirty state, installed CLI and skill delivery, running
