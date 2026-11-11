@@ -219,8 +219,8 @@ and package metadata checks. `git diff --check` passed. The system Python lacked
 development extras; checks used the existing project virtual environment. The
 probe behavior was checked with mocked Tk and private temporary files, including
 default-mode compatibility, decoy event isolation and blocked-output creation.
-The real desktop was not opened. Full CI, native KDE qualification and consuming
-project adoption were not performed by this delivery.
+No graphical session was opened for that initial delivery. Full CI, native KDE
+qualification and consuming-project adoption were not performed at that revision.
 
 The successor-recipe follow-up passed the same fast checks with 849 tests. Its
 real-parser/offline-ledger regression verifies frozen parent bytes, distinct
@@ -229,6 +229,21 @@ boot change, without contacting either desktop backend. Published successor
 commands are also included in the parser-tested recipes. These checks exercise
 the existing ledger API; manual parent-chain checks and original-deadline
 enforcement still belong to the controller.
+
+Local review on source `18f43def0b0c6b09223a88c8cbec28a3aa2a87e4` subsequently
+passed `make check-ci` in the project virtual environment: 9650 tests run, six
+skipped, 82% reported aggregate coverage, plus compilation, documentation, brand,
+package metadata and wheel build/install smoke checks. This is a local Debian
+result, without a claim about hosted CI or native KDE behavior.
+
+The same source passed the [real Tk small-control development check](../../workstations/short-observation-sequences.md#small-control-development-check-2026-11-11)
+in an isolated Xvfb display. Instrumented widget geometry supplied the numeric
+targets; the test does not qualify a fresh controller's visual interpretation.
+Default, Decoy recovery and blocked-output behavior passed with one Advance each
+and normal probe close. An initial Settled log/Transition PNG mismatch remains
+retained separately from follow-up rendered-frame evidence. Phase logs alone
+cannot establish what a capture shows. These disposable fixtures did not touch
+the shared desktop, account permission, helper or game.
 
 For the CachyOS follow-up, expected writable source scope is
 `scripts/desktop_observation_probe.py`, `tests/test_desktop_recipes.py`,

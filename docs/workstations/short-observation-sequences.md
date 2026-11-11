@@ -104,6 +104,13 @@ The probe shows an immediate amber phase, a blue phase after 300 ms and a green
 phase after 1200 ms. Compare PNGs, probe logs and actual receipt timings; slow
 capture may miss a phase. Reinspect before a second independent input.
 
+Probe `phase` events timestamp the Tk callback's label update, without a paint or
+compositor acknowledgment. A label getter and the log can report **Settled phase**
+while a capture still shows **Transition phase**. Inspect the PNG before assigning
+a visual phase. If needed, take a separately inspected follow-up capture; do not
+replay the completed input to repair that evidence. Returning control to Tk lets
+painting proceed, but a fixed extra delay does not guarantee a particular frame.
+
 For a deliberate partial-capture failure, start a fresh probe with
 `--block-output /absolute/private/blocked.png`, and set only the second screenshot's
 `output` to that new path. On the first button event the probe creates that file,
@@ -152,3 +159,33 @@ control window; the Debian handoff observation does not qualify that UI. CachyOS
 task finalization refused the Debian host as designed; the frozen first
 segment remains `finalized: false`, with its verification and original evidence
 retained. This exercise is not an XRDP login/reconnect or physical-display test.
+
+## Small-control development check, 2026-11-11
+
+Source `18f43def0b0c6b09223a88c8cbec28a3aa2a87e4` was exercised with real Tk,
+xdotool and scrot in an authenticated, isolated Xvfb X11 display, without a window
+manager. Independent default, small-control recovery and small-control blocked
+output probes each logged exactly one Advance event and all three phase callbacks,
+then closed through their own Close control with a successful return.
+
+The recovery case first selected Decoy, retained its visible red state and event,
+then activated Advance using a fresh crop. Decoy did not advance the phases.
+The blocked-output case created its collision fixture
+only after Advance. This checked the probe's real GUI behavior; it did not repeat
+the earlier socket sequence/partial-capture qualification.
+
+Offline `map_capture_points` results drove the X11 clicks using reduced full-frame
+and bounded-crop coordinates. Points came from instrumented Tk widget geometry.
+This verifies the numeric integration and fixture, without qualifying a fresh
+controller's visual target reading or an unknown outer viewer transform.
+
+The first fixture's callback-adjacent capture retained a visible Transition frame
+despite its Settled log/getter state. Those artifacts remain distinct from a fresh
+follow-up fixture that returned to Tk's event loop before capture and checked the
+saved PNG's settled-color region. The follow-up recovery PNG was also visually
+inspected. The observed mismatch is retained as a rendering/evidence boundary,
+not classified as input failure or repaired by overwriting the original capture.
+
+No shared desktop, helper, account permission or game state was changed. Live KDE
+portal/PipeWire timing, native Windows and fresh-controller targeting remain
+unqualified by this development check.
