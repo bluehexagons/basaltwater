@@ -49,6 +49,11 @@ before running native checks, rather than assuming an earlier SHA was tested.
   Preserve its original MP4 and use the documented lossless faststart remux
   before pipe-based analysis. Interactive Movit is disabled in this editor
   build; retain the explicit CPU timeline fallback and separate MLT effect test.
+- A regenerated 320×180 proxy passes full video/audio decoding and picture
+  comparison against the scaled source. The project reopens with its original
+  and proxy links; full-resolution CPU delivery has identical decoded stream
+  hashes to the earlier baseline. Merely changing proxy width can reuse the
+  old cache; use the guide's task-owned regeneration steps and verify dimensions.
 
 Raw evidence is private and is not included in Git. On the receiving machine,
 create a new private evidence directory outside the checkout; record the exact

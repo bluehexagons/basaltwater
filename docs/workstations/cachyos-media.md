@@ -24,10 +24,16 @@ kdenlive --config /absolute/private/task/kdenliverc --no-welcome \
    Place it on V2 at timeline zero. A five-second title over the four-second
    clip intentionally produces a final second of title on black.
 3. In **File → Project Settings**, select the project parent folder for task
-   cache storage and enable **Proxy clips** on the Proxy tab. For the source
-   clip, enable **Proxy Clip** in the bin context menu. Wait for the job and
+   cache storage and enable **Proxy clips** on the Proxy tab. Set **Proxy video
+   resize (width)** to 320 for this 640-pixel source. For the source clip,
+   enable **Proxy Clip** in the bin context menu. Wait for the job and
    verify the actual proxy file and saved original/proxy references. A `P`
    badge alone is insufficient. Preserve project, source and cache together.
+   Changing the width and toggling Proxy Clip can reuse an existing cached
+   proxy: check its decoded dimensions. For an owned task proxy, preserve any
+   needed baseline copy, then use **Clip Properties → Properties → Delete proxy
+   file** and enable **Proxy clip** again to regenerate it. Shared caches may
+   affect other projects; keep qualification media and caches task-specific.
 4. Save, quit and reopen the saved project with the same task config. Check
    profile, tracks, title, original/proxy links and timeline range. Scrub both
    the video/title overlap and title-only tail. A missing-link dialog is a
@@ -79,8 +85,12 @@ the copy as evidence for the original.
 
 On native CachyOS, Kdenlive 26.08.3 / MLT 7.42.0 passes this save/quit/reopen,
 linked media, generated proxy, editable title, synchronous CPU render and muted
-MPV review. The proxy used the source's 640-pixel width; downscaled proxy quality
-and long/complex projects are not established. Render analysis reports five
+MPV review. A regenerated 320×180 H.264/AAC proxy decodes all 96 video frames
+and audio, and passes a four-second comparison against the scaled source
+(PSNR about 44 dB). The project reopens with its saved proxy/original links.
+Its 640×360 delivery has identical decoded video/audio hashes to the CPU
+baseline made before downscaling the proxy. Long/complex projects and proxy
+performance under production load are not established. Render analysis reports five
 seconds of video and about 5.013 seconds of audio. The separate VA-API preset
 also passes, with advancing same-process i915 video-engine counters, matching
 decoded stream hashes across faststart remux, sampled PSNR above 41 dB against
