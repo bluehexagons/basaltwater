@@ -253,8 +253,8 @@ this handoff and the two workstation recipes linked above. Inspect actual failur
 regressions and compatibility notes for any demonstrated defect. Do not edit
 the companion repository as part of a Basaltwater-only assignment. Keep captures,
 runtime provenance, exact evidence paths and operational checkpoints outside Git.
-No live helper, system, account or game state was changed for this delivery; no
-background jobs or owned desktop resources were created. The test processes
+No live helper, shared desktop, account or game state was changed for this
+delivery. All disposable probe runs, Xvfb wrappers and local test commands
 completed. Previous-run resources remain the prior controller's responsibility
 until its private checkpoint is reconciled.
 
