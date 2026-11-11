@@ -52,12 +52,13 @@ Preparation complete or blocked, with unresolved requirements:
 ```
 
 Use [preflight and instruction paging](../../workstations/desktop-evaluation.md#compact-read-only-preflight)
-for each required source. Preflight accepts at most 16 instruction files and
-pages emit at most 4000 Unicode characters. For this manual recipe, cap the
-closure at 16 sources and 64000 characters; if mandatory instructions exceed
-that cap, stop preparation and obtain a prospective project-owned reorganization
-without dropping authority. Do not crawl links automatically. Review explicit
-dependency edges for cycles and missing sources before reading the closure.
+for each required source. Preflight accepts at most 16 instruction files per
+invocation and pages emit at most 4000 Unicode characters. These command limits
+do not impose a total context budget or waive longer mandatory reading. The
+consuming project sets its prospective closure bounds; record them in the
+checklist. If required closure exceeds those bounds, resolve its organization
+before proceeding without dropping authority. Do not crawl links automatically.
+Review explicit dependency edges for cycles and missing sources before reading the closure.
 Pinned continuation digests reject changed bytes; invalidate the affected read
 checklist and review its dependents when bytes change. Reconcile received ranges
 after outer-tool truncation. A new context starts with no claimed exposure even
@@ -91,6 +92,30 @@ The new ledger starts now: its built-in elapsed and hard limit describe that
 segment, so separately carry and enforce the original authorized deadline.
 Creating it grants no new Start allowance. If original deadline/authority cannot
 be established, record the gap and resolve it before further input.
+
+For example, after independently checking the chain and writing the private
+continuation note, a successor can be created and linked as follows. The paths
+and IDs are fictional. The 80-second limit is illustrative: calculate the actual
+remaining allowance against the original deadline immediately before starting.
+Continue enforcing that original deadline as well, including command gaps.
+
+```bash
+basaltw desktop evidence run show /absolute/private/predecessor/run.json --json
+basaltw desktop evidence run start --run-id recovery-b --match-id match-a \
+  --phase recovery --hard-seconds 80 --output /absolute/private/recovery-b --json
+basaltw desktop evidence run checkpoint /absolute/private/recovery-b/run.json \
+  --context controller-b --artifact /absolute/private/predecessor/run.json \
+  --artifact /absolute/private/continuation.md \
+  --note 'Same match; root deadline and parent digest retained in continuation note' --json
+```
+
+Read each exit status before continuing. Use the returned successor artifact
+path, not an assumed filename if your command differs. Artifact references are
+paths only: checkpoint does not hash, pin or validate a parent chain. Preserve
+the parent bytes and note digest separately. After reboot, `show` validates the
+saved history but returns `timing: unsupported-clock`; its missing elapsed fields
+must remain unavailable. A new same-match segment on the new boot cannot repair
+that gap or justify replaying an uncertain input.
 
 Report root elapsed and successor elapsed separately. Same-boot comparable
 anchors permit original monotonic elapsed; across reboots keep UTC and uncertainty
@@ -187,7 +212,8 @@ Native Windows, gamepad and consuming-game transitions remain separate.
 
 ## Source acceptance and follow-up scope
 
-On the delivered source, `PATH="$PWD/.venv/bin:$PATH" make check-fast SUITE=desktop`
+On source delivery `f5f3aa671e4f71aceeeb7412c65b17444478c4f4`,
+`PATH="$PWD/.venv/bin:$PATH" make check-fast SUITE=desktop`
 passed: 848 tests, maintained-Python compilation, CLI documentation, local links
 and package metadata checks. `git diff --check` passed. The system Python lacked
 development extras; checks used the existing project virtual environment. The
@@ -196,10 +222,18 @@ default-mode compatibility, decoy event isolation and blocked-output creation.
 The real desktop was not opened. Full CI, native KDE qualification and consuming
 project adoption were not performed by this delivery.
 
+The successor-recipe follow-up passed the same fast checks with 849 tests. Its
+real-parser/offline-ledger regression verifies frozen parent bytes, distinct
+segment clocks, same-match/context references and unavailable elapsed after a
+boot change, without contacting either desktop backend. Published successor
+commands are also included in the parser-tested recipes. These checks exercise
+the existing ledger API; manual parent-chain checks and original-deadline
+enforcement still belong to the controller.
+
 For the CachyOS follow-up, expected writable source scope is
 `scripts/desktop_observation_probe.py`, `tests/test_desktop_recipes.py`,
-`tests/test_desktop_native_visuals.py`, this handoff and the two workstation
-recipes linked above. Inspect actual failures before extending that scope to
+`tests/test_desktop_native_visuals.py`, `tests/test_desktop_qa_media.py`,
+this handoff and the two workstation recipes linked above. Inspect actual failures before extending that scope to
 `desktop/coordinates.py`, `desktop/client.py` or native helper code; add focused
 regressions and compatibility notes for any demonstrated defect. Do not edit
 the companion repository as part of a Basaltwater-only assignment. Keep captures,
@@ -208,6 +242,31 @@ No live helper, system, account or game state was changed for this delivery; no
 background jobs or owned desktop resources were created. The test processes
 completed. Previous-run resources remain the prior controller's responsibility
 until its private checkpoint is reconciled.
+
+Copy this adoption receipt into private state and fill it from observations.
+Pending fields are not a compatibility pass. Keep the tested source revision
+separate from whichever HEAD happens to be present during handoff.
+
+```text
+Producing Basaltwater revision and clean/dirty state:
+Consuming project revision and clean/dirty state (pending until reviewed there):
+Probe/recipe fixture paths and SHA-256 digests:
+Invoked CLI source; managed source; running-helper startup source:
+Installed skills; new context's reported exposure; unavailable provenance:
+Changed contracts: optional standalone probe flag; no evidence schema change
+Offline commands, tested revision, exits and private evidence:
+Disposable native cases: passed / failed / unavailable, with platform and evidence
+Consuming-game cases: scene / trigger / resolution / terminal, separately qualified
+Current run disposition; owned resources; cleanup responsibility:
+Open objections, adoption changes and exact next action:
+Explicit next-cycle activation source, or not activated:
+```
+
+Review the consuming project's current authority, tasks, controller instructions
+and result format against NC-01–08 together; record each adopted recipe and each
+remaining difference. No companion revision or installed/runtime compatibility
+was established by this source-only delivery. The future agent must not fill
+those fields from this repository's HEAD or from a version string alone.
 
 ## Consuming-project restart gate (NC-07)
 

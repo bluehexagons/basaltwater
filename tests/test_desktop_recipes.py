@@ -364,6 +364,7 @@ class PublishedRecipeTests(unittest.TestCase):
         files += [ROOT / "common/agent_skills" / name for name in
                   ("basaltwater-cachyos-desktop/references/native-control.md", "basaltwater-desktop/references/windows.md")]
         files.append(ROOT / "common/agent_skills/basaltwater-desktop/references/session.md")
+        files.append(ROOT / "docs/plans/game-testing-handoffs/next-cycle.md")
         count = 0
         replacements = {"WIDTH": "2400", "HEIGHT": "1600", "X": "100", "Y": "100"}
         for name in files:
@@ -372,6 +373,8 @@ class PublishedRecipeTests(unittest.TestCase):
                 if language not in ("bash", "fish", "text"):
                     continue
                 for line in block.replace("\\\n", " ").splitlines():
+                    if not line.lstrip().startswith("basaltw desktop "):
+                        continue
                     words = shlex.split(line, comments=True)
                     if words[:2] != ["basaltw", "desktop"]:
                         continue

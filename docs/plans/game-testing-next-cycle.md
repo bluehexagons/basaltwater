@@ -6,9 +6,10 @@ provides NC-01 targeting and NC-03 read/exposure recipes first, with continuatio
 review, closeout and prospective trial checklists for the remaining items. These
 reuse existing contracts; optional generic APIs remain deferred pending measured
 need. Source/offline delivery does not establish native or game acceptance.
-Finish the currently authorized run and its cleanup, then stop game testing. Prepare tooling and
-documentation updates before selecting a fresh set of runs. This document does
-not activate another game, desktop fixture, helper refresh or evaluation phase.
+Finish the currently authorized run and its cleanup, then stop game testing.
+Prepare tooling and documentation updates before selecting a fresh set of runs.
+This document does not activate another game, desktop fixture, helper refresh or
+evaluation phase.
 
 The next cycle should reduce control mistakes, missed observations and reporting
 overhead while making learning experiments useful and comparisons interpretable.

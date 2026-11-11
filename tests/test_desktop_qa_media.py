@@ -128,6 +128,55 @@ class QAMediaTests(unittest.TestCase):
                 run_checkpoint.update(artifact, **changes)
         self.assertEqual(Path(artifact).read_bytes(), before)
 
+    def test_linked_successor_recipe_preserves_parent_and_separates_segment_clocks(self):
+        parser = argparse.ArgumentParser()
+        desktop_cli.add_desktop_subparser(parser.add_subparsers())
+        domain = {"boot_id": "11111111-2222-3333-4444-555555555555", "monotonic_scope": "linux-boot"}
+        def at(seconds):
+            return {"at": f"2026-01-01T00:{seconds // 60:02d}:{seconds % 60:02d}+00:00",
+                    "monotonic_ns": seconds * 10**9}
+        def command(*words):
+            with patch("sys.stdout", new_callable=io.StringIO) as out:
+                args = parser.parse_args(["desktop", "evidence", "run", *words, "--json"])
+                self.assertEqual(desktop_cli.run_desktop_command(args), 0)
+            return json.loads(out.getvalue())
+        with patch.object(run_checkpoint, "clock", return_value=domain), \
+                patch.object(run_checkpoint, "stamp") as stamp, \
+                patch("desktop.session_runtime.status") as status, \
+                patch("desktop.native_session.status") as native_status:
+            stamp.return_value = at(100)
+            parent = Path(command("start", "--run-id", "run-a", "--match-id", "match-a", "--phase", "play",
+                                  "--hard-seconds", "120", "--output", str(self.root / "parent"))["artifact"])
+            stamp.return_value = at(110)
+            command("finish", str(parent), "--note", "Ledger finished early; same match remains")
+            before = parent.read_bytes()
+            digest = qa_artifacts.file_digest(parent)
+            note = self.root / "continuation.md"
+            note.write_text(f"Parent SHA-256: {digest}\nRoot deadline: 220 seconds on original boot\n"
+                            "Controller/model exposure changed; input delivery unknown; no new Start allowance\n")
+            stamp.return_value = at(140)
+            successor = command("start", "--run-id", "recovery-b", "--match-id", "match-a", "--phase", "recovery",
+                                "--hard-seconds", "80", "--output", str(self.root / "successor"))
+            stamp.return_value = at(150)
+            linked = command("checkpoint", successor["artifact"], "--context", "controller-b",
+                             "--artifact", str(parent), "--artifact", str(note), "--note", "Same match; retain root deadline")
+            self.assertEqual(linked["match_id"], "match-a")
+            self.assertEqual(linked["started"], at(140))
+            self.assertEqual(linked["wall_seconds"], 10)
+            self.assertEqual(linked["hard_limit_seconds"], 80)
+            self.assertEqual(linked["latest"]["artifacts"], [str(parent), str(note)])
+            self.assertEqual(linked["latest"]["context"], "controller-b")
+            original = command("show", str(parent))
+            self.assertEqual(original["started"], at(100))
+            self.assertEqual(original["wall_seconds"], 10)  # Frozen duration, not current root elapsed.
+            self.assertEqual(parent.read_bytes(), before)
+            with patch.object(run_checkpoint, "clock", return_value={**domain, "boot_id": "new-boot"}):
+                old_boot = command("show", str(parent))
+                self.assertEqual(old_boot["timing"], "unsupported-clock")
+                self.assertNotIn("wall_seconds", old_boot)
+            status.assert_not_called()
+            native_status.assert_not_called()
+
     def test_clear_hard_limit_preserves_history_omission_and_original_deadline(self):
         domain = {"boot_id": "11111111-2222-3333-4444-555555555555", "monotonic_scope": "linux-boot"}
         def at(seconds):
