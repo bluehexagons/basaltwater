@@ -7,148 +7,43 @@ metadata:
 
 # Native Windows coding
 
-Keep Windows projects on native paths such as `C:\Users\NAME\repos`. Use the
-project's documented Windows build/test commands. The native setup installs
-tools and skills for the current Windows account; it does not port Basaltwater's
-Linux controller, `basaltw agent` commands, systemd, or Debian setup profiles.
-The native `basaltw` command supports help, version, saved-installation `info`,
-`doctor`, `refresh`, and `desktop` observation/control and supervised project tasks.
-Use `basaltw refresh --dry-run` to preview or `basaltw refresh`
-to update Basaltwater from main and reapply saved selections, including available
-WinGet/npm tool updates; provider logins are preserved. `basaltw --help` lists Windows options.
-Refresh follows live output, status, elapsed time and a final summary in the
-invoking terminal by default. Ctrl+C stops following without cancelling setup;
-`--detach` returns after submission. The worker survives T3 closing. Inspect
-`refresh --status ID` and `--logs ID`, or reconnect to output with `--follow ID`
-from a new terminal after an update closes T3.
-`--wait` runs setup directly in the invoking terminal; `--cancel ID` only cancels
-a queued job. An updating T3 installer can close its desktop. Successful desktop
-setup configures current-account login startup with a hidden PowerShell helper
-and launches T3 without allocating an output console.
-Windows setup uses the root `install.ps1` with `-Profile agent_windows` and
-optional feature flags; downloaded and checkout entry points save the same
-selections. The documented one-command PowerShell invocation installs a new PC
-or updates an existing setup automatically, retaining its selections.
-Native setup installs stable PowerShell 7 if missing and hands off to it before
-applying development tools. It also supplies a managed Windows Terminal profile
-and Start Menu development shell without replacing personal Terminal settings.
-Git for Windows and Git Bash are required. `git-bash` opens the bundled desktop
-shell; doctor probes its actual `bin\bash.exe`. Use that executable for Bash
-scripts because a bare `bash.exe` can select WSL's launcher. Git's Unix utility
-directory is not added to the Windows PATH.
-T3 starts or gracefully restarts after successful setup by default. For one run,
-`-NoUpdateSource` / `refresh --no-update-source` keeps the saved Basaltwater source
-while still updating tools; `-NoRestartT3` / `refresh --no-restart-t3` skips the
-completion start/restart, retaining login startup. A vendor upgrade can still
-close T3 independently.
-Native setup also reboots Windows when an installer explicitly requires it or
-Windows Update/component servicing reports a requirement. Pending file renames
-or deletions alone are advisory and never trigger automatic reboot. A visible
-desktop dialog shows the reason, restart time and a 60-second countdown with
-Restart now and Later buttons; closing it also defers. A locked/unavailable
-desktop or notification failure defers reboot. Apps are not forced closed. Use
-`-NoReboot` / `refresh --no-reboot` to defer that for one run. Interrupted setup
-continues once after a real boot and account login using saved source/selections;
-that continuation defers any further reboot to prevent a loop. Inspect
-`%LOCALAPPDATA%\Basaltwater\windows-restart.json` for reasons, queued/countdown
-timestamps and outcome, and rerun setup if recovery
-requires manual attention. WSL retains its manual Windows-reboot flow.
-Use `basaltw doctor --json` for read-only checks of saved selections and actual
-tool versions. Probes time out; failures return a nonzero exit. Desktop/C++ SDK
-checks establish discovery, while logins, project builds, export templates and
-GPU readiness require their own qualification. Doctor does not apply setup.
-Its `t3-desktop` check reports `InstalledVersion` from executable metadata when
-available; null means unknown. Verify the running version separately in About.
-Use `basaltw doctor --skills --json` to compare known installed bundles with the
-saved installation source/revision. It reports completion, differences, personal
-edits and unsafe state without catalog writes; absent optional bundles are
-informational. Legacy inventories have unknown completion until setup succeeds.
-Installed freshness does not establish which skill revision this session loaded.
+Use native project paths such as `C:\Users\NAME\repos` and the project's Windows
+build/test commands. Native setup prepares this account's tools and skills; it
+does not port the Linux controller, `basaltw agent`, systemd or Debian profiles.
+Windows and WSL have separate homes, settings and skills. Choose the actual
+Windows connection for native projects; WSL results do not qualify them.
 
-For native application observation, human handoff, or supervised project runs,
-read [Windows desktop and tasks](references/desktop.md). Active or uncertain
-development tasks block setup/reboot until cleanup is confirmed. These commands
-do not install Basaltwater's Linux controller or expose GUI access from services.
+The native `basaltw` surface includes help/version, saved-installation `info`,
+read-only `doctor`, maintenance `refresh`, and `desktop` commands. Discover only
+the surface needed for the task with its `--help`. Host maintenance is not a
+startup checklist: refresh can update tools, close T3 and request reboot.
+Active or uncertain development tasks block setup/reboot until cleanup settles.
 
-Discover the actual shell with `$PSVersionTable.PSVersion` before composing
-commands. The prepared development shell and supervised task guardians use
-PowerShell 7 (`pwsh.exe`). `powershell.exe` selects Windows PowerShell 5.1;
-use `pwsh.exe -NoProfile -File SCRIPT.ps1` for project scripts needing PowerShell 7.
-`desktop doctor` reporting `worker: WindowsPowerShell-5.1` identifies its private
-UI Automation helper, not the invoking development shell. That helper uses the
-installed .NET Framework UI Automation assemblies. The CLI wrapper and worker
-rebuild only their child module paths; the invoking shell's `PSModulePath` is
-preserved. Call the public `basaltw` commands from PowerShell 7; no shell switch
-or global module-path change is needed for desktop commands.
-PowerShell 7 supports `&&`; Windows PowerShell 5.1 does not. Check
-`$LASTEXITCODE` after native executables. Prefer `npm.cmd` to `npm.ps1` when
-script execution policy blocks npm. Quote paths and use `-LiteralPath` for file
-operations. Do not substitute WSL or translate a Linux build command into a
-Windows command without project guidance. Use the native `basaltw.exe` launcher
-from PowerShell 7 for literal argv; the explicit `.cmd` fallback and Windows
-PowerShell 5.1's native binder retain legacy quoting limitations.
+Use `basaltw doctor --json` for selected host-tool health, or
+`desktop develop doctor --project PATH` for project discovery. Discovery is not
+a build, login, GPU or export qualification. `doctor --skills --json` compares
+known bundles with saved source/revision without catalog writes; absent optional
+bundles are informational and session-loaded provenance can remain unknown.
+Do not collect every inventory for a narrow question.
 
-The Microsoft Store `python.exe` alias can exist without an installed Python.
-Verify the interpreter or use `uv run`/the project's virtual environment.
-Use `Get-Command TOOL` and `TOOL --version` to distinguish discovery from a
-working runtime. Setup normally restarts T3; reopen other terminals to inherit
-the new PATH, and inspect the completion status if restart was deferred or failed.
-Existing providers may be supplied
-by a desktop app rather than npm; preserve their installation and login.
+The prepared shell and task guardians use PowerShell 7 (`pwsh.exe`);
+`powershell.exe` selects 5.1. Check `$PSVersionTable.PSVersion` before composing
+commands. Use the native `basaltw.exe` launcher from PowerShell 7 for literal
+argv; the explicit `.cmd` fallback and 5.1 native binder have legacy quoting
+limits. Check `$LASTEXITCODE` after native programs, quote paths and use
+`-LiteralPath` for file operations. Do not translate Linux commands or substitute
+WSL without project guidance. Preserve provider installations and logins.
 
-Optional `-GameDev` supplies native C++/SDK, CMake, Ninja, LLVM and packaging
-tools. Enter the supported x64 Visual Studio developer environment before
-Ninja builds or C analysis; `cl.exe` on PATH alone does not supply SDK headers
-and libraries. `-ShaderTools` separately supplies shader validation.
-`-Godot` (or `basaltw refresh --godot`) supplies the standard engine/CLI.
-Honor project engine pins and install matching export templates; Godot .NET,
-its SDK and platform export SDKs remain separate project requirements.
-With `-NodeVersions`, use fnm to install the project's reviewed runtime and
-`fnm exec --using=VERSION -- npm.cmd ...` to select it per command. The system
-Node LTS may be too old for the checkout. Keep the project's vcpkg/library pins
-and bootstrap authoritative; host tools do not establish game/GPU readiness.
-See [Windows game tooling](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/windows-game-development.md).
+Read only the relevant procedure:
 
-`-StorageDrive F:` (or `basaltw refresh --storage-drive F:`) selects
-`F:\Basaltwater`; use `-StorageRoot PATH` for a custom directory, choosing
-one option. The resolved root is saved for subsequent refresh/resume runs.
-It puts Node versions and npm/uv/Go/vcpkg caches on that mounted NTFS drive
-and provides `repos` for new checkouts. An unavailable drive fails without
-falling back to C: or replacing saved selections. Inspect saved cache
-environment variables and keep the drive connected. Existing checkouts/build
-trees remain in place; do not assume the configured cache root moved them.
+| Work | Reference |
+| --- | --- |
+| Native desktop observation/control, human handoff or supervised project tasks | [Desktop and tasks](references/desktop.md) |
+| Shell/runtime discovery, C++/SDK, Node pins or Godot | [Development tools](references/development.md) |
+| Authorized setup/refresh, interrupted updates, reboot, storage or streaming | [Setup and maintenance](references/setup.md) |
+| T3 source/version, connection, policy or session-tool mismatches | [T3 environment](references/t3.md) |
 
-Optional `-Sunshine` (or `basaltw refresh --sunshine`) selects the native
-streaming service and saves it for later refreshes. Setup can request UAC for
-package/service configuration while retaining the intended account's tools
-and logins. Doctor checks the selected service without mutations. It starts
-at Windows boot. Pairing, display/GPU, sound and input still
-need a Moonlight check. See [Windows Sunshine](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/windows-sunshine.md).
-
-Use the installed `basaltwater-project-development` skill for repository work,
-`basaltwater-frontend-design` for UI work, and `basaltwater-subagents` for
-authorized delegation. Basaltwater CLI examples beyond the small native command
-surface require a compatible Linux environment; native Git and the active T3
-tools remain usable.
-T3 owns worktrees it creates. Native Windows and WSL providers have separate
-homes, settings, and skills; choose the local Windows connection for these projects.
-
-T3 browser and orchestration tools exist only when exposed to the active session.
-For connection/account, loaded-skill or cross-platform command mismatches, use
-the shared [execution-environment checks](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/t3-workflows.md#establish-the-execution-environment).
-For stable 0.1.6 side chats, project pin/archive, local commit review, and optional
-1Password sources, read the shared [client workflows](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-016-client-workflows).
-The [0.1.7 workflows](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-017-client-workflows)
-cover child approvals, thread links, usage filters and model history. Before
-policy diagnostics, read [desktop CLI installation and the Windows/WSL policy boundary](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/t3-platforms.md).
-The bundled command is enabled through Settings → About → t3 command → Install;
-open a new terminal and verify which `t3` resolves. Managed Windows policy
-disables desktop WSL environments; a missing distro is not proof of failed setup.
-Use `basaltw refresh` to deliver updated skills and available WinGet T3 updates;
-WinGet can lag the upstream stable feed. Verify the running version in T3's
-About screen and check a provider turn and terminal after completion.
-Do not run Linux `t3 service protect` for the Windows desktop.
-Follow that session's injected instructions. The installed
-`basaltwater-t3-preview-testing` skill supplies browser guidance without installing
-Playwright or configuring a browser. Authenticate selected providers as this
-account and preserve existing permissions and approval settings.
+For repository changes use the installed project-development skill; select
+frontend-design or subagent guidance only when that work applies. T3 owns its
+worktrees. Browser/orchestration tools exist only when exposed to this session;
+follow its injected policy and retain existing permissions.

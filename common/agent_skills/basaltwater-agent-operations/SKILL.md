@@ -11,7 +11,9 @@ Use this skill for host or agent operations, not as a startup checklist for ever
 coding task. Run only checks relevant to the request. Commands and stored
 evidence do not extend the user's authorization or the session's permissions.
 
-For project/tool discovery, `basaltw agent manifest --json` is read-only.
+For tool discovery, select the needed scope, for example
+`basaltw agent manifest . --capability development --json`. Add `workspace` for
+project paths or `skills` for catalog inspection; use `--help` for selectors.
 Select a reference before performing the corresponding operation:
 
 | Task | Read |
@@ -36,11 +38,9 @@ only; it does not authorize external messages, host repairs or broader actions.
 Sender labels are self-reported. Never include secrets.
 Use the installed workspace and browser skills only when those workflows apply.
 
-Distinguish native API capacity, the client/account's active context window,
-and the managed compaction target. Check the selected model and billing route:
-Sol's included Codex/ChatGPT Work subscription usage has no long-context
-surcharge, although its API requests have a price threshold. Read the context
-reference for current limits; do not infer subscription charges from API rates.
+For context work, distinguish native API capacity, the client/account's active
+window and the managed compaction target. Use the linked context reference for
+current limits and billing routes; do not infer subscription charges from API rates.
 
 Keep the managed context budget unless the user requests or approves a larger
 one. An explicit request already authorizes its stated scope. Carry temporary
