@@ -72,6 +72,28 @@ def input_remaining(deadline: float, maximum: float = INPUT_TIMEOUT) -> float:
     return min(maximum, budget)
 
 
+def request_deadline(payload: dict[str, Any]) -> float | None:
+    """Honor an optional controller budget for observations and handoff too."""
+    if "deadline" not in payload:
+        return None
+    deadline = payload["deadline"]
+    try:
+        valid = type(deadline) in (int, float) and math.isfinite(deadline)
+    except OverflowError:
+        valid = False
+    if not valid:
+        raise ValueError("Desktop request deadline must be a finite monotonic timestamp")
+    request_remaining(deadline)
+    return min(deadline, time.monotonic() + 30)
+
+
+def request_remaining(deadline: float) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise ValueError("Desktop request deadline expired; inspect before further actions")
+    return min(30, remaining)
+
+
 def configuration() -> dict[str, Any]:
     """Read the root-owned machine desktop declaration."""
     try:
@@ -127,7 +149,7 @@ def receive(connection: socket.socket, *, deadline: float | None = None) -> dict
     data = bytearray()
     while not data.endswith(b"\n"):
         if deadline is not None:
-            connection.settimeout(input_remaining(deadline))
+            connection.settimeout(request_remaining(deadline))
         part = connection.recv(4096)
         if not part:
             raise ValueError("Incomplete desktop request")
@@ -144,16 +166,16 @@ def request(payload: dict[str, Any]) -> dict[str, Any]:
     is_input = payload.get("action") == "input"
     attempted = False
     try:
-        deadline = input_deadline(payload) if is_input else None
+        deadline = input_deadline(payload) if is_input else request_deadline(payload)
         if deadline is not None:
             payload = {**payload, "deadline": deadline}
         configuration()
         with socket.socket(socket.AF_UNIX) as connection:
-            connection.settimeout(30 if deadline is None else input_remaining(deadline))
+            connection.settimeout(30 if deadline is None else request_remaining(deadline))
             connection.connect(str(runtime_directory() / "control.sock"))
             data = json.dumps(payload).encode() + b"\n"
             if deadline is not None:
-                connection.settimeout(input_remaining(deadline))
+                connection.settimeout(request_remaining(deadline))
             attempted = True
             connection.sendall(data)
             result = receive(connection) if deadline is None else receive(connection, deadline=deadline)
@@ -173,10 +195,10 @@ def request(payload: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def status(*, include_control: bool = True) -> dict[str, Any]:
+def status(*, include_control: bool = True, deadline: float | None = None) -> dict[str, Any]:
     config = configuration()
     try:
-        return request({"action": "status"})
+        return request({"action": "status", **({"deadline": deadline} if deadline is not None else {})})
     except (FileNotFoundError, ConnectionRefusedError):
         return {"state": "stopped", "desktop": config["desktop"], "username": config["username"],
                 "observation_id": None, "capture_freshness": capture_freshness(),
@@ -463,7 +485,7 @@ class DesktopSession:
 
     def _handle(self, payload: dict[str, Any]) -> dict[str, Any]:
         validate_observation_option(payload)
-        deadline = input_deadline(payload) if payload.get("action") == "input" else 0.0
+        deadline = input_deadline(payload) if payload.get("action") == "input" else request_deadline(payload)
         self.sync_control()
         self.expire_browser_control()
         action = payload.get("action")
@@ -616,6 +638,16 @@ class DesktopSession:
                     "coordinate_space": "desktop", "image_origin": window["origin"] if window else [0, 0],
                     "image_geometry": captured_geometry,
                     "window": window, "output": str(output), "captured_at": datetime.now(timezone.utc).isoformat()}
+        if action == "handoff":
+            process = subprocess.Popen(
+                ["/usr/bin/python3", str(Path(__file__).with_name("handoff.py"))],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                process_group=self.process.pid,
+            )
+            self.children.append(process)
+            return {"pid": process.pid, "generation": self.generation, "control_window_requested": True,
+                    "window_visibility": "unverified", "ownership_transferred": False,
+                    "permission_changed": False, "desktop_preserved": True}
         control_state.require_enabled(payload)
         if self.maintenance:
             raise RuntimeError("Desktop is logging out for setup; finish logout and restart the session")

@@ -370,7 +370,7 @@ class NativeCanvasTests(unittest.TestCase):
             client.run_sequence(str(sequence), "g")
         request.assert_not_called()
         backend = Mock(MAX_MESSAGE=65536)
-        backend.status.return_value = {"generation": "g", "control_revision": "r", "agent_control": "enabled"}
+        backend.status.return_value = {"state": "running", "generation": "g", "control_revision": "r", "agent_control": "enabled"}
         backend.request.side_effect = [{"input_completed_at": "now"}, {"geometry": [2560,1440], "image_geometry": [2560,1440]}]
         result = client.run_sequence(str(sequence), "g", backend=backend)
         self.assertEqual(result["completed"], 1)

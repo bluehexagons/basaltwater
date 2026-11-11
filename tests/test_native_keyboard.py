@@ -260,7 +260,7 @@ class InputReliabilityTests(unittest.TestCase):
                    "dispatch_stage": "before-input", "input_id": "refused-input"}
         for failure, delivery in ((DesktopRequestError(refused), "not-sent"), (TimeoutError("lost reply"), "unknown")):
             backend = Mock(MAX_MESSAGE=65536)
-            backend.status.return_value = {"generation": "g", "control_revision": "r", "agent_control": "enabled"}
+            backend.status.return_value = {"state": "running", "generation": "g", "control_revision": "r", "agent_control": "enabled"}
             backend.request.side_effect = [{"windows": []}, failure]
             with self.subTest(delivery=delivery):
                 result = client.run_sequence(str(path), "g", backend=backend)

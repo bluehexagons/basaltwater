@@ -43,7 +43,12 @@ Use `basaltw desktop --native handoff --json` on CachyOS, with `--native` before
 desktop is not configured” refers to that backend, not a missing KDE capability.
 Inspect the invoked installation/source if the explicit native route is missing;
 do not provision XRDP, enable agents, start a portal or restart a match to open
-the window. On Debian use `basaltw desktop handoff`; Windows uses its distinct
+the window. On Debian use `basaltw desktop handoff`; its dedicated supervisor
+action opens only the fixed control UI, including while agent permission is
+blocked. It requires an existing running XRDP desktop and does not start one.
+An older supervisor may refuse this action: use the **Shared Desktop Control**
+launcher and load the update at a safe logout checkpoint. Never enable agents
+just to open the window. Windows uses its distinct
 [`desktop control`](windows-desktop.md) UI and pause contract.
 
 Closing the window, selecting observation, losing a browser connection, stopping

@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import re
 import shlex
+import shutil
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
@@ -144,6 +145,35 @@ class ObservationRecipeTests(unittest.TestCase):
                 client.run_sequence(str(path), "g")
             self.assertEqual(request.call_count, 3)
 
+    def test_debian_format_paths_fail_before_input_but_native_paths_stay_literal(self):
+        with patch.object(client.runtime, "status") as status, patch.object(client.runtime, "request") as request:
+            for char in ("%", "$", "\\"):
+                output = str(self.home / f"literal{char}name.png")
+                self.steps[1]["output"] = output
+                path = self.home / "steps.json"
+                path.write_text(json.dumps(self.steps))
+                with self.subTest(char=char), self.assertRaisesRegex(ValueError, "scrot format"):
+                    client.run_sequence(str(path), "g")
+                self.assertEqual(client.validate_capture_output(output, backend=self.backend), output)
+            status.assert_not_called()
+            request.assert_not_called()
+
+    def test_status_checks_share_the_sequence_budget_and_keep_completed_input(self):
+        def status(*, deadline):
+            self.assertEqual(deadline, 30)
+            if self.backend.request.call_count:
+                self.advance(20)
+                raise TimeoutError("status deadline expired")
+            return self.current
+        self.backend.status.side_effect = status
+        result = self.run_recipe()
+        self.assertEqual(result["completed"], 1)
+        self.assertEqual(result["results"][0], self.receipt)
+        self.assertEqual(result["failed_action_index"], 1)
+        self.assertEqual(len(result["timings"]), 2)
+        self.backend.request.assert_called_once()
+        self.assertEqual(self.backend.request.call_args.args[0]["deadline"], 24)
+
     def test_old_helper_and_deadline_stop_without_further_input(self):
         self.steps[1]["next_frame"] = True
         self.backend.request.side_effect = [self.receipt, {"output": "/unused.png"}]
@@ -200,6 +230,92 @@ class RecorderHeadroomTests(unittest.TestCase):
         folder.mkdir()
         return folder
 
+    def test_saved_sequence_preview_keeps_latest_headroom_and_recording_errors(self):
+        recorder = evidence.Recorder(str(self.home), "g")
+        recorder.data["events"] = [{"action": "input"}] * 449
+        first = recorder.capacity()
+        recorder.data["events"].append({"action": "screenshot"})
+        last = recorder.capacity()
+        result = {"completed": 1, "results": [{"input_delivery": "completed", "evidence_capacity": first,
+                   "evidence_error": "Recording checkpoint failed"}], "error": "capture unavailable",
+                  "failed_action_index": 1, "failed_action": {"error": "capture unavailable", "evidence_capacity": last}}
+        short = observations.save_observation(result)
+        self.addCleanup(shutil.rmtree, Path(short["artifact"]).parent)
+        self.assertEqual(short["evidence_capacity"]["remaining_events"], 50)
+        self.assertTrue(short["evidence_capacity"]["rotation_recommended"])
+        self.assertIn("safe checkpoint", short["evidence_capacity"]["warning"])
+        self.assertEqual(short["evidence_error"], "Recording checkpoint failed")
+        self.assertEqual(json.loads(Path(short["artifact"]).read_text()), result)
+        standalone = observations.save_observation({"evidence_capacity": last})
+        self.addCleanup(shutil.rmtree, Path(standalone["artifact"]).parent)
+        self.assertEqual(standalone["evidence_capacity"], last)
+
+    def test_failed_capture_returns_capacity_and_original_failure_receipt(self):
+        session = native_session.NativeSession(Mock())
+        session.evidence = recorder = evidence.Recorder(str(self.home), "g")
+        recorder.data["events"] = [{"action": "input"}] * 449
+        original = {"error": "Capture was cancelled", "reason": "capture-cancelled", "output": "/private/failed.png"}
+        with patch.object(session, "_handle", side_effect=DesktopRequestError(original)), \
+                self.assertRaises(DesktopRequestError) as failure:
+            session.handle({"action": "screenshot"})
+        self.assertEqual(failure.exception.receipt["reason"], "capture-cancelled")
+        self.assertEqual(failure.exception.receipt["error"], original["error"])
+        self.assertEqual(failure.exception.receipt["evidence_capacity"]["remaining_events"], 50)
+        self.assertEqual(recorder.data["events"][-1]["action"], "screenshot")
+
+    def test_recording_save_failure_cannot_erase_input_delivery_or_warning(self):
+        for refused in (False, True):
+            with self.subTest(refused=refused):
+                session = native_session.NativeSession(Mock())
+                session.evidence = recorder = evidence.Recorder(str(self.home), "g")
+                recorder.data["events"] = [{"action": "input"}] * 449
+                receipt = {"input_delivery": "not-sent" if refused else "completed", "input_id": "one"}
+                payload = {"action": "input"}
+                with patch.object(recorder, "save", side_effect=OSError("disk full")), \
+                        patch.object(session, "_handle", return_value=dict(receipt),
+                                     side_effect=DesktopRequestError({**receipt, "error": "expired"}) if refused else None):
+                    if refused:
+                        with self.assertRaises(DesktopRequestError) as failure:
+                            session.handle(payload)
+                        result = failure.exception.receipt
+                    else:
+                        result = session.handle(payload)
+                self.assertEqual(result["input_delivery"], receipt["input_delivery"])
+                self.assertEqual(result["input_id"], payload["input_id"] if refused else "one")
+                self.assertIn("checkpoint failed", result["evidence_error"])
+                self.assertEqual(result["evidence_capacity"]["remaining_events"], 50)
+
+
+class RecipeTransportTests(unittest.TestCase):
+    def test_debian_observation_reads_do_not_reset_the_controller_deadline(self):
+        for action in ("status", "screenshot"):
+            with self.subTest(action=action):
+                now = [100.0]
+                def receive(_size):
+                    now[0] += .75
+                    return b'{"state":'
+                connection = Mock()
+                connection.recv.side_effect = receive
+                with patch.object(client.runtime, "configuration"), \
+                        patch.object(client.runtime, "runtime_directory", return_value=Path("/fixture")), \
+                        patch.object(client.runtime.socket, "socket") as socket, \
+                        patch.object(client.runtime.time, "monotonic", side_effect=lambda: now[0]):
+                    socket.return_value.__enter__.return_value = connection
+                    with self.assertRaisesRegex(ValueError, "request deadline expired"):
+                        client.runtime.request({"action": action, "deadline": 100.5})
+                connection.recv.assert_called_once()
+                self.assertTrue(all(0 < call.args[0] <= .5 for call in connection.settimeout.call_args_list))
+
+    def test_debian_status_forwards_budget_and_invalid_deadlines_never_connect(self):
+        with patch.object(client.runtime, "configuration"), patch.object(client.runtime, "request", return_value={"state": "running"}) as request:
+            client.runtime.status(deadline=123)
+            request.assert_called_once_with({"action": "status", "deadline": 123})
+        for value in (True, "123", float("nan"), float("inf"), 10 ** 1000):
+            with self.subTest(value=value), patch.object(client.runtime.socket, "socket") as socket, \
+                    self.assertRaisesRegex(ValueError, "finite monotonic"):
+                client.runtime.request({"action": "screenshot", "deadline": value})
+            socket.assert_not_called()
+
 
 class PublishedRecipeTests(unittest.TestCase):
     @classmethod
@@ -213,6 +329,7 @@ class PublishedRecipeTests(unittest.TestCase):
                   "short-observation-sequences.md")]
         files += [ROOT / "common/agent_skills" / name for name in
                   ("basaltwater-cachyos-desktop/references/native-control.md", "basaltwater-desktop/references/windows.md")]
+        files.append(ROOT / "common/agent_skills/basaltwater-desktop/references/session.md")
         count = 0
         replacements = {"WIDTH": "2400", "HEIGHT": "1600", "X": "100", "Y": "100"}
         for name in files:
@@ -311,6 +428,46 @@ class PublishedRecipeTests(unittest.TestCase):
             self.parser.parse_args(["desktop", "sequence", "/private/steps.json", "--generation", "g", "--json"])
         self.assertEqual(error.exception.code, 2)
         self.assertIn("omit --json, or use --save-output", message.getvalue())
+
+    def test_debian_handoff_uses_fixed_ui_action_while_ordinary_exec_stays_blocked(self):
+        for mode in ("enabled", "human-override", "disabled"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as folder, \
+                    patch.object(Path, "home", return_value=Path(folder)), \
+                    patch.object(client.runtime.subprocess, "Popen", return_value=Mock(pid=123)) as spawn:
+                before = control_state.change(mode, seconds=None, human_approved=True)
+                process = Mock(pid=456)
+                process.poll.return_value = None
+                session = client.runtime.DesktopSession({"desktop": "xfce"}, process)
+                current = {"state": "running", "generation": session.generation, **before}
+                with patch.object(client.runtime, "status", return_value=current), \
+                        patch.object(client.runtime, "request", side_effect=session.handle) as request, \
+                        redirect_stdout(out := StringIO()):
+                    code = desktop_cli.run_desktop_command(self.parser.parse_args(["desktop", "handoff"]))
+                result = json.loads(out.getvalue())
+                self.assertEqual(code, 0)
+                self.assertEqual(request.call_args.args[0]["action"], "handoff")
+                self.assertNotIn("argv", request.call_args.args[0])
+                self.assertFalse(result["permission_changed"])
+                self.assertFalse(result["ownership_transferred"])
+                self.assertEqual(result["window_visibility"], "unverified")
+                self.assertEqual(control_state.status(), before)
+                self.assertTrue(spawn.call_args.args[0][1].endswith("handoff.py"))
+                self.assertEqual(spawn.call_args.kwargs["process_group"], 456)
+                self.assertEqual(session.children, [spawn.return_value])
+                if mode != "enabled":
+                    with self.assertRaisesRegex(RuntimeError, "Agent desktop control"):
+                        session.handle({"action": "exec", "generation": session.generation, **before, "argv": ["unavailable"]})
+                    spawn.assert_called_once()
+
+    def test_old_debian_handoff_suggests_launcher_without_replaying_exec(self):
+        with patch.object(client.runtime, "status", return_value={"state": "running", "generation": "g", "control_revision": "r"}), \
+                patch.object(client.runtime, "request", side_effect=ValueError("Unknown desktop action")) as request, \
+                redirect_stdout(out := StringIO()):
+            self.assertEqual(desktop_cli.run_desktop_command(self.parser.parse_args(["desktop", "handoff"])), 1)
+        result = json.loads(out.getvalue())
+        self.assertIn("Shared Desktop Control launcher", result["hint"])
+        self.assertNotIn("--native", result["hint"])
+        request.assert_called_once()
 
     def test_png_and_directory_are_not_mistaken_for_json_mapping_receipts(self):
         with tempfile.TemporaryDirectory() as folder, patch.object(native_session, "status") as status:

@@ -924,7 +924,7 @@ class BoundCaptureTests(unittest.TestCase):
         sequence.write_text(json.dumps([{"action": "screenshot", "max_age_seconds": 180},
             {"action": "input", "kind": "key", "key": "Return", "geometry": [10, 20]}]))
         backend = Mock(MAX_MESSAGE=65536)
-        backend.status.return_value = {"generation": "g", "control_revision": "r", "agent_control": "enabled"}
+        backend.status.return_value = {"state": "running", "generation": "g", "control_revision": "r", "agent_control": "enabled"}
         backend.request.return_value = {"output": "/tmp/capture.png"}
         result = client.run_sequence(str(sequence), "g", backend=backend)
         self.assertIn("did not confirm observation lifetime", result["error"])

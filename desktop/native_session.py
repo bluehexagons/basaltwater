@@ -489,11 +489,11 @@ class NativeSession:
                 result = input_failure(exc, payload, stage=payload.get("_dispatch_stage", "before-input"))
                 self.record_evidence(payload, result)
                 raise DesktopRequestError(result) from exc
-            self.record_evidence(payload, {"error": str(exc), "reason": "request-failed"})
+            result = dict(getattr(exc, "receipt", {"error": str(exc), "reason": "request-failed"}))
+            self.record_evidence(payload, result)
+            exc.receipt = result
             raise
         self.record_evidence(payload, result)
-        if self.evidence_error:
-            result["evidence_error"] = self.evidence_error
         return result
 
     def record_evidence(self, payload, result):
@@ -501,12 +501,14 @@ class NativeSession:
             if self.evidence:
                 try:
                     self.evidence.event(payload, result)
-                    if result is not None:
-                        result["evidence_capacity"] = self.evidence.capacity()
                 except (OSError, ValueError, RuntimeError):
                     # A completed input must never look like a retryable failure
                     # merely because recording ran out of disk space.
                     self.evidence_error = "Evidence checkpoint failed; inspect its private artifact"
+                if result is not None:
+                    result["evidence_capacity"] = self.evidence.capacity()
+            if result is not None and self.evidence_error:
+                result["evidence_error"] = self.evidence_error
 
     def _handle(self, payload):
         validate_observation_option(payload)
