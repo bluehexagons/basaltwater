@@ -10,12 +10,13 @@ from pathlib import Path
 import shlex
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 from common import cachyos_steps
 from desktop import apps_steps
-from lib import agent_environment, agent_workspace, cachyos, reconstruct
+from lib import agent_environment, agent_workspace, cachyos, cachyos_refresh, reconstruct
 from lib.arg_parser import add_setup_arguments, create_setup_argument_parser
 from lib.config import SetupConfig
 from lib.cache import merge_setup_configs
@@ -133,6 +134,15 @@ class MusicToolsTests(unittest.TestCase):
             omitted = cachyos.cachyos_config_from_args(parser.parse_args(["agent_cachyos", "localhost", "agent"]))
             self.assertIsNone(omitted.install_audio_tools)
             self.assertTrue(merge_setup_configs(saved, omitted).install_audio_tools)
+            with patch.object(cachyos_refresh, "_account", return_value=SimpleNamespace(pw_name="agent")):
+                replay = cachyos_refresh._replay_arguments(config)
+                self.assertTrue(cachyos_refresh._parse_saved_arguments(replay).install_audio_tools)
+                _, refreshed = cachyos_refresh._merge_overrides(replay, {"install_av_tools": ["--av-tools"]})
+                self.assertTrue(refreshed.install_audio_tools)
+                self.assertTrue(refreshed.install_av_tools)
+                _, added = cachyos_refresh._merge_overrides(cachyos_refresh._replay_arguments(omitted),
+                                                           {"install_audio_tools": ["--audio-tools"]})
+                self.assertTrue(added.install_audio_tools)
             with patch.object(cachyos_steps, "_home", return_value=Path("/task/home")), \
                     patch.object(cachyos_steps.shutil, "which", return_value="/usr/bin/existing"):
                 packages = cachyos_steps.cachyos_packages(saved)

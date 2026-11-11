@@ -599,20 +599,23 @@ class DoctorTests(unittest.TestCase):
 
         config = SetupConfig(host="localhost", username="alice", system_type="agent_cachyos",
                              agent_tools=[], install_av_tools=True, install_gl_tools=True,
+                             install_audio_tools=True,
                              install_blender=True, install_sysadmin_tools=True,
                              install_butler=True, install_steamcmd=True, install_moonlight=True)
         # Package queries succeed, but missing executables must still fail.
-        missing = {"ffprobe", "apitrace", "blender", "tcpdump", "butler", "moonlight"}
+        missing = {"ffprobe", "apitrace", "blender", "tcpdump", "butler", "moonlight", "pw-record", "wpctl"}
         with patch.object(doctor.shutil, "which", side_effect=lambda cmd: None if cmd in missing else "/fixture/" + cmd):
             report = doctor.collect_cachyos_doctor(config=config)
         records = {item["name"]: item for item in report["capabilities"]}
         for command in missing:
             self.assertEqual(records["tool." + command]["state"], "failed")
             self.assertTrue(records["tool." + command]["selected"])
-        for command in ("ffmpeg", "magick", "exiftool", "glxinfo", "vulkaninfo", "steamcmd", "nmap"):
+        for command in ("ffmpeg", "magick", "exiftool", "glxinfo", "vulkaninfo", "steamcmd", "nmap",
+                        "sox", "soxi", "pactl", "pw-cli"):
             self.assertEqual(records["tool." + command]["state"], "available")
             self.assertIsNone(records["tool." + command]["version"])
         self.assertEqual(records["package.blender"]["state"], "available")
+        self.assertTrue(records["package.sox"]["selected"])
         for call in self.probe.call_args_list:
             if call.args[0] == DPMS_PROBE:
                 continue
@@ -639,7 +642,7 @@ class DoctorTests(unittest.TestCase):
         config = SetupConfig(host="localhost", username="alice", system_type="agent_cachyos")
         with patch.object(doctor.shutil, "which", return_value=None):
             records = {item["name"] for item in doctor.collect_cachyos_doctor(config=config)["capabilities"]}
-        for command in ("ffprobe", "apitrace", "blender", "steamcmd", "tcpdump"):
+        for command in ("ffprobe", "apitrace", "blender", "steamcmd", "tcpdump", "sox", "pactl", "wpctl"):
             self.assertNotIn("tool." + command, records)
         config.install_game_dev = config.install_gl_tools = True
         with patch.object(doctor.shutil, "which", return_value=None):

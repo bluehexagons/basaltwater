@@ -27,9 +27,13 @@ input timeline; original stream start times remain in metadata. VFR samples
 can land later than requested. Frames undergo FFmpeg autorotation and software
 scaling; this does not qualify color/HDR presentation.
 
-The three PNGs and embedded, labelled `contact-sheet.svg` sample the beginning,
-middle and near-end. The selected video also receives a bounded full decode
-check. Audio results include per-channel/overall sample peak and RMS, integrated
+The three PNGs and embedded, labelled `contact-sheet.svg` sample the selected
+video's beginning, middle and near-end, using its packet PTS range normalized
+to the input timeline. They do not use a longer audio stream's end time; a
+low-rate or single-frame stream can yield repeated images. Video without packet
+timestamps is unsupported. Actual decoded PTS remains the frame's timing evidence.
+The selected video also receives a bounded full decode check. Audio results
+include per-channel/overall sample peak and RMS, integrated
 loudness, estimated true peak and silence intervals at -50 dB for 0.25 seconds.
 Nonfinite signal levels become JSON null (including digital silence); a missing
 measurement key fails the operation. No semantic, perceived-quality, sync,
@@ -121,15 +125,16 @@ python3 scripts/qualify_media.py --output /absolute/private/new-media-run
 
 This opt-in script creates synthetic fixtures, an editable JSON recipe with its
 linked source, exports and analysis receipts. It verifies silent/no-audio,
-Unicode/space paths, VFR, rotation, offset audio, packet-derived timing,
-malformed/playlist/truncated input refusal, deadline failure, real Ctrl-C child
+Unicode/space paths, VFR, low-rate/shorter/delayed video, rotation, offset audio,
+packet-derived timing, malformed/playlist/truncated input refusal, deadline failure, real Ctrl-C child
 cleanup and short CPU
 trim/fade/scale/concatenation outputs. It records elapsed/child CPU time, largest
 child RSS and retained bytes. Largest-child RSS is cumulative across the run,
 not total guest memory or aggregate concurrent usage. The script is a native
 qualification command, separate from mocked automated tests. See the
 [coverage map](../plans/testing-coverage.md) for measured scope and remaining
-platform boundaries.
+platform boundaries. Continue platform work with the
+[CachyOS handoff](../plans/audio-video-cachyos-handoff.md).
 
 On Debian 13 x86-64 with FFmpeg 7.1.5, the synthetic 2–4 second, 640×360 suite
 completed analysis in under one second per valid fixture. Its two-second audio

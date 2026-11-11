@@ -5,7 +5,9 @@ qualification and remaining platform boundaries are recorded in the
 [Debian media guide](../workstations/media-analysis.md) and
 [coverage map](testing-coverage.md). CachyOS GPU/editor and Windows milestones
 remain separate; optional speech recognition is deferred without a demonstrated
-need. This plan extends [multimedia bundles issue #25](https://github.com/bluehexagons/basaltwater/issues/25)
+need. The [CachyOS handoff](audio-video-cachyos-handoff.md) gives the next agent
+the setup, baseline and production acceptance sequence. This plan extends
+[multimedia bundles issue #25](https://github.com/bluehexagons/basaltwater/issues/25)
 and complements [native QA evidence](../workstations/native-qa-evidence.md)
 and [Windows game testing](windows-game-testing.md).
 

@@ -162,9 +162,23 @@ def inspect(source: str, output: str, *, video: int = 0, audio: int = 0,
             prefix = ["-nostdin", "-nostats", "-xerror", "-n", "-t", str(max_seconds), "-filter_threads", "1"]
             if "video" in selected:
                 stream = selected["video"]
+                video_pts = [finite(p["pts_time"]) for p in packets
+                             if p.get("stream_index") == stream["index"] and "pts_time" in p]
+                if not video_pts:
+                    raise UnsupportedMedia("Selected video packet timestamps unavailable")
+                origin = finite(metadata.get("format", {}).get("start_time", min(starts, default=0)))
+                first, last = max(0, min(video_pts) - origin), max(0, max(video_pts) - origin)
+                result["video"]["packet_pts_range_seconds"] = [first, last]
+                # Audio can outlast video, and a low-rate stream may have no
+                # frame near the container end. Sample the selected stream's
+                # packet span, then retain the actual decoded PTS as evidence.
+                # A microsecond tolerance avoids skipping a boundary due to
+                # ffprobe's decimal timestamp rounding.
+                targets = (max(0, first - .000001), max(0, (first + last) / 2 - .000001),
+                           max(0, first - .000001, last - .25))
                 command("ffmpeg", prefix + ["-v", "error", "-map", f"0:{stream['index']}",
                                             "-f", "null", "-"])
-                for index, target in enumerate((0, duration / 2, max(0, duration - .25))):
+                for index, target in enumerate(targets):
                     name = f"frame-{index}.png"
                     filters = f"select=gte(t\\,{target}),scale=640:360:force_original_aspect_ratio=decrease,showinfo"
                     log = command("ffmpeg", prefix + ["-map", f"0:{stream['index']}", "-vf", filters,

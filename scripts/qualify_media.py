@@ -49,6 +49,11 @@ def qualify(output: str) -> dict:
     flac = ffmpeg("tone.flac", audio + ["-t", "2", "-c:a", "flac"])
     ogg = ffmpeg("tone.ogg", audio + ["-t", "2", "-c:a", "libvorbis"])
     no_audio = ffmpeg("no-audio.mp4", video + ["-t", "2"] + encode)
+    low_rate = ffmpeg("low-rate.mp4", ["-f", "lavfi", "-i", "testsrc2=size=320x180:rate=1", "-t", "2"] + encode)
+    short_video = ffmpeg("short-video.mp4", ["-f", "lavfi", "-i", "testsrc2=size=320x180:rate=12:duration=2"]
+                         + audio + ["-t", "6"] + encode)
+    delayed_video = ffmpeg("delayed-video.mp4", ["-itsoffset", "1"] + video + audio + ["-t", "4"] + encode
+                           + ["-fps_mode:v", "passthrough"])
     vfr = ffmpeg("vfr.mp4", video + ["-t", "4", "-vf", "select='if(lt(t,2),1,not(mod(n,3)))'", "-fps_mode", "vfr"] + encode)
     offset = ffmpeg("offset.mp4", video + ["-itsoffset", "0.5"] + audio + ["-t", "4"] + encode)
     rotated = ffmpeg("rotated.mp4", ["-display_rotation:v:0", "90", "-i", str(source), "-c", "copy",
@@ -93,7 +98,8 @@ def qualify(output: str) -> dict:
     truncated = root / "truncated.mp4"
     truncated.write_bytes(source.read_bytes()[:source.stat().st_size // 2])
     cases = []
-    for fixture in (source, silent, flac, ogg, no_audio, vfr, offset, rotated, unknown, trimmed_audio, trimmed, delivery,
+    for fixture in (source, silent, flac, ogg, no_audio, low_rate, short_video, delayed_video,
+                    vfr, offset, rotated, unknown, trimmed_audio, trimmed, delivery,
                     malformed, playlist, truncated):
         result = inspect(str(fixture), str(root / (fixture.name + "-analysis")))
         expected = "complete" if fixture not in (malformed, playlist, truncated) else None
@@ -104,6 +110,12 @@ def qualify(output: str) -> dict:
             assert result["audio"]["measurements"]["silence_intervals"]
         if fixture == no_audio:
             assert result["audio"]["status"] == "missing"
+        if fixture in (low_rate, short_video, delayed_video):
+            first, last = result["video"]["packet_pts_range_seconds"]
+            assert all(first - .000002 <= frame["requested_seconds"] <= last for frame in result["frames"])
+            assert all(frame["decoded_pts_seconds"] <= last + .000002 for frame in result["frames"])
+            if fixture == delayed_video:
+                assert first >= .99
         if fixture == offset:
             assert float(result["metadata"]["streams"][1]["start_time"]) >= .45
         if fixture == rotated:

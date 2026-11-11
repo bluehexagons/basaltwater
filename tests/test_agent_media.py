@@ -76,17 +76,35 @@ class MediaTests(unittest.TestCase):
 
     def test_decoded_timestamps_and_missing_audio(self):
         result = self.run_analysis({"format": {"duration": "2"}, "streams": [
-            {"index": 0, "codec_type": "video", "width": 640, "height": 360}]})
+            {"index": 0, "codec_type": "video", "width": 640, "height": 360}],
+            "packets": [{"stream_index": 0, "pts_time": "0"}, {"stream_index": 0, "pts_time": "1.9"}]})
         self.assertEqual(result["status"], "complete")
         self.assertEqual(result["frames"][0]["decoded_pts_seconds"], .5)
         self.assertEqual(result["frames"][0]["requested_seconds"], 0)
         self.assertEqual(result["audio"]["status"], "missing")
+
+    def test_sampling_uses_selected_video_span_and_normalizes_offsets(self):
+        for first, last in ((10, 11), (12, 12), (12, 13)):
+            with self.subTest(first=first, last=last):
+                result = self.run_analysis({"format": {"duration": "20", "start_time": "10"}, "streams": [
+                    {"index": 0, "codec_type": "video", "width": 640, "height": 360},
+                    {"index": 1, "codec_type": "video", "width": 640, "height": 360}], "packets": [
+                        {"stream_index": 0, "pts_time": "10"}, {"stream_index": 0, "pts_time": "29"},
+                        {"stream_index": 1, "pts_time": str(first)}, {"stream_index": 1, "pts_time": str(last)},
+                    ]}, video=1)
+                self.assertEqual(result["status"], "complete")
+                self.assertEqual(result["video"]["packet_pts_range_seconds"], [first - 10, last - 10])
+                targets = [frame["requested_seconds"] for frame in result["frames"]]
+                self.assertTrue(all(first - 10 - .000002 <= target <= last - 10 for target in targets))
+                self.assertEqual(len(targets), 3)
 
     def test_incomplete_and_unsupported(self):
         for metadata, kwargs, status in (
             ({"streams": []}, {}, "unsupported"),
             ({"format": {"duration": "121"}}, {}, "unsupported"),
             ({"format": {"duration": "2"}, "streams": []}, {"audio": 1}, "unsupported"),
+            ({"format": {"duration": "2"}, "streams": [
+                {"index": 0, "codec_type": "video", "width": 640, "height": 360}]}, {}, "unsupported"),
             ({}, {"fail": subprocess.TimeoutExpired("ffprobe", 1)}, "incomplete"),
             ({"format": {"duration": "2"}, "streams": [
                 {"index": 0, "codec_type": "audio", "channels": 1, "sample_rate": "48000"}]}, {}, "incomplete"),
