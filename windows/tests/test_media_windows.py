@@ -121,6 +121,7 @@ class MediaTests(unittest.TestCase):
         def run(code, **kwargs):
             return native.run_captured([sys.executable, "-c", code], cwd=str(self.root), **kwargs)
         self.assertEqual(run("print('音')").returncode, 0)
+        self.assertEqual(run("print('early input close')", input_data=b"x" * 1024 * 1024).returncode, 0)
         with self.assertRaisesRegex(RuntimeError, "output exceeded"):
             run("import sys; sys.stdout.write('x'*100000)", max_bytes=1000)
         with self.assertRaises(TimeoutError):

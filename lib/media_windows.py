@@ -245,7 +245,12 @@ def run_captured(argv, *, input_data=None, timeout=180, max_bytes=2*1024*1024, c
             except (BrokenPipeError, OSError):
                 pass
             finally:
-                process.stdin.close()
+                try:
+                    process.stdin.close()
+                except OSError:
+                    # A bounded frame sample intentionally closes its input
+                    # early; buffered stdin may report that again on close.
+                    pass
 
         for fn, args in ((drain, (process.stdout, 0)), (drain, (process.stderr, 1)), (feed, ())):
             worker = threading.Thread(target=fn, args=args, daemon=True)

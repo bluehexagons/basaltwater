@@ -30,8 +30,9 @@ update owner. AV refresh revalidates existing binaries; it does not silently
 upgrade them. For a WinGet-managed installation, explicitly review and apply
 `winget upgrade --id Gyan.FFmpeg --exact --source winget`, then rerun discovery
 and qualification. No installer or refresh was executed during implementation;
-actual package provenance, installation and decoding remain native acceptance
-steps. Keep decoder security updates current.
+package installation/upgrade behavior still needs separate native acceptance.
+The file-only qualification below records the discovered build's decoder results.
+Keep decoder security updates current.
 
 ## Result and media contract
 
@@ -89,8 +90,8 @@ receives a 16 MiB output-file limit. Polling can overshoot between checks and is
 not a disk quota. At least 128 MiB free space is required without reservation.
 Input snapshot and Python interpreter memory are outside the child Job limit.
 Resolution changes and pathological decoders can still fail within declared
-metadata ceilings. Limits are provisional refusal ceilings pending native media
-measurements, not throughput guarantees or a decoder sandbox.
+metadata ceilings. These are refusal ceilings; the small native measurements
+below do not establish throughput at those ceilings or a decoder sandbox.
 
 Timeout, Ctrl+C and Python interruption terminate the entire owned Job and
 confirm that its active count reaches zero. Abrupt analyzer termination closes
@@ -132,6 +133,14 @@ Only successful runs write `qualification.json`. Explicit gates remain active
 with `python -O`. Reports retain executable paths, effective limits, elapsed
 time, Job CPU, peak Job commit and artifact byte counts; individual manifests
 record versions and measurement filters. Raw paths/media/logs stay private.
-No successful native FFmpeg run is claimed until that runner passes on the
-target. Windows live capture, playback, game testing and GPU qualification are
-separate integration work.
+On native Windows 11 x64 with Python 3.15.2 and Gyan FFmpeg/ffprobe 9.0.2,
+the common 18-fixture suite passes, including deadline and cancellation cleanup.
+The synthetic 2–6 second, at most 640×360 inputs analyze in under one second
+per valid fixture in the initial run. The retained bundle is under 8 MiB;
+the largest measured production Job commit is under 84 MiB. Decoded RGB boundary
+errors are below 3/255. These are single-run observations with uncontrolled warm
+caches; they do not establish sustained throughput, whole-machine memory,
+1080p/120-second capacity or physical playback quality. Existing WinGet package
+discovery and version probes pass; installation and upgrade were not executed
+by the qualification runner. Windows live capture, playback, game testing and
+GPU qualification remain separate integration work.
