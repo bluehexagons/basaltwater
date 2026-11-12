@@ -28,6 +28,54 @@ from lib import desktop_cli
 
 
 class CaptureCoordinateTests(unittest.TestCase):
+    def test_source_pixels_add_receipt_origin_once_and_keep_freshness_guards(self):
+        capture = {"observation_id": "a" * 32, "generation": "b" * 32, "control_revision": "c" * 32,
+                   "geometry": [2400, 1600], "image_origin": [100, 200], "image_geometry": [800, 600]}
+        current = {**capture, "state": "running", "capture_freshness": {"fresh": True}}
+        receipt = {"input_delivery": "completed", "observation": capture}
+        result = map_observation_points(receipt, current, None, 400, 300,
+                                        image_coordinates=True, to_x=799, to_y=599)
+        self.assertEqual(result["input_coordinates"], {"x": 500, "y": 500, "to_x": 899, "to_y": 799})
+        self.assertEqual(result["scale"], [1, 1])
+        self.assertEqual(result["point_space"], "source-image")
+        self.assertIsNone(result["view_geometry"])
+        self.assertIsNone(result["view_origin"])
+        self.assertEqual(result["observation_id"], capture["observation_id"])
+        for changes in ({"capture_freshness": {"fresh": False}}, {"state": "stopped"},
+                        {"control_revision": "old"}, {"image_origin": [0, 0]},
+                        {"observation_id": "d" * 32}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                map_observation_points(receipt, {**current, **changes}, None, 1, 1, image_coordinates=True)
+        with self.assertRaisesRegex(ValueError, "margins"):
+            map_observation_points(receipt, current, None, 1, 1, image_coordinates=True, view_origin=[0, 0])
+        with self.assertRaisesRegex(ValueError, "never replay"):
+            map_observation_points({**capture, "input_delivery": "completed"}, current, None, 1, 1,
+                                   image_coordinates=True)
+
+    def test_source_coordinate_basis_is_explicit_and_bounded(self):
+        base = dict(geometry=[2400, 1600], view_geometry=None, x=1, y=1,
+                    crop=[100, 200, 800, 600], image_coordinates=True)
+        for changes in ({"image_coordinates": 1}, {"view_geometry": [800, 600]},
+                        {"x": True}, {"x": 800}, {"y": -1}, {"to_x": 2},
+                        {"to_x": 799, "to_y": 600}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                map_capture_points(**{**base, **changes})
+        parser = argparse.ArgumentParser()
+        desktop_cli.add_desktop_subparser(parser.add_subparsers())
+        arguments = ["desktop", "--native", "map-point", "--geometry", "2400", "1600",
+                     "--crop", "100", "200", "800", "600", "--x", "400", "--y", "300"]
+        for basis in ([], ["--image-coordinates", "--view-geometry", "800", "600"]):
+            with patch("sys.stderr", StringIO()), self.assertRaises(SystemExit):
+                parser.parse_args(arguments + basis)
+        with patch.object(native, "status") as status, patch.object(native, "request") as request:
+            output = StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(desktop_cli.run_desktop_command(parser.parse_args(
+                    arguments + ["--image-coordinates"])), 0)
+            self.assertEqual(json.loads(output.getvalue())["input_coordinates"], {"x": 500, "y": 500})
+            status.assert_not_called()
+            request.assert_not_called()
+
     def test_cli_frame_recipe_roundtrips_into_one_token_bound_action(self):
         parser = argparse.ArgumentParser()
         desktop_cli.add_desktop_subparser(parser.add_subparsers())
@@ -185,6 +233,79 @@ class CaptureCoordinateTests(unittest.TestCase):
                         self.assertIn("error", result)
             for mock in (status, request, debian_status, debian_request, artifact):
                 mock.assert_not_called()
+
+
+class PointPreviewTests(unittest.TestCase):
+    def setUp(self):
+        self.folder = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.source = self.folder / "frame.png"
+        self.source.write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + struct.pack(">II", 100, 80) + b"\0" * 9)
+
+    @staticmethod
+    def render(arguments):
+        Path(arguments[-1]).write_bytes(b"rendered PNG")
+        return ""
+
+    def test_preview_preserves_literal_bundle_and_labels_annotation(self):
+        from desktop.point_preview import point_preview
+        original = self.source.read_bytes()
+        bundle = self.folder / "preview"
+        with patch("desktop.evidence_media.media_command", side_effect=self.render), \
+                patch("desktop.point_preview.media_command", side_effect=self.render) as render:
+            result = point_preview(str(self.source), [10, 20, 40, 30], [10, 20], "<target>", str(bundle))
+        data = json.loads(Path(result["artifact"]).read_text())
+        literal = json.loads((bundle / "manifest.json").read_text())
+        self.assertEqual(literal["kind"], "literal-crop")
+        self.assertEqual(data["point_in_preview"], [0, 0])
+        self.assertEqual(data["source"], literal["source"])
+        self.assertEqual(data["source"]["sha256"], hashlib.sha256(original).hexdigest())
+        self.assertEqual(data["literal_crop"]["sha256"], hashlib.sha256((bundle / "manifest.json").read_bytes()).hexdigest())
+        self.assertEqual(self.source.read_bytes(), original)
+        self.assertEqual((bundle / "source.png").read_bytes(), original)
+        self.assertIn("drawbox=x=0:y=0:w=11:h=2", render.call_args.args[0][-4])
+        self.assertIn("&lt;target&gt;", Path(result["report"]).read_text())
+        for key in ("input_sent", "input_authority", "freshness_renewed"):
+            self.assertFalse(data[key])
+            self.assertFalse(result[key])
+        for path in bundle.iterdir():
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(bundle.stat().st_mode & 0o777, 0o700)
+
+    def test_invalid_preview_does_not_render_or_create_bundle(self):
+        from desktop.point_preview import point_preview
+        for rectangle, point in (([0, 0, 1025, 1], [0, 0]), ([0, 0, 10, 10], [True, 1]),
+                                 ([0, 0, 10, 10], [10, 1]), ([1, 1, 10, 10], [0, 1])):
+            output = self.folder / "absent"
+            with self.subTest(rectangle=rectangle, point=point), \
+                    patch("desktop.point_preview.crop") as crop, self.assertRaises(ValueError):
+                point_preview(str(self.source), rectangle, point, "target", str(output))
+            crop.assert_not_called()
+            self.assertFalse(output.exists())
+
+    def test_failed_annotation_keeps_literal_prefix_without_success_manifest(self):
+        from desktop.point_preview import point_preview
+        output = self.folder / "failed"
+        with patch("desktop.evidence_media.media_command", side_effect=self.render), \
+                patch("desktop.point_preview.media_command", side_effect=RuntimeError("renderer failed")), \
+                self.assertRaisesRegex(RuntimeError, "renderer failed"):
+            point_preview(str(self.source), [10, 20, 40, 30], [20, 30], "target", str(output))
+        self.assertTrue((output / "manifest.json").exists())
+        self.assertFalse((output / "point-preview.json").exists())
+        with self.assertRaises((FileExistsError, ValueError)):
+            point_preview(str(self.source), [10, 20, 40, 30], [20, 30], "target", str(output))
+
+    def test_cli_preview_routes_offline_without_helper_calls(self):
+        parser = argparse.ArgumentParser()
+        desktop_cli.add_desktop_subparser(parser.add_subparsers())
+        arguments = ["desktop", "--native", "evidence", "point-preview", str(self.source),
+                     "--rectangle", "10", "20", "40", "30", "--point", "20", "30", "--caption", "target"]
+        with patch("desktop.point_preview.point_preview", return_value={"input_sent": False}) as preview, \
+                patch.object(native, "status") as status, patch.object(native, "request") as request, \
+                redirect_stdout(StringIO()):
+            self.assertEqual(desktop_cli.run_desktop_command(parser.parse_args(arguments)), 0)
+            preview.assert_called_once()
+            status.assert_not_called()
+            request.assert_not_called()
 
 
 class NativeCanvasTests(unittest.TestCase):

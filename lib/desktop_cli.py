@@ -102,17 +102,20 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     target = screenshot.add_mutually_exclusive_group()
     target.add_argument("--window", help="Capture a window ID from 'desktop windows'")
     target.add_argument("--active-window", action="store_true", help="Capture the active application without changing focus")
-    mapping = commands.add_parser("map-point", help="Native: convert presented-image points to monitor pixels without sending input")
+    mapping = commands.add_parser("map-point", help="Native: convert source-PNG or presented-view points to monitor pixels without input")
     mapping.add_argument("--geometry", nargs=2, type=int, metavar=("WIDTH", "HEIGHT"),
                          help="Full-monitor geometry from the screenshot metadata")
-    mapping.add_argument("--view-geometry", required=True, nargs=2, type=int, metavar=("WIDTH", "HEIGHT"),
-                         help="Dimensions of the entire PNG as presented, excluding viewer margins")
+    point_space = mapping.add_mutually_exclusive_group(required=True)
+    point_space.add_argument("--view-geometry", nargs=2, type=int, metavar=("WIDTH", "HEIGHT"),
+                             help="Dimensions of the entire PNG as presented, excluding viewer margins")
+    point_space.add_argument("--image-coordinates", action="store_true",
+                             help="Points are pixels in the source PNG, e.g. a verified crop center; no viewer transform is claimed")
     mapping.add_argument("--crop", nargs=4, type=int, metavar=("X", "Y", "WIDTH", "HEIGHT"),
                          help="Same monitor-pixel crop used for the screenshot; omit for a full capture")
-    mapping.add_argument("--x", required=True, type=int, help="Image-local x in the presented view")
-    mapping.add_argument("--y", required=True, type=int, help="Image-local y in the presented view")
-    mapping.add_argument("--to-x", type=int, help="Optional drag endpoint x in the same view")
-    mapping.add_argument("--to-y", type=int, help="Optional drag endpoint y in the same view")
+    mapping.add_argument("--x", required=True, type=int, help="Local x in the selected source-image or presented-view space")
+    mapping.add_argument("--y", required=True, type=int, help="Local y in the selected source-image or presented-view space")
+    mapping.add_argument("--to-x", type=int, help="Optional drag endpoint x in the same coordinate space")
+    mapping.add_argument("--to-y", type=int, help="Optional drag endpoint y in the same coordinate space")
     mapping.add_argument("--json", action="store_true")
     mapping.add_argument("--capture", help="Saved screenshot or input --observe JSON receipt; checks the fresh frame against status without capturing")
     mapping.add_argument("--view-origin", nargs=2, type=int, metavar=("LEFT", "TOP"),
@@ -230,7 +233,7 @@ def run_desktop_command(args: argparse.Namespace) -> int:
         elif command == "accessibility-record":
             from desktop.accessibility_recording import run_recording_command
             result = run_recording_command(args)
-        elif command == "audio" or (command == "evidence" and args.evidence_command in ("crop", "excerpt", "export", "timeline")):
+        elif command == "audio" or (command == "evidence" and args.evidence_command in ("crop", "point-preview", "excerpt", "export", "timeline")):
             if backend is runtime:
                 raise ValueError("Native QA tools require --native")
             from desktop.qa_cli import run_qa_command
@@ -253,12 +256,14 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                 if not isinstance(capture, dict):
                     raise ValueError("Expected a screenshot JSON receipt")
                 result = map_observation_points(capture, backend.status(), args.view_geometry, args.x, args.y,
-                    view_origin=args.view_origin, to_x=args.to_x, to_y=args.to_y)
+                    view_origin=args.view_origin, to_x=args.to_x, to_y=args.to_y,
+                    image_coordinates=args.image_coordinates)
             else:
                 if args.view_origin is not None:
                     raise ValueError("--view-origin requires --capture")
                 result = map_capture_points(args.geometry, args.view_geometry, args.x, args.y,
-                                            crop=args.crop, to_x=args.to_x, to_y=args.to_y)
+                                            crop=args.crop, to_x=args.to_x, to_y=args.to_y,
+                                            image_coordinates=args.image_coordinates)
         elif command == "evidence":
             if backend is runtime:
                 raise ValueError("Manual desktop evidence requires --native")

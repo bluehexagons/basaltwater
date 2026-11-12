@@ -119,10 +119,49 @@ returned context and point arguments into the input command described above.
 Both drag endpoints must fit inside this same crop.
 
 The PNG dimensions and an image API's original-detail option do not establish
-the outer viewer's presentation size. If that transform is unknown, obtain a
-view whose dimensions can be established before input. A crop-width limit alone
-does not establish it either. Record the actual content dimensions, margins,
-receipt origin/image dimensions, selected point and mapped point privately.
+the outer viewer's presentation size. If that transform is unknown, either obtain
+a view whose dimensions can be established or explicitly choose source-PNG pixels
+as described below. A crop-width limit alone does not establish a view transform.
+Record the chosen basis, receipt origin/image dimensions, selected point and mapped
+point privately; presented-view mapping also needs content dimensions and margins.
+
+### Explicit source-PNG points and offline previews
+
+`--image-coordinates` is an alternative to `--view-geometry`. Points are integer
+pixels in the exact capture PNG, independent of its display size. For a 400 by
+300 native crop, its arithmetic center is `(200, 150)`; the example receipt above
+adds origin `(1000, 600)` once to produce monitor point `(1200, 750)`:
+
+```bash
+basaltw desktop --native map-point --capture /absolute/private/control.json \
+  --image-coordinates --x 200 --y 150
+```
+
+This selects a coordinate basis, not a target. Do not relabel positions estimated
+from an unknown-size viewer as source pixels. Inspect a marked derivative first
+when the source point is uncertain:
+
+```bash
+basaltw desktop --native evidence point-preview /absolute/private/control.png \
+  --rectangle 0 0 400 300 --point 200 150 --caption 'Proposed control center' \
+  --output /absolute/private/new-point-preview --json
+```
+
+Open `point-preview.png` and the unchanged `crop.png`; verify the red cross lies
+inside the intended control. The preview's source hash must match the exact PNG
+in the saved capture receipt. Rectangles and points refer to that PNG, so an
+already cropped capture uses local coordinates. A full-frame PNG uses full-frame
+coordinates even if the preview shows only a small region. Do not add the preview
+rectangle origin to a point already expressed in source-PNG pixels.
+
+Image mode rejects view geometry and viewer margins. Both drag endpoints use
+the same source basis and must remain inside the capture. Receipt-bound mapping
+still checks current status, crop, token, revision and age; a preview or mapping
+never reserves or renews freshness. If preparation expires the capture, inspect
+a fresh one and re-establish its target. Offline `--geometry ... --crop ...`
+image-mode arithmetic has no live checks. Neither mode recognizes controls or
+proves focus, intent or application effect. See the
+[preview artifact contract](native-qa-evidence.md#offline-point-previews).
 
 For a synthetic 2400 by 1600 full frame displayed at 1200 by 800, presented
 point `(600, 400)` maps to `(1200, 800)`. Claiming the view is 2400 by 1600

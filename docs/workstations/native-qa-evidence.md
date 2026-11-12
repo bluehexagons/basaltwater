@@ -130,6 +130,32 @@ portable references with reviewer attribution. It neither publishes nor uploads
 anything. Application audio and accessibility records can contain private data;
 their raw bundles are not automatically included in a portable export.
 
+## Offline point previews
+
+```sh
+basaltw desktop --native evidence point-preview /absolute/private/frame.png \
+  --rectangle 100 80 640 360 --point 420 260 --caption 'Proposed pause control' \
+  --output /absolute/private/new-point-preview --json
+```
+
+This adds an annotated derivative to a normal literal-crop bundle. Each rectangle
+is at most 1024 by 1024 source pixels; the integer point must be inside it. The
+red cross marks that source-PNG pixel without modifying the source or `crop.png`.
+`point-preview.json` binds the source hash, source geometry, rectangle, point,
+literal manifest hash and annotated derivative hash. `point-preview.md` shows
+both versions. Files stay private and output requires a new bundle. If annotation
+fails, the literal prefix can remain; absence of `point-preview.json` means no
+successful preview was recorded. Inspect partial bundles before discarding them.
+
+The tool captures nothing, sends no input, reads no helper status and grants no
+freshness or input authority. It does not establish presentation dimensions or
+recognize a semantic target. Match its source hash to the capture receipt before
+using the separate [source-coordinate mapping](desktop-observations.md#explicit-source-png-points-and-offline-previews)
+route; mapping and subsequent input still validate the current observation.
+Historical previews never authorize input. Annotated point manifests are not
+supported by `evidence export`; only the separately reviewed literal manifest
+uses the existing portable crop export contract.
+
 ## One observation timeline
 
 New desktop action journals, [accessibility recordings](accessibility-testing.md)

@@ -32,6 +32,19 @@ No new preview API, helper behavior, dependency or setup refresh is delivered by
 this documentation update. Historical restart instructions below describe the
 original preparation gate; each later run retains its own explicit activation.
 
+**Source update after the offline rehearsal, November 12:** all three proposed
+points fell inside independently pinned target regions, but the controller could
+not establish the outer viewer's dimensions and correctly withheld input
+qualification. That provides the measured case for the optional diagnostic.
+The [offline point preview](../workstations/native-qa-evidence.md#offline-point-previews)
+now retains both unchanged and marked pixels. Explicit
+[`map-point --image-coordinates`](../workstations/desktop-observations.md#explicit-source-png-points-and-offline-previews)
+uses the existing source-PNG basis without inventing a viewer transform. Receipt
+origins, freshness and permission checks remain unchanged. These are source/offline
+features; refresh the installed setup, check provenance and qualify a disposable
+control before consuming-game adoption. The earlier docs-only delivery statement
+describes the prior milestone, not this code update. No new game Start is activated.
+
 The next cycle should reduce control mistakes, missed observations and reporting
 overhead while making learning experiments useful and comparisons interpretable.
 A completed match or verified PNG inventory alone does not establish those goals.
@@ -89,7 +102,8 @@ Retain the presented dimensions, image dimensions/origin and mapped point in the
 private decision evidence. If useful, add an offline diagnostic preview showing
 the proposed point on a derivative of the exact source frame. Such a preview
 would send no input, confer no new authority and renew no observation token.
-Do not add a second coordinate system or infer an unknown viewer transform.
+Use the existing source-PNG coordinate basis explicitly; do not infer an unknown
+viewer transform. The delivered preview and mapping route are documented above.
 
 Acceptance: synthetic full-view scaling, crop origins, margins, independent-axis
 scaling and drag endpoints still pass existing contracts. A fresh controller

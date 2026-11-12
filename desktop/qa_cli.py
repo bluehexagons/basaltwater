@@ -106,6 +106,11 @@ def add_qa_parser(commands: argparse._SubParsersAction, evidence: argparse._SubP
     crop.add_argument("path")
     crop.add_argument("--rectangle", nargs=4, type=int, required=True, metavar=("X", "Y", "WIDTH", "HEIGHT"))
     crop.add_argument("--caption", required=True)
+    point_preview = evidence.add_parser("point-preview", help="Offline annotated source-pixel target preview; no capture, input or freshness renewal")
+    point_preview.add_argument("path", help="Exact source PNG; points and rectangle are local to this PNG")
+    point_preview.add_argument("--rectangle", nargs=4, type=int, required=True, metavar=("X", "Y", "WIDTH", "HEIGHT"))
+    point_preview.add_argument("--point", nargs=2, type=int, required=True, metavar=("X", "Y"))
+    point_preview.add_argument("--caption", required=True)
     excerpt = evidence.add_parser("excerpt", help="Create a WAV excerpt of at most ten seconds with interval provenance")
     excerpt.add_argument("path")
     excerpt.add_argument("--start", type=float, required=True)
@@ -116,9 +121,9 @@ def add_qa_parser(commands: argparse._SubParsersAction, evidence: argparse._SubP
     export.add_argument("--output", required=True, help="New directory beneath an existing private parent outside Git")
     timeline = evidence.add_parser("timeline", help="Join action, accessibility and audio receipts from the same Linux boot")
     timeline.add_argument("--artifact", action="append", required=True)
-    for operation in (capture, analysis, crop, excerpt, timeline):
+    for operation in (capture, analysis, crop, point_preview, excerpt, timeline):
         operation.add_argument("--output", help="New private directory outside Git; default creates a private temporary bundle")
-    for operation in (sources, capture, analysis, crop, excerpt, export, timeline):
+    for operation in (sources, capture, analysis, crop, point_preview, excerpt, export, timeline):
         operation.add_argument("--json", action="store_true")
 
 
@@ -205,6 +210,9 @@ def run_qa_command(args: argparse.Namespace, *, backend=None) -> dict:
     from desktop import evidence_media, qa_timeline
     if args.evidence_command == "crop":
         return evidence_media.crop(args.path, args.rectangle, args.caption, args.output)
+    if args.evidence_command == "point-preview":
+        from desktop.point_preview import point_preview
+        return point_preview(args.path, args.rectangle, args.point, args.caption, args.output)
     if args.evidence_command == "excerpt":
         return evidence_media.excerpt(args.path, args.start, args.seconds, args.output)
     if args.evidence_command == "export":
