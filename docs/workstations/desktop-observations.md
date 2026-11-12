@@ -48,6 +48,18 @@ basaltw desktop screenshot --window HWND --identity IDENTITY --generation GEN --
 basaltw desktop input click --window HWND --identity IDENTITY --generation GEN --width W --height H --observation OBSERVATION_ID --x X --y Y
 ```
 
+Windows also accepts `input ... --observe NEW.png`, preserving completed input
+when a later capture fails. Holds capture only after confirmed release/cleanup.
+The output must be new; its parent and write access are checked before input.
+`screenshot --compact` retains the existing small JSON geometry/origin receipt.
+Save that JSON and use `map-point --capture frame.json --view-width 1200
+--view-height 800 --x 600 --y 400` for a resized, full window image. Coordinates
+are relative to the image content, with no viewer margins. Windows mapping also
+accepts the nested post-input observation, checks the current receipt and age,
+and returns `input_context_args` plus `input_args`. It does not renew authority,
+recognize content or support monitor-token input. Cropped Windows acquisition
+is not implemented. Native source qualification remains separate.
+
 `--observation` binds input to the latest successfully published screenshot.
 An admitted mutation consumes or invalidates the token, including an uncertain
 input attempt. Capture and inspect again before another action. A later
@@ -178,8 +190,11 @@ The recorder retains refused events separately from uncertain ones. Verification
 counts `image_less` capture events separately from `missing` saved paths and
 includes uncertain events in health. PNG hashes alone cannot certify journal
 health. Older errors/journals have no proven dispatch stage; they remain
-uncertain and are never rewritten. Windows worker stage parity remains separate
-work; a new client cannot infer it from old Linux or Windows strings. Restart a
+uncertain and are never rewritten. Windows cold and warm workers now retain
+structured `submitted`, `dispatch_stage` and `input_delivery` failures. Entering
+the worker body is conservatively unknown even if a later native guard refuses;
+only an envelope refusal proves not-sent. A new client cannot infer stages from
+old Linux or Windows strings. Restart a
 Debian desktop session normally after installing updated worker code; updating
 the client alone cannot add stages to an already running old worker.
 
@@ -207,9 +222,9 @@ take a new capture to observe current dimensions. Debian records completion
 without a final geometry query that could obscure successfully submitted input.
 CachyOS skips the stream's initial sample; Debian performs a
 new scrot capture without claiming compositor frame timing. A capture failure
-does not replay input. Windows post-input observation remains follow-up work;
-its observation-bound route currently supports discrete input, with held-key
-watchdog deadline plumbing still pending.
+does not replay input. Windows now supports post-input observation and carries
+capture deadlines through held-input preparation and watchdog startup to the
+first down. Its PrintWindow capture does not claim GPU frame synchronization.
 Debian observation-bound ASCII text uses one unpaced request; `--delay-ms`
 requires server-paced text support for a single-use token. Non-ASCII text
 defaults to separate character requests with 10 ms pacing because rapid X11

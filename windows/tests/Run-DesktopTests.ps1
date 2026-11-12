@@ -64,8 +64,9 @@ try {
     # Parse/compile only: not a single user32, capture, UIA or input call.
     Initialize-NativeDesktopTypes
     # Pure capture rectangle validation; no PrintWindow or desktop API calls.
+    Add-Type -AssemblyName System.Drawing
     $captureCheck = [Basaltwater.Desktop.Native].GetMethod('CheckCaptureRectangle', [Reflection.BindingFlags]'Static,NonPublic')
-    $rectangle = New-Object Drawing.Rectangle(-640,-20,640,480)
+    $rectangle = New-Object System.Drawing.Rectangle(-640,-20,640,480)
     $captureWindow = [Basaltwater.Desktop.Window]@{x=-640;y=-20;width=640;height=480}
     $null = $captureCheck.Invoke($null, @($captureWindow,$rectangle))
     foreach ($field in @('x','y','width','height','minimized')) {
@@ -77,6 +78,7 @@ try {
     }
     & (Join-Path $PSScriptRoot 'Run-InputTransportTests.ps1')
     & (Join-Path $PSScriptRoot 'Run-HeldInputTests.ps1')
+    & (Join-Path $PSScriptRoot 'Run-InputBacklogTests.ps1')
     # Pure event construction with a synthetic keyboard map. No user32 calls.
     $builder = [Basaltwater.Desktop.Native].GetMethod('KeyInputs', [Reflection.BindingFlags]'Static,NonPublic')
     $map = [Func[uint16,uint32]]{ param($vk)

@@ -54,7 +54,6 @@ public static partial class Native {
     [DllImport("user32.dll")] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
     [DllImport("advapi32.dll",SetLastError=true)] static extern bool OpenProcessToken(IntPtr p,uint a,out IntPtr t);
     [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
-    [DllImport("user32.dll")] static extern bool SetCursorPos(int x,int y);
     [DllImport("user32.dll")] static extern bool GetCursorPos(out Point p);
     [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr h,IntPtr dc,uint flags);
     [StructLayout(LayoutKind.Sequential)] struct Input { public uint type; public InputUnion data; }
@@ -314,19 +313,28 @@ public static partial class Native {
         InputPermit(guard);
         var w=Check(id,identity); if(!w.active || w.minimized || w.width!=width || w.height!=height) throw new Exception("Target must remain foreground with observed geometry");
         foreach(int key in new [] {16,17,18,91,92,1,2,4}) if((GetAsyncKeyState(key)&0x8000)!=0) throw new Exception("Physical modifier or mouse button held; input refused");
-        if(kind=="click") {
+        if(kind=="click" || kind=="move" || kind=="wheel") {
+            int delta=0;
+            if(kind=="wheel" && (!Int32.TryParse(text,out delta) || delta==0 || delta<-1200 || delta>1200 || delta%120!=0)) throw new Exception("Wheel delta must be nonzero multiples of 120 within -1200..1200");
             if(x<0 || y<0 || x>=w.width || y>=w.height) throw new Exception("Click outside window");
             // Reject occlusion and borders using WindowFromPoint.
             var point=new Point {x=w.x+x,y=w.y+y}; var target=WindowFromPoint(point); int owner; GetWindowThreadProcessId(target,out owner);
             if(owner!=w.pid || GetAncestor(target,2)!=new IntPtr(id)) throw new Exception("Click target occluded or changed");
-            InputPermit(guard);if(!SetCursorPos(point.x,point.y)) throw new Exception("Pointer move rejected"); Point observed;
+            InputPermit(guard);
+            var move=new [] {PointerMove(point.x,point.y,new UIntPtr(0xb45a17u))};
+            if(SendInput(1,move,Marshal.SizeOf(typeof(Input)))!=1) throw new Exception("Pointer move rejected"); Point observed;
             if(!GetCursorPos(out observed) || observed.x!=point.x || observed.y!=point.y) throw new Exception("Pointer destination unverified");
             var current=Check(id,identity);
             if(!current.active || current.minimized || current.width!=width || current.height!=height || current.x!=w.x || current.y!=w.y) throw new Exception("Foreground or geometry changed before click");
             target=WindowFromPoint(point);GetWindowThreadProcessId(target,out owner);
             if(owner!=w.pid || GetAncestor(target,2)!=new IntPtr(id)) throw new Exception("Click target occluded or changed");
             foreach(int key in new [] {16,17,18,91,92,1,2,4}) if((GetAsyncKeyState(key)&0x8000)!=0) throw new Exception("Physical modifier or mouse button held; input refused");
-            InputPermit(guard);SendPair(ClickInputs(),delegate(Input[] batch) {return SendInput((uint)batch.Length,batch,Marshal.SizeOf(typeof(Input)));});
+            InputPermit(guard);
+            if(kind=="move") return;
+            if(kind=="wheel") {
+                var batch=new [] {new Input {data=new InputUnion {mouse=new Mouse {flags=0x800,data=unchecked((uint)delta),extra=new UIntPtr(0xb45a17u)}}}};
+                if(SendInput(1,batch,Marshal.SizeOf(typeof(Input)))!=1) throw new Exception("Wheel rejected; do not replay");
+            } else SendPair(ClickInputs(),delegate(Input[] batch) {return SendInput((uint)batch.Length,batch,Marshal.SizeOf(typeof(Input)));});
         } else if(kind=="text") {
             var items=UnicodeInputs(text);w=Check(id,identity);
             if(!w.active || w.minimized || w.width!=width || w.height!=height) throw new Exception("Foreground or geometry changed");

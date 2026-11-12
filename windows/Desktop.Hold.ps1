@@ -102,11 +102,17 @@ function Assert-NativeHeldIdle {
     if($receipt.version -ne 1 -or $receipt.lease -cne $record.id -or -not $receipt.scheduler_retired -or -not (Test-NativeHeldClosedOwnership $request)){throw 'Held-input receipt does not confirm closed ownership and Scheduler retirement'}
     Remove-Item -LiteralPath $active
 }
-function Get-NativeHeldControlReason($Record) {
+function Get-NativeHeldControlReason($Record,$Plan=$null) {
     try {
         if (Test-Path -LiteralPath (Join-Path $Record.directory 'cancel')) { return 'cancelled' }
         $state = Read-NativeHeldJson (Get-NativeDesktopStatePath) 2097152
+        if($Plan){
+            $Plan.control_expected=$Record.revision+';enabled;'+$Record.session+';'+$Record.sid
+            $Plan.control_observed=$state.revision+';'+$state.mode+';'+$state.session+';'+$state.owner
+            if($Record.PSObject.Properties['generation']){$Plan.control_expected+=';'+$Record.generation;$Plan.control_observed+=';'+$state.generation}
+        }
         if ($state.mode -ne 'enabled' -or $state.revision -cne $Record.revision -or $state.session -cne $Record.session -or $state.owner -cne $Record.sid) { return 'control-changed' }
+        if($Record.PSObject.Properties['generation'] -and $state.generation -cne $Record.generation){return 'control-changed'}
         return $null
     } catch { return 'control-unavailable' }
 }
@@ -116,7 +122,10 @@ function Invoke-NativeHeldDriver($Request) {
     Assert-NativeHeldRecord $record $Request.lease $directory
     $plan = [Basaltwater.Desktop.HeldPlan]$record.plan
     try {
-        return [Basaltwater.Desktop.Native]::RunHold($plan,$record.directory,$record.name,[uint64]$record.marker,[int]$record.milliseconds,[int]$record.repeat_ms,[int]$record.caller_pid,[long]$record.caller_created,[Func[string]]{ Get-NativeHeldControlReason $record })
+        return [Basaltwater.Desktop.Native]::RunHold($plan,$record.directory,$record.name,[uint64]$record.marker,[int]$record.milliseconds,[int]$record.repeat_ms,[int]$record.caller_pid,[long]$record.caller_created,[Func[string]]{
+            if($script:NativeDesktopInputGuard){$reason=$script:NativeDesktopInputGuard.Invoke();if($reason){return $reason}}
+            Get-NativeHeldControlReason $record $plan
+        })
     } catch {
         Write-NativeHeldJson (Join-Path $record.directory 'driver-error.json') @{ error=$_.Exception.ToString(); stack=$_.ScriptStackTrace }
         throw
@@ -141,13 +150,14 @@ function Start-NativeHeldLease($Request,$Context,$State) {
     # Preparation uses all existing native foreground/physical input guards.
     $prepare = @{}; foreach ($key in $Request.Keys) { $prepare[$key] = $Request[$key] }; $prepare.command = 'hold-plan'
     $plan = Invoke-NativeDesktopWorker $prepare
+    if($Request.ContainsKey('observation_deadline') -and (Get-NativeDesktopMonotonic) -gt [long]$Request.observation_deadline){throw 'Capture observation expired before watchdog startup'}
     $root = Get-NativeHeldRoot; New-NativeDesktopPrivateDirectory $root
     $id = [guid]::NewGuid().ToString('N'); $directory = Join-Path $root $id
     New-NativeDesktopPrivateDirectory $directory
     $caller = [Diagnostics.Process]::GetCurrentProcess()
     try { $callerCreated = $caller.StartTime.ToUniversalTime().Ticks } finally { $caller.Dispose() }
     $record = @{ version=1; id=$id; directory=$directory; sid=$Context.Sid; session=$Context.Session; revision=$State.revision;
-        name=('Local\Basaltwater.Hold.' + $id); task=('Basaltwater-Hold-' + $id); marker=[uint32]('0x' + $id.Substring(0,7));
+        generation=$State.generation; name=('Local\Basaltwater.Hold.' + $id); task=('Basaltwater-Hold-' + $id); marker=[uint32]('0x' + $id.Substring(0,7));
         caller_pid=$PID; caller_created=$callerCreated; milliseconds=$Request.milliseconds; repeat_ms=0; plan=$plan;
         created_utc=[DateTime]::UtcNow.ToString('o') }
     if ($Request.ContainsKey('repeat-ms')) { $record.repeat_ms=$Request['repeat-ms'] }
@@ -269,7 +279,7 @@ function Wait-NativeHeldLease($Record) {
     $wait = [Diagnostics.Stopwatch]::StartNew()
     while (-not (Test-Path -LiteralPath $path) -and $wait.Elapsed.TotalSeconds -lt 8) { Start-Sleep -Milliseconds 50 }
     $receipt = $null; if (Test-Path -LiteralPath $path) { $receipt=Read-NativeHeldJson $path }
-    $started=$driver -and @($driver.sends | Where-Object {$_.action -eq 'down' -and $_.accepted -gt 0 -and $_.accepted -eq $_.requested}).Count -eq 1
+    $started=$driver -and @($driver.sends | Where-Object {$_.action -in @('down','timeline-down') -and $_.accepted -gt 0 -and $_.accepted -eq $_.requested}).Count -gt 0
     $durationCompleted = $started -and ($driver.reason -eq 'expired' -or ($receipt -and $receipt.watchdog -and $receipt.watchdog.reason -eq 'watchdog-expired'))
     $ok = $null -ne $receipt -and $receipt.cleanup_confirmed -and -not $driverError -and $driver -and -not $driver.error -and $driver.release_state -eq 'submitted' -and $durationCompleted
     return @{ ok=[bool]$ok; duration_completed=[bool]$durationCompleted; lease=$Record.id; result=$driver; receipt=$receipt; error=$driverError; evidence_directory=$Record.directory }

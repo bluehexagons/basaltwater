@@ -107,7 +107,8 @@ short-lived members, tracking overflow and unavailable observations.
 Priority 2 adds finite keyboard `input hold` leases with optional explicit
 repeat, QPC send/lateness records and an independent Scheduled Task release
 watchdog. Focus/control/identity changes stop input; physical ownership and
-uncertain release remain explicit. Mouse holds and virtual pads are separate.
+uncertain release remain explicit. Source now also supports bounded mouse holds;
+their native qualification remains open. Virtual pads remain separate.
 
 ### Consuming-game feedback and next Windows pass
 
@@ -127,7 +128,14 @@ review of the private receipts.
 
 Keep the following scoped tasks open for agents with Windows access:
 
-- [ ] Add multiple ordinary keys within one finite lease, then a small bounded
+Source now implements eight-key leases, 32-event ordered overlap timelines,
+wheel and left/right/middle holds/drags, specific stop evidence, cold request
+envelopes, held observation deadlines and completion-preserving post captures.
+The [operator contract](../workstations/windows-held-input.md) documents bounds
+and the opt-in WinForms source probe. Offline PowerShell 5.1 tests do not promote
+native acceptance; the checklist below remains open for live qualification.
+
+- [ ] Qualify the implemented multiple ordinary keys within one finite lease and bounded
   input timeline for combinations such as `W+J`, `A+M` and direction changes
   during a jump. Validate the entire key set, ordering, event count and timing
   bounds before injection. Pay watchdog startup once per lease; retain per-key
@@ -137,12 +145,12 @@ Keep the following scoped tasks open for agents with Windows access:
   and cleanup after caller/driver/watchdog failures with SDL events and
   frame-polled game state. Coordinate capture-deadline support with the
   [shared observation backlog](game-testing.md#desktop-observation-follow-up).
-- [ ] Add wheel input and bounded left/right/middle button holds and drags
+- [ ] Qualify implemented wheel input and bounded left/right/middle button holds and drags
   through the public desktop adapter. Qualify camera orbit, right-drag pan,
   wheel zoom, scrollbars and sliders with observed effects. Reuse target,
   ownership, duration and independent-release contracts; cover partial mouse
   delivery, pointer/target changes, cancellation and controller loss.
-- [ ] Replace the combined held-target message with stable reason codes and
+- [ ] Qualify stable held-target reason codes and
   bounded expected/observed guard fields for foreground, identity, geometry
   and control changes. Preserve the stop time and confirmed release/cleanup
   separately. Keep raw target details in private evidence. Reproduce a fullscreen

@@ -9,10 +9,18 @@ using System.Threading;
 using System.Windows.Forms;
 
 namespace Basaltwater.Desktop {
-public sealed class HeldKey { public ushort vk, scan; public uint flags; }
+public sealed class HeldKey { public ushort vk, scan; public uint flags; public bool mouse; }
+public sealed class HeldEvent { public int milliseconds, mask; }
 public sealed class HeldPlan {
     public long window, layout; public string identity; public int width, height;
+    public long observation_deadline;
+    public string control_expected, control_observed;
+    internal Func<string> admission;
+    internal bool input_started;
     public HeldKey[] keys;
+    public HeldEvent[] timeline;
+    public bool pointer, drag; public int x, y, to_x, to_y, origin_x, origin_y;
+    public bool position_bound;
 }
 public sealed class HeldStamp {
     public int sequence, requested, accepted; public string action;
@@ -20,9 +28,10 @@ public sealed class HeldStamp {
 }
 public sealed class HeldReceipt {
     public string reason, release_state, utc_anchor, error;
-    public long qpc_anchor, qpc_frequency, started_qpc, ended_qpc;
+    public long qpc_anchor, qpc_frequency, started_qpc, stopped_qpc, ended_qpc;
     public int transferred_mask, pending_mask;
     public bool outcome_verified = false;
+    public string stop_field, expected, observed;
     public List<HeldStamp> sends = new List<HeldStamp>();
 }
 // All shared ownership changes, including intent BEFORE SendInput, use this
@@ -52,7 +61,7 @@ public sealed class HeldStore : IDisposable {
                 if(magic!=0 && magic!=s.magic) throw new Exception("Invalid held-input record version");
                 s.phase=r.ReadInt32(); s.mask=r.ReadInt32(); s.pid=r.ReadInt32(); s.transferred=r.ReadInt32();
                 s.created=r.ReadInt64(); s.start=r.ReadInt64(); s.deadline=r.ReadInt64(); s.heartbeat=r.ReadInt64();
-                if(s.phase<0 || s.phase>3 || s.mask<0 || s.mask>7 || s.transferred<0 || s.transferred>7) throw new Exception("Invalid held-input ownership state");
+                if(s.phase<0 || s.phase>3 || s.mask<0 || s.mask>255 || s.transferred<0 || s.transferred>255) throw new Exception("Invalid held-input ownership state");
                 // Persist changes even when the action fails after a send intent.
                 try { return action(s); }
                 finally { f.Position=0; var w=new BinaryWriter(f); w.Write(s.magic); w.Write(s.phase); w.Write(s.mask); w.Write(s.pid); w.Write(s.transferred); w.Write(s.created); w.Write(s.start); w.Write(s.deadline); w.Write(s.heartbeat); w.Flush(); f.Flush(true); }
@@ -68,6 +77,34 @@ public sealed class HeldStore : IDisposable {
     public void Dispose() { mutex.Dispose(); }
 }
 public static partial class Native {
+    static void ValidateHeldPlan(HeldPlan plan) {
+        if(plan==null || plan.keys==null || plan.keys.Length<1 || plan.keys.Length>8) throw new Exception("Invalid held key count");
+        var seen=new HashSet<ushort>();
+        foreach(var key in plan.keys) {
+            if(key==null || !seen.Add(key.vk)) throw new Exception("Invalid held key identity");
+            if(key.mouse) {if(!plan.pointer || plan.keys.Length!=1 || (key.vk!=1 && key.vk!=2 && key.vk!=4)) throw new Exception("Invalid mouse lease");}
+        }
+        if(plan.timeline!=null) {
+            if(plan.pointer || plan.timeline.Length<1 || plan.timeline.Length>32) throw new Exception("Invalid timeline event count");
+            int previous=-1,all=(1<<plan.keys.Length)-1;
+            foreach(var step in plan.timeline) {
+                if(step==null || step.milliseconds<=previous || step.milliseconds>=5000 || (previous<0 && step.milliseconds!=0) || step.mask<0 || (step.mask&~all)!=0) throw new Exception("Invalid timeline event");
+                previous=step.milliseconds;
+            }
+        }
+        if(plan.pointer && (plan.x<0 || plan.y<0 || plan.to_x<0 || plan.to_y<0 || plan.x>=plan.width || plan.to_x>=plan.width || plan.y>=plan.height || plan.to_y>=plan.height)) throw new Exception("Invalid pointer endpoints");
+    }
+    sealed class HeldGuardFailure : Exception {
+        public string field, expected, observed;
+        public HeldGuardFailure(string reason,string field,string expected,string observed) : base(reason) {
+            this.field=field; this.expected=BoundHeldField(expected); this.observed=BoundHeldField(observed);
+        }
+    }
+    static string BoundHeldField(string value) { return value==null ? null : value.Substring(0,Math.Min(value.Length,256)); }
+    static void HeldFailureEvidence(HeldReceipt receipt,Exception error) {
+        var guard=error as HeldGuardFailure;
+        if(guard!=null) {receipt.stop_field=guard.field;receipt.expected=guard.expected;receipt.observed=guard.observed;}
+    }
     public static bool SettleUnstartedHold(string directory,string name) {
         using(var store=new HeldStore(directory,name)) return store.Locked<bool>(delegate(HeldStore.State s) {
             if(s.phase!=0 || s.mask!=0) return false;
@@ -97,29 +134,94 @@ public static partial class Native {
         var plan=new HeldPlan {window=id,identity=identity,width=width,height=height};
         HoldGuard(plan,true);
         int pid; var thread=GetWindowThreadProcessId(new IntPtr(id),out pid); var layout=GetKeyboardLayout(thread);
-        var vks=new List<ushort>();
-        var inputs=KeyInputs(text,false,delegate(ushort vk) { vks.Add(vk); return MapVirtualKeyEx(vk,4,layout); });
-        if(vks.Count<1 || vks.Count>3) throw new Exception("Hold supports one key with optional distinct CTRL/SHIFT prefixes");
-        plan.keys=new HeldKey[vks.Count]; plan.layout=layout.ToInt64();
-        for(int i=0;i<vks.Count;i++) plan.keys[i]=new HeldKey {vk=vks[i],scan=inputs[i].data.key.scan,flags=inputs[i].data.key.flags};
+        plan.keys=BuildHeldKeys(text,delegate(ushort vk) { return MapVirtualKeyEx(vk,4,layout); });
+        plan.layout=layout.ToInt64();
+        var target=Check(id,identity);plan.origin_x=target.x;plan.origin_y=target.y;plan.position_bound=true;
         HoldGuard(plan,true); return plan;
     }
+    static HeldKey[] BuildHeldKeys(string text,Func<ushort,uint> map) {
+        if(String.IsNullOrEmpty(text) || text.Length>64) throw new Exception("Hold key set exceeds bound");
+        var result=new List<HeldKey>(); var seen=new HashSet<ushort>();
+        foreach(var part in text.Split('+')) {
+            var vks=new List<ushort>();
+            // Reuse the discrete parser and its layout/extended-key rules.
+            string token=part.Trim().ToUpperInvariant();
+            string chord=token=="CTRL" || token=="SHIFT" ? token+"+A" : token;
+            var inputs=KeyInputs(chord,false,delegate(ushort vk) { vks.Add(vk); return map(vk); });
+            ushort key=vks[0];
+            if(!seen.Add(key) || result.Count==8) throw new Exception("Hold requires 1..8 distinct keys");
+            result.Add(new HeldKey {vk=key,scan=inputs[0].data.key.scan,flags=inputs[0].data.key.flags});
+        }
+        return result.ToArray();
+    }
+    public static HeldPlan PrepareTimeline(long id,string identity,string timeline,int width,int height,int duration) {
+        int pid;var thread=GetWindowThreadProcessId(new IntPtr(id),out pid);var layout=GetKeyboardLayout(thread);
+        var plan=BuildHeldTimeline(timeline,duration,delegate(ushort vk) {return MapVirtualKeyEx(vk,4,layout);});
+        plan.window=id;plan.identity=identity;plan.width=width;plan.height=height;plan.layout=layout.ToInt64();
+        var target=Check(id,identity);plan.origin_x=target.x;plan.origin_y=target.y;plan.position_bound=true;
+        HoldGuard(plan,true);return plan;
+    }
+    static HeldPlan BuildHeldTimeline(string timeline,int duration,Func<ushort,uint> map) {
+        if(String.IsNullOrEmpty(timeline) || timeline.Length>2048 || duration<50 || duration>5000) throw new Exception("Invalid timeline bounds");
+        var parts=timeline.Split(','); if(parts.Length>32) throw new Exception("Timeline limit is 32 events");
+        var keys=new List<HeldKey>();var events=new List<HeldEvent>();
+        int previous=-1;
+        foreach(var part in parts) {
+            var pair=part.Split(':');int at;
+            if(pair.Length!=2 || !Int32.TryParse(pair[0],out at) || at<=previous || at>=duration || (previous<0 && at!=0)) throw new Exception("Timeline starts at 0, strictly ordered before duration");
+            previous=at;int mask=0;
+            if(pair[1]!="-") foreach(var key in BuildHeldKeys(pair[1],map)) {
+                int index=keys.FindIndex(delegate(HeldKey k) {return k.vk==key.vk;});
+                if(index<0) {if(keys.Count==8) throw new Exception("Timeline owns at most 8 keys");index=keys.Count;keys.Add(key);}
+                mask|=1<<index;
+            }
+            events.Add(new HeldEvent {milliseconds=at,mask=mask});
+        }
+        if(keys.Count==0) throw new Exception("Timeline requires a key");
+        return new HeldPlan {keys=keys.ToArray(),timeline=events.ToArray()};
+    }
+    public static HeldPlan PreparePointerHold(long id,string identity,string button,int width,int height,int x,int y,int toX,int toY,bool drag) {
+        ushort vk;uint flags;
+        switch(button) {case "left":vk=1;flags=2;break;case "right":vk=2;flags=8;break;case "middle":vk=4;flags=32;break;default:throw new Exception("Button must be left, right or middle");}
+        if(x<0 || y<0 || x>=width || y>=height || toX<0 || toY<0 || toX>=width || toY>=height) throw new Exception("Pointer endpoint outside window");
+        var plan=new HeldPlan {window=id,identity=identity,width=width,height=height,x=x,y=y,to_x=toX,to_y=toY,drag=drag,keys=new [] {new HeldKey {vk=vk,mouse=true,flags=flags}}};
+        HoldGuard(plan,true);var w=Check(id,identity);plan.origin_x=w.x;plan.origin_y=w.y;
+        Point current;if(!GetCursorPos(out current) || current.x!=w.x+x || current.y!=w.y+y) throw new Exception("Place pointer at observed start with discrete input before hold");
+        plan.pointer=true;HoldGuard(plan,true);return plan;
+    }
     public static void HoldGuard(HeldPlan plan,bool initial) {
-        var w=Check(plan.window,plan.identity);
-        if(!w.active || w.minimized || w.width!=plan.width || w.height!=plan.height) throw new Exception("Held target lost foreground, identity or geometry");
+        Window w;
+        try { w=Observe(plan.window); } catch { throw new HeldGuardFailure("target-unavailable","identity",plan.identity,"unavailable"); }
+        CheckHeldWindow(plan,w,w.active ? plan.window : GetForegroundWindow().ToInt64());
+        if(plan.pointer) {
+            Point point;int owner;
+            if(!GetCursorPos(out point)) throw new Exception("pointer-unavailable");
+            var target=WindowFromPoint(point);GetWindowThreadProcessId(target,out owner);
+            if(point.x<w.x || point.y<w.y || point.x>=w.x+w.width || point.y>=w.y+w.height || owner!=w.pid || GetAncestor(target,2)!=new IntPtr(plan.window)) throw new Exception("pointer-target-changed");
+        }
         int pid; var thread=GetWindowThreadProcessId(new IntPtr(plan.window),out pid);
-        if(plan.layout!=0 && GetKeyboardLayout(thread).ToInt64()!=plan.layout) throw new Exception("Target keyboard layout changed");
+        CheckHeldLayout(plan,GetKeyboardLayout(thread).ToInt64());
         if(initial) {
             foreach(int key in new [] {16,17,18,91,92,1,2,4}) if((GetAsyncKeyState(key)&0x8000)!=0) throw new Exception("Physical modifier or mouse button held; input refused");
             if(plan.keys!=null) foreach(var key in plan.keys) if((GetAsyncKeyState(key.vk)&0x8000)!=0) throw new Exception("Requested key already held; input refused");
         }
     }
+    static void CheckHeldWindow(HeldPlan plan,Window w,long foreground) {
+        if(w.identity!=plan.identity) throw new HeldGuardFailure("identity-changed","identity",plan.identity,w.identity);
+        if(!w.active) throw new HeldGuardFailure("foreground-changed","foreground",plan.window.ToString(),foreground.ToString());
+        if(w.minimized || w.width!=plan.width || w.height!=plan.height) throw new HeldGuardFailure("geometry-changed","geometry",plan.width+"x"+plan.height,w.width+"x"+w.height+";minimized="+w.minimized);
+        if(plan.pointer || plan.position_bound) {
+            if(w.x!=plan.origin_x || w.y!=plan.origin_y) throw new HeldGuardFailure("geometry-changed","origin",plan.origin_x+","+plan.origin_y,w.x+","+w.y);
+        }
+    }
+    static void CheckHeldLayout(HeldPlan plan,long layout) {if(plan.layout!=0 && layout!=plan.layout) throw new HeldGuardFailure("layout-changed","layout",plan.layout.ToString(),layout.ToString());}
     static Input[] HeldInputs(HeldKey[] keys,int mask,bool up,UIntPtr marker) {
         var batch=new List<Input>();
         for(int n=0;n<keys.Length;n++) {
             int i=up ? keys.Length-1-n : n;
             if((mask&(1<<i))==0) continue;
-            var k=keys[i]; var input=Key(0,k.scan,k.flags|(up ? 2u : 0u)); input.data.key.extra=marker; batch.Add(input);
+            var k=keys[i]; var input=k.mouse ? new Input {data=new InputUnion {mouse=new Mouse {flags=k.flags<<(up ? 1 : 0),extra=marker}}} : Key(0,k.scan,k.flags|(up ? 2u : 0u));
+            if(!k.mouse) input.data.key.extra=marker; batch.Add(input);
         }
         return batch.ToArray();
     }
@@ -134,7 +236,9 @@ public static partial class Native {
         catch { p.Dispose(); throw; }
     }
     static void HeldRelease(HeldStore store,HeldPlan plan,EventWaitHandle[] transferred,UIntPtr marker,HeldReceipt receipt,string reason,Func<Input[],uint> send) {
-        receipt.reason=reason;
+        if(receipt.reason==null) receipt.reason=reason;
+        if(receipt.stopped_qpc==0) receipt.stopped_qpc=Stopwatch.GetTimestamp();
+        if(reason=="control-changed") {receipt.stop_field="control";receipt.expected=BoundHeldField(plan.control_expected);receipt.observed=BoundHeldField(plan.control_observed);}
         store.Locked<int>(delegate(HeldStore.State s) {
             receipt.started_qpc=s.start;
             if(s.phase==3) { receipt.release_state="uncertain"; receipt.pending_mask=s.mask; receipt.transferred_mask=s.transferred; return 0; }
@@ -160,20 +264,36 @@ public static partial class Native {
         receipt.ended_qpc=Stopwatch.GetTimestamp();
     }
     static uint SendHeld(Input[] batch) { return SendInput((uint)batch.Length,batch,Marshal.SizeOf(typeof(Input))); }
+    [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
+    static Input PointerMove(int x,int y,UIntPtr marker) {
+        int left=GetSystemMetrics(76),top=GetSystemMetrics(77),width=GetSystemMetrics(78),height=GetSystemMetrics(79);
+        return PointerMoveForBounds(x,y,marker,left,top,width,height);
+    }
+    static Input PointerMoveForBounds(int x,int y,UIntPtr marker,int left,int top,int width,int height) {
+        if(width<2 || height<2 || x<left || y<top || x>=left+width || y>=top+height) throw new Exception("Pointer outside virtual desktop");
+        return new Input {data=new InputUnion {mouse=new Mouse {x=(int)((long)(x-left)*65535/(width-1)),y=(int)((long)(y-top)*65535/(height-1)),flags=0xc001,extra=marker}}};
+    }
     static void HeldPress(HeldStore store,HeldPlan plan,UIntPtr marker,HeldReceipt receipt,long start,long deadline,Func<Input[],uint> send) {
         store.Locked<int>(delegate(HeldStore.State s) {
             if(s.phase!=0 || start-s.heartbeat>Stopwatch.Frequency/4) throw new Exception("Watchdog stopped or heartbeat expired");
-            s.phase=1; s.mask=(1<<plan.keys.Length)-1;
+            s.phase=1; s.mask=plan.timeline==null ? (1<<plan.keys.Length)-1 : plan.timeline[0].mask;
             using(var current=Process.GetCurrentProcess()) { s.pid=current.Id; s.created=current.StartTime.ToUniversalTime().Ticks; }
             s.start=start; s.deadline=deadline;
             store.Intent(s); var batch=HeldInputs(plan.keys,s.mask,false,marker);
+            try { if(plan.admission!=null) { var error=plan.admission(); if(error!=null) throw new Exception(error); } }
+            catch { s.mask=0; s.phase=2; throw; }
             long actual=Stopwatch.GetTimestamp();
+            if(plan.observation_deadline!=0 && actual>plan.observation_deadline) {
+                s.mask=0;s.phase=2;throw new HeldGuardFailure("observation-expired","observation_deadline",plan.observation_deadline.ToString(),actual.ToString());
+            }
             if(actual>=deadline || actual-s.heartbeat>Stopwatch.Frequency/4) {
                 s.mask=0; s.phase=2; throw new Exception("Lease or watchdog expired before down; no input submitted");
             }
             uint sent=send(batch); Stamp(receipt,"down",start,actual,batch,sent);
+            plan.input_started=sent>0;
             if(sent>batch.Length) throw new Exception("Invalid input submission count");
-            s.mask=(1<<(int)sent)-1;
+            int accepted=0,seen=0;for(int i=0;i<plan.keys.Length;i++) if((s.mask&(1<<i))!=0 && seen++<sent) accepted|=1<<i;
+            s.mask=accepted;
             if(sent!=batch.Length) throw new Exception("Partial held input; no replay"); return 0;
         });
     }
@@ -182,7 +302,7 @@ public static partial class Native {
         if(cancel.WaitOne(0)) return "cancelled";
         if(activity.WaitOne(0)) return "outside-input";
         var reason=control(); if(!String.IsNullOrEmpty(reason)) return reason;
-        try { HoldGuard(plan,false); } catch(Exception e) { return e.Message; }
+        HoldGuard(plan,false);
         return null;
     }
     static string HeldRepeatStop(long now,long scheduled,long deadline,long interval) {
@@ -190,7 +310,39 @@ public static partial class Native {
         if(now-scheduled>Stopwatch.Frequency/10 || now-scheduled>=interval) return "schedule-late";
         return null;
     }
+    static void HeldTransition(HeldStore store,HeldPlan plan,UIntPtr marker,HeldReceipt receipt,int desired,long scheduled,long deadline,Func<Input[],uint> send) {
+        store.Locked<int>(delegate(HeldStore.State s) {
+            if(s.phase!=1 || s.transferred!=0) throw new Exception("Ownership changed before timeline event");
+            if(plan.admission!=null) {var reason=plan.admission();if(reason!=null) throw new Exception(reason);}
+            long now=Stopwatch.GetTimestamp();
+            if(now>=deadline || now-scheduled>Stopwatch.Frequency/10 || now-s.heartbeat>Stopwatch.Frequency/4) throw new Exception("Timeline or watchdog expired; no catch-up");
+            int releasing=s.mask&~desired;
+            var ups=HeldInputs(plan.keys,releasing,true,marker);
+            if(ups.Length>0) {
+                s.phase=3;store.Intent(s);long actual=Stopwatch.GetTimestamp();uint sent=send(ups);Stamp(receipt,"timeline-up",scheduled,actual,ups,sent);
+                int seen=0;for(int i=plan.keys.Length-1;i>=0;i--) if((releasing&(1<<i))!=0 && seen++<sent) s.mask&=~(1<<i);
+                if(sent!=ups.Length) throw new Exception("Partial timeline release; no replay");s.phase=1;
+            }
+            int pressing=desired&~s.mask;var downs=HeldInputs(plan.keys,pressing,false,marker);
+            if(downs.Length>0) {
+                int before=s.mask;s.mask|=pressing;store.Intent(s);
+                try {if(plan.admission!=null){var stop=plan.admission();if(stop!=null) throw new Exception(stop);}}
+                catch {s.mask=before;throw;}
+                now=Stopwatch.GetTimestamp();if(now>=deadline || now-scheduled>Stopwatch.Frequency/10){s.mask=before;throw new Exception("Timeline expired before down");}
+                if(!plan.input_started && plan.observation_deadline!=0 && now>plan.observation_deadline){s.mask=before;throw new HeldGuardFailure("observation-expired","observation_deadline",plan.observation_deadline.ToString(),now.ToString());}
+                uint sent=send(downs);Stamp(receipt,"timeline-down",scheduled,now,downs,sent);
+                if(sent>0) plan.input_started=true;
+                s.mask=before;int seen=0;for(int i=0;i<plan.keys.Length;i++) if((pressing&(1<<i))!=0 && seen++<sent) s.mask|=1<<i;
+                if(sent!=downs.Length) throw new Exception("Partial timeline down; no replay");
+            }
+            return 0;
+        });
+    }
     public static HeldReceipt RunHold(HeldPlan plan,string directory,string name,ulong markerValue,int milliseconds,int repeatMilliseconds,int callerPid,long callerCreated,Func<string> control) {
+        ValidateHeldPlan(plan);
+        if(plan.timeline!=null && repeatMilliseconds!=0) throw new Exception("Timeline cannot repeat");
+        if(plan.pointer && repeatMilliseconds!=0) throw new Exception("Mouse lease cannot repeat");
+        if(plan.timeline!=null && plan.timeline[plan.timeline.Length-1].milliseconds>=milliseconds) throw new Exception("Timeline event exceeds lease duration");
         if(milliseconds<50 || milliseconds>5000 || (repeatMilliseconds!=0 && (repeatMilliseconds<50 || repeatMilliseconds>milliseconds))) throw new Exception("Hold bounds: 50-5000 ms; repeat 0 or 50..duration");
         var receipt=NewHeldReceipt(); var marker=new UIntPtr(markerValue);
         using(var store=new HeldStore(directory,name))
@@ -204,8 +356,11 @@ public static partial class Native {
                 if(!ready.WaitOne(0)) throw new Exception("Held-input watchdog not ready");
                 var reason=HeldCheck(plan,control,caller,cancel,activity); if(reason!=null) throw new Exception(reason);
                 HoldGuard(plan,true);
+                plan.admission=delegate { return HeldCheck(plan,control,caller,cancel,activity); };
                 long start=Stopwatch.GetTimestamp(), deadline=start+milliseconds*Stopwatch.Frequency/1000;
                 HeldPress(store,plan,marker,receipt,start,deadline,SendHeld);
+                int eventIndex=1;
+                long nextMove=start+20*Stopwatch.Frequency/1000;
                 long next=repeatMilliseconds==0 ? deadline : start+repeatMilliseconds*Stopwatch.Frequency/1000;
                 while(true) {
                     long now=Stopwatch.GetTimestamp(); if(now>=deadline) { reason="expired"; break; }
@@ -213,6 +368,23 @@ public static partial class Native {
                     now=Stopwatch.GetTimestamp(); if(now>=deadline) { reason="expired"; break; }
                     bool alive=store.Locked<bool>(delegate(HeldStore.State s) { return s.phase==1 && now-s.heartbeat<=Stopwatch.Frequency/4; });
                     if(!alive) { reason="watchdog-stopped"; break; }
+                    if(plan.drag && now>=nextMove) {
+                        store.Locked<int>(delegate(HeldStore.State s) {
+                            var stop=plan.admission();if(stop!=null) throw new Exception(stop);
+                            long actual=Stopwatch.GetTimestamp();
+                            if(s.phase!=1 || actual>=deadline || actual-s.heartbeat>Stopwatch.Frequency/4 || actual-nextMove>Stopwatch.Frequency/10) throw new Exception("Drag schedule expired");
+                            double fraction=Math.Min(1.0,(actual-start)/(double)Math.Max(1,deadline-start-20*Stopwatch.Frequency/1000));
+                            var batch=new [] {PointerMove(plan.origin_x+plan.x+(int)Math.Round((plan.to_x-plan.x)*fraction),plan.origin_y+plan.y+(int)Math.Round((plan.to_y-plan.y)*fraction),marker)};
+                            actual=Stopwatch.GetTimestamp();if(actual>=deadline || actual-s.heartbeat>Stopwatch.Frequency/4) throw new Exception("Drag expired before move");
+                            uint sent=SendHeld(batch);Stamp(receipt,"move",nextMove,actual,batch,sent);if(sent!=1) throw new Exception("Drag move rejected; no replay");return 0;
+                        });
+                        nextMove=now+20*Stopwatch.Frequency/1000;
+                    }
+                    if(plan.timeline!=null && eventIndex<plan.timeline.Length) {
+                        long scheduled=start+plan.timeline[eventIndex].milliseconds*Stopwatch.Frequency/1000;
+                        long eventDeadline=eventIndex+1<plan.timeline.Length ? Math.Min(deadline,start+plan.timeline[eventIndex+1].milliseconds*Stopwatch.Frequency/1000) : deadline;
+                        if(now>=scheduled) {HeldTransition(store,plan,marker,receipt,plan.timeline[eventIndex].mask,scheduled,eventDeadline,SendHeld);eventIndex++;}
+                    }
                     if(repeatMilliseconds!=0 && now>=next) {
                         bool repeated=store.Locked<bool>(delegate(HeldStore.State s) {
                             long actual=Stopwatch.GetTimestamp();
@@ -229,7 +401,7 @@ public static partial class Native {
                     Thread.Sleep(5);
                 }
                 HeldRelease(store,plan,transferred,marker,receipt,reason,SendHeld);
-            } catch(Exception e) { receipt.error=e.Message; HeldRelease(store,plan,transferred,marker,receipt,"failed",SendHeld); }
+            } catch(Exception e) { receipt.error=e.Message; HeldFailureEvidence(receipt,e); HeldRelease(store,plan,transferred,marker,receipt,e is HeldGuardFailure ? e.Message : "failed",SendHeld); }
             finally { foreach(var handle in transferred) if(handle!=null) handle.Dispose(); }
         }
         return receipt;
@@ -245,8 +417,9 @@ public static partial class Native {
     static bool IsHeldPhysicalKey(HeldKey key,uint vk,uint scan,uint flags) {
         // Hooks can expose a generic modifier VK. Physical scan identity still
         // identifies our left modifier; E0 distinguishes keypad/navigation keys.
-        return key.vk==vk || (key.scan==(scan&255) && ((key.flags^flags)&1)==0);
+        return !key.mouse && (key.vk==vk || (key.scan==(scan&255) && ((key.flags^flags)&1)==0));
     }
+    static int HeldMouseKey(int msg) { return msg==0x201 || msg==0x202 ? 1 : msg==0x204 || msg==0x205 ? 2 : msg==0x207 || msg==0x208 ? 4 : 0; }
     sealed class HeldHooks : IDisposable {
         readonly Thread thread; readonly ManualResetEvent ready=new ManualResetEvent(false);
         uint threadId; Exception failure;
@@ -260,7 +433,10 @@ public static partial class Native {
                     } return CallNextHookEx(IntPtr.Zero,code,message,data);
                 };
                 HeldHook mouseHook=delegate(int code,IntPtr message,IntPtr data) {
-                    if(code>=0) { var m=(HeldMouse)Marshal.PtrToStructure(data,typeof(HeldMouse)); if(m.extra!=marker) activity.Set(); }
+                    if(code>=0) { var m=(HeldMouse)Marshal.PtrToStructure(data,typeof(HeldMouse)); if(m.extra!=marker) {
+                        activity.Set();int vk=HeldMouseKey(message.ToInt32());
+                        for(int i=0;i<plan.keys.Length;i++) if(plan.keys[i].mouse && plan.keys[i].vk==vk) transferred[i].Set();
+                    } }
                     return CallNextHookEx(IntPtr.Zero,code,message,data);
                 };
                 try {
@@ -283,6 +459,7 @@ public static partial class Native {
         }
     }
     public static HeldReceipt WatchHold(HeldPlan plan,string directory,string name,ulong markerValue,int callerPid,long callerCreated,Func<string> control) {
+        ValidateHeldPlan(plan);
         var receipt=NewHeldReceipt(); var marker=new UIntPtr(markerValue); var transferred=new EventWaitHandle[plan.keys.Length];
         using(var store=new HeldStore(directory,name))
         using(var caller=PinHeldProcess(callerPid,callerCreated))
@@ -304,14 +481,15 @@ public static partial class Native {
                             if(driver==null) driver=PinHeldProcess(s.pid,s.created);
                             if(driver.HasExited) { reason="driver-exited"; return true; }
                             if(s.heartbeat>=s.deadline) { reason="watchdog-expired"; return true; }
-                        } else if(s.heartbeat>=startup) { reason="startup-expired"; return true; }
+                        } else if(plan.observation_deadline!=0 && s.heartbeat>plan.observation_deadline) { reason="observation-expired"; return true; }
+                        else if(s.heartbeat>=startup) { reason="startup-expired"; return true; }
                         return false;
                     });
                     if(done) break;
                     ready.Set(); Thread.Sleep(10);
                 }
                 HeldRelease(store,plan,transferred,marker,receipt,reason,SendHeld);
-            } catch(Exception e) { receipt.error=e.Message; HeldRelease(store,plan,transferred,marker,receipt,"watchdog-failed",SendHeld); }
+            } catch(Exception e) { receipt.error=e.Message; HeldFailureEvidence(receipt,e); HeldRelease(store,plan,transferred,marker,receipt,e is HeldGuardFailure ? e.Message : "watchdog-failed",SendHeld); }
             finally {
                 ready.Reset(); if(hooks!=null) hooks.Dispose(); if(driver!=null) driver.Dispose();
                 foreach(var handle in transferred) if(handle!=null) handle.Dispose();

@@ -108,18 +108,16 @@ Remaining implementation tasks, independently assignable after qualification:
 - [ ] Apply the [reported Windows game-testing feedback](windows-game-testing.md#consuming-game-feedback-and-next-windows-pass):
   multi-key/timeline leases, wheel and mouse gestures, and specific target-stop
   diagnostics. Parent input help is fixed in source; native revalidation is open.
-- [ ] Carry observation deadlines through Windows held-key preparation, watchdog
-  startup and driver admission before enabling `hold --observation`. The new
-  token route currently rejects holds explicitly; existing inventory-based
-  holds retain their independent watchdog contract.
-- [ ] Give Windows cold one-shot workers the same pinned caller/control and
-  request-deadline envelope as warm workers. Discrete token input now checks
-  capture expiry inside both workers; that is separate from full transport
-  admission parity. Preserve structured submitted/uncertain outcomes through
-  the public CLI instead of reducing them to generic error strings.
-- [ ] Port post-input observation, compact capture output and explicit image
-  coordinate mapping to Windows with the same completion-preserving failures.
-  Add one-request server-paced Debian text before supporting single-use tokens
+- [x] Carry observation deadlines through Windows held-key preparation, watchdog
+  startup and driver admission for `hold --observation`. Source and offline
+  coverage are implemented; native cold/warm qualification remains above.
+- [x] Give Windows cold one-shot workers pinned caller/control/session and
+  request-deadline envelopes, retaining conservative submitted/uncertain
+  failures through the public CLI. Native transport qualification remains open.
+- [x] Port post-input observation, compact capture receipts and explicit image
+  mapping to Windows with completion-preserving failures. Windows mapping uses
+  `--view-width`/`--view-height`, with image-relative coordinates.
+- [ ] Add one-request server-paced Debian text before supporting single-use tokens
   with `--delay-ms`; per-character pacing cannot reuse a consumed token.
 - [ ] Prototype guarded revalidation of a completed plan against a fresh
   observation. Bind the expected target and relevant scene conditions; start

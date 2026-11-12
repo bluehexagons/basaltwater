@@ -14,6 +14,30 @@ $plan=[Basaltwater.Desktop.HeldPlan]@{ window=123; identity='fixture'; width=640
     @{vk=162; scan=29; flags=8}, @{vk=160; scan=42; flags=8}, @{vk=36; scan=71; flags=9}) }
 $marker=[UIntPtr]::new([uint64]1234)
 try {
+    $builder=[Basaltwater.Desktop.Native].GetMethod('BuildHeldKeys',$flags)
+    $map=[Func[uint16,uint32]]{param($vk) return [uint32]($vk%100+1)}
+    $eight=$builder.Invoke($null,@('A+B+C+D+E+F+G+H',$map))
+    Assert-Held ($eight.Length -eq 8) 'Eight ordinary keys not admitted'
+    foreach($invalid in @('A+A','A+B+C+D+E+F+G+H+I','A+','ALT+A','A,BOGUS')){
+        $caught=$null;try{$null=$builder.Invoke($null,@($invalid,$map))}catch{$caught=$_}
+        Assert-Held ($null -ne $caught) "Invalid key set admitted: $invalid"
+    }
+    $timelineBuilder=[Basaltwater.Desktop.Native].GetMethod('BuildHeldTimeline',$flags)
+    $timeline=$timelineBuilder.Invoke($null,@('0:W+J,100:J,200:A+J,300:-',500,$map))
+    Assert-Held (($timeline.timeline.mask -join ',') -eq '3,2,6,0') 'Timeline overlap masks changed'
+    foreach($invalid in @('1:W','0:W,0:J','0:W,500:J','0:W,20:BOGUS',(('0:W')+(',1:W'*32)))){
+        $caught=$null;try{$null=$timelineBuilder.Invoke($null,@($invalid,500,$map))}catch{$caught=$_}
+        Assert-Held ($null -ne $caught) "Invalid timeline admitted: $invalid"
+    }
+    $eightDir=Join-Path $temporary 'eight';New-NativeDesktopPrivateDirectory $eightDir
+    [Basaltwater.Desktop.HeldStore]::Create($eightDir)
+    $eightStore=[Basaltwater.Desktop.HeldStore]::new($eightDir,('Local\Basaltwater.HeldTest.'+[guid]::NewGuid().ToString('N')))
+    try {
+        $set=[Func[Basaltwater.Desktop.HeldStore+State,int]]{param($s) $s.mask=255;$s.transferred=128;return 0}
+        $null=$eightStore.GetType().GetMethod('Locked').MakeGenericMethod([int]).Invoke($eightStore,@($set))
+        $read=[Func[Basaltwater.Desktop.HeldStore+State,int]]{param($s) return $s.mask+$s.transferred}
+        Assert-Held ($eightStore.GetType().GetMethod('Locked').MakeGenericMethod([int]).Invoke($eightStore,@($read)) -eq 383) 'Expanded ownership mask did not round-trip'
+    } finally {$eightStore.Dispose()}
     $physical=[Basaltwater.Desktop.Native].GetMethod('IsHeldPhysicalKey',$flags)
     Assert-Held ([bool]$physical.Invoke($null,@($plan.keys[1],[uint32]16,[uint32]42,[uint32]0))) 'Generic modifier lost physical ownership'
     Assert-Held (-not [bool]$physical.Invoke($null,@($plan.keys[2],[uint32]103,[uint32]71,[uint32]0))) 'Keypad key confused with extended navigation ownership'

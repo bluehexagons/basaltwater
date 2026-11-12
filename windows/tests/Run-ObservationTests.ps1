@@ -17,6 +17,8 @@ $script:ObservationCaptureHook = $null
 $script:ObservationClosedOwnership = $true
 $script:ObservationOwnershipChecks = 0
 $script:ObservationLastInput = $null
+$script:ObservationPostFail = $false
+$script:ObservationInputs = 0
 function Get-NativeDesktopStatePath { return Join-Path $script:ObservationRoot 'state.json' }
 function Get-NativeDesktopContext { return @{Sid='fixture-owner';Session=$script:ObservationSession} }
 function Get-NativeDesktopMonotonic { return $script:ObservationTicks }
@@ -35,6 +37,7 @@ function Invoke-NativeDesktopWorker($Request, [int]$TimeoutSeconds=8) {
         ready { return @{healthy=$true;capture_performed=$false} }
         windows { return @{windows=@([pscustomobject]@{id=123L;identity='fixture-identity';width=640;height=480})} }
         screenshot {
+            if($script:ObservationPostFail){throw 'fixture post capture failed'}
             $script:ObservationTicks += $script:ObservationCaptureDelay
             if ($script:ObservationCaptureHook) { & $script:ObservationCaptureHook }
             # Match the real serialized worker response, including PSCustomObject properties.
@@ -42,7 +45,7 @@ function Invoke-NativeDesktopWorker($Request, [int]$TimeoutSeconds=8) {
                 coordinate_space=$(if($Request.ContainsKey('monitor')){'monitor'}else{'window'});captured_at='2026-01-01T00:00:00Z'}
         }
         default {
-            if ($Request.command -eq 'input') { $script:ObservationLastInput = $Request | ConvertTo-Json -Depth 10 | ConvertFrom-Json }
+            if ($Request.command -eq 'input') { $script:ObservationInputs++;$script:ObservationLastInput = $Request | ConvertTo-Json -Depth 10 | ConvertFrom-Json }
             return @{submitted=$true}
         }
     }
@@ -93,6 +96,27 @@ try {
     Assert-ObservationFailure (Invoke-NativeDesktopCli @('screenshot','--max-age-seconds','1','--max-age-seconds','2')) 'Duplicate'
     Assert-ObservationFailure (Invoke-NativeDesktopCli @('screenshot','--max-age-seconds')) 'Missing value'
     $first=New-ObservationCapture
+    $postPath=Join-Path $script:ObservationRoot 'post.png'
+    $post=Invoke-ObservationInput $first @('--observe',$postPath)
+    Assert-Observation ($post.ok -and $post.result.input_delivery -eq 'completed' -and $post.result.observation.observation_id -cmatch '\A[0-9a-f]{32}\z') 'Post capture lost completed input or fresh authority'
+    $first=New-ObservationCapture
+    $script:ObservationPostFail=$true;$before=$script:ObservationInputs
+    $post=Invoke-ObservationInput $first @('--observe',$postPath)
+    $script:ObservationPostFail=$false
+    Assert-Observation (-not $post.ok -and $post.input_delivery -eq 'completed' -and $post.dispatch_stage -eq 'post-input-observation' -and $post.result.submitted -and $script:ObservationInputs -eq $before+1) 'Failed post capture lost completion or replayed input'
+    Assert-ObservationFailure (Invoke-ObservationInput $first) 'latest successful'
+    $first=New-ObservationCapture
+    [IO.File]::WriteAllText($postPath,'preserve')
+    $before=$script:ObservationInputs
+    Assert-ObservationFailure (Invoke-ObservationInput $first @('--observe',$postPath)) 'NEW .png'
+    Assert-Observation ($script:ObservationInputs -eq $before -and [IO.File]::ReadAllText($postPath) -eq 'preserve') 'Post capture preflight injected or overwrote'
+    Remove-Item -LiteralPath $postPath
+    Assert-Observation (Invoke-ObservationInput $first).ok 'Preflight consumed observation'
+    $first=New-ObservationCapture
+    $mapPath=Join-Path $script:ObservationRoot 'capture.json'
+    [IO.File]::WriteAllText($mapPath,($first|ConvertTo-Json -Depth 12))
+    $mapped=Invoke-NativeDesktopCli @('map-point','--capture',$mapPath,'--view-width','320','--view-height','240','--x','160','--y','120')
+    Assert-Observation ($mapped.ok -and $mapped.x -eq 320 -and $mapped.y -eq 240 -and -not $mapped.authority_renewed) 'Map aid lost scale or renewed authority'
     Assert-Observation ($first.result.observation_id -cmatch '\A[0-9a-f]{32}\z' -and $first.result.capture_freshness.max_age_seconds -eq 60) 'Default receipt missing'
     Assert-Observation (($first.result.geometry -join ',') -eq '640,480') 'Capture geometry is not a shared dimension pair'
     $status = Invoke-NativeDesktopCli @('status')
@@ -214,8 +238,18 @@ try {
         $heldCapture=New-ObservationCapture
         $hold=@('input','hold','--key','W','--milliseconds','500','--window','123','--identity','fixture-identity','--generation',$heldCapture.generation,
             '--width','640','--height','480','--observation',$heldCapture.result.observation_id)
-        Assert-ObservationFailure (Invoke-NativeDesktopCli $hold) 'Observation-bound holds'
-        Assert-Observation (Invoke-ObservationInput $heldCapture).ok 'Unsupported hold consumed capture without dispatch'
+        Assert-ObservationFailure (Invoke-NativeDesktopCli $hold) 'fixture hold attempt failed'
+        Assert-ObservationFailure (Invoke-ObservationInput $heldCapture) 'latest successful'
+    }
+    $heldCapture=New-ObservationCapture
+    & {
+        $script:PostHoldLocks=0
+        function Enter-NativeDesktopLock($Context){$script:PostHoldLocks++;if($script:PostHoldLocks -gt 1){throw 'fixture controller busy after hold'};return $null}
+        function Start-NativeHeldLease($Request,$Context,$State){return @{id=('a'*32)}}
+        function Wait-NativeHeldLease($Record){return @{ok=$true;lease=$Record.id;duration_completed=$true}}
+        $post=Invoke-NativeDesktopCli @('input','hold','--key','W','--milliseconds','500','--window','123','--identity','fixture-identity','--generation',$heldCapture.generation,
+            '--width','640','--height','480','--observation',$heldCapture.result.observation_id,'--observe',(Join-Path $script:ObservationRoot 'held-post.png'))
+        Assert-Observation (-not $post.ok -and $post.input_delivery -eq 'completed' -and $post.result.duration_completed) 'Post-hold lock failure hid completed lease'
     }
     # Version-1 files without the optional receipt remain supported.
     $state=Read-NativeDesktopState (Get-NativeDesktopContext)

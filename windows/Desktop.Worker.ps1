@@ -1,6 +1,37 @@
 <# Explicit finite warm workers. Mailboxes are private, single-use and never replayed. #>
 if(-not(Get-Variable -Name NativeDesktopWorkerServing -Scope Script -ErrorAction SilentlyContinue)){$script:NativeDesktopWorkerServing=$false}
 if(-not(Get-Variable -Name NativeDesktopInputGuard -Scope Script -ErrorAction SilentlyContinue)){$script:NativeDesktopInputGuard=$null}
+function New-NativeWorkerFailure([string]$Message,[bool]$Submitted,[string]$Stage='input-dispatch') {
+    $exception=[InvalidOperationException]::new($Message)
+    $exception.Data['desktop_failure']=@{submitted=$Submitted;dispatch_stage=$(if($Submitted){$Stage}else{'before-input'});input_delivery=$(if($Submitted){'unknown'}else{'not-sent'})}
+    return $exception
+}
+function Invoke-NativeColdEnvelope($Envelope) {
+    $peer=$null;$submitted=$false;$id=$null
+    try {
+        $id=$Envelope.id
+        if($id -cnotmatch '\A[0-9a-f]{32}\z'){throw 'Invalid cold request identity'}
+        $context=Get-NativeDesktopContext
+        if($Envelope.version -ne 1 -or $Envelope.session -cne $context.Session -or $Envelope.sid -cne $context.Sid){throw 'Cold worker session mismatch'}
+        $record=@{sid=$context.Sid;session=$context.Session;directory=$Envelope.directory}
+        $peer=Pin-NativeWarmProcess $record ([int]$Envelope.pid) ([long]$Envelope.created)
+        $now=[Diagnostics.Stopwatch]::GetTimestamp()
+        if([long]$Envelope.deadline -le $now -or [long]$Envelope.deadline-$now -gt 10*[Diagnostics.Stopwatch]::Frequency){throw 'Cold worker request expired or exceeds budget'}
+        if(Test-Path -LiteralPath (Get-NativeDesktopStatePath)){
+            $state=Read-NativeHeldJson (Get-NativeDesktopStatePath) 2097152
+            if($state.owner -cne $Envelope.sid -or $state.session -cne $Envelope.session -or $state.revision -cne $Envelope.revision -or $state.generation -cne $Envelope.generation){throw 'Desktop control/generation changed before cold dispatch'}
+        }
+        if($Envelope.request.command -in @('input','window','element','hold-plan','hold')){
+            $coldRecord=$record;$coldEnvelope=$Envelope;$coldPeer=$peer
+            $script:NativeDesktopInputGuard=[Func[string]]{Get-NativeWarmInputGuardReason $coldRecord $coldEnvelope $coldPeer}
+            $reason=$script:NativeDesktopInputGuard.Invoke();if($reason){throw $reason}
+        }
+        if($peer.HasExited -or [Diagnostics.Stopwatch]::GetTimestamp() -ge [long]$Envelope.deadline){throw 'Cold caller exited or request expired before dispatch'}
+        $submitted=$true
+        return @{version=1;id=$id;ok=$true;result=(Invoke-NativeDesktopWorkerBody $Envelope.request);error=$null;submitted=$true}
+    } catch {return @{version=1;id=$id;ok=$false;result=$null;error=$_.Exception.Message;submitted=$submitted}}
+    finally {$script:NativeDesktopInputGuard=$null;if($peer){$peer.Dispose()}}
+}
 function Get-NativeWarmInputGuardReason($Record,$Request,$Peer){
     if($Peer.HasExited){return 'Desktop caller exited'}
     if([Diagnostics.Stopwatch]::GetTimestamp() -ge [long]$Request.deadline){return 'Desktop request expired'}
@@ -212,11 +243,12 @@ function Invoke-NativeWarmRequest($Record,$Request,[int]$TimeoutSeconds) {
             -not $response.PSObject.Properties['version'] -or $response.version -ne 1 -or
             -not $response.PSObject.Properties['id'] -or $response.id -cne $id -or
             -not $response.PSObject.Properties['ok'] -or $response.ok -isnot [bool] -or
+            -not $response.PSObject.Properties['submitted'] -or $response.submitted -isnot [bool] -or
             -not $response.PSObject.Properties['result'] -or -not $response.PSObject.Properties['error']){
             throw 'Desktop worker response identity/schema mismatch; outcome unknown; do not replay'
         }
         $responseOwned=$true
-        if(-not $response.ok){throw $response.error}
+        if(-not $response.ok){throw (New-NativeWorkerFailure $response.error ([bool]$response.submitted))}
     } catch {$failure=$_}
     finally {
         $process.Dispose()
@@ -227,8 +259,9 @@ function Invoke-NativeWarmRequest($Record,$Request,[int]$TimeoutSeconds) {
         }
     }
     if($failure){
-        if($cleanupError){throw ($failure.Exception.Message+'; mailbox cleanup unconfirmed; inspect retained evidence; do not replay')}
-        throw $failure
+        if($cleanupError){throw (New-NativeWorkerFailure ($failure.Exception.Message+'; mailbox cleanup unconfirmed; inspect retained evidence; do not replay') $(if($responseOwned){[bool]$response.submitted}else{$true}))}
+        if($failure.Exception.Data.Contains('desktop_failure')){throw $failure}
+        throw (New-NativeWorkerFailure $failure.Exception.Message $true 'transport')
     }
     if($cleanupError){
         if($Request.command -eq 'hold-plan'){throw 'Hold preparation completed but mailbox cleanup is unconfirmed; no held input started; inspect retained evidence'}

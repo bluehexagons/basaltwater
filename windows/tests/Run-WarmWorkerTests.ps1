@@ -28,7 +28,8 @@ try {
         Assert-Warm (-not(Test-Path -LiteralPath $ghostPath)) 'Closeout recreated a concurrently removed mailbox'
     }
     $context=Get-NativeDesktopContext
-    $state=@{owner=$context.Sid;session=$context.Session;revision=('a'*32);generation=('b'*32);mode='enabled'}
+    $state=Read-NativeDesktopState $context
+    $state.revision='a'*32;$state.generation='b'*32;$state.mode='enabled'
     Write-NativeHeldJson (Get-NativeDesktopStatePath) $state
     $source=Join-Path $temporary 'source';New-NativeDesktopPrivateDirectory $source
     foreach($name in Get-NativeWarmSources){Copy-Item -LiteralPath (Join-Path $originalSource $name) -Destination (Join-Path $source $name)}
@@ -154,6 +155,22 @@ function Invoke-NativeDesktopWorkerBody(`$Request) {
     Assert-Warm ($process.WaitForExit(3000)) 'Worker process survived graceful shutdown'
     Assert-NativeWarmIdle
     $process.Dispose();$process=$null
+    # Exercise the real cold JSON/process boundary against the same mocked
+    # body, session pin and temporary state after the warm worker retires.
+    $cold=Invoke-NativeDesktopWorker @{command='input';text='cold-envelope'} 8
+    Assert-Warm ($cold.echo -eq 'cold-envelope' -and [IO.File]::ReadAllText((Join-Path $temporary 'effects')) -eq '1') 'Cold transport lost its envelope or dispatched more than once'
+    Remove-Item -LiteralPath (Join-Path $temporary 'effects')
+    $state.mode='disabled';Write-NativeHeldJson (Get-NativeDesktopStatePath) $state
+    $caught=$null;try{Invoke-NativeDesktopWorker @{command='input';text='cold-refused'} 8}catch{$caught=$_}
+    Assert-Warm ($null -ne $caught -and $caught.Exception.Data['desktop_failure'].input_delivery -eq 'not-sent' -and -not(Test-Path -LiteralPath (Join-Path $temporary 'effects'))) 'Cold control refusal lost structured not-sent evidence'
+    $state.mode='enabled';Write-NativeHeldJson (Get-NativeDesktopStatePath) $state
+    $coldAck=& {
+        function Remove-Item([string]$LiteralPath){throw 'fixture cold mailbox deletion denied'}
+        Invoke-NativeDesktopWorker @{command='input';text='cold-acknowledged'} 8
+    }
+    Assert-Warm ($coldAck.echo -eq 'cold-acknowledged' -and -not $coldAck.worker_cleanup.confirmed -and [IO.File]::ReadAllText((Join-Path $temporary 'effects')) -eq '1') 'Cold cleanup failure hid or replayed acknowledged input'
+    Remove-NativeWarmMailbox $coldAck.worker_cleanup.directory
+    Remove-Item -LiteralPath (Join-Path $temporary 'effects')
     # A Scheduler delivery arriving after retirement cannot reopen old work.
     Start-ScheduledTask $worker.task;$process=$script:WarmFixtureProcess
     Assert-Warm ($process.WaitForExit(5000)) 'A retired worker was restarted by late dispatch'
