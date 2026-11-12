@@ -154,6 +154,19 @@ already cropped capture uses local coordinates. A full-frame PNG uses full-frame
 coordinates even if the preview shows only a small region. Do not add the preview
 rectangle origin to a point already expressed in source-PNG pixels.
 
+Before accepting a point, describe the visible label or object under the cross,
+then compare it with the intended action. A preview caption records caller intent;
+it is not recognition or confirmation. For example, `intended: Continue;
+observed: Help; decision: reject` requires a corrected target, even when the point
+is in bounds and the token is fresh. A newer capture with the same misplaced point
+does not correct that mismatch. Keep this acknowledgment short and retain it with
+the action receipt; the CLI does not validate its meaning.
+
+For an unlabeled or drag-dependent destination, record what is actually visible
+and the evidence supporting the gesture. An empty region alone cannot confirm a
+drop target; absence of a target before dragging does not prove it is invalid.
+Use the task's bounded qualification/failure policy and verify the returned effect.
+
 Image mode rejects view geometry and viewer margins. Both drag endpoints use
 the same source basis and must remain inside the capture. Receipt-bound mapping
 still checks current status, crop, token, revision and age; a preview or mapping
