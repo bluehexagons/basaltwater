@@ -11,6 +11,27 @@ Prepare tooling and documentation updates before selecting a fresh set of runs.
 This document does not activate another game, desktop fixture, helper refresh or
 evaluation phase.
 
+**Consuming evidence update, November 12:** the owner subsequently refreshed and
+authorized further bounded runs. One Medium learning match completed first on
+clean CLI/managed/helper `7e33c77f`; the new process receipts retained live game
+and wrapper identities and supported same-boot absence checks after UI Quit.
+Cloud upload and original overlay restoration were verified; exit codes remain
+unknown. The finalized recorder verified 196 PNG references with no uncertainty
+or truncation. These are selected consuming observations, not broad qualification.
+
+NC-01 remains open: two End Turn-labelled clicks repeated the same wrong point
+and inspected a card; a later changed point advanced the match. There were also
+an unintended offer purchase and an upgrade activated during intended inspection.
+Freshness and valid numeric coordinates cannot establish target identity. The
+consuming project now selects a finite offline crop/mapping rehearsal on three
+retained targets before another live brief. Require a changed mapping explanation
+after a verified miss and distinguish inspection from a spending transaction.
+Reuse existing literal crops and offline geometry mapping first; if those remain
+unreliable, consider the source-bound diagnostic point preview proposed below.
+No new preview API, helper behavior, dependency or setup refresh is delivered by
+this documentation update. Historical restart instructions below describe the
+original preparation gate; each later run retains its own explicit activation.
+
 The next cycle should reduce control mistakes, missed observations and reporting
 overhead while making learning experiments useful and comparisons interpretable.
 A completed match or verified PNG inventory alone does not establish those goals.
