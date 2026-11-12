@@ -56,6 +56,7 @@ from lib.system_types import get_steps_for_system_type
 from lib.deploy_utils import extract_repo_name, repository_stage_name
 from typing import Optional
 from lib.types import StepFunc
+from lib.managed_storage import guarded_setup
 
 
 REMOTE_AGENT_PAYLOAD_DIR = "/opt/basaltwater/agent_payload"
@@ -547,6 +548,7 @@ def _run_main() -> int:
     return _run_configured_setup(config, args)
 
 
+@guarded_setup
 def _run_configured_setup(config: SetupConfig, args: argparse.Namespace) -> int:
     """Exclude all build producers before any setup package or service change."""
     from lib.build_coordinator import LOCK, ensure_coordinator, maintenance

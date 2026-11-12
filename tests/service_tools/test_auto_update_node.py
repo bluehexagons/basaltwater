@@ -148,6 +148,17 @@ stable -> 22.3 (-> v26.12.3) (default)
                 self.assertEqual(auto_update_node.get_current_version(), '')
 
     @patch("web.service_tools.auto_update_node.run_nvm_command")
+    def test_npm_updates_automatic_runtime_without_global_package_opt_in(self, run):
+        run.return_value = subprocess.CompletedProcess([], 0, "", "")
+        with patch.dict(os.environ, {ECOSYSTEM_AUTO_UPGRADE_ENV: "0", "BASALTWATER_NPM_AUTO_UPDATE": "1"}), \
+                patch.object(auto_update_node, "runtime_owner", return_value="automatic"):
+            self.assertEqual(auto_update_node.update_global_packages("v24.22.1"), (True, None))
+        command = run.call_args.args[0]
+        self.assertEqual(command[:7], ["nvm", "exec", "v24.22.1", "npm", "install", "-g", "npm@latest"])
+        self.assertIn("--engine-strict", command)
+        self.assertEqual(run.call_count, 1)
+
+    @patch("web.service_tools.auto_update_node.run_nvm_command")
     def test_global_package_updates_skip_by_default(self, mock_run_nvm):
         with patch.dict(os.environ, {}, clear=True):
             with self.assertLogs(auto_update_node.logger, level="INFO") as logs:

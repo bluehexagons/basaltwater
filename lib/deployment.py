@@ -47,6 +47,7 @@ from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
 from lib.node_toolchain import is_supported_node
 from lib.project_build_tools import node_build_command, node_cli, source_has_marker
+from lib.managed_storage import guarded_deployment
 
 
 SYSTEMD_UNIT_DIR = "/etc/systemd/system"
@@ -209,6 +210,7 @@ class DeploymentOrchestrator:
             handle.close()
             raise
     
+    @guarded_deployment
     def deploy_from_archive(self, source_path: str, domain: Optional[str], path: str,
                            git_url: str, commit_hash: Optional[str],
                            full_deploy: bool = True, keep_source: bool = False) -> dict[str, Any]:
@@ -885,6 +887,7 @@ class DeploymentOrchestrator:
             remove_file_durable(old_backup)
         print(f"  ✓ Backed up SQLite database to {backup_path}")
 
+    @guarded_deployment
     def deploy_manifest(self, manifest: Manifest, source_path: str, domain: Optional[str],
                         path: str, git_url: str, commit_hash: Optional[str],
                         keep_source: bool = False) -> list[dict[str, Any]]:
@@ -901,6 +904,7 @@ class DeploymentOrchestrator:
             keep_source=keep_source,
         )
 
+    @guarded_deployment
     def deploy_prebuilt(
         self,
         manifest: Manifest,

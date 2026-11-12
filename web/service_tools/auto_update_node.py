@@ -2,7 +2,7 @@
 """
 Auto-update Node.js
 
-This script updates Node.js via nvm on the LTS track by default. Global npm
+This script updates Node.js and npm on the LTS track by default. Other global
 package upgrades and the latest Node track require explicit policy opt-ins.
 Only runtimes created by this updater may be removed automatically.
 
@@ -443,7 +443,21 @@ def update_global_packages(target_version: str) -> tuple[bool, MaybeStr]:
             "Node.js global package auto-upgrades disabled by policy",
             env_var=ECOSYSTEM_AUTO_UPGRADE_ENV,
         )
-        return True, None
+        if os.environ.get("BASALTWATER_NPM_AUTO_UPDATE", "1") == "0":
+            return True, None
+        if not _allowed_target(target_version):
+            return False, "npm updates require a supported exact Node target"
+        try:
+            with runtime_lock(get_nvm_dir()):
+                if runtime_owner(get_nvm_dir(), target_version) != "automatic":
+                    return True, None
+                result = run_nvm_command(["nvm", "exec", target_version, "npm", "install", "-g",
+                                          "npm@latest", "--engine-strict", *npm_freshness_args()])
+                if not log_subprocess_result(logger, "Updated npm", result):
+                    return False, "npm update failed; inspect the Node maintenance log"
+                return True, None
+        except (OSError, ValueError) as exc:
+            return False, f"npm update deferred: {exc}"
 
     if not _allowed_target(target_version):
         return False, f"Global package upgrades require an exact Node target within {SUPPORTED_NODE_RANGE}"
@@ -460,7 +474,7 @@ def update_global_packages(target_version: str) -> tuple[bool, MaybeStr]:
 
 def _update_global_packages_locked(target_version: str) -> tuple[bool, MaybeStr]:
     commands = (
-        ("Updated npm", ["npm", "install", "-g", "npm@latest"] + npm_freshness_args()),
+        ("Updated npm", ["npm", "install", "-g", "npm@latest", "--engine-strict"] + npm_freshness_args()),
         ("Updated global npm packages", ["npm", "update", "-g"] + npm_freshness_args()),
         ("Updated pnpm", ["npm", "install", "-g", "pnpm"] + npm_freshness_args()),
     )

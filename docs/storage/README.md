@@ -8,6 +8,7 @@ recovery. For applications that store data on a host, see
 | Guide | Use it for |
 | --- | --- |
 | [Storage operations](storage-operations.md) | Rsync mirrors, par2 protection, schedules, and operation locks |
+| [Host storage maintenance](host-maintenance.md) | Setup/deployment headroom checks and guarded native cache budgets |
 | [Shares & Data panel](../services/shares-data.md) | Browse managed share access, recurring copies and scrub findings |
 | [Generic path backups](backups.md) | Recurring path mirrors and mounted destinations |
 | [Samba shares](samba-shares.md) | Authenticated shares, access changes, removals, and SMB mounts |

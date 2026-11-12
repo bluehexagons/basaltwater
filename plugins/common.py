@@ -149,6 +149,7 @@ def get_final_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
     """Return the standard final verification steps for built-in setup flows."""
 
     from common.setup_maintenance import run_setup_maintenance
+    from common.storage_maintenance_steps import configure_storage_maintenance
     from common.game_development_steps import record_game_development_selection
     from common.steps import (
         check_restart_required,
@@ -162,6 +163,7 @@ def get_final_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
     steps.append(("Ensuring python command alias", ensure_python_alias))
     steps.append(("Reconciling native game development selection", record_game_development_selection))
     steps.append(("Running setup maintenance", run_setup_maintenance))
+    steps.append(("Configuring host storage maintenance", configure_storage_maintenance))
     steps.append(("Checking if restart required", check_restart_required))
     return steps
 
