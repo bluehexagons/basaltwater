@@ -102,30 +102,24 @@ function Assert-NativeHeldIdle {
     if($receipt.version -ne 1 -or $receipt.lease -cne $record.id -or -not $receipt.scheduler_retired -or -not (Test-NativeHeldClosedOwnership $request)){throw 'Held-input receipt does not confirm closed ownership and Scheduler retirement'}
     Remove-Item -LiteralPath $active
 }
-function Get-NativeHeldControlReason($Record,$Plan=$null) {
-    try {
-        if (Test-Path -LiteralPath (Join-Path $Record.directory 'cancel')) { return 'cancelled' }
-        $state = Read-NativeHeldJson (Get-NativeDesktopStatePath) 2097152
-        if($Plan){
-            $Plan.control_expected=$Record.revision+';enabled;'+$Record.session+';'+$Record.sid
-            $Plan.control_observed=$state.revision+';'+$state.mode+';'+$state.session+';'+$state.owner
-            if($Record.PSObject.Properties['generation']){$Plan.control_expected+=';'+$Record.generation;$Plan.control_observed+=';'+$state.generation}
-        }
-        if ($state.mode -ne 'enabled' -or $state.revision -cne $Record.revision -or $state.session -cne $Record.session -or $state.owner -cne $Record.sid) { return 'control-changed' }
-        if($Record.PSObject.Properties['generation'] -and $state.generation -cne $Record.generation){return 'control-changed'}
-        return $null
-    } catch { return 'control-unavailable' }
-}
 function Invoke-NativeHeldDriver($Request) {
     $directory=Resolve-NativeHeldDirectory $Request.lease
     $record = Read-NativeHeldJson (Join-Path $directory 'request.json')
     Assert-NativeHeldRecord $record $Request.lease $directory
     $plan = [Basaltwater.Desktop.HeldPlan]$record.plan
+    $heldControl=[Basaltwater.Desktop.HeldControlGuard]::new((Get-NativeDesktopStatePath),$record.directory,$record.sid,$record.session,$record.revision,$record.generation,$plan)
+    # The existing cold/warm delegate still checks its pinned caller, envelope
+    # deadline and stop marker. Shadow only its provider-heavy implementation
+    # for this synchronous hold; HeldCheck then reads current control itself.
+    function Get-NativeWarmInputGuardReason($Record,$Request,$Peer) {
+        return $heldControl.CheckWorker($Record.directory,$Record.sid,$Record.session,$Request.revision,$Request.generation,[long]$Request.deadline,$Peer)
+    }
+    $control=[Func[string]]{
+        if($script:NativeDesktopInputGuard){$reason=$script:NativeDesktopInputGuard.Invoke();if($reason){return $reason}}
+        return $heldControl.Check()
+    }
     try {
-        return [Basaltwater.Desktop.Native]::RunHold($plan,$record.directory,$record.name,[uint64]$record.marker,[int]$record.milliseconds,[int]$record.repeat_ms,[int]$record.caller_pid,[long]$record.caller_created,[Func[string]]{
-            if($script:NativeDesktopInputGuard){$reason=$script:NativeDesktopInputGuard.Invoke();if($reason){return $reason}}
-            Get-NativeHeldControlReason $record $plan
-        })
+        return [Basaltwater.Desktop.Native]::RunHold($plan,$record.directory,$record.name,[uint64]$record.marker,[int]$record.milliseconds,[int]$record.repeat_ms,[int]$record.caller_pid,[long]$record.caller_created,$control)
     } catch {
         Write-NativeHeldJson (Join-Path $record.directory 'driver-error.json') @{ error=$_.Exception.ToString(); stack=$_.ScriptStackTrace }
         throw

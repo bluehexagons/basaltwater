@@ -6,6 +6,10 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Text;
+using System.Security.AccessControl;
+using System.Security.Principal;
+using System.Text.RegularExpressions;
 using System.Windows.Forms;
 
 namespace Basaltwater.Desktop {
@@ -33,6 +37,142 @@ public sealed class HeldReceipt {
     public bool outcome_verified = false;
     public string stop_field, expected, observed;
     public List<HeldStamp> sends = new List<HeldStamp>();
+}
+// Only immutable expectations and paths live across calls. Every Check opens a
+// new snapshot (delete sharing permits atomic publication), validates its ACL
+// through that handle, and reads current bytes. No observations/permissions are
+// cached. This stays independent of PowerShell providers and their cold cost.
+public sealed class HeldControlGuard {
+    readonly string path, cancel, sid, session, revision, generation;
+    readonly HeldPlan plan;
+    const int Limit=2097152;
+    public HeldControlGuard(string path,string directory,string sid,string session,string revision,string generation,HeldPlan plan) {
+        this.path=LocalPath(path); cancel=Path.Combine(LocalPath(directory),"cancel");
+        using(var identity=WindowsIdentity.GetCurrent()) {
+            if(identity.User.Value!=sid) throw new Exception("Held control account mismatch");
+        }
+        this.sid=sid;this.session=session;this.revision=revision;this.generation=generation;this.plan=plan;
+    }
+    static string LocalPath(string value) {
+        if(value==null || !Regex.IsMatch(value,@"\A[A-Za-z]:[\\/]") || value.Substring(2).Contains(":") || Regex.IsMatch(value,@"[\x00-\x1f]")) throw new Exception("Invalid control path");
+        return Path.GetFullPath(value);
+    }
+    static void NoReparse(string path) {
+        for(string p=path;!String.IsNullOrEmpty(p);p=Path.GetDirectoryName(p))
+            if((File.GetAttributes(p)&FileAttributes.ReparsePoint)!=0) throw new Exception("Reparse control path");
+    }
+    void Private(FileSystemSecurity acl) {
+        if(acl.GetOwner(typeof(SecurityIdentifier)).Value!=sid) throw new Exception("Control owner mismatch");
+        foreach(FileSystemAccessRule rule in acl.GetAccessRules(true,true,typeof(SecurityIdentifier)))
+            if(rule.AccessControlType==AccessControlType.Allow && rule.IdentityReference.Value!=sid && rule.IdentityReference.Value!="S-1-5-18" && rule.IdentityReference.Value!="S-1-5-32-544") throw new Exception("Unsafe control ACL");
+    }
+    void Parent(string file) {
+        string directory=Path.GetDirectoryName(file);
+        NoReparse(directory);
+        Private(Directory.GetAccessControl(directory,AccessControlSections.Owner|AccessControlSections.Access));
+    }
+    static bool Exists(string file) {
+        try {File.GetAttributes(file);return true;}
+        catch(FileNotFoundException) {return false;}
+        // Directory loss and access failures are uncertainty, never absence.
+    }
+    public string CheckWorker(string directory,string owner,string workerSession,string workerRevision,string workerGeneration,long deadline,Process peer) {
+        if(peer.HasExited) return "Desktop caller exited";
+        if(Stopwatch.GetTimestamp()>=deadline) return "Desktop request expired";
+        try {
+            string stop=Path.Combine(LocalPath(directory),"stop");Parent(stop);
+            if(Exists(stop)) return "Desktop worker stopped";
+            if(owner!=sid || workerSession!=session || workerRevision!=revision || workerGeneration!=generation) return "Desktop control/generation changed";
+            return null; // Check() follows immediately in HeldCheck, before send.
+        } catch {return "Desktop control unavailable";}
+    }
+    public string Check() {
+        try {
+            Parent(cancel);
+            if(Exists(cancel)) return "cancelled";
+            Parent(path);NoReparse(path);
+            Dictionary<string,string> state;
+            using(var stream=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete)) {
+                Private(stream.GetAccessControl());
+                if(stream.Length>Limit) throw new Exception("Oversized control state");
+                var bytes=new byte[(int)stream.Length+1];int count=0,read;
+                while(count<bytes.Length && (read=stream.Read(bytes,count,bytes.Length-count))!=0) count+=read;
+                if(count==bytes.Length || count>Limit) throw new Exception("Control state grew");
+                string json=new UTF8Encoding(false,true).GetString(bytes,0,count);
+                state=new ControlJson(json).Read();
+                // Recheck namespace and parent permission after reading; the
+                // handle ACL above belongs to the bytes, not a replaced name.
+                Parent(path);NoReparse(path);
+            }
+            string observed=Field(state,"revision")+";"+Field(state,"mode")+";"+Field(state,"session")+";"+Field(state,"owner");
+            string expected=revision+";enabled;"+session+";"+sid;
+            if(generation!=null) {observed+=";"+Field(state,"generation");expected+=";"+generation;}
+            if(plan!=null) {plan.control_expected=expected;plan.control_observed=observed;}
+            return Field(state,"revision")==revision && Field(state,"mode")=="enabled" && Field(state,"session")==session && Field(state,"owner")==sid &&
+                (generation==null || Field(state,"generation")==generation) ? null : "control-changed";
+        } catch {return "control-unavailable";}
+    }
+    static string Field(Dictionary<string,string> fields,string name) {
+        string value;if(!fields.TryGetValue(name,out value) || value==null || value.Length>256) throw new Exception("Invalid control field");return value;
+    }
+    // Validate the entire JSON document, including ignored inventory. Extract
+    // only root strings; reject duplicates, trailing data, bad UTF-8, invalid
+    // escapes/numbers and excessive nesting without deserializing UI objects.
+    sealed class ControlJson {
+        readonly string text;int at;
+        readonly Dictionary<string,string> fields=new Dictionary<string,string>(StringComparer.Ordinal);
+        public ControlJson(string text) {this.text=text;}
+        void Space() {while(at<text.Length && (text[at]==' ' || text[at]=='\r' || text[at]=='\n' || text[at]=='\t')) at++;}
+        bool Take(char c) {Space();if(at<text.Length && text[at]==c) {at++;return true;}return false;}
+        void Need(char c) {if(!Take(c)) throw new Exception("Invalid control JSON");}
+        string String() {
+            Need('"');var result=new StringBuilder();
+            while(at<text.Length) {
+                char c=text[at++];if(c=='"') return result.ToString();
+                if(c<32) throw new Exception("Invalid JSON string");
+                if(c=='\\') {
+                    if(at==text.Length) throw new Exception("Invalid JSON escape");c=text[at++];
+                    switch(c) {
+                        case '"':case '\\':case '/':break;
+                        case 'b':c='\b';break;case 'f':c='\f';break;case 'n':c='\n';break;case 'r':c='\r';break;case 't':c='\t';break;
+                        case 'u':
+                            if(at+4>text.Length || !Regex.IsMatch(text.Substring(at,4),@"\A[0-9a-fA-F]{4}\z")) throw new Exception("Invalid Unicode escape");
+                            c=(char)Convert.ToUInt16(text.Substring(at,4),16);at+=4;break;
+                        default:throw new Exception("Invalid JSON escape");
+                    }
+                }
+                result.Append(c);
+            }
+            throw new Exception("Incomplete JSON string");
+        }
+        string Value(int depth) {
+            Space();if(depth>64 || at>=text.Length) throw new Exception("Invalid control JSON depth");
+            if(text[at]=='"') return String();
+            if(Take('{')) {
+                var keys=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                if(!Take('}')) do {
+                    string key=String();if(!keys.Add(key)) throw new Exception("Duplicate JSON key");Need(':');
+                    int valueStart=at;string value=Value(depth+1);
+                    if(depth==0) {
+                        if(key=="version" && text.Substring(valueStart,at-valueStart).Trim()!="1") throw new Exception("Invalid control version");
+                        fields.Add(key,value);
+                    }
+                    if(Take('}')) return null;Need(',');
+                } while(true);
+                return null;
+            }
+            if(Take('[')) {if(!Take(']')) do {Value(depth+1);if(Take(']')) break;Need(',');} while(true);return null;}
+            int start=at;while(at<text.Length && ",}] \r\n\t".IndexOf(text[at])<0) at++;
+            string token=text.Substring(start,at-start);
+            if(token!="true" && token!="false" && token!="null" && !Regex.IsMatch(token,@"\A-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?\z")) throw new Exception("Invalid JSON token");
+            return null;
+        }
+        public Dictionary<string,string> Read() {
+            if(at<text.Length && text[at]=='\ufeff') at++;
+            Space();if(at>=text.Length || text[at]!='{') throw new Exception("Control JSON must be object");
+            Value(0);Space();if(at!=text.Length || !fields.ContainsKey("version")) throw new Exception("Invalid control document");return fields;
+        }
+    }
 }
 // All shared ownership changes, including intent BEFORE SendInput, use this
 // mutex. A dead driver leaves a conservative pending mask for the watchdog.
@@ -280,7 +420,7 @@ public static partial class Native {
             using(var current=Process.GetCurrentProcess()) { s.pid=current.Id; s.created=current.StartTime.ToUniversalTime().Ticks; }
             s.start=start; s.deadline=deadline;
             store.Intent(s); var batch=HeldInputs(plan.keys,s.mask,false,marker);
-            try { if(plan.admission!=null) { var error=plan.admission(); if(error!=null) throw new Exception(error); } }
+            try { HeldAdmission(plan); }
             catch { s.mask=0; s.phase=2; throw; }
             long actual=Stopwatch.GetTimestamp();
             if(plan.observation_deadline!=0 && actual>plan.observation_deadline) {
@@ -310,10 +450,16 @@ public static partial class Native {
         if(now-scheduled>Stopwatch.Frequency/10 || now-scheduled>=interval) return "schedule-late";
         return null;
     }
+    static void HeldAdmission(HeldPlan plan) {
+        if(plan.admission==null) return;
+        string reason=plan.admission();
+        if(reason=="control-changed") throw new HeldGuardFailure(reason,"control",plan.control_expected,plan.control_observed);
+        if(!String.IsNullOrEmpty(reason)) throw new Exception(reason);
+    }
     static void HeldTransition(HeldStore store,HeldPlan plan,UIntPtr marker,HeldReceipt receipt,int desired,long scheduled,long deadline,Func<Input[],uint> send) {
         store.Locked<int>(delegate(HeldStore.State s) {
             if(s.phase!=1 || s.transferred!=0) throw new Exception("Ownership changed before timeline event");
-            if(plan.admission!=null) {var reason=plan.admission();if(reason!=null) throw new Exception(reason);}
+            HeldAdmission(plan);
             long now=Stopwatch.GetTimestamp();
             if(now>=deadline || now-scheduled>Stopwatch.Frequency/10 || now-s.heartbeat>Stopwatch.Frequency/4) throw new Exception("Timeline or watchdog expired; no catch-up");
             int releasing=s.mask&~desired;
@@ -326,7 +472,7 @@ public static partial class Native {
             int pressing=desired&~s.mask;var downs=HeldInputs(plan.keys,pressing,false,marker);
             if(downs.Length>0) {
                 int before=s.mask;s.mask|=pressing;store.Intent(s);
-                try {if(plan.admission!=null){var stop=plan.admission();if(stop!=null) throw new Exception(stop);}}
+                try {HeldAdmission(plan);}
                 catch {s.mask=before;throw;}
                 now=Stopwatch.GetTimestamp();if(now>=deadline || now-scheduled>Stopwatch.Frequency/10){s.mask=before;throw new Exception("Timeline expired before down");}
                 if(!plan.input_started && plan.observation_deadline!=0 && now>plan.observation_deadline){s.mask=before;throw new HeldGuardFailure("observation-expired","observation_deadline",plan.observation_deadline.ToString(),now.ToString());}

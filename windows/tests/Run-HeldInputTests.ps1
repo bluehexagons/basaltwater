@@ -149,16 +149,6 @@ try {
         try {$null=$press.Invoke($null,@($store,$plan,$marker,[Basaltwater.Desktop.HeldReceipt]::new(),$now,($now-1),$send))} catch {$caught=$_}
         Assert-Held ($null -ne $caught -and $script:ExpiredSendCalls -eq 0) 'Expired startup injected a down'
     } finally {$store.Dispose()}
-    $record=@{sid='fixture';session='fixture-session';directory=$dir;revision='r'}
-    Remove-Item -LiteralPath (Join-Path $dir 'cancel')
-    Write-NativeHeldJson (Get-NativeDesktopStatePath) @{owner='fixture';session='fixture-session';mode='enabled';revision='r'}
-    Assert-Held ([string]::IsNullOrEmpty((Get-NativeHeldControlReason $record))) 'Unchanged enabled control refused'
-    Write-NativeHeldJson (Get-NativeDesktopStatePath) @{owner='fixture';session='fixture-session';mode='human-override';revision='changed'}
-    Assert-Held ((Get-NativeHeldControlReason $record) -eq 'control-changed') 'Control handoff did not stop a lease'
-    Remove-Item -LiteralPath (Get-NativeDesktopStatePath)
-    Assert-Held ((Get-NativeHeldControlReason $record) -eq 'control-unavailable') 'Missing control state failed open'
-    [IO.File]::WriteAllText((Join-Path $dir 'cancel'),'cancel')
-    Assert-Held ((Get-NativeHeldControlReason $record) -eq 'cancelled') 'Cancellation was not observed'
     & {
         $script:HeldSchedulerPresent=$true; $script:HeldSchedulerFailure=$false
         function Get-ScheduledTask($TaskPath,$ErrorAction) {
@@ -219,6 +209,7 @@ try {
             Assert-Held ($caught.Exception.Message -match 'Held-input lease') 'Setup/reboot admission ignored an unsettled keyboard lease'
         } finally {$env:LOCALAPPDATA=$savedLocal}
     }
+    & (Join-Path $PSScriptRoot 'Run-HeldControlTests.ps1')
     Write-Host 'Held-input offline ownership and cleanup contracts passed (no live input).'
 } finally {
     $resolved=[IO.Path]::GetFullPath($temporary)

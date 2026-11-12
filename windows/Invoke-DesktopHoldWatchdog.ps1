@@ -16,7 +16,9 @@ try {
     Initialize-NativeDesktopTypes
     [Basaltwater.Desktop.Native]::Ready(); [Basaltwater.Desktop.Native]::Dpi()
     $plan=[Basaltwater.Desktop.HeldPlan]$record.plan
-    $result=[Basaltwater.Desktop.Native]::WatchHold($plan,$Directory,$record.name,[uint64]$record.marker,[int]$record.caller_pid,[long]$record.caller_created,[Func[string]]{ Get-NativeHeldControlReason $record $plan })
+    $control=[Basaltwater.Desktop.HeldControlGuard]::new((Get-NativeDesktopStatePath),$Directory,$record.sid,$record.session,$record.revision,$record.generation,$plan)
+    $check=[Delegate]::CreateDelegate([Func[string]],$control,'Check')
+    $result=[Basaltwater.Desktop.Native]::WatchHold($plan,$Directory,$record.name,[uint64]$record.marker,[int]$record.caller_pid,[long]$record.caller_created,$check)
 } catch { $failure=$_.Exception.Message }
 finally {
     if ($record -and $validated) {
