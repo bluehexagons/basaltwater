@@ -88,3 +88,18 @@ def process_identity(pid: int) -> dict:
     if len(fields) < 20 or not fields[19].isdigit() or fields[0] == "Z":
         raise ValueError("Application process identity is unavailable")
     return {"pid": pid, "start_ticks": fields[19]}
+
+
+def process_snapshot(pid: int, output: str | None = None) -> dict:
+    """Retain a selected live identity before a context change or normal quit."""
+    from lib.atomic_io import write_json_atomic
+
+    identity = process_identity(pid)
+    data = {"schema_version": 1, "kind": "process-identity", "clock": clock(),
+            "observed": stamp(), "process": identity, "input_authority": False,
+            "normal_exit": "unknown",
+            "limit": "Point-in-time, current-account Linux identity only; not application ownership, continued liveness or normal-exit proof. Compare start ticks only on the same boot."}
+    folder = new_bundle(output)
+    artifact = folder / "process.json"
+    write_json_atomic(str(artifact), data, mode=0o600)
+    return {"artifact": str(artifact), **data}

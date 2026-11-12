@@ -25,6 +25,40 @@ class QAMediaTests(unittest.TestCase):
         self.root = Path(temporary.name)
         self.root.chmod(0o700)
 
+    def test_process_snapshot_cli_retains_identity_without_contacting_desktop(self):
+        parser = argparse.ArgumentParser()
+        desktop_cli.add_desktop_subparser(parser.add_subparsers())
+        identity = {"pid": 12345, "start_ticks": "987654"}
+        with patch.object(qa_artifacts, "process_identity", return_value=identity) as observe, \
+                patch("desktop.session_runtime.status") as status, \
+                patch("desktop.session_runtime.request") as request, \
+                patch("sys.stdout", new_callable=io.StringIO) as out:
+            args = parser.parse_args(["desktop", "evidence", "process", "--pid", "12345",
+                                      "--output", str(self.root / "identity"), "--json"])
+            self.assertEqual(desktop_cli.run_desktop_command(args), 0)
+            result = json.loads(out.getvalue())
+            saved = Path(result["artifact"])
+            data = json.loads(saved.read_text())
+            self.assertEqual(data["process"], identity)
+            self.assertEqual(saved.stat().st_mode & 0o777, 0o600)
+            self.assertFalse(data["input_authority"])
+            self.assertEqual(data["normal_exit"], "unknown")
+            self.assertIn("boot_id", data["clock"])
+            observe.assert_called_once_with(12345)
+            status.assert_not_called()
+            request.assert_not_called()
+            before = saved.read_bytes()
+            self.assertEqual(desktop_cli.run_desktop_command(args), 1)
+            self.assertEqual(saved.read_bytes(), before)
+
+    def test_process_snapshot_refuses_unavailable_identity_without_output(self):
+        for failure in (FileNotFoundError(), ValueError("foreign account or zombie")):
+            with self.subTest(failure=failure), \
+                    patch.object(qa_artifacts, "process_identity", side_effect=failure), \
+                    self.assertRaises(type(failure)):
+                qa_artifacts.process_snapshot(12345, str(self.root / "unavailable"))
+            self.assertFalse((self.root / "unavailable").exists())
+
     def test_instruction_pages_reconstruct_unicode_and_refuse_changed_files(self):
         source = self.root / "instructions.md"
         text = "詳しい instructions\n" * 1000

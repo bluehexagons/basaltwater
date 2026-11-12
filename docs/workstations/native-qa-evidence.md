@@ -5,6 +5,27 @@ default devices, move application playback, start a portal, install packages,
 or establish physical audibility. Use the checkout's CLI until a refresh delivers
 it; inspect [source provenance](cachyos-provenance.md) when comparing runs.
 
+## Retain process identities
+
+Before a normal quit or controller context change, retain the selected live
+application's Linux PID/start identity in a private bundle:
+
+```sh
+basaltw desktop evidence process --pid 12345 \
+  --output /absolute/private/new-process --json
+```
+
+This local read needs no desktop helper or enabled input. It records the current
+account's non-zombie PID/start ticks, UTC/monotonic observation and boot ID; it
+reads no command line and starts or stops nothing. Select the actual game child
+as well as its launcher when both matter. Link each returned `process.json` in
+the run checkpoint before further work. A missing/foreign/zombie process fails
+rather than inventing an identity. Output requires a new private bundle and
+refuses overwrites. On the same boot, use the retained pair with
+`evidence closeout ... --process PID START_TICKS` after normal UI quit. Identity
+absence alone does not prove normal exit, and start ticks from another boot are
+not comparable. This cannot reconstruct identities lost in an earlier run.
+
 ## Application audio
 
 Run in the existing CachyOS KDE Wayland session as its ordinary user. Identify

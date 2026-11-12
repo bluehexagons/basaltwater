@@ -6,6 +6,10 @@ import argparse
 
 
 def add_qa_parser(commands: argparse._SubParsersAction, evidence: argparse._SubParsersAction) -> None:
+    process = evidence.add_parser("process", help="Retain one selected current-account Linux PID/start identity; no desktop input or process control")
+    process.add_argument("--pid", type=int, required=True)
+    process.add_argument("--output", help="New private directory outside Git")
+    process.add_argument("--json", action="store_true")
     conditional = evidence.add_parser("conditional", help="Validate offline plans or explicitly run bounded native observe/act/verify")
     conditional_ops = conditional.add_subparsers(dest="conditional_command", required=True)
     check_plan = conditional_ops.add_parser("validate", help="Offline schema validation; grants no input authority")
@@ -119,6 +123,9 @@ def add_qa_parser(commands: argparse._SubParsersAction, evidence: argparse._SubP
 
 
 def run_qa_command(args: argparse.Namespace, *, backend=None) -> dict:
+    if args.desktop_command == "evidence" and args.evidence_command == "process":
+        from desktop.qa_artifacts import process_snapshot
+        return process_snapshot(args.pid, args.output)
     if args.desktop_command == "evidence" and args.evidence_command == "conditional":
         from desktop import conditional, conditional_contract, conditional_native, perception
         from desktop.record_bundles import _read
