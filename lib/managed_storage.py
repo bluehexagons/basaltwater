@@ -28,6 +28,7 @@ from lib.streamed_process import run_streamed
 LOCK = "/run/basaltwater-storage.lock"
 BUILD_HOMES = "/var/lib/basaltwater/build-users"
 _held = ContextVar("managed_storage_lock", default=False)
+_lock_fd = ContextVar("managed_storage_lock_fd", default=None)
 MIB = 1024 * 1024
 CACHES = (
     (".npm/_cacache", "npm-content", "Packages must be downloaded again"),
@@ -51,10 +52,12 @@ def storage_lock(*, cleanup: bool = False):
             raise ValueError("Unsafe storage maintenance lock")
         fcntl.flock(fd, (fcntl.LOCK_EX if cleanup else fcntl.LOCK_SH) | fcntl.LOCK_NB)
         token = _held.set(True)
+        fd_token = _lock_fd.set(fd)
         try:
             yield
         finally:
             _held.reset(token)
+            _lock_fd.reset(fd_token)
     finally:
         os.close(fd)
 
@@ -197,15 +200,35 @@ def activity(uid: int) -> str | None:
     return None
 
 
-def _native_cleanup(category: str) -> None:
+def _native_cleanup(category: str, expected_home: str, device: int, inode: int) -> None:
     """Execute as the owner with fixed paths, no shell profiles or Go hooks."""
     if category not in {item[1] for item in CACHES}:
         raise ValueError("Unknown cache category")
     home = pwd.getpwuid(os.geteuid()).pw_dir
+    validate_filesystem_path(home, must_exist=True)
+    if home != expected_home:
+        raise ValueError("Maintenance account home changed")
+    relative = next(relative for relative, name, _ in CACHES if name == category)
+    path = f"{home}/{relative}"
+    if not safe_cache_path(path, home, os.geteuid()):
+        raise ValueError("Cache path is unsafe")
+    info = os.lstat(path)
+    if (info.st_dev, info.st_ino) != (device, inode):
+        raise ValueError("Cache changed since inventory")
+    measurement = inspect_storage(home=home, paths=[path], timeout=10)
+    if measurement["issues"] or not measurement["candidates"]:
+        raise ValueError("Worker cache inventory unavailable")
+    row = measurement["candidates"][0]
+    if (row["status"] != "measured" or row["issues"] or row["other_owner_entries"]
+            or row["hardlinked_files"] or row["is_mountpoint"]):
+        raise ValueError("Worker cache inventory is unsafe or incomplete")
     env = {"HOME": home, "PATH": "/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin",
            "GOENV": "off", "GOTOOLCHAIN": "local", "GOFLAGS": "", "GOCACHEPROG": "",
            "GOCACHE": f"{home}/.cache/go-build", "NVM_DIR": f"{home}/.nvm",
            "NPM_CONFIG_IGNORE_SCRIPTS": "true", "NPM_CONFIG_UPDATE_NOTIFIER": "false"}
+    if category != "npm-content":
+        _run_native(category, env)
+        return
     with tempfile.TemporaryDirectory(prefix="basaltwater-cache-config-") as directory:
         for name in ("user", "global"):
             path = Path(directory) / (name + ".npmrc")
@@ -219,6 +242,10 @@ def _run_native(category: str, env: dict[str, str]) -> None:
 
     if category == "go-build":
         subprocess.run(["go", "clean", "-cache"], env=env, cwd="/", check=True, timeout=120)
+        return
+    if category == "npm-content" and not os.path.lexists(Path(env["NVM_DIR"]) / "nvm.sh"):
+        subprocess.run(["npm", "--cache", f'{env["HOME"]}/.npm', "cache", "clean", "--force"],
+                       env=env, cwd="/", check=True, timeout=120)
         return
     with runtime_lock(env["NVM_DIR"]):
         command = '. "$NVM_DIR/nvm.sh" --no-use && '
@@ -283,16 +310,20 @@ def maintain(*, names: list[str], apply: bool, budget: int, target: int, force: 
                 row["status"] = "preview"
                 if not apply:
                     continue
+                identity = os.lstat(row["path"])
                 # Never execute an account's NVM script as root on its behalf.
                 code = ("import sys; sys.path.insert(0, sys.argv[1]); "
-                        "from lib.managed_storage import _native_cleanup; _native_cleanup(sys.argv[2])")
+                        "from lib.managed_storage import _native_cleanup; "
+                        "_native_cleanup(sys.argv[2], sys.argv[3], int(sys.argv[4]), int(sys.argv[5]))")
                 command = ["/usr/bin/python3", "-I", "-c", code,
-                           str(Path(__file__).resolve().parent.parent), category]
+                           str(Path(__file__).resolve().parent.parent), category, home,
+                           str(identity.st_dev), str(identity.st_ino)]
                 if account.pw_uid != os.geteuid():
                     command = ["runuser", "-u", account.pw_name, "--", *command]
                 try:
                     status = run_streamed(command, cwd="/", env={"PATH": os.defpath},
                                           on_output=lambda _line: None, timeout=150,
+                                          pass_fds=(() if _lock_fd.get() is None else (_lock_fd.get(),)),
                                           cleanup_group_on_exit=True)
                     if status:
                         raise OSError("Native cleanup failed")
@@ -303,10 +334,13 @@ def maintain(*, names: list[str], apply: bool, budget: int, target: int, force: 
                 measured = inspect_storage(home=home, paths=[row["path"]], timeout=5)
                 row["measurement_after"] = measured
                 if measured["issues"] or not measured["candidates"]:
+                    row["status"] = "failed_verification"
                     raise ValueError("Post-cleanup measurement unavailable")
                 after = measured["candidates"][0]
-                if after["status"] in {"measured", "absent"} and not after["issues"]:
-                    total -= max(0, row["allocated_bytes"] - after["allocated_bytes"])
+                if after["status"] not in {"measured", "absent"} or after["issues"] or after["other_owner_entries"]:
+                    row["status"] = "failed_verification"
+                    raise ValueError("Post-cleanup measurement incomplete or unsafe")
+                total -= max(0, row["allocated_bytes"] - after["allocated_bytes"])
         except (OSError, ValueError) as exc:
             record["error"] = str(exc)
     for record in result["accounts"]:

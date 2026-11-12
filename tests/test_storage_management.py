@@ -155,9 +155,10 @@ class StorageManagementTests(unittest.TestCase):
             self.assertGreater(result["shortfalls"][0]["remaining_bytes"], 0)
 
     def test_go_native_command_disables_hooks_and_preserves_modules(self):
-        with patch.object(storage.pwd, "getpwuid", return_value=SimpleNamespace(pw_dir="/home/fixture")), \
-                patch.object(storage.subprocess, "run") as run:
-            storage._native_cleanup("go-build")
+        env = {"HOME": "/home/fixture", "GOCACHE": "/home/fixture/.cache/go-build",
+               "GOTOOLCHAIN": "local", "GOENV": "off"}
+        with patch.object(storage.subprocess, "run") as run:
+            storage._run_native("go-build", env)
         self.assertEqual(run.call_args.args[0], ["go", "clean", "-cache"])
         env = run.call_args.kwargs["env"]
         self.assertEqual(env["GOCACHE"], "/home/fixture/.cache/go-build")
@@ -168,11 +169,10 @@ class StorageManagementTests(unittest.TestCase):
         from contextlib import nullcontext
         for category, expected in (("npm-content", 'npm --cache "$HOME/.npm" cache clean --force'),
                                    ("nvm-downloads", "nvm cache clear")):
-            with self.subTest(category=category), patch.object(storage.pwd, "getpwuid",
-                    return_value=SimpleNamespace(pw_dir="/home/fixture")), patch(
+            with self.subTest(category=category), patch.object(storage.os.path, "lexists", return_value=True), patch(
                     "lib.node_runtime_ownership.runtime_lock", return_value=nullcontext()) as lock, patch.object(
                     storage.subprocess, "run") as run:
-                storage._native_cleanup(category)
+                storage._run_native(category, {"HOME": "/home/fixture", "NVM_DIR": "/home/fixture/.nvm"})
                 lock.assert_called_once_with("/home/fixture/.nvm")
                 self.assertIn(expected, run.call_args.args[0][-1])
                 self.assertIn("--noprofile", run.call_args.args[0])

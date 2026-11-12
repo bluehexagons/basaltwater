@@ -36,7 +36,7 @@ from lib.update_policy import (
 from lib.remote_utils import CommandTimeoutError, run as run_command
 from lib.node_install import node_install_guard
 from lib.node_runtime_ownership import (
-    LATEST_UPDATE_ENV, mark_runtime, runtime_directory, runtime_lock, runtime_owner,
+    LATEST_UPDATE_ENV, MARKER, mark_runtime, runtime_directory, runtime_lock, runtime_owner,
 )
 from lib.node_toolchain import SUPPORTED_NODE_RANGE, choose_node_release, fetch_node_releases, is_supported_node
 
@@ -437,37 +437,34 @@ def cleanup_old_versions(candidates: list[str], keep_versions: set[str]) -> tupl
 
 def update_global_packages(target_version: str) -> tuple[bool, MaybeStr]:
     """Update npm itself and global npm packages."""
-    if not ecosystem_auto_upgrade_enabled():
+    upgrade_globals = ecosystem_auto_upgrade_enabled()
+    if not upgrade_globals:
         log_event(
             logger,
             "Node.js global package auto-upgrades disabled by policy",
             env_var=ECOSYSTEM_AUTO_UPGRADE_ENV,
         )
-        if os.environ.get("BASALTWATER_NPM_AUTO_UPDATE", "1") == "0":
-            return True, None
-        if not _allowed_target(target_version):
-            return False, "npm updates require a supported exact Node target"
-        try:
-            with runtime_lock(get_nvm_dir()):
-                if runtime_owner(get_nvm_dir(), target_version) != "automatic":
-                    return True, None
-                result = run_nvm_command(["nvm", "exec", target_version, "npm", "install", "-g",
-                                          "npm@latest", "--engine-strict", *npm_freshness_args()])
-                if not log_subprocess_result(logger, "Updated npm", result):
-                    return False, "npm update failed; inspect the Node maintenance log"
-                return True, None
-        except (OSError, ValueError) as exc:
-            return False, f"npm update deferred: {exc}"
 
     if not _allowed_target(target_version):
         return False, f"Global package upgrades require an exact Node target within {SUPPORTED_NODE_RANGE}"
     try:
-        # Explicit/preexisting runtimes retain their tools even with the opt-in.
         with runtime_lock(get_nvm_dir()):
-            if runtime_owner(get_nvm_dir(), target_version) != "automatic":
-                log_event(logger, "Retained project/preexisting Node global tools", version=target_version)
+            owner = runtime_owner(get_nvm_dir(), target_version)
+            if upgrade_globals and owner == "automatic":
+                return _update_global_packages_locked(target_version)
+            if os.environ.get("BASALTWATER_NPM_AUTO_UPDATE", "1") == "0" or owner == "project":
                 return True, None
-            return _update_global_packages_locked(target_version)
+            directory = runtime_directory(get_nvm_dir(), target_version)
+            if owner is None and (
+                os.path.lexists(directory / MARKER) or not (directory / "bin/node").is_file()
+                or get_current_version() != target_version
+            ):
+                return True, None
+            result = run_nvm_command(["nvm", "exec", target_version, "npm", "install", "-g",
+                                      "npm@latest", "--engine-strict", *npm_freshness_args()])
+            if not log_subprocess_result(logger, "Updated npm", result):
+                return False, "npm update failed; inspect the Node maintenance log"
+            return True, None
     except (OSError, ValueError) as exc:
         return False, f"Global package upgrades deferred: {exc}"
 

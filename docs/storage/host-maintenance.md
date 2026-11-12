@@ -47,7 +47,11 @@ Commands run as the owning account, with explicit cache paths and without login
 profiles. Go configuration, hooks and automatic toolchain downloads are disabled.
 Custom cache locations are outside this initial policy. Missing tools are failures,
 never a reason to substitute recursive deletion. npm/nvm cleanup also takes the
-existing per-account Node runtime lock.
+existing per-account Node runtime lock. When nvm is absent, npm cleanup uses the
+system npm executable. Each owner worker revalidates its home, cache inode and
+cache inventory before running a native command. Workers inherit the maintenance
+lock so it remains held if the launcher exits unexpectedly. Missing or incomplete
+post-cleanup measurements are failures, rather than successful reclamation.
 
 ## Exclusion and headroom
 
@@ -93,10 +97,12 @@ The weekly Node updater now updates npm on its automatically owned LTS runtime
 even when broader global package upgrades are disabled. It retains the dependency
 minimum-age policy and uses `--engine-strict` so an incompatible npm release fails
 without forcing an unsupported engine. Set `BASALTWATER_NPM_AUTO_UPDATE=0` in a
-systemd service override to disable this independent update. Explicit/project and
-legacy runtimes remain outside automatic global-tool changes; their owners must
-update them deliberately. Other global packages still require the ecosystem
-upgrade opt-in.
+systemd service override to disable this independent update. An unmarked legacy
+runtime is also eligible for npm-only updates when it is the selected default
+LTS runtime. A malformed ownership marker never grants eligibility. Project-marked
+runtimes remain outside automatic global-tool changes; their owners must update
+them deliberately. Other global packages still require the ecosystem upgrade
+opt-in and automatic runtime ownership.
 
 Native command boundaries follow the [npm cache documentation](https://docs.npmjs.com/cli/cache/),
 [nvm documentation](https://github.com/nvm-sh/nvm), and
