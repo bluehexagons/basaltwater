@@ -73,6 +73,12 @@ reset or align a run. A finished run cannot be continued.
 Reads validate saved transitions, UTC timestamps and event details as well as
 monotonic ordering. Impossible histories, such as duplicate suspensions or an
 event after finish, fail without rewriting the original file.
+When saved `previous_gap_seconds` or `checkpoint_late_seconds` fields are present,
+reads also recompute them from preceding event clocks and effective review policy.
+Contradictory values are refused without changing the record, including on
+`checkpoint` and `finish`. Preserve rejected files and inspect a retained receipt;
+do not remove the fields to make history load. Older records without these fields
+remain readable, with their missing metadata left untouched.
 
 Structural validation does not authenticate who wrote earlier events. A later
 successful `show` or `finish` cannot establish that every checkpoint came through
@@ -104,6 +110,11 @@ Check `show` within the controller's normal work loop. Checkpoint events retain
 actual previous gaps and lateness before restarting the chosen soft review
 cadence. `checkpoint_due_monotonic_ns`, `checkpoint_remaining_seconds` and
 `checkpoint_late_seconds` expose the current review deadline and actual timing.
+`checkpoint_history` separately reports the number of completed checkpoints with
+a prior review deadline, how many were late, and maximum lateness. It recomputes
+from clocks/policy before each checkpoint resets the deadline; a currently
+on-time status does not erase earlier late reviews. No qualifying checkpoints
+means a zero count and null maximum. These checks do not authenticate authorship.
 Policy changes require a source/authorization note and record a timing change;
 hard seconds always refer to the ORIGINAL start. Recording an override
 does not authenticate its author or grant permission. These commands neither

@@ -51,6 +51,8 @@ class QAMediaTests(unittest.TestCase):
             path = started["artifact"]
             self.assertEqual(started["checkpoint_due_monotonic_ns"], 31 * 10**9)
             self.assertEqual(started["checkpoint_remaining_seconds"], 30)
+            self.assertEqual(started["checkpoint_history"]["reviewed"], 0)
+            self.assertIsNone(started["checkpoint_history"]["max_late_seconds"])
             stamp.return_value = at(41)
             paused = run_checkpoint.update(path, "suspend", note="Awaiting owner decision")
             self.assertEqual(paused["checkpoint_late_seconds"], 10)
@@ -70,6 +72,9 @@ class QAMediaTests(unittest.TestCase):
             reviewed = run_checkpoint.update(path, "checkpoint", phase="results", game_clock="05:17")
             self.assertEqual(reviewed["latest"]["checkpoint_late_seconds"], 230)
             self.assertEqual(reviewed["checkpoint_late_seconds"], 0)
+            self.assertEqual(reviewed["checkpoint_history"]["reviewed"], 1)
+            self.assertEqual(reviewed["checkpoint_history"]["late"], 1)
+            self.assertEqual(reviewed["checkpoint_history"]["max_late_seconds"], 230)
             stamp.return_value = at(301)
             finished = run_checkpoint.update(path, "finish")
             self.assertEqual(finished["wall_seconds"], 300)
@@ -79,6 +84,7 @@ class QAMediaTests(unittest.TestCase):
             self.assertIsNone(finished["model_reasoning_seconds"])
             self.assertIsNone(finished["observed_active_work_seconds"])
             self.assertFalse(finished["hard_limit_reached"])
+            self.assertEqual(finished["checkpoint_history"]["max_late_seconds"], 230)
             with self.assertRaisesRegex(ValueError, "finished"):
                 run_checkpoint.update(path, "context", context="another")
             before = Path(path).read_bytes()
@@ -87,6 +93,46 @@ class QAMediaTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "comparable boot clock"):
                     run_checkpoint.update(path, "checkpoint")
             self.assertEqual(Path(path).read_bytes(), before)
+
+    def test_saved_run_timing_metadata_must_match_clocks_without_rewriting(self):
+        domain = {"boot_id": "11111111-2222-3333-4444-555555555555", "monotonic_scope": "linux-boot"}
+        def at(seconds):
+            return {"at": f"2026-01-01T00:00:{seconds:02d}+00:00", "monotonic_ns": seconds * 10**9}
+        with patch.object(run_checkpoint, "clock", return_value=domain), patch.object(run_checkpoint, "stamp") as stamp:
+            stamp.return_value = at(1)
+            path = Path(run_checkpoint.start("run-a", "match-a", "setup", output=str(self.root / "metadata"),
+                                            review_seconds=10)["artifact"])
+            stamp.return_value = at(21)
+            run_checkpoint.update(str(path), "policy", review_seconds=30, note="Task brief changes play cadence")
+            stamp.return_value = at(22)
+            run_checkpoint.update(str(path), "checkpoint", phase="play")
+            stamp.return_value = at(55)
+            run_checkpoint.update(str(path), "checkpoint")
+            original = path.read_bytes()
+            rows = json.loads(original)
+            for key, values in (("previous_gap_seconds", [0, -1, None, True, float("nan"), float("inf")]),
+                                ("checkpoint_late_seconds", [0, -1, None, True, float("nan"), float("inf")])):
+                for value in values:
+                    changed = json.loads(original)
+                    changed["events"][-1][key] = value
+                    path.write_text(json.dumps(changed))
+                    before = path.read_bytes()
+                    for operation in ("show", "checkpoint", "finish"):
+                        with self.subTest(key=key, value=value, operation=operation), self.assertRaisesRegex(ValueError, f"{key}|non-finite"):
+                            run_checkpoint.update(str(path), operation)
+                        self.assertEqual(path.read_bytes(), before)
+            # Older records can omit derived fields. Recompute review history
+            # from their clocks/policy, without inventing or writing metadata.
+            for row in rows["events"]:
+                row.pop("previous_gap_seconds", None)
+                row.pop("checkpoint_late_seconds", None)
+            path.write_text(json.dumps(rows))
+            before = path.read_bytes()
+            shown = run_checkpoint.update(str(path))
+            self.assertEqual(shown["checkpoint_history"]["reviewed"], 2)
+            self.assertEqual(shown["checkpoint_history"]["late"], 1)
+            self.assertEqual(shown["checkpoint_history"]["max_late_seconds"], 3)
+            self.assertEqual(path.read_bytes(), before)
 
     def test_run_parser_records_one_bounded_event_without_contacting_desktop(self):
         parser = argparse.ArgumentParser()

@@ -46,6 +46,15 @@ def _path(artifact: str) -> Path:
     return path
 
 
+def _next_review(row: dict, due: int | None, interval: int | None) -> tuple[int | None, int | None]:
+    if row.get("review_seconds") is not None:
+        interval = row["review_seconds"]
+        due = row["monotonic_ns"] + interval * 10**9
+    elif row["event"] == "checkpoint" and due is not None:
+        due = row["monotonic_ns"] + interval * 10**9
+    return due, interval
+
+
 def _load(path: Path) -> dict:
     data = read_json_file(str(path), max_bytes=MAX_BYTES)
     if (not isinstance(data, dict) or type(data.get("schema_version")) is not int or data["schema_version"] not in (1, 2)
@@ -55,10 +64,24 @@ def _load(path: Path) -> dict:
     _label(data.get("run_id"), "Run ID")
     _label(data.get("match_id"), "Match ID")
     previous, suspended, finished = -1, False, False
+    review_due, review_interval = None, None
     for index, row in enumerate(data["events"]):
         if (not isinstance(row, dict) or row.get("event") not in ("start", *EVENTS)
                 or type(row.get("monotonic_ns")) is not int or row["monotonic_ns"] < max(0, previous)):
             raise ValueError("Invalid run event clocks; preserve the record")
+        expected = {
+            "previous_gap_seconds": (row["monotonic_ns"] - previous) / 10**9 if index else None,
+            "checkpoint_late_seconds": max(0, (row["monotonic_ns"] - review_due) / 10**9)
+                if review_due is not None else None,
+        }
+        for key, value in expected.items():
+            # Missing legacy metadata stays unknown; present metadata must agree
+            # with the original event clocks and policy, before this event resets it.
+            if key not in row:
+                continue
+            matches = row[key] is None if value is None else type(row[key]) in (int, float) and row[key] == value
+            if not matches:
+                raise ValueError(f"Inconsistent saved {key}; preserve the record")
         previous = row["monotonic_ns"]
         _label(row.get("at"), "Event UTC")
         try:
@@ -98,6 +121,7 @@ def _load(path: Path) -> dict:
         if event in ("suspend", "resume"):
             suspended = event == "suspend"
         finished = event == "finish"
+        review_due, review_interval = _next_review(row, review_due, review_interval)
     return data
 
 
@@ -145,17 +169,16 @@ def _summary(data: dict, observed: dict) -> dict:
         raise ValueError("Run clock moved backwards")
     suspended_at, suspension = None, 0
     review_due, review_interval, hard_seconds = None, None, None
+    checkpoint_lateness = []
     for row in rows:
         if row["event"] == "suspend":
             suspended_at = row["monotonic_ns"]
         elif row["event"] in ("resume", "finish") and suspended_at is not None:
             suspension += row["monotonic_ns"] - suspended_at
             suspended_at = None
-        if row.get("review_seconds") is not None:
-            review_interval = row["review_seconds"]
-            review_due = row["monotonic_ns"] + review_interval * 10**9
-        elif row["event"] == "checkpoint" and review_due is not None:
-            review_due = row["monotonic_ns"] + review_interval * 10**9
+        if row["event"] == "checkpoint" and review_due is not None:
+            checkpoint_lateness.append(max(0, (row["monotonic_ns"] - review_due) / 10**9))
+        review_due, review_interval = _next_review(row, review_due, review_interval)
         if row.get("clear_hard_limit"):
             hard_seconds = None
         elif row.get("hard_seconds") is not None:
@@ -173,6 +196,10 @@ def _summary(data: dict, observed: dict) -> dict:
             "checkpoint_due_monotonic_ns": review_due,
             "checkpoint_remaining_seconds": max(0, (review_due - end) / 10**9) if review_due is not None else None,
             "checkpoint_late_seconds": max(0, (end - review_due) / 10**9) if review_due is not None else None,
+            "checkpoint_history": {"reviewed": len(checkpoint_lateness),
+                                   "late": sum(value > 0 for value in checkpoint_lateness),
+                                   "max_late_seconds": max(checkpoint_lateness, default=None),
+                                   "scope": "Completed checkpoints with a preceding review deadline; recomputed from saved clocks/policy, not proof of authorship."},
             "hard_limit_reached": wall >= hard_seconds if hard_seconds is not None else None,
             "hard_limit_seconds": hard_seconds, "observed_active_work_seconds": None,
             "model_reasoning_seconds": None, "tokens": None, "cost": None,
