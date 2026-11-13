@@ -152,9 +152,24 @@ class QAMediaTests(unittest.TestCase):
                     path.write_text(json.dumps(changed))
                     before = path.read_bytes()
                     for operation in ("show", "checkpoint", "finish"):
-                        with self.subTest(key=key, value=value, operation=operation), self.assertRaisesRegex(ValueError, f"{key}|non-finite"):
+                        with self.subTest(key=key, value=value, operation=operation), self.assertRaisesRegex(ValueError, f"{key}|non-finite") as refused:
                             run_checkpoint.update(str(path), operation)
+                        if "non-finite" not in str(refused.exception):
+                            expected = 33.0 if key == "previous_gap_seconds" else 3.0
+                            self.assertIn(f"at events[3] (checkpoint); expected {expected!r}", str(refused.exception))
                         self.assertEqual(path.read_bytes(), before)
+            # Multiple corrupt rows must identify the first contradiction, not
+            # the latest checkpoint or the operation the caller wanted to append.
+            changed = json.loads(original)
+            changed["events"][1]["checkpoint_late_seconds"] = 0
+            changed["events"][3]["checkpoint_late_seconds"] = 900
+            path.write_text(json.dumps(changed))
+            before = path.read_bytes()
+            for operation in ("show", "checkpoint", "finish"):
+                with self.subTest(operation=operation), self.assertRaisesRegex(
+                        ValueError, r"at events\[1\] \(policy\); expected 10\.0 from saved clocks/policy"):
+                    run_checkpoint.update(str(path), operation)
+                self.assertEqual(path.read_bytes(), before)
             # Older records can omit derived fields. Recompute review history
             # from their clocks/policy, without inventing or writing metadata.
             for row in rows["events"]:

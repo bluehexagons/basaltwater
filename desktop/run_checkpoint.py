@@ -81,7 +81,8 @@ def _load(path: Path) -> dict:
                 continue
             matches = row[key] is None if value is None else type(row[key]) in (int, float) and row[key] == value
             if not matches:
-                raise ValueError(f"Inconsistent saved {key}; preserve the record")
+                raise ValueError(f"Inconsistent saved {key} at events[{index}] ({row['event']}); "
+                                 f"expected {value!r} from saved clocks/policy; preserve the record")
         previous = row["monotonic_ns"]
         _label(row.get("at"), "Event UTC")
         try:

@@ -80,6 +80,15 @@ Contradictory values are refused without changing the record, including on
 do not remove the fields to make history load. Older records without these fields
 remain readable, with their missing metadata left untouched.
 
+Timing-metadata refusals identify the first contradictory zero-based
+`events[index]`, its event kind and the value recomputed from saved clocks/policy.
+That expected value is a diagnostic, not an instruction to replace a field.
+Preserve the rejected artifact and command receipt. Keep subsequent observations
+in a separate companion note, or a linked new segment with an explicit timing
+gap and the original match identity/limits; never insert missing events into the
+rejected history. A validation error alone cannot establish which writer caused
+it. Audit retained execution receipts before attributing it to the CLI.
+
 Structural validation does not authenticate who wrote earlier events. A later
 successful `show` or `finish` cannot establish that every checkpoint came through
 the CLI. Keep returned receipts and record execution provenance separately from
