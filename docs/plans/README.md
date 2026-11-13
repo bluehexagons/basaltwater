@@ -25,7 +25,7 @@ These areas are not prerequisites for the shared Debian build/CI host.
 
 | Area | Next boundary and owner |
 | --- | --- |
-| Build retention and recovery | Preserve explicit settlement/pruning/bundle release and stop-and-inspect recovery. Automatic retention, replay-history retirement and further interruption checks need separate acceptance in the [build plan](cicd-manifest-reuse.md). |
+| Build retention and recovery | Preserve explicit settlement/pruning/bundle release and stop-and-inspect recovery. Plan populated target conversion, per-owner cleanup and replay-safe record retirement under the [conversion and storage lifecycle plan](build-conversion-storage.md), alongside the [build plan](cicd-manifest-reuse.md). |
 | Deployment secrets | Add administrator-owned runtime binding IDs before a broader secret store; selected-builder deployment currently rejects runtime environment and `env_file`. See [secret references](deploy-secrets.md). |
 | Headscale private networking | Add independent Headscale hosting and Tailscale client enrollment, explicit service access, and backup/restore qualification under the [Headscale plan](headscale.md). |
 | Proxmox, storage and Gogs | Extend selected same-host recovery to off-host restore; coordinate guest filesystem growth separately from provider disk resize. See [VM/storage work](vm-management-and-lightweight-git-hosting.md). |
