@@ -15,6 +15,7 @@ from lib.build_target_activation import TargetReleaseActivator, parse_expected_r
 from lib.build_target_artifacts import BuildTargetArtifactStore
 from lib.build_target_maintenance import target_maintenance
 from lib.build_target_routing import routing_for_config
+from lib.build_conversion import finish_conversion
 from lib.machine_state import can_manage_system_services
 from lib.remote_utils import is_dry_run
 
@@ -102,6 +103,10 @@ def expected_artifact_setup(config: SetupConfig, expected_releases: object) -> I
         token = _ACTIVE_SETUP.set(context)
         try:
             yield
+            # Check again after the entire profile, while typed requests remain
+            # excluded. Delivery receipts alone do not prove full conversion.
+            context.activator.check_expected_releases(expected_releases=expected, admissions=context.admissions)
+            finish_conversion(context.activator, expected)
         finally:
             context.active = False
             _ACTIVE_SETUP.reset(token)

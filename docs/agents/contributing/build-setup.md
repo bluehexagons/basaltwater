@@ -91,6 +91,13 @@ retained artifact storage are checked before target bootstrap. Dry runs prepare
 sources in a disposable private directory under the configured controller
 workspace and perform read-only SSH probes; they
 never enroll, reserve, build, stage, activate or save setup state.
+Physical admission probes target and builder roots (including installed custom
+roots), deployment parents and temporary mounts, aggregating concurrent allocation
+by device with byte/inode reserves. Controller delivery also checks inodes.
+Source preparation checks reserve inodes before Git work and continues bounded
+storage monitoring. Estimates use declared ceilings and include builder export
+packaging; they are not disk reservations. Refusals before remote intent dispose
+of their temporary attempt unless source-process cleanup is uncertain.
 
 Non-dry setup stores private attempts under the controller workspace's
 `build-setups/HOST-HASH`. There are at most 32 active retained attempts per host,
@@ -99,6 +106,10 @@ frees active slots while preserving evidence and disk usage. `prepared.json` ret
 serving projections, pinned snapshot paths and idempotency keys. The durable
 `setup.json` guard precedes bootstrap and records phases through final profile
 application. Delivery uses its own separate empty directory and receipt.
+The separate completed-payload collector can reclaim sources, bundles and
+extraction trees while preserving this metadata. Host timers do not sweep
+controller workspaces. Preflight observations live in private `storage.json`;
+handled failures add phase/category-only `failure.json` without exception text.
 After acknowledged final profile success, a private per-attempt
 `profile-success.json` preserves the exact completed intent before the host
 guard clears. Receipt persistence failure keeps the guard authoritative.
@@ -111,6 +122,12 @@ first activation, and activations remain sequential. Final setup receives
 transient expected release identities, excludes reenrollment, and must validate
 those identities and their current completed admissions under target maintenance
 ownership before beginning the setup operation or applying any profile step.
+One-time bootstrap captures protected serving configuration and persistent
+directory identities before enrollment. Final guarded setup checks expected
+identities again on exit and completes that snapshot only after captured route
+bindings and data-directory identities agree. See the
+[conversion procedure](../../services/build-operations.md#switch-an-existing-source-built-target)
+for snapshot limits and maintenance-window behavior.
 The maintenance lease spans the final profile and local response. Expectations
 remain transient and are rechecked during retained artifact reconciliation; see
 [activation and guarded replay](build-target-activation.md#artifact-mode-setup-replay).

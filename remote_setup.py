@@ -544,7 +544,10 @@ def _run_main() -> int:
         if len(expected_json.encode("utf-8")) > 16 * 1024:
             raise ValueError("Expected artifact release input exceeds its bound")
         with expected_artifact_setup(config, parse_json(expected_json)):
-            return _run_configured_setup(config, args)
+            result = _run_configured_setup(config, args)
+            if result != 0:
+                raise RuntimeError("Final artifact profile did not complete successfully")
+            return result
     return _run_configured_setup(config, args)
 
 

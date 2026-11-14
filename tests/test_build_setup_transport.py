@@ -67,6 +67,7 @@ class SavedBuilderPatchTransportTests(unittest.TestCase):
         stack.enter_context(patch.object(build_selection, "_endpoint", side_effect=lambda config, _keys, prefix, _workspace:
             SSHEndpoint(config.host, prefix + "fixture", "/unused/key", "/unused/known_hosts", next(iter(_keys)))))
         stack.enter_context(patch.object(build_setup, "_preflight_target"))
+        stack.enter_context(patch.object(build_setup, "preflight_delivery_storage", return_value={}))
         stack.enter_context(patch.object(build_setup, "strict_ssh_transport"))
         stack.enter_context(patch.object(build_setup, "_check_workspace_capacity"))
         self.sources = stack.enter_context(patch.object(build_setup, "_prepare_sources", side_effect=self.prepare_sources))
@@ -542,6 +543,7 @@ class BuildSetupTransportTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "stale generation"):
                 remote_setup._run_main()
         apply.assert_not_called()
+
         tokens = self.tokens()
         tokens[-1] = '[{"application":"site","application":"other"}]'
         with patch.object(sys, "argv", tokens), \
@@ -550,6 +552,16 @@ class BuildSetupTransportTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "duplicate"):
                 remote_setup._run_main()
         apply.assert_not_called()
+
+    def test_nonzero_profile_cannot_finish_conversion_scope(self):
+        from contextlib import nullcontext
+
+        with patch.object(sys, "argv", self.tokens()), \
+             patch("lib.cachyos.is_cachyos", return_value=False), \
+             patch("common.build_target_refresh.expected_artifact_setup", return_value=nullcontext()), \
+             patch.object(remote_setup, "_run_configured_setup", return_value=1), \
+             self.assertRaisesRegex(RuntimeError, "did not complete"):
+            remote_setup._run_main()
 
     def test_hidden_expected_input_cannot_change_enrollment_or_run_ordinary_profile(self):
         for mode in ("disable", "ordinary"):

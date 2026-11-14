@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from common.build_target_steps import configure_build_target
 from lib.build_target_maintenance import target_maintenance
+from lib.build_conversion import capture_conversion
 from lib.build_target_routing import save_target_routing
 from lib.machine_state import STATE_DIR
 from lib.operation_state import OperationStateStore
@@ -68,6 +69,7 @@ def bootstrap_build_target(config: SetupConfig) -> None:
     with OperationStateStore(SETUP_OPERATION_FILE).ownership() as setup:
         if setup.load() is not None:
             raise RuntimeError("Unfinished target setup must be reconciled before target bootstrap")
+        capture_conversion(config.build_target_enrollment)
         if config.effective_ssh_sources():
             # Existing web profiles rate-limit unrestricted SSH. Install the
             # explicit trusted sources before the typed delivery opens its

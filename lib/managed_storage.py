@@ -363,15 +363,40 @@ def main() -> int:
     parser.add_argument("--budget-mib", type=int, default=1024, help="Combined cache budget per account")
     parser.add_argument("--target-mib", type=int, default=1536, help="Free-space target including build reserve")
     parser.add_argument("--force", action="store_true", help="Select eligible caches even below budget")
+    parser.add_argument("--payloads", action="store_true", help="Also maintain installed builder/target terminal payloads")
+    parser.add_argument("--payload-budget-mib", type=int, default=4096, help="Retained payload budget per installed role")
+    parser.add_argument("--payload-min-age-hours", type=int, default=168, help="Minimum payload retention age")
+    parser.add_argument("--release-builder-bundles", action="store_true", help="Explicitly end retrieval of eligible successful builder artifacts")
     args = parser.parse_args()
     if os.geteuid() != 0:
         parser.error("Host maintenance must run as root")
+    if min(args.budget_mib, args.target_mib, args.payload_budget_mib, args.payload_min_age_hours) < 0:
+        parser.error("Storage thresholds cannot be negative")
+    if args.release_builder_bundles and not args.payloads:
+        parser.error("Bundle release requires --payloads")
     try:
         with storage_lock(cleanup=True):
             result = maintain(names=args.account, apply=args.apply, budget=args.budget_mib * MIB,
                               target=args.target_mib * MIB, force=args.force)
+        # Release the cache lease before dispatch. Target collection reacquires
+        # storage -> maintenance -> admission -> artifact; builder collection
+        # uses its existing worker -> input -> payload -> job lock order.
+        if args.payloads:
+            from lib.build_storage_maintenance import maintain_roles
+
+            result["roles"] = maintain_roles(apply=args.apply, budget=args.payload_budget_mib * MIB,
+                target=args.target_mib * MIB, min_age=args.payload_min_age_hours * 3600,
+                release_bundles=args.release_builder_bundles)
+            # Payload collection can resolve shortfalls first observed by cache
+            # inventory. Report final measurements, including protected storage.
+            result["shortfalls"] = [dict(path=row["path"], mount=observed["mount"],
+                remaining_bytes=args.target_mib * MIB - observed["free_bytes"])
+                for row in result["shortfalls"]
+                if (observed := filesystem(row["path"]))["free_bytes"] < args.target_mib * MIB]
         print(json.dumps(result, indent=2))
         return int(bool(result["shortfalls"] or any(
+            row.get("status") == "deferred_or_failed" or row.get("remaining_bytes") or row.get("remaining_budget_bytes")
+            for row in result.get("roles", [])) or any(
             record.get("error") or any(row["status"].startswith("failed") for row in record["candidates"])
             for record in result["accounts"])))
     except (OSError, ValueError) as exc:

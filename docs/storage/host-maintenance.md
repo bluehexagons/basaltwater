@@ -7,6 +7,8 @@ random delay. The job inventories root, managed `build-*` accounts whose passwd
 homes exactly match Basaltwater's build-home convention, and the setup account.
 Application service accounts are separate from build accounts; no service is
 stopped by cache maintenance.
+The daily job also dispatches retention for installed managed builder and target
+roles. It does not require those roles on ordinary hosts.
 
 ## Preview and apply
 
@@ -17,6 +19,8 @@ cd /opt/basaltwater
 sudo python3 -m lib.managed_storage
 sudo python3 -m lib.managed_storage --apply
 sudo python3 -m lib.managed_storage --account developer --budget-mib 768 --target-mib 2048
+sudo python3 -B -m lib.managed_storage --payloads
+sudo python3 -B -m lib.managed_storage --payloads --apply
 ```
 
 Wheel installations also provide `basaltw-storage` with the same arguments.
@@ -35,7 +39,7 @@ during setup, avoiding repeated eviction and download cycles. Raise the target
 to accommodate your measured deployment peak plus a reserve. Use a systemd
 override for the service's `ExecStart` to persist different policy arguments.
 
-Only these conventional paths are eligible:
+Only these conventional cache paths are eligible:
 
 | Path below home | Native operation | Preserved |
 | --- | --- | --- |
@@ -52,6 +56,54 @@ system npm executable. Each owner worker revalidates its home, cache inode and
 cache inventory before running a native command. Workers inherit the maintenance
 lock so it remains held if the launcher exits unexpectedly. Missing or incomplete
 post-cleanup measurements are failures, rather than successful reclamation.
+
+## Managed build payloads
+
+`--payloads` adds local role-aware inspection; `--apply` selects eligible deletion.
+The installed daily timer includes both flags. The default retained payload
+budget is 4096 MiB per role, with the same free-space target as cache maintenance
+and a seven-day grace period. Override with `--payload-budget-mib`,
+`--payload-min-age-hours` and `--target-mib`. Each pass changes at most 32 eligible
+records per role and stops selecting deletions once policy is satisfied. Preview
+does not simulate reclaimed bytes. Protected content can prevent either budget
+or headroom from being reached; reports include remaining byte shortfalls and
+the command exits unsuccessfully in that case.
+
+On builders, old certain-terminal requests use the existing verified settlement
+and source/log pruning operations. Successful bundles stay downloadable by
+default. `--release-builder-bundles` explicitly ends retrieval of eligible old
+successful artifacts; review all consumers' retention needs before enabling it.
+Queued/running/uncertain work, readers, scratch and ambiguous publication evidence
+remain protected. Pending pruning requires the existing exact-request retention
+recovery procedure; a scheduled pass never guesses completion.
+
+On targets, only proven completed bundles superseded by a newer installed release
+qualify. Every current bundle is verified and pinned, including during pressure,
+so local reconciliation remains possible without the builder. Unfinished
+conversion, setup, activation or uncertain admission evidence defers collection.
+Live releases, data directories and services are never removed. Durable retirement
+intent precedes unlink; completion precedes releasing its logical byte charge.
+Compact intent/ready/retirement records remain. Missing or corrupt current bundles
+refuse collection before deleting older bundles.
+
+An interrupted target retirement appears with `retirement_requires_exact_retry`.
+After reviewing the operation and preview revision, finish that exact retirement:
+
+```bash
+sudo python3 -B -m lib.build_storage_maintenance \
+  --retry-target OPERATION_ID --expected-revision SHA256
+```
+
+The retry repeats current-release/reference checks. It cannot override a pinned
+or uncertain operation. Corrupt or incomplete markers require reconciliation.
+Both roles report finite record runway separately: payload collection preserves
+replay identities and does **not** free record slots. Warnings start at 80% usage.
+Replay-safe record retirement remains separate protocol work; payload collection
+does not provide indefinite operation within finite metadata limits.
+
+Controller workspaces are owned by their controller account and are not swept
+by a root host timer. Use the explicit completed-attempt collector in the
+[build operations guide](../services/build-operations.md#collect-completed-controller-payloads).
 
 ## Exclusion and headroom
 
@@ -72,6 +124,12 @@ The lock file must first be created by setup or a maintenance invocation. A
 process snapshot cannot exclude a new uncoordinated manual build. This protocol
 does not coordinate arbitrary external launchers or older installed Basaltwater
 code; stop such intake before applying maintenance. Running services remain up.
+
+Cache ownership is released before role dispatch. Target collection reacquires
+storage exclusion, then target maintenance, admission and artifact ownership.
+Builder collection uses existing nonblocking worker, input, payload and job
+locks; a worker or reader starting after inventory still excludes deletion.
+Neither path relies on a process snapshot to protect managed payloads.
 
 Preflight checks downloads, build homes, staging and temporary directories,
 including separate `/tmp` mounts and `TMPDIR`. Each filesystem must provide the

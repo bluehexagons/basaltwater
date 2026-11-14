@@ -29,6 +29,7 @@ class TargetBootstrapTests(unittest.TestCase):
         self.configure = self.enterContext(patch.object(bootstrap, "configure_build_target"))
         self.routing = self.enterContext(patch.object(bootstrap, "configure_target_routing"))
         self.firewall = self.enterContext(patch.object(bootstrap, "configure_firewall_ssh_only"))
+        self.snapshot = self.enterContext(patch.object(bootstrap, "capture_conversion"))
         self.config = SetupConfig(
             host="localhost", username="agent", system_type="custom_steps",
             machine_type="vm", custom_steps=bootstrap.BOOTSTRAP_STEP,

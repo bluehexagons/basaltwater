@@ -1,10 +1,42 @@
 # Web-target conversion and build storage lifecycle
 
-Status: reviewed design and implementation backlog; the changes below are not
-implemented. Existing commands and limits remain in the
+Status: initial conversion evidence, physical admission and payload collectors
+are implemented; qualification and protocol follow-ups remain below. Commands and limits are in the
 [operations guide](../services/build-operations.md). This plan complements the
 [shared build-host plan](cicd-manifest-reuse.md), rather than changing its
 execution or transport contracts.
+
+## Implemented boundary
+
+Selected-builder setup now probes physical bytes/inodes across controller,
+builder and target filesystems before bootstrap, budgets the complete staged
+cohort and builder packaging, observes installed custom role roots and temporary
+mounts, and preserves private preflight/failure diagnostics. Known unsubmitted
+preparation failures dispose of their own temporary attempts; uncertain source
+processes retain evidence.
+
+First bootstrap captures bounded serving configuration, enrolled roots/routes
+and existing persistent-directory identities. Final guarded setup rechecks
+expected releases, captured route bindings and data-directory identities before
+completing that one-time snapshot. Sequential publication still permits downtime;
+operators must verify HTTP routes, health and database contents.
+
+Role-aware maintenance now retires proven superseded target bundles while
+pinning verified current bundles, schedules builder terminal source/log retention
+through existing verified primitives, and supports explicit builder bundle-release
+policy. The daily host timer dispatches these roles with a seven-day grace and
+configurable CLI budgets. Explicit controller preview/apply collects proven
+completed sources, bundles and extraction trees while preserving history proof.
+Interrupted payload deletion requires original revisions. Record runway warnings
+do not reclaim or erase replay identities.
+
+Remaining work: replay-safe record retirement and long-run qualification beyond
+existing record bounds; controller automatic age/budget scheduling; configurable
+inode-driven collection policy; full live populated-target conversion and measured
+small-disk/tmpfs peaks; richer pre-mutation inspection of arbitrary installed
+service/root changes and end-to-end route verification. No automatic runtime
+removal or shared writable toolchain design is introduced. The requirements below
+remain the full design, not a claim that these qualification boundaries have passed.
 
 ## Scope and decisions
 

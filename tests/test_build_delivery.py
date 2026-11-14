@@ -67,6 +67,7 @@ class BuildDeliveryFixture:
             self.addCleanup(patcher.stop)
         capacity = patch("lib.build_delivery.os.fstatvfs", return_value=SimpleNamespace(
             f_frsize=4096, f_bsize=4096, f_bavail=256 * 1024**2,
+            f_favail=10**9, f_files=10**9,
         ))
         self.capacity = capacity.start()
         self.addCleanup(capacity.stop)
@@ -227,6 +228,13 @@ class BuildDeliveryFixture:
 
 
 class TestBuildDelivery(BuildDeliveryFixture, unittest.TestCase):
+    def test_inode_exhaustion_refuses_before_any_remote_work(self) -> None:
+        self.capacity.return_value.f_favail = 10
+        with self.assertRaisesRegex(ValueError, "inodes"):
+            self.controller.deliver(self.plans)
+        self.target.reserve.assert_not_called()
+        self.builder.submit.assert_not_called()
+
     def test_completed_receipt_and_global_ordering(self) -> None:
         receipt = self.controller.deliver(self.plans)
         names = [name for name, _ in self.events]

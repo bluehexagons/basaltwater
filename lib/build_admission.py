@@ -152,7 +152,7 @@ class DeploymentAdmissionStore:
         return True
 
     @contextmanager
-    def _locked(self) -> Iterator[dict[str, Any]]:
+    def _locked(self, *, initialize: bool = True) -> Iterator[dict[str, Any]]:
         """Hold global store ownership through state changes and activation."""
         self._check_parent()
         with directory_fd(self.parent) as parent_fd:
@@ -161,8 +161,10 @@ class DeploymentAdmissionStore:
             if (parent_info.st_uid != os.geteuid() or mode & 0o077
                     or mode & 0o700 != 0o700):
                 raise ValueError("Admission parent changed to an unsafe directory")
-            flags = (os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK
+            flags = (os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK
                      | getattr(os, "O_CLOEXEC", 0))
+            if initialize:
+                flags |= os.O_CREAT
             lock_fd = os.open(self.lock_name, flags, 0o600, dir_fd=parent_fd)
             try:
                 self._check_file(parent_fd, self.lock_name, "lock")
@@ -174,6 +176,8 @@ class DeploymentAdmissionStore:
                 initialized = os.pread(lock_fd, len(_INITIALIZED) + 1, 0)
                 if initialized not in (b"", _INITIALIZED):
                     raise ValueError("Admission initialization witness is invalid")
+                if not initialized and not initialize:
+                    raise ValueError("Admission maintenance requires an initialized ledger")
                 state = self._load(required=bool(initialized))
                 if not initialized:
                     self._save(state)

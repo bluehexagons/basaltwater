@@ -14,6 +14,35 @@ from lib import managed_storage as storage
 
 
 class StorageManagementTests(unittest.TestCase):
+    def test_cli_role_dispatch_releases_cache_lock_and_reports_shortfall(self):
+        from contextlib import contextmanager
+        import io
+        import sys
+        held = False
+
+        @contextmanager
+        def lock(**_):
+            nonlocal held
+            held = True
+            try:
+                yield
+            finally:
+                held = False
+
+        def roles(**options):
+            self.assertFalse(held)
+            self.assertFalse(options["release_bundles"])
+            self.assertEqual(options["min_age"], 168 * 3600)
+            return [dict(role="target", remaining_bytes=1)]
+
+        with patch.object(sys, "argv", ["maintenance", "--payloads", "--apply"]), \
+             patch.object(storage.os, "geteuid", return_value=0), \
+             patch.object(storage, "storage_lock", side_effect=lock), \
+             patch.object(storage, "maintain", return_value=dict(accounts=[], shortfalls=[])), \
+             patch("lib.build_storage_maintenance.maintain_roles", side_effect=roles), \
+             patch("sys.stdout", new_callable=io.StringIO):
+            self.assertEqual(storage.main(), 1)
+
     def test_setup_and_deployment_hold_guard_through_operation(self):
         from contextlib import contextmanager
         from tests import real_storage_operation_guard

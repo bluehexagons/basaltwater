@@ -41,6 +41,7 @@ class BuildTargetRefreshTests(unittest.TestCase):
         self.admissions = self.enterContext(patch.object(refresh, "DeploymentAdmissionStore"))
         self.builder = self.enterContext(patch("lib.deployment.DeploymentOrchestrator._prepare_build_toolchain"))
         self.output = self.enterContext(patch("builtins.print"))
+        self.conversion = self.enterContext(patch.object(refresh, "finish_conversion"))
         self.expected = [{"application": "shop", "operation_id": "a" * 32, "generation": 3,
                           "artifact_sha256": "b" * 64}]
 
@@ -182,11 +183,12 @@ class BuildTargetRefreshTests(unittest.TestCase):
             events.append("profile")
             self.expected[0]["generation"] += 1  # Scope owns a detached snapshot.
             refresh.reconcile_artifact_deployments(self.config)
-        self.assertEqual(events, ["lease", "config", "check", "profile", "reconcile", "response", "released"])
+        self.assertEqual(events, ["lease", "config", "check", "profile", "reconcile", "response", "check", "released"])
         self.lease.assert_called_once_with()
         self.load.assert_called_once_with()
         self.activator.assert_called_once()
-        self.activator.return_value.check_expected_releases.assert_called_once_with(
+        self.assertEqual(self.activator.return_value.check_expected_releases.call_count, 2)
+        self.activator.return_value.check_expected_releases.assert_called_with(
             expected_releases=original, admissions=self.admissions.return_value,
         )
         self.activator.return_value.reconcile_installed.assert_called_once_with(
