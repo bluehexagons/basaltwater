@@ -33,6 +33,12 @@ stop leaves the candidate, private recovery snapshot and blocking operation
 under `/var/lib/basaltwater/unbound`; follow the
 [transaction recovery guide](../operations/transaction-recovery.md) before retrying.
 Package installation and root-anchor maintenance are outside file rollback.
+Fresh setup refreshes APT metadata before installing with bounded commands.
+Any failed fresh package attempt or subsequent activation keeps a blocking marker
+and private snapshot even if file rollback succeeds. Follow the exact reviewed
+[`unbound-recover-fresh` procedure](headscale-recovery.md#failed-fresh-unbound-package-setup)
+to confirm an independently restored absent installation before a new attempt.
+Recovery never replays installation, adopts an existing package, or removes data.
 
 `--no-unbound` stops and disables the service while retaining configuration,
 local records and node binding. An advertised or reserved resolver cannot be

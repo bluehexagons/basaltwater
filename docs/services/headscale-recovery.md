@@ -134,6 +134,72 @@ restore a stale anchor from backup. Verify UDP/TCP health identity, recursion an
 valid/bogus DNSSEC from another enrolled client, then explicitly republish through
 the DNS adoption workflow. There is no automatic publication or public fallback.
 
+## Failed fresh Unbound package setup
+
+A fresh APT attempt is never replayed by recovery. Setup refreshes APT metadata
+with a five-minute bound and installs with a ten-minute bound, without retries.
+Any failed fresh package attempt or later activation retains `operation.json`
+and `recovery.json`, even after successful file/unit rollback. The operation
+records the observed unpublished identity, original snapshot SHA256 and package
+presence before the attempt. Package effects and trust-anchor data remain outside
+file rollback. A verified not-found/inactive fresh unit needs no stop or disable.
+
+Use `unbound-recover-fresh` only to confirm an independently restored **absent**
+installation. It never installs, removes, adopts or restores packages or native
+identity. If Unbound is installed, partially configured, running or has remaining
+configuration, preserve evidence and reconcile through independent administration
+first. Review APT/dpkg logs and the retained package inventory. Stop and disable
+the candidate, verify quiescence, and preserve any new configuration and package
+data privately before an explicitly reviewed package removal. Never purge data,
+autoremove dependencies, delete native client identity, or discard unrelated
+configuration to satisfy the guard. Restore each transaction file to its recorded
+baseline; null means absent. Preserve unrelated files. If this baseline cannot be
+established safely, keep the operation blocked for further review.
+
+After package reconciliation, reload systemd and verify `unbound.service` has
+`LoadState=not-found`, `ActiveState=inactive` (or `failed`) and empty
+`UnitFileState`. Unbound must have no dpkg record (or status `not-installed`), stock main
+configuration or `*.conf` fragments. All managed files and the manifest must be
+absent, matching the retained fresh snapshot. Residual `config-files` package
+state also blocks recovery: deleting conffiles while retaining dpkg's old
+conffile decisions can prevent a later fresh install from restoring them.
+Reconcile that package metadata independently while preserving package data;
+this adapter never runs a purge. There must be no managed firewall
+rules, conflicting resolver listeners or DNS binding/publication reservation.
+Do not erase a binding to bypass publication withdrawal. Auxiliary packages and
+unrelated files are preserved. Keep other package/configuration writers quiesced
+through review and recovery; the locks exclude cooperating Basaltwater writers,
+not independent root administration or APT processes.
+
+Privately create `/root/recovery/fresh-review.json`, mode 0600, containing exactly
+three keys: `operation` (the **complete, unchanged** retained operation JSON,
+including its UUID, phases, timestamps and context), `backup_sha256` (lowercase
+SHA256 of the exact retained `recovery.json` bytes), and `binding` (the reviewed
+unpublished DNSBinding for the actual enrolled native node, in the format above).
+Review these independently rather than guessing an operation ID or copying an
+old review. Keep copies of both original evidence files outside Git.
+
+```bash
+sudo python3 -m lib.headscale_maintenance_cli headscale-maintenance unbound-recover-fresh --review /root/recovery/fresh-review.json --dry-run
+sudo python3 -m lib.headscale_maintenance_cli headscale-maintenance unbound-recover-fresh --review /root/recovery/fresh-review.json
+```
+
+The command holds publication and operation exclusion, checks the exact reviewed
+marker and snapshot, observes native identity, and verifies absence twice before
+completion. It archives the snapshot as `recovery.json.<operation-uuid>.resolved`
+and saves the completed marker in `operation.json.last.json`. It then removes the
+blocking evidence from its active paths. Changed evidence, uncertain package
+status, a live owner, identity drift or publication state refuses completion.
+A legacy fresh failure whose context contains only the backup path can also be
+resolved at this strict absent baseline; its reviewed identity is verified live,
+but the older marker cannot establish the identity observed before failure.
+The API is `recover_fresh_unbound(reviewed=review, paths=UnboundPaths())`.
+
+Only after confirmed recovery may the operator start a new normal setup attempt.
+That is a new transaction, not replay of the uncertain install. Native enrollment
+and peer verification/publication remain separate. An existing managed resolver
+uses its original rollback path; this command refuses its non-null snapshot.
+
 ## Native identity recovery or new enrollment
 
 `node_id` metadata is evidence, not a credential or portable identity. Preserve

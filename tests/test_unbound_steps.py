@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import hashlib
 from pathlib import Path
 import subprocess
 import tempfile
@@ -10,10 +11,11 @@ import unittest
 from unittest.mock import patch
 
 from common import unbound_steps as steps
-from lib.atomic_io import read_json_file
+from lib.atomic_io import read_json_file, write_json_atomic
 from lib.config import SetupConfig
 from lib.headscale_dns_binding import DNSBinding, read_dns_binding, save_dns_binding
-from lib.operation_state import OperationStateError
+from lib.operation_state import OperationStateError, OperationStateStore
+from lib import unbound_backup as recovery
 from lib.state_read import StateReadError
 from lib.unbound_config import LocalRecord, health_identity
 
@@ -37,6 +39,7 @@ class UnboundStepsTests(unittest.TestCase):
         self.fail_health = 0
         self.fail_candidate = False
         self.fail_stop = False
+        self.fail_install = None
         for name, kwargs in (
             ("_preflight", {"return_value": None}),
             ("_observe", {"return_value": self.binding}),
@@ -68,9 +71,15 @@ class UnboundStepsTests(unittest.TestCase):
     def command(self, command, **_kwargs):
         self.commands.append(command)
         output = ""
-        if command[0] == "apt-get":
+        if command[:2] == ["apt-get", "update"] and self.fail_install == "update":
+            raise RuntimeError("metadata refresh failed")
+        if command[:2] == ["apt-get", "install"]:
             self.assertIn("RESOLVCONF=false", Path(self.paths.defaults).read_text())
+            if self.fail_install == "before":
+                raise RuntimeError("failed install")
             self.package()
+            if self.fail_install == "after":
+                raise RuntimeError("failed install")
         elif command[:3] == ["ufw", "status", "numbered"]:
             output = "Status: active\n" + "".join(f"[{i}] 53 ALLOW IN # {comment}\n" for i, comment in enumerate(self.rules, 1))
         elif command[:2] == ["ufw", "allow"]:
@@ -131,6 +140,135 @@ class UnboundStepsTests(unittest.TestCase):
         self.assertNotIn("nameserver", Path(self.paths.defaults).read_text())
         self.assertFalse(Path(self.paths.operation).exists())
         self.assertFalse(Path(self.paths.backup).exists())
+        update = next(i for i, command in enumerate(self.commands) if command[:2] == ["apt-get", "update"])
+        install = next(i for i, command in enumerate(self.commands) if command[:2] == ["apt-get", "install"])
+        self.assertLess(update, install)
+        self.assertEqual(1, sum(command[:2] == ["apt-get", "install"] for command in self.commands))
+
+    def test_fresh_package_failures_always_retain_blocking_identity_and_snapshot(self):
+        for failure in ("update", "before", "after", "health"):
+            with self.subTest(failure=failure):
+                # Each variant needs an independent absent installation.
+                with tempfile.TemporaryDirectory() as root:
+                    self.paths = steps.UnboundPaths(root + "/etc/unbound", root + "/state",
+                                                   root + "/defaults", root + "/dropin")
+                    self.installed = self.active = self.enabled = False
+                    self.rules, self.commands = [], []
+                    self.fail_install = failure
+                    self.fail_health = int(failure == "health")
+                    with self.assertRaisesRegex(RuntimeError, "fresh package recovery required"):
+                        self.configure()
+                    operation = read_json_file(self.paths.operation)
+                    self.assertEqual("recovery_required", operation["status"])
+                    self.assertEqual(self.binding.to_dict(), operation["context"]["fresh_binding"])
+                    self.assertEqual(hashlib.sha256(Path(self.paths.backup).read_bytes()).hexdigest(),
+                                     operation["context"]["backup_sha256"])
+                    self.assertFalse(self.active or self.enabled)
+                    self.assertIsNone(read_dns_binding(self.paths.binding))
+                    self.assertEqual(0o600, Path(self.paths.backup).stat().st_mode & 0o777)
+                    before = list(self.commands)
+                    with self.assertRaises(OperationStateError):
+                        self.configure()
+                    self.assertEqual(before, self.commands)
+                    if failure in {"update", "before"}:
+                        self.assertNotIn(["systemctl", "stop", steps.SERVICE], self.commands)
+                    if failure == "update":
+                        self.assertFalse(any(command[:2] == ["apt-get", "install"] for command in self.commands))
+                        self.assertIn(["systemctl", "unmask", "--runtime", steps.SERVICE], self.commands)
+
+    def test_exact_fresh_recovery_and_successful_new_attempt(self):
+        self.fail_install = "before"
+        with self.assertRaises(RuntimeError):
+            self.configure()
+        review = dict(operation=read_json_file(self.paths.operation), binding=self.binding.to_dict(),
+                      backup_sha256=hashlib.sha256(Path(self.paths.backup).read_bytes()).hexdigest())
+        status = subprocess.CompletedProcess([], 1, "", "dpkg-query: no packages found matching unbound")
+        with patch.object(recovery, "require_capabilities"), patch.object(recovery, "_observe", return_value=self.binding), patch.object(
+            recovery, "inspect_unit_state", side_effect=self.state
+        ), patch.object(recovery, "run", return_value=status), patch.object(recovery, "_ports"), patch.object(recovery, "_rules", return_value=[]):
+            stale = dict(review, operation=dict(review["operation"], phase="changed"))
+            with self.assertRaisesRegex(ValueError, "changed"):
+                recovery.recover_fresh_unbound(reviewed=stale, paths=self.paths)
+            self.installed = True
+            with self.assertRaisesRegex(ValueError, "quiescent"):
+                recovery.recover_fresh_unbound(reviewed=review, paths=self.paths)
+            self.installed = False
+            recovery.recover_fresh_unbound(reviewed=review, paths=self.paths)
+        self.assertFalse(Path(self.paths.operation).exists())
+        self.assertTrue(list(Path(self.paths.state_dir).glob("recovery.json.*.resolved")))
+        self.fail_install = None
+        self.configure()
+        self.assertTrue(self.active)
+
+    def test_fresh_recovery_preserves_concurrent_and_published_state(self):
+        self.fail_install = "before"
+        with self.assertRaises(RuntimeError):
+            self.configure()
+        review = dict(operation=read_json_file(self.paths.operation), binding=self.binding.to_dict(),
+                      backup_sha256=hashlib.sha256(Path(self.paths.backup).read_bytes()).hexdigest())
+        status = subprocess.CompletedProcess([], 0, "not-installed", "")
+        with patch.object(recovery, "require_capabilities"), patch.object(recovery, "_observe", return_value=self.binding) as observe, patch.object(
+            recovery, "inspect_unit_state", side_effect=self.state
+        ), patch.object(recovery, "run", return_value=status), patch.object(recovery, "_ports"), patch.object(recovery, "_rules", return_value=[]) as rules:
+            observe.return_value = replace(self.binding, node_id="8")
+            with self.assertRaisesRegex(ValueError, "identity changed"):
+                recovery.recover_fresh_unbound(reviewed=review, paths=self.paths)
+            observe.return_value = self.binding
+            status.stdout = "half-configured"
+            with self.assertRaisesRegex(ValueError, "uncertain"):
+                recovery.recover_fresh_unbound(reviewed=review, paths=self.paths)
+            status.stdout = "config-files"
+            with self.assertRaisesRegex(ValueError, "uncertain"):
+                recovery.recover_fresh_unbound(reviewed=review, paths=self.paths)
+            status.stdout = "not-installed"
+            Path(self.paths.config_dir).mkdir(parents=True, exist_ok=True)
+            Path(self.paths.main).write_text("operator configuration")
+            Path(self.paths.main).chmod(0o644)
+            with self.assertRaisesRegex(ValueError, "files differ"):
+                recovery.recover_fresh_unbound(reviewed=review, paths=self.paths)
+            self.assertEqual("operator configuration", Path(self.paths.main).read_text())
+            Path(self.paths.main).unlink()
+            owner = OperationStateStore(self.paths.operation)
+            with owner.ownership(), self.assertRaises(OperationStateError):
+                recovery.recover_fresh_unbound(reviewed=review, paths=self.paths)
+            published = replace(self.binding, advertised=True, publication_id="ecdc8544-8516-4684-be66-1721a4bcd328")
+            save_dns_binding(published, expected=None, path=self.paths.binding)
+            with self.assertRaisesRegex(ValueError, "publication"):
+                recovery.recover_fresh_unbound(reviewed=review, paths=self.paths)
+            self.assertEqual(published, read_dns_binding(self.paths.binding))
+            # Independent withdrawal, while retaining identity, still blocks reset.
+            save_dns_binding(self.binding, expected=published, path=self.paths.binding)
+            with self.assertRaises(ValueError):
+                recovery.recover_fresh_unbound(reviewed=review, paths=self.paths)
+        self.assertTrue(Path(self.paths.operation).exists())
+        self.assertTrue(Path(self.paths.backup).exists())
+
+    def test_legacy_fresh_failure_exact_review_and_changed_evidence(self):
+        self.fail_install = "before"
+        with self.assertRaises(RuntimeError):
+            self.configure()
+        operation = read_json_file(self.paths.operation)
+        operation["context"] = {"backup": self.paths.backup}
+        operation["phase"] = "rollback-failed"
+        write_json_atomic(self.paths.operation, operation)
+        review = dict(operation=operation, binding=self.binding.to_dict(),
+                      backup_sha256=hashlib.sha256(Path(self.paths.backup).read_bytes()).hexdigest())
+        status = subprocess.CompletedProcess([], 1, "", "dpkg-query: no packages found matching unbound")
+        with patch.object(recovery, "require_capabilities"), patch.object(recovery, "_observe", return_value=self.binding), patch.object(
+            recovery, "inspect_unit_state", side_effect=self.state
+        ), patch.object(recovery, "run", return_value=status), patch.object(recovery, "_ports"), patch.object(recovery, "_rules", return_value=[]) as rules:
+            def concurrent_change():
+                changed = dict(operation, phase="concurrent-change")
+                write_json_atomic(self.paths.operation, changed)
+                return []
+            rules.side_effect = concurrent_change
+            with self.assertRaisesRegex(ValueError, "evidence changed"):
+                recovery.recover_fresh_unbound(reviewed=review, paths=self.paths)
+            self.assertTrue(Path(self.paths.backup).exists())
+            write_json_atomic(self.paths.operation, operation)
+            rules.side_effect = None
+            recovery.recover_fresh_unbound(reviewed=review, paths=self.paths)
+        self.assertFalse(Path(self.paths.operation).exists())
 
     def test_rerun_preserves_identity_records_and_unrelated_files(self):
         record = LocalRecord("lan.example.net", "files.lan.example.net", "A", "192.0.2.5")

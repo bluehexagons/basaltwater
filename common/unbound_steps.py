@@ -273,7 +273,9 @@ def _install() -> None:
     run(["systemctl", "mask", "--runtime", SERVICE], capture_output=True)
     try:
         environment = dict(os.environ, DEBIAN_FRONTEND="noninteractive")
-        run(["apt-get", "install", "-y", "-qq", *APT_LOCK_OPTIONS, *missing], env=environment)
+        run(["apt-get", "update", "-qq", *APT_LOCK_OPTIONS, "-o", "APT::Update::Error-Mode=any"],
+            env=environment, timeout=300)
+        run(["apt-get", "install", "-y", "-qq", *APT_LOCK_OPTIONS, *missing], env=environment, timeout=600)
         if any(not is_package_installed(package) for package in PACKAGES):
             raise RuntimeError("Unbound package installation was not verified")
     finally:
@@ -366,6 +368,8 @@ def configure_unbound(config: SetupConfig, *, paths: UnboundPaths = UnboundPaths
         check_directory_path(path)
     with dns_binding_lease(paths.binding) as lease:
         previous_binding = lease.binding
+        if _read(paths.operation, private=True) is not None or _read(paths.backup, private=True) is not None:
+            raise OperationStateError("Unfinished Unbound transaction; preserve operation and recovery files")
         if not config.unbound and previous_binding is not None and previous_binding.advertised:
             raise ValueError("Withdraw or replace the advertised DNS resolver before disabling Unbound")
         managed = _manifest(paths)
@@ -412,14 +416,20 @@ def configure_unbound(config: SetupConfig, *, paths: UnboundPaths = UnboundPaths
                 raise OperationStateError("Unfinished Unbound transaction; preserve and inspect operation and recovery files")
             snapshot = _snapshot(paths, state, previous_binding)
             write_json_atomic(paths.backup, snapshot)
-            operation = store.begin("unbound-configuration", paths.fragment, "prepared", context={"backup": paths.backup})
+            context = {"backup": paths.backup, "backup_sha256": _hash(_read(paths.backup, private=True) or b""),
+                       "fresh_binding": binding.to_dict() if managed is None else None,
+                       "packages_before": {package: is_package_installed(package) for package in PACKAGES}}
+            operation = store.begin("unbound-configuration", paths.fragment, "prepared", context=context)
             mutated = False
+            package_attempted = False
             try:
                 if config.unbound:
                     store.transition(operation.operation_id, "installing")
                     if managed is None:
                         mutated = True
                         _write(paths.defaults, b"# Managed by Basaltwater\nRESOLVCONF=false\nROOT_TRUST_ANCHOR_UPDATE=true\n", 0o644)
+                        store.transition(operation.operation_id, "fresh-package-intent")
+                        package_attempted = True
                         _install()
                         _unit_configuration(paths, managed=False)
                     stocks = _stock_fragments(paths, managed=managed is not None)
@@ -456,10 +466,19 @@ def configure_unbound(config: SetupConfig, *, paths: UnboundPaths = UnboundPaths
                 try:
                     if mutated:
                         store.transition(operation.operation_id, "rolling-back")
-                        run(["systemctl", "stop", SERVICE], capture_output=True)
+                        current = inspect_unit_state(SERVICE)
+                        if not (managed is None and current["LoadState"] == "not-found"
+                                and current["ActiveState"] in {"inactive", "failed"}):
+                            run(["systemctl", "stop", SERVICE], capture_output=True)
                         if inspect_unit_state(SERVICE)["ActiveState"] not in {"inactive", "failed"}:
                             raise RuntimeError("Could not establish DNS quiescence; candidate files retained")
-                        _restore(snapshot)
+                        if managed is None and current["LoadState"] == "not-found":
+                            for path, previous in snapshot["files"].items():
+                                if previous is not None:
+                                    raise RuntimeError("Unexpected prior fresh resolver file")
+                                remove_file_durable(path)
+                        else:
+                            _restore(snapshot)
                         _firewall(previous_binding if state["ActiveState"] == "active" else None)
                         if previous_binding is None:
                             lease.clear()
@@ -467,10 +486,15 @@ def configure_unbound(config: SetupConfig, *, paths: UnboundPaths = UnboundPaths
                             lease.save(previous_binding)
                         if state["ActiveState"] == "active" and previous_binding is not None:
                             verify_resolver(previous_binding)
-                    store.complete(operation.operation_id, outcome="rolled_back" if mutated else "failed", keep_ownership=True)
+                    if package_attempted:
+                        store.transition(operation.operation_id, "fresh-package-recovery", status="recovery_required")
+                    else:
+                        store.complete(operation.operation_id, outcome="rolled_back" if mutated else "failed", keep_ownership=True)
                 except BaseException as recovery:
                     store.transition(operation.operation_id, "rollback-failed", status="recovery_required")
                     raise RuntimeError("Unbound recovery required; preserve " + paths.operation + " and " + paths.backup) from recovery
+                if package_attempted:
+                    raise RuntimeError("Unbound fresh package recovery required; preserve " + paths.operation + " and " + paths.backup) from original
                 remove_file_durable(paths.backup)
                 raise original
             remove_file_durable(paths.backup)

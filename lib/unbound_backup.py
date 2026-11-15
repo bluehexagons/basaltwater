@@ -8,21 +8,108 @@ import hashlib
 import os
 from pathlib import Path
 import tempfile
+import uuid
 
 from common.unbound_steps import (
-    UnboundPaths, _candidate, _files, _manifest, _observe, _read,
+    SERVICE, FIREWALL_PREFIX, UnboundPaths, _candidate, _files, _manifest, _observe, _read,
+    _snapshot, _ports, _rules,
     _private_directory, _same_identity, _stock_fragments, _write,
 )
-from lib.atomic_io import parse_json, write_json_atomic
+from lib.atomic_io import parse_json, remove_file_durable, write_bytes_atomic, write_json_atomic
 from lib.headscale_dns_binding import DNSBinding, dns_binding_lease, parse_dns_binding
 from lib.headscale_server import require_capabilities
 from lib.operation_state import OperationStateStore
 from lib.remote_utils import run
+from lib.unit_transaction import inspect_unit_state
 from lib.setup_directories import directory_fd, check_directory_path
 from lib.unbound_config import parse_local_records, render_unbound
 from lib.validation import validate_filesystem_path
 
 MAX_SNAPSHOT = 256 * 1024
+
+
+def validate_fresh_recovery_review(review: object) -> dict:
+    """Validate private review syntax without observing or changing the host."""
+    if (not isinstance(review, dict) or set(review) != {"operation", "backup_sha256", "binding"}
+            or not isinstance(review["operation"], dict)
+            or not isinstance(review["backup_sha256"], str)
+            or len(review["backup_sha256"]) != 64
+            or any(c not in "0123456789abcdef" for c in review["backup_sha256"])):
+        raise ValueError("Exact operation, snapshot digest and identity review required")
+    binding = parse_dns_binding(review["binding"])
+    if binding.advertised:
+        raise ValueError("Unpublished recovery identity required")
+    return review
+
+
+def recover_fresh_unbound(*, reviewed: dict, paths: UnboundPaths = UnboundPaths()) -> None:
+    """Resolve only an independently restored absent fresh installation.
+
+    No package/file restoration, installation, adoption or identity deletion.
+    Retain the snapshot as archived evidence; completion saves the exact marker.
+    """
+    require_capabilities()
+    validate_fresh_recovery_review(reviewed)
+    expected = parse_dns_binding(reviewed["binding"])
+    with dns_binding_lease(paths.binding) as lease:
+        if lease.binding is not None:
+            raise ValueError("Resolver binding exists; withdraw publication and reconcile independently")
+        store = OperationStateStore(paths.operation)
+        with store.ownership():
+            operation = store.load()
+            if (operation is None or operation.to_dict() != reviewed["operation"]
+                    or operation.operation_type != "unbound-configuration"
+                    or operation.resource != paths.fragment
+                    or operation.context.get("backup") != paths.backup):
+                raise ValueError("Retained operation changed or is not a fresh configuration")
+            raw = _read(paths.backup, private=True)
+            if raw is None or hashlib.sha256(raw).hexdigest() != reviewed["backup_sha256"]:
+                raise ValueError("Retained snapshot changed")
+            if str(uuid.UUID(operation.operation_id)) != operation.operation_id:
+                raise ValueError("Invalid retained operation identity")
+            if operation.context.get("backup_sha256", reviewed["backup_sha256"]) != reviewed["backup_sha256"]:
+                raise ValueError("Snapshot differs from the original operation")
+            snapshot = parse_json(raw)
+            # Legacy failures have only a backup context. They can be resolved
+            # only at this same strict absent baseline, never by adopting APT effects.
+            fresh = operation.context.get("fresh_binding")
+            if fresh is not None and parse_dns_binding(fresh) != expected:
+                raise ValueError("Reviewed identity differs from retained fresh identity")
+            if (not isinstance(snapshot, dict) or set(snapshot) != {"version", "files", "state", "binding"}
+                    or snapshot["version"] != 1 or snapshot["binding"] is not None
+                    or snapshot["files"] != dict.fromkeys((*_files(paths), paths.manifest))
+                    or snapshot["state"].get("LoadState") != "not-found"
+                    or snapshot["state"].get("ActiveState") not in {"inactive", "failed"}):
+                raise ValueError("Snapshot is not an absent fresh resolver baseline")
+            def verify_absent():
+                if not _same_identity(_observe(expected.network_url), expected):
+                    raise ValueError("Native identity changed")
+                state = inspect_unit_state(SERVICE)
+                if (state["LoadState"] != "not-found" or state["ActiveState"] not in {"inactive", "failed"}
+                        or state["UnitFileState"] != ""):
+                    raise ValueError("Fresh recovery requires an absent, quiescent unit")
+                status = run(["dpkg-query", "-W", "-f=${db:Status-Status}", "unbound"],
+                             capture_output=True, check=False, timeout=30, env=dict(os.environ, LC_ALL="C"))
+                if not ((status.returncode == 0 and status.stdout.strip() == "not-installed")
+                        or (status.returncode == 1 and not status.stdout.strip()
+                            and "no packages found matching unbound" in (status.stderr or ""))):
+                    raise ValueError("Unbound package effects remain installed or uncertain")
+                if (_read(paths.main) is not None or list(Path(paths.fragments).glob("*.conf"))
+                        or _snapshot(paths, snapshot["state"], None) != snapshot):
+                    raise ValueError("Resolver files differ from the reviewed absent baseline")
+                _ports(expected, managed=False)
+                if any(comment.startswith(FIREWALL_PREFIX) for _, comment in _rules()):
+                    raise ValueError("Resolver firewall effects remain")
+            verify_absent()
+            # Archive before clearing the guard; never discard the only snapshot.
+            archive = paths.backup + "." + operation.operation_id + ".resolved"
+            validate_filesystem_path(archive)
+            write_bytes_atomic(archive, raw, mode=0o600)
+            verify_absent()
+            if store.load() != operation or _read(paths.backup, private=True) != raw:
+                raise ValueError("Recovery evidence changed during verification")
+            store.complete(operation.operation_id, outcome="rolled_back", keep_ownership=True)
+            remove_file_durable(paths.backup)
 
 
 def private_json(path: Path, *, limit: int = MAX_SNAPSHOT) -> object:

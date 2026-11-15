@@ -93,3 +93,17 @@ class MaintenanceTests(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             self.assertEqual(0, cli.main(["headscale-maintenance", "backup", "--destination",
                                           str(self.root / "new"), "--dry-run"]))
+
+    def test_fresh_recovery_dispatch_and_dryrun(self):
+        review = dict(operation={"operation_id": "reviewed"}, backup_sha256="a" * 64,
+                      binding=dict(version=1, network_url="https://vpn.example.com", node_id="7",
+                                   addresses=["100.64.0.2"], advertised=False, publication_id=None))
+        source = self.root / "review.json"
+        write_json_atomic(str(source), review)
+        words = ["unbound-recover-fresh", "--review", str(source)]
+        with patch("lib.unbound_backup.recover_fresh_unbound") as recover:
+            self.assertEqual(0, self.invoke([*words, "--dry-run"])[0])
+            recover.assert_not_called()
+            with patch.object(cli.os, "geteuid", return_value=0), patch("lib.unbound_backup.private_json", return_value=review):
+                self.assertEqual(0, self.invoke(words)[0])
+            recover.assert_called_once_with(reviewed=review)
