@@ -33,6 +33,10 @@ class RootHeadscaleTests(unittest.TestCase):
             with patch.object(basaltwater, "run_headscale_dns_command", return_value=8) as handler:
                 self.assertEqual(self.main("headscale-dns", "inspect", "--dry-run"), 8)
                 self.assertTrue(handler.call_args.args[0].dry_run)
+            with patch.object(basaltwater, "run_headscale_maintenance_command", return_value=9) as handler:
+                self.assertEqual(self.main("headscale-maintenance", "backup", "--destination", str(Path(temporary) / "backup"), "--dry-run"), 9)
+                self.assertEqual(handler.call_args.args[0].headscale_maintenance_action, "backup")
+                self.assertTrue(handler.call_args.args[0].dry_run)
             self.assertFalse(Path(root).exists())
             self.assertFalse(Path(local).exists())
 
@@ -73,6 +77,16 @@ class RootHeadscaleTests(unittest.TestCase):
                 prepare.assert_not_called()
                 remote.assert_not_called()
 
+    def test_maintenance_dryrun_and_failure_keep_native_boundary(self):
+        with tempfile.TemporaryDirectory() as temporary, patch("subprocess.run", side_effect=AssertionError("native call")), patch("lib.headscale_backup.backup_headscale") as backup:
+            destination = Path(temporary) / "backup"
+            self.assertEqual(self.main("headscale-maintenance", "backup", "--destination", str(destination), "--dry-run"), 0)
+            self.assertFalse(destination.exists())
+            self.assertEqual(self.main("headscale-maintenance", "backup", "--destination", "relative", "--dry-run"), 1)
+            with patch("os.geteuid", return_value=1000):
+                self.assertEqual(self.main("headscale-maintenance", "backup", "--destination", str(destination)), 1)
+            backup.assert_not_called()
+
     def test_setup_dryrun_transports_static_metadata_and_propagates_failure(self):
         with patch.object(basaltwater, "load_setup_command", return_value=None), patch.object(basaltwater, "prompt_for_missing_passwords"), patch.object(basaltwater, "prepare_runtime_config", side_effect=lambda config: config), patch.object(basaltwater, "run_remote_setup", return_value=1) as remote, patch.object(basaltwater, "save_setup_command") as save, patch("subprocess.run", side_effect=AssertionError("native call")):
             self.assertEqual(self.main("setup", "server_lite", "target.example.com", "agent", "--timezone", "UTC", "--dry-run",
@@ -89,7 +103,7 @@ class RootHeadscaleTests(unittest.TestCase):
         code = '''
 import builtins
 real_import = builtins.__import__
-allowed = {"lib.headscale_management_cli", "lib.headscale_dns_cli"}
+allowed = {"lib.headscale_management_cli", "lib.headscale_dns_cli", "lib.headscale_maintenance_cli"}
 def guarded(name, *args, **kwargs):
     if name.startswith(("lib.", "common.")) and name not in allowed:
         raise AssertionError(name)
@@ -97,11 +111,13 @@ def guarded(name, *args, **kwargs):
 builtins.__import__ = guarded
 from lib.headscale_management_cli import add_headscale_management_parser
 from lib.headscale_dns_cli import add_headscale_dns_parser
+from lib.headscale_maintenance_cli import add_headscale_maintenance_parser
 import argparse
 p = argparse.ArgumentParser()
 s = p.add_subparsers()
 add_headscale_management_parser(s)
 add_headscale_dns_parser(s)
+add_headscale_maintenance_parser(s)
 p.parse_args(["headscale-dns", "inspect", "--dry-run"])
 '''
         result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)

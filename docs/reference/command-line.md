@@ -81,6 +81,7 @@ basaltw headscale-admin <users-list|users-create|users-delete|nodes-list|approve
 basaltw headscale-client <status|enroll-personal|enroll-machine|reconcile|adopt|disable|leave|migrate|abandon> --url HTTPS_URL [options] [--dry-run]
 basaltw headscale-manage <bind|show|remove|enroll|inspect|reconcile> REFERENCE [options] [--dry-run]
 basaltw headscale-dns <publish|withdraw|inspect|reconcile> [--input PRIVATE_JSON] [--dry-run]
+basaltw headscale-maintenance <backup|validate|restore|upgrade|unbound-backup|unbound-validate|unbound-restore> [options] [--dry-run]
 basaltw desktop <command> ...
 basaltw kiosk <status|doctor|start|stop|restart> [--json]
 basaltw firmware <audit|update> [options]
@@ -138,6 +139,9 @@ see [management and tagged enrollment](../services/headscale-management.md).
 `headscale-dns` performs explicit root local DNS publication and recovery.
 Its mutating actions require a private root-owned JSON request; `inspect`
 rejects `--input`. Dry runs retain handler input and privilege validation.
+`headscale-maintenance` provides explicit local backup, restore and reviewed
+upgrade operations; see [recovery commands](../services/headscale-recovery.md).
+Its dry run validates paths and private metadata without native calls or locks.
 Setup and patch validate the complete merged network configuration and ingress
 before provisioning or uploading source. Active named selections follow stable
 IDs across renames and reject removed/replaced records or changed endpoints.

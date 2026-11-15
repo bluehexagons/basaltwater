@@ -1,9 +1,8 @@
 # Private Headscale and DNS recovery
 
 Use independent root SSH access on the service host. The standalone adapter is
-available as `python3 -m lib.headscale_maintenance_cli`; root CLI registration is
-owned by the parent integration. After registration the same arguments follow
-`basaltw headscale-maintenance`. These are local operations, with no SSH transport,
+available as `python3 -m lib.headscale_maintenance_cli` and through the root CLI
+as `basaltw headscale-maintenance`. These are local operations, with no SSH transport,
 release discovery, enrollment, automatic service stop or backup scheduler.
 See [hosting](headscale-hosting.md), [native clients](headscale-clients.md) and the
 [network contract](../plans/headscale-networking.md).

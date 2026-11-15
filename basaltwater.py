@@ -43,6 +43,7 @@ from lib.headscale_admin_cli import add_headscale_admin_parser, run_headscale_ad
 from lib.headscale_client_cli import add_headscale_client_parser, run_headscale_client_command
 from lib.headscale_management_cli import add_headscale_management_parser, run_headscale_management_command
 from lib.headscale_dns_cli import add_headscale_dns_parser, run_headscale_dns_command
+from lib.headscale_maintenance_cli import add_headscale_maintenance_parser, run_headscale_maintenance_command
 from lib.concurrency import ResourceBusyError, ResourceLockSafetyError
 from lib.scrub_cli import add_scrub_subparser, run_scrub_command
 from lib.homebox_config import validate_homebox_settings
@@ -181,6 +182,7 @@ def _build_basaltwater_epilog() -> str:
     headscale-client ...         Root local native client enrollment and recovery
     headscale-manage ...         Explicit SSH management and tagged enrollment
     headscale-dns ...            Root local DNS publication and recovery
+    headscale-maintenance ...    Root local backup, restore and upgrade
 
 Sysadmin Shortcuts:
     mount <host:path> <local>   Mount a remote directory via sshfs
@@ -695,6 +697,7 @@ def create_basaltwater_parser(*, _command: str | None = None) -> Tuple[argparse.
     add_headscale_client_parser(subparsers)
     add_headscale_management_parser(subparsers)
     add_headscale_dns_parser(subparsers)
+    add_headscale_maintenance_parser(subparsers)
     if _command is None or _command in {"setup", "patch"}:
         from lib.headscale_cli import _complete_server_names
 
@@ -2677,6 +2680,8 @@ def main() -> int:
         return run_headscale_management_command(args)
     elif args.command == "headscale-dns":
         return run_headscale_dns_command(args)
+    elif args.command == "headscale-maintenance":
+        return run_headscale_maintenance_command(args)
     elif args.command in {"mount", "umount", "health", "ssh", "push", "pull", "key", "ssh-key", "df", "fan", "svc", "logs", "upgrade", "reachable", "user"}:
         return run_sysadmin_command(args)
     elif args.command == "shell":
