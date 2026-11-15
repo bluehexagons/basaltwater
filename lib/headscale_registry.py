@@ -18,6 +18,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.concurrency import resource_lock
+from lib.headscale_config import validate_headscale_url
 from lib.setup_directories import check_directory_path
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_host
@@ -49,7 +50,9 @@ def _registry_path(workspace: str | None) -> str:
     return os.path.join(root, REGISTRY_NAME)
 
 
-def _validate_url(value: str, label: str) -> str:
+def _validate_url(value: str, label: str, *, allow_path: bool = False) -> str:
+    if not allow_path:
+        return validate_headscale_url(value)
     if not isinstance(value, str) or not value or len(value) > 2048:
         raise ValueError(f"{label} must be an HTTPS URL")
     if any(ord(c) < 32 or ord(c) == 127 for c in value) or any(c.isspace() for c in value):
@@ -60,7 +63,7 @@ def _validate_url(value: str, label: str) -> str:
     except ValueError as exc:
         raise ValueError(f"{label} must be a valid HTTPS URL") from exc
     if (parts.scheme.lower() != "https" or not parts.netloc or parts.username is not None
-            or parts.password is not None or parts.query or parts.fragment):
+            or parts.password is not None or "?" in value or "#" in value):
         raise ValueError(f"{label} must be HTTPS without userinfo, query, or fragment")
     hostname = parts.hostname
     if not hostname or not validate_host(hostname):
@@ -73,7 +76,8 @@ def _validate_url(value: str, label: str) -> str:
     if ("\\" in path or "%" in path or ".." in path.split("/")
             or (path and not re.fullmatch(r"/[A-Za-z0-9._~/-]*", path))):
         raise ValueError(f"{label} path contains unsupported characters")
-    return urlunsplit(("https", parts.netloc.lower(), path.rstrip("/"), "", ""))
+    origin = validate_headscale_url(urlunsplit(("https", parts.netloc, "", "", "")))
+    return origin + path.rstrip("/")
 
 
 def _validate_name(name: str) -> str:
@@ -99,7 +103,7 @@ def _validate_record(raw: object) -> HeadscaleServer:
         if origin not in {"managed", "external"}:
             raise ValueError("invalid origin")
         if onboarding is not None:
-            onboarding = _validate_url(onboarding, "Onboarding URL")
+            onboarding = _validate_url(onboarding, "Onboarding URL", allow_path=True)
         return HeadscaleServer(identifier, name, url, origin, onboarding)
     except (ValueError, TypeError, KeyError) as exc:
         raise RegistryStateError("Headscale registry contains an invalid record") from exc

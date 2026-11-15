@@ -29,5 +29,6 @@ operation without creating or changing registry state. Registry reads and
 completion do not create files. Invalid or corrupt saved state is reported by
 commands and is never silently reset.
 
-See the [Headscale implementation plan](../plans/headscale-implementation.md)
+See the [setup configuration contract](headscale-configuration.md) and
+[Headscale implementation plan](../plans/headscale-implementation.md)
 for the later hosting, enrollment, administration, and recovery milestones.

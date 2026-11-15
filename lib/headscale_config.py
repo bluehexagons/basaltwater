@@ -66,8 +66,9 @@ def validate_headscale_url(value: str) -> str:
 
 
 def _reference(value: str, label: str) -> str:
-    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", value):
-        raise ValueError(f"Invalid {label}; use 1-128 letters, numbers, dots, underscores or hyphens")
+    if (not isinstance(value, str) or value != value.strip()
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_. -]{0,63}", value)):
+        raise ValueError(f"Invalid {label}; use 1-64 simple characters")
     return value
 
 
@@ -132,8 +133,9 @@ def validate_headscale_settings(config: SetupConfig, *, complete: bool = False) 
             if not isinstance(value, str):
                 raise ValueError(f"{name} must be an IP string")
             address = ipaddress.ip_address(validate_network_ip(value, name))
-            if address.version != version or not address.is_global:
-                raise ValueError(f"{name} requires a global IPv{version} address")
+            if (address.version != version or address.is_unspecified or address.is_loopback
+                    or address.is_multicast or address.is_link_local):
+                raise ValueError(f"{name} requires a unicast IPv{version} address reachable by clients")
             setattr(config, name, str(address))
     if config.headscale_resolvers is not None:
         if not isinstance(config.headscale_resolvers, list) or not config.headscale_resolvers:
@@ -201,9 +203,11 @@ def _validate_host_conflicts(config: SetupConfig) -> None:
     services.extend(values[0] for values in (config.gogs, config.homebox) if values)
     services.extend(target.split("/")[0] for spec in config.deploy_specs or [] if spec for target in spec[0].split(","))
     for spec in services:
-        if spec and spec.split(":")[0].lower().rstrip(".") == config.headscale_domain:
+        if spec and spec.split(":")[0].lower().rstrip(".") in {
+            config.headscale_domain, config.headscale_onboarding_domain,
+        }:
             ingress = "Cloudflare ingress" if config.enable_cloudflare else "service ingress"
-            raise ValueError(f"Headscale control hostname conflicts with {ingress}")
+            raise ValueError(f"Headscale hostname conflicts with {ingress}")
     if config.antistatic_server:
         raise ValueError("Headscale STUN UDP 3478 conflicts with antistatic-server")
     if config.gogs and not config.enable_cloudflare and config.gogs[0].rsplit(":", 1)[-1] in {"80", "443"}:

@@ -25,7 +25,7 @@ class TestHeadscaleConfig(unittest.TestCase):
         fields = dict(headscale=True, headscale_domain="vpn.example.com",
                       headscale_base_domain="mesh.example.net",
                       headscale_onboarding_domain="join.example.com",
-                      headscale_public_ipv4="93.184.216.34")
+                      headscale_public_ipv4="198.51.100.34")
         fields.update(changes)
         return self.config(**fields)
 
@@ -44,6 +44,7 @@ class TestHeadscaleConfig(unittest.TestCase):
         self.assertEqual(config.tailscale_server, "Office")
         self.assertTrue(config.tailscale)
         self.assertTrue(config.unbound)
+        self.assertEqual("Team Space", self.parse("--tailscale 'Team Space'").tailscale_server)
         help_text = create_setup_argument_parser("help").format_help()
         for flag in ("--headscale", "--no-headscale", "--tailscale", "--tailscale-login-server", "--no-tailscale", "--unbound", "--no-unbound"):
             self.assertIn(flag, help_text)
@@ -122,7 +123,7 @@ class TestHeadscaleConfig(unittest.TestCase):
                 config.to_remote_args()
 
     def test_enabled_round_trips_and_omitted_merge_preserves_values(self):
-        host = self.hosting(headscale_public_ipv6="2606:4700:4700::1111")
+        host = self.hosting(headscale_public_ipv6="2001:db8::34")
         merged = merge_setup_configs(host, self.config())
         self.assertEqual(merged.headscale_domain, host.headscale_domain)
         self.assertIs(merged.headscale, True)
@@ -146,7 +147,7 @@ class TestHeadscaleConfig(unittest.TestCase):
                 self.config(**changes)
 
     def test_dns_topology_and_ingress_conflicts(self):
-        for changes in (dict(tailscale_login_server="https://vpn.example.com"), dict(tailscale_login_server="https://target.example.com"), dict(unbound=True), dict(headscale_base_domain="example.com"), dict(headscale_onboarding_domain="vpn.example.com"), dict(antistatic_server="game.example.com"), dict(homebox_port=8080), dict(web_panel_port=9090), dict(enable_cloudflare=True, deploy_specs=[["site.example.com,vpn.example.com", "https://example.com/repo.git"]])):
+        for changes in (dict(tailscale_login_server="https://vpn.example.com"), dict(tailscale_login_server="https://target.example.com"), dict(unbound=True), dict(headscale_base_domain="example.com"), dict(headscale_onboarding_domain="vpn.example.com"), dict(antistatic_server="game.example.com"), dict(homebox_port=8080), dict(web_panel_port=9090), dict(enable_cloudflare=True, deploy_specs=[["site.example.com,vpn.example.com", "https://example.com/repo.git"]]), dict(deploy_specs=[["join.example.com", "https://example.com/repo.git"]])):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 self.hosting(**changes)
         allowed = self.hosting(enable_cloudflare=True, deploy_specs=[["site.example.com", "https://example.com/repo.git"]])

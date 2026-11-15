@@ -91,7 +91,7 @@ def run_headscale_command(args: argparse.Namespace) -> int:
     if action == "add":
         name = _validate_name(args.name)
         url = _validate_url(args.url, "Server URL")
-        onboarding_url = _validate_url(args.onboarding_url, "Onboarding URL") if args.onboarding_url else None
+        onboarding_url = _validate_url(args.onboarding_url, "Onboarding URL", allow_path=True) if args.onboarding_url else None
         record = HeadscaleServer(str(uuid.uuid4()), name, url, args.origin, onboarding_url)
 
         def add_record(records):
