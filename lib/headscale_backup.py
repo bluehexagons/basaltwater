@@ -91,7 +91,13 @@ def validate_backup(source: Path, *, expected: ServerManifest,
     check_directory_path(str(source))
     if source.stat().st_mode & 0o077:
         raise ValueError("Backup directory must be private")
-    metadata = read_json_file(str(source / "backup.json"))
+    # Metadata is part of the private snapshot too: reject linked, oversized,
+    # foreign-owned or world-readable inputs before interpreting their binding.
+    metadata_path = source / "backup.json"
+    regular_bytes(metadata_path)
+    if metadata_path.stat().st_mode & 0o077:
+        raise ValueError("Backup metadata must be private")
+    metadata = read_json_file(str(metadata_path), max_bytes=64 * 1024)
     names = snapshot_files(paths)
     if (not isinstance(metadata, dict) or metadata.get("schema") != 1
             or metadata.get("manifest") != asdict(expected)
