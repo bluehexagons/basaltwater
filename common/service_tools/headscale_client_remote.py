@@ -45,6 +45,8 @@ def inspect_client(url: str, tags: list[str], *, enrolled_only: bool = False) ->
     with client.client_lock():
         client.reject_control_host(url)
         binding = client.owned(url)
+        if binding["phase"] == "leaving":
+            raise ValueError("Reconcile retained logout intent locally first")
         if enrolled_only and binding["phase"] != "enrolled":
             raise ValueError("Owned enrolled binding required")
         if enrolled_only:

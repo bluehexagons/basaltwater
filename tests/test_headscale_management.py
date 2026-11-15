@@ -162,6 +162,23 @@ class ControllerTests(unittest.TestCase):
 
 
 class PrivateStateTests(unittest.TestCase):
+    def test_target_refuses_retained_logout_intent_before_inspection_or_delivery(self):
+        with patch.object(target.client, "client_lock", side_effect=nullcontext), \
+                patch.object(target.client, "reject_control_host"), \
+                patch.object(target.client, "owned", return_value={"phase": "leaving", "node_id": "7"}), \
+                patch.object(target, "_privacy") as privacy, \
+                patch.object(target.client, "snapshot") as snapshot, \
+                patch.object(target.client, "enroll_client") as enroll:
+            for action in ("inspect", "observe", "enroll"):
+                request = {"action": action, "url": URL, "tags": TAGS}
+                if action == "enroll":
+                    request["key"] = SECRET
+                with self.subTest(action=action), patch.object(target.os, "geteuid", return_value=0):
+                    self.assertFalse(target.execute_request(json.dumps(request).encode())["ok"])
+            privacy.assert_not_called()
+            snapshot.assert_not_called()
+            enroll.assert_not_called()
+
     def test_corrupt_unsafe_linked_and_unknown_state_preserved(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "state.json"

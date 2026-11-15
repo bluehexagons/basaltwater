@@ -224,25 +224,64 @@ def read_binding() -> dict | None:
             or info.st_nlink != 1 or info.st_mode & 0o077):
         raise ClientError("Unsafe client ownership record")
     value = read_json_file(CLIENT_STATE, max_bytes=8192)
-    if (not isinstance(value, dict) or set(value) != {"version", "url", "phase", "node_id"}
-            or type(value["version"]) is not int or value["version"] != 1
+    if (not isinstance(value, dict) or set(value) not in (
+                {"version", "url", "phase", "node_id"},
+                {"version", "url", "phase", "node_id", "recovery"})
+            or type(value["version"]) is not int or value["version"] not in {1, 2}
+            or (value["version"] == 2) != ("recovery" in value)
             or not isinstance(value["phase"], str)
-            or value["phase"] not in {"prepared", "joining", "enrolled", "left", "resuming"}
+            or value["phase"] not in {"prepared", "joining", "enrolled", "left", "resuming", "leaving"}
             or not isinstance(value["node_id"], str)
-            or (value["phase"] in {"enrolled", "resuming"} and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9:_.-]{0,127}", value["node_id"]))
+            or (value["phase"] in {"enrolled", "resuming", "leaving"} and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9:_.-]{0,127}", value["node_id"]))
             or (value["phase"] in {"prepared", "joining", "left"} and value["node_id"])):
         raise ClientError("Invalid client ownership record; preserve for recovery")
     validate_headscale_url(value["url"])
+    if value["version"] == 2:
+        recovery = value["recovery"]
+        field = {"joining": "prior_url", "leaving": "destination_url"}.get(value["phase"])
+        if field is None or not isinstance(recovery, dict) or set(recovery) != {field}:
+            raise ClientError("Invalid client recovery evidence")
+        if field == "prior_url":
+            _reviewed_endpoint(recovery[field])
+        else:
+            validate_headscale_url(recovery[field])
+    elif value["phase"] == "leaving":
+        raise ClientError("Missing client recovery intent")
     return value
 
 
-def save_binding(url: str, phase: str, node_id: str = "") -> None:
+def save_binding(url: str, phase: str, node_id: str = "", *, recovery: dict | None = None) -> None:
     with directory_fd(os.path.dirname(CLIENT_STATE), create=True, mode=0o700) as fd:
         info = os.fstat(fd)
         if info.st_uid != os.geteuid() or info.st_mode & 0o077:
             raise ClientError("Unsafe client ownership directory")
-        write_json_atomic(CLIENT_STATE, {"version": 1, "url": validate_headscale_url(url),
-                                      "phase": phase, "node_id": node_id})
+        value = {"version": 1, "url": validate_headscale_url(url), "phase": phase, "node_id": node_id}
+        if recovery is not None:
+            value.update(version=2, recovery=recovery)
+        write_json_atomic(CLIENT_STATE, value)
+
+
+def _reviewed_endpoint(value: object) -> object:
+    """Retain only a validated endpoint, including native bootstrap defaults."""
+    if value not in (None, ""):
+        validate_headscale_url(value)
+    return value
+
+
+def _require_logged_out(status: dict) -> None:
+    """Require absence of both a native node key and an observed identity."""
+    if (status.get("BackendState") != "NeedsLogin"
+            or status.get("HaveNodeKey", False) is not False
+            or status.get("Self") not in (None, {})):
+        raise ClientError("Native logout unconfirmed; retain recovery intent")
+
+
+def _finish_leave(binding: dict) -> None:
+    require_private_daemon()
+    status, prefs = snapshot()
+    _require_logged_out(status)
+    _network(prefs, binding["url"])
+    save_binding(binding["recovery"]["destination_url"], "left")
 
 
 def reject_control_host(url: str) -> None:
@@ -420,6 +459,8 @@ def resume_client(url: str, *, expected_node_id: str) -> ClientIdentity:
 
 def _reconcile(url: str) -> ClientIdentity:
     binding = owned(url)
+    if binding["phase"] == "leaving":
+        raise ClientError("Logout intent retained; explicitly confirm logged-out reconciliation")
     require_private_daemon()
     identity = observe_client(url, require_running=False)
     if binding["node_id"] and binding["node_id"] != identity.node_id:
@@ -428,9 +469,16 @@ def _reconcile(url: str) -> ClientIdentity:
     return identity
 
 
-def reconcile(url: str) -> ClientIdentity:
+def reconcile(url: str, *, confirm_logged_out: bool = False) -> ClientIdentity | None:
     """Serialize lost-ack reconciliation with enrollment and teardown."""
     with client_lock():
+        if confirm_logged_out is True:
+            with resolver_lifecycle_guard():
+                binding = owned(url)
+                if binding["phase"] != "leaving":
+                    raise ClientError("No reviewed logout intent to reconcile")
+                _finish_leave(binding)
+                return None
         return _reconcile(url)
 
 
@@ -462,6 +510,8 @@ def enroll_client(url: str, *, key_file: str | None = None,
             raise ClientError("Invalid approved service tags")
         reject_control_host(url)
         binding = owned(url)
+        if binding["phase"] == "leaving":
+            raise ClientError("Reconcile retained logout intent before enrollment")
         require_private_daemon()
         status, prefs = snapshot()
         check_network(status, prefs, url, binding["phase"])
@@ -472,11 +522,13 @@ def enroll_client(url: str, *, key_file: str | None = None,
             return identity
         if binding["phase"] not in {"prepared", "left"}:
             raise ClientError("Enrollment already issued; reconcile or explicitly leave before retry")
+        _require_logged_out(status)
+        recovery = {"prior_url": _reviewed_endpoint(prefs.get("ControlURL"))}
         args = ["tailscale", "up", "--login-server=" + url, "--accept-dns=true", "--timeout=60s"]
         if key_file is None:
             if not interactive or expected_tags or not os.isatty(1) or not os.isatty(2):
                 raise ClientError("Personal enrollment requires an authorized private terminal")
-            save_binding(url, "joining")
+            save_binding(url, "joining", recovery=recovery)
             try:
                 result = subprocess.run(args, check=False, timeout=65)
                 if result.returncode:
@@ -498,7 +550,7 @@ def enroll_client(url: str, *, key_file: str | None = None,
                     if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
                             or info.st_mode & 0o077 or info.st_nlink != 1 or not 1 <= info.st_size <= 4096):
                         raise ClientError("Unsafe transient enrollment key file")
-                    save_binding(url, "joining")
+                    save_binding(url, "joining", recovery=recovery)
                     try:
                         native(args + ["--auth-key=file:" + key_file], timeout=65)
                     finally:
@@ -540,11 +592,9 @@ def leave_client(url: str, *, expected_node_id: str) -> None:
         identity = _reconcile(url)
         if identity.node_id != expected_node_id:
             raise ClientError("Leave identity changed; review again")
+        save_binding(url, "leaving", expected_node_id, recovery={"destination_url": validate_headscale_url(url)})
         native(["tailscale", "logout"])
-        status, _ = snapshot()
-        if status["BackendState"] != "NeedsLogin":
-            raise ClientError("Leave not acknowledged; reconcile before retry")
-        save_binding(url, "left")
+        _finish_leave(owned(url))
 
 
 def migrate_client(url: str, new_url: str, *, expected_node_id: str) -> None:
@@ -557,11 +607,9 @@ def migrate_client(url: str, new_url: str, *, expected_node_id: str) -> None:
         identity = _reconcile(url)
         if identity.node_id != expected_node_id:
             raise ClientError("Migration identity changed; review again")
+        save_binding(url, "leaving", expected_node_id, recovery={"destination_url": new_url})
         native(["tailscale", "logout"])
-        status, _ = snapshot()
-        if status["BackendState"] != "NeedsLogin":
-            raise ClientError("Migration leave uncertain; reconcile before retry")
-        save_binding(new_url, "left")
+        _finish_leave(owned(url))
 
 
 def abandon_enrollment(url: str, *, confirm: bool = False) -> None:
@@ -576,12 +624,13 @@ def abandon_enrollment(url: str, *, confirm: bool = False) -> None:
         binding = owned(url)
         require_private_daemon()
         status, prefs = snapshot()
-        _network(prefs, url)
-        if (binding["phase"] != "joining" or binding["node_id"]
-                or status["BackendState"] not in {"NeedsLogin", "NeedsMachineAuth"}):
+        if binding["phase"] != "joining" or binding["node_id"]:
             raise ClientError("Attempt is not pending; reconcile observed identity")
-        native(["tailscale", "logout"])
-        status, _ = snapshot()
-        if status["BackendState"] != "NeedsLogin":
-            raise ClientError("Pending logout uncertain; retain enrollment marker")
+        _require_logged_out(status)
+        actual = _reviewed_endpoint(prefs.get("ControlURL"))
+        allowed = [validate_headscale_url(url)]
+        if "recovery" in binding:
+            allowed.append(binding["recovery"]["prior_url"])
+        if actual not in allowed:
+            raise ClientError("Pending endpoint differs from reviewed enrollment prestate")
         save_binding(url, "left")
