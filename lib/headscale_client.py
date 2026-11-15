@@ -270,9 +270,20 @@ def _reviewed_endpoint(value: object) -> object:
 
 def _require_logged_out(status: dict) -> None:
     """Require absence of both a native node key and an observed identity."""
+    # Native status still includes Self host/OS metadata without a netmap.
+    # Absence of enrollment is established by key, ID, address and map state,
+    # rather than requiring that the entire Self object disappear.
+    peer = status.get("Self")
+    if peer is None:
+        peer = {}
     if (status.get("BackendState") != "NeedsLogin"
             or status.get("HaveNodeKey", False) is not False
-            or status.get("Self") not in (None, {})):
+            or status.get("TailscaleIPs") not in (None, [])
+            or not isinstance(peer, dict)
+            or peer.get("ID") not in (None, "")
+            or peer.get("TailscaleIPs") not in (None, [])
+            or peer.get("Online", False) is not False
+            or peer.get("InNetworkMap", False) is not False):
         raise ClientError("Native logout unconfirmed; retain recovery intent")
 
 

@@ -23,7 +23,10 @@ OTHER = "https://other.example.com"
 def observed(state="Running", tags=None):
     return {"Version": "1.104.7-tabcdef123-gabcdef123", "TUN": True,
             "BackendState": state, "AuthURL": "private-pending-id",
-            "Self": None if state not in {"Running", "Stopped"} else {"ID": "node123", "HostName": "peer", "Online": state == "Running",
+            "Self": {"ID": "", "HostName": "peer", "OS": "linux", "Online": False,
+                     "InNetworkMap": False, "TailscaleIPs": None,
+                     "PublicKey": "nodekey:" + "0" * 64}
+            if state not in {"Running", "Stopped"} else {"ID": "node123", "HostName": "peer", "Online": state == "Running",
                      "TailscaleIPs": ["100.64.0.5", "fd7a:115c:a1e0::5"], "Tags": tags}}
 
 
@@ -289,6 +292,20 @@ class ClientTests(unittest.TestCase):
                 client.reconcile(URL, confirm_logged_out=True)
             native.assert_not_called()
             self.assertEqual(Path(client.CLIENT_STATE).read_bytes(), before)
+
+    def test_logged_out_native_metadata_requires_no_enrollment_evidence(self):
+        status = observed("NeedsLogin")
+        client._require_logged_out(status)
+        client._require_logged_out({**status, "Self": None})
+        client._require_logged_out({**status, "Self": {}})
+        for changes in ({"HaveNodeKey": True}, {"HaveNodeKey": "false"},
+                        {"TailscaleIPs": ["100.64.0.5"]}, {"Self": []},
+                        {"Self": {**status["Self"], "ID": "node123"}},
+                        {"Self": {**status["Self"], "TailscaleIPs": ["100.64.0.5"]}},
+                        {"Self": {**status["Self"], "Online": True}},
+                        {"Self": {**status["Self"], "InNetworkMap": True}}):
+            with self.subTest(changes=changes), self.assertRaises(client.ClientError):
+                client._require_logged_out({**status, **changes})
 
     def test_early_up_failure_retains_verified_prestate_for_confirmed_abandonment(self):
         for prestate in (None, "", "https://controlplane.tailscale.com", URL, OTHER):

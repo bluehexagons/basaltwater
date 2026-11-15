@@ -172,6 +172,9 @@ when a private native observation proves `NeedsLogin`, no node key and no Self
 identity. It performs no logout. The observed endpoint must exactly match the
 intended endpoint or the verified pre-submission endpoint retained with the
 attempt (including bootstrap defaults or previous preferences after migration).
+Native status may retain a `Self` object containing host metadata; it must have
+no node ID, overlay addresses, online state or network-map membership. Host
+metadata alone does not indicate enrollment.
 An enrolled node, third network, pending machine authorization or uncertain
 observation retains the marker. It holds the same DNS lifecycle guard. Personal
 expired requests require the same review. Legacy joining records without
