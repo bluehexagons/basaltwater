@@ -41,6 +41,9 @@ class ClientTests(unittest.TestCase):
             p = patch.object(client, name, side_effect=nullcontext)
             p.start()
             self.addCleanup(p.stop)
+        p = patch.object(client, "require_private_daemon")
+        p.start()
+        self.addCleanup(p.stop)
 
     def test_observation_redacts_and_types(self):
         with patch.object(client, "native", side_effect=[json.dumps({"short": "1.104.7"}),
@@ -51,7 +54,8 @@ class ClientTests(unittest.TestCase):
         self.assertNotIn("private-pending-id", repr(identity))
 
     def test_invalid_observations(self):
-        cases = [("Version", "1.80.0"), ("BackendState", "Surprise"), ("TUN", False)]
+        cases = [("Version", "1.80.0"), ("Version", "1.104.6"),
+                 ("BackendState", "Surprise"), ("BackendState", []), ("TUN", False)]
         for field, value in cases:
             status = observed()
             status[field] = value
@@ -263,8 +267,11 @@ class SetupTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.state = self.root / "client" / "binding.json"
+        (self.root / "native.state").write_text("opaque native identity")
+        (self.root / "native.state").chmod(0o600)
         dropin = self.root / "privacy.conf"
         dropin.write_text(steps.PRIVACY)
+        dropin.chmod(0o644)
         replacements = ((client, "CLIENT_STATE", str(self.state)),
                         (client, "NATIVE_STATE", str(self.root / "native.state")),
                         (steps, "DROPIN", str(dropin)))
@@ -279,7 +286,10 @@ class SetupTests(unittest.TestCase):
         stack.enter_context(patch.object(steps, "is_dry_run", return_value=False))
         stack.enter_context(patch.object(steps, "preflight", return_value="trixie"))
         stack.enter_context(patch.object(client, "client_lock", side_effect=nullcontext))
+        stack.enter_context(patch.object(client, "resolver_lifecycle_guard", side_effect=nullcontext))
         stack.enter_context(patch.object(client, "reject_control_host"))
+        stack.enter_context(patch.object(client, "require_private_daemon"))
+        stack.enter_context(patch.object(client, "_object", return_value={"short": "1.104.7"}))
         stack.enter_context(patch.object(steps.shutil, "which", return_value="/mock/tailscale"))
         stack.enter_context(patch.object(client, "snapshot", return_value=(observed(state), {"ControlURL": url})))
         return stack
@@ -314,6 +324,7 @@ class SetupTests(unittest.TestCase):
     def test_setup_inactive_retained_state_requires_review(self):
         client.save_binding(URL, "enrolled", "node123")
         Path(client.NATIVE_STATE).write_text("opaque native state")
+        Path(client.NATIVE_STATE).chmod(0o644)
         config = SimpleNamespace(tailscale=True, tailscale_login_server=URL)
         with self.setup_context("Stopped"), patch.object(client, "native", return_value="inactive"), patch.object(steps, "run") as run:
             with self.assertRaises(client.ClientError):
@@ -321,6 +332,7 @@ class SetupTests(unittest.TestCase):
             run.assert_not_called()
 
     def test_fresh_install_does_not_probe_missing_unit(self):
+        Path(client.NATIVE_STATE).unlink()
         config = SimpleNamespace(tailscale=True, tailscale_login_server=URL)
         with self.setup_context("NeedsLogin"), patch.object(steps.shutil, "which", return_value=None), \
                 patch.object(steps, "install_client") as install, patch.object(steps, "run"), \
