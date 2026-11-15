@@ -6,7 +6,7 @@ from dataclasses import replace
 import unittest
 
 from lib.headscale_dns_binding import DNSBinding
-from lib.unbound_config import LocalRecord, health_identity, parse_local_records, records_document, render_unbound
+from lib.unbound_config import HEALTH_NAME, LocalRecord, health_identity, parse_local_records, records_document, render_unbound
 
 
 class UnboundConfigTests(unittest.TestCase):
@@ -37,7 +37,10 @@ class UnboundConfigTests(unittest.TestCase):
         self.assertEqual(digest, health_identity(replace(self.binding, addresses=tuple(reversed(self.binding.addresses)))))
         self.assertNotEqual(digest, health_identity(replace(self.binding, node_id="8")))
         self.assertNotEqual(digest, health_identity(replace(self.binding, network_url="https://other.example.com")))
-        self.assertIn('TXT \\"' + digest + '\\"', render_unbound(self.binding))
+        line = next(line for line in render_unbound(self.binding).splitlines() if HEALTH_NAME in line)
+        self.assertIn('TXT "' + digest + '"', line)
+        self.assertNotIn("\\", line)
+        self.assertTrue(line.endswith('"\''))
 
     def test_normalized_records_render_as_data(self):
         records = self.parse(self.record, LocalRecord("lan.example.net.", "alias.lan.example.net.",

@@ -28,6 +28,8 @@ outage on the deployed system before relying on it.
 
 Configuration is validated with `unbound-checkconf` before publication. Activation
 checks UDP/TCP identity responses and authenticated root DNSKEY resolution.
+The identity TXT answer contains the plain binding digest; configuration quoting
+must not add quote or backslash characters to its DNS payload.
 Failed activation restores prior managed files and service state. An uncertain
 stop leaves the candidate, private recovery snapshot and blocking operation
 under `/var/lib/basaltwater/unbound`; follow the

@@ -126,7 +126,7 @@ def render_unbound(binding: DNSBinding, records: tuple[LocalRecord, ...] = (), *
     lines.extend("    interface: " + address for address in binding.addresses)
     lines.extend([
         '    local-zone: "basaltwater-resolver.invalid." static',
-        '    local-data: "' + HEALTH_NAME + ' 30 IN TXT \\"' + health_identity(binding) + '\\""',
+        f"    local-data: '{HEALTH_NAME} 30 IN TXT \"{health_identity(binding)}\"'",
     ])
     for zone in sorted({record.zone for record in records}):
         lines.append(f'    local-zone: "{zone}" static')
