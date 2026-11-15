@@ -82,5 +82,10 @@ available through the [native administration adapter](headscale-administration.m
 
 Offline tests cover authority separation, rename/endpoint binding, private-file
 safety, delivery ordering, missing acknowledgements, explicit reconciliation and
-secret-free diagnostics. Native socket/key-to-node linkage and full SSH delivery
-still require disposable live qualification.
+secret-free diagnostics. Disposable Debian amd64 qualification passes full private
+SSH delivery to two tagged machine clients, exact native key/node identity checks
+and daemon privacy checks. Native tagged disable/enable and stopped-profile resume
+at `145197b2` change only `WantRunning`, with 70 focused client tests passing.
+This does not establish personal Auth-ID approval or connected-client revocation;
+see the [qualification record](../testing/headscale.md) for candidate boundaries
+and remaining acceptance checks.
