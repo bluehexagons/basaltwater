@@ -162,6 +162,8 @@ def check_network(status: dict, prefs: dict, url: str, phase: str) -> None:
 
 
 def _identity(status: dict, prefs: dict, expected_url: str, require_running: bool) -> ClientIdentity:
+    if status.get("BackendState") == "Starting":
+        raise ClientStarting("Native client is initializing")
     if status.get("BackendState") not in ("Running", "Stopped"):
         raise ClientError("Client enrollment is pending or unavailable")
     url = _network(prefs, expected_url)
@@ -202,6 +204,8 @@ def observe_client(expected_url: str, *, require_running: bool = True) -> Client
     status, prefs = snapshot()
     try:
         return _identity(status, prefs, expected_url, require_running)
+    except ClientStarting:
+        raise
     except (ValueError, TypeError):
         raise ClientError("Invalid observed native identity") from None
 
@@ -370,8 +374,8 @@ def _resume_client(url: str, expected_node_id: str, *, dropin: str = PRIVACY_DRO
         save_binding(url, "resuming", expected_node_id)
         try:
             native(["systemctl", "enable", "--now", "tailscaled"])
-            status, _prefs = wait_for_daemon()
-            identity = observe_client(url, require_running=False)
+            status, prefs = wait_for_daemon()
+            identity = _identity(status, prefs, url, require_running=False)
             if identity.node_id != expected_node_id or identity.login_server != validate_headscale_url(url):
                 raise ClientError("Resumed node differs from reviewed binding")
             if status["BackendState"] == "Stopped":
@@ -379,17 +383,20 @@ def _resume_client(url: str, expected_node_id: str, *, dropin: str = PRIVACY_DRO
             deadline = time.monotonic() + 15
             while True:
                 require_private_daemon()
-                identity = observe_client(url, require_running=False)
-                if identity.node_id != expected_node_id or identity.login_server != validate_headscale_url(url):
-                    raise ClientError("Resumed node differs from reviewed binding")
-                if identity.online:
-                    break
+                try:
+                    identity = observe_client(url, require_running=False)
+                    if identity.node_id != expected_node_id or identity.login_server != validate_headscale_url(url):
+                        raise ClientError("Resumed node differs from reviewed binding")
+                    if identity.online:
+                        identity = observe_client(url)
+                        if identity.node_id != expected_node_id or identity.login_server != validate_headscale_url(url):
+                            raise ClientError("Resumed node differs from reviewed binding")
+                        break
+                except ClientStarting:
+                    pass
                 if time.monotonic() >= deadline:
                     raise ClientError("Resumed client did not become online; reconcile identity")
                 time.sleep(0.25)
-            identity = observe_client(url)
-            if identity.node_id != expected_node_id or identity.login_server != validate_headscale_url(url):
-                raise ClientError("Resumed node differs from reviewed binding")
             save_binding(url, "enrolled", expected_node_id)
             return identity
         except BaseException:

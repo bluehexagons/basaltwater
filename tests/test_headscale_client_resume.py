@@ -43,7 +43,7 @@ class ResumeTests(unittest.TestCase):
         stack.enter_context(patch.object(client, "_object", return_value={"short": "1.104.7"}))
         self.privacy = stack.enter_context(patch.object(client, "require_private_daemon"))
         self.wait = stack.enter_context(patch.object(client, "wait_for_daemon"))
-        self.wait.return_value = ({"BackendState": "Running"}, {})
+        self.wait.return_value = (observed(), {"ControlURL": URL})
         self.start_profile = stack.enter_context(patch.object(client, "_enable_retained_profile"))
         self.commands = []
         self.active = False
@@ -198,10 +198,9 @@ class ResumeTests(unittest.TestCase):
             client.read_binding()
 
     def test_stopped_identity_is_checked_before_and_after_masked_resume(self):
-        stopped = client._identity(observed("Stopped"), {"ControlURL": URL}, URL, False)
         running = self.observe.return_value
-        self.wait.return_value = ({"BackendState": "Stopped"}, {})
-        self.observe.side_effect = [stopped, running, running]
+        self.wait.return_value = (observed("Stopped"), {"ControlURL": URL})
+        self.observe.side_effect = [running, running]
         self.enable()
         self.start_profile.assert_called_once_with()
         self.assertFalse(any(c[0] == "tailscale" for c in self.commands))
@@ -215,6 +214,27 @@ class ResumeTests(unittest.TestCase):
         self.assertFalse(any(c[0] == "tailscale" for c in self.commands))
         self.start_profile.assert_not_called()
         self.assertEqual(client.read_binding()["phase"], "enrolled")
+
+    def test_stopped_profile_waits_through_starting_before_exact_online_identity(self):
+        running = self.observe.return_value
+        self.wait.return_value = (observed("Stopped"), {"ControlURL": URL})
+        self.observe.side_effect = [client.ClientStarting("initializing"), running,
+                                   client.ClientStarting("initializing"), running, running]
+        with patch.object(client.time, "sleep") as sleep:
+            self.enable()
+        self.start_profile.assert_called_once_with()
+        self.assertEqual(sleep.call_count, 2)
+        self.assertEqual(client.read_binding()["phase"], "enrolled")
+
+    def test_stopped_profile_with_changed_node_is_not_activated(self):
+        status = observed("Stopped")
+        status["Self"]["ID"] = "other"
+        self.wait.return_value = (status, {"ControlURL": URL})
+        with self.assertRaisesRegex(ValueError, "differs from reviewed"):
+            self.enable()
+        self.start_profile.assert_not_called()
+        self.assertFalse(self.active)
+        self.assertEqual(client.read_binding()["phase"], "resuming")
 
     def test_online_wait_timeout_quiesces_and_keeps_resume_evidence(self):
         running = self.observe.return_value
@@ -244,6 +264,11 @@ class ResumeTests(unittest.TestCase):
 
 
 class PrivacyTests(unittest.TestCase):
+    def test_starting_observation_preserves_the_typed_transient_error(self):
+        with patch.object(client, "snapshot", return_value=({"BackendState": "Starting"}, {})), \
+                self.assertRaises(client.ClientStarting):
+            client.observe_client(URL, require_running=False)
+
     def test_profile_resume_changes_only_want_running_over_owned_unix_socket(self):
         info = SimpleNamespace(st_mode=stat.S_IFSOCK | 0o666, st_uid=os.geteuid(), st_nlink=1)
         with patch.object(client, "require_private_daemon") as privacy, \

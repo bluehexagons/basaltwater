@@ -26,7 +26,8 @@ A stopped native profile is resumed only after that identity matches, using a
 masked `WantRunning` update through the owned local daemon Unix socket. This
 preserves every other preference, including tagged profiles without a native
 login name. Startup then observes the same node becoming online for up to 15
-seconds. No key, logout or automatic enrollment is involved.
+seconds, including known startup transitions after the preference change.
+No key, logout or automatic enrollment is involved.
 Unowned state, pending joins, missing identity and changed bindings require
 explicit recovery; setup never adopts them.
 An inactive prepared or explicitly left client can also be enabled: setup checks
