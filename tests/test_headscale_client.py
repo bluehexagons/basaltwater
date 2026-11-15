@@ -23,7 +23,7 @@ OTHER = "https://other.example.com"
 def observed(state="Running", tags=None):
     return {"Version": "1.104.7-tabcdef123-gabcdef123", "TUN": True,
             "BackendState": state, "AuthURL": "private-pending-id",
-            "Self": {"ID": "node123", "HostName": "peer", "Online": state == "Running",
+            "Self": None if state not in {"Running", "Stopped"} else {"ID": "node123", "HostName": "peer", "Online": state == "Running",
                      "TailscaleIPs": ["100.64.0.5", "fd7a:115c:a1e0::5"], "Tags": tags}}
 
 
@@ -235,8 +235,125 @@ class ClientTests(unittest.TestCase):
             native.assert_not_called()
         with patch.object(client, "snapshot", return_value=(observed("NeedsLogin"), {"ControlURL": URL})), patch.object(client, "native") as native:
             client.abandon_enrollment(URL, confirm=True)
-            native.assert_called_once_with(["tailscale", "logout"])
+            native.assert_not_called()
         self.assertEqual(client.read_binding()["phase"], "left")
+
+    def test_logout_uncertainty_retains_intent_and_recovers_without_replay(self):
+        identity = client._identity(observed(), {"ControlURL": URL}, URL, True)
+        for migration in (False, True):
+            for failure in ("reply", "observation"):
+                with self.subTest(migration=migration, failure=failure):
+                    client.save_binding(URL, "enrolled", "node123")
+                    def logout(args):
+                        self.assertEqual(args, ["tailscale", "logout"])
+                        intent = client.read_binding()
+                        self.assertEqual(intent["phase"], "leaving")
+                        self.assertEqual(intent["node_id"], "node123")
+                        self.assertEqual(intent["url"], URL)
+                        if failure == "reply":
+                            raise client.ClientError("lost reply")
+                    with patch.object(client, "observe_client", return_value=identity), \
+                            patch.object(client, "native", side_effect=logout), \
+                            patch.object(client, "snapshot", side_effect=client.ClientError("lost observation")):
+                        with self.assertRaises(client.ClientError):
+                            if migration:
+                                client.migrate_client(URL, OTHER, expected_node_id="node123")
+                            else:
+                                client.leave_client(URL, expected_node_id="node123")
+                    before = Path(client.CLIENT_STATE).read_bytes()
+                    with patch.object(client, "native") as native, \
+                            patch.object(client, "observe_client", return_value=identity), \
+                            patch.object(client, "snapshot", return_value=(observed("NeedsLogin"), {"ControlURL": URL})):
+                        for action in (lambda: client.reconcile(URL),
+                                       lambda: client.leave_client(URL, expected_node_id="node123"),
+                                       lambda: client.migrate_client(URL, OTHER, expected_node_id="node123"),
+                                       lambda: client.enroll_client(URL),
+                                       lambda: client.abandon_enrollment(URL, confirm=True)):
+                            with self.assertRaises(client.ClientError):
+                                action()
+                            self.assertEqual(Path(client.CLIENT_STATE).read_bytes(), before)
+                        self.assertIsNone(client.reconcile(URL, confirm_logged_out=True))
+                        native.assert_not_called()
+                    self.assertEqual(client.read_binding()["url"], OTHER if migration else URL)
+                    self.assertEqual(client.read_binding()["phase"], "left")
+
+    def test_logout_reconciliation_refuses_uncertain_or_changed_native_state(self):
+        client.save_binding(URL, "leaving", "node123", recovery={"destination_url": OTHER})
+        before = Path(client.CLIENT_STATE).read_bytes()
+        for status, prefs in ((observed(), {"ControlURL": URL}),
+                              (observed("NeedsLogin"), {"ControlURL": OTHER}),
+                              ({**observed("NeedsLogin"), "HaveNodeKey": True}, {"ControlURL": URL}),
+                              ({**observed("NeedsLogin"), "Self": observed()["Self"]}, {"ControlURL": URL})):
+            with self.subTest(status=status, prefs=prefs), patch.object(client, "native") as native, \
+                    patch.object(client, "snapshot", return_value=(status, prefs)), self.assertRaises(client.ClientError):
+                client.reconcile(URL, confirm_logged_out=True)
+            native.assert_not_called()
+            self.assertEqual(Path(client.CLIENT_STATE).read_bytes(), before)
+
+    def test_early_up_failure_retains_verified_prestate_for_confirmed_abandonment(self):
+        for prestate in (None, "", "https://controlplane.tailscale.com", URL, OTHER):
+            with self.subTest(prestate=prestate):
+                client.save_binding(URL, "left" if prestate == OTHER else "prepared")
+                key = self.key()
+                with patch.object(client, "snapshot", return_value=(observed("NeedsLogin"), {"ControlURL": prestate})), \
+                        patch.object(client, "native", side_effect=client.ClientError("early up failure")) as native:
+                    with self.assertRaises(client.ClientError):
+                        client.enroll_client(URL, key_file=str(key), expected_tags=("tag:dns",))
+                    self.assertFalse(key.exists())
+                    self.assertEqual(client.read_binding()["recovery"], {"prior_url": prestate})
+                    with self.assertRaises(ValueError):
+                        client.enroll_client(URL, key_file=str(key), expected_tags=("tag:dns",))
+                    self.assertEqual(native.call_count, 1)
+                before = Path(client.CLIENT_STATE).read_bytes()
+                for state, endpoint in ((observed(), prestate), (observed("Stopped"), URL),
+                                        (observed("NeedsLogin"), "https://third.example.com"),
+                                        ({**observed("NeedsLogin"), "HaveNodeKey": True}, prestate),
+                                        (observed("NeedsMachineAuth"), URL)):
+                    with patch.object(client, "snapshot", return_value=(state, {"ControlURL": endpoint})), \
+                            patch.object(client, "native") as native, self.assertRaises(client.ClientError):
+                        client.abandon_enrollment(URL, confirm=True)
+                    native.assert_not_called()
+                    self.assertEqual(Path(client.CLIENT_STATE).read_bytes(), before)
+                with patch.object(client, "snapshot", return_value=(observed("NeedsLogin"), {"ControlURL": prestate})), \
+                        patch.object(client, "native") as native:
+                    with self.assertRaises(client.ClientError):
+                        client.abandon_enrollment(URL)
+                    client.abandon_enrollment(URL, confirm=True)
+                    native.assert_not_called()
+                self.assertEqual(client.read_binding()["phase"], "left")
+
+    def test_publication_exclusion_preserves_all_teardown_intents(self):
+        from lib import headscale_dns_binding as dns
+        client.save_binding(URL, "leaving", "node123", recovery={"destination_url": OTHER})
+        before = Path(client.CLIENT_STATE).read_bytes()
+        lease = SimpleNamespace(binding=SimpleNamespace(advertised=True))
+        # A publication reservation has the same durable advertised guard as a
+        # completed publication; neither may be bypassed by recovery.
+        with patch.object(client, "resolver_lifecycle_guard", dns.resolver_lifecycle_guard), \
+                patch.object(dns, "dns_binding_lease", return_value=nullcontext(lease)), \
+                patch.object(client, "native") as native, patch.object(client, "snapshot") as snapshot:
+            for action in (lambda: client.disable_client(URL),
+                           lambda: client.leave_client(URL, expected_node_id="node123"),
+                           lambda: client.migrate_client(URL, OTHER, expected_node_id="node123"),
+                           lambda: client.abandon_enrollment(URL, confirm=True),
+                           lambda: client.reconcile(URL, confirm_logged_out=True)):
+                with self.assertRaisesRegex(ValueError, "advertised DNS resolver"):
+                    action()
+                self.assertEqual(Path(client.CLIENT_STATE).read_bytes(), before)
+            native.assert_not_called()
+            snapshot.assert_not_called()
+
+    def test_recovery_schema_rejects_unverified_or_extra_evidence(self):
+        client.save_binding(URL, "joining", recovery={"prior_url": OTHER})
+        valid = client.read_binding()
+        for changes in ({"version": 1}, {"phase": "enrolled", "node_id": "node123"},
+                        {"recovery": {"prior_url": "http://other.example.com"}},
+                        {"recovery": {"prior_url": OTHER, "key": "forbidden"}}):
+            value = {**valid, **changes}
+            Path(client.CLIENT_STATE).write_text(json.dumps(value))
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                client.read_binding()
+            self.assertEqual(json.loads(Path(client.CLIENT_STATE).read_text()), value)
 
     def test_native_bootstrap_default_is_not_an_enrolled_network(self):
         client.check_network(observed("NeedsLogin"), {"ControlURL": "https://controlplane.tailscale.com"}, URL, "prepared")

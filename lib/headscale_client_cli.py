@@ -44,6 +44,9 @@ def add_headscale_client_parser(subparsers) -> argparse.ArgumentParser:
         if action == "abandon":
             command.add_argument("--confirm", action="store_true", required=True,
                                  help="Confirm remote request/key reconciliation and abandonment")
+        if action == "reconcile":
+            command.add_argument("--confirm-logged-out", action="store_true",
+                                 help="Confirm independent logout review; finish retained leave/migration intent")
     return parser
 
 
@@ -99,7 +102,7 @@ def run_headscale_client_command(args: argparse.Namespace) -> int:
         elif action == "enroll-machine":
             result = client.enroll_client(url, key_file=args.key_file, expected_tags=tags)
         elif action == "reconcile":
-            result = client.reconcile(url)
+            result = client.reconcile(url, confirm_logged_out=args.confirm_logged_out)
         elif action == "adopt":
             result = client.adopt_client(url, expected_node_id=args.node_id)
         elif action == "disable":

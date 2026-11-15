@@ -116,7 +116,10 @@ class LocalCliTests(unittest.TestCase):
                     patch.object(client, "snapshot", return_value=(observed("NeedsLogin"), {"ControlURL": URL})), \
                     patch.object(client, "native") as native:
                 self.assertEqual(0, self.invoke(action, *flags))
-                native.assert_called_once_with(["tailscale", "logout"])
+                if action == "abandon":
+                    native.assert_not_called()
+                else:
+                    native.assert_called_once_with(["tailscale", "logout"])
             self.assertEqual(endpoint, client.read_binding()["url"])
             self.assertEqual("left", client.read_binding()["phase"])
 
@@ -125,6 +128,18 @@ class LocalCliTests(unittest.TestCase):
         with patch.object(client, "native", side_effect=["inactive", "", "ActiveState=inactive\nUnitFileState=disabled\n"]):
             self.assertEqual(0, self.invoke("disable"))
         self.assertEqual("node123", client.read_binding()["node_id"])
+
+    def test_confirmed_logout_reconciliation_is_explicit_and_never_replays(self):
+        client.save_binding(URL, "leaving", "node123", recovery={"destination_url": OTHER})
+        with patch.object(client, "native") as native, \
+                patch.object(client, "snapshot", return_value=(observed("NeedsLogin"), {"ControlURL": URL})):
+            self.assertEqual(1, self.invoke("reconcile"))
+            self.assertEqual(0, self.invoke("reconcile", "--confirm-logged-out", "--dry-run"))
+            self.assertEqual("leaving", client.read_binding()["phase"])
+            self.assertEqual(0, self.invoke("reconcile", "--confirm-logged-out"))
+            native.assert_not_called()
+        self.assertEqual(OTHER, client.read_binding()["url"])
+        self.assertEqual("left", client.read_binding()["phase"])
 
     def test_corrupt_binding_is_retained_and_lock_errors_are_bounded(self):
         client.save_binding(URL, "prepared")

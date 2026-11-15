@@ -167,9 +167,15 @@ require `reconcile(url)` against the observed client before any new key issuance
 Setup never replays enrollment. If no enrolled identity can be observed, retain
 the marker and investigate/revoke the issued request remotely; do not delete the
 marker to retry. After remote reconciliation/revocation, explicitly confirmed
-`abandon_enrollment(url, confirm=True)` can log out a still-pending attempt and
-prepare a fresh explicit join. It refuses an enrolled identity and holds the
-same DNS lifecycle guard. Personal expired requests require the same review.
+`abandon_enrollment(url, confirm=True)` can prepare a fresh explicit join only
+when a private native observation proves `NeedsLogin`, no node key and no Self
+identity. It performs no logout. The observed endpoint must exactly match the
+intended endpoint or the verified pre-submission endpoint retained with the
+attempt (including bootstrap defaults or previous preferences after migration).
+An enrolled node, third network, pending machine authorization or uncertain
+observation retains the marker. It holds the same DNS lifecycle guard. Personal
+expired requests require the same review. Legacy joining records without
+prestate evidence permit only the intended endpoint.
 
 ## Identity and lifecycle APIs
 
@@ -191,6 +197,25 @@ explicit enrollment remains necessary. The caller must show the URLs and node
 identity for review and confirm independent recovery access before these calls.
 Leaving locally does not prove administrative node revocation; administrators
 must revoke/remove the remote node and verify access loss separately.
+
+Leave/migration durably writes `leaving` before logout, preserving the reviewed
+old endpoint/node and destination (the same endpoint for leave). Lost logout
+replies and failed observations retain this intent and block all enrollment,
+adoption and repeated logout. After independent review, use
+`reconcile(old_url, confirm_logged_out=True)` or
+`basaltw headscale-client reconcile --url https://vpn.example.com --confirm-logged-out`.
+Under the client lock then DNS guard, this observes the private daemon and
+requires `NeedsLogin`, no node key, no Self identity and the old endpoint. It
+then prepares the retained destination without another logout or a new identity.
+Unknown results and changed endpoints remain blocked. Ordinary reconciliation
+cannot clear a leaving intent, even if the old node is still enrolled.
+
+The ownership record retains version 1 for stable phases and reads existing
+version 1 records. Version 2 adds an exact `recovery` object: joining has
+`prior_url` (validated endpoint, null or empty bootstrap preference), leaving has
+`destination_url`. Leaving retains the old `url` and `node_id`; joining has an
+empty node ID and is written only after verifying the logged-out prestate.
+No keys, authentication URLs or raw native preferences enter this record.
 
 Disable, leave and migration hold the shared resolver lifecycle guard throughout
 mutation. An advertised or reserved DNS resolver blocks teardown until verified
