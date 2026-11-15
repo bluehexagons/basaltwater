@@ -1,0 +1,400 @@
+"""Native client observations and explicit enrollment/lifecycle boundaries.
+
+No enrollment credential or pending authentication URL is durable state.
+"""
+
+from __future__ import annotations
+
+from contextlib import contextmanager
+from dataclasses import dataclass
+import ipaddress
+import os
+from pathlib import Path
+import re
+import selectors
+import signal
+import stat
+import subprocess
+import time
+
+from lib.atomic_io import parse_json, read_json_file, write_json_atomic
+from lib.concurrency import resource_lock
+from lib.headscale_config import validate_headscale_url
+from lib.headscale_dns_binding import resolver_lifecycle_guard
+from lib.setup_directories import check_directory_path, directory_fd
+from lib.validation import validate_filesystem_path, validate_network_ip
+
+CLIENT_STATE = "/var/lib/basaltwater/tailscale/client.json"
+NATIVE_STATE = "/var/lib/tailscale/tailscaled.state"
+CONTROL_CONFIG = "/etc/headscale/config.yaml"
+SECURITY_FLOOR = (1, 104, 4)
+VERIFIED_VERSION = "1.104.7"
+
+
+class ClientError(RuntimeError):
+    """Safe diagnostic that never includes native command output."""
+
+
+@dataclass(frozen=True)
+class ClientIdentity:
+    node_id: str
+    addresses: tuple[str, ...]
+    login_server: str
+    tags: tuple[str, ...]
+    online: bool
+    hostname: str
+
+
+def native(args: list[str], *, timeout: int = 30, limit: int = 1024 * 1024) -> str:
+    """Bound time and both output streams; suppress raw failures and AuthURL.
+
+    Deliberately bypass the general setup logger: debug prefs can contain keys.
+    """
+    output = bytearray()
+    try:
+        with subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, start_new_session=True,
+                              env={**os.environ, "LC_ALL": "C"}) as proc:
+            try:
+                with selectors.DefaultSelector() as selector:
+                    selector.register(proc.stdout, selectors.EVENT_READ)
+                    deadline = time.monotonic() + timeout
+                    while selector.get_map():
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise ClientError("Native client command timed out; reconcile identity")
+                        for key, _ in selector.select(min(remaining, 1)):
+                            chunk = os.read(key.fd, 65536)
+                            if not chunk:
+                                selector.unregister(key.fileobj)
+                            else:
+                                output.extend(chunk)
+                                if len(output) > limit:
+                                    raise ClientError("Native client output exceeds limit")
+                    if proc.wait(timeout=max(0.1, deadline - time.monotonic())):
+                        raise ClientError("Native client command failed; reconcile identity")
+            finally:
+                if proc.poll() is None:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                    proc.wait()
+        return output.decode("utf-8")
+    except (OSError, UnicodeError, subprocess.SubprocessError):
+        raise ClientError("Native client command unavailable or invalid") from None
+
+
+def version(value: object) -> tuple[int, int, int]:
+    if not isinstance(value, str) or not re.fullmatch(r"\d+\.\d+\.\d+(?:-t[0-9a-f]+(?:-g[0-9a-f]+)?)?", value):
+        raise ClientError("Unsupported native client version")
+    result = tuple(int(n) for n in value.split("-", 1)[0].split("."))
+    if result < SECURITY_FLOOR or result[0] != 1 or result[1] % 2:
+        raise ClientError("Native client is below the security floor or unsupported")
+    return result
+
+
+def _object(args: list[str]) -> dict:
+    try:
+        value = parse_json(native(args))
+        if not isinstance(value, dict):
+            raise ValueError()
+        # Do not expose native authentication URLs to any caller.
+        value.pop("AuthURL", None)
+        return value
+    except (ValueError, TypeError):
+        raise ClientError("Invalid native client JSON") from None
+
+
+def snapshot() -> tuple[dict, dict]:
+    client = _object(["tailscale", "version", "--json"])
+    status = _object(["tailscale", "status", "--json", "--peers=false"])
+    if version(client.get("short")) != version(status.get("Version")):
+        raise ClientError("Client and running daemon versions differ")
+    raw_prefs = _object(["tailscale", "debug", "prefs"])
+    prefs = {"ControlURL": raw_prefs.get("ControlURL")}
+    if status.get("BackendState") not in {"NeedsLogin", "NeedsMachineAuth", "Stopped", "Starting", "Running"}:
+        raise ClientError("Unsupported native client state")
+    if status.get("TUN") is not True:
+        raise ClientError("Native kernel TUN client required")
+    if type(status.get("HaveNodeKey", False)) is not bool:
+        raise ClientError("Invalid native node-key state")
+    return status, prefs
+
+
+def _network(prefs: dict, expected_url: str) -> str:
+    expected = validate_headscale_url(expected_url)
+    actual = prefs.get("ControlURL")
+    if not isinstance(actual, str) or validate_headscale_url(actual) != expected:
+        raise ClientError("Client belongs to another network; explicit migration required")
+    return expected
+
+
+def check_network(status: dict, prefs: dict, url: str, phase: str) -> None:
+    """Allow bootstrap defaults only before any native identity is issued."""
+    if (phase in {"prepared", "left"} and status.get("BackendState") == "NeedsLogin"
+            and not status.get("HaveNodeKey", False)):
+        # After explicit leave/migration the old URL may remain in prefs.
+        if phase == "left" or prefs.get("ControlURL") in {None, "", "https://controlplane.tailscale.com"}:
+            return
+    _network(prefs, url)
+
+
+def _identity(status: dict, prefs: dict, expected_url: str, require_running: bool) -> ClientIdentity:
+    if status.get("BackendState") not in {"Running", "Stopped"}:
+        raise ClientError("Client enrollment is pending or unavailable")
+    url = _network(prefs, expected_url)
+    peer = status.get("Self")
+    if not isinstance(peer, dict):
+        raise ClientError("No observed enrolled client identity")
+    node = peer.get("ID")
+    hostname = peer.get("HostName")
+    online = peer.get("Online")
+    if (not isinstance(node, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9:_.-]{0,127}", node)
+            or not isinstance(hostname, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,253}", hostname)
+            or type(online) is not bool):
+        raise ClientError("Invalid observed client identity")
+    addresses = peer.get("TailscaleIPs")
+    if not isinstance(addresses, list) or not 1 <= len(addresses) <= 8:
+        raise ClientError("Missing observed overlay addresses")
+    normalized = []
+    for text in addresses:
+        address = ipaddress.ip_address(validate_network_ip(text))
+        if address not in ipaddress.ip_network("100.64.0.0/10" if address.version == 4 else "fd7a:115c:a1e0::/48"):
+            raise ClientError("Client address is outside the overlay")
+        normalized.append(str(address))
+    tags = peer.get("Tags")
+    if tags is None:
+        tags = []
+    if (not isinstance(tags, list) or len(tags) > 64
+            or any(not isinstance(t, str) or not re.fullmatch(r"tag:[a-zA-Z][a-zA-Z0-9-]{0,62}", t) for t in tags)):
+        raise ClientError("Invalid observed service tags")
+    if require_running and (status.get("BackendState") != "Running" or not online):
+        raise ClientError("Client is not running and online")
+    return ClientIdentity(node, tuple(normalized), url, tuple(tags), online, hostname)
+
+
+def observe_client(expected_url: str, *, require_running: bool = True) -> ClientIdentity:
+    """Observe native typed identity without modifying the client."""
+    status, prefs = snapshot()
+    try:
+        return _identity(status, prefs, expected_url, require_running)
+    except (ValueError, TypeError):
+        raise ClientError("Invalid observed native identity") from None
+
+
+def read_binding() -> dict | None:
+    check_directory_path(os.path.dirname(CLIENT_STATE))
+    try:
+        info = os.lstat(CLIENT_STATE)
+    except FileNotFoundError:
+        return None
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+            or info.st_nlink != 1 or info.st_mode & 0o077):
+        raise ClientError("Unsafe client ownership record")
+    value = read_json_file(CLIENT_STATE, max_bytes=8192)
+    if (not isinstance(value, dict) or set(value) != {"version", "url", "phase", "node_id"}
+            or type(value["version"]) is not int or value["version"] != 1
+            or value["phase"] not in {"prepared", "joining", "enrolled", "left"}
+            or not isinstance(value["node_id"], str)):
+        raise ClientError("Invalid client ownership record; preserve for recovery")
+    validate_headscale_url(value["url"])
+    return value
+
+
+def save_binding(url: str, phase: str, node_id: str = "") -> None:
+    with directory_fd(os.path.dirname(CLIENT_STATE), create=True, mode=0o700) as fd:
+        info = os.fstat(fd)
+        if info.st_uid != os.geteuid() or info.st_mode & 0o077:
+            raise ClientError("Unsafe client ownership directory")
+        write_json_atomic(CLIENT_STATE, {"version": 1, "url": validate_headscale_url(url),
+                                      "phase": phase, "node_id": node_id})
+
+
+def reject_control_host(url: str) -> None:
+    """Inspect actual native control configuration, even if setup omits hosting."""
+    if os.path.lexists(CONTROL_CONFIG):
+        check_directory_path(os.path.dirname(CONTROL_CONFIG))
+        info = os.lstat(CONTROL_CONFIG)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 1024 * 1024:
+            raise ClientError("Cannot establish local control-server identity")
+        # Fail closed for unfamiliar YAML rather than assuming this is a peer.
+        text = Path(CONTROL_CONFIG).read_text()
+        matches = re.findall(r'^server_url:\s*[\"\']?(https://[^\s\"\']+)[\"\']?\s*$', text, re.M)
+        if len(matches) != 1 or validate_headscale_url(matches[0]) == url:
+            raise ClientError("Local control host cannot join this network")
+
+
+def owned(url: str) -> dict:
+    binding = read_binding()
+    if binding is None:
+        raise ClientError("Unowned client; explicit reviewed adoption required")
+    if binding["url"] != validate_headscale_url(url):
+        raise ClientError("Persisted network differs; explicit migration required")
+    return binding
+
+
+def _require_root() -> None:
+    if os.geteuid() != 0:
+        raise ClientError("Client lifecycle mutations require root")
+
+
+@contextmanager
+def client_lock():
+    _require_root()
+    with resource_lock("tailscale-client", CLIENT_STATE):
+        yield
+
+
+def _reconcile(url: str) -> ClientIdentity:
+    binding = owned(url)
+    identity = observe_client(url, require_running=False)
+    if binding["node_id"] and binding["node_id"] != identity.node_id:
+        raise ClientError("Client node identity changed; review before adoption")
+    save_binding(url, "enrolled", identity.node_id)
+    return identity
+
+
+def reconcile(url: str) -> ClientIdentity:
+    """Serialize lost-ack reconciliation with enrollment and teardown."""
+    with client_lock():
+        return _reconcile(url)
+
+
+def adopt_client(url: str, *, expected_node_id: str) -> ClientIdentity:
+    """Explicit adoption after caller shows the observed node for review."""
+    with client_lock():
+        if read_binding() is not None:
+            raise ClientError("Client already managed")
+        reject_control_host(validate_headscale_url(url))
+        identity = observe_client(url)
+        if identity.node_id != expected_node_id:
+            raise ClientError("Adoption identity changed")
+        save_binding(url, "enrolled", identity.node_id)
+        return identity
+
+
+def enroll_client(url: str, *, key_file: str | None = None,
+                  expected_tags: tuple[str, ...] = (), interactive: bool = False) -> ClientIdentity:
+    """Explicit enrollment; interactive output goes only to a caller-owned TTY.
+
+    The caller must provide an authorized private terminal, never a setup log.
+    A joining marker survives cancellation and prevents machine-key replay.
+    """
+    with client_lock():
+        url = validate_headscale_url(url)
+        reject_control_host(url)
+        binding = owned(url)
+        status, prefs = snapshot()
+        check_network(status, prefs, url, binding["phase"])
+        if status["BackendState"] == "Running":
+            identity = _reconcile(url)
+            if set(identity.tags) != set(expected_tags):
+                raise ClientError("Observed service tags differ; administrative review required")
+            return identity
+        if binding["phase"] not in {"prepared", "left"}:
+            raise ClientError("Enrollment already issued; reconcile or explicitly leave before retry")
+        args = ["tailscale", "up", "--login-server=" + url, "--accept-dns=true", "--timeout=60s"]
+        if key_file is None:
+            if not interactive or expected_tags or not os.isatty(1) or not os.isatty(2):
+                raise ClientError("Personal enrollment requires an authorized private terminal")
+            save_binding(url, "joining")
+            try:
+                result = subprocess.run(args, check=False, timeout=65)
+                if result.returncode:
+                    raise ClientError("Enrollment pending; reconcile before retry")
+            except subprocess.SubprocessError:
+                raise ClientError("Enrollment interrupted; reconcile before retry") from None
+        else:
+            if interactive or not expected_tags or any(not re.fullmatch(r"tag:[a-zA-Z][a-zA-Z0-9-]{0,62}", t) for t in expected_tags):
+                raise ClientError("Machine enrollment requires explicit approved service tags")
+            validate_filesystem_path(key_file, must_exist=True)
+            check_directory_path(os.path.dirname(key_file))
+            with directory_fd(os.path.dirname(os.path.abspath(key_file))) as parent:
+                parent_info = os.fstat(parent)
+                if parent_info.st_uid != os.geteuid() or parent_info.st_mode & 0o077:
+                    raise ClientError("Key directory must be private and owned")
+                fd = os.open(key_file, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                try:
+                    info = os.fstat(fd)
+                    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                            or info.st_mode & 0o077 or info.st_nlink != 1 or not 1 <= info.st_size <= 4096):
+                        raise ClientError("Unsafe transient enrollment key file")
+                    save_binding(url, "joining")
+                    try:
+                        native(args + ["--auth-key=file:" + key_file], timeout=65)
+                    finally:
+                        current = os.lstat(key_file)
+                        if (current.st_dev, current.st_ino) == (info.st_dev, info.st_ino):
+                            os.unlink(key_file)
+                finally:
+                    os.close(fd)
+        identity = _reconcile(url)
+        if set(identity.tags) != set(expected_tags):
+            raise ClientError("Observed service tags differ; administrative review required")
+        if not identity.online:
+            raise ClientError("Enrollment is not online; reconcile before retry")
+        return identity
+
+
+def disable_client(url: str) -> None:
+    with client_lock(), resolver_lifecycle_guard():
+        binding = owned(url)
+        # A stopped daemon cannot answer prefs; the persisted binding still
+        # protects setup selection. A running daemon must also match.
+        active = native(["systemctl", "show", "--property=ActiveState", "--value", "tailscaled"])
+        if active.strip() == "active":
+            status, prefs = snapshot()
+            check_network(status, prefs, url, binding["phase"])
+            if status["BackendState"] in {"Running", "Stopped"}:
+                _reconcile(url)
+        native(["systemctl", "disable", "--now", "tailscaled"])
+
+
+def leave_client(url: str, *, expected_node_id: str) -> None:
+    """Reviewable leave: exact currently observed node, no data deletion."""
+    with client_lock(), resolver_lifecycle_guard():
+        identity = _reconcile(url)
+        if identity.node_id != expected_node_id:
+            raise ClientError("Leave identity changed; review again")
+        native(["tailscale", "logout"])
+        status, _ = snapshot()
+        if status["BackendState"] != "NeedsLogin":
+            raise ClientError("Leave not acknowledged; reconcile before retry")
+        save_binding(url, "left")
+
+
+def migrate_client(url: str, new_url: str, *, expected_node_id: str) -> None:
+    """Reviewed leave and prepare only; a new explicit enrollment is required."""
+    new_url = validate_headscale_url(new_url)
+    if validate_headscale_url(url) == new_url:
+        raise ClientError("Migration requires a different network")
+    reject_control_host(new_url)
+    with client_lock(), resolver_lifecycle_guard():
+        identity = _reconcile(url)
+        if identity.node_id != expected_node_id:
+            raise ClientError("Migration identity changed; review again")
+        native(["tailscale", "logout"])
+        status, _ = snapshot()
+        if status["BackendState"] != "NeedsLogin":
+            raise ClientError("Migration leave uncertain; reconcile before retry")
+        save_binding(new_url, "left")
+
+
+def abandon_enrollment(url: str, *, confirm: bool = False) -> None:
+    """Explicitly discard an inspected pending attempt after remote review.
+
+    Caller must first revoke/reconcile the issued key or pending request with
+    the administrator. This never substitutes for revoking a registered node.
+    """
+    if confirm is not True:
+        raise ClientError("Pending enrollment abandonment requires explicit confirmation")
+    with client_lock(), resolver_lifecycle_guard():
+        binding = owned(url)
+        status, prefs = snapshot()
+        _network(prefs, url)
+        if (binding["phase"] != "joining" or binding["node_id"]
+                or status["BackendState"] not in {"NeedsLogin", "NeedsMachineAuth"}):
+            raise ClientError("Attempt is not pending; reconcile observed identity")
+        native(["tailscale", "logout"])
+        status, _ = snapshot()
+        if status["BackendState"] != "NeedsLogin":
+            raise ClientError("Pending logout uncertain; retain enrollment marker")
+        save_binding(url, "left")
