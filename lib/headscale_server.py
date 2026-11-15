@@ -295,8 +295,9 @@ def configtest(path: Path, *, expected_database_schema: Path | None = None) -> N
         if result.returncode:
             raise RuntimeError("Headscale configtest failed; candidate not activated")
         if expected_database_schema is not None:
-            def schema(database: Path) -> list:
-                connection = sqlite3.connect(database.as_uri() + "?mode=ro&immutable=1", uri=True)
+            def schema(database: Path, *, immutable: bool) -> list:
+                connection = sqlite3.connect(database.as_uri() + "?mode=ro" +
+                                             ("&immutable=1" if immutable else ""), uri=True)
                 try:
                     return connection.execute(
                         "SELECT type, name, tbl_name, sql FROM sqlite_master "
@@ -305,8 +306,11 @@ def configtest(path: Path, *, expected_database_schema: Path | None = None) -> N
                 finally:
                     connection.close()
             regular_bytes(expected_database_schema)
-            native_schema = schema(scratch / "db.sqlite")
-            if not native_schema or schema(expected_database_schema) != native_schema:
+            # configtest exits without checkpointing its fresh WAL. Only this
+            # private scratch database may consult/reconstruct WAL state; the
+            # reviewed stopped production database remains immutable.
+            native_schema = schema(scratch / "db.sqlite", immutable=False)
+            if not native_schema or schema(expected_database_schema, immutable=True) != native_schema:
                 raise ValueError("Headscale database schema differs from pinned native schema; migrate manually")
 
 

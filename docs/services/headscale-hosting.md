@@ -281,6 +281,8 @@ Adoption alone supplies `expected_database_schema=paths.data / "db.sqlite"`
 to `configtest`; other callers retain its existing behavior. This optional
 read-only comparison against scratch schema is the narrow server-helper change
 needed to reject foreign databases without migrating production data.
+The scratch comparison reads its committed WAL; production schema inspection
+remains immutable and never checkpoints or reconstructs production state.
 
 Low-level mutation helpers require root and caller-held `runtime_operation`;
 `configure_headscale`, backup, restore and upgrade enforce their own capability

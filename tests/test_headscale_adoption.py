@@ -309,3 +309,39 @@ class NativeIdentityTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "schema differs"):
                     server.configtest(paths.config, expected_database_schema=database)
             self.assertEqual(database.read_bytes(), before)
+
+    def test_matching_schema_reads_scratch_wal_without_touching_native(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            paths = fixture_paths(temporary)
+            paths.etc.mkdir()
+            paths.data.mkdir()
+            paths.config.write_text(server.render_config(configuration(), paths))
+            paths.config.chmod(0o600)
+            database = paths.data / "db.sqlite"
+            connection = sqlite3.connect(database)
+            connection.execute("create table native_schema (id integer)")
+            connection.close()
+            database.chmod(0o600)
+            before = database.read_bytes()
+
+            def validate(command, **kwargs):
+                candidate = json.loads(Path(command[2]).read_text())
+                scratch = Path(candidate["database"]["sqlite"]["path"])
+                wal = Path(str(scratch) + "-wal")
+                connection = sqlite3.connect(scratch)
+                connection.execute("PRAGMA journal_mode=WAL")
+                connection.execute("create table native_schema (id integer)")
+                connection.commit()
+                # Preserve the actual committed WAL/main bytes, modelling
+                # configtest's exit without an orderly database close.
+                main_bytes, wal_bytes = scratch.read_bytes(), wal.read_bytes()
+                connection.close()
+                scratch.write_bytes(main_bytes)
+                wal.write_bytes(wal_bytes)
+                return subprocess.CompletedProcess(command, 0)
+
+            with patch.object(server, "run", side_effect=validate):
+                server.configtest(paths.config, expected_database_schema=database)
+            self.assertEqual(database.read_bytes(), before)
+            self.assertFalse(Path(str(database) + "-wal").exists())
+            self.assertFalse(Path(str(database) + "-shm").exists())
