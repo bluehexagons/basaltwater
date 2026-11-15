@@ -18,6 +18,8 @@ from urllib.parse import urlsplit, urlunsplit
 
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.concurrency import resource_lock
+from lib.setup_directories import check_directory_path
+from lib.validation import validate_filesystem_path
 from lib.validators import validate_host
 from lib.workspace import normalize_workspace_dir
 
@@ -41,7 +43,10 @@ class HeadscaleServer:
 
 
 def _registry_path(workspace: str | None) -> str:
-    return os.path.join(normalize_workspace_dir(workspace), REGISTRY_NAME)
+    root = normalize_workspace_dir(workspace)
+    validate_filesystem_path(root)
+    check_directory_path(root)
+    return os.path.join(root, REGISTRY_NAME)
 
 
 def _validate_url(value: str, label: str) -> str:
@@ -158,7 +163,7 @@ def mutate_servers(
     operation: Callable[[list[HeadscaleServer]], tuple[list[HeadscaleServer] | None, _Result]],
 ) -> _Result:
     """Run a validated registry mutation under the shared process lock."""
-    root = normalize_workspace_dir(workspace)
+    root = os.path.dirname(_registry_path(workspace))
     with resource_lock("headscale-registry", root):
         _check_private_dir(root)
         current = _read(root)
