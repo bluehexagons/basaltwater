@@ -277,6 +277,11 @@ Hosts that cannot be reached are reported as warnings and omitted from the table
 Run a shell command on multiple hosts concurrently, printing each host's output
 in a labeled block followed by a pass/fail summary.
 
+Hosts can be names saved with `setup --name`, IP addresses, or DNS hostnames.
+Saved names resolve to their configured host address and SSH credentials in the
+active workspace. Output keeps the names you supplied. Use `--username` or
+`--key` to override the saved credentials.
+
 ```
 basaltw fan <host> [<host2> ...] [options] -- <command>
 ```
@@ -292,7 +297,8 @@ basaltw fan <host> [<host2> ...] [options] -- <command>
 basaltw fan web1 web2 -- uptime
 basaltw fan web1 web2 db1 -- systemctl restart myapp
 basaltw fan web1 web2 -u deploy -- git -C /srv/app pull
-basaltw fan -u root web1 web2 -- journalctl -u headscale --no-pager -n 20
+basaltw fan mesh-dns mesh-app -- systemctl is-active tailscaled
+basaltw fan -u root mesh-dns mesh-app -- journalctl -u tailscaled --no-pager -n 20
 ```
 
 The first `--` is required to separate hosts and connection options from the

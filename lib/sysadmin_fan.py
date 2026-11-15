@@ -12,18 +12,19 @@ from lib.cache import load_setup_command
 from lib.ssh_utils import build_ssh_command, ssh_batch_mode
 
 
-def _resolve_credentials(
+def _resolve_connection(
     host: str,
     username: Optional[str],
     ssh_key: Optional[str],
-) -> tuple[str, Optional[str]]:
+) -> tuple[str, str, Optional[str]]:
     config = load_setup_command(host)
     if config:
+        host = config.host
         if not username:
             username = config.username
         if not ssh_key:
             ssh_key = config.ssh_key
-    return username or "root", ssh_key
+    return host, username or "root", ssh_key
 
 
 def _run_remote(
@@ -33,9 +34,9 @@ def _run_remote(
     ssh_key: Optional[str],
 ) -> tuple[str, int, str, str]:
     """Run a command on one host, return (host, returncode, stdout, stderr)."""
-    resolved_user, resolved_key = _resolve_credentials(host, username, ssh_key)
+    resolved_host, resolved_user, resolved_key = _resolve_connection(host, username, ssh_key)
     cmd = build_ssh_command(
-        host,
+        resolved_host,
         resolved_user,
         resolved_key,
         batch_mode=ssh_batch_mode(),

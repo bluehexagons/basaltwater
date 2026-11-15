@@ -98,8 +98,11 @@ their own [administrator approval](headscale-onboarding.md).
 
 ```bash
 basaltw headscale-manage dns-inspect mesh
-basaltw fan 192.0.2.11 192.0.2.12 -- systemctl is-active tailscaled
+basaltw fan mesh-dns mesh-app -- systemctl is-active tailscaled
 ```
+
+`fan` resolves the names saved by setup in the active workspace and uses each
+VM's saved SSH credentials. The names do not need DNS records.
 
 To change a machine's configuration, rerun its setup command with the desired
 options. Add `--dry-run` to preview an automated setup or DNS hookup without
