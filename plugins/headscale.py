@@ -19,7 +19,9 @@ PLUGIN = PluginDefinition(
 
 def extend_headscale_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]]) -> None:
     """Compose native services before the portal exports installed features."""
-    if all(getattr(config, name) is None for name in ("headscale", "tailscale", "unbound")):
+    onboarding = bool(getattr(config, "headscale_onboarding_domain", None))
+    native = any(getattr(config, name) is not None for name in ("headscale", "tailscale", "unbound"))
+    if not native and not onboarding:
         return
     from common.headscale_preflight import preflight_network_services, validate_ingress
     from common.headscale_admin_steps import configure_headscale_administration
@@ -28,17 +30,20 @@ def extend_headscale_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]
     from lib.headscale_config import validate_headscale_settings
     from security.steps import configure_firewall, configure_firewall_web
     from web.headscale_steps import configure_headscale
+    from web.headscale_onboarding_steps import configure_headscale_onboarding, preflight_onboarding
     from web.ssl_steps import install_certbot
     from web.web_steps import install_nginx
 
-    validate_headscale_settings(config, complete=True)
+    if native:
+        validate_headscale_settings(config, complete=True)
     validate_ingress(config)
-    steps.insert(0, ("Checking native network service prerequisites", preflight_network_services))
+    steps.insert(0, ("Checking native network service prerequisites", preflight_network_services)
+                 if native else ("Checking onboarding prerequisites", preflight_onboarding))
     functions = {function for _, function in steps}
     if any(getattr(config, name) for name in ("headscale", "tailscale", "unbound")):
         if not functions.intersection({configure_firewall, configure_firewall_web}):
             steps.append(("Configuring firewall for native network services", configure_firewall))
-    if config.headscale:
+    if config.headscale or onboarding:
         if install_nginx not in functions:
             steps.append(("Installing nginx for Headscale", install_nginx))
         if install_certbot not in functions:
@@ -55,3 +60,5 @@ def extend_headscale_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]
         steps.append(("Reconciling native Tailscale client", configure_tailscale))
     if config.unbound:
         steps.append(("Reconciling managed Unbound", configure_unbound))
+    if onboarding:
+        steps.append(("Publishing static Headscale onboarding", configure_headscale_onboarding))
