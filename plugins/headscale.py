@@ -22,6 +22,7 @@ def extend_headscale_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]
     if all(getattr(config, name) is None for name in ("headscale", "tailscale", "unbound")):
         return
     from common.headscale_preflight import preflight_network_services, validate_ingress
+    from common.headscale_admin_steps import configure_headscale_administration
     from common.tailscale_steps import configure_tailscale
     from common.unbound_steps import configure_unbound
     from lib.headscale_config import validate_headscale_settings
@@ -44,6 +45,8 @@ def extend_headscale_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]
             steps.append(("Installing certificate tools for Headscale", install_certbot))
     if config.headscale is not None:
         steps.append(("Reconciling native Headscale hosting", configure_headscale))
+    if config.headscale:
+        steps.append(("Checking native Headscale administration", configure_headscale_administration))
     # Withdrawal is a separate operation. Stop an unadvertised resolver before
     # stopping its client; the shared lease refuses either while advertised.
     if config.unbound is False:

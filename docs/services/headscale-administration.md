@@ -41,7 +41,7 @@ the Auth ID from output. List operations only observe native state.
 | `users_create` | `name` | `user` |
 | `users_delete` | numeric string `id` | verified `deleted` ID |
 | `nodes_list` | `{}` | `nodes` array |
-| `register` | `user`, private `auth_id` | verified `node` |
+| `register` | numeric user ID or exact user name in `user`, private `auth_id` | verified `node` |
 | `node_expire` | numeric string `id` | observed `node` with expiry |
 | `node_delete` | numeric string `id` | verified `deleted` ID |
 
@@ -51,6 +51,8 @@ and `name`. Tagged nodes have no personal owner. The native decimal node ID is
 the Tailscale `Self.ID`: the pinned source's `NodeID.StableID()` formats it in
 base ten. Node expiry is independent of bootstrap-key expiry. User deletion
 refuses remaining owned nodes and checks native absence afterward.
+Portal reviews bind the numeric user ID; execution resolves the current name
+for the native registration RPC and verifies the returned node's ownership.
 
 The management-side DNS publication lease is the fixed private
 `/var/lib/basaltwater/headscale/dns-publication.json`, using the existing DNS

@@ -16,6 +16,9 @@ is prepared before Unbound; a new client must finish explicit enrollment before
 Unbound can observe its network identity. Rerun setup after enrollment to install
 the resolver. Disabling both stops the unadvertised resolver before its client.
 The DNS publication guard refuses teardown while the node remains advertised.
+Hosting also installs the distribution's `python3-grpcio` and `python3-protobuf`
+runtime, verifies the managed service and exercises its private socket schema
+before the portal exports administrative availability.
 
 The control hostname needs direct HTTPS. Cloudflare for other services on the
 same host requires `--cloudflare-allow-direct`; a tunnel policy that closes shared

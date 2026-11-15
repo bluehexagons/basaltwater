@@ -113,6 +113,19 @@ class NativeTests(unittest.TestCase):
                     admin.execute_admin_action("register", {"user": "alice", "auth_id": secret})
                 self.assertNotIn(secret, str(error.exception))
 
+    def test_portal_numeric_user_binding_resolves_name_for_native_registration(self):
+        secret = "hskey-authreq-" + "a" * 24
+        self.adapter.users = Mock(return_value=[{"id": "2", "name": "alice"}])
+        self.adapter.nodes = Mock(return_value=[admin.node_projection(self.node())])
+        self.adapter.rpc.return_value = self.types["AuthRegisterResponse"](node=self.node())
+        self.adapter.execute("register", {"user": "2", "auth_id": secret})
+        self.adapter.rpc.assert_called_once_with("AuthRegister", user="alice", auth_id=secret)
+        self.adapter.users.return_value = [{"id": "3", "name": "alice"}]
+        self.adapter.rpc.reset_mock()
+        with self.assertRaisesRegex(admin.AdminError, "Exact native user"):
+            self.adapter.execute("register", {"user": "2", "auth_id": secret})
+        self.adapter.rpc.assert_not_called()
+
     def test_dns_guard_native_and_management_binding(self):
         self.adapter.endpoint = "https://vpn.example.com"
         node = admin.node_projection(self.node())
@@ -163,7 +176,7 @@ class NativeTests(unittest.TestCase):
         for response, running, accepted in [(service, binary, True),
                 (service.replace("Environment=", "Environment=HEADSCALE_CONFIG=/tmp/evil"), binary, False),
                 (service, SimpleNamespace(st_dev=1, st_ino=3), False)]:
-            with patch.object(admin.os, "geteuid", return_value=0), patch.object(admin, "load_manifest", return_value=manifest), patch.object(admin, "regular_bytes", return_value=json.dumps(config).encode()), patch.object(admin, "check_directory_path"), patch.object(Path, "lstat", return_value=SimpleNamespace(st_mode=stat.S_IFSOCK | 0o600, st_uid=99)), patch.object(admin.pwd, "getpwnam", return_value=SimpleNamespace(pw_uid=99)), patch.object(admin.os, "stat", side_effect=[binary, running]), patch.object(admin, "native", side_effect=["headscale version v0.29.7", response]):
+            with patch.object(admin.os, "geteuid", return_value=0), patch.object(admin, "load_manifest", return_value=manifest), patch.object(admin, "regular_bytes", return_value=json.dumps(config).encode()), patch.object(admin, "check_directory_path"), patch.object(Path, "lstat", return_value=SimpleNamespace(st_mode=stat.S_IFSOCK | 0o600, st_uid=99)), patch.object(admin.pwd, "getpwnam", return_value=SimpleNamespace(pw_uid=99)), patch.object(admin.os, "stat", side_effect=[binary, running]), patch.object(admin, "native", side_effect=["headscale version v0.29.7\ncommit: example\nbuild time: example\nbuilt with: go1.27.3 linux/amd64\n", response]):
                 adapter = admin.NativeAdmin()
                 if accepted:
                     adapter.verify()

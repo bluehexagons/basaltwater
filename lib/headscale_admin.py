@@ -45,6 +45,8 @@ def validate_action(action: str, parameters: dict) -> dict:
     for key, value in parameters.items():
         if key == "id":
             identifier(value)
+        elif key == "user" and isinstance(value, str) and value.isascii() and value.isdigit():
+            identifier(value)
         elif key in {"name", "user"}:
             if not isinstance(value, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", value):
                 raise AdminError("Invalid native user name")
@@ -119,7 +121,7 @@ class NativeAdmin:
         if not stat.S_ISREG(binary.st_mode) or binary.st_uid != 0 or binary.st_mode & 0o022:
             raise AdminError("Unsafe native server binary")
         if not re.fullmatch(r"headscale version v?" + re.escape(VERSION),
-                            native(["/usr/bin/headscale", "version"], limit=4096).strip()):
+                            native(["/usr/bin/headscale", "version"], limit=4096).splitlines()[0].strip()):
             raise AdminError("Native binary differs from schema pin")
         state = dict(line.split("=", 1) for line in native([
             "/usr/bin/systemctl", "show", "headscale",
@@ -202,10 +204,13 @@ class NativeAdmin:
                 raise AdminError("User deletion not verified")
             return {"deleted": p["id"]}
         if action == "register":
-            users = [u for u in self.users() if u["name"] == p["user"]]
+            # Portal reviews bind the immutable numeric user ID. The native
+            # registration RPC takes a user name; resolve it at execution time.
+            field = "id" if p["user"].isdigit() else "name"
+            users = [u for u in self.users() if u[field] == p["user"]]
             if len(users) != 1:
                 raise AdminError("Exact native user unavailable")
-            node = node_projection(self.rpc("AuthRegister", **p).node)
+            node = node_projection(self.rpc("AuthRegister", user=users[0]["name"], auth_id=p["auth_id"]).node)
             if node["user_id"] != users[0]["id"] or node not in self.nodes():
                 raise AdminError("Registered node ownership not verified")
             return {"node": node}

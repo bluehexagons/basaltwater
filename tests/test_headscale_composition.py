@@ -39,6 +39,7 @@ class CompositionTests(unittest.TestCase):
                 self.assertLess(functions.index(configure_tailscale), functions.index(configure_web_panel))
 
     def test_host_prerequisites_and_independent_selection(self):
+        from common.headscale_admin_steps import configure_headscale_administration
         from web.web_steps import install_nginx
         from web.ssl_steps import install_certbot
         from web.headscale_steps import configure_headscale
@@ -49,6 +50,7 @@ class CompositionTests(unittest.TestCase):
         functions = [fn for _, fn in get_steps_for_system_type(config)]
         self.assertLess(functions.index(install_nginx), functions.index(configure_headscale))
         self.assertLess(functions.index(install_certbot), functions.index(configure_headscale))
+        self.assertLess(functions.index(configure_headscale), functions.index(configure_headscale_administration))
         self.assertNotIn(configure_tailscale, functions)
 
     def test_enable_client_before_resolver_disable_resolver_before_client(self):
@@ -72,6 +74,13 @@ class CompositionTests(unittest.TestCase):
 
 
 class AdmissionTests(unittest.TestCase):
+    def test_admin_dry_run_avoids_packages_and_native_observation(self):
+        from common import headscale_admin_steps as admin_steps
+        with patch.object(admin_steps, "run") as run, patch.object(admin_steps, "missing_packages") as packages:
+            admin_steps.configure_headscale_administration(configuration(headscale=True, dry_run=True))
+        run.assert_not_called()
+        packages.assert_not_called()
+
     def test_dry_run_performs_no_system_reads_or_mutations(self):
         with patch.object(admission, "run") as run, patch.object(admission, "get_os_id") as os_id:
             admission.preflight_network_services(configuration(dry_run=True, tailscale=False))
