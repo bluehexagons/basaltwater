@@ -167,6 +167,10 @@ def add_setup_arguments(
 ) -> None:
     """Add the shared setup/patch argument surface to an argparse parser."""
 
+    from lib.headscale_config import add_headscale_arguments
+
+    add_headscale_arguments(parser, for_remote=for_remote)
+
     if not for_remote:
         if include_system_type:
             parser.add_argument(

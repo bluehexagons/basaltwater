@@ -704,4 +704,7 @@ def merge_setup_configs(
             merged_dict[field] = new_dict[field]
         merged_dict["disable_git_auth"] = new_config.disable_git_auth
     
+    from lib.headscale_config import merge_headscale_settings
+
+    merged_dict.update(merge_headscale_settings(cached_config, new_config, preserve_keys=preserve_keys))
     return SetupConfig(**merged_dict)

@@ -506,6 +506,18 @@ class SetupConfig:
     network_gateway6: MaybeStr = None
     network_dns: Optional[StrList] = None
     network_interface: MaybeStr = None
+    headscale: bool | None = None
+    tailscale: bool | None = None
+    unbound: bool | None = None
+    headscale_domain: MaybeStr = None
+    headscale_base_domain: MaybeStr = None
+    headscale_onboarding_domain: MaybeStr = None
+    headscale_public_ipv4: MaybeStr = None
+    headscale_public_ipv6: MaybeStr = None
+    headscale_resolvers: Optional[StrList] = None  # Candidates only; never DNS publication
+    tailscale_server: MaybeStr = None  # Controller-local friendly selector
+    tailscale_server_id: MaybeStr = None  # Stable controller registry identity
+    tailscale_login_server: MaybeStr = None  # Resolved endpoint, never credentials
     activate_network: bool = False
     friendly_name: MaybeStr = None
     tags: Optional[StrList] = None
@@ -766,6 +778,9 @@ class SetupConfig:
     _loading_saved_config: InitVar[bool] = field(default=False, kw_only=True)
 
     def __post_init__(self, _loading_saved_config: bool = False) -> None:
+        from lib.headscale_config import validate_headscale_settings
+
+        validate_headscale_settings(self)
         if self.install_audio_tools is not None and type(self.install_audio_tools) is not bool:
             raise ValueError("install_audio_tools must be a boolean")
         if self.system_type != "agent_cachyos":
@@ -1373,6 +1388,9 @@ class SetupConfig:
 
         validate_kiosk_settings(self)
         args: StrList = []
+        from lib.headscale_config import headscale_args
+
+        args.extend(headscale_args(self, for_remote=True))
         if self.gogs:
             target_host = (
                 self.target_host
@@ -1890,6 +1908,9 @@ class SetupConfig:
         # Keep all positionals before options for Python 3.11 argparse.
         if include_username:
             cmd_parts.append(self.username)
+        from lib.headscale_config import headscale_args
+
+        cmd_parts.extend(headscale_args(self))
         if self.t3code_ready:
             cmd_parts.append("--t3code-ready")
         if self.t3code_desktop:
@@ -2784,6 +2805,7 @@ class SetupConfig:
     
     @classmethod
     def from_args(cls, args: argparse.Namespace, system_type: str) -> 'SetupConfig':
+        from lib.headscale_config import headscale_from_args
         from lib.system_utils import get_current_username, get_local_timezone
         from lib.privilege_auth import auth_from_args
 
@@ -3160,6 +3182,7 @@ class SetupConfig:
         
         return cls(
             host=args.host,
+            **headscale_from_args(args),
             target_host=_optional_str_arg(args, 'target_host'),
             username=username,
             system_type=system_type,
