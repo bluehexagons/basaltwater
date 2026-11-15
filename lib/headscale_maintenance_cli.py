@@ -31,10 +31,12 @@ def add_headscale_maintenance_parser(subparsers) -> argparse.ArgumentParser:
     parser = subparsers.add_parser("headscale-maintenance", help="Root local backup and recovery")
     commands = parser.add_subparsers(dest="headscale_maintenance_action", required=True)
     for action in ("backup", "validate", "restore", "upgrade", "unbound-backup",
-                   "unbound-validate", "unbound-restore"):
+                   "unbound-validate", "unbound-restore", "unbound-recover-fresh"):
         command = commands.add_parser(action)
         command.add_argument("--dry-run", action="store_true")
-        if action in {"backup", "unbound-backup"}:
+        if action == "unbound-recover-fresh":
+            command.add_argument("--review", required=True, help="Private exact operation/digest/identity review JSON")
+        elif action in {"backup", "unbound-backup"}:
             command.add_argument("--destination", required=True)
         elif action == "upgrade":
             for name in ("target-package", "recovery-package", "backup", "current-release",
@@ -70,12 +72,14 @@ def run_headscale_maintenance_command(args: argparse.Namespace) -> int:
 
         action = args.headscale_maintenance_action
         if action not in {"backup", "validate", "restore", "upgrade", "unbound-backup",
-                          "unbound-validate", "unbound-restore"}:
+                          "unbound-validate", "unbound-restore", "unbound-recover-fresh"}:
             raise ValueError("Unknown maintenance action")
         for name in ("destination", "source", "target_package", "recovery_package", "backup"):
             if hasattr(args, name):
                 _path(getattr(args, name))
         expected = None
+        if action == "unbound-recover-fresh":
+            review = ub.validate_fresh_recovery_review(ub.private_json(_path(args.review)))
         if action in {"validate", "restore"}:
             expected = ServerManifest(**ub.private_json(_path(args.manifest)))
         if action in {"unbound-validate", "unbound-restore"}:
@@ -114,6 +118,8 @@ def run_headscale_maintenance_command(args: argparse.Namespace) -> int:
                 ub.backup_unbound(_path(args.destination))
             elif action == "unbound-validate":
                 ub.validate_unbound_backup(_path(args.source), expected=expected)
+            elif action == "unbound-recover-fresh":
+                ub.recover_fresh_unbound(reviewed=review)
             else:
                 ub.restore_unbound(_path(args.source), expected=expected, reviewed_rebind=rebind)
         print(json.dumps({"action": action, "confirmed": True}))
