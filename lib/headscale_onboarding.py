@@ -22,7 +22,8 @@ def onboarding_url(domain: str) -> str:
 
 def resolve_control_url(config: object) -> str:
     value = (getattr(config, "headscale_domain", None) if getattr(config, "headscale", False)
-             else getattr(config, "tailscale_login_server", None))
+             else (getattr(config, "headscale_onboarding_control_url", None)
+                   or getattr(config, "tailscale_login_server", None)))
     if not value:
         raise ValueError("A trusted Headscale HTTPS endpoint is required")
     return validate_headscale_url("https://" + value if getattr(config, "headscale", False) and "://" not in value else value)

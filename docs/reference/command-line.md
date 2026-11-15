@@ -79,6 +79,9 @@ basaltw publish <command> ... [--json]
 basaltw headscale <add|list|show|rename|remove|onboarding> ...
 basaltw headscale-admin <users-list|users-create|users-delete|nodes-list|approve|expire|revoke> ... [--dry-run]
 basaltw headscale-client <status|enroll-personal|enroll-machine|reconcile|adopt|disable|leave|migrate|abandon> --url HTTPS_URL [options] [--dry-run]
+basaltw headscale-manage <bind|show|remove|enroll|inspect|reconcile> REFERENCE [options] [--dry-run]
+basaltw headscale-dns <publish|withdraw|inspect|reconcile> [--input PRIVATE_JSON] [--dry-run]
+basaltw headscale-maintenance <backup|validate|restore|upgrade|unbound-backup|unbound-validate|unbound-restore> [options] [--dry-run]
 basaltw desktop <command> ...
 basaltw kiosk <status|doctor|start|stop|restart> [--json]
 basaltw firmware <audit|update> [options]
@@ -131,6 +134,14 @@ recovery; see [administration](../services/headscale-administration.md).
 `headscale-client` provides explicit root local enrollment and lifecycle actions;
 see [client commands](../services/headscale-clients.md#local-recovery-commands).
 Saved `headscale` references provide discovery only, without management authority.
+`headscale-manage` uses explicit pinned SSH authority in the selected workspace;
+see [management and tagged enrollment](../services/headscale-management.md).
+`headscale-dns` performs explicit root local DNS publication and recovery.
+Its mutating actions require a private root-owned JSON request; `inspect`
+rejects `--input`. Dry runs retain handler input and privilege validation.
+`headscale-maintenance` provides explicit local backup, restore and reviewed
+upgrade operations; see [recovery commands](../services/headscale-recovery.md).
+Its dry run validates paths and private metadata without native calls or locks.
 Setup and patch validate the complete merged network configuration and ingress
 before provisioning or uploading source. Active named selections follow stable
 IDs across renames and reject removed/replaced records or changed endpoints.
@@ -410,6 +421,17 @@ contract, unattended job ownership, exact-text review, recovery and limits.
 | `--gateway6 IP` | IPv6 default gateway; requires `--ipv6` |
 | `--dns IP` | DNS server; repeatable and accepts IPv4 or IPv6 addresses |
 | `--network-interface NAME` | Interface to configure; defaults to the interface carrying the default route |
+| `--headscale` / `--no-headscale` | Manage native Headscale hosting on supported Debian profiles; disable preserves data |
+| `--headscale-domain HOSTNAME` | Hosted public control hostname |
+| `--headscale-base-domain HOSTNAME` | MagicDNS suffix, separate from public hostnames |
+| `--headscale-onboarding-domain HOSTNAME` | Separate static HTTPS device instruction hostname |
+| `--headscale-onboarding-control-url HTTPS_ORIGIN` | Non-secret external control endpoint for static onboarding; does not select a local client; requires an onboarding domain |
+| `--headscale-public-ipv4 IP`, `--headscale-public-ipv6 IP` | Public relay addresses for hosted Headscale |
+| `--headscale-resolver IP` | Candidate overlay resolver metadata; repeatable, does not publish DNS |
+| `--tailscale NAME` | Select a saved Headscale reference for local native client setup |
+| `--tailscale-login-server HTTPS_ORIGIN` | Explicit local native client selection |
+| `--no-tailscale` | Disable managed client setup while retaining device identity |
+| `--unbound` / `--no-unbound` | Manage Unbound on a separate explicitly enrolled Debian DNS node |
 | `--activate-network` | Safely make requested addresses live, verify SSH on each address, then persist the configuration |
 | `--workspace PATH` | Workspace root for config, credentials, known_hosts, and history |
 | `--machine TYPE` | Machine type override; defaults to `auto` on the target |

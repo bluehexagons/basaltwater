@@ -4,7 +4,8 @@
 read-only device instructions at the separate HTTPS origin configured by
 `headscale_onboarding_domain`. The control URL comes from the hosted
 `headscale_domain` when hosting is selected (even when this host joins another
-network), otherwise an explicitly resolved `tailscale_login_server`; an
+network), otherwise `headscale_onboarding_control_url` (CLI option
+`--headscale-onboarding-control-url HTTPS_ORIGIN`). An
 external endpoint does not grant Basaltwater administrative authority.
 
 The page links only to official Tailscale downloads and documents native client
@@ -41,10 +42,22 @@ reduces support capabilities.
 The capability builder installs Nginx and Certbot before onboarding and keeps
 the existing native-service order. Explicit onboarding with external resolved
 endpoint metadata and omitted native capabilities composes only the static web
-steps; it requires neither TUN nor network enrollment. The shared configuration
-validator currently infers client selection from `tailscale_login_server`, so
-callers supplying discovery-only metadata must retain omitted client intent at
-the configuration boundary; this installer never selects or enrolls a client.
+steps; it requires neither TUN nor network enrollment. For example:
+
+```bash
+basaltw setup server_web web.example.com admin \
+  --headscale-onboarding-domain join.example.com \
+  --headscale-onboarding-control-url https://vpn.example.net
+```
+
+The dedicated option leaves `headscale`, `tailscale`, and `unbound` omitted.
+`--tailscale-login-server` still explicitly selects local client setup and is a
+compatibility fallback for existing callers without a dedicated onboarding URL.
+Hosted Headscale always supplies its own endpoint; a conflicting explicit
+onboarding URL is rejected. A dedicated URL requires an onboarding domain at
+complete validation. Control and onboarding hostnames must differ, and neither
+may collide with the MagicDNS suffix. These checks apply before source staging
+or provisioning, including dry runs, on every supported Debian profile.
 Both omitted onboarding and dry-run publication perform no package, QR, lock,
 file or service operations.
 

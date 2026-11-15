@@ -12,7 +12,7 @@ from unittest.mock import patch
 from lib.arg_parser import create_setup_argument_parser
 from lib.cache import load_setup_command, merge_setup_configs, save_setup_command
 from lib.config import SetupConfig
-from lib.headscale_config import validate_headscale_url
+from lib.headscale_config import SUPPORTED_PROFILES, validate_headscale_url
 
 
 class TestHeadscaleConfig(unittest.TestCase):
@@ -33,6 +33,7 @@ class TestHeadscaleConfig(unittest.TestCase):
         parser = create_setup_argument_parser("Headscale test", for_remote=remote)
         args = parser.parse_args(shlex.split(flags) if remote else ["target.example.com", "agent", *shlex.split(flags)])
         args.host = "target.example.com"
+        args.timezone = "UTC"
         return SetupConfig.from_args(args, "server_lite")
 
     def test_independent_capabilities_and_help(self):
@@ -48,6 +49,76 @@ class TestHeadscaleConfig(unittest.TestCase):
         help_text = create_setup_argument_parser("help").format_help()
         for flag in ("--headscale", "--no-headscale", "--tailscale", "--tailscale-login-server", "--no-tailscale", "--unbound", "--no-unbound"):
             self.assertIn(flag, help_text)
+
+    def test_static_external_endpoint_round_trips_without_native_intent(self):
+        config = self.parse("--headscale-onboarding-domain join.example.com "
+                            "--headscale-onboarding-control-url https://VPN.example.net:443/")
+        self.assertEqual(config.headscale_onboarding_control_url, "https://vpn.example.net")
+        with tempfile.TemporaryDirectory() as workspace, patch("lib.cache.get_setup_cache_dir", return_value=workspace):
+            save_setup_command(config)
+            restored = load_setup_command(config.host)
+        merged = merge_setup_configs(restored, self.config())
+        for current in (restored, merged,
+                        self.parse(" ".join(merged.to_setup_command()[3:])),
+                        self.parse(" ".join(merged.to_remote_args()), remote=True)):
+            self.assertEqual(current.headscale_onboarding_control_url, "https://vpn.example.net")
+            for name in ("headscale", "tailscale", "unbound"):
+                self.assertIsNone(getattr(current, name))
+        patched = merge_setup_configs(merged, self.config(headscale_onboarding_control_url="https://new.example.net"))
+        self.assertEqual(patched.headscale_onboarding_control_url, "https://new.example.net")
+        legacy = self.config().to_dict()
+        legacy.pop("headscale_onboarding_control_url")
+        self.assertIsNone(SetupConfig.from_dict(config.host, config.system_type, legacy).headscale_onboarding_control_url)
+
+    def test_parsed_external_metadata_composes_only_static_steps(self):
+        from plugins.headscale import extend_headscale_steps
+
+        config = self.parse("--headscale-onboarding-domain join.example.com "
+                            "--headscale-onboarding-control-url https://vpn.example.net")
+        steps = []
+        with patch("subprocess.run", side_effect=AssertionError("native command")):
+            extend_headscale_steps(config, steps)
+        self.assertEqual([function.__name__ for _, function in steps],
+                         ["preflight_onboarding", "install_nginx", "install_certbot", "configure_headscale_onboarding"])
+
+    def test_onboarding_complete_validation_and_hosted_endpoint_binding(self):
+        from lib.headscale_config import validate_headscale_settings
+
+        for changes in (
+            {"headscale_onboarding_control_url": "https://vpn.example.net"},
+            {"headscale_onboarding_domain": "join.example.com"},
+        ):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                self.config(**changes, dry_run=True).to_remote_args()
+        self.hosting(headscale_onboarding_control_url="https://VPN.example.com:443/").to_remote_args()
+        with self.assertRaisesRegex(ValueError, "own control endpoint"):
+            self.hosting(headscale_onboarding_control_url="https://other.example.net")
+        for profile in SUPPORTED_PROFILES:
+            config = self.config(system_type=profile, headscale_onboarding_domain="join.example.com",
+                                 headscale_onboarding_control_url="https://vpn.example.net",
+                                 **(dict(ci_repository="example/project", ci_allowed_users=["admin"])
+                                    if profile == "server_github_runner" else {}))
+            validate_headscale_settings(config, complete=True)
+            self.assertIsNone(config.tailscale)
+
+    def test_external_onboarding_rejects_bad_urls_and_topology(self):
+        for url in ("http://vpn.example.net", "https://user@vpn.example.net", "https://vpn.example.net/path",
+                    "https://vpn.example.net?x", "https://bad..example.net", "https://vpn.example.net\n"):
+            with self.subTest(url=url), self.assertRaises(ValueError):
+                self.config(headscale_onboarding_control_url=url)
+        for changes in (
+            dict(headscale_onboarding_domain="bad..example.com"),
+            dict(headscale_onboarding_domain="127.0.0.1"),
+            dict(headscale_onboarding_domain="vpn.example.net"),
+            dict(headscale_base_domain="example.net"),
+            dict(headscale_base_domain="child.vpn.example.net"),
+            dict(headscale_base_domain="join.example.com"),
+        ):
+            fields = dict(headscale_onboarding_domain="join.example.com",
+                          headscale_onboarding_control_url="https://vpn.example.net")
+            fields.update(changes)
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                self.config(**fields)
 
     def test_parser_rejects_conflicting_client_requests(self):
         for flags in ("--tailscale office --tailscale-login-server https://vpn.example.com",
@@ -65,7 +136,7 @@ class TestHeadscaleConfig(unittest.TestCase):
                 validate_headscale_url(value)
 
     def test_opt_out_survives_cache_merge_and_transport(self):
-        cached = self.hosting()
+        cached = self.hosting(headscale_onboarding_control_url="https://vpn.example.com")
         disabled = merge_setup_configs(cached, self.parse("--no-headscale --no-tailscale --no-unbound"))
         with tempfile.TemporaryDirectory() as workspace, patch("lib.cache.get_setup_cache_dir", return_value=workspace):
             save_setup_command(disabled)
