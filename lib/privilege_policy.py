@@ -187,6 +187,16 @@ def operation_plan(policy: dict, uid: int, operation: str, parameters: object) -
                      if parameters["action"] in PASSWORD_ACTIONS else "")
                   + "Existing SMB sessions may continue. Reject changed account/configuration metadata; "
                   "run once in a supervised root service with a 45-second limit and wait for its result.")
+    elif operation == "headscale.admin":
+        from lib.headscale_portal import require_installed, validate_action
+
+        require_installed()
+        parameters = validate_action(parameters)
+        mode = "approve"
+        argv = []  # In-process fixed native adapter, never a shell command.
+        effect = ("Headscale " + parameters["action"] + ". Approval admits or changes access to the shared network. "
+                  "Register only the exact Auth ID verified with the selected person. "
+                  "Registration expires after five minutes or broker restart; attempt once, never retry automatically.")
     elif operation == "command.run" and set(parameters) == {"argv"}:
         argv = validate_command_argv(parameters["argv"])
         mode = policy.get("commands", "approve")

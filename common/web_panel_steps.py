@@ -34,6 +34,7 @@ from lib.remote_utils import install_package, is_dry_run, is_service_active, run
 from lib.unit_transaction import UnitOwnership, replace_units, unit_ownership
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
+from lib.headscale_portal import managed_installed
 
 
 WEB_PANEL_SERVICE_NAME = "basaltwater-web-panel"
@@ -249,6 +250,7 @@ def build_web_panel_manifest(
         "access": access,
         "features": {
             "approvals": integrated_approvals(config),
+            "managed_headscale": managed_installed(),
             "agent_tools": config.selected_agent_tools(),
             "publishing_tools": sorted(publishing_tools),
             "git": bool(config.has_agent_features() or config.git_credentials
@@ -455,6 +457,25 @@ server {{
 {approval_location}
 {ca_tls_location}
 
+    location = /actions/headscale {{
+        limit_except POST {{ deny all; }}
+        limit_req zone=basaltwater_web_panel_auth burst=1 nodelay;
+        limit_req_status 429;
+        client_max_body_size 16k;
+        client_body_buffer_size 16k;
+        client_body_in_file_only off;
+        proxy_request_buffering off;
+        proxy_pass http://unix:{WEB_PANEL_SOCKET}:/actions/headscale;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Basaltwater-User $remote_user;
+        proxy_set_header Authorization "";
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 10s;
+        proxy_send_timeout 10s;
+    }}
+
     location / {{
         limit_req zone=basaltwater_web_panel_auth burst=5 nodelay;
         limit_req_status 429;
@@ -463,6 +484,7 @@ server {{
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Basaltwater-User $remote_user;
         proxy_connect_timeout 5s;
         proxy_read_timeout 35s;
         proxy_send_timeout 35s;
