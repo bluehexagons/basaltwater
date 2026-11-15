@@ -25,7 +25,7 @@ from lib.headscale_server import ServerPaths
 from lib.headscale_transport import SSHBinding, TransportError
 
 URL = "https://vpn.example.com"
-SECRET = "hskey-auth-" + "s" * 64
+SECRET = "hskey-auth-" + "p" * 12 + "-" + "s" * 64
 TAGS = ["tag:service"]
 IDENTITY = {"node_id": "7", "addresses": ["100.64.0.7"], "login_server": URL,
             "tags": TAGS, "online": True, "hostname": "worker"}
@@ -196,7 +196,8 @@ class NativeDeliveryTests(unittest.TestCase):
                        "before": [], "id": "9", "delivery": "a" * 32}
 
     def test_claim_precedes_return_and_replay_is_rejected(self):
-        key = self.types["PreAuthKey"](id=9, key=SECRET, acl_tags=TAGS, expiration={"seconds": self.intent["expiry"]})
+        key = self.types["PreAuthKey"](id=9, key="hskey-auth-" + "p" * 12 + "-***",
+                                        acl_tags=TAGS, expiration={"seconds": self.intent["expiry"]})
         self.adapter.rpc.return_value = self.types["ListPreAuthKeysResponse"](pre_auth_keys=[key])
         events = []
         with patch.object(server, "resource_lock", return_value=nullcontext()), patch.object(server, "_intent", return_value=self.intent), \
@@ -210,6 +211,26 @@ class NativeDeliveryTests(unittest.TestCase):
             with patch.object(server, "read_private", return_value={"schema": 1}):
                 with self.assertRaisesRegex(ValueError, "already claimed"):
                     server.take_key(self.adapter, "9")
+
+    def test_wrong_native_prefix_or_malformed_secret_retains_delivery_without_claim(self):
+        for public, private in (("hskey-auth-" + "q" * 12 + "-***", SECRET),
+                                ("hskey-auth-" + "p" * 12 + "-***", SECRET[:-1]),
+                                (SECRET, SECRET)):
+            with self.subTest(public=public[:11], private_length=len(private)):
+                key = self.types["PreAuthKey"](id=9, key=public, acl_tags=TAGS,
+                                                expiration={"seconds": self.intent["expiry"]})
+                self.adapter.rpc.return_value = self.types["ListPreAuthKeysResponse"](pre_auth_keys=[key])
+                with patch.object(server, "resource_lock", return_value=nullcontext()), \
+                        patch.object(server, "_intent", return_value=self.intent), \
+                        patch.object(server, "read_private", return_value=None), \
+                        patch.object(Path, "lstat", return_value=SimpleNamespace(st_uid=0, st_mode=0o600)), \
+                        patch.object(server.admin, "regular_bytes", return_value=private.encode()), \
+                        patch.object(server, "write_private") as claim, \
+                        patch.object(server, "remove_file_durable") as remove:
+                    with self.assertRaisesRegex(ValueError, "differs from native"):
+                        server.take_key(self.adapter, "9")
+                    claim.assert_not_called()
+                    remove.assert_not_called()
 
     def test_completion_requires_native_key_to_node_link(self):
         key = self.types["PreAuthKey"](id=9, used=True, acl_tags=TAGS, expiration={"seconds": 1})

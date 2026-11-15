@@ -36,8 +36,12 @@ in a private volatile target directory. It never appears in argv, setup/cache
 payloads, command output, logs, review records or the enrollment journal.
 
 The server records a one-use delivery claim before returning the secret and
-deletes its delivery file. The target records its joining state before passing
-the file to the native client and removes that file after submission. The final
+deletes its delivery file. The pinned native API returns a masked prefix when
+listing keys; delivery checks that prefix against the private creation response
+and verifies its exact key ID, tags, lifetime and unused single-use state. It
+does not expect a listed key to reproduce the secret. The target records its
+joining state before passing the file to the native client and removes that
+file after submission. The final
 check compares the native target identity, addresses and tags with the control
 server's node and verifies its native bootstrap-key association. Successful
 completion expires the consumed bootstrap key and clears the issuance guard.
@@ -62,6 +66,11 @@ removes private delivery material, preserving enrolled nodes. The controller
 records that review without replaying any enrollment. A still-pending target
 requires explicit native abandonment after remote key/node reconciliation.
 Existing nodes require their own explicit expiry/removal to offboard.
+
+Each exchange opens a new SSH connection. Host SSH rate limits can reject a
+burst of inspection, reconciliation and enrollment commands. Allow that limit
+to clear before an explicitly reviewed new attempt; a connection refusal does
+not authorize replaying a retained delivery or clearing its journal.
 
 `remove` forgets only the local management binding and refuses an unreconciled
 attempt. `--dry-run` validates references and private schemas without acquiring

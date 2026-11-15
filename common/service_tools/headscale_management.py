@@ -53,7 +53,10 @@ def take_key(adapter, key_id: str) -> dict:
         if info.st_uid != 0 or info.st_mode & 0o077:
             raise ValueError("Unsafe private key delivery")
         material = admin.regular_bytes(key_path).decode()
-        if material != keys[0].key or not re.fullmatch(r"[A-Za-z0-9_-]{32,4096}", material):
+        # v0.29.7 returns the secret once at creation. Subsequent lists return
+        # only hskey-auth-{12-character-prefix}-***, never the full secret.
+        parsed = re.fullmatch(r"hskey-auth-([A-Za-z0-9_-]{12})-[A-Za-z0-9_-]{64}", material)
+        if parsed is None or keys[0].key != "hskey-auth-" + parsed.group(1) + "-***":
             raise ValueError("Private key delivery differs from native issuance")
         write_private(claim_path, {"schema": 1, "id": key_id, "delivery": intent["delivery"]})
         remove_file_durable(str(key_path))
