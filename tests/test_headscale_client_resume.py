@@ -95,6 +95,45 @@ class ResumeTests(unittest.TestCase):
                 self.assertFalse(any("enable" in c for c in self.commands))
                 self.root.chmod(0o700)
 
+    def test_prepared_and_left_reenable_without_enrollment_or_phase_change(self):
+        for phase in ("prepared", "left"):
+            with self.subTest(phase=phase):
+                client.save_binding(URL, phase)
+                before = Path(client.CLIENT_STATE).read_bytes()
+                self.active = False
+                self.commands.clear()
+                status = {"BackendState": "NeedsLogin", "HaveNodeKey": False}
+                prefs = {"ControlURL": "https://controlplane.tailscale.com"}
+                with patch.object(client, "snapshot", return_value=(status, prefs)):
+                    self.enable()
+                self.assertTrue(self.active)
+                self.assertEqual(Path(client.CLIENT_STATE).read_bytes(), before)
+                self.observe.assert_not_called()
+                self.assertFalse(any(c[0] == "tailscale" for c in self.commands))
+
+    def test_unenrolled_start_rejects_unexpected_native_identity_and_quiesces(self):
+        for status in ({"BackendState": "Running", "HaveNodeKey": True},
+                       {"BackendState": "NeedsLogin", "HaveNodeKey": True}):
+            client.save_binding(URL, "left")
+            with patch.object(client, "snapshot", return_value=(status, {"ControlURL": URL})):
+                with self.assertRaisesRegex(ValueError, "unexpected identity"):
+                    self.enable()
+            self.assertFalse(self.active)
+            self.assertEqual(client.read_binding()["phase"], "left")
+
+    def test_unenrolled_lost_start_ack_quiesces_and_retains_phase(self):
+        client.save_binding(URL, "prepared")
+        def command(args, **kwargs):
+            result = self.command_result(args, **kwargs)
+            if "enable" in args:
+                raise client.ClientError("lost acknowledgement")
+            return result
+        self.command.side_effect = command
+        with self.assertRaisesRegex(ValueError, "lost acknowledgement"):
+            self.enable()
+        self.assertFalse(self.active)
+        self.assertEqual(client.read_binding()["phase"], "prepared")
+
     def test_wrong_node_endpoint_and_lost_observation_quiesce_and_block_retry(self):
         for failure in (client.ClientError("lost observation"),
                         client._identity(observed(), {"ControlURL": OTHER}, OTHER, True),

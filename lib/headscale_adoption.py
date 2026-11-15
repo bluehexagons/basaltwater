@@ -33,6 +33,34 @@ from lib.setup_directories import check_directory_path
 from lib.validation import validate_filesystem_path
 
 
+def parse_adoption_settings(value: object) -> SetupConfig:
+    """Accept only explicit hosting inputs, without native calls or discovery."""
+    from lib.headscale_config import validate_headscale_settings
+
+    if (type(value) is not dict or set(value) != {
+            "version", "headscale_domain", "headscale_base_domain",
+            "headscale_public_ipv4", "headscale_public_ipv6"}
+            or type(value["version"]) is not int or value["version"] != 1):
+        raise ValueError("Explicit version-1 adoption settings required")
+    config = SetupConfig(host="localhost", username="root", system_type="server_lite",
+                         headscale=True, **{k: v for k, v in value.items() if k != "version"})
+    validate_headscale_settings(config, complete=True)
+    return config
+
+
+def validate_adoption_review(config: SetupConfig, reviewed: object) -> ServerManifest:
+    """Check the reviewed authority and exact explicit binding without I/O."""
+    if (type(reviewed) is not dict or set(reviewed) != {
+            "schema", "authority", "binding", "files", "package", "firewall"}
+            or type(reviewed["schema"]) is not int or reviewed["schema"] != 1
+            or reviewed["authority"] is not True):
+        raise ValueError("Explicit root-reviewed adoption authority required")
+    manifest = manifest_for(config)
+    if reviewed["binding"] != asdict(manifest):
+        raise ValueError("Review differs from explicitly requested network binding")
+    return manifest
+
+
 def _digest(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
@@ -62,7 +90,7 @@ def _unit_state(unit: Path) -> dict:
     if (fields.get("FragmentPath") not in {str(unit), "/lib/systemd/system/headscale.service"}
             or fields.get("DropInPaths") != "" or fields.get("NeedDaemonReload") != "no"
             or fields.get("LoadState") != "loaded" or fields.get("Environment") != ""
-            or fields.get("EnvironmentFiles") != "" or fields.get("UnitFileState") != "disabled"
+            or fields.get("EnvironmentFiles", "") != "" or fields.get("UnitFileState") != "disabled"
             or fields.get("ActiveState") != "inactive" or fields.get("SubState") != "dead"
             or fields.get("MainPID") != "0" or fields.get("ControlPID") != "0"):
         raise ValueError("Adoption requires the disabled, stopped, unmodified package unit without environment overrides")
@@ -207,14 +235,7 @@ def adopt_headscale(config: SetupConfig, package: Path, review_file: Path,
     paths = ServerPaths()
     _ancestors(review_file.parent, 0)
     reviewed = read_private(str(review_file))
-    if reviewed is None or reviewed.get("authority") is not True:
-        raise ValueError("Explicit root-reviewed adoption authority required")
-    if (set(reviewed) != {"schema", "authority", "binding", "files", "package", "firewall"}
-            or type(reviewed["schema"]) is not int or reviewed["schema"] != 1):
-        raise ValueError("Invalid adoption review schema")
-    manifest = manifest_for(config)
-    if reviewed.get("binding") != asdict(manifest):
-        raise ValueError("Review differs from explicitly requested network binding")
+    manifest = validate_adoption_review(config, reviewed)
     if dry_run or config.dry_run or is_dry_run():
         return manifest
     expected = dict(reviewed, authority=False)
@@ -230,6 +251,10 @@ def adopt_headscale(config: SetupConfig, package: Path, review_file: Path,
     with nginx.ownership(), store.ownership():
         if nginx.load() is not None:
             raise ValueError("Unfinished Nginx operation requires recovery")
+        # Another adopter may have completed while this caller waited for
+        # ownership. Reject stale review before leaving any durable evidence.
+        if _inspect(config, package, paths) != expected:
+            raise ValueError("Adoption review changed before ownership")
         record = store.begin("headscale-adopt", "headscale", "reviewed", context={
             "backup": str(backup), "review_sha256": _digest(regular_bytes(review_file))})
         _backup(backup, paths, reviewed)

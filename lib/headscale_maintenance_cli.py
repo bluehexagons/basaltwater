@@ -32,10 +32,19 @@ def add_headscale_maintenance_parser(subparsers) -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="headscale_maintenance_action", required=True)
     for action in ("backup", "validate", "restore", "upgrade", "unbound-backup",
                    "unbound-validate", "unbound-restore", "unbound-recover-fresh",
-                   "unbound-records-inspect", "unbound-records-replace"):
+                   "unbound-records-inspect", "unbound-records-replace",
+                   "adopt-inspect", "adopt"):
         command = commands.add_parser(action)
         command.add_argument("--dry-run", action="store_true")
-        if action == "unbound-records-inspect":
+        if action in {"adopt-inspect", "adopt"}:
+            command.add_argument("--configuration", required=True, help="Private explicit version-1 hosting settings")
+            command.add_argument("--package", required=True, help="Exact pinned official DEB")
+            if action == "adopt-inspect":
+                command.add_argument("--destination", required=True, help="New private inspection JSON file")
+            else:
+                command.add_argument("--review", required=True, help="Private exact inspected approval JSON")
+                command.add_argument("--backup", required=True, help="New private snapshot directory")
+        elif action == "unbound-records-inspect":
             command.add_argument("--binding", required=True, help="Private exact expected DNSBinding JSON")
         elif action == "unbound-records-replace":
             command.add_argument("--review", required=True, help="Private exact binding/digest/replacement JSON")
@@ -67,10 +76,27 @@ def _path(value: str) -> Path:
     return path
 
 
+def _write_inspection(path: Path, value: dict) -> None:
+    from lib.setup_directories import directory_fd
+
+    with directory_fd(str(path.parent)) as parent:
+        info = os.fstat(parent)
+        if info.st_uid != 0 or info.st_mode & 0o077:
+            raise ValueError("Inspection destination requires a root-private directory")
+        descriptor = os.open(path.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                             0o600, dir_fd=parent)
+        with os.fdopen(descriptor, "w") as stream:
+            json.dump(value, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.fsync(parent)
+
+
 def run_headscale_maintenance_command(args: argparse.Namespace) -> int:
     """Dry run validates inputs only; never calls native validation or locks."""
     try:
         from lib import headscale_backup as hs
+        from lib import headscale_adoption as adoption
         from lib import unbound_backup as ub
         from lib import unbound_records as ur
         from lib.headscale_dns_binding import parse_dns_binding
@@ -79,12 +105,17 @@ def run_headscale_maintenance_command(args: argparse.Namespace) -> int:
         action = args.headscale_maintenance_action
         if action not in {"backup", "validate", "restore", "upgrade", "unbound-backup",
                           "unbound-validate", "unbound-restore", "unbound-recover-fresh",
-                          "unbound-records-inspect", "unbound-records-replace"}:
+                          "unbound-records-inspect", "unbound-records-replace",
+                          "adopt-inspect", "adopt"}:
             raise ValueError("Unknown maintenance action")
-        for name in ("destination", "source", "target_package", "recovery_package", "backup"):
+        for name in ("destination", "source", "target_package", "recovery_package", "backup", "package"):
             if hasattr(args, name):
                 _path(getattr(args, name))
         expected = None
+        if action in {"adopt-inspect", "adopt"}:
+            adoption_config = adoption.parse_adoption_settings(ub.private_json(_path(args.configuration)))
+            if action == "adopt":
+                adoption.validate_adoption_review(adoption_config, ub.private_json(_path(args.review)))
         if action == "unbound-records-replace":
             update = ur.parse_records_update(ub.private_json(_path(args.review)))
         if action == "unbound-recover-fresh":
@@ -115,7 +146,11 @@ def run_headscale_maintenance_command(args: argparse.Namespace) -> int:
         # output, including native exception diagnostics, at this boundary.
         metadata = {}
         with _private_output():
-            if action == "backup":
+            if action == "adopt-inspect":
+                _write_inspection(_path(args.destination), adoption.inspect_adoption(adoption_config, _path(args.package)))
+            elif action == "adopt":
+                adoption.adopt_headscale(adoption_config, _path(args.package), _path(args.review), _path(args.backup))
+            elif action == "backup":
                 hs.backup_headscale(_path(args.destination))
             elif action == "validate":
                 hs.validate_backup(_path(args.source), expected=expected)

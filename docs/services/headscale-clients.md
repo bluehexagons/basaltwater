@@ -23,6 +23,11 @@ A stopped native profile may receive credential-free `tailscale up` only after
 that identity matches. No key, logout or automatic enrollment is involved.
 Unowned state, pending joins, missing identity and changed bindings require
 explicit recovery; setup never adopts them.
+An inactive prepared or explicitly left client can also be enabled: setup checks
+private retained state, the privacy drop-in and client version before starting,
+then verifies a private daemon with no issued node key in `NeedsLogin` state.
+It preserves the prepared/left phase and waits for separate explicit enrollment.
+Failed observation or a lost start response stops/disables the daemon again.
 
 Resume writes a `resuming` marker before service changes. Failed startup,
 lost observation, privacy failure or changed identity triggers guarded daemon
@@ -186,9 +191,10 @@ withdrawal/replacement clears its publication binding. Client state lives under
 `/var/lib/basaltwater/tailscale`; preserve it with `/var/lib/tailscale` in private
 recovery backups. Never publish native state or debug preferences.
 
-Offline mocked tests cover lifecycle and secret handling. Live package startup,
-native enrollment/approval, reboot, OS DNS restoration, relay and peer access,
-revocation and multi-platform device instructions remain unqualified.
+Offline mocked tests cover lifecycle and secret handling. The
+[qualification record](../testing/headscale.md) records verified Debian startup,
+machine enrollment, DNS and direct/relay access, with personal approval, reboot,
+revocation and other platform boundaries tracked separately.
 
 Upstream contracts: [official APT packages](https://pkgs.tailscale.com/stable/),
 [native up flags and secret-file input](https://github.com/tailscale/tailscale/blob/v1.104.7/cmd/tailscale/cli/up.go),

@@ -65,7 +65,8 @@ decimal node stable ID. The publisher must hold that same lease while reserving,
 publishing, withdrawing or replacing DNS. An advertised reservation blocks both
 expiry and removal; native global/split resolver addresses also block removal.
 The DNS node's separate local binding cannot substitute for this management
-record. Parent publication integration remains required.
+record. The explicit `basaltw headscale-dns` workflow holds this management lease
+while reserving, publishing, withdrawing or replacing DNS.
 
 Root/controller machine enrollment uses `issue_machine_key(approved_service_tags)`.
 The explicit tags are the caller's authorization; portal actions cannot issue
@@ -74,8 +75,9 @@ issuance, verifies returned attributes, and writes its value only to a newly
 created mode-600 transient file in a root-owned mode-700 directory. The result
 contains only ID, expiry, tags and nonsecret flags. A private issuance intent
 tracks delivery and blocks further issuance even after success or lost ack.
-Private key delivery and removal after consumption are parent integration work;
-never print or copy the file into setup/cache/audit artifacts.
+The explicit controller enrollment workflow delivers the transient key through
+private SSH transport and removes it after submission. Never print or copy the
+file into setup/cache/audit artifacts. See [controller enrollment](headscale-management.md).
 
 `manage_machine_key(action, key_id)` accepts `expire`, `revoke` (native expiry)
 or `delete`. It verifies the result without returning a key value. Revoking a
@@ -100,5 +102,6 @@ The small protobuf descriptor subset follows the official
 and [node identity implementation](https://github.com/juanfont/headscale/blob/v0.29.7/hscontrol/types/node.go).
 Calls use ten-second deadlines, bounded messages and disabled retries; raw
 native errors are suppressed. Offline tests use mocked calls and temporary
-files. Live socket registration, device revocation, SSH transport, portal
-authorization and platform onboarding still require disposable qualification.
+files. See the [qualification record](../testing/headscale.md) for verified
+native socket, machine enrollment, SSH and broker sandbox behavior, and the
+remaining personal approval, revocation, portal and platform checks.

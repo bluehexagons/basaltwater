@@ -5,8 +5,10 @@ from __future__ import annotations
 import argparse
 from contextlib import redirect_stdout, redirect_stderr
 import io
+import os
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -143,3 +145,58 @@ class MaintenanceTests(unittest.TestCase):
             with patch.object(cli.os, "geteuid", return_value=0), patch("lib.unbound_backup.private_json", return_value=review):
                 self.assertEqual(0, self.invoke(words)[0])
             recover.assert_called_once_with(reviewed=review)
+
+    def test_adoption_explicit_settings_dispatch_and_dryrun(self):
+        settings = dict(version=1, headscale_domain="vpn.example.com", headscale_base_domain="mesh.example.net",
+                        headscale_public_ipv4="192.0.2.10", headscale_public_ipv6=None)
+        configuration = self.root / "hosting.json"
+        review_file = self.root / "adoption.json"
+        write_json_atomic(str(configuration), settings)
+        review = dict(schema=1, authority=True, binding=dict(schema=1, version="0.29.7",
+                      endpoint="https://vpn.example.com", base_domain="mesh.example.net"),
+                      files={}, package={}, firewall="private inspected fixture")
+        write_json_atomic(str(review_file), review)
+        for action in ("adopt-inspect", "adopt"):
+            words = [action, "--configuration", str(configuration), "--package", str(self.root / "pinned.deb")]
+            if action == "adopt":
+                words += ["--review", str(review_file), "--backup", str(self.root / "snapshot")]
+            else:
+                words += ["--destination", str(self.root / "inspection.json")]
+            with patch("lib.headscale_adoption.inspect_adoption", return_value=review) as inspect, \
+                    patch("lib.headscale_adoption.adopt_headscale") as adopt, \
+                    patch.object(cli, "_write_inspection") as write:
+                with patch("lib.remote_utils.run", side_effect=AssertionError("native")), \
+                        patch.object(cli, "_private_output", side_effect=AssertionError("output mutation")):
+                    self.assertEqual(0, self.invoke([*words, "--dry-run"])[0])
+                inspect.assert_not_called()
+                adopt.assert_not_called()
+                write.assert_not_called()
+                with patch.object(cli.os, "geteuid", return_value=0), patch(
+                        "lib.unbound_backup.private_json", side_effect=lambda path: settings if path == configuration else review):
+                    code, out, err = self.invoke(words)
+                self.assertEqual(0, code)
+                self.assertNotIn("private inspected fixture", out + err)
+                if action == "adopt":
+                    self.assertEqual("vpn.example.com", adopt.call_args.args[0].headscale_domain)
+                    self.assertEqual(review_file, adopt.call_args.args[2])
+                else:
+                    write.assert_called_once_with(self.root / "inspection.json", review)
+        review["authority"] = False
+        write_json_atomic(str(review_file), review)
+        self.assertEqual(1, self.invoke(["adopt", "--configuration", str(configuration),
+                         "--package", str(self.root / "pinned.deb"), "--review", str(review_file),
+                         "--backup", str(self.root / "snapshot"), "--dry-run"])[0])
+        settings["unreviewed_option"] = "refuse"
+        write_json_atomic(str(configuration), settings)
+        self.assertEqual(1, self.invoke(["adopt-inspect", "--configuration", str(configuration),
+                         "--package", str(self.root / "pinned.deb"), "--destination", str(self.root / "absent"),
+                         "--dry-run"])[0])
+
+    def test_inspection_export_is_private_and_never_overwrites(self):
+        destination = self.root / "inspection.json"
+        with patch.object(cli.os, "fstat", return_value=SimpleNamespace(st_uid=0, st_mode=0o700)):
+            cli._write_inspection(destination, {"authority": False})
+            self.assertEqual(0o600, os.stat(destination).st_mode & 0o777)
+            with self.assertRaises(FileExistsError):
+                cli._write_inspection(destination, {"authority": True})
+        self.assertEqual('{"authority": false}', destination.read_text())

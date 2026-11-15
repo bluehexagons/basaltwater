@@ -28,8 +28,9 @@ The controller resolves `--tailscale NAME` against the private workspace registr
 before setup or patch processing. Client state stores the registry's stable ID
 and resolved HTTPS endpoint. A renamed record continues to select the same
 network; an explicitly supplied different record is rejected. Removing the
-record or changing its endpoint also fails until a future explicit migration
-operation is available. Registering an external endpoint only provides
+record or changing its endpoint also fails during ordinary setup. Use the
+explicit [client migration and saved-selection reconciliation](headscale-clients.md)
+workflow after independently completing the new enrollment. Registering an external endpoint only provides
 discovery and does not grant administrative or enrollment authority.
 
 On a patch, omitting the client option preserves the cached selection. Passing
@@ -45,7 +46,6 @@ tunnels can coexist. The control and onboarding hostnames cannot be assigned to
 another managed application. Native clients preserve the platform DNS manager;
 network selection does not authorize subnet routes or an exit node.
 
-This configuration milestone does not yet install services. See the
-[implementation handoff](../plans/headscale-implementation.md) for the remaining
-runtime milestones and [saved references](headscale-references.md) for endpoint
-discovery commands.
+See [managed setup](headscale-setup.md) for installation and composition,
+[recovery](headscale-recovery.md) for maintenance, and
+[saved references](headscale-references.md) for endpoint discovery commands.

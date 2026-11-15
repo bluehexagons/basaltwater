@@ -1,8 +1,9 @@
 # Headscale implementation handoff
 
-Status: ready to implement; documentation only. No Headscale hosting, client
-enrollment, managed Unbound or Headscale portal handlers have been implemented
-or qualified by this planning work. No product decision blocks the first slice.
+Status: hosting, client enrollment, managed Unbound, onboarding and portal
+handlers are integrated. Native qualification and final review remain in
+progress; the [qualification record](../testing/headscale.md) separates passing
+checks from outstanding acceptance. This document retains the full contract.
 
 ## Read first
 
@@ -71,13 +72,13 @@ mutations behind the plugin plan; local bootstrap must not become a second
 target-side installer. Use existing validators, atomic writes and service
 transactions. Mock system calls and use temporary directories in offline tests.
 
-## First slice: configuration and saved references
+## Configuration and saved references
 
-Implement milestone 1 before installing services. Reserve `--headscale` for
+Milestone 1 is integrated. Use `--headscale` for
 hosting, mutually exclusive `--tailscale NAME` / `--tailscale-login-server URL`
-for joining, and a separate managed-Unbound capability. Finalize supporting flag
-names using existing CLI conventions and test help/completion/reconstruction
-before publishing them as supported commands. Current examples remain proposals.
+for joining, and `--unbound` for the separate managed resolver. The
+[reference](../services/headscale-configuration.md) documents supported flags and commands;
+help, completion and reconstruction have focused offline coverage.
 
 Named-server operations must cover add, list/show, rename, removal of a reference
 and printing onboarding instructions. Removing a reference never deletes remote
@@ -103,7 +104,7 @@ package/service changes, key issuance or feature-state mutation. Tests cover
 new/external records, conflicts, rename/migration, unsupported profiles and safe
 secret-free round trips. Commit this coherent slice before service work.
 
-## Remaining implementation order
+## Dependency order and verification boundaries
 
 1. **Headscale and owned relay.** Select a stable release and compatible client
    baseline, record verified artifact sources/checksums and use configuration/API
@@ -176,7 +177,8 @@ Only claim implemented or qualified behavior that has passed its checks. Missing
 devices or disposable infrastructure leave named qualification gaps; they do not
 block offline implementation or count as passes. Update the coverage map and
 operator/reference documentation as each capability lands. Commit and push
-coherent validated slices to `main`, as authorized for this project.
+coherent validated slices on the feature branch and open a pull request for
+final checks and review, as authorized for this project.
 
 ## Inputs and agent-owned choices
 

@@ -168,6 +168,20 @@ class AdoptionTests(unittest.TestCase):
                 self.adopt()
         self.assertFalse(self.paths.manifest.exists())
 
+    def test_concurrent_adoption_is_rejected_without_blocking_completed_owner(self):
+        create = adoption.private_directory
+
+        def competing_adopter(path):
+            create(path)
+            write_json_atomic(str(self.paths.manifest), self.review["binding"])
+
+        with patch.object(adoption, "private_directory", side_effect=competing_adopter):
+            with self.assertRaisesRegex(ValueError, "Already managed"):
+                self.adopt()
+        self.assertTrue(self.paths.manifest.exists())
+        self.assertFalse((self.paths.private / "operation.json").exists())
+        self.assertFalse((self.root / "snapshot").exists())
+
     def test_uncertain_publication_keeps_blocking_evidence(self):
         publish = adoption.write_json_atomic
         def uncertain(path, *args, **kwargs):
@@ -190,8 +204,12 @@ class NativeIdentityTests(unittest.TestCase):
         with patch.object(adoption, "run") as run:
             run.return_value = SimpleNamespace(stdout="\n".join(f"{k}={v}" for k, v in fields.items()))
             self.assertEqual(adoption._unit_state(Path(fields["FragmentPath"])), fields)
+            omitted = {k: v for k, v in fields.items() if k != "EnvironmentFiles"}
+            run.return_value.stdout = "\n".join(f"{k}={v}" for k, v in omitted.items())
+            self.assertEqual(adoption._unit_state(Path(fields["FragmentPath"])), omitted)
             for key, value in (("FragmentPath", "/foreign/unit"), ("DropInPaths", "/etc/override"),
                     ("Environment", "HEADSCALE_LISTEN_ADDR=0.0.0.0:8080"), ("NeedDaemonReload", "yes"),
+                    ("EnvironmentFiles", "/etc/foreign.env"),
                     ("MainPID", "123"), ("UnitFileState", "enabled"), ("ActiveState", "active")):
                 with self.subTest(key=key):
                     altered = dict(fields, **{key: value})

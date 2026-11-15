@@ -7,11 +7,7 @@ peer. Both need `dig`; the DNS node needs the owned Unbound installation.
 Keep bootstrap control-host resolution independent of the overlay resolver.
 Saved resolver candidates never trigger publication.
 
-The integration exports `add_headscale_dns_parser(subparsers)` and
-`run_headscale_dns_command(args)` from `lib.headscale_dns_cli`. Root command
-registration is owned by the integrating caller. Until registered, use
-`python3 -m lib.headscale_dns_cli publish --input /root/dns-request.json` from
-the installed project directory. The registered command syntax is
+The registered root command is
 `basaltw headscale-dns publish --input /root/dns-request.json`; `withdraw`,
 `inspect`, and `reconcile` use the same command family. `inspect` takes no input.
 `--dry-run` validates local input and SSH files without locks, network calls,
@@ -93,6 +89,7 @@ automatic retries or replacement publication IDs.
    while either a reservation or effective native nameserver references them.
 
 Offline tests cover sequencing, invalid identities, peer failures, DNSSEC,
-uncertainty, recovery, withdrawal, replacement and dry run. Live private-network
-qualification, platform DNS behavior, outage and reboot checks remain deployment
-acceptance work; mocked checks do not establish them.
+uncertainty, recovery, withdrawal, replacement and dry run. The
+[qualification record](../testing/headscale.md) distinguishes verified Debian
+publication, reconciliation, DNSSEC, OS resolution and outage behavior from
+remaining platform and recovery acceptance work.

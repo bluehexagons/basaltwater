@@ -1,14 +1,15 @@
 # Headscale network access, relays and DNS
 
-Status: design contract for the unimplemented [Headscale integration](headscale.md).
+Status: networking contract for the integrated [Headscale implementation](headscale.md).
 All-to-all peer access, owned relays, MagicDNS and managed Unbound for all other
 queries are selected requirements. See the [implementation handoff](headscale-implementation.md)
-for the dependency order and completion gates.
+for the dependency order and completion gates, and the
+[qualification record](../testing/headscale.md) for the tested subset.
 
 ## Access among enrolled systems
 
 Headscale permits traffic between all nodes when no policy is loaded. Basaltwater
-will make this intent explicit for new managed networks: enrolled personal
+makes this intent explicit for new managed networks: enrolled personal
 devices and tagged machines may initiate connections to each other's overlay
 addresses. Registration still requires native administrator approval or an
 authorized machine key under the [enrollment contract](headscale-enrollment.md).
@@ -36,7 +37,7 @@ and rate limiting/overload protection. Do not present this as guaranteed unlimit
 capacity or use Tailscale's hosted-plan user/device allowances as a relay quota.
 Public relays remain a third-party runtime dependency even without a subscription.
 
-Initial Basaltwater hosting will enable Headscale's embedded DERP and STUN,
+Initial Basaltwater hosting enables Headscale's embedded DERP and STUN,
 retain `verify_clients: true`, and set `derp.urls: []` so the default public map
 is not fetched or distributed. Merely enabling the embedded server still leaves
 public relays in the upstream default map. Supply the owned server's public

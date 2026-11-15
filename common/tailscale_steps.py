@@ -107,6 +107,27 @@ def install_client(codename: str) -> None:
     client.version(installed.get("short"))
 
 
+def _start_unenrolled(url: str, phase: str) -> None:
+    """Start retained prepared/left state without issuing an enrollment."""
+    client.check_native_state()
+    client.check_privacy_dropin(DROPIN)
+    client.version(client._object(["tailscale", "version", "--json"]).get("short"))
+    with client.resolver_lifecycle_guard():
+        try:
+            client.native(["systemctl", "enable", "--now", "tailscaled"])
+            client.require_private_daemon()
+            status, prefs = client.snapshot()
+            if status["BackendState"] != "NeedsLogin" or status.get("HaveNodeKey", False):
+                raise client.ClientError("Retained client has an unexpected identity; reconcile explicitly")
+            client.check_network(status, prefs, url, phase)
+        except BaseException:
+            client.native(["systemctl", "disable", "--now", "tailscaled"])
+            state = client.native(["systemctl", "show", "--property=ActiveState", "--value", "tailscaled"])
+            if state.strip() not in {"inactive", "failed"}:
+                raise client.ClientError("Client start uncertain and quiescence unverified") from None
+            raise
+
+
 def configure_tailscale(config: SetupConfig) -> None:
     """None is inert; enable installs/resumes; disable preserves native state."""
     if config.tailscale is None or getattr(config, "dry_run", False) or is_dry_run():
@@ -145,7 +166,12 @@ def configure_tailscale(config: SetupConfig) -> None:
                 client._resume_client(url, binding["node_id"], dropin=DROPIN)
                 return
         elif binding is not None and os.path.lexists(client.NATIVE_STATE):
-            client._resume_client(url, binding["node_id"], dropin=DROPIN)
+            if binding["phase"] in {"prepared", "left"}:
+                if active not in {"inactive", "failed"}:
+                    raise client.ClientError("Native service state uncertain; review before starting")
+                _start_unenrolled(url, binding["phase"])
+            else:
+                client._resume_client(url, binding["node_id"], dropin=DROPIN)
             return
         elif binding is not None and binding["phase"] in {"enrolled", "joining"}:
             raise client.ClientError("Managed native identity is missing; preserve binding for recovery")

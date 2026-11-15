@@ -1,11 +1,12 @@
 # Native Headscale hosting foundations
 
-The target-side implementation is `web.headscale_steps.configure_headscale`.
-Plugin ordering and the root administration commands must still be integrated
-before this is an advertised setup capability. See the
+The target-side implementation is `web.headscale_steps.configure_headscale`,
+wired through the native-network plugin with root administration and recovery
+commands. See the
 [implementation plan](../plans/headscale-implementation.md) and
-[network contract](../plans/headscale-networking.md). No live deployment or
-client/platform qualification is claimed by the offline tests.
+[network contract](../plans/headscale-networking.md) and the selected
+[qualification record](../testing/headscale.md). Offline tests alone do not
+qualify deployment or client platforms.
 
 ## Installation contract
 
@@ -165,15 +166,28 @@ schema/version migration requirements and explicitly convert on a disposable
 copy, preserving endpoint, policy, DNS and identity. Requalify ingress and data
 before cutover. Do not delete sidecars or reinitialize data to satisfy adoption.
 
-Parent root integration: import the two APIs above into the maintenance command
-owner. Add explicit inspection and adoption actions requiring an operator-supplied
-validated `SetupConfig`, pinned package path, private reviewed file and new private
-backup destination. Persist inspection output only on explicit request, using
-root-private output handling. Forward dry run to `adopt_headscale`; never invoke
-adoption from setup or build settings from discovered endpoints. Do not expose
-this API through the public portal/admin HTTP API. No parser/root CLI files are
-changed by this implementation. The existing `tests/test_headscale*.py` network
-suite pattern includes the focused adoption tests automatically.
+Use the root-local maintenance commands with a private explicit configuration:
+
+```json
+{"version":1,"headscale_domain":"vpn.example.com","headscale_base_domain":"mesh.example.net","headscale_public_ipv4":"192.0.2.10","headscale_public_ipv6":null}
+```
+
+All five fields are required; at least one relay address must be supplied.
+No endpoint discovery or unrelated setup options are accepted in this document.
+
+```bash
+sudo basaltw headscale-maintenance adopt-inspect --configuration /root/recovery/hosting.json --package /root/recovery/headscale.deb --destination /root/recovery/new-inspection.json
+sudo basaltw headscale-maintenance adopt --configuration /root/recovery/hosting.json --package /root/recovery/headscale.deb --review /root/recovery/approved-inspection.json --backup /root/recovery/new-adoption-snapshot --dry-run
+sudo basaltw headscale-maintenance adopt --configuration /root/recovery/hosting.json --package /root/recovery/headscale.deb --review /root/recovery/approved-inspection.json --backup /root/recovery/new-adoption-snapshot
+```
+
+Inspection writes only the explicitly requested new file, mode 0600, in an
+existing root-owned mode-0700 directory; it refuses to overwrite any file.
+Review a private copy and change only its authority field as described above.
+Stdout contains completion metadata only. Both actions accept `--dry-run`, which
+checks private input syntax without native calls or file/lock writes; adoption
+also checks the approved binding. Adoption never runs automatically from setup
+and is unavailable through portal HTTP actions.
 
 Operations share a private lock and durable `operation.json` marker. Failure or
 interruption leaves the marker to block blind retries. The shared Nginx lock
@@ -222,9 +236,9 @@ and Nginx are not included in these private network snapshots. Restore those
 through their owning web/TLS recovery procedure and retain root SSH access.
 Reconcile revocations made after the snapshot before reopening public ingress.
 
-DNS-node identity, Unbound records/configuration and client enrollment recovery
-are separate later deliverables. These snapshots alone do not recover those
-services or establish their network binding.
+DNS-node identity, Unbound records/configuration and client enrollment have
+[separate recovery procedures](headscale-recovery.md). These snapshots alone do
+not recover those services or establish their network binding.
 
 ## Controlled upgrades
 
@@ -248,7 +262,8 @@ Debian qualification on both advertised architectures before release.
 
 ## Reusable Python interfaces
 
-These are Python APIs, not new root CLI commands. Paths use `pathlib.Path`.
+These APIs support the [root maintenance commands](headscale-recovery.md).
+Paths use `pathlib.Path`.
 
 | Module | Interfaces |
 | --- | --- |
@@ -270,5 +285,4 @@ needed to reject foreign databases without migrating production data.
 Low-level mutation helpers require root and caller-held `runtime_operation`;
 `configure_headscale`, backup, restore and upgrade enforce their own capability
 checks/operation scope. Do not expose bytes returned by backup validation to a
-portal or logs. New test modules must be registered in the appropriate parent
-test suites when the plugin/CLI integration lands.
+portal or logs. The focused modules are included in the network test suite.

@@ -29,6 +29,7 @@ operation without creating or changing registry state. Registry reads and
 completion do not create files. Invalid or corrupt saved state is reported by
 commands and is never silently reset.
 
-See the [setup configuration contract](headscale-configuration.md) and
-[Headscale implementation plan](../plans/headscale-implementation.md)
-for the later hosting, enrollment, administration, and recovery milestones.
+See [setup](headscale-setup.md), [client enrollment](headscale-clients.md),
+[administration](headscale-administration.md) and [recovery](headscale-recovery.md)
+for the separate operations and their authorization requirements. Saving an
+endpoint reference grants none of those authorities.
