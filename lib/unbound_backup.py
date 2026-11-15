@@ -13,7 +13,7 @@ import uuid
 from common.unbound_steps import (
     SERVICE, FIREWALL_PREFIX, UnboundPaths, _candidate, _files, _manifest, _observe, _read,
     _snapshot, _ports, _rules,
-    _private_directory, _same_identity, _stock_fragments, _write,
+    _private_directory, _same_identity, _stock_fragments, _write, _write_fragment,
 )
 from lib.atomic_io import parse_json, remove_file_durable, write_bytes_atomic, write_json_atomic
 from lib.headscale_dns_binding import DNSBinding, dns_binding_lease, parse_dns_binding
@@ -156,7 +156,7 @@ def validate_unbound_backup(source: Path, *, expected: DNSBinding,
         entry = doc["files"][name]
         if (not isinstance(entry, dict) or set(entry) != {"content", "mode", "sha256"}
                 or type(entry["mode"]) is not int
-                or entry["mode"] & ~(0o600 if name == "records" else 0o644)
+                or entry["mode"] & ~({"records": 0o600, "fragment": 0o640}.get(name, 0o644))
                 or not entry["mode"] & 0o400):
             raise ValueError("Unsafe resolver snapshot file metadata")
         raw = base64.b64decode(entry["content"], validate=True)
@@ -256,7 +256,10 @@ def restore_unbound(source: Path, *, expected: DNSBinding,
             # From this point any uncertainty leaves the operation blocking.
             _stopped()
             for name, path in _mapping(paths).items():
-                _write(path, contents[name], doc["files"][name]["mode"])
+                if name == "fragment":
+                    _write_fragment(paths, contents[name], doc["files"][name]["mode"])
+                else:
+                    _write(path, contents[name], doc["files"][name]["mode"])
             manifest = dict(doc["manifest"], binding=candidate.to_dict(), enabled=False,
                             files={path: hashlib.sha256(contents[name]).hexdigest()
                                    for name, path in _mapping(paths).items()})

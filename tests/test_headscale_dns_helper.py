@@ -6,7 +6,9 @@ from dataclasses import replace
 from contextlib import nullcontext
 import json
 import itertools
+from pathlib import Path
 import subprocess
+import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
@@ -159,6 +161,7 @@ class DNSHelperTests(unittest.TestCase):
                 patch("common.unbound_steps._observe", return_value=self.binding), \
                 patch("common.unbound_steps._stock_fragments"), \
                 patch("common.unbound_steps._unit_configuration"), \
+                patch("common.service_tools.headscale_dns.os.path.lexists", return_value=False), \
                 patch("common.unbound_steps.verify_resolver") as verify:
             self.assertFalse(execute_request(payload)["ok"])
             lease.save.assert_not_called()
@@ -166,3 +169,35 @@ class DNSHelperTests(unittest.TestCase):
             self.assertTrue(execute_request(payload)["ok"])
             verify.assert_called_once_with(self.binding)
             lease.save.assert_called_once_with(reserved)
+
+    def test_recovery_evidence_blocks_observation_and_reservation_but_allows_release(self):
+        reserved = replace(self.binding, advertised=True, publication_id="ecdc8544-8516-4684-be66-1721a4bcd328")
+        lease = Mock(binding=self.binding)
+        with tempfile.TemporaryDirectory() as root:
+            paths = unbound_steps.UnboundPaths(state_dir=root)
+            with patch("os.geteuid", return_value=0), patch("lib.headscale_client.reject_control_host"), \
+                    patch.object(unbound_steps, "UnboundPaths", return_value=paths), \
+                    patch("lib.headscale_dns_binding.dns_binding_lease", return_value=nullcontext(lease)), \
+                    patch.object(unbound_steps, "_manifest") as manifest, \
+                    patch.object(unbound_steps, "_observe") as observe, \
+                    patch.object(unbound_steps, "verify_resolver") as verify:
+                for evidence in (paths.operation, paths.backup):
+                    # Even an unreadable or dangling recovery path blocks publication.
+                    Path(evidence).symlink_to(Path(root, "missing"))
+                    for action in ("node", "cas"):
+                        parameters = dict(binding=self.binding.to_dict())
+                        if action == "cas":
+                            parameters["desired"] = reserved.to_dict()
+                        self.assertFalse(execute_request(json.dumps(dict(action=action, parameters=parameters)).encode())["ok"])
+                    lease.save.assert_not_called()
+                    manifest.assert_not_called()
+                    observe.assert_not_called()
+                    verify.assert_not_called()
+                    lease.binding = reserved
+                    release = dict(binding=reserved.to_dict(), desired=self.binding.to_dict())
+                    self.assertTrue(execute_request(json.dumps(dict(action="cas", parameters=release)).encode())["ok"])
+                    lease.save.assert_called_once_with(self.binding)
+                    self.assertTrue(Path(evidence).is_symlink())
+                    Path(evidence).unlink()
+                    lease.reset_mock()
+                    lease.binding = self.binding

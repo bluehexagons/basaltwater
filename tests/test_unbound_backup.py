@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import hashlib
+import os
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -25,6 +26,7 @@ class UnboundBackupTests(unittest.TestCase):
         self.paths = UnboundPaths(str(self.root / "etc"), str(self.root / "state"),
                                   str(self.root / "defaults"), str(self.root / "dropin"))
         self.binding = DNSBinding("https://vpn.example.com", "7", ("100.64.0.2",))
+        self.enterContext(patch("common.unbound_steps.grp.getgrnam", return_value=SimpleNamespace(gr_gid=os.getegid())))
         Path(self.paths.state_dir).mkdir(mode=0o700)
         Path(self.paths.fragments).mkdir(parents=True)
         self.contents = {
@@ -35,7 +37,7 @@ class UnboundBackupTests(unittest.TestCase):
         write_json_atomic(self.paths.records, records_document(()))
         self.contents["records"] = Path(self.paths.records).read_bytes()
         for name, path in backup._mapping(self.paths).items():
-            write_bytes_atomic(path, self.contents[name], mode=0o600 if name == "records" else 0o644)
+            write_bytes_atomic(path, self.contents[name], mode={"records": 0o600, "fragment": 0o640}.get(name, 0o644))
         write_json_atomic(self.paths.manifest, {
             "version": 1, "enabled": True, "binding": self.binding.to_dict(),
             "files": {path: hashlib.sha256(self.contents[name]).hexdigest()
@@ -76,7 +78,8 @@ class UnboundBackupTests(unittest.TestCase):
         self.assertEqual(self.contents["fragment"], Path(self.paths.fragment).read_bytes())
         self.assertEqual(self.binding, read_dns_binding(self.paths.binding))
         for name, path in backup._mapping(self.paths).items():
-            self.assertEqual(0o600 if name == "records" else 0o644, Path(path).stat().st_mode & 0o777)
+            self.assertEqual({"records": 0o600, "fragment": 0o640}.get(name, 0o644), Path(path).stat().st_mode & 0o777)
+        self.assertEqual(os.getegid(), Path(self.paths.fragment).stat().st_gid)
         self.assertFalse(Path(self.paths.operation).exists())
         self.assertFalse(any(c.args[0][:2] in (["systemctl", "start"], ["systemctl", "stop"])
                              for c in self.mocks["run"].call_args_list))
@@ -91,6 +94,15 @@ class UnboundBackupTests(unittest.TestCase):
             self.restore()
         write.assert_not_called()
         self.mocks["run"].assert_not_called()
+
+    def test_snapshot_cannot_restore_world_readable_local_inventory(self):
+        self.capture()
+        doc = backup.private_json(self.snapshot)
+        doc["files"]["fragment"]["mode"] = 0o644
+        write_json_atomic(str(self.snapshot), doc)
+        with patch.object(backup, "_write_fragment") as write, self.assertRaisesRegex(ValueError, "metadata"):
+            self.restore()
+        write.assert_not_called()
 
     def test_live_service_and_changed_identity_block_capture(self):
         self.mocks["run"].return_value.stdout = "active"

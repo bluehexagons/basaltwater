@@ -127,6 +127,8 @@ def _wait_effective_dns(binding, effective: str) -> None:
 def _owned_node(paths, binding, manifest, observe, same, stocks, unit, verify) -> None:
     from lib.headscale_dns_binding import parse_dns_binding
 
+    if os.path.lexists(paths.operation) or os.path.lexists(paths.backup):
+        raise ValueError("Reconcile unfinished resolver recovery before DNS publication")
     managed = manifest(paths)
     if (managed is None or managed["enabled"] is not True
             or not same(parse_dns_binding(managed["binding"]), binding)

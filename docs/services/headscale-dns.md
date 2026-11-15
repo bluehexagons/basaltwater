@@ -38,6 +38,10 @@ verification also queries with checking disabled to distinguish DNSSEC rejection
 from an ordinary resolution failure. No caller can submit a health-success file.
 The external `dnssec-failed.org` fixture must remain reachable through native
 recursion; a failure blocks publication without choosing another resolver.
+Any retained resolver operation or recovery snapshot also blocks observation
+for publication and new reservations, even when health checks would succeed.
+Explicitly reconcile that recovery state first. Releasing an existing guard
+remains possible during an outage or recovery; evidence is preserved.
 
 The control server independently checks native node IDs and addresses. It holds
 the management DNS binding lease through every mutation, journals exact prior

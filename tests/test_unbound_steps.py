@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from dataclasses import replace
 import hashlib
+import os
 from pathlib import Path
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -40,6 +42,7 @@ class UnboundStepsTests(unittest.TestCase):
         self.fail_candidate = False
         self.fail_stop = False
         self.fail_install = None
+        self.enterContext(patch.object(steps.grp, "getgrnam", return_value=SimpleNamespace(gr_gid=os.getegid())))
         for name, kwargs in (
             ("_preflight", {"return_value": None}),
             ("_observe", {"return_value": self.binding}),
@@ -282,6 +285,23 @@ class UnboundStepsTests(unittest.TestCase):
         self.assertEqual("preserve operator notes", unrelated.read_text())
         self.assertEqual(self.binding, read_dns_binding(self.paths.binding))
         self.assertFalse(any(command[0] == "apt-get" for command in self.commands))
+
+    def test_local_inventory_fragment_stays_private_through_update_and_rollback(self):
+        record = LocalRecord("lan.example.net", "files.lan.example.net", "A", "192.0.2.5")
+        self.configure(records=(record,))
+        fragment = Path(self.paths.fragment)
+        self.assertIn(record.name, fragment.read_text())
+        self.assertEqual(fragment.stat().st_mode & 0o777, 0o640)
+        self.assertEqual(fragment.stat().st_gid, os.getegid())
+        # A prior candidate can have the old permissive mode. Rollback must
+        # restore its data without re-exposing that inventory to local users.
+        fragment.chmod(0o644)
+        self.fail_health = 1
+        with self.assertRaisesRegex(RuntimeError, "DNSSEC"):
+            self.configure(records=())
+        self.assertIn(record.name, fragment.read_text())
+        self.assertEqual(fragment.stat().st_mode & 0o777, 0o640)
+        self.assertEqual(fragment.stat().st_gid, os.getegid())
 
     def test_bad_candidate_preserves_working_configuration_without_restart(self):
         self.configure()

@@ -53,7 +53,10 @@ Local records use a bounded version-1 document with `records` entries containing
 TTL is 30–86400 seconds. Supply the intended MagicDNS suffix with
 `--headscale-base-domain` to check collisions. Managed zones must differ from
 control/onboarding hostnames, MagicDNS and the reserved resolver-health zone.
-Keep this inventory private. LAN-wide MagicDNS synchronization is outside scope.
+Keep this inventory private. The generated fragment also contains the inventory:
+setup, rollback and restore restrict it to root and the `unbound` group (mode
+`0640` or stricter). Snapshot validation refuses world-readable fragments.
+LAN-wide MagicDNS synchronization is outside scope.
 
 Use the root-local maintenance commands to replace the entire inventory. Direct
 editing of managed `records.json` invalidates the manifest hashes. On the DNS node:

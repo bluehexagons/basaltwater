@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 import base64
+import grp
 import hashlib
 import ipaddress
 import json
@@ -263,10 +264,15 @@ def _private_directory(path: str) -> None:
         os.fchmod(descriptor, 0o700)
 
 
-def _write(path: str, content: bytes, mode: int) -> None:
+def _write(path: str, content: bytes, mode: int, *, gid: int = -1) -> None:
     parent = os.path.dirname(path)
     with directory_fd(parent, create=True):
-        write_bytes_atomic(path, content, mode=mode)
+        write_bytes_atomic(path, content, mode=mode, gid=gid)
+
+
+def _write_fragment(paths: UnboundPaths, content: bytes, mode: int = 0o640) -> None:
+    """Keep local inventory readable only by root and the resolver account."""
+    _write(paths.fragment, content, mode & 0o640, gid=grp.getgrnam("unbound").gr_gid)
 
 
 def _install() -> None:
@@ -334,10 +340,12 @@ def _snapshot(paths: UnboundPaths, state: dict, binding: DNSBinding | None) -> d
             "binding": None if binding is None else binding.to_dict()}
 
 
-def _restore(snapshot: dict) -> None:
+def _restore(snapshot: dict, paths: UnboundPaths) -> None:
     for path, previous in snapshot["files"].items():
         if previous is None:
             remove_file_durable(path)
+        elif path == paths.fragment:
+            _write_fragment(paths, base64.b64decode(previous["content"], validate=True), previous["mode"])
         else:
             _write(path, base64.b64decode(previous["content"], validate=True), previous["mode"])
     run(["systemctl", "daemon-reload"], capture_output=True)
@@ -470,7 +478,7 @@ def configure_unbound(config: SetupConfig, *, paths: UnboundPaths = UnboundPaths
                     mutated = True
                     _write(paths.defaults, b"# Managed by Basaltwater\nRESOLVCONF=false\nROOT_TRUST_ANCHOR_UPDATE=true\n", 0o644)
                     _write(paths.dropin, b"[Unit]\nAfter=network-online.target tailscaled.service\nWants=network-online.target tailscaled.service\n", 0o644)
-                    _write(paths.fragment, content, 0o644)
+                    _write_fragment(paths, content)
                     write_json_atomic(paths.records, records_document(records))
                     _firewall(binding)
                     run(["unbound-checkconf", paths.main], capture_output=True)
@@ -509,7 +517,7 @@ def configure_unbound(config: SetupConfig, *, paths: UnboundPaths = UnboundPaths
                                     raise RuntimeError("Unexpected prior fresh resolver file")
                                 remove_file_durable(path)
                         else:
-                            _restore(snapshot)
+                            _restore(snapshot, paths)
                         _firewall(previous_binding if state["ActiveState"] == "active" else None)
                         if previous_binding is None:
                             lease.clear()
