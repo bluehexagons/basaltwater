@@ -22,8 +22,11 @@ client/daemon version agreement, endpoint and exact node, then online identity.
 Startup observes native `NoState`/`Starting` transitions for up to 15 seconds
 before identity verification. It never repeats the service start or enrollment;
 other observation errors still fail immediately and trigger guarded teardown.
-A stopped native profile may receive credential-free `tailscale up` only after
-that identity matches. No key, logout or automatic enrollment is involved.
+A stopped native profile is resumed only after that identity matches, using a
+masked `WantRunning` update through the owned local daemon Unix socket. This
+preserves every other preference, including tagged profiles without a native
+login name. Startup then observes the same node becoming online for up to 15
+seconds. No key, logout or automatic enrollment is involved.
 Unowned state, pending joins, missing identity and changed bindings require
 explicit recovery; setup never adopts them.
 An inactive prepared or explicitly left client can also be enabled: setup checks
@@ -203,4 +206,5 @@ Upstream contracts: [official APT packages](https://pkgs.tailscale.com/stable/),
 [native up flags and secret-file input](https://github.com/tailscale/tailscale/blob/v1.104.7/cmd/tailscale/cli/up.go),
 [typed status](https://github.com/tailscale/tailscale/blob/v1.104.7/ipn/ipnstate/ipnstate.go),
 [native preferences](https://github.com/tailscale/tailscale/blob/v1.104.7/ipn/prefs.go),
+[local preference editing](https://github.com/tailscale/tailscale/blob/v1.104.7/client/local/local.go),
 and [Headscale topology/logging guidance](https://headscale.net/stable/about/faq/).

@@ -7,6 +7,7 @@ import io
 import json
 import os
 from pathlib import Path
+import stat
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -42,6 +43,8 @@ class ResumeTests(unittest.TestCase):
         stack.enter_context(patch.object(client, "_object", return_value={"short": "1.104.7"}))
         self.privacy = stack.enter_context(patch.object(client, "require_private_daemon"))
         self.wait = stack.enter_context(patch.object(client, "wait_for_daemon"))
+        self.wait.return_value = ({"BackendState": "Running"}, {})
+        self.start_profile = stack.enter_context(patch.object(client, "_enable_retained_profile"))
         self.commands = []
         self.active = False
         self.command = stack.enter_context(patch.object(client, "native", side_effect=self.command_result))
@@ -194,12 +197,32 @@ class ResumeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             client.read_binding()
 
-    def test_stopped_identity_is_checked_before_up_and_after_up(self):
+    def test_stopped_identity_is_checked_before_and_after_masked_resume(self):
         stopped = client._identity(observed("Stopped"), {"ControlURL": URL}, URL, False)
         running = self.observe.return_value
-        self.observe.side_effect = [stopped, running]
+        self.wait.return_value = ({"BackendState": "Stopped"}, {})
+        self.observe.side_effect = [stopped, running, running]
         self.enable()
-        self.assertIn(["tailscale", "up"], self.commands)
+        self.start_profile.assert_called_once_with()
+        self.assertFalse(any(c[0] == "tailscale" for c in self.commands))
+
+    def test_running_offline_start_waits_without_up_or_preference_changes(self):
+        running = self.observe.return_value
+        offline = client.ClientIdentity(running.node_id, running.addresses, URL, (), False, running.hostname)
+        self.observe.side_effect = [offline, offline, running, running]
+        with patch.object(client.time, "sleep"):
+            self.enable()
+        self.assertFalse(any(c[0] == "tailscale" for c in self.commands))
+        self.start_profile.assert_not_called()
+        self.assertEqual(client.read_binding()["phase"], "enrolled")
+
+    def test_online_wait_timeout_quiesces_and_keeps_resume_evidence(self):
+        running = self.observe.return_value
+        self.observe.return_value = client.ClientIdentity(running.node_id, running.addresses, URL, (), False, running.hostname)
+        with patch.object(client.time, "monotonic", side_effect=[0, 16]), self.assertRaisesRegex(ValueError, "did not become online"):
+            self.enable()
+        self.assertFalse(self.active)
+        self.assertEqual(client.read_binding()["phase"], "resuming")
 
     def test_dry_run_no_observations_or_writes(self):
         before = Path(client.CLIENT_STATE).read_bytes()
@@ -221,6 +244,38 @@ class ResumeTests(unittest.TestCase):
 
 
 class PrivacyTests(unittest.TestCase):
+    def test_profile_resume_changes_only_want_running_over_owned_unix_socket(self):
+        info = SimpleNamespace(st_mode=stat.S_IFSOCK | 0o666, st_uid=os.geteuid(), st_nlink=1)
+        with patch.object(client, "require_private_daemon") as privacy, \
+                patch.object(client, "check_directory_path") as directory, \
+                patch.object(client.os, "lstat", return_value=info), \
+                patch.object(client, "native") as native:
+            client._enable_retained_profile()
+        privacy.assert_called_once_with()
+        directory.assert_called_once_with("/run/tailscale")
+        args = native.call_args.args[0]
+        self.assertEqual(args[:2], ["curl", "--disable"])
+        self.assertEqual(args[args.index("--unix-socket") + 1], client.NATIVE_SOCKET)
+        self.assertEqual(args[args.index("--request") + 1], "PATCH")
+        self.assertEqual(json.loads(args[args.index("--data") + 1]), {"WantRunning": True, "WantRunningSet": True})
+        self.assertEqual(args[args.index("--output") + 1], "/dev/null")
+        self.assertEqual(args[args.index("--noproxy") + 1], "*")
+        self.assertEqual(args[-1], "http://local-tailscaled.sock/localapi/v0/prefs")
+        self.assertEqual(native.call_args.kwargs, {"timeout": 15})
+
+    def test_profile_resume_rejects_foreign_or_linked_socket_before_mutation(self):
+        for mode, owner, links in ((stat.S_IFREG | 0o600, os.geteuid(), 1),
+                                   (stat.S_IFLNK | 0o777, os.geteuid(), 1),
+                                   (stat.S_IFSOCK | 0o666, -1, 1),
+                                   (stat.S_IFSOCK | 0o666, os.geteuid(), 2)):
+            with self.subTest(mode=mode, owner=owner, links=links), \
+                    patch.object(client, "require_private_daemon"), \
+                    patch.object(client, "check_directory_path"), \
+                    patch.object(client.os, "lstat", return_value=SimpleNamespace(st_mode=mode, st_uid=owner, st_nlink=links)), \
+                    patch.object(client, "native") as native, self.assertRaises(ValueError):
+                client._enable_retained_profile()
+            native.assert_not_called()
+
     def test_startup_wait_observes_only_known_transient_states(self):
         ready = ({"BackendState": "Running"}, {"ControlURL": URL})
         with patch.object(client, "require_private_daemon") as privacy, \

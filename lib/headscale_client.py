@@ -25,6 +25,7 @@ from lib.validation import validate_filesystem_path, validate_network_ip
 
 CLIENT_STATE = "/var/lib/basaltwater/tailscale/client.json"
 NATIVE_STATE = "/var/lib/tailscale/tailscaled.state"
+NATIVE_SOCKET = "/run/tailscale/tailscaled.sock"
 CONTROL_CONFIG = "/etc/headscale/config.yaml"
 SECURITY_FLOOR = (1, 104, 4)
 VERIFIED_VERSION = "1.104.7"
@@ -326,6 +327,28 @@ def check_privacy_dropin(path: str = PRIVACY_DROPIN) -> None:
                 raise ClientError("Reviewed native privacy drop-in required")
 
 
+def _enable_retained_profile() -> None:
+    """Set only WantRunning on the private local daemon, preserving its prefs.
+
+    Bare `tailscale up` requires a nonempty native login name for its simple
+    resume path; tagged Headscale profiles do not always have one. EditPrefs
+    with an explicit mask avoids reauthentication and unrelated flag defaults.
+    The response can contain private preferences and is deliberately discarded.
+    """
+    require_private_daemon()
+    check_directory_path(os.path.dirname(NATIVE_SOCKET))
+    info = os.lstat(NATIVE_SOCKET)
+    if (not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.geteuid()
+            or info.st_nlink != 1):
+        raise ClientError("Owned native daemon socket required")
+    native(["curl", "--disable", "--silent", "--show-error", "--fail",
+            "--noproxy", "*", "--unix-socket", NATIVE_SOCKET,
+            "--request", "PATCH", "--header", "Content-Type: application/json",
+            "--data", '{"WantRunning":true,"WantRunningSet":true}',
+            "--output", "/dev/null", "--max-time", "10",
+            "http://local-tailscaled.sock/localapi/v0/prefs"], timeout=15)
+
+
 def _resume_client(url: str, expected_node_id: str, *, dropin: str = PRIVACY_DROPIN) -> ClientIdentity:
     """Locked implementation; retain uncertainty before any service mutation."""
     binding = owned(url)
@@ -347,12 +370,23 @@ def _resume_client(url: str, expected_node_id: str, *, dropin: str = PRIVACY_DRO
         save_binding(url, "resuming", expected_node_id)
         try:
             native(["systemctl", "enable", "--now", "tailscaled"])
-            wait_for_daemon()
+            status, _prefs = wait_for_daemon()
             identity = observe_client(url, require_running=False)
             if identity.node_id != expected_node_id or identity.login_server != validate_headscale_url(url):
                 raise ClientError("Resumed node differs from reviewed binding")
-            if not identity.online:
-                native(["tailscale", "up"], timeout=65)
+            if status["BackendState"] == "Stopped":
+                _enable_retained_profile()
+            deadline = time.monotonic() + 15
+            while True:
+                require_private_daemon()
+                identity = observe_client(url, require_running=False)
+                if identity.node_id != expected_node_id or identity.login_server != validate_headscale_url(url):
+                    raise ClientError("Resumed node differs from reviewed binding")
+                if identity.online:
+                    break
+                if time.monotonic() >= deadline:
+                    raise ClientError("Resumed client did not become online; reconcile identity")
+                time.sleep(0.25)
             identity = observe_client(url)
             if identity.node_id != expected_node_id or identity.login_server != validate_headscale_url(url):
                 raise ClientError("Resumed node differs from reviewed binding")
