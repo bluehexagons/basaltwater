@@ -2346,11 +2346,7 @@ def run_patch_command(args: argparse.Namespace) -> int:
         print(f"Error: Invalid username: {username}")
         return 1
     
-    try:
-        cached_config = load_setup_command(args.host)
-    except (ValueError, OSError, ResourceBusyError, ResourceLockSafetyError) as exc:
-        print(f"Error: {exc}")
-        return 1
+    cached_config = load_setup_command(args.host)
     if not cached_config:
         print(f"Error: No cached setup found for {args.host}")
         print(f"Please run the initial setup first using 'basaltw setup <system_type> {args.host}'")
@@ -2561,7 +2557,11 @@ def main() -> int:
     if args.command == "setup":
         return run_setup_command(args)
     elif args.command == "patch":
-        return run_patch_command(args)
+        try:
+            return run_patch_command(args)
+        except StateReadError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
     elif args.command == "shares":
         return run_shares_command(args)
     elif args.command in {"list", "ls"}:

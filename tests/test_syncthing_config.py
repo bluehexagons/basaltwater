@@ -5,7 +5,7 @@ from __future__ import annotations
 import io
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 
 import basaltwater
@@ -336,6 +336,15 @@ class SyncthingSavedConfigTest(unittest.TestCase):
                         with self.assertRaises(StateReadError):
                             basaltwater.run_patch_command(args)
                     execute.assert_not_called()
+                    with (
+                        patch("sys.argv", ["basaltw", "patch", "fileserver", "agent", *options]),
+                        patch("basaltwater._execute_patch_config") as execute,
+                        redirect_stderr(io.StringIO()) as error,
+                    ):
+                        self.assertEqual(basaltwater.main(), 1)
+                    execute.assert_not_called()
+                    self.assertIn("Invalid state", error.getvalue())
+                    self.assertIn("File retained", error.getvalue())
                 with open(self.cache_path, "rb") as stream:
                     self.assertEqual(stream.read(), original)
 
