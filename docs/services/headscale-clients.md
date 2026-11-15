@@ -1,7 +1,6 @@
 # Native Debian Headscale clients
 
-The client implementation is an integration API; parent setup/plugin and root
-CLI wiring are separate. It installs native Tailscale using the official signed
+The client setup installs native Tailscale using the official signed
 stable APT repository on Debian 12/13, amd64/arm64. The reviewed baseline is
 Tailscale 1.104.7 with Headscale 0.29.7. Headscale's protocol minimum is 1.80;
 the enforced client security floor is 1.104.4. Security updates are not held.
@@ -28,7 +27,39 @@ apply it through a reviewed restart before adoption. No WAN ports are opened.
 Native `--accept-dns=true` delegates DNS changes to Tailscale's OS integration;
 Basaltwater does not write `/etc/resolv.conf` or enable routing/exit nodes.
 
-## Explicit enrollment
+## Local recovery commands
+
+Run these commands as root on the client through independent SSH recovery.
+Setup must first prepare the managed client; an existing enrolled installation
+instead requires reviewed adoption. Status prints safe observed identity JSON.
+
+```bash
+sudo basaltw headscale-client status --url https://vpn.example.com
+sudo basaltw headscale-client enroll-personal --url https://vpn.example.com
+sudo basaltw headscale-client enroll-machine --url https://vpn.example.com --key-file /run/private/join.key --approved-tag tag:service
+sudo basaltw headscale-client reconcile --url https://vpn.example.com
+sudo basaltw headscale-client adopt --url https://vpn.example.com --node-id 7
+sudo basaltw headscale-client disable --url https://vpn.example.com
+sudo basaltw headscale-client leave --url https://vpn.example.com --node-id 7
+sudo basaltw headscale-client migrate --url https://vpn.example.com --new-url https://other.example.com --node-id 7
+sudo basaltw headscale-client abandon --url https://vpn.example.com --confirm
+```
+
+Personal enrollment requires private stdin/stdout/stderr terminals. Never capture
+its native instructions in setup logs. Machine enrollment accepts only an existing
+private key file and repeated explicit `--approved-tag` values; it never issues a
+key. Interrupted enrollment retains its marker and refuses replay. Abandon only
+after reconciling/revoking the pending request or issued key remotely. Migration
+prepares the new endpoint after exact-node logout; enroll there explicitly later.
+It does not rewrite the controller's saved setup selection. Update that private
+selection only after reviewing the completed migration; ordinary setup/patch
+reject replacement endpoints and stable IDs, even following disable.
+
+Every action accepts `--dry-run`, validating public inputs without native calls,
+locks or state writes. Keep independent recovery access before disable/leave or
+migration. Advertised DNS resolvers retain the native lifecycle teardown guards.
+
+## Enrollment APIs
 
 After setup prepares the client, an authorized adapter may call
 `lib.headscale_client.enroll_client(url, interactive=True)` in a private terminal.

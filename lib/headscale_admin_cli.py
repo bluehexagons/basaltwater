@@ -54,6 +54,7 @@ def _auth_id(args) -> str:
 
 def run_headscale_admin_command(args: argparse.Namespace) -> int:
     from lib.headscale_admin import AdminError, execute_admin_action, validate_action
+    from lib.concurrency import ResourceBusyError, ResourceLockSafetyError
 
     try:
         action = {"approve": "register", "expire": "node_expire", "revoke": "node_delete"}.get(
@@ -74,6 +75,6 @@ def run_headscale_admin_command(args: argparse.Namespace) -> int:
             result = execute_admin_action(action, parameters)
         print(json.dumps(result))
         return 0
-    except (AdminError, OSError, ValueError, EOFError):
+    except (AdminError, OSError, ValueError, EOFError, ResourceBusyError, ResourceLockSafetyError):
         print("Headscale operation unavailable or unconfirmed; reconcile before retry", file=sys.stderr)
         return 1
