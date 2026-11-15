@@ -211,6 +211,28 @@ class SetupTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "named"):
             replace(self.config, tailscale_server=None, tailscale_server_id=None)
 
+    def test_reconciled_enrollment_accepts_corrected_tags_before_native_inspection(self):
+        from lib.headscale_management import inspect_enrollment
+        from lib.headscale_private import write_private
+        from lib.headscale_setup import target_binding
+
+        journal = {"schema": 1, "attempt": "00000000-0000-4000-8000-000000000001",
+                   "server_id": self.server.id, "endpoint": self.server.url,
+                   "control": self.authority.ssh.to_dict(),
+                   "target": target_binding(self.config, workspace=self.workspace).to_dict(),
+                   "tags": ["tag:service"], "phase": "complete", "key_id": "", "node_id": ""}
+        path = str(Path(self.workspace) / "headscale-enrollment.json")
+        self.journal.side_effect = lambda **kwargs: inspect_enrollment(**kwargs)
+        write_private(path, journal)
+        with self.assertRaisesRegex(ValueError, "Retained target enrollment differs"):
+            self.run_flow()
+        self.assertEqual([], self.events)
+        journal["phase"] = "reconciled"
+        write_private(path, journal)
+        self.assertEqual(0, self.run_flow())
+        self.assertEqual(["prepare", "enroll", "final"], self.events)
+        self.assertEqual(["tag:dns"], self.enroll.call_args.args[2])
+
     def hosting(self):
         self.config = SetupConfig(host="control.example.com", username="agent", system_type="server_lite",
             ssh_key="/private/root_key", headscale=True, headscale_name="new-mesh",

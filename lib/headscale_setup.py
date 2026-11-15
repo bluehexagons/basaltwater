@@ -86,7 +86,7 @@ def preflight_setup(config: SetupConfig, *, workspace: str | None = None) -> Non
         if journal and target and journal["target"] == target.to_dict() and (
                 journal["server_id"] != config.tailscale_server_id
                 or journal["endpoint"] != config.tailscale_login_server
-                or journal["tags"] != config.tailscale_tags):
+                or (journal["phase"] == "complete" and journal["tags"] != config.tailscale_tags)):
             raise ValueError("Retained target enrollment differs; explicit migration required")
         if not config.dry_run:
             _credentials(authority.ssh, require_pin=True)

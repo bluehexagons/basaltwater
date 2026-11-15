@@ -384,6 +384,21 @@ class AuthorityTests(unittest.TestCase):
 
 
 class SelectionTests(unittest.TestCase):
+    def test_malformed_saved_inventory_fails_with_bounded_validation_error(self):
+        with tempfile.TemporaryDirectory() as workspace:
+            setups = Path(workspace) / 'setups'
+            setups.mkdir(mode=0o700)
+            path = setups / 'invalid.json'
+            for value in ([], 1, 'invalid', None, {}, {'host': 'dns.example.com', 'args': []}):
+                with self.subTest(value=value):
+                    path.write_text(json.dumps(value))
+                    path.chmod(0o600)
+                    before = path.read_bytes()
+                    with self.assertRaisesRegex(ValueError, 'Invalid saved host inventory'), \
+                            patch.object(flow, 'exchange', side_effect=AssertionError('network')):
+                        flow.saved_target('dns', SimpleNamespace(server_id='server', endpoint=URL), workspace)
+                    self.assertEqual(before, path.read_bytes())
+
     def test_actual_cache_writer_permissions_and_noncreating_read(self):
         from lib.cache import load_setup_command, save_setup_command
         from lib.config import SetupConfig

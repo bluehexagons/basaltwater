@@ -42,7 +42,7 @@ def saved_target(reference: str, management, workspace: str) -> SSHBinding:
         if len(content) > 65536:
             raise ValueError('Saved host exceeds size limit')
         record = parse_json(content)
-        if (record is None or type(record.get('args')) is not dict or type(record.get('host')) is not str):
+        if (type(record) is not dict or type(record.get('args')) is not dict or type(record.get('host')) is not str):
             raise ValueError('Invalid saved host inventory')
         names = [record['host'], record['args'].get('friendly_name'), record.get('name')]
         if any(isinstance(name, str) and name.casefold() == reference.casefold() for name in names):
