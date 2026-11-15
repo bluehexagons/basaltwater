@@ -79,13 +79,101 @@ setup can reconcile a server upgraded beyond that pin.
 
 Existing unmanaged directories, binaries, systemd units, occupied listeners or
 conflicting ingress fail closed. Automatic adoption is intentionally unavailable.
-For an existing native server, stop and take an upstream-native backup of
-`/etc/headscale` and `/var/lib/headscale` before considering migration. Keep it
-under native administration and register it as an external endpoint through the
-saved-reference integration. Do not fabricate a managed manifest. Migration to
-this layout needs an explicit reviewed conversion preserving endpoint, policy,
-keys and matching database/version; that converter is a remaining integration
-gap. The restore adapter below accepts managed snapshots only.
+Explicit root-reviewed adoption is available through `lib.headscale_adoption`
+for the bounded subset below. Do not fabricate a managed manifest. The restore
+adapter below accepts managed snapshots only; adoption creates and verifies a
+compatible snapshot before publishing ownership.
+
+### Explicit reviewed adoption
+
+`inspect_adoption(config: SetupConfig, package: Path) -> dict` inspects the
+explicitly requested network. `adopt_headscale(config, package, review_file,
+backup, *, dry_run=False) -> ServerManifest` consumes its reviewed private JSON.
+Neither API discovers authority, installs packages, changes native ownership,
+rewrites config/policy/DNS, rotates keys, checkpoints data, or starts the daemon.
+The only production writes are private journal, backup and ownership metadata.
+The package input must be the pinned official DEB above, retained privately for
+recovery; extraction is confined to temporary scratch storage.
+
+Supported adoption requires all of these existing conditions:
+
+- Debian root/service/firewall capabilities; pinned 0.29.7 amd64/arm64 package,
+  installed package metadata and package hold. `/usr/bin/headscale` and
+  `/usr/lib/systemd/system/headscale.service` must match the verified DEB bytes.
+  The loaded unit must use that fragment (the Debian `/lib` alias is accepted),
+  have no drop-ins or environment inputs, require no daemon reload, and be
+  disabled and stopped. Adoption leaves it disabled and stopped.
+- Exact default native paths, permissions and ownership described above;
+  no symlink components, hardlinked files, writable ancestors or foreign owners.
+  Config/policy are 0640 root:headscale; database/keys are 0600 headscale:headscale;
+  config directory is 0750 root:headscale and data directory 0700 headscale:headscale.
+- Strict JSON config semantically identical to `render_config(config)`, including
+  explicit endpoint, relay addresses, prefixes, loopback admin listeners,
+  native socket, DERP, policy file path and baseline DNS. Formatting is preserved.
+  File policy contents can differ from the fresh default and are preserved
+  byte for byte. Existing resolver overrides, split DNS, extra records, foreign
+  settings, YAML syntax and database-backed policies require manual migration.
+  Adoption does not reset DNS to make an unsupported server fit.
+- SQLite integrity and exact schema equality with a fresh database initialized
+  by the pinned native scratch validator. No WAL, SHM or rollback journal may
+  exist. Native key formats and policy are checked by the existing isolated
+  configtest. Native validation never runs against the production database;
+  integrity/schema inspection uses read-only SQLite connections.
+- Existing Nginx site bytes equal `render_nginx(domain)` at the managed site
+  path, successful Nginx validation and active firewall with explicit public
+  `80/tcp`, `443/tcp` and `3478/udp` ALLOW rules. Ordinary managed
+  preflight also checks actual listeners, competing effective Nginx bindings
+  and conventional Cloudflare ingress. Cloud tunnels remain unsupported for
+  control hosting. External routing, TLS trust and reachability require explicit
+  operator review; local inspection cannot establish those facts.
+
+The schema-1 review has exactly the inspection output's fields: `schema`,
+`authority`, `binding`, `files`, `package`, and `firewall`. `binding` is the exact managed
+manifest (schema/version/endpoint/base_domain). `files` contains config, original
+policy, both native keys, database and Nginx identities: SHA256, device, inode,
+UID, GID, mode and size. `package` contains architecture, pinned DEB digest,
+installed package identity, exact observed systemd fields, binary/unit identities.
+`firewall` retains the exact inspected UFW status for review and comparison.
+Treat the document as private operational evidence. Store it as a root-owned
+0600 regular file in a root-owned 0700 directory. Review all identities and the
+intended same-network authority independently, then change only `authority`
+from `false` to JSON `true`. An endpoint lookup or reachable health URL is not
+authorization. Extra fields, changed binding or changed observations refuse.
+
+Adoption holds the shared Nginx and native operation locks, journals before
+backup, verifies an exact private stopped snapshot, validates config/schema,
+and rechecks all reviewed identities before publishing `adoption.json` and
+`manifest.json`. The new backup destination must have a root-private parent.
+Failures and uncertain publication retain a blocking operation marker and any
+completed backup. Preserve these and reconcile actual state before recovery;
+never clear the marker and blindly retry. The snapshot includes the original
+config/policy/keys/database, a prospective manifest, Nginx and approved review.
+It is compatible with the existing managed backup validator/restore API.
+
+Activation is separate: after reviewing the completed backup and external
+ingress, ordinary setup with the exact same settings can enable/start the adopted
+server through its managed rerun path. That path retains original config, DNS,
+policy, keys and data. Dry run checks private review authority and explicit
+binding only; it creates no locks, scratch files, backup or metadata and does
+not claim native validation or freshness of the review.
+
+For unsupported servers, keep native administration or register an external
+endpoint. Stop and disable the native service using its own operating procedure,
+take a consistent upstream-native backup of config, policy, keys and database,
+retain matching binary/package and independently verify recovery. Review upstream
+schema/version migration requirements and explicitly convert on a disposable
+copy, preserving endpoint, policy, DNS and identity. Requalify ingress and data
+before cutover. Do not delete sidecars or reinitialize data to satisfy adoption.
+
+Parent root integration: import the two APIs above into the maintenance command
+owner. Add explicit inspection and adoption actions requiring an operator-supplied
+validated `SetupConfig`, pinned package path, private reviewed file and new private
+backup destination. Persist inspection output only on explicit request, using
+root-private output handling. Forward dry run to `adopt_headscale`; never invoke
+adoption from setup or build settings from discovered endpoints. Do not expose
+this API through the public portal/admin HTTP API. No parser/root CLI files are
+changed by this implementation. The existing `tests/test_headscale*.py` network
+suite pattern includes the focused adoption tests automatically.
 
 Operations share a private lock and durable `operation.json` marker. Failure or
 interruption leaves the marker to block blind retries. The shared Nginx lock
@@ -172,6 +260,12 @@ These are Python APIs, not new root CLI commands. Paths use `pathlib.Path`.
 | `lib.headscale_backup` | `snapshot_files(paths) -> dict[str, Path]`, `backup_headscale(destination, *, paths=ServerPaths()) -> ServerManifest` |
 | `lib.headscale_backup` | `validate_backup(source, *, expected, paths=ServerPaths()) -> dict[str, bytes]`, `restore_headscale(source, *, expected, paths=ServerPaths(), activate=False)` |
 | `lib.headscale_backup` | `validate_upgrade(current, target, *, reviewed_releases)`, `upgrade_headscale(target_package, recovery_package, backup, *, current, target, reviewed_releases, paths=ServerPaths())` |
+| `lib.headscale_adoption` | `inspect_adoption(config, package) -> dict`, `adopt_headscale(config, package, review_file, backup, *, dry_run=False) -> ServerManifest` |
+
+Adoption alone supplies `expected_database_schema=paths.data / "db.sqlite"`
+to `configtest`; other callers retain its existing behavior. This optional
+read-only comparison against scratch schema is the narrow server-helper change
+needed to reject foreign databases without migrating production data.
 
 Low-level mutation helpers require root and caller-held `runtime_operation`;
 `configure_headscale`, backup, restore and upgrade enforce their own capability
