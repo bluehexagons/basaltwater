@@ -79,9 +79,11 @@ basaltw publish <command> ... [--json]
 basaltw headscale <add|list|show|rename|remove|onboarding> ...
 basaltw headscale-admin <users-list|users-create|users-delete|nodes-list|approve|expire|revoke> ... [--dry-run]
 basaltw headscale-client <status|enroll-personal|enroll-machine|reconcile|adopt|disable|leave|migrate|abandon> --url HTTPS_URL [options] [--dry-run]
+basaltw headscale-client reconcile --url HTTPS_URL [--confirm-logged-out] [--dry-run]
+basaltw headscale-client reconcile-selection HOST --expected-url HTTPS_URL [--expected-server-id ID] --server REFERENCE --new-url HTTPS_URL --node-id ID --target-host HOST --target-key PATH --target-known-hosts PATH [options] [--dry-run]
 basaltw headscale-manage <bind|show|remove|enroll|inspect|reconcile> REFERENCE [options] [--dry-run]
 basaltw headscale-dns <publish|withdraw|inspect|reconcile> [--input PRIVATE_JSON] [--dry-run]
-basaltw headscale-maintenance <backup|validate|restore|upgrade|unbound-backup|unbound-validate|unbound-restore> [options] [--dry-run]
+basaltw headscale-maintenance <backup|validate|restore|upgrade|unbound-backup|unbound-validate|unbound-restore|unbound-recover-fresh|unbound-records-inspect|unbound-records-replace|adopt-inspect|adopt> [options] [--dry-run]
 basaltw desktop <command> ...
 basaltw kiosk <status|doctor|start|stop|restart> [--json]
 basaltw firmware <audit|update> [options]
@@ -124,6 +126,8 @@ basaltw shell
 basaltw network ...
 basaltw proxmox ...
 basaltw ssh-key enroll <host> [--port PORT] [--fingerprint SHA256:FINGERPRINT | --yes]
+basaltw ssh <host> [connection-options] [-- <command> ...]
+basaltw fan <host> [<host> ...] [connection-options] -- <command> ...
 ```
 
 `basaltw --version` prints one stable line containing the installed project
@@ -133,6 +137,12 @@ version, suitable for feedback and support records.
 recovery; see [administration](../services/headscale-administration.md).
 `headscale-client` provides explicit root local enrollment and lifecycle actions;
 see [client commands](../services/headscale-clients.md#local-recovery-commands).
+`reconcile --confirm-logged-out` confirms an independently reviewed logout;
+`reconcile-selection` reconciles a controller's saved binding after migration.
+See the [multi-VM Headscale walkthrough](../services/headscale-vms.md) for
+separate control, client, and DNS VMs. Fresh service VMs can run root-local
+commands as root with `python3 /opt/basaltwater/basaltwater.py` even when no
+`basaltw` launcher is installed.
 Saved `headscale` references provide discovery only, without management authority.
 `headscale-manage` uses explicit pinned SSH authority in the selected workspace;
 see [management and tagged enrollment](../services/headscale-management.md).
@@ -2399,6 +2409,16 @@ Useful shell commands:
 See [`sysadmin.md`](../operations/sysadmin.md) for the host shortcut commands (`mount`,
 `health`, `ssh`, `push`, `pull`, `df`, `fan`, `svc`, `logs`, `upgrade`,
 `reachable`, `key`).
+
+For `ssh` and `fan`, connection options may appear before or after hosts
+(and between `fan` hosts), before the first `--`. The delimiter separates
+remote argv: all following tokens, including flags and later literal `--`,
+are passed to the remote command. Unknown connection options are rejected.
+`fan` requires the delimiter and a command. `ssh` without a command opens an
+interactive session; an explicit delimiter with no command is an error.
+SSH also accepts a direct command without the delimiter, such as
+`basaltw ssh myserver -u root id -u`; the first command word ends connection
+option parsing. Prefer the explicit delimiter for scripts.
 
 Interactive remote setup confirms a new host key through OpenSSH's normal
 fingerprint prompt, saves it in the workspace, and continues without a separate

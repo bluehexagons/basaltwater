@@ -5,10 +5,10 @@ from __future__ import annotations
 import argparse
 import io
 import unittest
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 
-from basaltwater import create_basaltwater_parser
+from basaltwater import create_basaltwater_parser, main
 from lib.sysadmin_cli import run_sysadmin_command
 
 
@@ -128,13 +128,7 @@ class TestSysadminCliDispatch(SysadminCliTestCase):
         )
 
     def test_fan_and_df_dispatch(self) -> None:
-        fan_args = argparse.Namespace(
-            _sysadmin_cmd="fan",
-            hosts=["server"],
-            remote_command=["--", "uname", "-a"],
-            username=None,
-            ssh_key=None,
-        )
+        fan_args = self._parse("fan", "server", "--", "uname", "-a")
         with patch("lib.sysadmin_fan.run_fan", return_value=10) as run_fan:
             self.assertEqual(run_sysadmin_command(fan_args), 10)
         run_fan.assert_called_once_with(["server"], ["uname", "-a"], username=None, ssh_key=None)
@@ -143,6 +137,114 @@ class TestSysadminCliDispatch(SysadminCliTestCase):
         with patch("lib.sysadmin_fan.run_df", return_value=11) as run_df:
             self.assertEqual(run_sysadmin_command(df_args), 11)
         run_df.assert_called_once_with(["server", "other"], username=None, ssh_key=None)
+
+    def test_fan_options_and_remote_tokens_reach_dispatch(self) -> None:
+        remote = ["printf", "--", "%s", "two words", "", "--username", "remote"]
+        for connection in (
+            ["-u", "root", "-i", "/tmp/key", "h1", "h2"],
+            ["h1", "h2", "--username=root", "--key=/tmp/key"],
+            ["h1", "-u", "root", "h2", "-i", "/tmp/key"],
+        ):
+            with self.subTest(connection=connection):
+                args = self._parse("fan", *connection, "--", *remote)
+                with patch("lib.sysadmin_fan.run_fan", return_value=7) as run:
+                    self.assertEqual(run_sysadmin_command(args), 7)
+                run.assert_called_once_with(
+                    ["h1", "h2"], remote, username="root", ssh_key="/tmp/key",
+                )
+
+    def test_fan_minimal_multi_host_command_reaches_dispatch(self) -> None:
+        for remote in (["uptime"], ["--", "id", "--help"]):
+            with self.subTest(remote=remote):
+                args = self._parse("fan", "h1", "h2", "--", *remote)
+                with patch("lib.sysadmin_fan.run_fan", return_value=0) as run:
+                    self.assertEqual(run_sysadmin_command(args), 0)
+                run.assert_called_once_with(
+                    ["h1", "h2"], remote, username=None, ssh_key=None,
+                )
+
+    def test_ssh_root_override_and_remote_tokens_reach_dispatch(self) -> None:
+        for connection in (
+            ["-u", "root", "-i", "/tmp/key", "-p", "2222", "h1"],
+            ["h1", "--username=root", "--key=/tmp/key", "--port=2222"],
+        ):
+            for remote in (["id"], ["--", "printf", "--", "", "two words", "-u", "remote"]):
+                with self.subTest(connection=connection, remote=remote):
+                    args = self._parse("ssh", *connection, "--", *remote)
+                    with patch("lib.sysadmin_ssh.run_ssh", return_value=8) as run:
+                        self.assertEqual(run_sysadmin_command(args), 8)
+                    run.assert_called_once_with(
+                        "h1", username="root", ssh_key="/tmp/key", port=2222,
+                        remote_command=remote,
+                    )
+
+    def test_ssh_direct_command_and_interactive_forms(self) -> None:
+        for suffix, remote in (
+            ([], None),
+            (["journalctl", "-u", "nginx", "--no-pager"], ["journalctl", "-u", "nginx", "--no-pager"]),
+        ):
+            for connection in (["-u", "root", "h1"], ["h1", "-uroot"], ["h1", "--user", "root"]):
+                with self.subTest(connection=connection, suffix=suffix):
+                    args = self._parse("ssh", *connection, *suffix)
+                    with patch("lib.sysadmin_ssh.run_ssh", return_value=0) as run:
+                        self.assertEqual(run_sysadmin_command(args), 0)
+                    run.assert_called_once_with(
+                        "h1", username="root", ssh_key=None, port=None, remote_command=remote,
+                    )
+
+    def test_unknown_connection_options_and_missing_hosts_fail(self) -> None:
+        for argv in (
+            ["fan", "h1", "--typo", "root", "--", "uptime"],
+            ["ssh", "h1", "--typo", "root", "--", "id"],
+            ["ssh", "h1", "--typo"],
+            ["ssh", "h1", "-u", "--", "id"],
+            ["ssh", "h1", "-p", "oops", "--", "id"],
+            ["fan", "--", "uptime"],
+            ["ssh", "--", "id"],
+        ):
+            with self.subTest(argv=argv), redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as error:
+                    self._parse(*argv)
+                self.assertEqual(error.exception.code, 2)
+
+    def test_explicit_empty_commands_never_connect(self) -> None:
+        for command, module in (("fan", "lib.sysadmin_fan.run_fan"), ("ssh", "lib.sysadmin_ssh.run_ssh")):
+            with self.subTest(command=command):
+                args = self._parse(command, "h1", "-u", "root", "--")
+                error = io.StringIO()
+                with patch(module) as run, redirect_stderr(error):
+                    self.assertEqual(run_sysadmin_command(args), 1)
+                run.assert_not_called()
+                self.assertIn("remote command is required after --", error.getvalue())
+
+    def test_lazy_main_preserves_workspace_and_remote_argv(self) -> None:
+        for command, module, hosts in (
+            ("fan", "lib.sysadmin_fan.run_fan", ["h1", "h2"]),
+            ("ssh", "lib.sysadmin_ssh.run_ssh", ["h1"]),
+        ):
+            argv = ["basaltw", "--workspace", "/tmp/workspace", command, *hosts, "-u", "root", "--", "id", "--", "-u"]
+            with (
+                self.subTest(command=command),
+                patch("sys.argv", argv),
+                patch("basaltwater.argcomplete", None),
+                patch("basaltwater.validate_workspace_dir") as validate,
+                patch("basaltwater.set_workspace_dir") as workspace,
+                patch(module, return_value=6) as run,
+            ):
+                self.assertEqual(main(), 6)
+                validate.assert_called_once_with("/tmp/workspace")
+                workspace.assert_called_once_with("/tmp/workspace")
+                if command == "fan":
+                    run.assert_called_once_with(hosts, ["id", "--", "-u"], username="root", ssh_key=None)
+                else:
+                    run.assert_called_once_with("h1", username="root", ssh_key=None, port=None, remote_command=["id", "--", "-u"])
+
+    def test_help_before_delimiter_stays_local(self) -> None:
+        for command in ("ssh", "fan"):
+            with self.subTest(command=command), redirect_stdout(io.StringIO()):
+                with self.assertRaises(SystemExit) as error:
+                    self._parse(command, "--help")
+                self.assertEqual(error.exception.code, 0)
 
     def test_service_log_upgrade_and_reachable_dispatch(self) -> None:
         svc_args = self._parse("svc", "server", "nginx", "restart")

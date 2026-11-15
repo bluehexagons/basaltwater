@@ -99,7 +99,7 @@ from lib.proxmox_lifecycle import LIFECYCLE_FIELD_FLAGS
 from lib.privilege_setup import resolve_approval_panel_args
 from lib.proxmox_cli import add_proxmox_subparser, run_proxmox_command
 from lib.vm_cli import add_vm_subparser, run_vm_command
-from lib.sysadmin_cli import add_sysadmin_subparsers, run_sysadmin_command
+from lib.sysadmin_cli import SysadminArgumentParser, add_sysadmin_subparsers, run_sysadmin_command
 from lib.python_setup import run_local_python_setup
 from lib.recall import run_recall_command
 from lib.reconstruct import run_reconstruct_command
@@ -188,7 +188,7 @@ Sysadmin Shortcuts:
     mount <host:path> <local>   Mount a remote directory via sshfs
     umount <local|host>         Unmount an sshfs mount
     health <host>               Show uptime, disk, memory, failed units, pending upgrades
-    ssh <host> [-- cmd]         Open SSH session using saved config
+    ssh <host> [options] [-- cmd] Open SSH session using saved config
     push <local> <host:path>    Rsync a local path to a remote host
     pull <host:path> [local]    Rsync a remote path to local
     key push <host>             Install local public key on a remote host
@@ -275,7 +275,7 @@ def run_tool_upgrade_command(args: argparse.Namespace | None = None) -> int:
         return 1
 
 
-class _CommandArgumentParser(argparse.ArgumentParser):
+class _CommandArgumentParser(SysadminArgumentParser):
     """Keep an inherited workspace unless this command explicitly replaces it."""
 
     def add_argument(self, *args: str, **kwargs) -> argparse.Action:
