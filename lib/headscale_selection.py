@@ -85,7 +85,7 @@ def resolve_client_server(
 
 
 def reconcile_saved_selection(
-    host: str, *, expected_server_id: str, expected_url: str, server: str,
+    host: str, *, expected_server_id: str | None, expected_url: str, server: str,
     new_url: str, node_id: str, tags: list[str], target: SSHBinding,
     workspace: str | None = None, dry_run: bool = False,
 ) -> None:
@@ -116,7 +116,7 @@ def reconcile_saved_selection(
     normalized = host.lower().rstrip(".")
     if target.host.lower().rstrip(".") != normalized:
         raise ValueError("SSH host differs from selected cached host")
-    if str(uuid.UUID(expected_server_id)) != expected_server_id:
+    if expected_server_id is not None and str(uuid.UUID(expected_server_id)) != expected_server_id:
         raise ValueError("Expected canonical old stable ID")
     if not isinstance(node_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9:_.-]{0,127}", node_id):
         raise ValueError("Invalid expected native node ID")

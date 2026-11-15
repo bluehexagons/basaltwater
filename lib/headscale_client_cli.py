@@ -16,7 +16,7 @@ def add_headscale_client_parser(subparsers) -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="headscale_client_action", required=True)
     selection = commands.add_parser("reconcile-selection", help="Reconcile saved controller binding after native migration")
     selection.add_argument("host", help="Exact cached setup host")
-    selection.add_argument("--expected-server-id", required=True)
+    selection.add_argument("--expected-server-id", help="Exact old stable ID; omit only for an old explicit URL selection")
     selection.add_argument("--expected-url", required=True)
     selection.add_argument("--server", required=True, help="New saved server name or stable ID")
     selection.add_argument("--new-url", required=True)

@@ -128,6 +128,18 @@ class ReconcileSelectionTests(unittest.TestCase):
                 self.reconcile(**override)
             self.assertEqual(before, self.path.read_bytes())
 
+    def test_explicit_old_url_requires_absent_saved_id(self):
+        before = self.path.read_bytes()
+        with self.assertRaisesRegex(ValueError, "exact expected old binding"):
+            self.reconcile(expected_server_id=None)
+        self.assertEqual(before, self.path.read_bytes())
+        self.record["args"].update(tailscale_server=None, tailscale_server_id=None)
+        self.save()
+        self.reconcile(expected_server_id=None)
+        result = json.loads(self.path.read_text())
+        self.assertEqual(self.server.id, result["args"]["tailscale_server_id"])
+        self.assertEqual(self.record["private_metadata"], result["private_metadata"])
+
     def test_unconfirmed_or_wrong_native_identity_preserves_cache(self):
         before = self.path.read_bytes()
         for field, value in (("login_server", "https://wrong.example.com"), ("node_id", "wrong"),

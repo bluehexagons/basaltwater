@@ -99,6 +99,11 @@ basaltw headscale-client reconcile-selection client.example.com \
   --target-known-hosts /private/ssh/known_hosts
 ```
 
+For an old explicit URL selection without a stable registry ID, omit
+`--expected-server-id`. This requires the saved ID to be absent; it cannot
+bypass a named selection's identity check. The new endpoint must have a saved
+reference, which can be an external server added before reconciliation.
+
 SSH always uses root, explicit descriptor-pinned credentials and strict pinned
 host keys; `--target-port` defaults to 22. The target host must match the cached
 host (case and a terminal DNS dot are normalized); aliases and alternate recovery
