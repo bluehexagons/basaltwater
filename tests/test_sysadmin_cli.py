@@ -207,6 +207,30 @@ class TestSysadminCliDispatch(SysadminCliTestCase):
                     self._parse(*argv)
                 self.assertEqual(error.exception.code, 2)
 
+    def test_ssh_direct_command_preserves_remote_delimiters(self) -> None:
+        remote = ["printf", "--", "%s", "two words", "", "--username", "remote"]
+        for connection in (["-u", "root", "h1"], ["h1", "--username=root"]):
+            for delimiter in ([], ["--"]):
+                argv = ["ssh", *connection, *delimiter, *remote]
+                with self.subTest(argv=argv):
+                    args = self._parse(*argv)
+                    with patch("lib.sysadmin_ssh.run_ssh", return_value=0) as run:
+                        self.assertEqual(run_sysadmin_command(args), 0)
+                    run.assert_called_once_with(
+                        "h1", username="root", ssh_key=None, port=None,
+                        remote_command=remote,
+                    )
+                    with (
+                        patch("sys.argv", ["basaltw", *argv]),
+                        patch("basaltwater.argcomplete", None),
+                        patch("lib.sysadmin_ssh.run_ssh", return_value=0) as run,
+                    ):
+                        self.assertEqual(main(), 0)
+                    run.assert_called_once_with(
+                        "h1", username="root", ssh_key=None, port=None,
+                        remote_command=remote,
+                    )
+
     def test_explicit_empty_commands_never_connect(self) -> None:
         for command, module in (("fan", "lib.sysadmin_fan.run_fan"), ("ssh", "lib.sysadmin_ssh.run_ssh")):
             with self.subTest(command=command):

@@ -19,15 +19,19 @@ class SysadminArgumentParser(argparse.ArgumentParser):
         if cmd not in {"ssh", "fan"} or getattr(self, "_connection_parse", False):
             return super().parse_known_args(args, namespace)
         words = list(sys.argv[1:] if args is None else args)
-        explicit = "--" in words
+        explicit = cmd == "fan" and "--" in words
         boundary = words.index("--") if explicit else len(words)
-        if cmd == "ssh" and not explicit:
+        if cmd == "ssh":
             # The first command word after the host starts the legacy direct
             # command form. Once started, its options belong to that command.
             host_seen = False
             index = 0
             while index < len(words):
                 word = words[index]
+                if word == "--":
+                    explicit = True
+                    boundary = index
+                    break
                 option = word.split("=", 1)[0]
                 action = self._option_string_actions.get(option)
                 if action is None and self.allow_abbrev and option.startswith("--"):
