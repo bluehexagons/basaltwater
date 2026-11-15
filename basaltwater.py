@@ -37,6 +37,7 @@ from lib.arg_parser import add_setup_arguments
 from lib.agent_cli import add_agent_subparser, run_agent_command
 from lib.gogs_cli import add_gogs_subparser, run_gogs_command
 from lib.homebox_cli import add_homebox_subparser, run_homebox_command
+from lib.headscale_cli import add_headscale_parser, run_headscale_command
 from lib.scrub_cli import add_scrub_subparser, run_scrub_command
 from lib.homebox_config import validate_homebox_settings
 from lib.kiosk_config import validate_kiosk_settings
@@ -169,6 +170,7 @@ def _build_basaltwater_epilog() -> str:
     manifest init|validate      Initialize or validate project build/deploy settings
     node status|env|exec|install Select a project-specific Node runtime
     publish status|prepare|upload Manage VM publishing and reviewed release writing
+    headscale add|list|show|rename|remove|onboarding Manage saved Headscale references
 
 Sysadmin Shortcuts:
     mount <host:path> <local>   Mount a remote directory via sshfs
@@ -678,6 +680,7 @@ def create_basaltwater_parser(*, _command: str | None = None) -> Tuple[argparse.
     add_project_manifest_subparser(subparsers)
     add_node_subparser(subparsers)
     add_publishing_subparser(subparsers)
+    add_headscale_parser(subparsers)
 
     shell_parser = subparsers.add_parser(
         "shell",
@@ -2621,6 +2624,12 @@ def main() -> int:
         return run_node_command(args)
     elif args.command == "publish":
         return run_publishing_command(args)
+    elif args.command == "headscale":
+        try:
+            return run_headscale_command(args)
+        except (ValueError, OSError) as exc:
+            print(f"Error: {exc}")
+            return 1
     elif args.command in {"mount", "umount", "health", "ssh", "push", "pull", "key", "ssh-key", "df", "fan", "svc", "logs", "upgrade", "reachable", "user"}:
         return run_sysadmin_command(args)
     elif args.command == "shell":

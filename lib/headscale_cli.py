@@ -13,6 +13,19 @@ from lib.headscale_registry import (
     mutate_servers,
     resolve_server,
 )
+from lib.workspace import get_workspace_dir
+
+
+def _complete_server_names(prefix: str, parsed_args: argparse.Namespace, **kwargs) -> list[str]:
+    """Offer names from the active workspace without creating or changing state."""
+    del kwargs
+    try:
+        workspace = getattr(parsed_args, "workspace", None) or get_workspace_dir()
+        return [server.name for server in list_servers(workspace)
+                if server.name.casefold().startswith(prefix.casefold())]
+    except (OSError, ValueError):
+        # Completion is advisory; the command itself reports corrupt state.
+        return []
 
 
 def add_headscale_parser(subparsers) -> argparse.ArgumentParser:
@@ -36,20 +49,20 @@ def add_headscale_parser(subparsers) -> argparse.ArgumentParser:
 
     show = commands.add_parser("show", help="Show one saved reference")
     common(show)
-    show.add_argument("reference")
+    show.add_argument("reference").completer = _complete_server_names
 
     rename = commands.add_parser("rename", help="Rename a saved reference")
     common(rename)
-    rename.add_argument("reference")
+    rename.add_argument("reference").completer = _complete_server_names
     rename.add_argument("name")
 
     remove = commands.add_parser("remove", help="Remove a local reference")
     common(remove)
-    remove.add_argument("reference")
+    remove.add_argument("reference").completer = _complete_server_names
 
     onboarding = commands.add_parser("onboarding", help="Print a trusted onboarding page URL")
     common(onboarding)
-    onboarding.add_argument("reference")
+    onboarding.add_argument("reference").completer = _complete_server_names
     parser.set_defaults(headscale_handler=run_headscale_command)
     return parser
 
