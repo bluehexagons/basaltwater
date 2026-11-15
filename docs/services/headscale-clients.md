@@ -19,6 +19,9 @@ its persisted endpoint and exact node binding. Before starting, it checks the
 private native state and ownership record, reviewed privacy drop-in, and installed
 client security floor. After starting it verifies effective daemon privacy,
 client/daemon version agreement, endpoint and exact node, then online identity.
+Startup observes native `NoState`/`Starting` transitions for up to 15 seconds
+before identity verification. It never repeats the service start or enrollment;
+other observation errors still fail immediately and trigger guarded teardown.
 A stopped native profile may receive credential-free `tailscale up` only after
 that identity matches. No key, logout or automatic enrollment is involved.
 Unowned state, pending joins, missing identity and changed bindings require

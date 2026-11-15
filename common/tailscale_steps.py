@@ -115,8 +115,7 @@ def _start_unenrolled(url: str, phase: str) -> None:
     with client.resolver_lifecycle_guard():
         try:
             client.native(["systemctl", "enable", "--now", "tailscaled"])
-            client.require_private_daemon()
-            status, prefs = client.snapshot()
+            status, prefs = client.wait_for_daemon()
             if status["BackendState"] != "NeedsLogin" or status.get("HaveNodeKey", False):
                 raise client.ClientError("Retained client has an unexpected identity; reconcile explicitly")
             client.check_network(status, prefs, url, phase)

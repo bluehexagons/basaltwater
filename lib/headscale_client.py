@@ -36,6 +36,10 @@ class ClientError(RuntimeError, ValueError):
     """Safe diagnostic that never includes native command output."""
 
 
+class ClientStarting(ClientError):
+    """A known transient backend state; never an enrolled identity."""
+
+
 @dataclass(frozen=True)
 class ClientIdentity:
     node_id: str
@@ -111,6 +115,8 @@ def snapshot() -> tuple[dict, dict]:
         raise ClientError("Client and running daemon versions differ")
     raw_prefs = _object(["tailscale", "debug", "prefs"])
     prefs = {"ControlURL": raw_prefs.get("ControlURL")}
+    if status.get("BackendState") == "NoState":
+        raise ClientStarting("Native client is initializing")
     if not isinstance(status.get("BackendState"), str) or status["BackendState"] not in {"NeedsLogin", "NeedsMachineAuth", "Stopped", "Starting", "Running"}:
         raise ClientError("Unsupported native client state")
     if status.get("TUN") is not True:
@@ -118,6 +124,22 @@ def snapshot() -> tuple[dict, dict]:
     if type(status.get("HaveNodeKey", False)) is not bool:
         raise ClientError("Invalid native node-key state")
     return status, prefs
+
+
+def wait_for_daemon(*, timeout: float = 15) -> tuple[dict, dict]:
+    """Bounded read-only startup observation; never repeat a service mutation."""
+    deadline = time.monotonic() + timeout
+    while True:
+        require_private_daemon()
+        try:
+            status, prefs = snapshot()
+            if status["BackendState"] != "Starting":
+                return status, prefs
+        except ClientStarting:
+            pass
+        if time.monotonic() >= deadline:
+            raise ClientError("Native client did not become ready; reconcile service state")
+        time.sleep(0.25)
 
 
 def _network(prefs: dict, expected_url: str) -> str:
@@ -325,7 +347,7 @@ def _resume_client(url: str, expected_node_id: str, *, dropin: str = PRIVACY_DRO
         save_binding(url, "resuming", expected_node_id)
         try:
             native(["systemctl", "enable", "--now", "tailscaled"])
-            require_private_daemon()
+            wait_for_daemon()
             identity = observe_client(url, require_running=False)
             if identity.node_id != expected_node_id or identity.login_server != validate_headscale_url(url):
                 raise ClientError("Resumed node differs from reviewed binding")

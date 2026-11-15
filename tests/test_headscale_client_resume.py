@@ -41,6 +41,7 @@ class ResumeTests(unittest.TestCase):
         stack.enter_context(patch.object(steps.shutil, "which", return_value="/mock/tailscale"))
         stack.enter_context(patch.object(client, "_object", return_value={"short": "1.104.7"}))
         self.privacy = stack.enter_context(patch.object(client, "require_private_daemon"))
+        self.wait = stack.enter_context(patch.object(client, "wait_for_daemon"))
         self.commands = []
         self.active = False
         self.command = stack.enter_context(patch.object(client, "native", side_effect=self.command_result))
@@ -104,8 +105,8 @@ class ResumeTests(unittest.TestCase):
                 self.commands.clear()
                 status = {"BackendState": "NeedsLogin", "HaveNodeKey": False}
                 prefs = {"ControlURL": "https://controlplane.tailscale.com"}
-                with patch.object(client, "snapshot", return_value=(status, prefs)):
-                    self.enable()
+                self.wait.return_value = (status, prefs)
+                self.enable()
                 self.assertTrue(self.active)
                 self.assertEqual(Path(client.CLIENT_STATE).read_bytes(), before)
                 self.observe.assert_not_called()
@@ -115,9 +116,9 @@ class ResumeTests(unittest.TestCase):
         for status in ({"BackendState": "Running", "HaveNodeKey": True},
                        {"BackendState": "NeedsLogin", "HaveNodeKey": True}):
             client.save_binding(URL, "left")
-            with patch.object(client, "snapshot", return_value=(status, {"ControlURL": URL})):
-                with self.assertRaisesRegex(ValueError, "unexpected identity"):
-                    self.enable()
+            self.wait.return_value = (status, {"ControlURL": URL})
+            with self.assertRaisesRegex(ValueError, "unexpected identity"):
+                self.enable()
             self.assertFalse(self.active)
             self.assertEqual(client.read_binding()["phase"], "left")
 
@@ -220,6 +221,33 @@ class ResumeTests(unittest.TestCase):
 
 
 class PrivacyTests(unittest.TestCase):
+    def test_startup_wait_observes_only_known_transient_states(self):
+        ready = ({"BackendState": "Running"}, {"ControlURL": URL})
+        with patch.object(client, "require_private_daemon") as privacy, \
+                patch.object(client, "snapshot", side_effect=[client.ClientStarting("initializing"),
+                    ({"BackendState": "Starting"}, {}), ready]) as snapshot, \
+                patch.object(client.time, "sleep") as sleep:
+            self.assertEqual(client.wait_for_daemon(), ready)
+            self.assertEqual(snapshot.call_count, 3)
+            self.assertEqual(privacy.call_count, 3)
+            self.assertEqual(sleep.call_count, 2)
+
+    def test_startup_wait_bounds_initialization_and_never_retries_other_failures(self):
+        with patch.object(client, "require_private_daemon"), \
+                patch.object(client, "snapshot", side_effect=client.ClientStarting("initializing")), \
+                patch.object(client.time, "monotonic", side_effect=[0, 16]), \
+                patch.object(client.time, "sleep") as sleep:
+            with self.assertRaisesRegex(ValueError, "did not become ready"):
+                client.wait_for_daemon()
+            sleep.assert_not_called()
+        with patch.object(client, "require_private_daemon"), \
+                patch.object(client, "snapshot", side_effect=client.ClientError("invalid native data")) as snapshot, \
+                patch.object(client.time, "sleep") as sleep:
+            with self.assertRaisesRegex(ValueError, "invalid native data"):
+                client.wait_for_daemon()
+            self.assertEqual(snapshot.call_count, 1)
+            sleep.assert_not_called()
+
     def test_running_environment_required_for_adoption_and_enrollment(self):
         for environment in (b"OTHER=true\0", b"TS_NO_LOGS_NO_SUPPORT=true\0"):
             fields = 'ActiveState=active\nMainPID=123\nEnvironment=TS_NO_LOGS_NO_SUPPORT=true\n'
