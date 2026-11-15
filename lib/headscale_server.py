@@ -328,7 +328,13 @@ def health(paths: ServerPaths) -> None:
 
 def installed_version() -> str:
     output = run(["headscale", "version"], capture_output=True, timeout=30).stdout
-    match = re.search(r"\bheadscale version v?(0\.[0-9]+\.[0-9]+)(?:\s|$)", output)
+    # Official stable artifacts can report SemVer build metadata (the reviewed
+    # 0.29.6 DEB reports +dirty). Metadata does not change the release version;
+    # prerelease labels remain unsupported. Package digest/metadata validation
+    # stays mandatory at installation, independently of this observation.
+    match = re.fullmatch(r"headscale version v?(0\.[0-9]+\.[0-9]+)"
+                         r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?",
+                         (output.splitlines() or [""])[0].strip())
     if not match:
         raise ValueError("Cannot determine stable installed Headscale version")
     return match[1]

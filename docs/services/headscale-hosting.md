@@ -257,6 +257,9 @@ tests config and native health, then updates the manifest. Failure stops the
 target, installs the verified prior package, restores its matching database,
 config, policy and keys, then checks health. A binary-only downgrade is never the
 recovery path. Recovery failures retain the backup and blocking operation marker.
+Stable native version observations normalize SemVer build metadata such as
+`0.29.6+dirty` to `0.29.6`; prerelease labels remain unsupported. This does not
+replace the reviewed package digest and exact DEB version/architecture checks.
 Native migrations, fresh/replacement installs and recovery still need disposable
 Debian qualification on both advertised architectures before release.
 

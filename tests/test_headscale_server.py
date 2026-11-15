@@ -27,6 +27,19 @@ def fixture_paths(root):
 
 
 class HeadscaleServerTests(unittest.TestCase):
+    def test_installed_stable_version_accepts_build_metadata_but_not_prereleases(self):
+        for label, expected in (("v0.29.7", "0.29.7"), ("v0.29.6+dirty", "0.29.6"),
+                                ("0.29.7+build.12", "0.29.7")):
+            with self.subTest(label=label), patch.object(server, "run", return_value=
+                    subprocess.CompletedProcess([], 0, "headscale version " + label + "\ncommit: fixture\n")):
+                self.assertEqual(server.installed_version(), expected)
+        for output in ("", "headscale version v0.29.7-rc.1", "headscale version dev",
+                       "headscale version v0.29.7+", "headscale version v0.29.7+dirty injected",
+                       "unrelated diagnostic\nheadscale version v0.29.7"):
+            with self.subTest(output=output), patch.object(server, "run", return_value=
+                    subprocess.CompletedProcess([], 0, output)), self.assertRaises(ValueError):
+                server.installed_version()
+
     def test_configtest_isolates_database_keys_and_environment(self):
         with tempfile.TemporaryDirectory() as root:
             paths = fixture_paths(root)
