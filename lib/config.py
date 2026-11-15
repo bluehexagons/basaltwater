@@ -512,6 +512,7 @@ class SetupConfig:
     headscale_domain: MaybeStr = None
     headscale_base_domain: MaybeStr = None
     headscale_onboarding_domain: MaybeStr = None
+    headscale_onboarding_control_url: MaybeStr = None  # Static page metadata; no client intent
     headscale_public_ipv4: MaybeStr = None
     headscale_public_ipv6: MaybeStr = None
     headscale_resolvers: Optional[StrList] = None  # Candidates only; never DNS publication

@@ -13,7 +13,7 @@ Credential files remain open through descriptor paths during each bounded SSH
 exchange. The remote adapter checks the actual managed endpoint, pinned binary,
 running process and private native socket before every operation.
 
-The controller parser exposes these commands when registered at the root CLI:
+The root CLI exposes these commands in the active `--workspace`:
 
 ```bash
 basaltw headscale-manage bind office --ssh-host control.example.com --ssh-key /private/controller.key --ssh-known-hosts /private/known_hosts

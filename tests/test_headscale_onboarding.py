@@ -23,6 +23,14 @@ class OnboardingRenderTests(unittest.TestCase):
     def test_resolves_explicit_external_endpoint(self):
         self.assertEqual(resolve_control_url(SimpleNamespace(tailscale_login_server="https://external.example.net", headscale_domain=None)), "https://external.example.net")
 
+    def test_dedicated_static_endpoint_wins_over_joined_network(self):
+        config = SimpleNamespace(headscale=None, headscale_onboarding_control_url="https://VPN.example.net:443/",
+                                 tailscale_login_server="https://other.example.com")
+        self.assertEqual(resolve_control_url(config), "https://vpn.example.net")
+        config.headscale = True
+        config.headscale_domain = "hosted.example.com"
+        self.assertEqual(resolve_control_url(config), "https://hosted.example.com")
+
     def test_rejects_untrusted_endpoint(self):
         with self.assertRaises(ValueError):
             resolve_control_url(SimpleNamespace(tailscale_login_server="http://bad.example", headscale_domain=None))
@@ -189,6 +197,8 @@ class OnboardingPublicationTests(unittest.TestCase):
         from web.ssl_steps import install_certbot
         from web.web_steps import install_nginx
         self.config.headscale = self.config.tailscale = self.config.unbound = None
+        self.config.headscale_onboarding_control_url = self.config.tailscale_login_server
+        self.config.tailscale_login_server = None
         steps = []
         extend_headscale_steps(self.config, steps)
         functions = [function for _, function in steps]

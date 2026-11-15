@@ -28,6 +28,7 @@ SUPPORTED_PROFILES = frozenset({
 })
 HOST_FIELDS = (
     "headscale_domain", "headscale_base_domain", "headscale_onboarding_domain",
+    "headscale_onboarding_control_url",
     "headscale_public_ipv4", "headscale_public_ipv6", "headscale_resolvers",
 )
 CLIENT_FIELDS = ("tailscale", "tailscale_server", "tailscale_server_id", "tailscale_login_server")
@@ -99,6 +100,7 @@ def add_headscale_arguments(parser: argparse.ArgumentParser, *, for_remote: bool
         parser.add_argument(
             flag,
             dest=name, action="append" if name == "headscale_resolvers" else "store",
+            **({"type": validate_headscale_url} if name == "headscale_onboarding_control_url" else {}),
             help="Candidate overlay resolver IP; repeat; publication requires later validation" if name == "headscale_resolvers" else name.replace("_", " "),
         )
 
@@ -158,6 +160,8 @@ def validate_headscale_settings(config: SetupConfig, *, complete: bool = False) 
             raise ValueError("Saved server ID requires its resolved login endpoint")
     if config.tailscale_login_server is not None:
         config.tailscale_login_server = validate_headscale_url(config.tailscale_login_server)
+    if config.headscale_onboarding_control_url is not None:
+        config.headscale_onboarding_control_url = validate_headscale_url(config.headscale_onboarding_control_url)
     selected = config.tailscale_server is not None or config.tailscale_login_server is not None
     if config.tailscale_server and config.tailscale is False:
         raise ValueError("Cannot select and disable Tailscale together")
@@ -170,9 +174,18 @@ def validate_headscale_settings(config: SetupConfig, *, complete: bool = False) 
     suffix = config.headscale_base_domain
     control = config.headscale_domain
     onboarding = config.headscale_onboarding_domain
+    onboarding_control = config.headscale_onboarding_control_url
+    if config.headscale and control and onboarding_control and onboarding_control != "https://" + control:
+        raise ValueError("Hosted Headscale onboarding must use its own control endpoint")
+    # Static hosting metadata never selects the local native client. The legacy
+    # client URL remains a fallback only when no dedicated endpoint was given.
+    page_control = (control if config.headscale else
+                    urlsplit(onboarding_control or config.tailscale_login_server or "").hostname)
+    if onboarding and page_control and onboarding == page_control:
+        raise ValueError("Control and onboarding hostnames must differ")
     if control and onboarding and control == onboarding:
         raise ValueError("Control and onboarding hostnames must differ")
-    for hostname in (control, onboarding):
+    for hostname in (control, onboarding, page_control if onboarding else None):
         if suffix and hostname and (hostname == suffix or hostname.endswith("." + suffix) or suffix.endswith("." + hostname)):
             raise ValueError("MagicDNS suffix collides with a public hostname")
     if config.headscale and config.unbound:
@@ -189,6 +202,10 @@ def validate_headscale_settings(config: SetupConfig, *, complete: bool = False) 
     if config.unbound and config.tailscale is False:
         raise ValueError("Managed Unbound requires an enabled Tailscale client")
     if complete:
+        if onboarding_control and not onboarding:
+            raise ValueError("Onboarding control URL requires an onboarding domain")
+        if onboarding and not page_control:
+            raise ValueError("Onboarding requires a trusted Headscale HTTPS endpoint")
         if config.headscale and (not control or not suffix or not (config.headscale_public_ipv4 or config.headscale_public_ipv6)):
             raise ValueError("Headscale hosting requires control domain, MagicDNS base domain and public relay IP")
         if config.tailscale and not config.tailscale_login_server:
