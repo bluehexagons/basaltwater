@@ -14,6 +14,8 @@ peer DNS-map observation through `0d0e11c4`. The complete backend candidate
 `0d0e11c4` passed combined offline CI; unchanged application UI from `68b1ebdc`
 passed the browser checks below. These results do not qualify arbitrary
 combinations or architectures.
+Follow-up native checks use the scoped runtime changes from `1948f60a` for
+resolver file permissions, recovery exclusion and endpoint-bound administration.
 
 ## Passing native checks
 
@@ -86,6 +88,22 @@ combinations or architectures.
   and disabled until separate activation. Full DNSSEC health, independent peer
   republication and withdrawal pass. The temporary resolver is then disabled
   through normal setup, retaining recovery state.
+- Follow-up resolver setup, restart and stopped backup/restore retain a root-owned
+  `0640` fragment readable by the `unbound` group and denied to an ordinary
+  account. Full native DNSSEC health passes after separate activation, and the
+  original local records are restored. A retained recovery-snapshot fixture
+  causes the real DNS helper to refuse reservation without changing the binding.
+- Follow-up administration under private temporary storage, a read-only system
+  and AF_UNIX-only transport records the actual endpoint in privilege reviews,
+  completes reviewed native user creation/deletion, and refuses an explicit
+  mismatched endpoint before creating a user. Original users are preserved.
+- Listener preflight from `d05e519c` accepts a real temporary IPv6 TCP listener
+  whose address contains `8080` while its actual listening port is unreserved.
+  The existing managed control configuration and other services are preserved.
+- An isolated native kernel-TUN daemon supplies logged-out `Self` host metadata.
+  The identity check from `6bf41130` accepts that native status and refuses
+  injected node IDs, overlay addresses, online state or network-map membership.
+  This check performs no enrollment and preserves the managed client.
 
 ## Offline and browser boundaries
 
@@ -94,6 +112,15 @@ Backend candidate `0d0e11c4` passed `make check-ci`: 10,045 tests, 26 skipped,
 The final independent delta review found no actionable regression; its 86
 focused mocked tests also pass. Later documentation-only updates pass the
 documentation checks.
+Review candidate `1948f60a` also passes all three hosted CI checks and local
+`make check-ci`: 10,052 tests, 26 skipped and 82% coverage. That review fixes
+root-CI fixture isolation, endpoint-bound approvals, private resolver fragments
+and reservation exclusion during retained recovery.
+Review candidate `6bf41130` passes `make check-ci`: 10,061 tests, 26 skipped,
+82% coverage and all static/documentation/brand/package/wheel checks. It adds
+durable logout intent, verified enrollment prestate, fresh-hosting failure
+masking and precise listener checks. The subsequent setup guard in `ecd1aa9e`
+passes 105 focused client, controller, selection and composition tests.
 
 The frozen full application run passed 84/84 checks across Chromium and Firefox,
 including all 18 Headscale checks. This resolves earlier unrelated Firefox form
@@ -115,3 +142,5 @@ Public ACME, ARM64 and native Windows, macOS, iOS and Android onboarding remain
 separate gaps. Missing devices do not count as passes. Native Firefox ESR is
 separate from Playwright Firefox. Native client-identity portability, power loss
 and broader interruption boundaries retain their documented limits.
+The retained logout-intent and pre-enrollment recovery paths have mocked fault
+coverage; their lost-response scenarios have not been fault-injected natively.
