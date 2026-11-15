@@ -102,11 +102,15 @@ def run_headscale_command(args: argparse.Namespace) -> int:
         name = _validate_name(args.name)
 
         def rename_record(records):
+            if selected not in records:
+                raise ValueError("Headscale reference changed; inspect it before renaming")
             if any(item.id != selected.id and item.name.casefold() == name.casefold() for item in records):
                 raise ValueError("A Headscale server with that name already exists")
+            renamed = HeadscaleServer(selected.id, name, selected.url, selected.origin,
+                                      selected.onboarding_url)
             changed = [HeadscaleServer(r.id, name, r.url, r.origin, r.onboarding_url)
                        if r.id == selected.id else r for r in records]
-            return (None if dry_run else changed), changed[0]
+            return (None if dry_run else changed), renamed
 
         if dry_run:
             if any(item.id != selected.id and item.name.casefold() == name.casefold()
@@ -120,6 +124,8 @@ def run_headscale_command(args: argparse.Namespace) -> int:
         return 0
     if action == "remove":
         def remove_record(records):
+            if selected not in records:
+                raise ValueError("Headscale reference changed; inspect it before removal")
             changed = [r for r in records if r.id != selected.id]
             return (None if dry_run else changed), selected
 

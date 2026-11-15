@@ -7,10 +7,13 @@ does not imply authority to administer a referenced server.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Callable
+import json
 import os
 import re
 import stat
 import uuid
+from typing import TypeVar
 from urllib.parse import urlsplit, urlunsplit
 
 from lib.atomic_io import read_json_file, write_json_atomic
@@ -21,6 +24,7 @@ from lib.workspace import normalize_workspace_dir
 SCHEMA_VERSION = 1
 MAX_REGISTRY_BYTES = 256 * 1024
 REGISTRY_NAME = "headscale-servers.json"
+_Result = TypeVar("_Result")
 
 
 class RegistryStateError(ValueError):
@@ -78,7 +82,11 @@ def _validate_record(raw: object) -> HeadscaleServer:
     if not isinstance(raw, dict) or set(raw) != {"id", "name", "url", "origin", "onboarding_url"}:
         raise RegistryStateError("Headscale registry contains an invalid record")
     try:
+        if not isinstance(raw["id"], str):
+            raise ValueError("invalid stable ID")
         identifier = str(uuid.UUID(raw["id"]))
+        if identifier != raw["id"]:
+            raise ValueError("noncanonical stable ID")
         name = _validate_name(raw["name"])
         url = _validate_url(raw["url"], "Server URL")
         origin = raw["origin"]
@@ -109,7 +117,7 @@ def _read(workspace: str | None) -> list[HeadscaleServer]:
     try:
         info = os.lstat(path)
         if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
-                or info.st_mode & 0o077):
+                or info.st_nlink != 1 or info.st_mode & 0o077):
             raise RegistryStateError("Headscale registry file has unsafe type, owner, or permissions")
         value = read_json_file(path, max_bytes=MAX_REGISTRY_BYTES)
         if not isinstance(value, dict) or set(value) != {"schema_version", "servers"}:
@@ -137,6 +145,7 @@ def list_servers(workspace: str | None = None) -> list[HeadscaleServer]:
 
 def resolve_server(reference: str, workspace: str | None = None) -> HeadscaleServer:
     """Resolve one exact case-insensitive name or stable UUID."""
+    _validate_name(reference)
     records = _read(workspace)
     matches = [r for r in records if r.name.casefold() == reference.casefold() or r.id == reference]
     if len(matches) != 1:
@@ -144,7 +153,10 @@ def resolve_server(reference: str, workspace: str | None = None) -> HeadscaleSer
     return matches[0]
 
 
-def mutate_servers(workspace: str | None, operation) -> object:
+def mutate_servers(
+    workspace: str | None,
+    operation: Callable[[list[HeadscaleServer]], tuple[list[HeadscaleServer] | None, _Result]],
+) -> _Result:
     """Run a validated registry mutation under the shared process lock."""
     root = normalize_workspace_dir(workspace)
     with resource_lock("headscale-registry", root):
@@ -152,10 +164,18 @@ def mutate_servers(workspace: str | None, operation) -> object:
         current = _read(root)
         updated, result = operation(current)
         if updated is not None:
-            os.makedirs(root, mode=0o700, exist_ok=True)
-            os.chmod(root, 0o700)
+            # Validate the complete candidate before publishing, including callers
+            # other than the CLI. Existing state remains available on failure.
+            checked = [_validate_record(vars(record)) for record in updated]
+            if (len({record.id for record in checked}) != len(checked)
+                    or len({record.name.casefold() for record in checked}) != len(checked)):
+                raise ValueError("Headscale registry candidate contains duplicate IDs or names")
             payload = {"schema_version": SCHEMA_VERSION, "servers": [
                 {"id": r.id, "name": r.name, "url": r.url, "origin": r.origin,
-                 "onboarding_url": r.onboarding_url} for r in updated]}
+                 "onboarding_url": r.onboarding_url} for r in checked]}
+            if len((json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")) > MAX_REGISTRY_BYTES:
+                raise ValueError("Headscale registry exceeds the bounded state limit")
+            os.makedirs(root, mode=0o700, exist_ok=True)
+            os.chmod(root, 0o700)
             write_json_atomic(_registry_path(root), payload, mode=0o600, sort_keys=True)
         return result
