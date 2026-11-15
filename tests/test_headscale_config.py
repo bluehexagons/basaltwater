@@ -50,6 +50,24 @@ class TestHeadscaleConfig(unittest.TestCase):
         for flag in ("--headscale", "--no-headscale", "--tailscale", "--tailscale-login-server", "--no-tailscale", "--unbound", "--no-unbound"):
             self.assertIn(flag, help_text)
 
+    def test_controller_setup_flags_round_trip_and_do_not_reach_target(self):
+        client = self.parse("--tailscale mesh --tailscale-tag tag:service --tailscale-tag tag:dns")
+        self.assertEqual(["tag:dns", "tag:service"], client.tailscale_tags)
+        client.tailscale_server_id = "e23c52b1-1e80-4f91-9a68-f15c530c1d21"
+        client.tailscale_login_server = "https://vpn.example.com"
+        with tempfile.TemporaryDirectory() as workspace, patch("lib.cache.get_setup_cache_dir", return_value=workspace):
+            save_setup_command(client)
+            restored = load_setup_command(client.host)
+        self.assertEqual(client.tailscale_tags, restored.tailscale_tags)
+        merged = merge_setup_configs(restored, self.config())
+        self.assertEqual(client.tailscale_tags, merged.tailscale_tags)
+        self.assertNotIn("--tailscale-tag", " ".join(merged.to_remote_args()))
+        hosted = self.hosting(headscale_name="mesh", headscale_registration_id="e23c52b1-1e80-4f91-9a68-f15c530c1d21")
+        self.assertIn("--headscale-name mesh", hosted.to_setup_command())
+        self.assertNotIn("--headscale-name", " ".join(hosted.to_remote_args()))
+        self.assertEqual(hosted.headscale_registration_id,
+                         merge_setup_configs(hosted, self.config()).headscale_registration_id)
+
     def test_static_external_endpoint_round_trips_without_native_intent(self):
         config = self.parse("--headscale-onboarding-domain join.example.com "
                             "--headscale-onboarding-control-url https://VPN.example.net:443/")

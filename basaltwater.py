@@ -1999,6 +1999,11 @@ def run_setup_command(args: argparse.Namespace) -> int:
             for name, value in merge_headscale_settings(cached_config, config).items():
                 setattr(config, name, value)
         validate_final_selection(config, workspace=getattr(args, "workspace", None))
+        from lib.headscale_setup import automated_setup, preflight_setup, print_setup_plan
+
+        if config.dry_run and automated_setup(config):
+            preflight_setup(config, workspace=getattr(args, "workspace", None))
+            return print_setup_plan(config)
     except (ValueError, OSError, ResourceBusyError, ResourceLockSafetyError) as exc:
         print(f"Error: {exc}")
         return 1
@@ -2093,6 +2098,14 @@ def run_setup_command(args: argparse.Namespace) -> int:
         return 1
     
     description = f"{args.system_type.replace('_', ' ').title()} Setup"
+    try:
+        if automated_setup(runtime_config):
+            preflight_setup(runtime_config, workspace=getattr(args, "workspace", None))
+            config.headscale_registration_id = runtime_config.headscale_registration_id
+            config.headscale_registration_binding = runtime_config.headscale_registration_binding
+    except (ValueError, OSError) as exc:
+        print(f"Error: {exc}")
+        return 1
     print_setup_summary(config, description)
     if config.kiosk_destinations is not None:
         print(f"Kiosk destinations: {len(config.kiosk_destinations)}")
@@ -2276,8 +2289,18 @@ def run_setup_command(args: argparse.Namespace) -> int:
     replaced_cache_host: Optional[str] = None
     start_time = time.time()
     returncode = 1
+    def finish_automated_setup(verified: SetupConfig) -> int:
+        if shutdown:
+            return shutdown_after_setup(verified)
+        if restart_if_needed:
+            return restart_after_setup(verified, wait_for_restart=wait_for_restart)
+        return 0
+
     try:
-        returncode = run_remote_setup(runtime_config)
+        if automated_setup(config):
+            returncode = run_remote_setup(runtime_config, after_setup=finish_automated_setup)
+        else:
+            returncode = run_remote_setup(runtime_config)
         if returncode == 0:
             replaced_cache_host = adopt_verified_network_host(
                 config,
@@ -2287,7 +2310,16 @@ def run_setup_command(args: argparse.Namespace) -> int:
     except (ResourceBusyError, ResourceLockSafetyError):
         returncode = 1
         print("Error: operation lock busy or unsafe; preserve state and reconcile before retry")
+    except (ValueError, RuntimeError, OSError) as exc:
+        returncode = 1
+        if not automated_setup(config):
+            raise
+        print(f"Error: automated Headscale setup failed: {exc}")
     finally:
+        if automated_setup(config) and runtime_config.host != previous_host:
+            replaced_cache_host = adopt_verified_network_host(config, runtime_config, previous_host)
+        config.headscale_registration_id = runtime_config.headscale_registration_id
+        config.headscale_registration_binding = runtime_config.headscale_registration_binding
         end_time = time.time()
         success = (returncode == 0)
         if (
@@ -2320,9 +2352,9 @@ def run_setup_command(args: argparse.Namespace) -> int:
     )
     print("=" * 60)
 
-    if shutdown:
+    if shutdown and not automated_setup(config):
         return shutdown_after_setup(config)
-    if restart_if_needed:
+    if restart_if_needed and not automated_setup(config):
         return restart_after_setup(config, wait_for_restart=wait_for_restart)
 
     return 0

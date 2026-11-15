@@ -160,3 +160,49 @@ class ControllerTests(unittest.TestCase):
             for command in ("setup", "patch"):
                 self.assertEqual(1, self.run_command(command, "--dry-run"))
         self.save.assert_not_called()
+
+    def test_automatic_dry_run_precedes_runtime_builder_and_provider_work(self):
+        self.cached.tailscale_tags = ["tag:service"]
+        flags = ("--dry-run", "--key", "/private/root_key")
+        with patch("lib.headscale_setup.resolve_management") as authority, \
+                patch("lib.headscale_setup.inspect_enrollment", return_value=None), \
+                patch("lib.headscale_setup._credentials", side_effect=AssertionError("credentials")), \
+                patch("basaltwater._prepare_runtime_config_for_cli", side_effect=AssertionError("runtime")):
+            authority.return_value.endpoint = self.server.url
+            self.assertEqual(0, self.run_command("setup", *flags))
+        self.assert_no_mutations()
+
+    def test_automatic_requested_restart_failure_is_saved_as_failure(self):
+        self.cached.tailscale_tags = ["tag:service"]
+        self.remote.side_effect = lambda config, *, after_setup: after_setup(config)
+        with patch("lib.headscale_setup.preflight_setup"), \
+                patch("basaltwater.restart_after_setup", return_value=8) as restart:
+            self.assertEqual(1, self.run_command("setup", "--restart-if-needed"))
+        restart.assert_called_once()
+        self.assertIs(self.save.call_args.args[3], False)
+
+    def test_automatic_final_failure_is_saved_and_never_requests_restart(self):
+        self.cached.tailscale_tags = ["tag:service"]
+        self.remote.return_value = 9
+        with patch("lib.headscale_setup.preflight_setup"), \
+                patch("basaltwater.restart_after_setup") as restart:
+            self.assertEqual(1, self.run_command("setup", "--restart-if-needed"))
+        restart.assert_not_called()
+        self.assertIs(self.save.call_args.args[3], False)
+
+    def test_automatic_flow_provisions_once_and_rejects_authority_before_provider(self):
+        self.cached.tailscale_tags = ["tag:service"]
+        args = self.args("setup", "--key", "/private/root_key")
+        args.host = "198.51.100.35"
+        args.hosted_node = "pve.example.com"
+        args.machine_type = "vm"
+        args.container_memory = "1G"
+        args.container_storage = [["root", "local-lvm", "8G"]]
+        with patch("basaltwater._prepare_runtime_config_for_cli", side_effect=lambda config: config), \
+                patch("lib.headscale_setup.preflight_setup", side_effect=ValueError("authority")):
+            self.assertEqual(1, basaltwater.run_setup_command(args))
+        self.provision.assert_not_called()
+        with patch("basaltwater._prepare_runtime_config_for_cli", side_effect=lambda config: config), \
+                patch("lib.headscale_setup.preflight_setup"):
+            self.assertEqual(0, basaltwater.run_setup_command(args))
+        self.provision.assert_called_once()

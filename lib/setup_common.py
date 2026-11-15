@@ -1368,15 +1368,25 @@ def remove_replaced_setup_cache(previous_host: Optional[str], current_host: str)
         )
 
 
-def run_remote_setup(config: SetupConfig) -> int:
+def run_remote_setup(config: SetupConfig, *, after_setup: Callable[[SetupConfig], int] | None = None) -> int:
     """Run one setup while preventing overlapping mutation of the same target."""
     validate_kiosk_settings(config)
-    def execute() -> int:
+    def profile(config: SetupConfig) -> int:
         if config.build_on is not None:
             from lib.build_setup import run_build_setup
 
             return run_build_setup(config, apply_setup=_run_remote_setup_locked)
         return _run_remote_setup_locked(config)
+
+    def execute() -> int:
+        from lib.headscale_setup import automated_setup, run_setup
+
+        if automated_setup(config):
+            result = run_setup(config, apply_setup=_run_remote_setup_locked, apply_profile=profile)
+            if result == 0 and not config.dry_run and after_setup is not None:
+                return after_setup(config)
+            return result
+        return profile(config)
 
     if config.dry_run:
         return execute()
@@ -1409,7 +1419,8 @@ def _target_setup_lock():
             fcntl.flock(bootstrap.fileno(), fcntl.LOCK_UN)
 
 
-def _run_remote_setup_locked(config: SetupConfig, *, expected_releases: object = None) -> int:
+def _run_remote_setup_locked(config: SetupConfig, *, expected_releases: object = None,
+                             client_preparation: bool = False) -> int:
     expected_json = None
     if expected_releases is not None:
         from lib.build_protocol import encode_document
@@ -1489,6 +1500,8 @@ def _run_remote_setup_locked(config: SetupConfig, *, expected_releases: object =
             config.ci_registration_payload = False
 
         remote_arg_tokens = _expand_remote_args(config.to_remote_args())
+        if client_preparation:
+            remote_arg_tokens.append("--prepare-tailscale-client")
         if expected_json is not None:
             remote_arg_tokens.extend(("--artifact-releases-json", expected_json))
         if config.agent_auth_source == "login" and config.install_codex:
@@ -1668,8 +1681,29 @@ def setup_main(system_type: str, description: str, success_msg_fn: Callable[[Set
         )
         return 1
     
-    config = SetupConfig.from_args(args, system_type)
-    config.validate_agent_provider_selection()
+    from lib.headscale_setup import automated_setup, preflight_setup, print_setup_plan
+    from lib.headscale_selection import validate_final_selection
+
+    try:
+        from lib.headscale_selection import resolve_cli_selection
+        from lib.headscale_config import merge_headscale_settings
+        from lib.cache import load_setup_command
+
+        cached = load_setup_command(args.host)
+        if vars(args).get("tailscale_server") is not None:
+            resolve_cli_selection(args, cached)
+        config = SetupConfig.from_args(args, system_type)
+        config.validate_agent_provider_selection()
+        if cached is not None:
+            for name, value in merge_headscale_settings(cached, config).items():
+                setattr(config, name, value)
+        validate_final_selection(config, workspace=getattr(args, "workspace", None))
+        if automated_setup(config) and config.dry_run:
+            preflight_setup(config, workspace=getattr(args, "workspace", None))
+            return print_setup_plan(config)
+    except (ValueError, OSError) as exc:
+        print(f"Error: {exc}")
+        return 1
 
     if not validate_username(config.username):
         print(f"Error: Invalid username: {config.username}")
@@ -1690,6 +1724,10 @@ def setup_main(system_type: str, description: str, success_msg_fn: Callable[[Set
             config,
             getattr(args, "workspace", None),
         )
+        if automated_setup(runtime_config):
+            preflight_setup(runtime_config, workspace=getattr(args, "workspace", None))
+            config.headscale_registration_id = runtime_config.headscale_registration_id
+            config.headscale_registration_binding = runtime_config.headscale_registration_binding
     except ValueError as e:
         print(f"Error: {e}")
         return 1
@@ -1762,7 +1800,14 @@ def setup_main(system_type: str, description: str, success_msg_fn: Callable[[Set
                 runtime_config,
                 previous_host,
             )
+    except (ValueError, RuntimeError, OSError) as exc:
+        if not automated_setup(config):
+            raise
+        returncode = 1
+        print(f"Error: automated Headscale setup failed: {exc}")
     finally:
+        config.headscale_registration_id = runtime_config.headscale_registration_id
+        config.headscale_registration_binding = runtime_config.headscale_registration_binding
         end_time = time.time()
         success = (returncode == 0)
         if not config.dry_run:
