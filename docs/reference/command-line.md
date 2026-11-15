@@ -81,7 +81,7 @@ basaltw headscale-admin <users-list|users-create|users-delete|nodes-list|approve
 basaltw headscale-client <status|enroll-personal|enroll-machine|reconcile|adopt|disable|leave|migrate|abandon> --url HTTPS_URL [options] [--dry-run]
 basaltw headscale-client reconcile --url HTTPS_URL [--confirm-logged-out] [--dry-run]
 basaltw headscale-client reconcile-selection HOST --expected-url HTTPS_URL [--expected-server-id ID] --server REFERENCE --new-url HTTPS_URL --node-id ID --target-host HOST --target-key PATH --target-known-hosts PATH [options] [--dry-run]
-basaltw headscale-manage <bind|show|remove|enroll|inspect|reconcile> REFERENCE [options] [--dry-run]
+basaltw headscale-manage <bind|show|remove|enroll|inspect|reconcile|dns-publish|dns-withdraw|dns-inspect> REFERENCE [options] [--dry-run]
 basaltw headscale-dns <publish|withdraw|inspect|reconcile> [--input PRIVATE_JSON] [--dry-run]
 basaltw headscale-maintenance <backup|validate|restore|upgrade|unbound-backup|unbound-validate|unbound-restore|unbound-recover-fresh|unbound-records-inspect|unbound-records-replace|adopt-inspect|adopt> [options] [--dry-run]
 basaltw desktop <command> ...
@@ -146,6 +146,10 @@ commands as root with `python3 /opt/basaltwater/basaltwater.py` even when no
 Saved `headscale` references provide discovery only, without management authority.
 `headscale-manage` uses explicit pinned SSH authority in the selected workspace;
 see [management and tagged enrollment](../services/headscale-management.md).
+Its `dns-publish` and `dns-withdraw` actions also require `--resolver NAME`
+and `--peer NAME`; `dns-inspect` inspects the saved publication state. See the
+[Headscale VM guide](../services/headscale-vms.md) for the separated control,
+client, and DNS roles.
 `headscale-dns` performs explicit root local DNS publication and recovery.
 Its mutating actions require a private root-owned JSON request; `inspect`
 rejects `--input`. Dry runs retain handler input and privilege validation.
@@ -158,6 +162,12 @@ IDs across renames and reject removed/replaced records or changed endpoints.
 `--no-tailscale` preserves the endpoint binding without requiring the reference
 to remain registered. Omitted network flags retain saved settings on reruns.
 `--tailscale NAME` completion reads names from the selected workspace.
+Use `setup --headscale-name NAME` to select and verify a registered managed
+Headscale server. For a named client setup, repeat `--tailscale-tag tag:service`
+as needed to privately enroll the client before its final profile and Unbound
+configuration are applied. Without tags, setup with a named network or a direct
+`--tailscale-login-server URL` keeps enrollment manual. Routine configuration
+changes use setup reruns; patch is not a routine configuration workflow.
 
 `basaltw refresh` upgrades the installed source on its selected channel and
 repeats this machine's last successful setup using the updated code. It supports
