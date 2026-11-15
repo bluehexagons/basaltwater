@@ -127,19 +127,48 @@ class HeadscaleServerTests(unittest.TestCase):
             account, fchown, chown):
         from types import SimpleNamespace
         account.return_value = SimpleNamespace(pw_uid=-1, pw_gid=-1)
-        run.side_effect = lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0,
-            "Status: active" if cmd == ["ufw", "status"] else "amd64" if cmd[0] == "dpkg" else "")
-        with tempfile.TemporaryDirectory() as root:
-            paths = fixture_paths(root)
-            paths.nginx.parent.mkdir()
-            with patch.object(steps, "ServerPaths", return_value=paths):
-                steps.configure_headscale(configuration())
-            self.assertEqual(server.load_manifest(paths), server.manifest_for(configuration()))
-            self.assertEqual(paths.manifest.stat().st_mode & 0o777, 0o600)
-            self.assertEqual(json.loads((paths.etc / "policy.hujson").read_text())["acls"][0]["dst"], ["*:*"])
-            self.assertIn("proxy_set_header Upgrade", paths.nginx.read_text())
-            health.assert_called_once_with(paths)
-            self.assertFalse((paths.private / "operation.json").exists())
+        events = []
+        def execute(cmd, **kw):
+            events.append(cmd)
+            output = ("Status: active" if cmd == ["ufw", "status"] else
+                      "amd64" if cmd[0] == "dpkg" else
+                      "inactive" if "--property=ActiveState" in cmd else "")
+            return subprocess.CompletedProcess(cmd, 0, output)
+        run.side_effect = native_run.side_effect = execute
+        original_write = steps.write_json_atomic
+        for fail_manifest in (False, True):
+            with self.subTest(fail_manifest=fail_manifest), tempfile.TemporaryDirectory() as root:
+                events.clear()
+                health.reset_mock()
+                paths = fixture_paths(root)
+                paths.nginx.parent.mkdir()
+                def write(path, value, **kwargs):
+                    if fail_manifest and path == str(paths.manifest):
+                        raise OSError("manifest publication failed")
+                    original_write(path, value, **kwargs)
+                with patch.object(steps, "ServerPaths", return_value=paths), \
+                        patch.object(steps, "write_json_atomic", side_effect=write):
+                    if fail_manifest:
+                        with self.assertRaisesRegex(OSError, "manifest publication"):
+                            steps.configure_headscale(configuration())
+                    else:
+                        steps.configure_headscale(configuration())
+                health.assert_called_once_with(paths)
+                self.assertEqual(json.loads((paths.etc / "policy.hujson").read_text())["acls"][0]["dst"], ["*:*"])
+                if fail_manifest:
+                    self.assertFalse(paths.manifest.exists())
+                    self.assertTrue(paths.config.exists())
+                    self.assertTrue((paths.private / "operation.json").exists())
+                    restart = events.index(["systemctl", "restart", "headscale"])
+                    mask = events.index(["systemctl", "mask", "headscale.service"])
+                    stop = events.index(["systemctl", "stop", "headscale"])
+                    self.assertLess(restart, mask)
+                    self.assertLess(mask, stop)
+                else:
+                    self.assertEqual(server.load_manifest(paths), server.manifest_for(configuration()))
+                    self.assertEqual(paths.manifest.stat().st_mode & 0o777, 0o600)
+                    self.assertIn("proxy_set_header Upgrade", paths.nginx.read_text())
+                    self.assertFalse((paths.private / "operation.json").exists())
 
     def test_native_owned_only_render_and_candidate_resolvers(self):
         config = configuration(headscale_resolvers=["100.64.0.9"])
@@ -249,6 +278,33 @@ class HeadscaleServerTests(unittest.TestCase):
                                subprocess.CompletedProcess([], 0, 'tcp LISTEN 0 0 127.0.0.1:8080 *:* users:(("other",pid=1))')]
             with self.assertRaisesRegex(ValueError, "listener"):
                 server.preflight(configuration(), paths)
+
+    @patch.object(server.shutil, "which", return_value=None)
+    @patch.object(server.Path, "glob", return_value=[])
+    def test_preflight_checks_local_ports_and_protocol_without_parsing_ipv6_hextets(self, glob, which):
+        listeners = (
+            ('tcp LISTEN 0 128 [2001:db8:8080::1]:22 [2001:db8:443::2]:* users:(("sshd",pid=1))', False),
+            ('tcp LISTEN 0 128 [::]:8080 [::]:* users:(("other",pid=1))', True),
+            ('udp UNCONN 0 0 [::]:3478 [::]:* users:(("other",pid=1))', True),
+            ('udp UNCONN 0 0 0.0.0.0:8080 0.0.0.0:* users:(("other",pid=1))', False),
+            ('tcp LISTEN 0 128 *:3478 *:* users:(("other",pid=1))', False),
+            ('tcp LISTEN 0 128 [::]:443 [::]:* users:(("other",pid=1))', True),
+            ('udp UNCONN 0 0 [::]:443 [::]:* users:(("other",pid=1))', False),
+            ('tcp LISTEN 0 128 [::]:443 [::]:* users:(("nginx",pid=1))', False),
+            ('malformed observation', True),
+        )
+        with tempfile.TemporaryDirectory() as root:
+            paths = fixture_paths(root)
+            for listener, conflict in listeners:
+                def execute(cmd, **kwargs):
+                    output = "not-found" if cmd[0] == "systemctl" else listener if cmd[0] == "ss" else ""
+                    return subprocess.CompletedProcess(cmd, 0, output)
+                with self.subTest(listener=listener), patch.object(server, "run", side_effect=execute):
+                    if conflict:
+                        with self.assertRaisesRegex(ValueError, "listener|ingress"):
+                            server.preflight(configuration(), paths)
+                    else:
+                        self.assertIsNone(server.preflight(configuration(), paths))
 
     @patch.object(server.os, "fchown")
     @patch.object(server, "run")

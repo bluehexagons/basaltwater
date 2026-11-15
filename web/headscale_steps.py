@@ -118,8 +118,13 @@ def configure_headscale(config: SetupConfig) -> None:
                 publish_config(content, paths, gid=account.pw_gid)
                 write_json_atomic(str(paths.manifest), asdict(manifest_for(config)))
             except BaseException:
-                run(["systemctl", "stop", "headscale"])
-                stopped()
+                # Activation can succeed before manifest publication fails.
+                # Keep this fresh installation inert across reboot/recovery.
+                try:
+                    run(["systemctl", "mask", "headscale.service"])
+                finally:
+                    run(["systemctl", "stop", "headscale"])
+                    stopped()
                 if old_nginx is None:
                     paths.nginx.unlink(missing_ok=True)
                     run(["nginx", "-t"], capture_output=True)

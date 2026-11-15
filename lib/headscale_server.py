@@ -397,10 +397,15 @@ def preflight(config: SetupConfig, paths: ServerPaths) -> ServerManifest | None:
             raise ValueError("Unmanaged Headscale unit requires explicit adoption/migration")
     listeners = run(["ss", "-H", "-lntup"], capture_output=True, timeout=30).stdout
     for line in listeners.splitlines():
-        ports = {int(p) for p in re.findall(r":(\d+)\b", line.split("users:")[0])}
-        if ports & {8080, 9090, 50443, 3478} and not (previous and '"headscale"' in line):
+        fields = line.split()
+        if (len(fields) < 6 or fields[0] not in {"tcp", "udp"}
+                or not fields[4].rsplit(":", 1)[-1].isdigit()):
+            raise ValueError("Cannot inspect Headscale listener ownership")
+        port = int(fields[4].rsplit(":", 1)[-1])
+        reserved = {8080, 9090, 50443} if fields[0] == "tcp" else {3478}
+        if port in reserved and not (previous and '"headscale"' in line):
             raise ValueError("Headscale listener conflicts with an existing process")
-        if ports & {80, 443} and '"nginx"' not in line:
+        if fields[0] == "tcp" and port in {80, 443} and '"nginx"' not in line:
             raise ValueError("Headscale HTTPS ingress conflicts with an existing process")
     # Effective Nginx includes catch included snippets and tunnel routes too.
     effective = run(["nginx", "-T"], capture_output=True, timeout=30).stdout

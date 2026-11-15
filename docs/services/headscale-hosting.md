@@ -27,7 +27,10 @@ is the configuration reference; the package supplies its native service account
 and hardened systemd unit. Installation persistently masks the service before
 APT runs and holds the package against unattended upgrades. The mask remains
 after failed or interrupted installation, including across reboot. Activation
-unmasks only after configuration validation.
+unmasks only after configuration validation. A caught fresh-setup failure masks
+the service again before stopping it, including failure to publish ownership
+metadata after successful native activation. Reconcile the retained operation
+and installation before explicitly unmasking it during recovery.
 
 The capability is independent of client enrollment. `headscale=None` performs no
 work. `True` validates complete configuration and preflights declared and actual
@@ -69,6 +72,8 @@ Cloudflare route for the control endpoint. Unrelated Cloudflare services remain
 supported. Existing conventional Cloudflare YAML ingress files and effective
 Nginx hostname bindings are checked; external/provider-managed routes require
 operator reconciliation during qualification.
+Listener checks inspect the local endpoint's final port and transport, preserving
+valid IPv6 addresses whose components happen to match reserved port numbers.
 
 ## Reruns, adoption and interrupted operations
 
