@@ -398,6 +398,10 @@ def extend_web_panel_steps(
 ) -> None:
     """Append the optional authenticated web panel."""
 
+    from plugins.headscale import extend_headscale_steps
+
+    extend_headscale_steps(config, steps)
+
     from lib.guacamole_config import validate_guacamole_settings
 
     validate_guacamole_settings(config)
