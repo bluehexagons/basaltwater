@@ -1,8 +1,9 @@
 # Headscale enrollment and onboarding security
 
 Status: enrollment commands, static onboarding and portal handlers are integrated
-under the [Headscale plan](headscale.md). Native platform and installed-portal
-qualification remain incomplete; see the [qualification record](../testing/headscale.md).
+under the [Headscale plan](headscale.md). Selected installed Debian portal and
+personal-client checks pass; other native platform qualification remains
+incomplete. See the [qualification record](../testing/headscale.md).
 
 Initial enrollment uses Headscale's native administrator approval and machine
 keys. OIDC integration and provider qualification are deferred; the

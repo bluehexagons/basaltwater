@@ -1,7 +1,8 @@
 # Headscale integration
 
-Status: implementation integrated; native qualification and final review are in
-progress. See the [qualification record](../testing/headscale.md) for tested
+Status: implementation integrated, selected Debian qualification and final code
+review passed; broader platform acceptance remains open. See the
+[qualification record](../testing/headscale.md) for tested
 behavior and remaining gaps. Provide an optional private network for
 managed servers, workstations, agent VMs and builders, including access to SSH
 and management services across NAT.

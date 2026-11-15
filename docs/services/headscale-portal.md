@@ -49,10 +49,15 @@ BasicAuth, reviewed native user creation/deletion and inventory, forged-CSRF
 rejection (403), and changed-review, cross-origin and replay rejection (409).
 The actual root broker sandbox also passes native administration and shared-lock
 contention with host root. These checks preserve the security boundaries above.
-Personal Auth-ID approval/denial, expiry/replay and connected-client revocation
-remain pending. Integrated native browser flows, mobile layout, native mobile
-onboarding, portal-independent SSH recovery and Firefox ESR require separate
-qualification. Later backend fixes still require final combined CI; see the
+Installed HTTPS checks also pass exact personal Auth-ID approval/denial,
+five-minute expiry and replay refusal, with native user ownership verified.
+Separately reviewed deletion removes an already connected device; access stays
+revoked after its daemon restarts, while independent root SSH remains available.
+The public onboarding origin has no administrative routes; direct Unix backend
+calls cannot bypass peer identity by forging valid proxy-header names.
+Integrated native browser flows, native mobile onboarding and Firefox ESR retain
+separate qualification boundaries. Backend candidate `0d0e11c4` passes combined
+CI (10,045 tests, 26 skipped); see the
 [qualification record](../testing/headscale.md). The public
 onboarding origin has no administrative authority; see the
 [enrollment contract](../plans/headscale-enrollment.md).
