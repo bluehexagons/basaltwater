@@ -71,13 +71,58 @@ private key file and repeated explicit `--approved-tag` values; it never issues 
 key. Interrupted enrollment retains its marker and refuses replay. Abandon only
 after reconciling/revoking the pending request or issued key remotely. Migration
 prepares the new endpoint after exact-node logout; enroll there explicitly later.
-It does not rewrite the controller's saved setup selection. Update that private
-selection only after reviewing the completed migration; ordinary setup/patch
-reject replacement endpoints and stable IDs, even following disable.
+It does not rewrite the controller's saved setup selection. After migration and
+separate explicit enrollment have completed on the client, reconcile the private
+controller selection with the command below. Ordinary setup/patch still reject
+replacement endpoints and stable IDs, even following disable.
 
 Every action accepts `--dry-run`, validating public inputs without native calls,
 locks or state writes. Keep independent recovery access before disable/leave or
 migration. Advertised DNS resolvers retain the native lifecycle teardown guards.
+
+## Controller selection reconciliation
+
+Run `reconcile-selection` on the controller after independently reviewing the
+new enrolled node. Use the exact saved host, OLD stable registry ID and OLD
+canonical endpoint, plus the NEW saved server reference, canonical endpoint and
+native node ID. The old registry record may already have changed or disappeared.
+The new reference must resolve to the supplied new endpoint in the selected
+workspace. For example (all values below are fictional):
+
+```bash
+basaltw headscale-client reconcile-selection client.example.com \
+  --workspace /private/example-workspace \
+  --expected-server-id 092f1108-5af3-49f1-9c38-434b3d3b355c \
+  --expected-url https://old.example.com \
+  --server NewNetwork --new-url https://new.example.com --node-id node-new \
+  --target-host client.example.com --target-key /private/ssh/client-key \
+  --target-known-hosts /private/ssh/known_hosts
+```
+
+SSH always uses root, explicit descriptor-pinned credentials and strict pinned
+host keys; `--target-port` defaults to 22. The target host must match the cached
+host (case and a terminal DNS dot are normalized); aliases and alternate recovery
+addresses are refused. No cached SSH credentials or management authority are
+inferred. Omit `--tag` for a personal client with empty tags; supply repeated
+`--tag tag:service` values for the exact expected tagged identity.
+
+The target adapter only observes an owned, enrolled, running, online native
+client at the new endpoint and exact node ID. It verifies effective systemd and
+running-process privacy plus retained native identity permissions. It never
+enrolls, adopts, logs out, issues keys or changes native state. The controller
+holds the setup-target lock and rechecks the full cache and new registry record
+under setup-cache/registry locks before publication. Concurrent changes, unsafe
+or corrupt caches and unconfirmed observations leave the cache untouched.
+Only the saved server name, stable ID and endpoint change; unrelated arguments,
+run metadata, omitted client enablement and explicit opt-out are preserved.
+An opted-out saved client remains opted out even when native enrollment has been
+completed independently. `--dry-run` validates local schemas and bindings without
+creating state or locks, reading SSH credential files or contacting the target.
+
+The controller API is
+`lib.headscale_selection.reconcile_saved_selection(host, *, expected_server_id,
+expected_url, server, new_url, node_id, tags, target, workspace=None, dry_run=False)`;
+`target` is an explicit `SSHBinding` and `tags=[]` selects personal observation.
 
 ## Enrollment APIs
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Root private stdin adapter for one tagged enrollment attempt."""
+"""Root private stdin adapter for enrollment and read-only native observation."""
 
 from __future__ import annotations
 
@@ -41,10 +41,14 @@ def _privacy() -> None:
         raise ValueError("Unsafe retained native client identity")
 
 
-def inspect_client(url: str, tags: list[str]) -> dict:
+def inspect_client(url: str, tags: list[str], *, enrolled_only: bool = False) -> dict:
     with client.client_lock():
         client.reject_control_host(url)
         binding = client.owned(url)
+        if enrolled_only and binding["phase"] != "enrolled":
+            raise ValueError("Owned enrolled binding required")
+        if enrolled_only:
+            client.check_native_state()
         _privacy()
         status, prefs = client.snapshot()
         client.check_network(status, prefs, url, binding["phase"])
@@ -71,11 +75,16 @@ def execute_request(payload: bytes) -> dict:
             fields.add("key")
         if set(request) != fields:
             raise ValueError()
-        if request["action"] not in {"inspect", "enroll"}:
+        if request["action"] not in {"inspect", "enroll", "observe"}:
             raise ValueError()
-        url, tags = validate_headscale_url(request["url"]), approved_tags(request["tags"])
-        observed = inspect_client(url, tags)
-        if request["action"] == "inspect":
+        url = validate_headscale_url(request["url"])
+        tags = ([] if request["action"] == "observe" and request["tags"] == []
+                else approved_tags(request["tags"]))
+        if request["action"] == "observe":
+            observed = inspect_client(url, tags, enrolled_only=True)
+        else:
+            observed = inspect_client(url, tags)
+        if request["action"] in {"inspect", "observe"}:
             result = observed
         else:
             secret = request["key"]
