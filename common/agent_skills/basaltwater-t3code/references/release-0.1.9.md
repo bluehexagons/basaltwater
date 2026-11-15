@@ -1,7 +1,8 @@
 # T3 Code 0.1.9 integration
 
 Reviewed **2026-11-11** against [stable 0.1.9](https://github.com/pingdotgg/t3code/releases/tag/v0.1.9),
-commit `24e77473ecf41bc1f7142529c7911c1c1aae1d76`.
+commit `24e77473ecf41bc1f7142529c7911c1c1aae1d76`; stable release and integration
+contracts rechecked **2026-11-15**. GitHub's latest stable remains 0.1.9.
 Nightly 0.1.10 is a separate track; Basaltwater setup continues to resolve stable.
 
 ## Compatibility
@@ -33,6 +34,16 @@ anchored PR links, GitLab revert, background command details and accessibility.
 Connect account approval from the environment-local code/browser route.
 Neither enrolls outside agents automatically.
 
+The [scheduling reference](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-subagents/references/t3-scheduling.md)
+now covers 0.1.9's workspace preservation: updating an already-unbound schedule
+with `bindToCurrentThread: false` retains its saved workspace. Only a change
+between bound and unbound recomputes that strategy. The shared project workflow
+also covers action previews in web clients; `autoOpenPreview` and `previewUrl`
+require Preview availability for the selected environment. The
+[orchestration reference](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-subagents/references/t3-orchestration.md#pull-requests-and-guides)
+covers retained PR approval holds: missing approval reads do not make checks
+green, and rewatching does not clear a hold.
+
 Download failures now include their step, HTTP status and host; distinguish
 network/download failures from native-runtime faults. Provider status probes
 no longer cause mise to install missing CLIs. The release also fixes default
@@ -50,7 +61,10 @@ the fixture server; SQLite integrity checks passed afterward. A second check
 started a digest-verified 0.1.8 archive in another disposable home, then ran
 0.1.9 against the retained data. Startup, native PTY, pairing, shutdown and
 integrity checks passed; migration count advanced from **80 to 81**. The focused
-Debian/CachyOS integration suite passed **244 tests**. No live shared service,
+Debian/CachyOS integration suite passed **246 tests** on the 2026-11-15 recheck;
+**513 smoke tests**, syntax, documentation links, package metadata and the three
+affected skill validators also passed. That recheck did not repeat the archive
+startup/upgrade trials or expand the live qualification below. No live shared service,
 user database, provider account or release-track setting was changed.
 
 These checks do not qualify systemd installation/update/reboot, authenticated

@@ -1,7 +1,7 @@
 # T3 Code scheduling
 
 Use this reference when authorized deferred or recurring work should run through
-T3 Code. This reference follows stable 0.1.8; inspect the connected
+T3 Code. This reference follows stable 0.1.9; inspect the connected
 environment's live tools before acting. No scheduler grants additional scope,
 publication authority, or permission to exceed the user's cost limits.
 
@@ -66,7 +66,7 @@ Inspect both the binding and the current thread settings. Before changing that
 thread to fast service, `max`, `ultra`, or broader permission modes, pause its
 unattended schedules or ensure the change stays within the user's authorization.
 Creation inherits the caller's model selection; updates preserve the stored
-selection. The 0.1.8 MCP inputs cannot set model/options or a custom workspace,
+selection. The 0.1.9 MCP inputs cannot set model/options or a custom workspace,
 and task summaries omit those settings. Inspect/edit the task in T3's scheduled
 task settings when those details matter; do not claim MCP verified them.
 
@@ -77,6 +77,15 @@ with `main` as the final fallback. They do not continue the caller's feature
 branch or uncommitted changes. Check that the selected remote/base exists and
 use the supported task settings surface for another base. Inspect the resulting
 workspace before dependent work, especially when rebinding an existing task.
+
+In 0.1.9, updating an already-unbound task with `bindToCurrentThread: false`
+preserves its saved workspace, including a project-checkout strategy selected
+in Settings. It does not restore the default worktree. Workspace selection is
+recomputed only when the task changes between bound and unbound: unbinding a
+bound task selects a worktree, and binding an unbound task selects the project
+root. Changing only the prompt, cadence or enabled state preserves the saved
+workspace. Inspect it in Settings before resuming a task that needs isolation;
+the MCP summary does not expose it.
 
 Stable 0.1.8 adds `freshSession: true` to `schedule_task`: runs share one thread
 but reset the provider session each time, without earlier runs' context. With
@@ -189,12 +198,12 @@ storage is a separate Connect choice with its own data-retention implications;
 do not enable it incidentally. Inspect and remove authorized external hooks
 when retiring a workflow, rather than leaving senders targeting a deleted task.
 
-Upstream baseline: [0.1.8 release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.8),
-[schedule contract](https://github.com/pingdotgg/t3code/blob/v0.1.8/packages/contracts/src/scheduledTask.ts),
-[MCP input and result](https://github.com/pingdotgg/t3code/blob/v0.1.8/packages/contracts/src/orchestratorMcp.ts),
-[scheduling tools](https://github.com/pingdotgg/t3code/blob/v0.1.8/apps/server/src/mcp/toolkits/orchestrator/tools.ts),
-[run-now tool](https://github.com/pingdotgg/t3code/blob/v0.1.8/apps/server/src/mcp/toolkits/thread/tools.ts),
-[manual-run behavior](https://github.com/pingdotgg/t3code/blob/v0.1.8/apps/server/src/scheduledTasks/ScheduledTaskService.ts),
-[MCP binding and caller limits](https://github.com/pingdotgg/t3code/blob/v0.1.8/apps/server/src/mcp/OrchestratorMcpService.ts),
+Upstream baseline: [0.1.9 release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.9),
+[schedule contract](https://github.com/pingdotgg/t3code/blob/v0.1.9/packages/contracts/src/scheduledTask.ts),
+[MCP input and result](https://github.com/pingdotgg/t3code/blob/v0.1.9/packages/contracts/src/orchestratorMcp.ts),
+[scheduling tools](https://github.com/pingdotgg/t3code/blob/v0.1.9/apps/server/src/mcp/toolkits/orchestrator/tools.ts),
+[run-now tool](https://github.com/pingdotgg/t3code/blob/v0.1.9/apps/server/src/mcp/toolkits/thread/tools.ts),
+[manual-run behavior](https://github.com/pingdotgg/t3code/blob/v0.1.9/apps/server/src/scheduledTasks/ScheduledTaskService.ts),
+[MCP binding, workspace preservation and caller limits](https://github.com/pingdotgg/t3code/blob/v0.1.9/apps/server/src/mcp/OrchestratorMcpService.ts),
 and [webhook settings](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/project-settings.md#webhook-automations).
 The active T3 tool schemas govern available schedule and signature fields.
