@@ -38,6 +38,7 @@ from lib.agent_cli import add_agent_subparser, run_agent_command
 from lib.gogs_cli import add_gogs_subparser, run_gogs_command
 from lib.homebox_cli import add_homebox_subparser, run_homebox_command
 from lib.headscale_cli import add_headscale_parser, run_headscale_command
+from lib.headscale_selection import resolve_client_server
 from lib.scrub_cli import add_scrub_subparser, run_scrub_command
 from lib.homebox_config import validate_homebox_settings
 from lib.kiosk_config import validate_kiosk_settings
@@ -1964,6 +1965,15 @@ def run_setup_command(args: argparse.Namespace) -> int:
             if args.system_type in BUILD_ROLE_PROFILES else None
         )
         config = setup_config_with_saved_build_roles(args, cached_build_roles)
+        if config.tailscale_server:
+            selected = resolve_client_server(
+                config.tailscale_server,
+                workspace=getattr(args, "workspace", None),
+            )
+            config.tailscale_server_id = selected.id
+            config.tailscale_login_server = selected.url
+            from lib.headscale_config import validate_headscale_settings
+            validate_headscale_settings(config, complete=True)
     except ValueError as exc:
         print(f"Error: {exc}")
         return 1
@@ -2350,6 +2360,28 @@ def run_patch_command(args: argparse.Namespace) -> int:
 
     try:
         resolve_approval_panel_args(args, saved_port=cached_config.privilege_broker_port)
+        explicit_server = getattr(args, "tailscale_server", None)
+        if cached_config.tailscale_server_id:
+            selected = resolve_client_server(
+                explicit_server or cached_config.tailscale_server,
+                server_id=cached_config.tailscale_server_id,
+                endpoint=cached_config.tailscale_login_server,
+                reference_is_explicit=explicit_server is not None,
+                workspace=getattr(args, "workspace", None),
+            )
+            args.tailscale_server = selected.name
+            args.tailscale_server_id = selected.id
+            args.tailscale_login_server = selected.url
+            if getattr(args, "tailscale", None) is None:
+                args.tailscale = cached_config.tailscale
+        elif explicit_server:
+            selected = resolve_client_server(
+                explicit_server, workspace=getattr(args, "workspace", None)
+            )
+            args.tailscale_server = selected.name
+            args.tailscale_server_id = selected.id
+            args.tailscale_login_server = selected.url
+            args.tailscale = True
         new_config = SetupConfig.from_args(args, cached_config.system_type)
         merged_config = merge_setup_configs(
             cached_config,
