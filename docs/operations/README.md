@@ -16,6 +16,7 @@ and backup workflows, see [Storage](../storage/README.md).
 | [Networking](networking.md) | Network profiles and Proxmox firewall planning |
 | [Proxmox](proxmox.md) | Host registration, VM/LXC lifecycle, and live-host operations |
 | [Proxmox provisioning policy](proxmox-provisioning.md) | Configure guest auto-start, startup order, shutdown timeout, and deletion protection |
+| [Headscale and Unbound VMs](../services/headscale-vms.md) | Provision and operate a control VM, recursive DNS VM and enrolled application peers |
 | [Proxmox setup troubleshooting](proxmox-setup-troubleshooting.md) | Missing management command, panel login identity, and guarded local updates |
 | [Proxmox local browser kiosk](../workstations/proxmox-kiosk.md) | Local browser and host console access on a Proxmox laptop or workstation |
 | [Proxmox VM templates](proxmox-templates.md) | Immutable vendor-image templates, clone identity, and qualification |

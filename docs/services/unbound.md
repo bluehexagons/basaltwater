@@ -1,10 +1,13 @@
 # Managed Unbound
 
-Unbound runs on a separate enrolled Debian node. Bootstrap the node's client
-using its existing resolver, then select the same network with
-`--tailscale NAME --unbound`. Headscale hosting and Unbound cannot share a host
+Unbound runs on a separate enrolled Debian node. Prepare the native client with
+`--tailscale NAME` using its existing resolver, finish explicit enrollment, then
+use `basaltw patch HOST --unbound --headscale-base-domain SUFFIX` or rerun setup
+with the same network and `--unbound`. A fresh unenrolled client cannot install
+Unbound in the same first setup. Headscale hosting and Unbound cannot share a host
 in that network. This installation does not advertise the resolver to clients;
 network DNS adoption requires a separate identity and peer-health check.
+The [three-VM walkthrough](headscale-vms.md) gives complete commands for each phase.
 
 Setup observes the client's native node ID, control endpoint and assigned overlay
 addresses. Unbound binds those addresses explicitly on UDP/TCP 53. Its access
@@ -66,6 +69,9 @@ sudo basaltw headscale-maintenance unbound-records-inspect --binding /private/ex
 sudo basaltw headscale-maintenance unbound-records-replace --review /private/records-review.json --dry-run
 sudo basaltw headscale-maintenance unbound-records-replace --review /private/records-review.json
 ```
+
+If the VM has no `basaltw` launcher, replace it with
+`python3 /opt/basaltwater/basaltwater.py` and run as root.
 
 Inputs must be absolute paths to private owned regular JSON files (mode `0600`),
 with safe parent directories. The binding file is the exact reviewed version-1

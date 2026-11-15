@@ -22,14 +22,21 @@ basaltw headscale-manage enroll office --target-host worker.example.com --target
 basaltw headscale-manage inspect office --remote
 ```
 
+Both SSH bindings default to port 22; use `--ssh-port` for the control server
+and `--target-port` for an enrollment target when needed. Bind the control server
+before enrolling targets, and enroll targets serially within the workspace.
+For complete preparation and VM commands, see the
+[three-VM walkthrough](headscale-vms.md).
+
 First prepare the target with ordinary native client setup using that network.
 The target must have active kernel networking, the managed prepared binding,
 private native state and the logging opt-out in its running daemon environment.
 An already enrolled matching node is observed on both ends without issuing a key.
 A pending, changed or unowned client must be reconciled before a new attempt.
 
-`enroll` explicitly authorizes only the listed service tags. It records a private
-controller intent before requesting a single-use, non-ephemeral key with a
+`enroll` explicitly authorizes only the listed service tags for userless tagged
+machines; creating a personal user is not a prerequisite for this flow. It records
+a private controller intent before requesting a single-use, non-ephemeral key with a
 one-hour expiry. The control server also retains its issuance intent. The secret
 travels only in private SSH input/output streams and a temporary mode-600 file
 in a private volatile target directory. It never appears in argv, setup/cache
@@ -86,6 +93,6 @@ secret-free diagnostics. Disposable Debian amd64 qualification passes full priva
 SSH delivery to two tagged machine clients, exact native key/node identity checks
 and daemon privacy checks. Native tagged disable/enable and stopped-profile resume
 at `145197b2` change only `WantRunning`, with 70 focused client tests passing.
-This does not establish personal Auth-ID approval or connected-client revocation;
-see the [qualification record](../testing/headscale.md) for candidate boundaries
-and remaining acceptance checks.
+Personal Auth-ID approval and connected-client revocation have separate installed
+portal qualification; see the [qualification record](../testing/headscale.md)
+for the exact native evidence and remaining acceptance checks.

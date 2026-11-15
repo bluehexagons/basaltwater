@@ -7,11 +7,18 @@ peer. Both need `dig`; the DNS node needs the owned Unbound installation.
 Keep bootstrap control-host resolution independent of the overlay resolver.
 Saved resolver candidates never trigger publication.
 
+The [three-VM walkthrough](headscale-vms.md) includes complete commands to
+prepare these hosts, grant the control VM separate SSH authority, and construct
+publication and withdrawal requests from observed identities. A controller's
+saved management binding does not give the control VM that SSH authority.
+
 The registered root command is
 `basaltw headscale-dns publish --input /root/dns-request.json`; `withdraw`,
 `inspect`, and `reconcile` use the same command family. `inspect` takes no input.
 `--dry-run` validates local input and SSH files without locks, network calls,
 configuration changes or state writes. It does not claim remote readiness.
+On a service VM without a launcher, run the same root-local command with
+`python3 /opt/basaltwater/basaltwater.py headscale-dns ...` as root.
 
 Keep request files mode 0600 and root owned, outside Git. Publication requests
 have exactly `binding`, `dns_remote`, `peer`, `peer_remote`, `expected`, and
@@ -23,6 +30,7 @@ insufficient. The peer must differ from the DNS node and control server.
 
 Each SSH object has exactly `host`, `user: "root"`, `key`, and `known_hosts`.
 Use absolute paths to private root-owned regular key and known-host files.
+This transport currently uses SSH port 22; it has no custom-port field.
 Populate known-hosts through an independently verified host fingerprint. The
 transport disables SSH config, agents, forwarding and interactive authentication,
 requires strict host-key verification, runs one fixed helper and bounds input,
