@@ -21,8 +21,9 @@ services across NAT.
   composition. Use the appropriate package/service/firewall capability checks;
   client preflight must also verify usable TUN support.
 - Preserve SSH and panel authentication and an independent recovery route.
-  Enrollment must not implicitly open services, replace DNS, advertise routes,
-  enable an exit node or enroll the Headscale host into its own network.
+  Apply the selected peer access and DNS configuration explicitly. Enrollment
+  must not open public service ports, advertise routes, enable an exit node or
+  enroll the Headscale host into its own network.
 
 ## Named servers and end-user onboarding
 
@@ -75,25 +76,38 @@ SSO integration, provider hosting and a custom identity provider are deferred.
 The [self-hosted SSO assessment](headscale-sso.md) preserves research for a later
 decision; it is not an active qualification task.
 
-## Decisions to settle
+## Selected defaults and remaining decisions
 
-- **Access policy:** define the initial user/groups, service tags and permitted
-  destinations/ports. Proposed default: explicit user-to-service grants, with
-  peer-device and server-to-server access requiring separate rules.
-- **Administrative interface:** proposed first delivery uses Headscale's native
-  CLI over authenticated SSH, including user creation, exact-request approval
-  and device revocation. Basaltwater management wrappers and web approval can
-  follow; named server discovery remains part of the initial setup interface.
-- **Relay dependency:** proposed first delivery retains the upstream default
-  Tailscale DERP map and leaves embedded DERP off. Requiring self-hosted relays
-  would bring relay hosting and connectivity qualification into the first scope.
-- **DNS and lifetime:** proposed default leaves client DNS unchanged. Make
-  enrollment-key lifetime and device reauthentication separate explicit settings;
-  settle defaults against the pinned Headscale/client behavior before coding.
+- **Access policy:** all enrolled systems may communicate with each other over
+  their overlay addresses. Headscale already defaults to allow-all without a
+  policy; generate an explicit managed allow-all policy for new networks so the
+  intent is visible. Preserve existing policies when adopting a server. Keep
+  personal ownership and approved machine tags for administration and later
+  restrictions. Host firewalls, listening addresses and service authentication
+  still apply; reconcile managed host rules only for the overlay interface.
+- **Administrative interface:** include a Headscale administration page in the
+  Web Portal when both are installed. Support user management, exact pending
+  device approval, node inspection and revocation through an authenticated,
+  authorized backend using native Headscale operations. Preserve CLI-over-SSH
+  recovery. Named external endpoints require separately configured management
+  authority. Keep the public join page separate from administration.
+- **Relay dependency:** self-host the control plane and DERP/STUN from the first
+  delivery. Enable embedded DERP with client verification and remove Tailscale's
+  public DERP map; do not require a paid service or public Tailscale relays.
+  One relay is the initial availability tradeoff; a second owned relay can follow.
+- **DNS design to confirm:** recommend MagicDNS for enrolled device names and
+  Unbound for recursive DNS and local records. Decide whether to send all other
+  queries to Unbound or only selected private zones before implementing DNS
+  defaults. DNS installation and DNS adoption are explicit configuration choices.
+- **Lifetime:** make enrollment-key lifetime and device reauthentication
+  separate explicit settings; settle defaults against pinned client behavior.
 - **Deployment inputs:** choose the server profile/architecture, public control
   and onboarding hostnames, page visibility, administrative SSH identity and
   backup destination before live qualification. Keep real endpoints and account
   details in private configuration. These inputs need not block initial code.
+
+See [network access, relays and DNS](headscale-networking.md) for the rationale,
+public-relay limitations, Unbound topology and connectivity acceptance.
 
 ## Milestones
 
@@ -116,21 +130,28 @@ decision; it is not an active qualification task.
    routing, explicit firewall rules and health checks. Keep administrative
    access local through the Unix socket. Publish configuration atomically and
    restart only when needed; preserve working configuration on validation failure.
+   Include verified-client embedded DERP, public STUN ingress and a relay map
+   containing only owned relays. Keep client log upload disabled and qualify
+   platform-specific startup settings under the networking contract.
    **Acceptance:** disposable Debian setup serves valid HTTPS and supports real
    client registration through Nginx; reruns and reboot retain identity and data.
+   Both direct and forced-relay connections work without Tailscale's public
+   relay/map services; unknown clients cannot use the relay.
 
 3. **Client enrollment and access policy.** Install the Tailscale client and
    support interactive enrollment, then unattended enrollment through a private
    short-lived, single-use key handoff. Keep keys out of argv, logs, saved
    commands and durable setup payloads. Preserve valid enrollment and require an
-   explicit operation to change control servers or leave. Define a restrictive
-   Headscale policy and reconcile only requested host service access, accounting
-   for Tailscale's own firewall behavior. Deliver the join page and native
-   administrator approval path. SSO configuration and provider management are
-   outside this milestone.
-   **Acceptance:** two disposable clients can reach allowed services while
-   denied traffic remains blocked; expired keys, interrupted joins and setup
-   reruns do not leak keys, duplicate enrollment or remove recovery access.
+   explicit operation to change control servers or leave. Apply the explicit
+   all-to-all default to new networks and preserve adopted policies, accounting
+   for Tailscale's own firewall behavior. Deliver the join page, conditional Web
+   Portal administration and native CLI recovery. Configure the chosen MagicDNS
+   and Unbound integration with reachable private resolvers and bootstrap-safe
+   control-host resolution. SSO and provider management remain outside this scope.
+   **Acceptance:** two disposable clients can initiate connections in both
+   directions under the default; a restrictive policy fixture still blocks denied
+   traffic and public ingress stays unchanged. Expired keys, interrupted joins
+   and setup reruns do not leak keys, duplicate enrollment or remove recovery access.
    Qualify guided enrollment on Windows, macOS, Linux, iOS and Android separately,
    including pre-join page access, denied/expired approval and device revocation.
    Verify onboarding-origin isolation, restricted enrollment identities, secret
@@ -157,11 +178,9 @@ use disposable systems for the acceptance above.
 
 ## Later scope
 
-Configurable MagicDNS, embedded DERP, subnet routers, exit nodes, full
-administrative panel controls, OIDC integration, identity-provider setup and
-broader managed-client platform support follow the initial deliverable.
-Embedded DERP requires public UDP 3478 and separate relay
-qualification; do not imply that hosting Headscale makes relays self-hosted.
+Additional relay locations, LAN-wide publication of overlay DNS records, subnet
+routers, exit nodes, advanced policy editing, OIDC integration, identity-provider
+setup and broader managed-client platform support follow the initial deliverable.
 
 Upstream references: [installation](https://headscale.net/stable/setup/install/official/),
 [proxy protocol and Cloudflare limits](https://headscale.net/stable/ref/integration/reverse-proxy/),
