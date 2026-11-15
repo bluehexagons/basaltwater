@@ -256,6 +256,43 @@ currently records Admin submissions immediately as `succeeded` (or `failed` in
 `degraded`), so pending-action gating and request cancellation require separate
 deployment checks.
 
+### Headscale portal and static onboarding boundary
+
+Run the bounded Headscale checks in both installed managed engines:
+
+```bash
+python3 scripts/run_browser_tests.py --grep Headscale --trace
+python3 -m unittest tests.test_headscale_browser_fixture tests.test_web_browser_support
+```
+
+`tests/browser/headscale.spec.cjs` uses separate fixture frontends, the production
+Headscale renderer and POST handler, and a synthetic broker with fixed inventory
+and pending review records. It covers escaped inventory, create/delete person,
+exact password Auth ID plus required verification checkbox, separate pending
+review, node expiry/revocation forms, rejected CSRF/duplicate fields/unknown
+actions, secret-free review metadata and rendered outcomes, desktop/320px layout,
+200% text and keyboard focus. Review is opened but never approved or executed.
+The broker has no executor; no native/admin commands or key issuance occur.
+
+The test handler explicitly simulates trusted admission behind authenticated
+fixture TLS. Its negative controls check missing identity and insecure forwarded
+transport within that simulation. This does **not** qualify production
+`_headscale_authorized`: AF_UNIX `www-data` peer credentials, authenticated
+Nginx headers and HTTPS enforcement require separate deployment qualification.
+Production guards are unchanged. Existing panel scenarios use their original
+frontend and state.
+
+Static onboarding uses the production HTML/CSS renderers through fixture TLS.
+Checks inspect official links and all five platform instructions without
+following external links or downloading clients. Only local CSS and a fixed PNG
+are loaded. Fixture metadata declares the PNG's intended payload to be the exact
+onboarding page URL, separate from the control URL; this is not a decoded QR or
+`qrencode` qualification. Native QR generation remains covered by unit tests.
+The ephemeral TLS CA exists solely for browser trust; no service certificates or
+enrollment keys are issued. Evidence stays in the private runner directory.
+Filtered results qualify only the selected checks; native ESR, real broker
+execution, client revocation and live proxy/auth remain separate checks.
+
 ### Guacamole boundary
 
 With an installed current Guacamole release, the runner finds its
