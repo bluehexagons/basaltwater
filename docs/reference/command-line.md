@@ -77,6 +77,8 @@ basaltw node resolve [--project PATH] [--version VERSION]
 basaltw node install [--project PATH] [--version VERSION] [--package-manager NAME@VERSION]...
 basaltw publish <command> ... [--json]
 basaltw headscale <add|list|show|rename|remove|onboarding> ...
+basaltw headscale-admin <users-list|users-create|users-delete|nodes-list|approve|expire|revoke> ... [--dry-run]
+basaltw headscale-client <status|enroll-personal|enroll-machine|reconcile|adopt|disable|leave|migrate|abandon> --url HTTPS_URL [options] [--dry-run]
 basaltw desktop <command> ...
 basaltw kiosk <status|doctor|start|stop|restart> [--json]
 basaltw firmware <audit|update> [options]
@@ -123,6 +125,18 @@ basaltw ssh-key enroll <host> [--port PORT] [--fingerprint SHA256:FINGERPRINT | 
 
 `basaltw --version` prints one stable line containing the installed project
 version, suitable for feedback and support records.
+
+`headscale-admin` provides root local native administration over independent SSH
+recovery; see [administration](../services/headscale-administration.md).
+`headscale-client` provides explicit root local enrollment and lifecycle actions;
+see [client commands](../services/headscale-clients.md#local-recovery-commands).
+Saved `headscale` references provide discovery only, without management authority.
+Setup and patch validate the complete merged network configuration and ingress
+before provisioning or uploading source. Active named selections follow stable
+IDs across renames and reject removed/replaced records or changed endpoints.
+`--no-tailscale` preserves the endpoint binding without requiring the reference
+to remain registered. Omitted network flags retain saved settings on reruns.
+`--tailscale NAME` completion reads names from the selected workspace.
 
 `basaltw refresh` upgrades the installed source on its selected channel and
 repeats this machine's last successful setup using the updated code. It supports

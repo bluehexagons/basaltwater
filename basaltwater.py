@@ -38,7 +38,10 @@ from lib.agent_cli import add_agent_subparser, run_agent_command
 from lib.gogs_cli import add_gogs_subparser, run_gogs_command
 from lib.homebox_cli import add_homebox_subparser, run_homebox_command
 from lib.headscale_cli import add_headscale_parser, run_headscale_command
-from lib.headscale_selection import resolve_client_server
+from lib.headscale_selection import resolve_cli_selection, validate_final_selection
+from lib.headscale_admin_cli import add_headscale_admin_parser, run_headscale_admin_command
+from lib.headscale_client_cli import add_headscale_client_parser, run_headscale_client_command
+from lib.concurrency import ResourceBusyError, ResourceLockSafetyError
 from lib.scrub_cli import add_scrub_subparser, run_scrub_command
 from lib.homebox_config import validate_homebox_settings
 from lib.kiosk_config import validate_kiosk_settings
@@ -172,6 +175,8 @@ def _build_basaltwater_epilog() -> str:
     node status|env|exec|install Select a project-specific Node runtime
     publish status|prepare|upload Manage VM publishing and reviewed release writing
     headscale add|list|show|rename|remove|onboarding Manage saved Headscale references
+    headscale-admin ...          Root local native Headscale administration
+    headscale-client ...         Root local native client enrollment and recovery
 
 Sysadmin Shortcuts:
     mount <host:path> <local>   Mount a remote directory via sshfs
@@ -682,6 +687,15 @@ def create_basaltwater_parser(*, _command: str | None = None) -> Tuple[argparse.
     add_node_subparser(subparsers)
     add_publishing_subparser(subparsers)
     add_headscale_parser(subparsers)
+    add_headscale_admin_parser(subparsers)
+    add_headscale_client_parser(subparsers)
+    if _command is None or _command in {"setup", "patch"}:
+        from lib.headscale_cli import _complete_server_names
+
+        for command_parser in (setup_parser, patch_parser):
+            for action in command_parser._actions:
+                if action.dest == "tailscale_server":
+                    action.completer = _complete_server_names
 
     shell_parser = subparsers.add_parser(
         "shell",
@@ -1088,7 +1102,7 @@ def _execute_patch_config(config: SetupConfig) -> int:
 
     try:
         runtime_config = _prepare_runtime_config_for_cli(config)
-    except ValueError as exc:
+    except (ValueError, ResourceBusyError, ResourceLockSafetyError) as exc:
         print(f"Error: {exc}")
         return 1
 
@@ -1106,6 +1120,9 @@ def _execute_patch_config(config: SetupConfig) -> int:
                 runtime_config,
                 previous_host,
             )
+    except (ResourceBusyError, ResourceLockSafetyError):
+        returncode = 1
+        print("Error: operation lock busy or unsafe; preserve state and reconcile before retry")
     finally:
         end_time = time.time()
         success = returncode == 0
@@ -1787,6 +1804,11 @@ def _refresh_existing_managed_guest_host_keys(
 
 
 def _prepare_runtime_config_for_cli(config: SetupConfig) -> SetupConfig:
+    from lib.headscale_config import validate_headscale_settings
+    from common.headscale_preflight import validate_ingress
+
+    validate_headscale_settings(config, complete=True)
+    validate_ingress(config)
     validate_kiosk_settings(config)
     if config.privilege_broker_auth and config.privilege_broker_port is None:
         raise ValueError("--approval-panel-password requires a standalone --approval-panel")
@@ -1958,23 +1980,17 @@ def run_setup_command(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        from lib.build_role_setup import BUILD_ROLE_PROFILES, setup_config_with_saved_build_roles
+        from lib.build_role_setup import setup_config_with_saved_build_roles
+        from lib.headscale_config import merge_headscale_settings
 
-        cached_build_roles = (
-            load_setup_command(_provisioning_cache_target(args.host))
-            if args.system_type in BUILD_ROLE_PROFILES else None
-        )
-        config = setup_config_with_saved_build_roles(args, cached_build_roles)
-        if config.tailscale_server:
-            selected = resolve_client_server(
-                config.tailscale_server,
-                workspace=getattr(args, "workspace", None),
-            )
-            config.tailscale_server_id = selected.id
-            config.tailscale_login_server = selected.url
-            from lib.headscale_config import validate_headscale_settings
-            validate_headscale_settings(config, complete=True)
-    except ValueError as exc:
+        cached_config = load_setup_command(_provisioning_cache_target(args.host))
+        resolve_cli_selection(args, cached_config)
+        config = setup_config_with_saved_build_roles(args, cached_config)
+        if cached_config is not None:
+            for name, value in merge_headscale_settings(cached_config, config).items():
+                setattr(config, name, value)
+        validate_final_selection(config, workspace=getattr(args, "workspace", None))
+    except (ValueError, OSError, ResourceBusyError, ResourceLockSafetyError) as exc:
         print(f"Error: {exc}")
         return 1
     if getattr(args, "verify_provider", False) and not config.hosted_node:
@@ -2052,9 +2068,10 @@ def run_setup_command(args: argparse.Namespace) -> int:
     try:
         from lib.build_enrollment_cli import prepare_cli_build_enrollments
 
+        validate_final_selection(config, workspace=getattr(args, "workspace", None))
         prepare_cli_build_enrollments(config, args)
         runtime_config = _prepare_runtime_config_for_cli(config)
-    except ValueError as e:
+    except (ValueError, ResourceBusyError, ResourceLockSafetyError) as e:
         print(f"Error: {e}")
         return 1
 
@@ -2258,6 +2275,9 @@ def run_setup_command(args: argparse.Namespace) -> int:
                 runtime_config,
                 previous_host,
             )
+    except (ResourceBusyError, ResourceLockSafetyError):
+        returncode = 1
+        print("Error: operation lock busy or unsafe; preserve state and reconcile before retry")
     finally:
         end_time = time.time()
         success = (returncode == 0)
@@ -2317,7 +2337,11 @@ def run_patch_command(args: argparse.Namespace) -> int:
         print(f"Error: Invalid username: {username}")
         return 1
     
-    cached_config = load_setup_command(args.host)
+    try:
+        cached_config = load_setup_command(args.host)
+    except (ValueError, OSError, ResourceBusyError, ResourceLockSafetyError) as exc:
+        print(f"Error: {exc}")
+        return 1
     if not cached_config:
         print(f"Error: No cached setup found for {args.host}")
         print(f"Please run the initial setup first using 'basaltw setup <system_type> {args.host}'")
@@ -2360,45 +2384,22 @@ def run_patch_command(args: argparse.Namespace) -> int:
 
     try:
         resolve_approval_panel_args(args, saved_port=cached_config.privilege_broker_port)
-        explicit_server = getattr(args, "tailscale_server", None)
-        if cached_config.tailscale_server_id:
-            selected = resolve_client_server(
-                explicit_server or cached_config.tailscale_server,
-                server_id=cached_config.tailscale_server_id,
-                endpoint=cached_config.tailscale_login_server,
-                reference_is_explicit=explicit_server is not None,
-                workspace=getattr(args, "workspace", None),
-            )
-            args.tailscale_server = selected.name
-            args.tailscale_server_id = selected.id
-            args.tailscale_login_server = selected.url
-            if getattr(args, "tailscale", None) is None:
-                args.tailscale = cached_config.tailscale
-        elif explicit_server:
-            selected = resolve_client_server(
-                explicit_server, workspace=getattr(args, "workspace", None)
-            )
-            args.tailscale_server = selected.name
-            args.tailscale_server_id = selected.id
-            args.tailscale_login_server = selected.url
-            args.tailscale = True
+        resolve_cli_selection(args, cached_config)
         new_config = SetupConfig.from_args(args, cached_config.system_type)
         merged_config = merge_setup_configs(
             cached_config,
             new_config,
             preserve_keys=_patch_preserve_keys(args),
         )
+        if getattr(args, "web_panel_port", None) is WEB_PANEL_DEFAULT_PORT_SENTINEL:
+            merged_config.web_panel_port = 443 if merged_config.enable_ssl else 80
         from lib.build_enrollment_cli import prepare_cli_build_enrollments
 
+        validate_final_selection(merged_config, workspace=getattr(args, "workspace", None))
         prepare_cli_build_enrollments(merged_config, args)
-    except ValueError as exc:
+    except (ValueError, OSError, ResourceBusyError, ResourceLockSafetyError) as exc:
         print(f"Error: {exc}")
         return 1
-    if (
-        getattr(args, "web_panel_port", None)
-        is WEB_PANEL_DEFAULT_PORT_SENTINEL
-    ):
-        merged_config.web_panel_port = 443 if merged_config.enable_ssl else 80
     return _execute_patch_config(merged_config)
 
 
@@ -2659,9 +2660,13 @@ def main() -> int:
     elif args.command == "headscale":
         try:
             return run_headscale_command(args)
-        except (ValueError, OSError) as exc:
+        except (ValueError, OSError, ResourceBusyError, ResourceLockSafetyError) as exc:
             print(f"Error: {exc}")
             return 1
+    elif args.command == "headscale-admin":
+        return run_headscale_admin_command(args)
+    elif args.command == "headscale-client":
+        return run_headscale_client_command(args)
     elif args.command in {"mount", "umount", "health", "ssh", "push", "pull", "key", "ssh-key", "df", "fan", "svc", "logs", "upgrade", "reachable", "user"}:
         return run_sysadmin_command(args)
     elif args.command == "shell":

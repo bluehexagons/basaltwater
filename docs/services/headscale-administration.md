@@ -10,9 +10,9 @@ then the adapter and its runtime dependencies before wiring the CLI or portal.
 The portal must retain its existing authorization, CSRF and privileged review
 boundary. Never give its service account the Headscale socket or group access.
 
-The exported parser `add_headscale_admin_parser(subparsers)` and handler
-`run_headscale_admin_command(args)` are integration points; root CLI registration
-is owned separately. Recovery also works over an independently authenticated
+The root command `basaltw headscale-admin` uses the exported parser
+`add_headscale_admin_parser(subparsers)` and handler
+`run_headscale_admin_command(args)`. Recovery also works over an independently authenticated
 root SSH session with the installed service tool:
 
 ```bash
@@ -23,6 +23,10 @@ python3 /opt/basaltwater/common/service_tools/headscale_admin.py approve --user 
 python3 /opt/basaltwater/common/service_tools/headscale_admin.py expire --id 7
 python3 /opt/basaltwater/common/service_tools/headscale_admin.py revoke --id 7
 ```
+
+Each example also works as `sudo basaltw headscale-admin ACTION [OPTIONS]`.
+Approve accepts the exact native user name or a reviewed numeric portal user ID.
+Busy or unsafe operation locks return a bounded failure and preserve private state.
 
 Approve prompts without echo on a private terminal; `--auth-id-stdin` supports
 private authenticated transport and `--auth-id-file` accepts a private owned
