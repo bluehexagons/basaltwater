@@ -20,6 +20,8 @@ SERVICES = {
     "management": "/opt/basaltwater/common/service_tools/headscale_management.py",
     "client": "/opt/basaltwater/common/service_tools/headscale_client_remote.py",
     "dns": "/opt/basaltwater/common/service_tools/headscale_dns.py",
+    "dns-authority": "/opt/basaltwater/common/service_tools/headscale_dns_authority.py",
+    "dns-control": "/opt/basaltwater/common/service_tools/headscale_dns_control.py",
 }
 MAX_BYTES = 1024 * 1024
 
