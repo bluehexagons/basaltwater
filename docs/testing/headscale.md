@@ -122,6 +122,16 @@ durable logout intent, verified enrollment prestate, fresh-hosting failure
 masking and precise listener checks. The subsequent setup guard in `ecd1aa9e`
 passes 105 focused client, controller, selection and composition tests.
 
+VM orchestration candidate `d324be49` passes `make check-ci`: 10,071 tests,
+26 skipped, 82% coverage and all static/documentation/brand/package/wheel checks.
+Independent review identified a direct-SSH delimiter regression, which is fixed
+with full-parser and lazy-dispatch coverage; 121 focused CLI tests pass. The
+[three-VM walkthrough](../services/headscale-vms.md) also passes offline execution
+with host operations replaced by fixtures: eight Bash blocks, 49 controller
+commands, four setup configurations, ten root-local CLI commands and both DNS
+request schemas. The complete Proxmox/public-ACME walkthrough has not been run
+as a single live deployment; the native checks above retain their stated scope.
+
 The frozen full application run passed 84/84 checks across Chromium and Firefox,
 including all 18 Headscale checks. This resolves earlier unrelated Firefox form
 failures caused by concurrent source edits restarting the development worker;
