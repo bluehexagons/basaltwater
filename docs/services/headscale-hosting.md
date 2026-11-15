@@ -260,8 +260,18 @@ recovery path. Recovery failures retain the backup and blocking operation marker
 Stable native version observations normalize SemVer build metadata such as
 `0.29.6+dirty` to `0.29.6`; prerelease labels remain unsupported. This does not
 replace the reviewed package digest and exact DEB version/architecture checks.
-Native migrations, fresh/replacement installs and recovery still need disposable
-Debian qualification on both advertised architectures before release.
+Selected disposable Debian 13.6 amd64 qualification is recorded in the
+[Headscale test record](../testing/headscale.md): the reviewed 0.29.6-to-0.29.7
+patch upgrade succeeds, and a controlled post-start failure after a newer native
+database write recovers the exact prior binary with its matching database,
+config, policy and keys, reaches native health, and permits independent guard
+reconciliation. A stopped control snapshot restored onto a replacement control
+host also preserves the endpoint, Noise/DERP keys, and original client identities
+and connectivity through cutover. The old server was stopped before replacement
+activation, and the replacement was stopped before the original resumed. This
+does not qualify full sequential-minor migrations, arm64, native Tailscale state
+portability, off-physical-host disaster recovery, trust-anchor aging, power loss,
+or every interruption boundary.
 
 ## Reusable Python interfaces
 

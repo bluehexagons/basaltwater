@@ -230,6 +230,12 @@ reconciliation, peer verification and explicit DNS republishing as above.
 
 Offline mocked tests establish ordering, corruption/identity rejection, publication
 guard behavior, private permissions, dry-run isolation and failure markers.
-Disposable Debian qualification remains required for package migrations,
-replacement-host recovery, trust-anchor maintenance, native identity portability,
-peer connectivity, reboot and DNS republishing on each advertised architecture.
+Selected disposable Debian 13.6 amd64 qualification is recorded in the
+[Headscale test record](../testing/headscale.md). Stopped Unbound backup and
+restore passed with the same enrolled native identity and, separately, with an
+explicitly reviewed different enrolled identity. Restore left the service stopped
+and disabled until separate normal activation; full DNSSEC health passed, followed
+by independent peer publication and withdrawal checks. This evidence does not
+qualify full sequential-minor migrations, arm64, native Tailscale state
+portability, off-physical-host disaster recovery, trust-anchor aging, power loss,
+or every interruption boundary.
