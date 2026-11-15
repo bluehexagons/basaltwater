@@ -106,6 +106,10 @@ class UnboundStepsTests(unittest.TestCase):
                 output = ";; ->>HEADER<<- status: SERVFAIL\n;; flags: qr rd ra;\n"
             else:
                 output = ";; ->>HEADER<<- status: NOERROR\n;; flags: qr rd ra ad;\n"
+                if "dnssec-failed.org." in command and "+cdflag" not in command:
+                    output = ";; ->>HEADER<<- status: SERVFAIL\n;; flags: qr rd ra;\n"
+                else:
+                    output += ". 300 IN DNSKEY 257 3 8 example\n"
         return subprocess.CompletedProcess(command, 0, output, "")
 
     def configure(self, config=None, **kwargs):
