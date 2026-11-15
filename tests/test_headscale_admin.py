@@ -126,6 +126,15 @@ class NativeTests(unittest.TestCase):
             self.adapter.execute("register", {"user": "2", "auth_id": secret})
         self.adapter.rpc.assert_not_called()
 
+    def test_interrupted_replacement_guards_both_old_and_new_nodes(self):
+        self.adapter.endpoint = "https://vpn.example.com"
+        replacement = SimpleNamespace(network_url=self.adapter.endpoint, node_id="8", advertised=True)
+        with patch.object(admin, "dns_binding_lease", return_value=nullcontext(SimpleNamespace(binding=replacement))), \
+                patch.object(admin.os.path, "lexists", return_value=True), \
+                patch.object(admin, "regular_bytes", return_value=b'{"dns":{"nameservers":{"global":["100.64.0.8"],"split":{}}}}'):
+            with self.assertRaisesRegex(admin.AdminError, "interrupted DNS"), self.adapter.dns_guard(admin.node_projection(self.node())):
+                self.fail("Old resolver teardown was allowed during replacement uncertainty")
+
     def test_dns_guard_native_and_management_binding(self):
         self.adapter.endpoint = "https://vpn.example.com"
         node = admin.node_projection(self.node())

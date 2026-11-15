@@ -240,11 +240,8 @@ class SSHValidationTests(unittest.TestCase):
     def test_fixed_command_and_strict_bindings_no_retry(self):
         remote = DNSRemote("dns.example.com", "/key", "/known")
         with patch.object(DNSRemote, "validate_files"), \
-                patch("lib.headscale_dns_peer.subprocess.Popen", side_effect=OSError()) as process:
-            with self.assertRaises(ValueError):
+                patch("lib.headscale_dns_peer.exchange", side_effect=RuntimeError("unconfirmed")) as exchange:
+            with self.assertRaisesRegex(RuntimeError, "unconfirmed"):
                 remote.call("inspect", binding={})
-            args = process.call_args.args[0]
-            self.assertIn("StrictHostKeyChecking=yes", args)
-            self.assertIn("IdentityAgent=none", args)
-            self.assertEqual("/usr/bin/python3 /opt/basaltwater/common/service_tools/headscale_dns.py", args[-1])
-            self.assertEqual(1, process.call_count)
+            exchange.assert_called_once_with(
+                remote._binding(), "dns", {"action": "inspect", "parameters": {"binding": {}}}, timeout=300)

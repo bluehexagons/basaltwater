@@ -164,6 +164,11 @@ class NativeAdmin:
         Native nameservers additionally prevent removal of unrecorded resolvers.
         """
         with dns_binding_lease(str(self.paths.private / "dns-publication.json")) as lease:
+            # A failed replacement may retain reservations for both old and new
+            # nodes while this single active binding names only one of them.
+            # Keep teardown excluded until the exact transition is reconciled.
+            if os.path.lexists(self.paths.private / "dns-transaction.json"):
+                raise AdminError("Reconcile interrupted DNS publication before removing nodes")
             binding = lease.binding
             if binding and binding.network_url != self.endpoint:
                 raise AdminError("DNS publication endpoint mismatch")

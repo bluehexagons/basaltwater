@@ -19,6 +19,7 @@ from lib.validators import validate_host
 SERVICES = {
     "management": "/opt/basaltwater/common/service_tools/headscale_management.py",
     "client": "/opt/basaltwater/common/service_tools/headscale_client_remote.py",
+    "dns": "/opt/basaltwater/common/service_tools/headscale_dns.py",
 }
 MAX_BYTES = 1024 * 1024
 
@@ -74,7 +75,7 @@ def _credential(path: str, *, private: bool) -> int:
 
 def exchange(binding: SSHBinding, service: str, request: dict, *, timeout: int = 90) -> dict:
     """No logging; credentials stay descriptor-pinned and bodies stay on stdin."""
-    if service not in SERVICES or type(timeout) is not int or not 1 <= timeout <= 120:
+    if service not in SERVICES or type(timeout) is not int or not 1 <= timeout <= 300:
         raise ValueError("Invalid private transport operation")
     payload = json.dumps(request, separators=(",", ":")).encode()
     if len(payload) > 16384:
