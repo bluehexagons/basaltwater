@@ -15,6 +15,7 @@ import shutil
 import stat
 import tempfile
 from urllib.parse import urlsplit
+from typing import TYPE_CHECKING
 
 from lib.atomic_io import parse_json, remove_file_durable, write_bytes_atomic, write_json_atomic
 from lib.config import SetupConfig
@@ -36,6 +37,9 @@ SERVICE = "unbound.service"
 FIREWALL_PREFIX = "basaltwater unbound "
 PACKAGES = ("unbound", "dns-root-data", "bind9-dnsutils")
 MAX_FILE = 256 * 1024
+
+if TYPE_CHECKING:
+    from lib.unbound_records import RecordsUpdate
 
 
 @dataclass(frozen=True)
@@ -350,12 +354,29 @@ def _restore(snapshot: dict) -> None:
 
 def configure_unbound(config: SetupConfig, *, paths: UnboundPaths = UnboundPaths(),
                       records: tuple[LocalRecord, ...] | None = None,
-                      expected_binding: DNSBinding | None = None) -> None:
+                      expected_binding: DNSBinding | None = None,
+                      records_update: RecordsUpdate | None = None) -> None:
     """Preserve working DNS on errors; explicit rebind requires an inspected identity.
 
     Package installation and trust-anchor updates remain outside file rollback.
     Interrupted or failed rollback retains a blocking operation and private backup.
     """
+    if records_update is not None:
+        from lib.unbound_records import parse_records_update
+
+        records_update = parse_records_update({
+            "version": 1, "binding": records_update.binding.to_dict(),
+            "records_sha256": records_update.records_sha256,
+            "magic_dns_suffix": records_update.magic_dns_suffix,
+            "onboarding_domain": records_update.onboarding_domain,
+            "inventory": records_document(records_update.records),
+        })
+        if (config.unbound is not True or records != records_update.records
+                or expected_binding != records_update.binding
+                or config.tailscale_login_server != records_update.binding.network_url
+                or config.headscale_base_domain != records_update.magic_dns_suffix
+                or config.headscale_onboarding_domain != records_update.onboarding_domain):
+            raise ValueError("Records replacement cannot change resolver configuration or identity")
     if config.unbound is None:
         return
     validate_headscale_settings(config, complete=True)
@@ -373,6 +394,11 @@ def configure_unbound(config: SetupConfig, *, paths: UnboundPaths = UnboundPaths
         if not config.unbound and previous_binding is not None and previous_binding.advertised:
             raise ValueError("Withdraw or replace the advertised DNS resolver before disabling Unbound")
         managed = _manifest(paths)
+        if records_update is not None:
+            from lib.unbound_records import check_records_update
+
+            check_records_update(records_update, paths=paths, managed=managed,
+                                 binding=previous_binding, state=inspect_unit_state(SERVICE))
         if managed is None and not config.unbound:
             return
         if managed is None:
@@ -385,6 +411,8 @@ def configure_unbound(config: SetupConfig, *, paths: UnboundPaths = UnboundPaths
         if binding is None:
             raise ValueError("Managed resolver has no observed network binding")
         if previous_binding is not None:
+            if records_update is not None and not _same_identity(previous_binding, binding):
+                raise ValueError("Records replacement cannot rebind native identity")
             if not _same_identity(previous_binding, binding):
                 if previous_binding.advertised or expected_binding != previous_binding:
                     raise ValueError("DNS node identity or addresses changed; withdraw and explicitly reconcile before rebind")
@@ -409,6 +437,8 @@ def configure_unbound(config: SetupConfig, *, paths: UnboundPaths = UnboundPaths
             raise ValueError("An existing Unbound unit requires explicit adoption")
         if managed is not None:
             _unit_configuration(paths, managed=True)
+        if records_update is not None and (state["ActiveState"] != "active" or state["UnitFileState"] != "enabled"):
+            raise ValueError("Records replacement requires an active enabled resolver")
         _private_directory(paths.state_dir)
         store = OperationStateStore(paths.operation)
         with store.ownership():
