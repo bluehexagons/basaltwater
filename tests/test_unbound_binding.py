@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 from lib.headscale_dns_binding import (
-    DNSBinding, read_dns_binding, resolver_lifecycle_guard, save_dns_binding,
+    DNSBinding, dns_binding_lease, read_dns_binding, resolver_lifecycle_guard, save_dns_binding,
 )
 from lib.state_read import StateReadError
 
@@ -63,3 +63,15 @@ class ResolverBindingTests(unittest.TestCase):
             with self.subTest(binding=binding), self.assertRaises(ValueError):
                 save_dns_binding(binding, expected=None, path=self.path)
         self.assertFalse(Path(self.path).exists())
+
+    def test_configuration_writer_expires_and_cannot_clear_advertised_guard(self):
+        with dns_binding_lease(self.path) as lease:
+            lease.save(self.binding)
+            published = replace(self.binding, advertised=True,
+                                publication_id="ecdc8544-8516-4684-be66-1721a4bcd328")
+            lease.save(published)
+            with self.assertRaises(ValueError):
+                lease.clear()
+        with self.assertRaisesRegex(ValueError, "ended"):
+            lease.save(self.binding)
+        self.assertEqual(published, read_dns_binding(self.path))

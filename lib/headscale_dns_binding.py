@@ -11,7 +11,7 @@ import re
 import stat
 import uuid
 
-from lib.atomic_io import read_json_file, write_json_atomic
+from lib.atomic_io import read_json_file, remove_file_durable, write_json_atomic
 from lib.concurrency import resource_lock
 from lib.headscale_config import validate_headscale_url
 from lib.setup_directories import check_directory_path, directory_fd
@@ -89,29 +89,62 @@ def save_dns_binding(
 ) -> None:
     """Compare the inspected state under the same lock used by client teardown."""
     candidate = parse_dns_binding(binding.to_dict())
-    validate_filesystem_path(path)
-    parent = os.path.dirname(os.path.abspath(path))
-    check_directory_path(parent)
-    with resource_lock("unbound-binding", os.path.abspath(path)):
-        current = read_dns_binding(path)
-        if current != expected:
+    with dns_binding_lease(path) as lease:
+        if lease.binding != expected:
             raise ValueError("Resolver binding changed; inspect it before retrying")
-        if current == candidate:
+        lease.save(candidate)
+
+
+class DNSBindingLease:
+    """A writer valid only within the node's publication/lifecycle exclusion."""
+
+    def __init__(self, path: str):
+        self.path = path
+        self.binding = read_dns_binding(path)
+        self.active = True
+
+    def save(self, binding: DNSBinding) -> None:
+        if not self.active:
+            raise ValueError("Resolver binding ownership has ended")
+        candidate = parse_dns_binding(binding.to_dict())
+        if self.binding == candidate:
             return
+        parent = os.path.dirname(self.path)
         with directory_fd(parent, create=True, mode=0o700) as descriptor:
             info = os.fstat(descriptor)
             if info.st_uid != os.geteuid() or info.st_mode & 0o022:
                 raise ValueError("Unsafe resolver binding directory")
             os.fchmod(descriptor, 0o700)
-            write_json_atomic(path, candidate.to_dict(), mode=0o600)
+            write_json_atomic(self.path, candidate.to_dict(), mode=0o600)
+        self.binding = candidate
+
+    def clear(self) -> None:
+        """Undo a fresh, unpublished installation while retaining advertised guards."""
+        if not self.active or (self.binding is not None and self.binding.advertised):
+            raise ValueError("Cannot clear an advertised resolver or expired ownership")
+        remove_file_durable(self.path)
+        self.binding = None
+
+
+@contextmanager
+def dns_binding_lease(path: str = DNS_BINDING_PATH) -> Iterator[DNSBindingLease]:
+    """Serialize configure, publication and teardown, without nested file locks."""
+    validate_filesystem_path(path)
+    path = os.path.abspath(path)
+    check_directory_path(os.path.dirname(path))
+    with resource_lock("unbound-binding", path):
+        lease = DNSBindingLease(path)
+        try:
+            yield lease
+        finally:
+            lease.active = False
 
 
 @contextmanager
 def resolver_lifecycle_guard(path: str = DNS_BINDING_PATH) -> Iterator[DNSBinding | None]:
     """Hold exclusion through disable/leave; publication reservations also block."""
-    validate_filesystem_path(path)
-    with resource_lock("unbound-binding", os.path.abspath(path)):
-        binding = read_dns_binding(path)
+    with dns_binding_lease(path) as lease:
+        binding = lease.binding
         if binding is not None and binding.advertised:
             raise ValueError("Withdraw or replace the advertised DNS resolver before disabling or leaving")
         yield binding
