@@ -10,11 +10,13 @@ import sys
 def add_headscale_management_parser(subparsers) -> argparse.ArgumentParser:
     parser = subparsers.add_parser("headscale-manage", help="Explicit SSH management and tagged enrollment")
     commands = parser.add_subparsers(dest="headscale_management_action", required=True)
-    for action in ("bind", "show", "remove", "enroll", "inspect", "reconcile", "dns-publish", "dns-withdraw", "dns-inspect"):
+    for action in ("bind", "show", "remove", "enroll", "inspect", "reconcile", "dns-publish", "dns-withdraw", "dns-inspect", "dns-reconcile"):
         command = commands.add_parser(action)
         command.add_argument("reference", help="Saved server name or stable ID")
         command.add_argument("--workspace")
         command.add_argument("--dry-run", action="store_true")
+        if action == "dns-reconcile":
+            command.add_argument("--expected-attempt", required=True, help="Absolute private JSON containing the exact inspected controller attempt")
         if action in {"dns-publish", "dns-withdraw"}:
             command.add_argument("--resolver", required=True, help="Exact saved resolver host or name")
             command.add_argument("--peer", required=True, help="Exact saved independent peer host or name")
@@ -41,7 +43,16 @@ def run_headscale_management_command(args: argparse.Namespace) -> int:
     try:
         action = args.headscale_management_action
         keywords = {"workspace": args.workspace}
-        if action.startswith("dns-"):
+        if action == "dns-reconcile":
+            import os
+            from lib.headscale_private import read_private
+            from lib.headscale_dns_orchestration import reconcile_dns_attempt
+
+            if not os.path.isabs(args.expected_attempt):
+                raise ValueError("Absolute private attempt review required")
+            result = reconcile_dns_attempt(args.reference, expected=read_private(args.expected_attempt),
+                                           dry_run=args.dry_run, **keywords)
+        elif action.startswith("dns-"):
             from lib.headscale_dns_orchestration import DNSPublicationExists, manage_dns
             try:
                 result = manage_dns(args.reference, action=action.removeprefix("dns-"),

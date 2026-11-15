@@ -46,7 +46,7 @@ class FlowTests(unittest.TestCase):
         self.calls = []
         for name, kwargs in {
             'resolve_management': {'return_value': self.binding},
-            'saved_target': {'side_effect': lambda ref, *a: self.dns if ref == 'dns' else self.peer},
+            'saved_target': {'side_effect': lambda ref, *a: self.dns if ref in {'dns', self.dns.host} else self.peer},
             'resource_lock': {'side_effect': lambda *a: nullcontext()},
             '_pins': {'side_effect': lambda target: target.host + ' ' + KEY + '\n'},
             'exchange': {'side_effect': self.exchange},
@@ -65,6 +65,8 @@ class FlowTests(unittest.TestCase):
             return {'key': KEY}
         if action == 'authorize':
             return {'authorized': True}
+        if action == 'confirm':
+            return {'confirmed': True, 'binding': self.state['binding']}
         self.assertIsNotNone(read_private(str(Path(self.workspace) / 'headscale-dns-attempt.json')))
         return {'binding': PUBLISHED.to_dict() if action == 'publish' else None}
 
@@ -133,6 +135,70 @@ class FlowTests(unittest.TestCase):
             self.run_flow('withdraw')
         self.assertFalse(any(call[2]['action'] in {'authorize', 'publish', 'withdraw'} for call in self.calls))
 
+    def attempt(self, action):
+        value = {'endpoint': URL, 'action': action, 'parameters': {
+            'resolver': (NODE if action == 'publish' else PUBLISHED).to_dict(), 'peer': PEER.to_dict(),
+            'resolver_host': self.dns.host, 'peer_host': self.peer.host,
+            'resolver_pins': self.dns.host + ' ' + KEY + '\n', 'peer_pins': self.peer.host + ' ' + KEY + '\n'}}
+        write_private(str(Path(self.workspace) / 'headscale-dns-attempt.json'), value)
+        return value
+
+    def test_reviewed_completion_observes_both_settled_sides_without_mutation_replay(self):
+        for action in ('publish', 'withdraw'):
+            for node in (NODE, PUBLISHED):
+                with self.subTest(action=action, advertised=node.advertised):
+                    expected = self.attempt(action)
+                    self.node = node
+                    self.state['binding'] = node.to_dict() if node.advertised else None
+                    self.calls.clear()
+                    result = flow.reconcile_dns_attempt('office', expected=expected, workspace=self.workspace)
+                    self.assertTrue(result['reconciled'])
+                    self.assertEqual(['inspect', 'observe', 'observe', 'confirm'], [c[2]['action'] for c in self.calls])
+                    self.assertIsNone(read_private(str(Path(self.workspace) / 'headscale-dns-attempt.json')))
+
+    def test_completion_preserves_stale_unsettled_changed_and_unconfirmed_attempts(self):
+        expected = self.attempt('withdraw')
+        path = str(Path(self.workspace) / 'headscale-dns-attempt.json')
+        for state, node in (({'binding': None, 'journal': {'pending': True}, 'config': {}}, NODE),
+                            ({'binding': None, 'journal': None, 'config': {}}, PUBLISHED),
+                            ({'binding': PUBLISHED.to_dict(), 'journal': None, 'config': {}},
+                             replace(PUBLISHED, publication_id='00000000-0000-4000-8000-000000000002'))):
+            self.state, self.node = state, node
+            with self.assertRaises(ValueError):
+                flow.reconcile_dns_attempt('office', expected=expected, workspace=self.workspace)
+            self.assertEqual(expected, read_private(path))
+        with self.assertRaises(ValueError):
+            flow.reconcile_dns_attempt('office', expected={**expected, 'endpoint': 'https://other.example.com'}, workspace=self.workspace)
+        self.state, self.node = {'binding': None, 'journal': None, 'config': {}}, NODE
+        original = self.exchange
+        def lost(binding, service, request, **kw):
+            if request['action'] == 'confirm':
+                raise TransportError('lost confirmation')
+            return original(binding, service, request, **kw)
+        with patch.object(flow, 'exchange', side_effect=lost), self.assertRaises(TransportError):
+            flow.reconcile_dns_attempt('office', expected=expected, workspace=self.workspace)
+        self.assertEqual(expected, read_private(path))
+
+    def test_completion_dry_run_never_calls_native_or_writes(self):
+        expected = self.attempt('publish')
+        with patch.object(flow, 'resource_lock', side_effect=AssertionError('lock')), \
+                patch.object(flow, 'remove_file_durable', side_effect=AssertionError('write')):
+            self.assertTrue(flow.reconcile_dns_attempt('office', expected=expected,
+                                                       workspace=self.workspace, dry_run=True)['dry_run'])
+        self.assertEqual([], self.calls)
+
+    def test_public_completion_command_loads_exact_private_review(self):
+        expected = self.attempt('publish')
+        path = Path(self.workspace) / 'review.json'
+        write_private(str(path), expected)
+        parser = argparse.ArgumentParser()
+        add_headscale_management_parser(parser.add_subparsers())
+        args = parser.parse_args(['headscale-manage', 'dns-reconcile', 'office',
+                                  '--expected-attempt', str(path), '--workspace', self.workspace, '--dry-run'])
+        with patch.object(flow, 'reconcile_dns_attempt', return_value={'dry_run': True}) as run, redirect_stdout(io.StringIO()):
+            self.assertEqual(0, run_headscale_management_command(args))
+        self.assertEqual(expected, run.call_args.kwargs['expected'])
+
     def test_public_parser_dispatch_and_generic_error(self):
         parser = argparse.ArgumentParser()
         add_headscale_management_parser(parser.add_subparsers())
@@ -156,6 +222,35 @@ class FlowTests(unittest.TestCase):
 
 
 class AuthorityTests(unittest.TestCase):
+    def test_settled_confirmation_checks_native_peer_without_reactivation(self):
+        from lib import headscale_dns_publish as publication
+
+        admin = SimpleNamespace(endpoint=URL, paths=SimpleNamespace(private=Path('/private/control')))
+        parameters = {'resolver': PUBLISHED.to_dict(), 'peer': PEER.to_dict(),
+                      'resolver_host': 'dns.example.com', 'peer_host': 'peer.example.com',
+                      'resolver_pins': 'pins', 'peer_pins': 'pins'}
+        config = {'dns': {'magic_dns': True, 'base_domain': 'mesh.example.net', 'override_local_dns': True,
+                          'nameservers': {'global': list(PUBLISHED.addresses), 'split': {}}}}
+        with patch.object(control, 'dns_binding_lease', return_value=nullcontext(SimpleNamespace(binding=PUBLISHED))), \
+                patch('lib.operation_state.OperationStateStore') as store, \
+                patch.object(publication, '_journal', return_value=None) as journal, \
+                patch.object(publication, '_read_config', return_value=config), \
+                patch.object(publication, '_node') as node, patch.object(publication, '_verify_active') as verify, \
+                patch.object(control, 'private_bytes', side_effect=lambda path: URL.encode() if path.endswith('/endpoint') else b'retained-placeholder'), \
+                patch.object(control, 'publication_key', return_value=('/private/key', KEY)), \
+                patch.object(control, 'remote', return_value='remote'), \
+                patch.object(control, 'publish_dns', side_effect=AssertionError('activation')), \
+                patch.object(control, 'withdraw_dns', side_effect=AssertionError('withdrawal')):
+            store.return_value.load.return_value = None
+            self.assertEqual({'confirmed': True, 'binding': PUBLISHED.to_dict()}, control.confirm(admin, parameters))
+            node.assert_called_once_with('remote', PUBLISHED)
+            verify.assert_called_once_with(admin, config, PUBLISHED, 'remote', PEER, PUBLISHED)
+            journal.return_value = {'pending': True}
+            verify.reset_mock()
+            with self.assertRaisesRegex(ValueError, 'Reconcile native'):
+                control.confirm(admin, parameters)
+            verify.assert_not_called()
+
     def test_publication_key_reuses_endpoint_binding_and_never_replaces_lost_generation(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(control, 'root_directory'), \
                 patch.object(control, 'resource_lock', side_effect=lambda *a: nullcontext()), \
@@ -289,6 +384,26 @@ class AuthorityTests(unittest.TestCase):
 
 
 class SelectionTests(unittest.TestCase):
+    def test_actual_cache_writer_permissions_and_noncreating_read(self):
+        from lib.cache import load_setup_command, save_setup_command
+        from lib.config import SetupConfig
+        from lib.workspace import WORKSPACE_ENV_VAR
+
+        with tempfile.TemporaryDirectory() as workspace, patch.dict(os.environ, {WORKSPACE_ENV_VAR: workspace}):
+            self.assertIsNone(load_setup_command('192.0.2.11'))
+            self.assertFalse((Path(workspace) / 'setups').exists())
+            config = SetupConfig(host='192.0.2.11', username='agent', system_type='server_lite',
+                friendly_name='dns', ssh_key='/private/key', tailscale_server='office',
+                tailscale_server_id='server', tailscale_login_server=URL)
+            save_setup_command(config)
+            setups = Path(workspace) / 'setups'
+            self.assertEqual(0o700, setups.stat().st_mode & 0o777)
+            # Older caches with safe readable parents also remain usable.
+            setups.chmod(0o755)
+            with patch.object(flow, 'resolve_client_server', return_value=SimpleNamespace(id='server', url=URL)):
+                result = flow.saved_target('dns', SimpleNamespace(server_id='server', endpoint=URL), workspace)
+            self.assertEqual(config.host, result.host)
+
     def test_unique_alias_actual_host_explicit_key_endpoint_and_port(self):
         with tempfile.TemporaryDirectory() as workspace:
             setups = Path(workspace) / 'setups'

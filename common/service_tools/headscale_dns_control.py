@@ -21,6 +21,7 @@ from lib.concurrency import resource_lock
 from lib.headscale_admin import NativeAdmin, identifier
 from lib.headscale_config import validate_headscale_url
 from lib.headscale_dns_binding import parse_dns_binding
+from lib.headscale_dns_binding import dns_binding_lease
 from lib.headscale_dns_peer import DNSRemote
 from lib.headscale_dns_publish import inspect_dns, publish_dns, withdraw_dns
 from lib.validators import validate_host
@@ -140,6 +141,38 @@ def change(admin, action: str, p: dict) -> dict:
     return withdraw_dns(binding, dns_remote=dns, peer=peer, peer_remote=check)
 
 
+def confirm(admin, p: dict) -> dict:
+    """Verify a settled transaction without activation, reservations or replay."""
+    from lib.headscale_dns_publish import _journal, _node, _paths, _read_config, _verify_active, dns_candidate
+    from lib.operation_state import OperationStateStore
+
+    if set(p) != {'resolver', 'peer', 'resolver_host', 'peer_host', 'resolver_pins', 'peer_pins'}:
+        raise ValueError('Invalid completion schema')
+    binding, peer = parse_dns_binding(p['resolver']), parse_dns_binding(p['peer'])
+    if binding.network_url != admin.endpoint or peer.network_url != admin.endpoint or peer.advertised:
+        raise ValueError('Completion network differs')
+    with dns_binding_lease(str(_paths(admin)[0])) as lease:
+        store = OperationStateStore(str(admin.paths.private / 'operation.json'))
+        if _journal(admin) is not None or store.load() is not None:
+            raise ValueError('Reconcile native operation first')
+        expected = binding if binding.advertised else None
+        if lease.binding != expected:
+            raise ValueError('Native publication differs')
+        config = _read_config(admin)
+        if dns_candidate(config, expected, expected) != config:
+            raise ValueError('Native DNS policy differs')
+        directory = str(admin.paths.private / 'dns-authority')
+        if (private_bytes(directory + '/endpoint') != admin.endpoint.encode()
+                or not private_bytes(directory + '/identity')):
+            raise ValueError('Retained publication authority required')
+        key, _ = publication_key(admin)
+        dns = remote(admin, p['resolver_host'], p['resolver_pins'], key)
+        check = remote(admin, p['peer_host'], p['peer_pins'], key)
+        _node(dns, binding)
+        _verify_active(admin, config, expected, check, peer, binding)
+        return {'confirmed': True, 'binding': expected.to_dict() if expected else None}
+
+
 def execute_request(payload: bytes) -> dict:
     try:
         if os.geteuid() != 0 or len(payload) > 16384:
@@ -164,6 +197,8 @@ def execute_request(payload: bytes) -> dict:
             result = {'key': key}
         elif action in {'publish', 'withdraw'}:
             result = change(admin, action, p)
+        elif action == 'confirm':
+            result = confirm(admin, p)
         else:
             raise ValueError()
         return {'ok': True, 'result': result}

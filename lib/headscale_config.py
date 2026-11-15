@@ -318,8 +318,9 @@ def merge_headscale_settings(cached: SetupConfig, patch: SetupConfig, *, preserv
         if name not in preserved and getattr(patch, name) is not None:
             values[name] = deepcopy(getattr(patch, name))
     if patch.tailscale_tags is not None and "tailscale_tags" not in preserved:
-        if cached.tailscale_tags is not None and patch.tailscale_tags != cached.tailscale_tags:
-            raise ValueError("Changing saved enrollment tags requires explicit device migration")
+        # These are requested enrollment authorizations, not observed identity.
+        # A corrected request must remain possible after failed setup. The native
+        # enrollment adapter still refuses an enrolled node with different tags.
         values["tailscale_tags"] = deepcopy(patch.tailscale_tags)
     if not preserved.intersection(CLIENT_FIELDS):
         if patch.tailscale is False:

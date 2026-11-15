@@ -155,6 +155,19 @@ class SetupTests(unittest.TestCase):
             self.assertEqual(0, remote_setup._run_main())
         prepare.assert_called_once_with(preparation)
 
+    def test_preparation_preserves_active_firewall_when_client_verification_fails(self):
+        from plugins.headscale import prepare_tailscale_client
+
+        config = replace(self.config, unbound=None)
+        with patch("common.headscale_preflight.preflight_network_services"), \
+                patch("lib.remote_utils.run") as run, \
+                patch("security.steps.configure_firewall") as firewall, \
+                patch("common.tailscale_steps.configure_tailscale", side_effect=ValueError("identity differs")):
+            run.return_value.returncode = 0
+            with self.assertRaisesRegex(ValueError, "identity differs"):
+                prepare_tailscale_client(config)
+            firewall.assert_not_called()
+
     def test_enrolled_rerun_reobserves_without_issuing_key(self):
         from lib import headscale_management as management
 
@@ -177,15 +190,20 @@ class SetupTests(unittest.TestCase):
                 patch.object(management, "resource_lock", return_value=nullcontext()), \
                 patch.object(management, "exchange", side_effect=exchange), \
                 patch.object(management, "write_private", side_effect=AssertionError("new attempt")):
+            target = SSHBinding("worker.example.com", "/private/key", "/private/known_hosts")
+            with self.assertRaisesRegex(ValueError, "tags differ"):
+                management.enroll_machine(self.server.id, target, ["tag:service"])
+            self.assertEqual([("management", "identity"), ("client", "inspect")], actions)
+            actions.clear()
             result = management.enroll_machine(self.server.id,
-                SSHBinding("worker.example.com", "/private/key", "/private/known_hosts"), ["tag:dns"])
+                                               target, ["tag:dns"])
         self.assertTrue(result["already_enrolled"])
         self.assertEqual([("management", "identity"), ("client", "inspect"), ("management", "inspect")], actions)
 
-    def test_changed_tags_rejected_and_controller_metadata_omitted_from_remote(self):
+    def test_corrected_tags_merge_and_controller_metadata_omitted_from_remote(self):
         changed = replace(self.config, tailscale_tags=["tag:service"])
-        with self.assertRaisesRegex(ValueError, "migration"):
-            merge_headscale_settings(self.config, changed)
+        self.assertEqual(["tag:service"], merge_headscale_settings(self.config, changed)["tailscale_tags"])
+        self.assertEqual(["tag:dns"], self.config.tailscale_tags)
         restored = SetupConfig.from_dict(self.config.host, self.config.system_type, self.config.to_dict())
         self.assertEqual(["tag:dns"], restored.tailscale_tags)
         self.assertIn("--tailscale-tag tag:dns", restored.to_setup_command())

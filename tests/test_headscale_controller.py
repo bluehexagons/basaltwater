@@ -172,6 +172,19 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(0, self.run_command("setup", *flags))
         self.assert_no_mutations()
 
+    def test_fresh_automatic_dry_run_does_not_create_cache_directory(self):
+        from lib.cache import load_setup_command
+
+        self.load.side_effect = load_setup_command
+        cache = Path(self.workspace) / "setups"
+        flags = ("--headscale", "--headscale-name", "mesh", "--headscale-domain", "control.example.com",
+                 "--headscale-base-domain", "mesh.example.net", "--headscale-public-ipv4", "192.0.2.10",
+                 "--dry-run")
+        with patch("lib.cache.get_setup_cache_dir", return_value=str(cache)):
+            self.assertEqual(0, self.run_command("setup", *flags))
+        self.assertFalse(cache.exists())
+        self.assert_no_mutations()
+
     def test_automatic_requested_restart_failure_is_saved_as_failure(self):
         self.cached.tailscale_tags = ["tag:service"]
         self.remote.side_effect = lambda config, *, after_setup: after_setup(config)

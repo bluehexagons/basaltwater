@@ -22,11 +22,16 @@ def prepare_tailscale_client(config: SetupConfig) -> None:
     from common.headscale_preflight import preflight_network_services
     from common.tailscale_steps import configure_tailscale
     from security.steps import configure_firewall
+    from lib.remote_utils import run
 
     if not config.tailscale or config.headscale or config.unbound or config.deploy_specs:
         raise ValueError("Client preparation requires only native client intent")
     preflight_network_services(config)
-    configure_firewall(config)
+    active = run("ufw status 2>/dev/null | grep -q 'Status: active'", check=False)
+    if active.returncode != 0:
+        configure_firewall(config)
+    # An active firewall belongs to the complete desired profile. Reconciliation
+    # from this minimal preparation would remove its application access rules.
     configure_tailscale(config)
 
 

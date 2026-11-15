@@ -10,7 +10,7 @@ import os
 
 from common.service_tools.headscale_dns_authority import public_key
 from common.service_tools.headscale_dns_control import pinned_entries
-from lib.atomic_io import remove_file_durable
+from lib.atomic_io import parse_json, remove_file_durable
 from lib.cache import _load_cache_file
 from lib.concurrency import resource_lock
 from lib.headscale_dns_binding import parse_dns_binding
@@ -35,7 +35,13 @@ def saved_target(reference: str, management, workspace: str) -> SSHBinding:
         if not filename.endswith('.json'):
             continue
         path = os.path.join(directory, filename)
-        record = read_private(path)
+        # Ordinary caches may have a readable (0755) parent. Require an owned,
+        # non-writable parent and a private regular file without creating state.
+        with os.fdopen(_credential(path, private=True), 'rb') as stream:
+            content = stream.read(65537)
+        if len(content) > 65536:
+            raise ValueError('Saved host exceeds size limit')
+        record = parse_json(content)
         if (record is None or type(record.get('args')) is not dict or type(record.get('host')) is not str):
             raise ValueError('Invalid saved host inventory')
         names = [record['host'], record['args'].get('friendly_name'), record.get('name')]
@@ -151,3 +157,45 @@ def manage_dns(reference: str, *, action: str, resolver: str | None = None, peer
             raise ValueError('Withdrawal unconfirmed; inspect/reconcile')
         remove_file_durable(journal)
         return result
+
+
+def reconcile_dns_attempt(reference: str, *, expected: dict, workspace: str | None = None,
+                          dry_run: bool = False) -> dict:
+    """Complete an exact reviewed controller attempt after native reconciliation."""
+    workspace = normalize_workspace_dir(workspace)
+    binding = resolve_management(reference, workspace=workspace)
+    journal = os.path.join(workspace, 'headscale-dns-attempt.json')
+    if (type(expected) is not dict or set(expected) != {'endpoint', 'action', 'parameters'}
+            or expected['endpoint'] != binding.endpoint or expected['action'] not in {'publish', 'withdraw'}
+            or type(expected['parameters']) is not dict
+            or set(expected['parameters']) != {'resolver', 'peer', 'resolver_host', 'peer_host', 'resolver_pins', 'peer_pins'}
+            or read_private(journal) != expected):
+        raise ValueError('Exact retained attempt for this network required')
+    p = expected['parameters']
+    original, original_peer = parse_dns_binding(p['resolver']), parse_dns_binding(p['peer'])
+    if original.network_url != binding.endpoint or original_peer.network_url != binding.endpoint:
+        raise ValueError('Retained attempt network differs')
+    if dry_run:
+        return {'dry_run': True, 'readiness_claim': False}
+    with resource_lock('headscale-management', workspace), resource_lock('headscale-dns-convenience', workspace):
+        if resolve_management(reference, workspace=workspace) != binding or read_private(journal) != expected:
+            raise ValueError('Retained attempt changed')
+        dns = saved_target(p['resolver_host'], binding, workspace)
+        check = saved_target(p['peer_host'], binding, workspace)
+        if _pins(dns) != p['resolver_pins'] or _pins(check) != p['peer_pins']:
+            raise ValueError('Retained SSH authority changed')
+        state = _control(binding, 'inspect', {})
+        if state.get('journal') is not None or not {'binding', 'config'} <= state.keys():
+            raise ValueError('Reconcile native transaction first')
+        node = _observe(dns, binding.endpoint, 'resolver')
+        peer = _observe(check, binding.endpoint, 'peer')
+        if ((node.network_url, node.node_id, node.addresses) !=
+                (original.network_url, original.node_id, original.addresses)
+                or peer != original_peer or (node.to_dict() if node.advertised else None) != state['binding']
+                or (expected['action'] == 'withdraw' and node.advertised and node != original)):
+            raise ValueError('Settled native identity differs from retained attempt')
+        confirmed = _control(binding, 'confirm', {**p, 'resolver': node.to_dict(), 'peer': peer.to_dict()})
+        if confirmed != {'confirmed': True, 'binding': state['binding']} or read_private(journal) != expected:
+            raise ValueError('Completion unconfirmed; retain controller attempt')
+        remove_file_durable(journal)
+        return {'reconciled': True, 'binding': state['binding']}
