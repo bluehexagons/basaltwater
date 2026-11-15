@@ -10,11 +10,14 @@ import sys
 def add_headscale_management_parser(subparsers) -> argparse.ArgumentParser:
     parser = subparsers.add_parser("headscale-manage", help="Explicit SSH management and tagged enrollment")
     commands = parser.add_subparsers(dest="headscale_management_action", required=True)
-    for action in ("bind", "show", "remove", "enroll", "inspect", "reconcile"):
+    for action in ("bind", "show", "remove", "enroll", "inspect", "reconcile", "dns-publish", "dns-withdraw", "dns-inspect"):
         command = commands.add_parser(action)
         command.add_argument("reference", help="Saved server name or stable ID")
         command.add_argument("--workspace")
         command.add_argument("--dry-run", action="store_true")
+        if action in {"dns-publish", "dns-withdraw"}:
+            command.add_argument("--resolver", required=True, help="Exact saved resolver host or name")
+            command.add_argument("--peer", required=True, help="Exact saved independent peer host or name")
         if action in {"bind", "enroll"}:
             prefix = "ssh" if action == "bind" else "target"
             command.add_argument("--" + prefix + "-host", required=True)
@@ -38,7 +41,16 @@ def run_headscale_management_command(args: argparse.Namespace) -> int:
     try:
         action = args.headscale_management_action
         keywords = {"workspace": args.workspace}
-        if action == "bind":
+        if action.startswith("dns-"):
+            from lib.headscale_dns_orchestration import DNSPublicationExists, manage_dns
+            try:
+                result = manage_dns(args.reference, action=action.removeprefix("dns-"),
+                                    resolver=getattr(args, "resolver", None), peer=getattr(args, "peer", None),
+                                    dry_run=args.dry_run, **keywords)
+            except DNSPublicationExists:
+                print("DNS publication refused: an existing publication will not be reactivated; use dns-inspect and explicit headscale-dns inspect/reconcile", file=sys.stderr)
+                return 1
+        elif action == "bind":
             ssh = SSHBinding(args.ssh_host, args.ssh_key, args.ssh_known_hosts, args.ssh_port)
             result = management.bind_management(args.reference, ssh, dry_run=args.dry_run, **keywords).to_dict()
         elif action == "show":
@@ -60,5 +72,5 @@ def run_headscale_management_command(args: argparse.Namespace) -> int:
         print(json.dumps(result))
         return 0
     except (OSError, ValueError, RuntimeError, TypeError, KeyError):
-        print("Headscale management unavailable or unconfirmed; inspect retained enrollment and native keys/nodes before retry", file=sys.stderr)
+        print("Headscale management unavailable or unconfirmed; inspect retained state and use explicit DNS inspect/reconcile or enrollment recovery before retry", file=sys.stderr)
         return 1
