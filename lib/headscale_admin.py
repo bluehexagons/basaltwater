@@ -379,5 +379,15 @@ def reconcile_machine_key(expected_key_ids: list[str], expected_node_ids: list[s
             if not isinstance(name, str) or not re.fullmatch(r"[0-9a-f]{32}", name):
                 raise AdminError("Invalid private delivery identity")
             remove_file_durable(str(admin.paths.private / "keys" / name))
+            # The separate private SSH delivery claim never permits key replay.
+            # Reconciliation clears it only for this exact issuance intent.
+            from lib.headscale_private import read_private
+
+            claim_path = str(admin.paths.private / "key-delivery.json")
+            claim = read_private(claim_path)
+            if claim is not None:
+                if claim != {"schema": 1, "id": intent["id"], "delivery": name}:
+                    raise AdminError("Private delivery claim differs; retain issuance intent")
+                remove_file_durable(claim_path)
         remove_file_durable(str(intent_path))
         return {"reconciled": sorted(outstanding), "nodes": sorted(expected_node_ids)}

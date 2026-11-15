@@ -20,7 +20,7 @@ def messages() -> dict:
         "User": [("id", 1, "uint64"), ("name", 2, "string")],
         "Node": [("id", 1, "uint64"), ("ip_addresses", 5, "string", True),
                  ("name", 6, "string"), ("user", 7, "User"),
-                 ("expiry", 10, "Timestamp"), ("tags", 26, "string", True),
+                 ("expiry", 10, "Timestamp"), ("pre_auth_key", 11, "PreAuthKey"), ("tags", 26, "string", True),
                  ("online", 22, "bool")],
         "PreAuthKey": [("user", 1, "User"), ("id", 2, "uint64"),
                        ("key", 3, "string"), ("reusable", 4, "bool"),
