@@ -14,16 +14,36 @@ Existing native installations require explicit reviewed adoption. Configuration
 and observed control URL must agree before changes; changing a saved endpoint
 cannot silently move a client. The actual local Headscale configuration is also
 checked to prevent joining the control host to its own network.
-If a retained native state file exists while the daemon is inactive, automatic
-enable fails before service changes: review the retained profile and start the
-daemon through independent administration, then rerun reconciliation/setup.
-This conservative recovery gate also applies after an explicit disable.
+After an explicit disable, enable can resume an enrolled managed client using
+its persisted endpoint and exact node binding. Before starting, it checks the
+private native state and ownership record, reviewed privacy drop-in, and installed
+client security floor. After starting it verifies effective daemon privacy,
+client/daemon version agreement, endpoint and exact node, then online identity.
+A stopped native profile may receive credential-free `tailscale up` only after
+that identity matches. No key, logout or automatic enrollment is involved.
+Unowned state, pending joins, missing identity and changed bindings require
+explicit recovery; setup never adopts them.
+
+Resume writes a `resuming` marker before service changes. Failed startup,
+lost observation, privacy failure or changed identity triggers guarded daemon
+disable/stop and retains that marker and the expected endpoint/node. If stopping
+cannot be verified, the operation reports uncertainty. Setup refuses automatic
+retry. Review native state through independent recovery access, establish a
+private daemon under operator supervision, and explicitly reconcile the exact
+retained identity before enabling again. Do not delete the marker to retry or
+substitute a new identity. An advertised/reserved DNS resolver blocks a resume
+that could require failure teardown until its publication is withdrawn.
 
 The installer writes `TS_NO_LOGS_NO_SUPPORT=true` in a systemd drop-in and reloads
 systemd before APT's postinst can first start the daemon. Headscale's separate
 `logtail.enabled: false` setting remains the server installer's responsibility.
-An adopted installation must already have the same privacy drop-in; inspect and
-apply it through a reviewed restart before adoption. No WAN ports are opened.
+An adopted installation must already have the privacy setting; inspect and
+apply it through a reviewed restart before adoption. Adoption, local enrollment
+and identity-dependent lifecycle mutations require both effective systemd
+Environment and the running process environment to contain
+`TS_NO_LOGS_NO_SUPPORT=true`. A drop-in alone is insufficient. Native state and
+its directory must be private, owned and free of symlinks/multiple file links.
+No WAN ports are opened.
 Native `--accept-dns=true` delegates DNS changes to Tailscale's OS integration;
 Basaltwater does not write `/etc/resolv.conf` or enable routing/exit nodes.
 
@@ -99,7 +119,10 @@ discarded. Unknown native states, userspace networking and mismatched versions
 fail closed. This is the identity contract for managed Unbound.
 
 `adopt_client(url, *, expected_node_id)` adopts an explicitly reviewed running
-node. `leave_client(url, *, expected_node_id)` verifies the exact node before
+node. `resume_client(url, *, expected_node_id)` resumes an enrolled managed
+binding with the checks and uncertainty marker described above; setup uses the
+same implementation with its persisted reviewed node. No new CLI command is
+required. `leave_client(url, *, expected_node_id)` verifies the exact node before
 native logout and retains state. `migrate_client(url, new_url, *, expected_node_id)`
 verifies and logs out the old identity, then prepares the new selection; a new
 explicit enrollment remains necessary. The caller must show the URLs and node

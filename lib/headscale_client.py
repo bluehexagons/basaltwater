@@ -28,9 +28,11 @@ NATIVE_STATE = "/var/lib/tailscale/tailscaled.state"
 CONTROL_CONFIG = "/etc/headscale/config.yaml"
 SECURITY_FLOOR = (1, 104, 4)
 VERIFIED_VERSION = "1.104.7"
+PRIVACY_DROPIN = "/etc/systemd/system/tailscaled.service.d/10-basaltwater-privacy.conf"
+PRIVACY_CONTENT = '[Service]\nEnvironment="TS_NO_LOGS_NO_SUPPORT=true"\n'
 
 
-class ClientError(RuntimeError):
+class ClientError(RuntimeError, ValueError):
     """Safe diagnostic that never includes native command output."""
 
 
@@ -109,7 +111,7 @@ def snapshot() -> tuple[dict, dict]:
         raise ClientError("Client and running daemon versions differ")
     raw_prefs = _object(["tailscale", "debug", "prefs"])
     prefs = {"ControlURL": raw_prefs.get("ControlURL")}
-    if status.get("BackendState") not in {"NeedsLogin", "NeedsMachineAuth", "Stopped", "Starting", "Running"}:
+    if not isinstance(status.get("BackendState"), str) or status["BackendState"] not in {"NeedsLogin", "NeedsMachineAuth", "Stopped", "Starting", "Running"}:
         raise ClientError("Unsupported native client state")
     if status.get("TUN") is not True:
         raise ClientError("Native kernel TUN client required")
@@ -131,13 +133,13 @@ def check_network(status: dict, prefs: dict, url: str, phase: str) -> None:
     if (phase in {"prepared", "left"} and status.get("BackendState") == "NeedsLogin"
             and not status.get("HaveNodeKey", False)):
         # After explicit leave/migration the old URL may remain in prefs.
-        if phase == "left" or prefs.get("ControlURL") in {None, "", "https://controlplane.tailscale.com"}:
+        if phase == "left" or prefs.get("ControlURL") in (None, "", "https://controlplane.tailscale.com"):
             return
     _network(prefs, url)
 
 
 def _identity(status: dict, prefs: dict, expected_url: str, require_running: bool) -> ClientIdentity:
-    if status.get("BackendState") not in {"Running", "Stopped"}:
+    if status.get("BackendState") not in ("Running", "Stopped"):
         raise ClientError("Client enrollment is pending or unavailable")
     url = _network(prefs, expected_url)
     peer = status.get("Self")
@@ -187,14 +189,21 @@ def read_binding() -> dict | None:
         info = os.lstat(CLIENT_STATE)
     except FileNotFoundError:
         return None
+    with directory_fd(os.path.dirname(CLIENT_STATE)) as fd:
+        parent = os.fstat(fd)
+        if parent.st_uid != os.geteuid() or parent.st_mode & 0o077:
+            raise ClientError("Unsafe client ownership directory")
     if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
             or info.st_nlink != 1 or info.st_mode & 0o077):
         raise ClientError("Unsafe client ownership record")
     value = read_json_file(CLIENT_STATE, max_bytes=8192)
     if (not isinstance(value, dict) or set(value) != {"version", "url", "phase", "node_id"}
             or type(value["version"]) is not int or value["version"] != 1
-            or value["phase"] not in {"prepared", "joining", "enrolled", "left"}
-            or not isinstance(value["node_id"], str)):
+            or not isinstance(value["phase"], str)
+            or value["phase"] not in {"prepared", "joining", "enrolled", "left", "resuming"}
+            or not isinstance(value["node_id"], str)
+            or (value["phase"] in {"enrolled", "resuming"} and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9:_.-]{0,127}", value["node_id"]))
+            or (value["phase"] in {"prepared", "joining", "left"} and value["node_id"])):
         raise ClientError("Invalid client ownership record; preserve for recovery")
     validate_headscale_url(value["url"])
     return value
@@ -258,8 +267,97 @@ def client_lock():
         yield
 
 
+def check_native_state() -> None:
+    """Require a private, owned retained identity without reading its secrets."""
+    with directory_fd(os.path.dirname(NATIVE_STATE)) as fd:
+        parent = os.fstat(fd)
+        if parent.st_uid != os.geteuid() or parent.st_mode & 0o077:
+            raise ClientError("Unsafe retained native identity directory")
+        info = os.stat(os.path.basename(NATIVE_STATE), dir_fd=fd, follow_symlinks=False)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                or info.st_nlink != 1 or info.st_mode & 0o077):
+            raise ClientError("Unsafe retained native client identity")
+
+
+def require_private_daemon() -> None:
+    """Reuse the adapter's effective manager AND running process privacy proof."""
+    from common.service_tools.headscale_client_remote import _privacy
+
+    try:
+        check_native_state()
+        _privacy()
+    except (OSError, ValueError):
+        raise ClientError("Running private native daemon required") from None
+
+
+def check_privacy_dropin(path: str = PRIVACY_DROPIN) -> None:
+    with directory_fd(os.path.dirname(path)) as parent:
+        info = os.fstat(parent)
+        if info.st_uid != os.geteuid() or info.st_mode & 0o022:
+            raise ClientError("Unsafe native privacy directory")
+        fd = os.open(os.path.basename(path), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+        with os.fdopen(fd, "r", encoding="utf-8") as stream:
+            info = os.fstat(stream.fileno())
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                    or info.st_nlink != 1 or info.st_mode & 0o022
+                    or stream.read(4096) != PRIVACY_CONTENT):
+                raise ClientError("Reviewed native privacy drop-in required")
+
+
+def _resume_client(url: str, expected_node_id: str, *, dropin: str = PRIVACY_DROPIN) -> ClientIdentity:
+    """Locked implementation; retain uncertainty before any service mutation."""
+    binding = owned(url)
+    if binding["phase"] != "enrolled" or binding["node_id"] != expected_node_id:
+        raise ClientError("Resume requires reviewed enrolled node binding")
+    reject_control_host(url)
+    check_native_state()
+    check_privacy_dropin(dropin)
+    version(_object(["tailscale", "version", "--json"]).get("short"))
+    active = native(["systemctl", "show", "--property=ActiveState", "--value", "tailscaled"]).strip()
+    if active == "active":
+        require_private_daemon()
+        if observe_client(url, require_running=False).node_id != expected_node_id:
+            raise ClientError("Live identity differs from reviewed binding")
+    elif active not in {"inactive", "failed"}:
+        raise ClientError("Native service state uncertain; review before resume")
+    # Hold the teardown guard before starting: failure must be safe to quiesce.
+    with resolver_lifecycle_guard():
+        save_binding(url, "resuming", expected_node_id)
+        try:
+            native(["systemctl", "enable", "--now", "tailscaled"])
+            require_private_daemon()
+            identity = observe_client(url, require_running=False)
+            if identity.node_id != expected_node_id or identity.login_server != validate_headscale_url(url):
+                raise ClientError("Resumed node differs from reviewed binding")
+            if not identity.online:
+                native(["tailscale", "up"], timeout=65)
+            identity = observe_client(url)
+            if identity.node_id != expected_node_id or identity.login_server != validate_headscale_url(url):
+                raise ClientError("Resumed node differs from reviewed binding")
+            save_binding(url, "enrolled", expected_node_id)
+            return identity
+        except BaseException:
+            # Even a lost start acknowledgement can mean the daemon is live.
+            # Never clear the marker, including when quiescence itself fails.
+            try:
+                save_binding(url, "resuming", expected_node_id)
+            finally:
+                native(["systemctl", "disable", "--now", "tailscaled"])
+                state = native(["systemctl", "show", "--property=ActiveState", "--value", "tailscaled"])
+                if state.strip() not in {"inactive", "failed"}:
+                    raise ClientError("Resume uncertain and quiescence unverified; retain binding") from None
+            raise
+
+
+def resume_client(url: str, *, expected_node_id: str) -> ClientIdentity:
+    """Resume only an exact reviewed managed enrollment, without credentials."""
+    with client_lock():
+        return _resume_client(url, expected_node_id)
+
+
 def _reconcile(url: str) -> ClientIdentity:
     binding = owned(url)
+    require_private_daemon()
     identity = observe_client(url, require_running=False)
     if binding["node_id"] and binding["node_id"] != identity.node_id:
         raise ClientError("Client node identity changed; review before adoption")
@@ -279,6 +377,7 @@ def adopt_client(url: str, *, expected_node_id: str) -> ClientIdentity:
         if read_binding() is not None:
             raise ClientError("Client already managed")
         reject_control_host(validate_headscale_url(url))
+        require_private_daemon()
         identity = observe_client(url)
         if identity.node_id != expected_node_id:
             raise ClientError("Adoption identity changed")
@@ -295,8 +394,12 @@ def enroll_client(url: str, *, key_file: str | None = None,
     """
     with client_lock():
         url = validate_headscale_url(url)
+        if (not isinstance(expected_tags, (tuple, list)) or len(expected_tags) > 64
+                or any(not isinstance(t, str) or not re.fullmatch(r"tag:[a-zA-Z][a-zA-Z0-9-]{0,62}", t) for t in expected_tags)):
+            raise ClientError("Invalid approved service tags")
         reject_control_host(url)
         binding = owned(url)
+        require_private_daemon()
         status, prefs = snapshot()
         check_network(status, prefs, url, binding["phase"])
         if status["BackendState"] == "Running":
@@ -408,6 +511,7 @@ def abandon_enrollment(url: str, *, confirm: bool = False) -> None:
         raise ClientError("Pending enrollment abandonment requires explicit confirmation")
     with client_lock(), resolver_lifecycle_guard():
         binding = owned(url)
+        require_private_daemon()
         status, prefs = snapshot()
         _network(prefs, url)
         if (binding["phase"] != "joining" or binding["node_id"]

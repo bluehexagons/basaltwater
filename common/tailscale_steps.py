@@ -21,8 +21,8 @@ from lib.setup_directories import check_directory_path, directory_fd
 if TYPE_CHECKING:
     from lib.config import SetupConfig
 
-DROPIN = "/etc/systemd/system/tailscaled.service.d/10-basaltwater-privacy.conf"
-PRIVACY = '[Service]\nEnvironment="TS_NO_LOGS_NO_SUPPORT=true"\n'
+DROPIN = client.PRIVACY_DROPIN
+PRIVACY = client.PRIVACY_CONTENT
 KEYRING = "/usr/share/keyrings/basaltwater-tailscale.gpg"
 SOURCE = "/etc/apt/sources.list.d/basaltwater-tailscale.list"
 KEY_SHA256 = "3e03dacf222698c60b8e2f990b809ca1b3e104de127767864284e6c228f1fb39"
@@ -58,7 +58,7 @@ def _owned_file(path: str, content: str | bytes) -> None:
     check_directory_path(os.path.dirname(path))
     if os.path.lexists(path):
         info = os.lstat(path)
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_nlink != 1 or info.st_mode & 0o022:
             raise client.ClientError("Unsafe native client configuration file")
         old = Path(path).read_bytes()
         expected = content.encode() if isinstance(content, str) else content
@@ -128,21 +128,27 @@ def configure_tailscale(config: SetupConfig) -> None:
         binding = client.read_binding()
         if binding is not None:
             client.owned(url)
+            if binding["phase"] == "resuming":
+                raise client.ClientError("Previous resume uncertain; explicit reconciliation required")
         elif os.path.lexists(client.NATIVE_STATE) or shutil.which("tailscale"):
             raise client.ClientError("Existing native client requires explicit adoption")
         # A live identity must agree before package, service, or prefs changes.
         active = (client.native(["systemctl", "show", "--property=ActiveState", "--value", "tailscaled"]).strip()
                   if shutil.which("tailscale") else "inactive")
         if active == "active":
+            client.require_private_daemon()
             status, prefs = client.snapshot()
             client.check_network(status, prefs, url, binding["phase"] if binding else "unowned")
             if status["BackendState"] in {"Running", "Stopped"}:
                 client._reconcile(url)
+            if binding is not None and binding["phase"] == "enrolled" and status["BackendState"] == "Stopped":
+                client._resume_client(url, binding["node_id"], dropin=DROPIN)
+                return
         elif binding is not None and os.path.lexists(client.NATIVE_STATE):
-            # Do not reconnect an opaque retained native profile before its
-            # actual identity can be observed. Explicit recovery starts the
-            # daemon under operator review, then reruns reconciliation.
-            raise client.ClientError("Inactive retained native state requires reviewed daemon start and reconciliation")
+            client._resume_client(url, binding["node_id"], dropin=DROPIN)
+            return
+        elif binding is not None and binding["phase"] in {"enrolled", "joining"}:
+            raise client.ClientError("Managed native identity is missing; preserve binding for recovery")
         if binding is None:
             client.save_binding(url, "prepared")
         if not shutil.which("tailscale"):
@@ -150,9 +156,10 @@ def configure_tailscale(config: SetupConfig) -> None:
         else:
             # Existing daemons must already have the privacy setting; changing
             # it needs a reviewed restart because this may be a DNS node.
-            if not Path(DROPIN).is_file() or Path(DROPIN).read_text() != PRIVACY:
-                raise client.ClientError("Existing daemon privacy setting requires reviewed adoption")
+            client.check_privacy_dropin(DROPIN)
+            client.version(client._object(["tailscale", "version", "--json"]).get("short"))
         run(["systemctl", "enable", "--now", "tailscaled"])
+        client.require_private_daemon()
         status, prefs = client.snapshot()
         current = client.owned(url)
         if current["phase"] == "left" and status["BackendState"] == "NeedsLogin":
@@ -162,9 +169,5 @@ def configure_tailscale(config: SetupConfig) -> None:
             client._reconcile(url)
             # Native set updates just DNS acceptance, preserving route settings.
             client.native(["tailscale", "set", "--accept-dns=true"])
-        elif status["BackendState"] == "Stopped" and current["phase"] == "enrolled":
-            client._reconcile(url)
-            client.native(["tailscale", "up"], timeout=65)
-            client.observe_client(url)
         # NeedsLogin/approval and interrupted joins wait for explicit enrollment
         # or reconciliation. Setup never consumes a key or prints an AuthURL.
