@@ -29,7 +29,9 @@ requires strict host-key verification, runs one fixed helper and bounds input,
 output and execution time. Endpoint discovery supplies no SSH authority. Never
 include private endpoints, keys, inventory or raw results in tracked documents.
 
-The helper observes network, node and assigned interface addresses, validates
+On both DNS node and peer, the helper first verifies private retained client
+state and effective systemd/running-process privacy. It then observes network,
+node and assigned interface addresses, validates
 the owned resolver manifest and file hashes, then queries identity TXT, native
 recursion and valid/bogus DNSSEC using both private UDP and TCP. Bogus-domain
 verification also queries with checking disabled to distinguish DNSSEC rejection

@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from common.service_tools.headscale_dns import execute_request
+from common import unbound_steps
 from common.unbound_steps import verify_resolver
 from lib.headscale_dns_binding import DNSBinding
 from lib.unbound_config import health_identity
@@ -23,6 +24,24 @@ class DNSHelperTests(unittest.TestCase):
 
     def request(self, p=None):
         return execute_request(json.dumps(dict(action="peer", parameters=p or self.p)).encode())
+
+    def test_native_binding_requires_running_privacy_before_observing_identity(self):
+        with patch("lib.headscale_client.require_private_daemon", side_effect=ValueError("privacy unavailable")), \
+                patch("lib.headscale_client.observe_client") as observe, \
+                patch.object(unbound_steps, "run") as run, self.assertRaises(ValueError):
+            unbound_steps._observe(self.binding.network_url)
+        observe.assert_not_called()
+        run.assert_not_called()
+
+    def test_private_native_binding_checks_actual_interface_addresses(self):
+        from lib.headscale_client import ClientIdentity
+        identity = ClientIdentity("7", ("100.64.0.2",), self.binding.network_url, (), True, "dns")
+        interface = json.dumps([{"addr_info": [{"local": "100.64.0.2"}]}])
+        with patch("lib.headscale_client.require_private_daemon") as privacy, \
+                patch("lib.headscale_client.observe_client", return_value=identity), \
+                patch.object(unbound_steps, "run", return_value=subprocess.CompletedProcess([], 0, interface)):
+            self.assertEqual(unbound_steps._observe(self.binding.network_url), self.binding)
+        privacy.assert_called_once_with()
 
     def test_forged_health_and_unknown_commands_rejected(self):
         for p in ({**self.p, "health": True}, {"binding": self.binding.to_dict()},

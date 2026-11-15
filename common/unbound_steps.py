@@ -170,8 +170,9 @@ def _preflight(config: SetupConfig) -> None:
 
 def _observe(network_url: str) -> DNSBinding:
     # Lazy import keeps parsing/rendering usable before client integration lands.
-    from lib.headscale_client import observe_client
+    from lib.headscale_client import observe_client, require_private_daemon
 
+    require_private_daemon()
     identity = observe_client(network_url)
     binding = parse_dns_binding(DNSBinding(identity.login_server, identity.node_id, identity.addresses).to_dict())
     result = run(["ip", "-j", "address", "show", "dev", "tailscale0"], capture_output=True)
