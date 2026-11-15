@@ -31,10 +31,15 @@ def add_headscale_maintenance_parser(subparsers) -> argparse.ArgumentParser:
     parser = subparsers.add_parser("headscale-maintenance", help="Root local backup and recovery")
     commands = parser.add_subparsers(dest="headscale_maintenance_action", required=True)
     for action in ("backup", "validate", "restore", "upgrade", "unbound-backup",
-                   "unbound-validate", "unbound-restore", "unbound-recover-fresh"):
+                   "unbound-validate", "unbound-restore", "unbound-recover-fresh",
+                   "unbound-records-inspect", "unbound-records-replace"):
         command = commands.add_parser(action)
         command.add_argument("--dry-run", action="store_true")
-        if action == "unbound-recover-fresh":
+        if action == "unbound-records-inspect":
+            command.add_argument("--binding", required=True, help="Private exact expected DNSBinding JSON")
+        elif action == "unbound-records-replace":
+            command.add_argument("--review", required=True, help="Private exact binding/digest/replacement JSON")
+        elif action == "unbound-recover-fresh":
             command.add_argument("--review", required=True, help="Private exact operation/digest/identity review JSON")
         elif action in {"backup", "unbound-backup"}:
             command.add_argument("--destination", required=True)
@@ -67,22 +72,26 @@ def run_headscale_maintenance_command(args: argparse.Namespace) -> int:
     try:
         from lib import headscale_backup as hs
         from lib import unbound_backup as ub
+        from lib import unbound_records as ur
         from lib.headscale_dns_binding import parse_dns_binding
         from lib.headscale_server import Release, ServerManifest
 
         action = args.headscale_maintenance_action
         if action not in {"backup", "validate", "restore", "upgrade", "unbound-backup",
-                          "unbound-validate", "unbound-restore", "unbound-recover-fresh"}:
+                          "unbound-validate", "unbound-restore", "unbound-recover-fresh",
+                          "unbound-records-inspect", "unbound-records-replace"}:
             raise ValueError("Unknown maintenance action")
         for name in ("destination", "source", "target_package", "recovery_package", "backup"):
             if hasattr(args, name):
                 _path(getattr(args, name))
         expected = None
+        if action == "unbound-records-replace":
+            update = ur.parse_records_update(ub.private_json(_path(args.review)))
         if action == "unbound-recover-fresh":
             review = ub.validate_fresh_recovery_review(ub.private_json(_path(args.review)))
         if action in {"validate", "restore"}:
             expected = ServerManifest(**ub.private_json(_path(args.manifest)))
-        if action in {"unbound-validate", "unbound-restore"}:
+        if action in {"unbound-validate", "unbound-restore", "unbound-records-inspect"}:
             expected = parse_dns_binding(ub.private_json(_path(args.binding)))
         rebind = None
         if getattr(args, "reviewed_rebind", None):
@@ -98,12 +107,13 @@ def run_headscale_maintenance_command(args: argparse.Namespace) -> int:
             inventory = [Release(**item) for item in raw]
             hs.validate_upgrade(current, target, reviewed_releases=inventory)
         if args.dry_run:
-            print(json.dumps({"action": action, "dry_run": True}))
+            print(json.dumps({"action": action, "dry_run": True, "readiness_claim": False}))
             return 0
         if os.geteuid() != 0:
             raise ValueError("Root required")
         # Existing adapters may log commands/paths. Suppress all downstream
         # output, including native exception diagnostics, at this boundary.
+        metadata = {}
         with _private_output():
             if action == "backup":
                 hs.backup_headscale(_path(args.destination))
@@ -120,9 +130,13 @@ def run_headscale_maintenance_command(args: argparse.Namespace) -> int:
                 ub.validate_unbound_backup(_path(args.source), expected=expected)
             elif action == "unbound-recover-fresh":
                 ub.recover_fresh_unbound(reviewed=review)
+            elif action == "unbound-records-inspect":
+                metadata = ur.inspect_records(expected=expected)
+            elif action == "unbound-records-replace":
+                ur.replace_records(update)
             else:
                 ub.restore_unbound(_path(args.source), expected=expected, reviewed_rebind=rebind)
-        print(json.dumps({"action": action, "confirmed": True}))
+        print(json.dumps({"action": action, "confirmed": True, **metadata}))
         return 0
     except (Exception, KeyboardInterrupt):
         print("Maintenance unavailable or unconfirmed; preserve private recovery state and reconcile before retry",

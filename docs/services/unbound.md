@@ -55,6 +55,66 @@ TTL is 30–86400 seconds. Supply the intended MagicDNS suffix with
 control/onboarding hostnames, MagicDNS and the reserved resolver-health zone.
 Keep this inventory private. LAN-wide MagicDNS synchronization is outside scope.
 
+Use the root-local maintenance commands to replace the entire inventory. Direct
+editing of managed `records.json` invalidates the manifest hashes. On the DNS node:
+
+```bash
+sudo basaltw headscale-maintenance unbound-records-inspect --binding /private/expected-binding.json
+sudo basaltw headscale-maintenance unbound-records-replace --review /private/records-review.json --dry-run
+sudo basaltw headscale-maintenance unbound-records-replace --review /private/records-review.json
+```
+
+Inputs must be absolute paths to private owned regular JSON files (mode `0600`),
+with safe parent directories. The binding file is the exact reviewed version-1
+DNSBinding: `version`, `network_url`, `node_id`, `addresses`, `advertised` and
+`publication_id`, including the current publication reservation if present.
+Inspect emits only `records_sha256`, `record_count`, `enabled`, `advertised` and
+`readiness_claim: false`, plus action/confirmation flags. It reads owned state
+without creating locks or files; its result is a snapshot, not a readiness test.
+Review the existing private inventory and binding locally before replacement.
+
+The replacement review has exactly these fields (all names below are fictional):
+
+```json
+{
+  "version": 1,
+  "binding": {
+    "version": 1, "network_url": "https://vpn.example.com", "node_id": "7",
+    "addresses": ["100.64.0.2"], "advertised": false, "publication_id": null
+  },
+  "records_sha256": "COPY_THE_64_LOWERCASE_HEX_DIGEST_FROM_INSPECT",
+  "magic_dns_suffix": "mesh.example.net",
+  "onboarding_domain": "join.example.com",
+  "inventory": {
+    "version": 1,
+    "records": [
+      {"zone": "lan.example.net", "name": "files.lan.example.net", "type": "A", "value": "192.0.2.8", "ttl": 300}
+    ]
+  }
+}
+```
+
+Supply the known onboarding hostname, or `null` only when none exists. This is
+an additional reviewed exclusion, not a native observation. The expected
+MagicDNS suffix is checked against the running native client's effective
+tailnet status; a missing/disabled suffix or mismatch refuses the update.
+The retained native identity, enrollment ownership and running daemon privacy
+are checked independently of the review. Control and health exclusions remain
+mandatory. `inventory.records: []` removes all local records; every replacement
+must include all records to retain. The digest is SHA-256 of the exact prior
+`records.json` bytes, not a normalized JSON digest.
+
+Replacement requires an existing managed, active, persistently enabled resolver.
+It cannot install, adopt, enable a disabled resolver, enroll, rebind, or change
+network, node, addresses or publication identity. Exact binding and inventory
+comparison occurs under the shared publication/lifecycle lease; stale reviews
+fail before transaction writes. The same publication guard may remain in place.
+Activation uses the existing candidate validation, health checks, rollback and
+retained recovery protocol described above. Dry-run validates private input
+syntax only: no native/network calls, service/package activity, locks or state
+writes, and no readiness claim. Errors emit a generic reconciliation message;
+keep corrupt/unsafe files and unfinished recovery state for investigation.
+
 Back up the private `records.json`, `binding.json`, `managed.json`, managed
 Unbound fragment, default environment and systemd drop-in together. Cache data
 need not be retained. Maintain the distribution's trust-anchor update mechanism

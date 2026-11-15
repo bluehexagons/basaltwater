@@ -94,6 +94,42 @@ class MaintenanceTests(unittest.TestCase):
             self.assertEqual(0, cli.main(["headscale-maintenance", "backup", "--destination",
                                           str(self.root / "new"), "--dry-run"]))
 
+    def test_records_parser_dispatch_dryrun_and_private_output(self):
+        binding = dict(version=1, network_url="https://vpn.example.com", node_id="7",
+                       addresses=["100.64.0.2"], advertised=False, publication_id=None)
+        review = dict(version=1, binding=binding, records_sha256="a" * 64,
+                      magic_dns_suffix="mesh.example.net", onboarding_domain=None,
+                      inventory=dict(version=1, records=[]))
+        source = self.root / "records-review.json"
+        write_json_atomic(str(source), review)
+        expected = self.root / "binding.json"
+        write_json_atomic(str(expected), binding)
+        for action, flag, path in (("unbound-records-replace", "--review", source),
+                                   ("unbound-records-inspect", "--binding", expected)):
+            words = [action, flag, str(path)]
+            with patch("lib.unbound_records.replace_records") as replace, patch(
+                    "lib.unbound_records.inspect_records", return_value={"record_count": 0}) as inspect:
+                with patch("lib.remote_utils.run", side_effect=AssertionError("native")), patch(
+                    "lib.headscale_dns_binding.dns_binding_lease", side_effect=AssertionError("lock")
+                ), patch.object(cli, "_private_output", side_effect=AssertionError("mutation")):
+                    code, out, err = self.invoke([*words, "--dry-run"])
+                self.assertEqual(0, code)
+                self.assertIn('"readiness_claim": false', out)
+                replace.assert_not_called()
+                inspect.assert_not_called()
+                with patch.object(cli.os, "geteuid", return_value=0), patch(
+                        "lib.unbound_backup.private_json", return_value=review if action.endswith("replace") else binding):
+                    code, out, err = self.invoke(words)
+                self.assertEqual(0, code)
+                self.assertNotIn("vpn.example.com", out + err)
+                if action.endswith("replace"):
+                    self.assertEqual("a" * 64, replace.call_args.args[0].records_sha256)
+                else:
+                    self.assertEqual("7", inspect.call_args.kwargs["expected"].node_id)
+        review["records_sha256"] = "invalid"
+        write_json_atomic(str(source), review)
+        self.assertEqual(1, self.invoke(["unbound-records-replace", "--review", str(source), "--dry-run"])[0])
+
     def test_fresh_recovery_dispatch_and_dryrun(self):
         review = dict(operation={"operation_id": "reviewed"}, backup_sha256="a" * 64,
                       binding=dict(version=1, network_url="https://vpn.example.com", node_id="7",
