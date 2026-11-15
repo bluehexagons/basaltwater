@@ -11,6 +11,7 @@ from pathlib import Path
 import pwd
 import re
 import shutil
+import sqlite3
 import stat
 import tempfile
 import time
@@ -252,7 +253,7 @@ server {{
 """
 
 
-def configtest(path: Path) -> None:
+def configtest(path: Path, *, expected_database_schema: Path | None = None) -> None:
     """Validate with scratch state: upstream configtest initializes its database.
 
     Never let validation create keys, migrate the live database, or change its
@@ -293,6 +294,20 @@ def configtest(path: Path) -> None:
                      check=False, capture_output=True, timeout=30)
         if result.returncode:
             raise RuntimeError("Headscale configtest failed; candidate not activated")
+        if expected_database_schema is not None:
+            def schema(database: Path) -> list:
+                connection = sqlite3.connect(database.as_uri() + "?mode=ro&immutable=1", uri=True)
+                try:
+                    return connection.execute(
+                        "SELECT type, name, tbl_name, sql FROM sqlite_master "
+                        "WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+                    ).fetchall()
+                finally:
+                    connection.close()
+            regular_bytes(expected_database_schema)
+            native_schema = schema(scratch / "db.sqlite")
+            if not native_schema or schema(expected_database_schema) != native_schema:
+                raise ValueError("Headscale database schema differs from pinned native schema; migrate manually")
 
 
 def health(paths: ServerPaths) -> None:
