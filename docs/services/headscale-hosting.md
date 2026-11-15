@@ -90,7 +90,14 @@ gap. The restore adapter below accepts managed snapshots only.
 Operations share a private lock and durable `operation.json` marker. Failure or
 interruption leaves the marker to block blind retries. The shared Nginx lock
 excludes ordinary Nginx reconciliation. Config is tested with actual
-`headscale configtest` before atomic replacement. Failed native activation
+`headscale configtest` before atomic replacement. That command initializes
+SQLite and private keys, so validation redirects its state into a private
+temporary directory and copies existing keys there for native key validation.
+It uses a fresh scratch database and cannot migrate or change ownership of the
+production database. Headscale environment overrides are removed for the check.
+The daemon initializes or migrates production state under its service account
+during activation; health verification and the matching-data recovery procedure
+cover that separate boundary. Failed native activation
 restores the prior config when available and checks native health. First-install
 failure stops the service and restores the prior Nginx file; usable certificates
 and additive firewall allowances remain. Package installation and firewall rules

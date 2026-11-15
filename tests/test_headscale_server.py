@@ -27,6 +27,50 @@ def fixture_paths(root):
 
 
 class HeadscaleServerTests(unittest.TestCase):
+    def test_configtest_isolates_database_keys_and_environment(self):
+        with tempfile.TemporaryDirectory() as root:
+            paths = fixture_paths(root)
+            paths.etc.mkdir()
+            paths.data.mkdir()
+            paths.config.write_text(server.render_config(configuration(), paths))
+            paths.config.chmod(0o600)
+            retained = {paths.data / "db.sqlite": b"live-database",
+                        paths.data / "noise_private.key": b"private-noise",
+                        paths.data / "derp_server_private.key": b"private-relay"}
+            for path, value in retained.items():
+                path.write_bytes(value)
+                path.chmod(0o600)
+            candidates = []
+
+            def execute(command, **keywords):
+                candidate = Path(command[2])
+                candidates.append(candidate)
+                content = json.loads(candidate.read_text())
+                self.assertEqual(candidate.stat().st_mode & 0o777, 0o600)
+                self.assertEqual(candidate.parent.stat().st_mode & 0o777, 0o700)
+                self.assertFalse(any(key.startswith("HEADSCALE_") for key in keywords["env"]))
+                database = Path(content["database"]["sqlite"]["path"])
+                self.assertEqual(database.parent, candidate.parent)
+                self.assertFalse(database.exists())
+                database.write_bytes(b"native-migration")
+                for section, filename, value in ((content["noise"], "noise.key", b"private-noise"),
+                                                (content["derp"]["server"], "derp.key", b"private-relay")):
+                    key = Path(section["private_key_path"])
+                    self.assertEqual(key, candidate.parent / filename)
+                    self.assertEqual(key.read_bytes(), value)
+                    self.assertEqual(key.stat().st_mode & 0o777, 0o600)
+                    key.write_bytes(b"native-side-effect")
+                return subprocess.CompletedProcess(command, 1, "private-native-diagnostics")
+
+            with patch.object(server, "run", side_effect=execute), \
+                    patch.dict(server.os.environ, {"HEADSCALE_DATABASE_SQLITE_PATH": str(paths.data / "db.sqlite")}):
+                with self.assertRaisesRegex(RuntimeError, "candidate not activated"):
+                    server.configtest(paths.config)
+            self.assertTrue(candidates)
+            self.assertFalse(candidates[0].parent.exists())
+            for path, value in retained.items():
+                self.assertEqual(path.read_bytes(), value)
+
     @patch.object(steps.os, "fchown")
     @patch.object(steps, "require_capabilities")
     @patch.object(steps, "health")

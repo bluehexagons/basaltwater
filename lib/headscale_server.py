@@ -16,7 +16,7 @@ import tempfile
 import time
 from collections.abc import Iterator
 
-from lib.atomic_io import read_json_file, write_bytes_atomic
+from lib.atomic_io import parse_json, read_json_file, write_bytes_atomic
 from lib.config import SetupConfig
 from lib.headscale_config import validate_headscale_settings, validate_headscale_url
 from lib.machine_state import can_manage_firewall, can_manage_system_services
@@ -253,11 +253,46 @@ server {{
 
 
 def configtest(path: Path) -> None:
-    # Capture diagnostics: malformed configs may contain private material.
-    result = run(["headscale", "--config", str(path), "configtest"],
-                 check=False, capture_output=True, timeout=30)
-    if result.returncode:
-        raise RuntimeError("Headscale configtest failed; candidate not activated")
+    """Validate with scratch state: upstream configtest initializes its database.
+
+    Never let validation create keys, migrate the live database, or change its
+    ownership. Existing keys are copied privately so their format and distinct
+    identities are still validated. The daemon owns production initialization.
+    """
+    content = parse_json(regular_bytes(path))
+    if not isinstance(content, dict):
+        raise ValueError("Managed Headscale validation requires an object")
+    database, noise, derp = (content.get(name) for name in ("database", "noise", "derp"))
+    if (not isinstance(database, dict) or database.get("type") != "sqlite"
+            or not isinstance(database.get("sqlite"), dict) or not isinstance(noise, dict)
+            or not isinstance(derp, dict) or not isinstance(derp.get("server"), dict)):
+        raise ValueError("Managed Headscale validation requires its SQLite configuration")
+    with tempfile.TemporaryDirectory(prefix="headscale-configtest-") as temporary:
+        scratch = Path(temporary)
+        for settings, key, filename in (
+            (content["database"]["sqlite"], "path", "db.sqlite"),
+            (content["noise"], "private_key_path", "noise.key"),
+            (content["derp"]["server"], "private_key_path", "derp.key"),
+        ):
+            original = settings.get(key)
+            validate_filesystem_path(original)
+            source = Path(original)
+            if not source.is_absolute() or ".." in source.parts:
+                raise ValueError("Managed Headscale state paths must be absolute")
+            destination = scratch / filename
+            if filename != "db.sqlite" and (source.exists() or source.is_symlink()):
+                write_bytes_atomic(str(destination), regular_bytes(source), mode=0o600)
+            settings[key] = str(destination)
+        content["unix_socket"] = str(scratch / "headscale.sock")
+        candidate = scratch / "config.yaml"
+        write_bytes_atomic(str(candidate), (json.dumps(content) + "\n").encode(), mode=0o600)
+        # Environment overrides must not redirect validation back to live state.
+        environment = {key: value for key, value in os.environ.items()
+                       if not key.startswith("HEADSCALE_")}
+        result = run(["headscale", "--config", str(candidate), "configtest"], env=environment,
+                     check=False, capture_output=True, timeout=30)
+        if result.returncode:
+            raise RuntimeError("Headscale configtest failed; candidate not activated")
 
 
 def health(paths: ServerPaths) -> None:
