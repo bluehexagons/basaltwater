@@ -32,7 +32,8 @@ HOST_FIELDS = (
     "headscale_public_ipv4", "headscale_public_ipv6", "headscale_resolvers",
 )
 CLIENT_FIELDS = ("tailscale", "tailscale_server", "tailscale_server_id", "tailscale_login_server")
-FIELDS = ("headscale", "unbound", *HOST_FIELDS, *CLIENT_FIELDS)
+CONTROLLER_FIELDS = ("headscale_name", "headscale_registration_id", "headscale_registration_binding", "tailscale_tags")
+FIELDS = ("headscale", "unbound", *HOST_FIELDS, *CLIENT_FIELDS, *CONTROLLER_FIELDS)
 # Local listeners reserved for the later service installer (TCP); STUN is UDP.
 HEADSCALE_TCP_PORTS = frozenset({8080, 9090, 50443})
 
@@ -93,6 +94,8 @@ def add_headscale_arguments(parser: argparse.ArgumentParser, *, for_remote: bool
     selection = parser.add_mutually_exclusive_group()
     if not for_remote:
         selection.add_argument("--tailscale", dest="tailscale_server", metavar="NAME", help="Join the saved Headscale server selected by name")
+        parser.add_argument("--headscale-name", help="Register this managed control server by name")
+        parser.add_argument("--tailscale-tag", dest="tailscale_tags", action="append", help="Authorize automatic enrollment with this service tag; repeatable")
     selection.add_argument("--tailscale-login-server", metavar="HTTPS_URL", type=validate_headscale_url, help="Join this explicit HTTPS control endpoint")
     selection.add_argument("--no-tailscale", dest="tailscale", action="store_false", default=None, help="Disable managed client setup; preserve device identity (does not leave)")
     for name in HOST_FIELDS:
@@ -118,6 +121,31 @@ def headscale_from_args(args: argparse.Namespace) -> dict[str, Any]:
 
 def validate_headscale_settings(config: SetupConfig, *, complete: bool = False) -> None:
     """Validate patch syntax early; require resolved values before transport."""
+    if config.headscale_name is not None:
+        _reference(config.headscale_name, "managed server name")
+    if config.headscale_registration_id is not None:
+        import uuid
+
+        if (not isinstance(config.headscale_registration_id, str)
+                or str(uuid.UUID(config.headscale_registration_id)) != config.headscale_registration_id):
+            raise ValueError("Invalid managed server registration identity")
+    if config.headscale_registration_binding is not None:
+        from lib.headscale_transport import parse_ssh_binding
+
+        binding = config.headscale_registration_binding
+        if type(binding) is not dict or set(binding) != {"endpoint", "ssh"} or not config.headscale_registration_id:
+            raise ValueError("Invalid retained hosting authority")
+        validate_headscale_url(binding["endpoint"])
+        parse_ssh_binding(binding["ssh"])
+    if config.tailscale_tags is not None:
+        from lib.headscale_admin import AdminError, approved_tags
+
+        try:
+            config.tailscale_tags = approved_tags(config.tailscale_tags)
+        except AdminError as exc:
+            raise ValueError(str(exc)) from exc
+        if config.tailscale is not False and not config.tailscale_server:
+            raise ValueError("Automatic enrollment requires a named saved network")
     for name in ("headscale", "tailscale", "unbound"):
         value = getattr(config, name)
         if value is not None and type(value) is not bool:
@@ -251,6 +279,11 @@ def headscale_args(config: SetupConfig, *, for_remote: bool = False) -> list[str
     """Reconstruct selection locally; transport only the resolved endpoint."""
     validate_headscale_settings(config, complete=for_remote)
     result = []
+    if not for_remote:
+        if config.headscale_name:
+            result.append("--headscale-name " + shlex.quote(config.headscale_name))
+        if config.tailscale is not False:
+            result.extend("--tailscale-tag " + shlex.quote(tag) for tag in config.tailscale_tags or [])
     for name in ("headscale", "unbound"):
         if getattr(config, name) is not None:
             result.append("--" + ("" if getattr(config, name) else "no-") + name)
@@ -281,9 +314,13 @@ def merge_headscale_settings(cached: SetupConfig, patch: SetupConfig, *, preserv
     """
     preserved = preserve_keys or set()
     values = {name: deepcopy(getattr(cached, name)) for name in FIELDS}
-    for name in ("headscale", "unbound", *HOST_FIELDS):
+    for name in ("headscale", "unbound", *HOST_FIELDS, "headscale_name"):
         if name not in preserved and getattr(patch, name) is not None:
             values[name] = deepcopy(getattr(patch, name))
+    if patch.tailscale_tags is not None and "tailscale_tags" not in preserved:
+        if cached.tailscale_tags is not None and patch.tailscale_tags != cached.tailscale_tags:
+            raise ValueError("Changing saved enrollment tags requires explicit device migration")
+        values["tailscale_tags"] = deepcopy(patch.tailscale_tags)
     if not preserved.intersection(CLIENT_FIELDS):
         if patch.tailscale is False:
             values["tailscale"] = False

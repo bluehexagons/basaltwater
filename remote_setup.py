@@ -475,6 +475,7 @@ def _run_main() -> int:
     )
     parser.add_argument("--artifact-releases-json", help=argparse.SUPPRESS)
     parser.add_argument("--expected-setup-revision", help=argparse.SUPPRESS)
+    parser.add_argument("--prepare-tailscale-client", action="store_true", help=argparse.SUPPRESS)
     
     args = parser.parse_args(_resolve_cli_args(sys.argv[1:]))
     expected_json = getattr(args, "artifact_releases_json", None)
@@ -525,6 +526,15 @@ def _run_main() -> int:
     if not validate_username(config.username):
         print(f"Error: Invalid username: {config.username}")
         return 1
+
+    if getattr(args, "prepare_tailscale_client", False):
+        from plugins.headscale import prepare_tailscale_client
+
+        if expected_json is not None or config.custom_steps:
+            raise ValueError("Client preparation cannot apply an artifact profile or custom steps")
+        with machine_type_context(config.machine_type):
+            prepare_tailscale_client(config)
+        return 0
 
     if config.custom_steps == "bootstrap_build_target":
         from common.build_target_bootstrap import bootstrap_build_target

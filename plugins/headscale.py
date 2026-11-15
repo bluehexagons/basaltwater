@@ -17,6 +17,19 @@ PLUGIN = PluginDefinition(
 )
 
 
+def prepare_tailscale_client(config: SetupConfig) -> None:
+    """Internal admission/firewall/client path without profile persistence."""
+    from common.headscale_preflight import preflight_network_services
+    from common.tailscale_steps import configure_tailscale
+    from security.steps import configure_firewall
+
+    if not config.tailscale or config.headscale or config.unbound or config.deploy_specs:
+        raise ValueError("Client preparation requires only native client intent")
+    preflight_network_services(config)
+    configure_firewall(config)
+    configure_tailscale(config)
+
+
 def extend_headscale_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]]) -> None:
     """Compose native services before the portal exports installed features."""
     onboarding = bool(getattr(config, "headscale_onboarding_domain", None))

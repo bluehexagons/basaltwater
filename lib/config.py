@@ -507,6 +507,10 @@ class SetupConfig:
     network_dns: Optional[StrList] = None
     network_interface: MaybeStr = None
     headscale: bool | None = None
+    headscale_name: MaybeStr = None
+    headscale_registration_id: MaybeStr = None
+    headscale_registration_binding: dict | None = None
+    tailscale_tags: Optional[StrList] = None
     tailscale: bool | None = None
     unbound: bool | None = None
     headscale_domain: MaybeStr = None
