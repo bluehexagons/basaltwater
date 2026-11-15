@@ -1,15 +1,18 @@
 # Headscale integration
 
-Status: planned; Headscale hosting and Tailscale client enrollment are not
-implemented. Provide an optional private network for managed servers,
-workstations, agent VMs and builders, including access to SSH and management
-services across NAT.
+Status: ready for implementation handoff; hosting, enrollment and managed
+Unbound support are not implemented. Provide an optional private network for
+managed servers, workstations, agent VMs and builders, including access to SSH
+and management services across NAT.
+
+Start implementation with the [handoff and work sequence](headscale-implementation.md).
+This plan owns scope; the linked enrollment and networking contracts own behavior.
 
 ## Scope and boundaries
 
 - Treat Headscale hosting and Tailscale client enrollment as independent
   capabilities. Clients may join an existing Headscale server. Start with
-  Debian servers and managed Linux clients on explicitly supported profiles;
+  Debian servers and managed Debian clients on explicitly supported profiles;
   end-user onboarding uses official clients across desktop and mobile platforms.
 - Install a pinned, integrity-verified official Headscale Debian package with
   its service account and systemd unit. Use SQLite and a dedicated public HTTPS
@@ -24,6 +27,11 @@ services across NAT.
   Apply the selected peer access and DNS configuration explicitly. Enrollment
   must not open public service ports, advertise routes, enable an exit node or
   enroll the Headscale host into its own network.
+- Include optional managed Unbound installation on a separate enrolled Debian
+  DNS node. Publish its resolver address only after enrollment and DNS health
+  checks; never require that address to bootstrap its own network connection.
+  Deliver Unbound setup and management as part of this project, including its
+  configuration, service lifecycle, security updates and recovery documentation.
 
 ## Named servers and end-user onboarding
 
@@ -76,7 +84,7 @@ SSO integration, provider hosting and a custom identity provider are deferred.
 The [self-hosted SSO assessment](headscale-sso.md) preserves research for a later
 decision; it is not an active qualification task.
 
-## Selected defaults and remaining decisions
+## Selected defaults and deployment inputs
 
 - **Access policy:** all enrolled systems may communicate with each other over
   their overlay addresses. Headscale already defaults to allow-all without a
@@ -95,16 +103,21 @@ decision; it is not an active qualification task.
   delivery. Enable embedded DERP with client verification and remove Tailscale's
   public DERP map; do not require a paid service or public Tailscale relays.
   One relay is the initial availability tradeoff; a second owned relay can follow.
-- **DNS design to confirm:** recommend MagicDNS for enrolled device names and
-  Unbound for recursive DNS and local records. Decide whether to send all other
-  queries to Unbound or only selected private zones before implementing DNS
-  defaults. DNS installation and DNS adoption are explicit configuration choices.
-- **Lifetime:** make enrollment-key lifetime and device reauthentication
-  separate explicit settings; settle defaults against pinned client behavior.
+- **DNS:** use MagicDNS for enrolled device names and managed Unbound for all
+  remaining DNS queries on new managed networks. Install Unbound on a separate
+  enrolled DNS node; use its overlay address and native recursion with DNSSEC
+  validation. Network setup is opt-in; adopted external servers retain their DNS
+  policy. Split DNS and LAN-wide publication of device records are later scope.
+- **Lifetime:** use single-use machine enrollment keys with a one-hour lifetime.
+  Preserve native Headscale/client device lifetimes and support administrator
+  expiry/revocation; add no periodic reapproval service. A key's expiry does not
+  expire an enrolled device. Report the actual device expiry rather than
+  promising indefinite enrollment.
 - **Deployment inputs:** choose the server profile/architecture, public control
   and onboarding hostnames, page visibility, administrative SSH identity and
-  backup destination before live qualification. Keep real endpoints and account
-  details in private configuration. These inputs need not block initial code.
+  DNS-node host, DNS suffix and backup destination before live qualification.
+  Keep real endpoints and account details in private configuration. These inputs
+  need not block initial code; no product decisions remain open for this scope.
 
 See [network access, relays and DNS](headscale-networking.md) for the rationale,
 public-relay limitations, Unbound topology and connectivity acceptance.
@@ -144,27 +157,46 @@ public-relay limitations, Unbound topology and connectivity acceptance.
    commands and durable setup payloads. Preserve valid enrollment and require an
    explicit operation to change control servers or leave. Apply the explicit
    all-to-all default to new networks and preserve adopted policies, accounting
-   for Tailscale's own firewall behavior. Deliver the join page, conditional Web
-   Portal administration and native CLI recovery. Configure the chosen MagicDNS
-   and Unbound integration with reachable private resolvers and bootstrap-safe
-   control-host resolution. SSO and provider management remain outside this scope.
+   for Tailscale's own firewall behavior. Provide native CLI administration and
+   recovery before relying on the portal. Keep device lifetimes native.
    **Acceptance:** two disposable clients can initiate connections in both
    directions under the default; a restrictive policy fixture still blocks denied
    traffic and public ingress stays unchanged. Expired keys, interrupted joins
    and setup reruns do not leak keys, duplicate enrollment or remove recovery access.
-   Qualify guided enrollment on Windows, macOS, Linux, iOS and Android separately,
-   including pre-join page access, denied/expired approval and device revocation.
+   Verify expiry, revocation and secret handling under the enrollment contract.
+
+4. **Managed DNS.** Enroll the separate DNS node, install and validate Unbound,
+   and verify private UDP/TCP DNS and public recursion before publishing its
+   address through Headscale. Enable MagicDNS with a distinct suffix and direct
+   remaining queries to Unbound. Preserve the platform DNS manager and test
+   control-host resolution before enrollment and after reboot/disconnection.
+   **Acceptance:** enrolled clients resolve device names, private records and
+   public names; invalid DNSSEC responses fail validation. Unknown/public clients
+   cannot use recursion. Resolver failure has a clear diagnostic and never
+   silently switches to a public recursive provider. Setup reruns preserve
+   enrollment, unrelated resolver configuration and independent recovery.
+
+5. **Onboarding and Web Portal administration.** Deliver the static join page
+   and conditional administration page under the enrollment contract. Use a
+   bounded backend adapter to native Headscale administration; preserve existing
+   portal authentication, authorization and privileged-action review boundaries.
+   SSO and provider management remain outside this scope.
+   **Acceptance:** qualify guided enrollment on Windows, macOS, Linux, iOS and
+   Android separately, including pre-join page access, denied/expired approval
+   and device revocation.
    Verify onboarding-origin isolation, restricted enrollment identities, secret
    handling and revocation under the enrollment contract before declaring it ready.
 
-4. **Recovery and qualification.** Add consistent backups of configuration,
-   SQLite data and private keys, a documented restore procedure, and controlled
+6. **Recovery and qualification.** Add consistent backups of configuration,
+   SQLite data and private keys, Unbound configuration/local records and DNS-node
+   identity or a verified replacement/rebinding procedure. Add controlled
    upgrades following upstream's sequential minor-version requirements. Preserve
    the matching pre-upgrade data for recovery from database migrations; replacing
    a binary alone is not rollback. Document manual setup, diagnosis and removal.
    **Acceptance:** restore onto a replacement disposable server, qualify an
    upgrade and recovery, and verify client connectivity after service restart
-   and reboot. Record sanitized scope and gaps in the coverage map.
+   and reboot, including the DNS-node binding. Record sanitized scope and gaps
+   in the coverage map.
 
 ## Delivery and checks
 

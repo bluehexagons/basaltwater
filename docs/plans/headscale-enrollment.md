@@ -1,6 +1,6 @@
 # Headscale enrollment and onboarding security
 
-Status: proposed implementation contract for the [Headscale plan](headscale.md).
+Status: agreed implementation contract for the [Headscale plan](headscale.md).
 These enrollment commands and onboarding services are not implemented yet.
 
 Initial enrollment uses Headscale's native administrator approval and machine
@@ -36,7 +36,9 @@ Do not place a browser login gate in front of native client protocol endpoints.
 Include a Headscale administration page when Headscale and the Web Portal are
 both installed. Use the portal's authenticated administrator context, explicit
 authorization for each operation, CSRF defenses and audit records without secret
-values. A narrowly scoped backend performs native Headscale operations through
+values. Preserve existing privileged-action review and policy boundaries; a
+portal login or T3 pairing session alone does not grant privileged authority.
+A narrowly scoped backend performs native Headscale operations through
 the local Unix socket; do not expose that socket, raw administrative credentials,
 shell commands or database access to the browser. Keep CLI administration over
 authenticated SSH as an independent recovery path. Registering a named external
@@ -60,10 +62,13 @@ cannot issue keys or approve devices, and T3 pairing credentials grant no access
    the intended person and exact pending authentication ID before approving that
    request for that user through the authorized portal backend or Headscale's
    CLI. Hostname alone is insufficient.
+   Do not assume the pinned API can enumerate pending requests: an administrator
+   may enter the Auth ID obtained through the verified channel. Resolve it using
+   native registration and reject expired, already-consumed or mismatched requests.
    Expired or failed requests restart native registration; do not distribute a
    shared reusable key or invent a separate invitation-token system.
 3. **Automate managed machines separately.** After target preflight, an explicitly
-   authorized administrator/controller issues a short-lived, single-use
+   authorized administrator/controller issues a one-hour, single-use
    preauthenticated key carrying only the approved service tags. Deliver it over
    authenticated private transport and use the client's supported secret-file or
    equivalent private input mechanism. Keep secret values out of argv, URLs,
@@ -73,8 +78,10 @@ cannot issue keys or approve devices, and T3 pairing credentials grant no access
 4. **Verify and manage the lifecycle.** Check the enrolled node's server,
    identity, tags and intended access. Test bidirectional access under the default
    policy and denied access where a restrictive policy is selected. Ordinary
-   reruns preserve valid enrollment. Set and document device reauthentication
-   policy separately from key expiry. Offboarding blocks future enrollment and
+   reruns preserve valid enrollment. Preserve native Headscale/client device
+   lifetimes; do not add scheduled reapproval or renewal. Display observed device
+   expiry separately from the one-hour bootstrap-key lifetime, and support native
+   administrative expiry/revocation. Offboarding blocks future enrollment and
    explicitly revokes/removes existing nodes and affected access grants. Revoking
    a bootstrap key alone is not verified node removal;
    confirm loss of access and retain an independent administrative recovery path.

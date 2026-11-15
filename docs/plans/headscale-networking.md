@@ -1,8 +1,9 @@
 # Headscale network access, relays and DNS
 
 Status: design contract for the unimplemented [Headscale integration](headscale.md).
-All-to-all peer access and fully self-hosted relays are selected requirements;
-the Unbound query-routing default remains to be confirmed.
+All-to-all peer access, owned relays, MagicDNS and managed Unbound for all other
+queries are selected requirements. See the [implementation handoff](headscale-implementation.md)
+for the dependency order and completion gates.
 
 ## Access among enrolled systems
 
@@ -74,21 +75,22 @@ These services have complementary jobs:
 - A saved Headscale name such as `office` is a Basaltwater configuration alias,
   separate from the public control hostname, node DNS suffix and Unbound zones.
 
-Recommend MagicDNS for enrolled device names, with Unbound handling the other
-queries selected by policy. Choose a distinct MagicDNS suffix that differs from
+Use MagicDNS for enrolled device names, with Unbound handling all other queries
+on new managed networks. Choose a distinct MagicDNS suffix that differs from
 the control hostname and does not collide with LAN records. Replace public
 recursive resolver examples from the upstream sample configuration with the
 operator's own resolvers. Clients must accept the managed DNS settings.
 
-Before implementation, choose between all remaining DNS queries going to
-Unbound, or split DNS sending only selected private zones there while retaining
-the device's existing general resolver. The former gives consistent self-hosted
-resolution; the latter preserves local-network DNS behavior. Installing Unbound
-does not implicitly authorize changing every client's DNS configuration.
+Installing and adopting this network is explicit; existing external servers keep
+their DNS settings. General resolution uses the owned Unbound resolver while
+connected. Split DNS is later scope. Let the native client/platform DNS manager
+apply and restore settings; do not overwrite unrelated OS resolver configuration.
+This configures normal resolver use, not device-wide enforcement against
+applications deliberately selecting another DNS service.
 
-Unbound must be reachable from remote enrolled clients: prefer a dedicated
-enrolled DNS node's overlay address. A LAN resolver instead needs an explicitly
-configured reachable route; subnet routing is outside the first deliverable.
+Install and manage Unbound on a separate enrolled Debian DNS node, using its
+overlay address. A LAN resolver instead needs an explicitly configured reachable
+route; subnet routing is outside the first deliverable.
 Do not enroll the Headscale control host into its own network merely to expose
 DNS; upstream does not support that topology. Permit UDP and TCP 53 only from
 intended private clients, with matching Unbound access controls and firewall
@@ -98,6 +100,46 @@ Ordinary LAN clients without Tailscale do not acquire MagicDNS records
 automatically. Publishing those names into Unbound requires a separately owned
 record synchronization design and is later scope. Do not forward Unbound's
 default queries back into the same client's MagicDNS resolver and create a loop.
+
+## Managed Unbound contract
+
+- Use distribution-managed Unbound packages and security updates, systemd and a
+  Basaltwater-owned configuration fragment. Enable native recursive resolution,
+  caching and DNSSEC validation using maintained trust anchors. Do not configure
+  a public recursive provider as an upstream or fallback. Recursion needs outbound
+  UDP/TCP 53 to authoritative DNS servers; DNSSEC does not encrypt those queries.
+- Preflight address/port ownership and existing resolver configuration before
+  changes. Bind private serving addresses explicitly, with matching access
+  controls and firewall rules. Keep query logging off by default and remote
+  management disabled or local. Existing LAN records/settings require explicit
+  adoption; do not replace an unmanaged resolver configuration silently.
+- First enroll the DNS node using its preexisting bootstrap resolver. Observe
+  its stable node identity and overlay addresses from the intended Headscale
+  network, install/configure Unbound, and test queries from another enrolled
+  client. Only then publish it as the network resolver. Keep the DNS node's own
+  recursion and control-host bootstrap independent of a circular forwarding path.
+  Until adoption succeeds, leave general client resolution at its bootstrap
+  settings; never copy public recursive defaults from the Headscale sample.
+- Validate with `unbound-checkconf` before atomic configuration replacement and
+  activation. Failed validation or activation preserves/restores working managed
+  configuration and reports the failing stage. Preserve unrelated fragments.
+  Qualify boot ordering when the overlay address is not yet available.
+- Save the network-to-DNS-node binding as private non-secret metadata; reject a
+  resolver from another network. Node replacement or overlay-address changes
+  require observed identity/address reconciliation and health checks before
+  publishing updated DNS settings. A failed DNS rollout keeps the prior working
+  resolver settings and never leaves an unverified address advertised.
+  Guard DNS-node disable, leave and removal while it is advertised: withdraw or
+  replace the resolver through explicit network reconfiguration first.
+- One resolver is the initial availability tradeoff. Include configuration,
+  local records and trust-anchor maintenance in recovery procedures; DNS cache
+  data need not be backed up. A second resolver and existing-resolver adoption
+  beyond the owned fragment are later scope.
+
+MagicDNS adds no hosted-service fee or additional resolver server requirement.
+Names apply to enrolled clients, do not provision HTTPS certificates, and extra
+Headscale records currently support only A/AAAA. Test naming collisions and
+applications that bypass system DNS; use Unbound for other private DNS records.
 
 ## Qualification
 
@@ -123,4 +165,5 @@ default queries back into the same client's MagicDNS resolver and create a loop.
 - [Use the configuration example matching the installed version](https://headscale.net/stable/ref/configuration/)
 - [Tailscale device-local DNS resolver](https://tailscale.com/docs/reference/quad100)
 - [Unbound resolver and local/forward zones](https://unbound.docs.nlnetlabs.nl/en/latest/manpages/unbound.conf.html)
+- [Unbound installation, DNSSEC and private-network serving](https://unbound.docs.nlnetlabs.nl/en/latest/use-cases/home-resolver.html)
 - [Headscale same-host and client-log limitations](https://headscale.net/stable/about/faq/)
