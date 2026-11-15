@@ -75,6 +75,7 @@ NAVIGATION_ICONS = {
     "Maintenance agent": "maintenance", "Agent inbox": "notifications",
     "Certificate trust": "certificate", "Maintenance": "maintenance",
     "GitHub runner": "jobs",
+    "Headscale": "security",
     "Local service status": "service-status", "Scheduled jobs": "jobs",
     "Service diagnostics": "diagnostics", "Storage": "storage",
 }
@@ -90,6 +91,7 @@ PAGE_ICONS = {
     "credentials": "access", "storage": "storage", "shares-data": "storage",
     "publishing": "export",
     "github-runner": "jobs",
+    "headscale": "security",
     "desktop": "web-services", "console": "diagnostics",
     "maintenance-agent": "maintenance", "agent-inbox": "notifications",
 }
@@ -294,6 +296,7 @@ def panel_navigation(
         ("/credentials", "Git & credentials", "credentials"),
         ("/publishing", "Publishing", "publishing"),
         ("/admin", "Admin controls", "admin"),
+        ("/headscale", "Headscale", "headscale"),
         ("/shares-data", "Shares & Data", "shares-data"),
     ]
     items.extend(

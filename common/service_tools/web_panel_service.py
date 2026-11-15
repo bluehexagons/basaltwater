@@ -9,8 +9,11 @@ import http.client
 import ipaddress
 import json
 import os
+import pwd
 import secrets
 import shutil
+import socket
+import struct
 import socketserver
 import subprocess
 import sys
@@ -48,6 +51,7 @@ from common.service_tools.web_panel_share_actions import (
     unavailable_reason as shares_unavailable,
 )
 from common.service_tools import web_panel_routine_actions as routine_actions
+from common.service_tools import web_panel_headscale
 from lib.storage_diagnostics import StorageDiagnostics
 from common.service_tools.web_panel_github_runner import parse_runner_query, render_runner_page
 from common.service_tools.web_panel_features import AGENT_TOOLS, PanelFeatures, discover_features, unit_installed
@@ -2079,6 +2083,8 @@ class WebPanelHandler(BaseHTTPRequestHandler):
     state: WebPanelState
 
     def _feature_available(self, path: str) -> bool:
+        if path in {"/headscale", "/actions/headscale"}:
+            return self.state.features().headscale
         if path == "/actions/t3-update":
             return self.state.t3_update_available()
         pages = {
@@ -2138,6 +2144,19 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def _headscale_authorized(self) -> bool:
+        try:
+            _pid, uid, _gid = struct.unpack("3i", self.request.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+            valid = (self.request.family == socket.AF_UNIX and uid == pwd.getpwnam("www-data").pw_uid
+                     and self.headers.get_all("X-Basaltwater-User") == [self.state.manifest["username"]]
+                     and self.state.credential_transport_available()
+                     and self.headers.get_all("X-Forwarded-Proto") == ["https"])
+        except (OSError, KeyError):
+            valid = False
+        if not valid:
+            self._send(HTTPStatus.FORBIDDEN, "Authenticated HTTPS panel proxy required\n", "text/plain")
+        return valid
+
     def _send_json(self, status: HTTPStatus, value: dict[str, object]) -> None:
         self._send(
             status,
@@ -2156,6 +2175,14 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             return
         if not self._feature_available(path):
             self._send(HTTPStatus.NOT_FOUND, "Feature is not installed on this machine\n", "text/plain")
+            return
+        if path == "/headscale":
+            if not self._headscale_authorized():
+                return
+            if parsed.query:
+                self._send(HTTPStatus.BAD_REQUEST, "Invalid Headscale query\n", "text/plain")
+                return
+            self._send(HTTPStatus.OK, web_panel_headscale.render(self.state, _PAGE_STYLE), "text/html")
             return
         if path == "/shares-data":
             try:
@@ -2313,7 +2340,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             self._handle_notification_ingest()
             return
         agent_paths = {"/actions/agent-task/save", "/actions/agent-task", "/actions/agent-diagnostics", "/actions/agent-tool/prepare"}
-        admin_paths = {"/actions/admin/cancel"}
+        admin_paths = {"/actions/admin/cancel", "/actions/headscale"}
         data_paths = {"/actions/data/review", "/actions/data/submit", "/actions/data/cancel"}
         samba_paths = {"/actions/samba/review", "/actions/samba/submit", "/actions/samba/cancel"}
         share_paths = {"/actions/shares/review", "/actions/shares/submit", "/actions/shares/cancel"}
@@ -2330,6 +2357,14 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         if not self._feature_available(path):
             self._send(HTTPStatus.NOT_FOUND, "Feature is not installed on this machine\n", "text/plain")
             return
+        if path == "/actions/headscale":
+            if not self._headscale_authorized():
+                return
+            if (self.headers.get_all("Content-Type") != ["application/x-www-form-urlencoded"]
+                    or self.headers.get_all("Transfer-Encoding") is not None
+                    or len(self.headers.get_all("Content-Length") or []) != 1):
+                self._send(HTTPStatus.BAD_REQUEST, "Invalid Headscale form\n", "text/plain")
+                return
         try:
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
@@ -2353,6 +2388,17 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             values["csrf"][0].encode("utf-8"), self.state.csrf_token.encode("utf-8"),
         ):
             self._send(HTTPStatus.FORBIDDEN, "Invalid request\n", "text/plain")
+            return
+        if path == "/actions/headscale":
+            if any(len(entries) != 1 for entries in values.values()):
+                self._send(HTTPStatus.BAD_REQUEST, "Invalid Headscale form\n", "text/plain")
+                return
+            try:
+                web_panel_headscale.submit({key: entries[0] for key, entries in values.items() if key != "csrf"})
+            except (OSError, ValueError, RuntimeError):
+                self._send(HTTPStatus.CONFLICT, "Request was not confirmed. Inspect requests and enrolled nodes before starting a fresh verified registration.\n", "text/plain")
+                return
+            self._send(HTTPStatus.SEE_OTHER, "", "text/plain", headers={"Location": "/admin?view=requests"})
             return
         if path == "/actions/storage-scan":
             try:

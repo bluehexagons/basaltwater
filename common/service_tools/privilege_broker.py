@@ -40,6 +40,7 @@ from sync.routine_job import job_status as routine_job_status, stage_routine_job
 from lib.privilege_execution import (
     COMMAND_HELPER, ENVIRONMENT, EXECUTOR_WAIT_SECONDS, ExecutionResult, command_executor_argv,
 )
+from lib import headscale_portal
 
 _REVIEW_ORDER = "CASE WHEN state IN ('pending','approved','executing') THEN 0 ELSE 1 END, created DESC"
 
@@ -113,6 +114,7 @@ class Broker:
         self.policy_loader = policy_loader
         self.runner = runner
         self.lock = threading.RLock()
+        self.registrations = headscale_portal.TransientRegistrations()
         self.db = sqlite3.connect(database, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
@@ -144,6 +146,8 @@ class Broker:
         if state in {"cancelled", "denied", "expired", "invalidated", "succeeded", "failed", "uncertain"}:
             row = self.db.execute("SELECT plan FROM requests WHERE id=?", (request_id,)).fetchone()
             plan = json.loads(row["plan"])
+            if plan["operation"] == "headscale.admin" and plan["parameters"]["action"] == "register":
+                self.registrations.discard(plan["parameters"]["token"])
             if plan["operation"] == "samba.account" and plan["parameters"]["action"] in PASSWORD_ACTIONS:
                 try:
                     discard_password(plan["parameters"]["job_id"])
@@ -170,6 +174,8 @@ class Broker:
         return result
 
     def request(self, uid: int, operation: str, parameters: dict, reason: str) -> dict:
+        if operation == "headscale.admin":
+            reason = "Administrator requested Headscale action"
         if not isinstance(reason, str) or len(reason) > 1000 or any(unicodedata.category(c).startswith("C") for c in reason):
             raise BrokerRequestRejected("Reason must be a single line of at most 1000 characters")
         with self.lock, self.db:
@@ -177,6 +183,13 @@ class Broker:
             try:
                 policy = self.policy_loader()
                 plan = operation_plan(policy, uid, operation, parameters)
+                if operation == "headscale.admin" and parameters["action"] == "register" and parameters["token"] not in self.registrations.entries:
+                    raise ValueError("Registration input unavailable")
+                if operation == "headscale.admin" and parameters["action"] == "register":
+                    if self.db.execute("SELECT 1 FROM requests WHERE json_extract(plan,'$.parameters.token')=?",
+                                       (parameters["token"],)).fetchone():
+                        raise ValueError("Registration input already used")
+                    policy = {**policy, "ttl_seconds": min(policy["ttl_seconds"], headscale_portal.TTL)}
                 if operation == "samba.account" and plan["parameters"]["action"] in PASSWORD_ACTIONS:
                     if self.db.execute("SELECT 1 FROM requests WHERE json_extract(plan,'$.operation')='samba.account' AND json_extract(plan,'$.parameters.job_id')=? LIMIT 1",
                                        (plan["parameters"]["job_id"],)).fetchone():
@@ -278,7 +291,19 @@ class Broker:
             self._transition(request["id"], "executing", request["actor"])
         # The execution claim must be durably committed BEFORE any side effect.
         try:
-            result = self.runner(request["plan"])
+            if request["plan"]["operation"] == "headscale.admin":
+                parameters = dict(request["plan"]["parameters"])
+                action = parameters.pop("action")
+                if action == "register":
+                    parameters.pop("token")
+                    parameters["auth_id"] = self.registrations.consume(request)
+                if action == "users_delete":
+                    if any(node["user_id"] == parameters["id"] for node in headscale_portal.snapshot()["nodes"]):
+                        raise ValueError("Remove owned nodes first")
+                headscale_portal.native(action, parameters)
+                result = ExecutionResult("succeeded", exit_code=0)
+            else:
+                result = self.runner(request["plan"])
             if not isinstance(result, ExecutionResult) or result.state not in {"succeeded", "failed", "uncertain", "dispatched"}:
                 result = ExecutionResult("uncertain", failure="invalid_executor_result")
         except Exception:
@@ -335,6 +360,30 @@ class Broker:
         if not isinstance(message, dict):
             raise ValueError("Expected an object")
         action = message.get("action")
+        if not approval and action in {"headscale-inspect", "headscale-register"}:
+            with self.lock:
+                if uid != self.policy_loader()["requester_uid"]:
+                    raise PermissionError("Account is not authorized")
+                headscale_portal.require_installed()
+                if action == "headscale-inspect" and set(message) == {"action"}:
+                    result = headscale_portal.snapshot()
+                    if len(canonical(result).encode()) > MAX_MESSAGE - 512:
+                        raise ValueError("Headscale inventory exceeds portal limit")
+                    return result
+                if action == "headscale-register" and set(message) == {"action", "user", "auth_id"}:
+                    user = message["user"]
+                    headscale_portal.validate_action({"action": "register", "user": user, "token": "0" * 32})
+                    if user not in {record["id"] for record in headscale_portal.snapshot()["users"]}:
+                        raise ValueError("Selected person unavailable")
+                    token = self.registrations.capture(uid, user, message["auth_id"])
+                    try:
+                        request = self.request(uid, "headscale.admin", {"action": "register", "user": user, "token": token}, "")
+                        self.registrations.bind(token, request)
+                        return request
+                    except Exception:
+                        self.registrations.discard(token)
+                        raise
+                raise ValueError("Invalid Headscale request")
         if approval and action == "admin-catalog" and set(message) == {"action"}:
             return self.admin_catalog()
         if approval and action == "admin-preview" and set(message) == {"action", "admin_action"}:
