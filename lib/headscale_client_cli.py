@@ -14,6 +14,20 @@ def add_headscale_client_parser(subparsers) -> argparse.ArgumentParser:
     """Register local lifecycle commands without loading native runtime code."""
     parser = subparsers.add_parser("headscale-client", help="Root local Headscale client lifecycle")
     commands = parser.add_subparsers(dest="headscale_client_action", required=True)
+    selection = commands.add_parser("reconcile-selection", help="Reconcile saved controller binding after native migration")
+    selection.add_argument("host", help="Exact cached setup host")
+    selection.add_argument("--expected-server-id", required=True)
+    selection.add_argument("--expected-url", required=True)
+    selection.add_argument("--server", required=True, help="New saved server name or stable ID")
+    selection.add_argument("--new-url", required=True)
+    selection.add_argument("--node-id", required=True, help="Exact new observed native node ID")
+    selection.add_argument("--tag", action="append", default=[], help="Exact expected service tags; omit for personal client")
+    selection.add_argument("--target-host", required=True)
+    selection.add_argument("--target-key", required=True)
+    selection.add_argument("--target-known-hosts", required=True)
+    selection.add_argument("--target-port", type=int, default=22)
+    selection.add_argument("--workspace")
+    selection.add_argument("--dry-run", action="store_true")
     for action in ("status", "enroll-personal", "enroll-machine", "reconcile", "adopt",
                    "disable", "leave", "migrate", "abandon"):
         command = commands.add_parser(action)
@@ -40,6 +54,18 @@ def run_headscale_client_command(args: argparse.Namespace) -> int:
 
     try:
         action = args.headscale_client_action
+        if action == "reconcile-selection":
+            from lib.headscale_selection import reconcile_saved_selection
+            from lib.headscale_transport import SSHBinding
+
+            reconcile_saved_selection(
+                args.host, expected_server_id=args.expected_server_id, expected_url=args.expected_url,
+                server=args.server, new_url=args.new_url, node_id=args.node_id, tags=args.tag,
+                target=SSHBinding(args.target_host, args.target_key, args.target_known_hosts, args.target_port),
+                workspace=args.workspace, dry_run=args.dry_run,
+            )
+            print(json.dumps({"action": action, "dry_run": args.dry_run}))
+            return 0
         url = validate_headscale_url(args.url)
         if action in {"adopt", "leave", "migrate"}:
             if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9:_.-]{0,127}", args.node_id):
@@ -88,7 +114,7 @@ def run_headscale_client_command(args: argparse.Namespace) -> int:
             raise ValueError("Unknown client action")
         print(json.dumps(asdict(result) if result is not None else {"action": action, "confirmed": True}))
         return 0
-    except (OSError, ValueError, RuntimeError, EOFError, KeyboardInterrupt):
+    except (OSError, ValueError, RuntimeError, TypeError, KeyError, EOFError, KeyboardInterrupt):
         # Native output and input values can contain credentials. Never echo
         # exception text, even when failure originated below the native adapter.
         print("Client operation unavailable or unconfirmed; preserve state and reconcile before retry",

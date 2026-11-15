@@ -15,6 +15,7 @@ import basaltwater
 from lib import headscale_client as client
 from lib.concurrency import ResourceBusyError, ResourceLockSafetyError
 from tests.test_headscale_client import observed, URL, OTHER
+from tests import test_headscale_selection as selection_tests
 
 
 class LocalCliTests(unittest.TestCase):
@@ -145,3 +146,21 @@ class LocalCliTests(unittest.TestCase):
         with patch("sys.argv", ["basaltw", "headscale-admin", "nodes-list", "--dry-run"]), \
                 patch("lib.headscale_admin.execute_admin_action", side_effect=AssertionError("native")):
             self.assertEqual(0, basaltwater.main())
+
+
+class SelectionCliTests(unittest.TestCase):
+    def test_public_dispatch_reconciles_saved_binding(self):
+        fixture = selection_tests.ReconcileSelectionTests("test_omission_and_opt_out_remain_exact")
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        flags = ["basaltw", "headscale-client", "reconcile-selection", fixture.host,
+                 "--expected-server-id", fixture.old_id, "--expected-url", fixture.kwargs["expected_url"],
+                 "--server", fixture.server.id, "--new-url", fixture.server.url, "--node-id", "node-new",
+                 "--target-host", fixture.host, "--target-key", fixture.target.identity_file,
+                 "--target-known-hosts", fixture.target.known_hosts_file, "--workspace", fixture.workspace]
+        with redirect_stdout(io.StringIO()), patch("sys.argv", flags + ["--dry-run"]):
+            self.assertEqual(0, basaltwater.main())
+        fixture.exchange.assert_not_called()
+        with redirect_stdout(io.StringIO()), patch("sys.argv", flags):
+            self.assertEqual(0, basaltwater.main())
+        self.assertEqual(fixture.server.id, json.loads(fixture.path.read_text())["args"]["tailscale_server_id"])
