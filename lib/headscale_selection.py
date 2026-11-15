@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from lib.headscale_registry import HeadscaleServer, _validate_url, resolve_server
+from lib.headscale_registry import HeadscaleServer, resolve_server
+from lib.headscale_config import validate_headscale_url
 
 
 def resolve_client_server(
@@ -23,7 +24,7 @@ def resolve_client_server(
     if server_id is not None and endpoint is None:
         raise ValueError("Saved Headscale client selection is missing its endpoint")
     if endpoint is not None:
-        endpoint = _validate_url(endpoint, "Saved client endpoint")
+        endpoint = validate_headscale_url(endpoint)
     if server_id is not None:
         selected = resolve_server(server_id, workspace)
         if reference_is_explicit:

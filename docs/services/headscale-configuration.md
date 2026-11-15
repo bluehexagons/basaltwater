@@ -24,6 +24,21 @@ It does not publish DNS settings and is omitted from target transport. Resolver
 publication needs observed network/node identity and DNS health checks first.
 Never use an overlay-only resolver to bootstrap its own enrollment.
 
+The controller resolves `--tailscale NAME` against the private workspace registry
+before setup or patch processing. Client state stores the registry's stable ID
+and resolved HTTPS endpoint. A renamed record continues to select the same
+network; an explicitly supplied different record is rejected. Removing the
+record or changing its endpoint also fails until a future explicit migration
+operation is available. Registering an external endpoint only provides
+discovery and does not grant administrative or enrollment authority.
+
+On a patch, omitting the client option preserves the cached selection. Passing
+`--no-tailscale` disables managed client setup while retaining its device identity
+and saved network binding; this does not leave the network or delete state.
+`--tailscale-login-server` is validated as a plain HTTPS origin and follows the
+same migration guard. DNS resolver candidates remain local metadata and are
+never published merely because they were supplied on the command line.
+
 The hosting contract reserves local TCP ports 8080, 9090 and 50443, HTTPS TCP
 443 and STUN UDP 3478. Headscale requires direct ingress; unrelated Cloudflare
 tunnels can coexist. The control and onboarding hostnames cannot be assigned to
