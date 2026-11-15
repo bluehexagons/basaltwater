@@ -7,6 +7,7 @@ from dataclasses import replace
 import json
 import os
 import sys
+import time
 
 if __name__ == "__main__" and not __package__:
     sys.path.insert(0, "/opt/basaltwater")
@@ -50,20 +51,7 @@ def execute_request(payload: bytes) -> dict:
             if effective not in {None, "published", "withdrawn"}:
                 raise ValueError()
             if effective is not None:
-                status = parse_json(native(["tailscale", "dns", "status", "--json"]))
-                resolvers = status.get("Resolvers") or []
-                addresses = [r["Addr"] for r in resolvers]
-                if status.get("Nameservers") or status.get("FallbackResolvers"):
-                    raise ValueError()
-                if effective == "published":
-                    if (status.get("TailscaleDNS") is not True
-                            or status.get("CurrentTailnet", {}).get("MagicDNSEnabled") is not True
-                            or addresses != list(binding.addresses)
-                            or status.get("FallbackResolvers")
-                            or any(r for r in (status.get("SplitDNSRoutes") or {}).values())):
-                        raise ValueError()
-                elif addresses or any(r for r in (status.get("SplitDNSRoutes") or {}).values()):
-                    raise ValueError()
+                _wait_effective_dns(binding, effective)
             if effective != "withdrawn":
                 verify_resolver(binding)
                 if effective == "published":
@@ -102,6 +90,38 @@ def execute_request(payload: bytes) -> dict:
         return {"ok": True, "result": result}
     except Exception:
         return {"ok": False, "result": {"error": "DNS operation unconfirmed; reconcile"}}
+
+
+def _wait_effective_dns(binding, effective: str) -> None:
+    """Observe propagation without repeating activation or accepting a fallback."""
+    from lib.atomic_io import parse_json
+    from lib.headscale_client import native
+
+    deadline = time.monotonic() + 10
+    while True:
+        status = parse_json(native(["tailscale", "dns", "status", "--json"], timeout=5, limit=65536))
+        if type(status) is not dict:
+            raise ValueError()
+        resolvers = status.get("Resolvers") or []
+        routes = status.get("SplitDNSRoutes") or {}
+        tailnet = status.get("CurrentTailnet") or {}
+        if (type(resolvers) is not list or type(routes) is not dict or type(tailnet) is not dict
+                or any(type(r) is not dict or type(r.get("Addr")) is not str for r in resolvers)):
+            raise ValueError()
+        addresses = [r["Addr"] for r in resolvers]
+        matches = not (status.get("Nameservers") or status.get("FallbackResolvers")
+                       or any(routes.values()))
+        if effective == "published":
+            matches = (matches and status.get("TailscaleDNS") is True
+                       and tailnet.get("MagicDNSEnabled") is True
+                       and addresses == list(binding.addresses))
+        else:
+            matches = matches and not addresses
+        if matches:
+            return
+        if time.monotonic() >= deadline:
+            raise ValueError("Native resolver map did not converge")
+        time.sleep(.25)
 
 
 def _owned_node(paths, binding, manifest, observe, same, stocks, unit, verify) -> None:

@@ -51,6 +51,9 @@ nameservers to the verified node addresses and enables override-local-DNS.
 After activation the peer must observe the exact native resolver list, enabled
 managed DNS and MagicDNS, no fallback or foreign split resolver, and answer
 identity queries through its device-local forwarder over UDP and TCP. The
+helper waits briefly for this read-only native resolver-map observation to
+converge after activation. It does not repeat activation, reservations or DNSSEC
+probes; a timeout or invalid response retains the transaction and guards. The
 reviewed JSON schema is from [Tailscale 1.104.7](https://github.com/tailscale/tailscale/blob/v1.104.7/cmd/tailscale/tsdnsjsonv0/status.go).
 This Linux peer check does not establish every desktop/mobile OS DNS path.
 
@@ -70,7 +73,7 @@ client's native bootstrap DNS behavior; it never installs a public fallback.
 
 Do not delete guards, journal or stable lock files to retry. Any unknown result
 remains blocked, including lost reserve/release acknowledgements. There are no
-automatic retries or replacement publication IDs.
+automatic mutation retries or replacement publication IDs.
 
 1. Run `inspect` locally over authorized administration and retain its output
    privately. Preserve `dns-transaction.json`, `dns-publication.json` and

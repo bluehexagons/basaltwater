@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from contextlib import nullcontext
 import json
+import itertools
 import subprocess
 import unittest
 from unittest.mock import Mock, patch
@@ -74,13 +75,52 @@ class DNSHelperTests(unittest.TestCase):
         with patch("os.geteuid", return_value=0), patch("lib.headscale_client.reject_control_host"), \
                 patch("common.unbound_steps._observe", return_value=self.peer), \
                 patch("common.unbound_steps.verify_resolver"), \
-                patch("lib.headscale_client.native", side_effect=native):
+                patch("lib.headscale_client.native", side_effect=native), \
+                patch("common.service_tools.headscale_dns.time.monotonic", side_effect=itertools.count(0, 11)):
             self.assertTrue(self.request()["ok"])
             status["FallbackResolvers"] = [dict(Addr="192.0.2.1")]
             self.assertFalse(self.request()["ok"])
             status.pop("FallbackResolvers")
             status["TailscaleDNS"] = False
             self.assertFalse(self.request()["ok"])
+
+    def test_effective_map_propagation_waits_without_repeating_dns_probes(self):
+        published = dict(TailscaleDNS=True, CurrentTailnet=dict(MagicDNSEnabled=True),
+                         Resolvers=[dict(Addr="100.64.0.2")])
+        for effective, states in (("published", [{}, published]), ("withdrawn", [published, {}])):
+            with self.subTest(effective=effective):
+                self.p["effective"] = effective
+                observations = iter(states)
+                def native(args, **kwargs):
+                    if args[0] == "tailscale":
+                        self.assertEqual(kwargs, dict(timeout=5, limit=65536))
+                        return json.dumps(next(observations))
+                    return '"' + health_identity(self.binding) + '"'
+                with patch("os.geteuid", return_value=0), patch("lib.headscale_client.reject_control_host"), \
+                        patch("common.unbound_steps._observe", return_value=self.peer), \
+                        patch("common.unbound_steps.verify_resolver") as verify, \
+                        patch("lib.headscale_client.native", side_effect=native) as calls, \
+                        patch("common.service_tools.headscale_dns.time.monotonic", return_value=0), \
+                        patch("common.service_tools.headscale_dns.time.sleep") as sleep:
+                    self.assertTrue(self.request()["ok"])
+                sleep.assert_called_once_with(.25)
+                self.assertEqual(sum(c.args[0][0] == "tailscale" for c in calls.call_args_list), 2)
+                self.assertEqual(verify.call_count, int(effective == "published"))
+
+    def test_unconfirmed_map_times_out_and_malformed_response_is_not_retried(self):
+        self.p["effective"] = "published"
+        for output in ("{}", "[]", '{"Resolvers": [false]}', "invalid"):
+            with self.subTest(output=output), patch("os.geteuid", return_value=0), \
+                    patch("lib.headscale_client.reject_control_host"), \
+                    patch("common.unbound_steps._observe", return_value=self.peer), \
+                    patch("common.unbound_steps.verify_resolver") as verify, \
+                    patch("lib.headscale_client.native", return_value=output) as native, \
+                    patch("common.service_tools.headscale_dns.time.monotonic", side_effect=[0, 11]), \
+                    patch("common.service_tools.headscale_dns.time.sleep") as sleep:
+                self.assertFalse(self.request()["ok"])
+                native.assert_called_once()
+                verify.assert_not_called()
+                sleep.assert_not_called()
 
     def test_udp_tcp_and_dnssec_required(self):
         commands = []
