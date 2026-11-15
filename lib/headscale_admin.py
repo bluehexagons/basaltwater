@@ -131,7 +131,7 @@ class NativeAdmin:
         if (state.get("ActiveState") != "active" or state.get("User") != "headscale"
                 or "path=/usr/bin/headscale ;" not in command
                 or "argv[]=/usr/bin/headscale serve ;" not in command
-                or state.get("Environment") != "" or state.get("EnvironmentFiles") != ""
+                or state.get("Environment") != "" or state.get("EnvironmentFiles", "") != ""
                 or not re.fullmatch(r"[1-9][0-9]{0,9}", state.get("MainPID", ""))):
             raise AdminError("Native service ownership unavailable")
         running = os.stat("/proc/" + state["MainPID"] + "/exe")

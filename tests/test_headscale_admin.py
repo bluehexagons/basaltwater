@@ -183,7 +183,9 @@ class NativeTests(unittest.TestCase):
                    "Environment=\nEnvironmentFiles=\nMainPID=123\n")
         binary = SimpleNamespace(st_mode=stat.S_IFREG | 0o755, st_uid=0, st_dev=1, st_ino=2)
         for response, running, accepted in [(service, binary, True),
+                (service.replace("EnvironmentFiles=\n", ""), binary, True),
                 (service.replace("Environment=", "Environment=HEADSCALE_CONFIG=/tmp/evil"), binary, False),
+                (service.replace("EnvironmentFiles=", "EnvironmentFiles=/tmp/evil"), binary, False),
                 (service, SimpleNamespace(st_dev=1, st_ino=3), False)]:
             with patch.object(admin.os, "geteuid", return_value=0), patch.object(admin, "load_manifest", return_value=manifest), patch.object(admin, "regular_bytes", return_value=json.dumps(config).encode()), patch.object(admin, "check_directory_path"), patch.object(Path, "lstat", return_value=SimpleNamespace(st_mode=stat.S_IFSOCK | 0o600, st_uid=99)), patch.object(admin.pwd, "getpwnam", return_value=SimpleNamespace(pw_uid=99)), patch.object(admin.os, "stat", side_effect=[binary, running]), patch.object(admin, "native", side_effect=["headscale version v0.29.7\ncommit: example\nbuild time: example\nbuilt with: go1.27.3 linux/amd64\n", response]):
                 adapter = admin.NativeAdmin()
