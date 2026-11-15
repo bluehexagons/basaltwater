@@ -5,10 +5,10 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 import hashlib
-import ipaddress
 import json
 import os
 from pathlib import Path
+import pwd
 import re
 import shutil
 import stat
@@ -111,6 +111,9 @@ def require_capabilities(*, firewall: bool = False) -> None:
 
 def private_directory(path: Path, *, uid: int = 0, gid: int = 0, mode: int = 0o700) -> None:
     with directory_fd(str(path), create=True, mode=mode) as fd:
+        info = os.fstat(fd)
+        if info.st_uid not in {0, os.geteuid(), uid} or info.st_mode & 0o022:
+            raise ValueError("Unsafe Headscale directory ownership or permissions")
         os.fchown(fd, uid, gid)
         os.fchmod(fd, mode)
 
@@ -121,16 +124,25 @@ def regular_bytes(path: Path) -> bytes:
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, "rb") as stream:
         info = os.fstat(stream.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_mode & 0o022:
+        owners = {0, os.geteuid()}
+        try:
+            owners.add(pwd.getpwnam("headscale").pw_uid)
+        except KeyError:
+            pass
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_mode & 0o022
+                or info.st_uid not in owners or info.st_size > 64 * 1024 * 1024):
             raise ValueError("Unsafe Headscale file")
-        return stream.read()
+        content = stream.read(64 * 1024 * 1024 + 1)
+        if len(content) > 64 * 1024 * 1024:
+            raise ValueError("Headscale file exceeds the bounded snapshot/package limit")
+        return content
 
 
 def load_manifest(paths: ServerPaths) -> ServerManifest | None:
     if not paths.manifest.exists() and not paths.manifest.is_symlink():
         return None
     regular_bytes(paths.manifest)
-    if paths.manifest.stat().st_mode & 0o077:
+    if paths.manifest.stat().st_mode & 0o077 or paths.manifest.stat().st_uid != os.geteuid():
         raise ValueError("Headscale manifest must be private")
     raw = read_json_file(str(paths.manifest))
     if not isinstance(raw, dict) or set(raw) != {"schema", "version", "endpoint", "base_domain"}:
@@ -172,8 +184,6 @@ def render_config(config: SetupConfig, paths: ServerPaths = ServerPaths()) -> st
     for family in (4, 6):
         address = getattr(config, f"headscale_public_ipv{family}")
         if address:
-            if not ipaddress.ip_address(address).is_global:
-                raise ValueError("Relay addresses must be globally reachable unicast IPs")
             relay[f"ipv{family}"] = address
     content = dict(
         server_url=f"https://{config.headscale_domain}", listen_addr="127.0.0.1:8080",

@@ -60,6 +60,7 @@ class ClientTests(unittest.TestCase):
                 with self.assertRaises(client.ClientError):
                     client.observe_client(URL)
         for key, value in (("Online", "true"), ("ID", 1), ("TailscaleIPs", ["8.8.8.8"]),
+                           ("TailscaleIPs", ["100.64.0.5", "100.64.0.5"]),
                            ("Tags", ["admin"]), ("HostName", "peer\n")):
             status = observed()
             status["Self"][key] = value
@@ -89,6 +90,11 @@ class ClientTests(unittest.TestCase):
 
     def test_actual_control_host(self):
         Path(client.CONTROL_CONFIG).write_text('server_url: "' + URL + '"\n')
+        Path(client.CONTROL_CONFIG).chmod(0o640)
+        with self.assertRaises(client.ClientError):
+            client.reject_control_host(URL)
+        client.reject_control_host(OTHER)
+        Path(client.CONTROL_CONFIG).write_text(json.dumps({"server_url": URL}))
         with self.assertRaises(client.ClientError):
             client.reject_control_host(URL)
         client.reject_control_host(OTHER)
@@ -184,10 +190,16 @@ class ClientTests(unittest.TestCase):
         def native(args):
             self.assertTrue(held)
             self.assertNotIn("logout", args)
-            return "inactive"
+            return "ActiveState=inactive\nUnitFileState=disabled\n" if "--property=ActiveState,UnitFileState" in args else "inactive"
         with patch.object(client, "resolver_lifecycle_guard", guard), patch.object(client, "native", side_effect=native):
             client.disable_client(URL)
         self.assertEqual(client.read_binding()["phase"], "enrolled")
+
+    def test_disable_requires_observed_stopped_and_disabled_state(self):
+        client.save_binding(URL, "enrolled", "node123")
+        with patch.object(client, "native", side_effect=["inactive", "", "ActiveState=active\nUnitFileState=enabled\n"]):
+            with self.assertRaisesRegex(client.ClientError, "not verified"):
+                client.disable_client(URL)
 
     def test_dns_guard_blocks_all_teardown(self):
         with patch.object(client, "resolver_lifecycle_guard", side_effect=ValueError("advertised")), patch.object(client, "native") as native:
@@ -322,6 +334,9 @@ class SetupTests(unittest.TestCase):
         with patch.object(steps, "preflight") as preflight, patch.object(steps, "is_dry_run", return_value=True):
             steps.configure_tailscale(SimpleNamespace(tailscale=True))
             steps.configure_tailscale(SimpleNamespace(tailscale=None))
+            preflight.assert_not_called()
+        with patch.object(steps, "preflight") as preflight, patch.object(steps, "is_dry_run", return_value=False):
+            steps.configure_tailscale(SimpleNamespace(tailscale=True, dry_run=True))
             preflight.assert_not_called()
 
     def test_capability_failures(self):

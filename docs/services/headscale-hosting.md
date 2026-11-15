@@ -35,8 +35,10 @@ retaining its endpoint binding, data, keys, configuration, policy and Nginx site
 Dry runs validate supplied settings without package, filesystem or service writes.
 
 Provide a direct public control hostname such as `vpn.example.com`, a distinct
-MagicDNS suffix such as `mesh.example.net`, and explicit globally routable relay
-IPv4 and/or IPv6 addresses. Public DNS, NAT and external firewalls must deliver
+MagicDNS suffix such as `mesh.example.net`, and explicit relay IPv4 and/or IPv6
+addresses reachable by the intended clients. Internet deployments need publicly
+routable addresses; private deployments can use their own reachable addresses.
+Public DNS, NAT and external firewalls must deliver
 TCP 80/443 and UDP 3478 to this server. Address syntax cannot prove reachability;
 that requires disposable-system qualification. Nginx listens on both families;
 dual-stack STUN behavior also needs platform qualification. The control host
@@ -112,6 +114,8 @@ instructions. Directories are 0700 and files 0600. Store snapshots on trusted
 private storage; digests detect corruption and do not authenticate an attacker
 who can rewrite the entire snapshot. Backups contain credentials and device
 identities and must never enter Git or public artifacts.
+The bounded native adapter accepts individual files up to 64 MiB; larger
+databases require an independently reviewed native backup procedure.
 
 Restore requires an explicit exact `ServerManifest`, matching installed binary
 version, consistent endpoint and native layout. All files and hashes, SQLite

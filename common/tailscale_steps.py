@@ -109,7 +109,7 @@ def install_client(codename: str) -> None:
 
 def configure_tailscale(config: SetupConfig) -> None:
     """None is inert; enable installs/resumes; disable preserves native state."""
-    if config.tailscale is None or is_dry_run():
+    if config.tailscale is None or getattr(config, "dry_run", False) or is_dry_run():
         return
     if config.tailscale is False:
         preflight(config)

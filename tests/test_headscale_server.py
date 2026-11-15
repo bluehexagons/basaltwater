@@ -18,7 +18,7 @@ from web import headscale_steps as steps
 def configuration(**values):
     return SetupConfig(host="vpn.example.com", username="operator", system_type="server_web", headscale=True,
                        headscale_domain="vpn.example.com", headscale_base_domain="mesh.example.net",
-                       headscale_public_ipv4="8.8.4.4", **values)
+                       headscale_public_ipv4="198.51.100.34", **values)
 
 
 def fixture_paths(root):
@@ -98,9 +98,11 @@ class HeadscaleServerTests(unittest.TestCase):
         for key in ("listen_addr", "grpc_listen_addr", "metrics_listen_addr"):
             self.assertTrue(rendered[key].startswith("127.0.0.1:"))
 
-    def test_private_relay_and_same_network_rejected(self):
+    def test_reachable_unicast_relay_and_same_network_guard(self):
         config = configuration()
-        config.headscale_public_ipv4 = "192.168.1.8"
+        config.headscale_public_ipv4 = "192.0.2.5"
+        self.assertEqual("192.0.2.5", json.loads(server.render_config(config))["derp"]["server"]["ipv4"])
+        config.headscale_public_ipv4 = "127.0.0.1"
         with self.assertRaises(ValueError):
             server.render_config(config)
         with self.assertRaises(ValueError):
@@ -151,6 +153,30 @@ class HeadscaleServerTests(unittest.TestCase):
             paths.manifest.symlink_to(Path(root) / "absent")
             with self.assertRaises(OSError):
                 server.load_manifest(paths)
+
+    def test_large_or_hardlinked_native_files_are_refused(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "native"
+            with path.open("wb") as stream:
+                stream.truncate(64 * 1024 * 1024 + 1)
+            path.chmod(0o600)
+            with self.assertRaises(ValueError):
+                server.regular_bytes(path)
+            path.write_text("fixture")
+            import os
+            os.link(path, Path(root) / "linked")
+            with self.assertRaises(ValueError):
+                server.regular_bytes(path)
+
+    @patch.object(server.os, "fchown")
+    def test_private_directory_does_not_adopt_writable_state(self, chown):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "state"
+            path.mkdir()
+            path.chmod(0o775)
+            with self.assertRaises(ValueError):
+                server.private_directory(path)
+            chown.assert_not_called()
 
     @patch.object(server, "run")
     @patch.object(server.shutil, "which", return_value=None)

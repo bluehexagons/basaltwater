@@ -9,7 +9,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import ipaddress
 import os
-from pathlib import Path
 import re
 import selectors
 import signal
@@ -160,6 +159,8 @@ def _identity(status: dict, prefs: dict, expected_url: str, require_running: boo
         if address not in ipaddress.ip_network("100.64.0.0/10" if address.version == 4 else "fd7a:115c:a1e0::/48"):
             raise ClientError("Client address is outside the overlay")
         normalized.append(str(address))
+    if len(set(normalized)) != len(normalized):
+        raise ClientError("Duplicate observed overlay addresses")
     tags = peer.get("Tags")
     if tags is None:
         tags = []
@@ -212,13 +213,27 @@ def reject_control_host(url: str) -> None:
     """Inspect actual native control configuration, even if setup omits hosting."""
     if os.path.lexists(CONTROL_CONFIG):
         check_directory_path(os.path.dirname(CONTROL_CONFIG))
-        info = os.lstat(CONTROL_CONFIG)
-        if not stat.S_ISREG(info.st_mode) or info.st_size > 1024 * 1024:
+        descriptor = os.open(CONTROL_CONFIG, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor, "r", encoding="utf-8") as stream:
+            info = os.fstat(stream.fileno())
+            if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid()
+                    or info.st_mode & 0o022 or info.st_size > 1024 * 1024):
+                raise ClientError("Cannot establish local control-server identity")
+            text = stream.read(1024 * 1024 + 1)
+        if len(text.encode()) > 1024 * 1024:
             raise ClientError("Cannot establish local control-server identity")
-        # Fail closed for unfamiliar YAML rather than assuming this is a peer.
-        text = Path(CONTROL_CONFIG).read_text()
-        matches = re.findall(r'^server_url:\s*[\"\']?(https://[^\s\"\']+)[\"\']?\s*$', text, re.M)
-        if len(matches) != 1 or validate_headscale_url(matches[0]) == url:
+        try:
+            if text.lstrip().startswith("{"):
+                native_config = parse_json(text)
+                control = native_config.get("server_url") if isinstance(native_config, dict) else None
+            else:
+                # Fail closed for unfamiliar YAML rather than assuming this is a peer.
+                matches = re.findall(r'^server_url:\s*[\"\']?(https://[^\s\"\']+)[\"\']?\s*$', text, re.M)
+                control = matches[0] if len(matches) == 1 else None
+            same_network = validate_headscale_url(control) == validate_headscale_url(url)
+        except (ValueError, TypeError):
+            raise ClientError("Cannot establish local control-server identity") from None
+        if same_network:
             raise ClientError("Local control host cannot join this network")
 
 
@@ -346,6 +361,11 @@ def disable_client(url: str) -> None:
             if status["BackendState"] in {"Running", "Stopped"}:
                 _reconcile(url)
         native(["systemctl", "disable", "--now", "tailscaled"])
+        state = native(["systemctl", "show", "tailscaled", "--property=ActiveState,UnitFileState"])
+        fields = dict(line.split("=", 1) for line in state.splitlines() if "=" in line)
+        if (fields.get("ActiveState") not in {"inactive", "failed"}
+                or fields.get("UnitFileState") not in {"disabled", "masked", "static", "indirect"}):
+            raise ClientError("Client disable was not verified; reconcile service state")
 
 
 def leave_client(url: str, *, expected_node_id: str) -> None:
