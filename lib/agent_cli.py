@@ -50,6 +50,7 @@ from lib.t3code_runtime import (
     is_t3_standalone_binary,
     is_t3_service_version,
     t3_native_probe_command,
+    t3_service_environment_probe_command,
     t3_version_binary,
     t3_version_root,
 )
@@ -2153,6 +2154,37 @@ def _repair_t3_native_runtime(
     )
 
 
+def _t3_service_environment_ready(
+    home: str, binary: str | None, node: str | None, host: str, port: int | None,
+) -> tuple[bool, str]:
+    """Detect persisted bind conflicts without exposing or changing owner settings."""
+    base_dir = os.path.join(home, ".t3")
+    path = os.path.join(base_dir, "service.env")
+    try:
+        os.lstat(path)
+    except FileNotFoundError:
+        return True, ""
+    except OSError:
+        return False, "T3 service.env could not be inspected; review its access and bind settings privately."
+    command = t3_service_environment_probe_command(binary, node, base_dir, host, port)
+    result = _run_check(command) if command is not None else None
+    try:
+        payload = json.loads(result.stdout) if result is not None and result.returncode == 0 else None
+        conflicts = payload.get("conflicts") if isinstance(payload, dict) else None
+        if not isinstance(conflicts, list) or any(
+            key not in ("T3CODE_HOST", "T3CODE_PORT") for key in conflicts
+        ):
+            raise ValueError("Invalid bind probe result")
+    except (ValueError, TypeError):
+        return False, "T3 service.env could not be inspected; review its access and bind settings privately."
+    if conflicts:
+        return False, (
+            "T3 service.env overrides managed " + ", ".join(conflicts)
+            + "; reconcile those bind settings privately before an arranged service restart."
+        )
+    return True, ""
+
+
 @contextmanager
 def _temporary_t3_npm_config() -> Iterator[str]:
     """Yield a private npm 12 allowlist without changing the user's npmrc."""
@@ -2352,6 +2384,11 @@ def inspect_t3code(
     environment = _t3_environment(user_home)
     node = _t3_node_binary(drop_in)
     native_runtime = _t3_native_runtime_healthy(node, t3_binary, environment)
+    port = _t3_port(drop_in)
+    host = _t3_host(drop_in)
+    service_environment_ready, service_environment_error = _t3_service_environment_ready(
+        user_home, t3_binary, node, host, port,
+    )
     gh_path = _tool_path("gh", user_home)
     git_path = _tool_path("git", user_home) or shutil.which("git")
     from lib.agent_skill_bundles import SKILL_AGENT_TOOLS, skill_catalogs
@@ -2413,7 +2450,7 @@ def inspect_t3code(
             credential_helper = True
     repair_stop_error = ""
     if (
-        fix and t3_binary and node and not native_runtime
+        fix and service_environment_ready and t3_binary and node and not native_runtime
         and not is_t3_standalone_binary(t3_binary)
     ):
         # A non-active unit may still be deactivating with a live process.
@@ -2455,7 +2492,10 @@ def inspect_t3code(
         if enabled.returncode == 0:
             fixes.append("enabled T3 Code service at boot")
     restarted_service = False
-    if fix and t3_binary and service.returncode != 0 and not repair_stop_error:
+    if (
+        fix and service_environment_ready and t3_binary
+        and service.returncode != 0 and not repair_stop_error
+    ):
         restart_command = ["systemctl", "--user", "restart", _T3_SERVICE_NAME]
         restarted = _run_check(
             restart_command,
@@ -2465,11 +2505,12 @@ def inspect_t3code(
             fixes.append("restarted inactive T3 Code service")
             restarted_service = True
 
-    port = _t3_port(drop_in)
-    host = _t3_host(drop_in)
     endpoint = False
-    startup_error = ""
-    if wait_for_startup:
+    startup_error = (
+        "T3 startup wait skipped until service.env is reconciled"
+        if wait_for_startup and not service_environment_ready else ""
+    )
+    if wait_for_startup and service_environment_ready:
         active, endpoint, startup_error = _wait_for_t3_startup(port, user_bus_environment, host=host)
         service = subprocess.CompletedProcess([], 0 if active else 1, "", "")
     else:
@@ -2491,6 +2532,7 @@ def inspect_t3code(
         "service_enabled": service_enabled,
         "runtime": bool(t3_binary),
         "native_runtime": native_runtime,
+        "service_environment": service_environment_ready,
         "wrapper": os.path.isfile(wrapper) and os.access(wrapper, os.X_OK),
         "pairing_helper": os.path.isfile(pair_wrapper)
         and os.access(pair_wrapper, os.X_OK),
@@ -2503,6 +2545,8 @@ def inspect_t3code(
     healthy = all(checks.values())
     checks["git_identity"] = bool(git_name and git_email)
     warnings: list[str] = []
+    if service_environment_error:
+        warnings.append(service_environment_error)
     if startup_error:
         warnings.append(startup_error)
     if repair_stop_error:

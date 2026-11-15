@@ -109,6 +109,16 @@ dropdown after a failed `Home` acknowledgment is successful input with uncertain
 acknowledgment. Keep transport failure, timeout, and unverified input distinct;
 do not repeat a toggle or submission when the expected change already occurred.
 
+Stable 0.1.9 shares snapshot metadata space between visible page text and the
+accessibility tree so a large tree does not consume the whole budget. Metadata
+is still bounded: inspect `omitted` and the screenshot before inferring that
+text or controls are absent. For requested browser work, `preview_evaluate`
+accepts top-level `await`, allowing bounded, read-only asynchronous checks
+without an async wrapper. Keep results small and inspect the returned state;
+an evaluation error or timeout does not justify repeating a mutation. Sources:
+[snapshot metadata](https://github.com/pingdotgg/t3code/pull/33745) and
+[async evaluation](https://github.com/pingdotgg/t3code/pull/31925).
+
 Attribute diagnostics by tab ID, requested URL, and navigation time/action.
 Separate Electron/preload/preview-host errors from gateway/network and application
 errors. Errors retained from `about:blank` are historical host diagnostics;

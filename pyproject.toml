@@ -54,6 +54,6 @@ common = [
     "agent_skills/*/assets/**/*",
     "agent_skills/*/agents/**/*",
 ]
-lib = ["t3code_native_probe.cjs"]
+lib = ["t3code_native_probe.cjs", "t3code_service_env_probe.cjs"]
 desktop = ["config/*.template", "config/*.js"]
 web = ["config/*"]

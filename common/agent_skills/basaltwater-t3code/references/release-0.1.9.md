@@ -44,6 +44,21 @@ require Preview availability for the selected environment. The
 covers retained PR approval holds: missing approval reads do not make checks
 green, and rewatching does not clear a hold.
 
+Preview snapshots now preserve page text better beside large accessibility
+trees, while still bounding metadata. Inspect `omitted` before inferring that
+content is absent. `preview_evaluate` also accepts top-level `await` for bounded,
+read-only asynchronous checks. The shared browser references cover both features;
+use them when browser work is requested. Sources:
+[snapshot metadata](https://github.com/pingdotgg/t3code/pull/33745) and
+[async evaluation](https://github.com/pingdotgg/t3code/pull/31925).
+
+Debian's readiness doctor now detects `service.env` bind overrides that conflict
+with its managed drop-in, using T3's Node dotenv parser and reporting only key
+names. It preserves owner settings and skips automatic repair/restart and the
+long startup wait while those settings remain unverified. See
+[service environment](updates.md#018-service-environment-and-maintenance) and the
+[tagged launcher](https://github.com/pingdotgg/t3code/blob/v0.1.9/apps/server/src/serviceLauncher.ts).
+
 Download failures now include their step, HTTP status and host; distinguish
 network/download failures from native-runtime faults. Provider status probes
 no longer cause mise to install missing CLIs. The release also fixes default
@@ -66,6 +81,15 @@ Debian/CachyOS integration suite passed **246 tests** on the 2026-11-15 recheck;
 affected skill validators also passed. That recheck did not repeat the archive
 startup/upgrade trials or expand the live qualification below. No live shared service,
 user database, provider account or release-track setting was changed.
+
+A follow-up audit on **2026-11-15** added service-environment conflict and
+privacy regression checks. `make check-ci` completed with **9,729 tests run,
+5 skipped**, including coverage, syntax, documentation and wheel checks. The
+updated wheel requirement and focused readiness tests also passed separately.
+Temporary dotenv fixtures passed under host Node and T3's embedded Node;
+the read-only live doctor passed all required checks. All three affected skill
+bundles passed validation. Preview changes were reviewed against upstream
+source; this audit did not exercise a browser or restart a shared service.
 
 These checks do not qualify systemd installation/update/reboot, authenticated
 provider turns or terminals, native clients, hosted Connect approval, or new
