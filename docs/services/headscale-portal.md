@@ -18,6 +18,10 @@ through the existing approval service. Portal sign-in and T3 pairing do not
 approve mutations. Inspection uses only the broker's authorized requester UID;
 the portal never connects to the native socket or reads the database or API keys.
 Authenticated SSH administration remains the independent recovery path.
+Each review records and displays the trusted managed endpoint. Execution checks
+that endpoint again when claiming the review and inside the native adapter;
+a changed endpoint requires a fresh review, and invalidation discards any staged
+registration input. Browser input cannot select a different administrative endpoint.
 
 Registration input lives only in broker memory for at most five minutes. Durable
 plans and reviews contain an opaque token bound to the account, selected user,
@@ -35,8 +39,9 @@ keys. Revoking a bootstrap key does not establish removal of an enrolled node;
 verify native node revocation against its connected client.
 
 Integration uses the lazy `lib.headscale_admin.execute_admin_action(action,
-parameters)` adapter. Fixed actions are users_list, users_create, users_delete,
-nodes_list, register, node_expire and node_delete. Native errors and mutation
+parameters, expected_endpoint=reviewed_endpoint)` adapter. Fixed actions are
+users_list, users_create, users_delete, nodes_list, register, node_expire and
+node_delete. Native errors and mutation
 payloads are never exported. Inventory exports only typed identity, ownership,
 address, tag, online and observed-expiry fields, bounded to 200 records per list
 and the broker response limit. Larger inventories require SSH inspection.

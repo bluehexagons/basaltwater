@@ -21,6 +21,18 @@ from common.service_tools.headscale_admin import execute_request
 
 
 class ValidationTests(unittest.TestCase):
+    def test_reviewed_endpoint_is_checked_after_native_verification_before_rpc(self):
+        adapter = admin.NativeAdmin()
+        adapter.verify = Mock(side_effect=lambda: setattr(adapter, "endpoint", "https://replacement.example.com"))
+        adapter.rpc = Mock()
+        with patch.object(admin, "NativeAdmin", return_value=adapter), \
+                patch.object(admin.os, "geteuid", return_value=0), \
+                patch.object(admin, "resource_lock", return_value=nullcontext()):
+            with self.assertRaisesRegex(admin.AdminError, "endpoint changed"):
+                admin.execute_admin_action("node_delete", {"id": "7"}, expected_endpoint="https://vpn.example.com")
+        adapter.verify.assert_called_once_with()
+        adapter.rpc.assert_not_called()
+
     def test_unknown_and_injection_inputs_fail_before_native(self):
         for action, value in [("shell", {}), ("nodes_list", {"socket": "/tmp/socket"}),
                               ("users_create", {"name": "alice;id"}),

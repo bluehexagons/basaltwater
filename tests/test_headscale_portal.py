@@ -29,6 +29,8 @@ INVENTORY = {"users": [{"id": "12", "name": "alice"}], "nodes": []}
 SECRET = "verified_auth_id_123456789"
 NATIVE_ADAPTER = boundary.native
 REQUIRE_INSTALLED = boundary.require_installed
+REVIEW_ENDPOINT = boundary.review_endpoint
+ENDPOINT = "https://vpn.example.com"
 
 
 class HeadscaleBrokerTests(unittest.TestCase):
@@ -39,6 +41,7 @@ class HeadscaleBrokerTests(unittest.TestCase):
         self.gate = patch.object(boundary, "require_installed")
         self.gate.start()
         self.addCleanup(self.gate.stop)
+        self.endpoint = self.enterContext(patch.object(boundary, "review_endpoint", return_value=ENDPOINT))
         self.inventory = patch.object(boundary, "snapshot", return_value=copy.deepcopy(INVENTORY))
         self.inventory.start()
         self.addCleanup(self.inventory.stop)
@@ -66,7 +69,8 @@ class HeadscaleBrokerTests(unittest.TestCase):
         self.approve(request)
         self.assertTrue(self.broker.execute_next())
         self.assertFalse(self.broker.execute_next())
-        self.native.assert_called_once_with("register", {"user": "12", "auth_id": SECRET})
+        self.native.assert_called_once_with("register", {"user": "12", "auth_id": SECRET},
+                                            expected_endpoint=ENDPOINT)
         self.assertEqual(self.broker.registrations.entries, {})
         self.broker.db.execute("PRAGMA wal_checkpoint(FULL)")
         for filename in os.listdir(self.temp.name):
@@ -142,6 +146,40 @@ class HeadscaleBrokerTests(unittest.TestCase):
             self.broker.execute_next()
         self.native.assert_not_called()
 
+    def test_endpoint_change_invalidates_approval_and_discards_registration(self):
+        for action in ("node_delete", "register"):
+            with self.subTest(action=action):
+                self.endpoint.return_value = ENDPOINT
+                request = (self.register() if action == "register" else
+                           self.broker.request(1000, "headscale.admin", {"action": action, "id": "7"}, ""))
+                self.assertEqual(request["plan"]["headscale_endpoint"], ENDPOINT)
+                self.assertIn(ENDPOINT, render_request(request, "csrf"))
+                self.approve(request)
+                self.endpoint.return_value = "https://replacement.example.com"
+                self.assertTrue(self.broker.execute_next())
+                self.assertEqual(self.broker.status(request["id"])["state"], "invalidated")
+                self.assertEqual(self.broker.registrations.entries, {})
+        self.native.assert_not_called()
+
+    def test_unavailable_endpoint_invalidates_approval_before_native_dispatch(self):
+        request = self.register()
+        self.approve(request)
+        self.endpoint.side_effect = ValueError("Managed Headscale endpoint unavailable")
+        self.assertTrue(self.broker.execute_next())
+        self.assertEqual(self.broker.status(request["id"])["state"], "invalidated")
+        self.assertEqual(self.broker.registrations.entries, {})
+        self.native.assert_not_called()
+
+    def test_review_endpoint_uses_verified_native_state_and_bounds_errors(self):
+        adapter = Mock(endpoint=ENDPOINT)
+        with patch("lib.headscale_admin.NativeAdmin", return_value=adapter):
+            self.assertEqual(REVIEW_ENDPOINT(), ENDPOINT)
+            adapter.verify.assert_called_once_with()
+            adapter.verify.side_effect = RuntimeError(SECRET)
+            with self.assertRaises(ValueError) as raised:
+                REVIEW_ENDPOINT()
+            self.assertNotIn(SECRET, str(raised.exception))
+
     def test_fixed_mutations_require_review_and_dispatch_only_valid_fields(self):
         for parameters in ({"action": "users_create", "name": "alice"},
                            {"action": "node_expire", "id": "7"}, {"action": "node_delete", "id": "7"}):
@@ -150,7 +188,8 @@ class HeadscaleBrokerTests(unittest.TestCase):
             self.assertNotIn(SECRET, json.dumps(request))
             self.approve(request)
             self.broker.execute_next()
-            self.native.assert_called_with(parameters["action"], {key: value for key, value in parameters.items() if key != "action"})
+            self.native.assert_called_with(parameters["action"], {key: value for key, value in parameters.items() if key != "action"},
+                                           expected_endpoint=ENDPOINT)
         with patch.object(boundary, "require_installed", side_effect=PermissionError("Unavailable")):
             with self.assertRaises(PermissionError):
                 self.broker.request(1000, "headscale.admin", {"action": "node_delete", "id": "7"}, "")
@@ -161,6 +200,10 @@ class HeadscaleBrokerTests(unittest.TestCase):
                 NATIVE_ADAPTER("register", {"user": "12", "auth_id": SECRET})
             self.assertNotIn(SECRET, str(raised.exception))
             self.assertTrue(raised.exception.__suppress_context__)
+        execute = Mock(return_value={})
+        with patch.dict("sys.modules", {"lib.headscale_admin": SimpleNamespace(execute_admin_action=execute)}):
+            NATIVE_ADAPTER("node_delete", {"id": "7"}, expected_endpoint=ENDPOINT)
+        execute.assert_called_once_with("node_delete", {"id": "7"}, expected_endpoint=ENDPOINT)
 
     def test_allowlist_discards_secret_urls(self):
         self.native.side_effect = [{"users": [{"id": "12", "name": "alice", "url": SECRET}]},

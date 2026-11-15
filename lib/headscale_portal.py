@@ -62,12 +62,25 @@ def validate_action(parameters: object) -> dict:
     return dict(parameters)
 
 
-def native(action: str, parameters: dict) -> dict:
+def review_endpoint() -> str:
+    """Observe the trusted running endpoint for a durable approval binding."""
+    try:
+        from lib.headscale_admin import NativeAdmin
+
+        adapter = NativeAdmin()
+        adapter.verify()
+        return adapter.endpoint
+    except Exception:
+        raise ValueError("Managed Headscale endpoint unavailable") from None
+
+
+def native(action: str, parameters: dict, *, expected_endpoint: str | None = None) -> dict:
     """Lazy integration contract; no subprocess argv or native error text escapes."""
     try:
         from lib.headscale_admin import execute_admin_action
 
-        result = execute_admin_action(action, parameters)
+        options = {} if expected_endpoint is None else {"expected_endpoint": expected_endpoint}
+        result = execute_admin_action(action, parameters, **options)
         if not isinstance(result, dict):
             raise ValueError("Invalid native response")
         return result

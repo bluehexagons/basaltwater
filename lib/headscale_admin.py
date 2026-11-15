@@ -187,9 +187,11 @@ class NativeAdmin:
     def nodes(self) -> list[dict]:
         return [node_projection(n) for n in self.rpc("ListNodes").nodes]
 
-    def execute(self, action: str, parameters: dict) -> dict:
+    def execute(self, action: str, parameters: dict, *, expected_endpoint: str | None = None) -> dict:
         p = validate_action(action, parameters)
         self.verify()
+        if expected_endpoint is not None and self.endpoint != expected_endpoint:
+            raise AdminError("Managed Headscale endpoint changed; review operation again")
         if action == "users_list":
             return {"users": self.users()}
         if action == "nodes_list":
@@ -236,19 +238,20 @@ class NativeAdmin:
             return {"node": observed[0]}
 
 
-def execute_admin_action(action: str, parameters: dict) -> dict:
+def execute_admin_action(action: str, parameters: dict, *, expected_endpoint: str | None = None) -> dict:
     """Portal contract: authorize outside this module; never persist Auth IDs."""
     try:
         validate_action(action, parameters)
         adapter = NativeAdmin()
+        options = {} if expected_endpoint is None else {"expected_endpoint": expected_endpoint}
         if action in {"users_list", "nodes_list"}:
-            return adapter.execute(action, parameters)
+            return adapter.execute(action, parameters, **options)
         # Serialise exact approval consumption across portal and SSH callers.
         # Never use an Auth ID as a lock name, filesystem key or stored value.
         if os.geteuid() != 0:
             raise AdminError("Headscale administration requires root")
         with resource_lock("headscale-admin", str(adapter.paths.private)):
-            return adapter.execute(action, parameters)
+            return adapter.execute(action, parameters, **options)
     except AdminError:
         raise
     except Exception:

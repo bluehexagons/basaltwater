@@ -37,7 +37,8 @@ consumed requests fail natively; start a new client registration after inspectio
 `--dry-run` validates input without native calls or file/lock changes and omits
 the Auth ID from output. List operations only observe native state.
 
-`execute_admin_action(action, parameters)` exports these exact bounded schemas:
+`execute_admin_action(action, parameters, *, expected_endpoint=None)` exports
+these exact bounded schemas:
 
 | Action | Parameters | Result |
 | --- | --- | --- |
@@ -55,8 +56,11 @@ and `name`. Tagged nodes have no personal owner. The native decimal node ID is
 the Tailscale `Self.ID`: the pinned source's `NodeID.StableID()` formats it in
 base ten. Node expiry is independent of bootstrap-key expiry. User deletion
 refuses remaining owned nodes and checks native absence afterward.
-Portal reviews bind the numeric user ID; execution resolves the current name
-for the native registration RPC and verifies the returned node's ownership.
+Portal reviews bind the numeric user ID and trusted managed endpoint; execution
+resolves the current name for the native registration RPC and verifies the
+returned node's ownership. The optional `expected_endpoint` is trusted review
+metadata, separate from the action parameters. The native adapter checks it
+against the verified running endpoint before any RPC and refuses changes.
 
 The management-side DNS publication lease is the fixed private
 `/var/lib/basaltwater/headscale/dns-publication.json`, using the existing DNS
@@ -103,5 +107,5 @@ and [node identity implementation](https://github.com/juanfont/headscale/blob/v0
 Calls use ten-second deadlines, bounded messages and disabled retries; raw
 native errors are suppressed. Offline tests use mocked calls and temporary
 files. See the [qualification record](../testing/headscale.md) for verified
-native socket, machine enrollment, SSH and broker sandbox behavior, and the
-remaining personal approval, revocation, portal and platform checks.
+native socket, machine enrollment, personal approval/revocation, SSH and broker
+sandbox behavior, and the remaining platform checks.

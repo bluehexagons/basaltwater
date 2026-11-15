@@ -300,7 +300,8 @@ class Broker:
                 if action == "users_delete":
                     if any(node["user_id"] == parameters["id"] for node in headscale_portal.snapshot()["nodes"]):
                         raise ValueError("Remove owned nodes first")
-                headscale_portal.native(action, parameters)
+                headscale_portal.native(action, parameters,
+                                       expected_endpoint=request["plan"]["headscale_endpoint"])
                 result = ExecutionResult("succeeded", exit_code=0)
             else:
                 result = self.runner(request["plan"])
