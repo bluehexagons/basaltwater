@@ -1,4 +1,25 @@
-# Explicit Headscale DNS publication
+# Headscale DNS hookup and recovery
+
+For a managed network, publish from the controller using saved machine names:
+
+```bash
+basaltw headscale-manage dns-publish office --resolver dns-vm --peer app-vm
+basaltw headscale-manage dns-inspect office
+basaltw headscale-manage dns-withdraw office --resolver dns-vm --peer app-vm
+```
+
+The [three-VM walkthrough](headscale-vms.md) covers normal setup. The hookup
+command observes native identities, prepares a dedicated restricted publication
+key and verified host pins, and runs the transaction below. Its private key stays
+on the control server. The controller's existing verified root SSH authority is
+required to establish that connection on the chosen DNS and peer VMs. Users do
+not need to assemble JSON or copy credentials. The independent peer needs `dig`.
+
+Use `--dry-run` for an offline plan without connections, credentials, locks or
+state changes. Publication remains an explicit operation; installing Unbound or
+saving resolver candidates alone never changes network DNS.
+
+## Advanced root-local interface
 
 Run publication locally as root on the managed control server. It needs no
 Tailscale enrollment. Install the same Basaltwater runtime under
@@ -7,10 +28,8 @@ peer. Both need `dig`; the DNS node needs the owned Unbound installation.
 Keep bootstrap control-host resolution independent of the overlay resolver.
 Saved resolver candidates never trigger publication.
 
-The [three-VM walkthrough](headscale-vms.md) includes complete commands to
-prepare these hosts, grant the control VM separate SSH authority, and construct
-publication and withdrawal requests from observed identities. A controller's
-saved management binding does not give the control VM that SSH authority.
+The low-level interface below is for separate administration, custom authority
+and exact recovery requests. The normal hookup command supplies these inputs.
 
 The registered root command is
 `basaltw headscale-dns publish --input /root/dns-request.json`; `withdraw`,
@@ -86,6 +105,22 @@ client's native bootstrap DNS behavior; it never installs a public fallback.
 Do not delete guards, journal or stable lock files to retry. Any unknown result
 remains blocked, including lost reserve/release acknowledgements. There are no
 automatic mutation retries or replacement publication IDs.
+
+For controller hookup commands, `headscale-manage dns-inspect NAME` also shows
+the retained controller `attempt`. Save that exact object in a private mode-0600
+JSON file. If the native `journal` is non-null, complete the native reconciliation
+below first. Then finish the controller attempt:
+
+```bash
+basaltw headscale-manage dns-reconcile office --expected-attempt /private/reviewed-attempt.json
+```
+
+This command verifies the exact retained request, unchanged SSH pins, actual node
+and publication identities, native DNS policy, resolver health and the independent
+peer. It completes only the controller record; it never repeats activation or
+reservation. Stale reviews, pending native operations and unknown results retain
+the blocker. Use `--dry-run` to validate the local review without connections or
+state changes. Inspect again after completion before a fresh operation.
 
 1. Run `inspect` locally over authorized administration and retain its output
    privately. Preserve `dns-transaction.json`, `dns-publication.json` and

@@ -104,6 +104,22 @@ resolver file permissions, recovery exclusion and endpoint-bound administration.
   The identity check from `6bf41130` accepts that native status and refuses
   injected node IDs, overlay addresses, online state or network-map membership.
   This check performs no enrollment and preserves the managed client.
+- Setup-led orchestration runs against an existing native control server and
+  saves its verified management binding automatically. A matching enrolled peer
+  rerun preserves its identity without issuing a key. A target with no native
+  client or resolver completes client installation, tagged enrollment and Unbound
+  installation in one public setup command; an unchanged rerun also succeeds.
+  The separate inactive control identity already on that test target is preserved.
+- The controller's single DNS hookup command generates its dedicated authority
+  on the control host, installs forced-command authorization, derives native
+  identities and passes publication. Peer OS MagicDNS lookup and ordinary
+  recursive queries over UDP/TCP pass. An arbitrary shell command using the
+  publication key is refused. After actual withdrawal, an injected lost reply
+  retains the controller attempt and blocks replay. Exact reviewed
+  `dns-reconcile` confirms settled native policy, identity, resolver and peer
+  health and completes only the controller record. Normal setup then disables
+  the withdrawn resolver and client while retaining the enrolled identity and
+  native state. All owned lab guests finish stopped with autostart disabled.
 
 ## Offline and browser boundaries
 
@@ -126,11 +142,19 @@ VM orchestration candidate `d324be49` passes `make check-ci`: 10,071 tests,
 26 skipped, 82% coverage and all static/documentation/brand/package/wheel checks.
 Independent review identified a direct-SSH delimiter regression, which is fixed
 with full-parser and lazy-dispatch coverage; 121 focused CLI tests pass. The
-[three-VM walkthrough](../services/headscale-vms.md) also passes offline execution
-with host operations replaced by fixtures: eight Bash blocks, 49 controller
-commands, four setup configurations, ten root-local CLI commands and both DNS
-request schemas. The complete Proxmox/public-ACME walkthrough has not been run
-as a single live deployment; the native checks above retain their stated scope.
+[three-VM walkthrough](../services/headscale-vms.md) now uses setup-led automation
+and passes offline execution with host operations replaced by fixtures: five
+Bash blocks, eight public commands, four setup configurations and all three
+managed DNS actions. The complete fresh-VM Proxmox/public-ACME walkthrough has
+not been run as a single live deployment; the native checks above retain their
+stated scope.
+
+Setup-led integration candidate `d2747c42` passes `make check-ci`: 10,110 tests,
+26 skipped, 82% coverage and all static/documentation/brand/package/wheel checks.
+Independent review covers enrollment ordering, saved authority, active-firewall
+preservation and guarded DNS completion. The final corrected-tag admission and
+malformed-cache fixes in `2d120e08` pass 48 focused tests, retaining native
+identity checks and private recovery evidence.
 
 The frozen full application run passed 84/84 checks across Chromium and Firefox,
 including all 18 Headscale checks. This resolves earlier unrelated Firefox form

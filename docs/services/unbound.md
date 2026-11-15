@@ -1,13 +1,14 @@
 # Managed Unbound
 
-Unbound runs on a separate enrolled Debian node. Prepare the native client with
-`--tailscale NAME` using its existing resolver, finish explicit enrollment, then
-use `basaltw patch HOST --unbound --headscale-base-domain SUFFIX` or rerun setup
-with the same network and `--unbound`. A fresh unenrolled client cannot install
-Unbound in the same first setup. Headscale hosting and Unbound cannot share a host
-in that network. This installation does not advertise the resolver to clients;
-network DNS adoption requires a separate identity and peer-health check.
-The [three-VM walkthrough](headscale-vms.md) gives complete commands for each phase.
+Unbound runs on a separate enrolled Debian node. Select
+`--tailscale NAME --tailscale-tag tag:dns --unbound` in its setup command.
+Basaltwater prepares the native client using bootstrap DNS, completes private
+enrollment, then installs Unbound in the same operation. Headscale hosting and
+Unbound cannot share a host in that network. This installation does not advertise
+the resolver to clients; network DNS adoption uses
+`headscale-manage dns-publish NAME --resolver HOST --peer HOST`
+for independent identity and health checks. The
+[three-VM walkthrough](headscale-vms.md) gives the routine setup and hookup commands.
 
 Setup observes the client's native node ID, control endpoint and assigned overlay
 addresses. Unbound binds those addresses explicitly on UDP/TCP 53. Its access

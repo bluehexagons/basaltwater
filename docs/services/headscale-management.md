@@ -6,6 +6,26 @@ that stable server ID and HTTPS endpoint. Renames preserve the binding; endpoint
 changes, replacement records and changed SSH identities require explicit review.
 External references need the same explicit authority as managed references.
 
+Routine managed networks use setup: `--headscale --headscale-name NAME` saves
+and binds a successfully installed server, and client setup with
+`--tailscale NAME --tailscale-tag tag:service` handles preparation and private
+enrollment. The [three-VM walkthrough](headscale-vms.md) is the usual entrypoint.
+The explicit bind/enroll commands below remain available for separately managed
+servers and recovery.
+
+For DNS hookup, use saved VM names:
+
+```bash
+basaltw headscale-manage dns-publish office --resolver dns-vm --peer app-vm
+basaltw headscale-manage dns-inspect office
+basaltw headscale-manage dns-withdraw office --resolver dns-vm --peer app-vm
+```
+
+These commands derive observed native identities and configure restricted
+publication SSH authority from the existing controller bindings. They require
+no user-authored JSON or manual private-key transfer. Publication and withdrawal
+retain the [DNS transaction and recovery checks](headscale-dns.md).
+
 The management adapter requires root SSH with an explicitly selected private key
 and an existing pinned known-hosts file. It disables password prompts, agent and
 connection sharing, forwarding, proxy commands and automatic host-key updates.
@@ -73,6 +93,9 @@ removes private delivery material, preserving enrolled nodes. The controller
 records that review without replaying any enrollment. A still-pending target
 requires explicit native abandonment after remote key/node reconciliation.
 Existing nodes require their own explicit expiry/removal to offboard.
+After completed reconciliation, setup can inspect a new attempt with corrected
+requested tags. An existing enrolled node must still match those tags; setup
+does not retag it.
 
 Each exchange opens a new SSH connection. Host SSH rate limits can reject a
 burst of inspection, reconciliation and enrollment commands. Allow that limit

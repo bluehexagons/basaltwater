@@ -5,6 +5,13 @@ independent setup selections. Hosting uses `--headscale`; joining uses either
 `--tailscale NAME` or `--tailscale-login-server https://vpn.example.com`.
 `--unbound` selects a resolver on a separate enrolled Debian node.
 
+For routine setup, add `--headscale-name NAME` to hosting to save the managed
+server and its verified SSH management connection. Join managed machines with
+`--tailscale NAME --tailscale-tag tag:service`; repeat `--tailscale-tag` when
+approving more than one service tag. Add `--unbound` to that same command for
+the DNS VM. Setup prepares the client, enrolls it privately, then installs the
+resolver. See the [short VM walkthrough](headscale-vms.md).
+
 Hosting settings are `--headscale-domain`, `--headscale-base-domain` for the
 MagicDNS suffix, `--headscale-onboarding-domain`, and the relay address options
 `--headscale-public-ipv4` and `--headscale-public-ipv6`. The relay addresses must
@@ -25,7 +32,7 @@ publication needs observed network/node identity and DNS health checks first.
 Never use an overlay-only resolver to bootstrap its own enrollment.
 
 The controller resolves `--tailscale NAME` against the private workspace registry
-before setup or patch processing. Client state stores the registry's stable ID
+before applying configuration. Client state stores the registry's stable ID
 and resolved HTTPS endpoint. A renamed record continues to select the same
 network; an explicitly supplied different record is rejected. Removing the
 record or changing its endpoint also fails during ordinary setup. Use the
@@ -33,7 +40,7 @@ explicit [client migration and saved-selection reconciliation](headscale-clients
 workflow after independently completing the new enrollment. Registering an external endpoint only provides
 discovery and does not grant administrative or enrollment authority.
 
-On a patch, omitting the client option preserves the cached selection. Passing
+Saved configuration retains the client selection and approved tags. Passing
 `--no-tailscale` disables managed client setup while retaining its device identity
 and saved network binding; this does not leave the network or delete state.
 `--tailscale-login-server` is validated as a plain HTTPS origin and follows the
@@ -45,6 +52,12 @@ The hosting contract reserves local TCP ports 8080, 9090 and 50443, HTTPS TCP
 tunnels can coexist. The control and onboarding hostnames cannot be assigned to
 another managed application. Native clients preserve the platform DNS manager;
 network selection does not authorize subnet routes or an exit node.
+
+Automatic enrollment requires the separate managed SSH binding established by
+hosting setup or an explicit management bind. A name or direct URL alone grants
+no enrollment authority. Without `--tailscale-tag`, setup prepares/resumes the
+client for separately administered enrollment. An uncertain enrollment stops
+setup and preserves its private recovery journal.
 
 See [managed setup](headscale-setup.md) for installation and composition,
 [recovery](headscale-recovery.md) for maintenance, and

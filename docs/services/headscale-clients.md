@@ -6,6 +6,10 @@ Tailscale 1.104.7 with Headscale 0.29.7. Headscale's protocol minimum is 1.80;
 the enforced client security floor is 1.104.4. Security updates are not held.
 Other architectures and platforms need separate qualification.
 
+For routine managed machines, use `setup --tailscale NAME --tailscale-tag
+tag:service`. The controller prepares the client and completes private enrollment
+in the same operation. See the [three-VM walkthrough](headscale-vms.md).
+
 `common.tailscale_steps.configure_tailscale(config)` leaves omitted configuration
 inert. Enable installs the daemon and preserves existing managed enrollment.
 Disable stops/disables the daemon and preserves native identity and state; it
