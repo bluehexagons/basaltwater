@@ -148,8 +148,8 @@ def configure_tailscale(config: SetupConfig) -> None:
         binding = client.read_binding()
         if binding is not None:
             client.owned(url)
-            if binding["phase"] == "resuming":
-                raise client.ClientError("Previous resume uncertain; explicit reconciliation required")
+            if binding["phase"] in {"resuming", "leaving"}:
+                raise client.ClientError("Previous client transition uncertain; explicit reconciliation required")
         elif os.path.lexists(client.NATIVE_STATE) or shutil.which("tailscale"):
             raise client.ClientError("Existing native client requires explicit adoption")
         # A live identity must agree before package, service, or prefs changes.

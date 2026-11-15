@@ -455,6 +455,21 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(client.read_binding()["phase"], "joining")
         self.assertFalse(any(c.args[0][:2] == ["tailscale", "up"] for c in native.call_args_list))
 
+    def test_setup_retained_transition_refuses_service_changes(self):
+        config = SimpleNamespace(tailscale=True, tailscale_login_server=URL)
+        for phase in ("resuming", "leaving"):
+            with self.subTest(phase=phase):
+                recovery = {"destination_url": OTHER} if phase == "leaving" else None
+                client.save_binding(URL, phase, "node123", recovery=recovery)
+                before = self.state.read_bytes()
+                with self.setup_context("NeedsLogin"), patch.object(client, "native") as native, \
+                        patch.object(steps, "run") as run:
+                    with self.assertRaisesRegex(client.ClientError, "explicit reconciliation"):
+                        steps.configure_tailscale(config)
+                    native.assert_not_called()
+                    run.assert_not_called()
+                self.assertEqual(self.state.read_bytes(), before)
+
     def test_setup_inactive_retained_state_requires_review(self):
         client.save_binding(URL, "enrolled", "node123")
         Path(client.NATIVE_STATE).write_text("opaque native state")

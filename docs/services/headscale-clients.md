@@ -212,6 +212,7 @@ requires `NeedsLogin`, no node key, no Self identity and the old endpoint. It
 then prepares the retained destination without another logout or a new identity.
 Unknown results and changed endpoints remain blocked. Ordinary reconciliation
 cannot clear a leaving intent, even if the old node is still enrolled.
+Setup also refuses a retained leaving intent before changing the daemon.
 
 The ownership record retains version 1 for stable phases and reads existing
 version 1 records. Version 2 adds an exact `recovery` object: joining has
