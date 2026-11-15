@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from contextlib import redirect_stdout
 import io
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,6 +16,9 @@ from lib.headscale_registry import list_servers, resolve_server
 
 class HeadscaleCliTests(unittest.TestCase):
     def setUp(self):
+        environment = patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.workspace = Path(self.temp.name) / "private"

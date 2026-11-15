@@ -63,7 +63,6 @@ def add_headscale_parser(subparsers) -> argparse.ArgumentParser:
     onboarding = commands.add_parser("onboarding", help="Print a trusted onboarding page URL")
     common(onboarding)
     onboarding.add_argument("reference").completer = _complete_server_names
-    parser.set_defaults(headscale_handler=run_headscale_command)
     return parser
 
 
