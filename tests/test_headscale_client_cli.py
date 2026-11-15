@@ -29,6 +29,7 @@ class LocalCliTests(unittest.TestCase):
         self.stack.enter_context(patch.object(client, "CONTROL_CONFIG", str(self.root / "control.yaml")))
         self.stack.enter_context(patch.object(client, "client_lock", side_effect=nullcontext))
         self.stack.enter_context(patch.object(client, "resolver_lifecycle_guard", side_effect=nullcontext))
+        self.stack.enter_context(patch.object(client, "require_private_daemon"))
         self.stack.enter_context(patch("lib.headscale_client_cli.os", SimpleNamespace(geteuid=lambda: 0, isatty=lambda fd: True)))
         self.output = io.StringIO()
         self.stack.enter_context(redirect_stdout(self.output))
