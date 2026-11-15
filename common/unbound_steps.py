@@ -284,18 +284,27 @@ def verify_resolver(binding: DNSBinding, *, recursion: bool = True) -> None:
     """Can also be run from an enrolled peer before network DNS publication."""
     binding = parse_dns_binding(binding.to_dict())
     for address in binding.addresses:
-        for protocol in ([], ["+tcp"]):
+        for protocol in (["+notcp", "+ignore"], ["+tcp"]):
             result = run(["dig", "@" + address, HEALTH_NAME, "TXT", "+short", "+time=3", "+tries=1", *protocol],
                          capture_output=True, timeout=15)
             if (result.stdout or "").strip() != '"' + health_identity(binding) + '"':
                 raise RuntimeError("DNS health response does not match the observed node/network binding")
         if recursion:
-            result = run(["dig", "@" + address, ".", "DNSKEY", "+dnssec", "+noall", "+comments",
-                          "+time=5", "+tries=1"], capture_output=True, timeout=20)
-            output = result.stdout or ""
-            flags = re.search(r";; flags: ([^;]*);", output)
-            if "status: NOERROR" not in output or flags is None or "ad" not in flags.group(1).split():
-                raise RuntimeError("Recursive DNSSEC validation did not return authenticated root data")
+            for protocol in (["+notcp", "+ignore"], ["+tcp"]):
+                for name, rrtype, status, extra in (
+                    (".", "DNSKEY", "NOERROR", []),
+                    ("dnssec-failed.org.", "A", "SERVFAIL", []),
+                    ("dnssec-failed.org.", "A", "NOERROR", ["+cdflag"]),
+                ):
+                    result = run(["dig", "@" + address, name, rrtype, "+dnssec", "+noall",
+                                  "+comments", "+answer", "+time=5", "+tries=1", *protocol, *extra],
+                                 capture_output=True, timeout=20)
+                    output = result.stdout or ""
+                    flags = re.search(r";; flags: ([^;]*);", output)
+                    if ("status: " + status not in output or flags is None
+                            or (name == "." and "ad" not in flags.group(1).split())
+                            or (status == "NOERROR" and not re.search(r"(?m)^[^;\s].*\sIN\s", output))):
+                        raise RuntimeError("Recursive valid/bogus DNSSEC verification failed")
 
 
 def _candidate(paths: UnboundPaths, content: bytes, stocks: list[str]) -> None:
