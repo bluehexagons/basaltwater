@@ -42,8 +42,17 @@ address, tag, online and observed-expiry fields, bounded to 200 records per list
 and the broker response limit. Larger inventories require SSH inspection.
 
 Offline routing, policy, review and transient-input tests are in
-`tests/test_headscale_portal.py`. Browser qualification with the integrated native
-backend, real proxy authentication, mobile layout, pending/expired native Auth
-IDs, connected-client revocation and SSH recovery remains necessary. The public
+`tests/test_headscale_portal.py`. Frozen candidate `68b1ebdc` passes the full
+84-check Chromium/Firefox application run, including 18 Headscale checks with
+synthetic broker responses. Separate installed Debian HTTPS portal checks pass
+BasicAuth, reviewed native user creation/deletion and inventory, forged-CSRF
+rejection (403), and changed-review, cross-origin and replay rejection (409).
+The actual root broker sandbox also passes native administration and shared-lock
+contention with host root. These checks preserve the security boundaries above.
+Personal Auth-ID approval/denial, expiry/replay and connected-client revocation
+remain pending. Integrated native browser flows, mobile layout, native mobile
+onboarding, portal-independent SSH recovery and Firefox ESR require separate
+qualification. Later backend fixes still require final combined CI; see the
+[qualification record](../testing/headscale.md). The public
 onboarding origin has no administrative authority; see the
 [enrollment contract](../plans/headscale-enrollment.md).
