@@ -81,7 +81,7 @@ basaltw headscale-admin <users-list|users-create|users-delete|nodes-list|approve
 basaltw headscale-client <status|enroll-personal|enroll-machine|reconcile|adopt|disable|leave|migrate|abandon> --url HTTPS_URL [options] [--dry-run]
 basaltw headscale-client reconcile --url HTTPS_URL [--confirm-logged-out] [--dry-run]
 basaltw headscale-client reconcile-selection HOST --expected-url HTTPS_URL [--expected-server-id ID] --server REFERENCE --new-url HTTPS_URL --node-id ID --target-host HOST --target-key PATH --target-known-hosts PATH [options] [--dry-run]
-basaltw headscale-manage <bind|show|remove|enroll|inspect|reconcile|dns-publish|dns-withdraw|dns-inspect> REFERENCE [options] [--dry-run]
+basaltw headscale-manage <bind|show|remove|enroll|inspect|reconcile|dns-publish|dns-withdraw|dns-inspect|dns-reconcile> REFERENCE [options] [--dry-run]
 basaltw headscale-dns <publish|withdraw|inspect|reconcile> [--input PRIVATE_JSON] [--dry-run]
 basaltw headscale-maintenance <backup|validate|restore|upgrade|unbound-backup|unbound-validate|unbound-restore|unbound-recover-fresh|unbound-records-inspect|unbound-records-replace|adopt-inspect|adopt> [options] [--dry-run]
 basaltw desktop <command> ...
@@ -150,6 +150,10 @@ Its `dns-publish` and `dns-withdraw` actions also require `--resolver NAME`
 and `--peer NAME`; `dns-inspect` inspects the saved publication state. See the
 [Headscale VM guide](../services/headscale-vms.md) for the separated control,
 client, and DNS roles.
+For interrupted DNS operations, `dns-reconcile` requires
+`--expected-attempt /private/reviewed-attempt.json` and verifies the exact
+retained controller attempt against native settled state and the peer; it never
+replays activation. See [interrupted DNS operations](../services/headscale-dns.md#interrupted-operations).
 `headscale-dns` performs explicit root local DNS publication and recovery.
 Its mutating actions require a private root-owned JSON request; `inspect`
 rejects `--input`. Dry runs retain handler input and privilege validation.
@@ -162,12 +166,12 @@ IDs across renames and reject removed/replaced records or changed endpoints.
 `--no-tailscale` preserves the endpoint binding without requiring the reference
 to remain registered. Omitted network flags retain saved settings on reruns.
 `--tailscale NAME` completion reads names from the selected workspace.
-Use `setup --headscale-name NAME` to select and verify a registered managed
-Headscale server. For a named client setup, repeat `--tailscale-tag tag:service`
-as needed to privately enroll the client before its final profile and Unbound
-configuration are applied. Without tags, setup with a named network or a direct
-`--tailscale-login-server URL` keeps enrollment manual. Routine configuration
-changes use setup reruns; patch is not a routine configuration workflow.
+For managed hosting, `setup --headscale --headscale-name NAME` installs
+Headscale and registers/binds that server. For a named client setup, repeat
+`--tailscale-tag tag:service` as needed to privately enroll the client before
+its final profile and Unbound configuration are applied. Without tags, setup
+with a named network or a direct `--tailscale-login-server URL` keeps enrollment
+manual. Routine configuration changes use setup reruns.
 
 `basaltw refresh` upgrades the installed source on its selected channel and
 repeats this machine's last successful setup using the updated code. It supports
@@ -442,6 +446,7 @@ contract, unattended job ownership, exact-text review, recovery and limits.
 | `--dns IP` | DNS server; repeatable and accepts IPv4 or IPv6 addresses |
 | `--network-interface NAME` | Interface to configure; defaults to the interface carrying the default route |
 | `--headscale` / `--no-headscale` | Manage native Headscale hosting on supported Debian profiles; disable preserves data |
+| `--headscale-name NAME` | Register and bind the managed Headscale server during hosted setup |
 | `--headscale-domain HOSTNAME` | Hosted public control hostname |
 | `--headscale-base-domain HOSTNAME` | MagicDNS suffix, separate from public hostnames |
 | `--headscale-onboarding-domain HOSTNAME` | Separate static HTTPS device instruction hostname |
@@ -449,6 +454,7 @@ contract, unattended job ownership, exact-text review, recovery and limits.
 | `--headscale-public-ipv4 IP`, `--headscale-public-ipv6 IP` | Public relay addresses for hosted Headscale |
 | `--headscale-resolver IP` | Candidate overlay resolver metadata; repeatable, does not publish DNS |
 | `--tailscale NAME` | Select a saved Headscale reference for local native client setup |
+| `--tailscale-tag TAG` | Authorize private automatic enrollment; repeatable for named client setup |
 | `--tailscale-login-server HTTPS_ORIGIN` | Explicit local native client selection |
 | `--no-tailscale` | Disable managed client setup while retaining device identity |
 | `--unbound` / `--no-unbound` | Manage Unbound on a separate explicitly enrolled Debian DNS node |
