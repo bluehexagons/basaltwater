@@ -1803,7 +1803,7 @@ def _render_audit_section(state: WebPanelState) -> str:
     return f'''<section aria-labelledby="audit-heading"><div class="section-heading"><div>
 {render_heading("System audit log", "security", heading_id="audit-heading")}</div>
 <span class="count">{count} event{"" if count == 1 else "s"}{warning_label} · {html.escape(status_label)}</span>
-</div>{refresh_ui.state_region(state, "audit", "Audit snapshot", '<p class="panel-summary" data-panel-summary>Audit history below reflects the page-load snapshot.</p>')}
+</div>{refresh_ui.state_region(state, "audit", "Audit snapshot", '<p class="panel-summary" data-panel-summary>Audit snapshot summary</p><p class="filesystem-note">Event history and header totals reflect the page-load snapshot. Reload the dashboard to inspect a newer export.</p>')}
 {issue_html}{suppression_html}{content}</section>'''
 
 
@@ -2108,7 +2108,7 @@ def render_page(state: WebPanelState, *, proxmox_query: ProxmoxQuery | None = No
 <span class="count">Host readings · cached up to 30 seconds</span></div>
 {refresh_ui.state_region(state, "host", "System overview", '<dl class="overview-grid host-overview">' + overview_cards + '</dl>' + pressure_section)}</section>
 {proxmox_section}{filesystem_section}
-{refresh_ui.state_region(state, "agents", "Agent activity", '<p class="panel-summary" data-panel-summary>Saved agent activity</p><span data-panel-elapsed hidden></span><p class="filesystem-note">Summary updates automatically. Open Agents to inspect changed runs and review decisions.</p>' + render_agent_activity(state)) if features.prompts else ""}
+{refresh_ui.state_region(state, "agents", "Agent activity", '<p class="panel-summary" data-panel-summary>Saved agent activity</p><span data-panel-elapsed hidden></span><p class="filesystem-note">Summary updates automatically. Activity cards and run links reflect the page-load snapshot. Open Agents to inspect changed runs and review decisions.</p>' + render_agent_activity(state)) if features.prompts else ""}
 {services_section}
 {audit_section}{notification_section}
 {access_section}{'<div id="trust">' + trust_section + '</div>' if trust_section else ""}{action}
@@ -2181,7 +2181,8 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         payload = body.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", f"{content_type}; charset=utf-8")
-        self.send_header("Content-Length", str(len(payload)))
+        if status != HTTPStatus.NOT_MODIFIED:
+            self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
         script_policy = f"script-src {CA_SCRIPT_CSP} {refresh_ui.SCRIPT_CSP}; connect-src 'self'; " if content_type == "text/html" else ""
         if content_type == "text/html" and self.state.manifest.get("system_type") == "server_proxmox":
@@ -2192,8 +2193,14 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         self.send_header("X-Frame-Options", "DENY")
         for name, value in (headers or {}).items():
             self.send_header(name, value)
-        self.end_headers()
-        self.wfile.write(payload)
+        try:
+            self.end_headers()
+            if payload:
+                self.wfile.write(payload)
+        except (BrokenPipeError, ConnectionResetError):
+            # Navigation and hidden-tab suspension cancel passive GETs. A
+            # disconnected client needs no response or server traceback.
+            self.close_connection = True
 
     def _headscale_authorized(self) -> bool:
         try:

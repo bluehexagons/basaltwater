@@ -86,6 +86,29 @@ class StatusTest(unittest.TestCase):
         handler.do_GET()
         self.assertEqual(handler._send.call_args.args[0], 403)
 
+    def test_disconnected_status_clients_release_request_budget(self) -> None:
+        for failure in (BrokenPipeError, ConnectionResetError):
+            for phase in ("headers", "body"):
+                with self.subTest(failure=failure, phase=phase):
+                    handler = self.handler("host")
+                    del handler._send
+                    handler.send_response = Mock()
+                    handler.send_header = Mock()
+                    handler.end_headers = Mock(side_effect=failure if phase == "headers" else None)
+                    handler.wfile = Mock()
+                    handler.wfile.write.side_effect = failure if phase == "body" else None
+                    with patch.object(panel, "collect_system_overview", return_value=[]):
+                        handler.do_GET()
+                    self.assertTrue(handler.close_connection)
+                    acquired = 0
+                    try:
+                        for _ in range(status.MAX_REQUESTS):
+                            self.assertTrue(self.state.status.requests.acquire(blocking=False))
+                            acquired += 1
+                    finally:
+                        for _ in range(acquired):
+                            self.state.status.requests.release()
+
     def test_request_budget_returns_retry_immediately(self) -> None:
         for _ in range(status.MAX_REQUESTS):
             self.assertTrue(self.state.status.requests.acquire(blocking=False))
@@ -250,7 +273,15 @@ class StatusTest(unittest.TestCase):
                 self.assertEqual(response.status, 200)
                 self.assertEqual(response.getheader("Cache-Control"), "no-store")
                 self.assertEqual(response.getheader("X-Content-Type-Options"), "nosniff")
+                validator = response.getheader("ETag")
                 response.read()
+                connection.request("GET", status.API_PREFIX + "host", headers={
+                    "X-Basaltwater-User": "operator", "If-None-Match": validator,
+                })
+                response = connection.getresponse()
+                self.assertEqual(response.status, 304)
+                self.assertIsNone(response.getheader("Content-Length"))
+                self.assertEqual(response.read(), b"")
                 connection.close()
             for _ in range(32):
                 self.assertTrue(server._request_slots.acquire(timeout=3))
