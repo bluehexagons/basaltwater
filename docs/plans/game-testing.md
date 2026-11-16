@@ -119,8 +119,13 @@ Remaining implementation tasks, independently assignable after qualification:
   the public CLI instead of reducing them to generic error strings.
 - [ ] Port post-input observation, compact capture output and explicit image
   coordinate mapping to Windows with the same completion-preserving failures.
-  Add one-request server-paced Debian text before supporting single-use tokens
-  with `--delay-ms`; per-character pacing cannot reuse a consumed token.
+- [x] Implement one-request server-paced Debian text for single-use tokens with
+  `--delay-ms`, including Unicode default pacing, per-character guards and
+  acknowledged-prefix/uncertain-character receipts. Offline regression checks
+  cover expiry, deadline, takeover, resize and active-window loss. See
+  [paced text](../workstations/desktop-automation.md#pace-text-for-custom-editors).
+  Live refreshed-supervisor multilingual read-back, UI takeover and reconnect
+  qualification remain open; the 2026-11-03 fixture above retains its old scope.
 - [ ] Prototype guarded revalidation of a completed plan against a fresh
   observation. Bind the expected target and relevant scene conditions; start
   with conservative comparisons and measure false refusals from animation.

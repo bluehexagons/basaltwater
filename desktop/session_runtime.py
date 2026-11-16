@@ -207,10 +207,16 @@ def status(*, include_control: bool = True, deadline: float | None = None) -> di
 
 def set_control(mode, *, seconds=control_state.DEFAULT_OVERRIDE_SECONDS, human_approved=False):
     configuration()
+    # Persist before contacting the serialized supervisor: an in-flight text
+    # request must see revocation between characters, not after it completes.
+    current = control_state.change(mode, seconds=seconds, human_approved=human_approved)
     try:
-        return request({"action": "control", "mode": mode, "seconds": seconds, "human_approved": human_approved})
+        return request({"action": "status"})
     except (FileNotFoundError, ConnectionRefusedError):
-        return {"state": "stopped", **control_state.change(mode, seconds=seconds, human_approved=human_approved)}
+        return {"state": "stopped", **current}
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        # Permission was saved even if the separate health observation failed.
+        return {"state": "unknown", **current, "detail": f"Control saved; backend status unavailable: {exc}"}
 
 
 def start() -> dict[str, Any]:
@@ -434,7 +440,7 @@ class DesktopSession:
             "browser_pause": self.browser_pause,
             "pid": self.process.pid,
             "control_active": False,
-            "input_capabilities": ["observation-input"],
+            "input_capabilities": ["observation-input", "server-paced-text"],
             "observation_id": self.observation.id if self.observation is not None and state == "running" else None,
             "capture_freshness": self.observation.freshness() if self.observation is not None and state == "running"
                                  else capture_freshness(),
@@ -475,10 +481,16 @@ class DesktopSession:
         payload = {**payload, "input_id": secrets.token_hex(16), "_dispatch_stage": "before-input",
                    "_input_receipt": {"input_received_at": datetime.now(timezone.utc).isoformat(),
                                       "input_received_monotonic_ns": time.monotonic_ns()}}
+        payload.pop("_submitted_characters", None)
         try:
             return self._handle(payload)
         except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as exc:
             receipt = input_failure(exc, payload, stage=payload["_dispatch_stage"])
+            if "_submitted_characters" in payload:
+                submitted = payload["_submitted_characters"]
+                unknown = payload["_dispatch_stage"] == "input-dispatch"
+                receipt.update(submitted_characters=submitted, completion_unknown=unknown,
+                               input_delivery="unknown" if unknown else "partial" if submitted else "not-sent")
             receipt["error"] = "\n".join([str(exc), *getattr(exc, "__notes__", [])])
             exc.receipt = receipt
             raise
@@ -736,13 +748,28 @@ class DesktopSession:
             kind = payload.get("kind")
             if not isinstance(kind, str):
                 raise ValueError("Unknown desktop input kind")
+            from desktop.client import validate_text_delay
+            validate_text_delay(payload)
             if kind == "text":
                 text = payload.get("text")
                 if not isinstance(text, str) or len(text) > 1024 or "\0" in text:
                     raise ValueError("Text must contain at most 1024 characters")
                 # Do not clear/restore modifiers held by a human. xdotool has
                 # no per-request ownership receipt for restoration or cleanup.
-                inject(["xdotool", "type", "--delay", "1", "--", text])
+                delay = payload.get("delay_ms")
+                if delay is None:
+                    inject(["xdotool", "type", "--delay", "1", "--", text])
+                else:
+                    payload["_submitted_characters"] = 0
+                    for index, character in enumerate(text):
+                        if index:
+                            time.sleep(min(delay / 1000, remaining()))
+                        # Even without a token, recheck resize between characters.
+                        if payload.get("geometry") != geometry(timeout=remaining(3)):
+                            raise ValueError("Desktop geometry changed; capture and inspect again")
+                        inject(["xdotool", "type", "--delay", "1", "--", character])
+                        payload["_submitted_characters"] += 1
+                        payload["_dispatch_stage"] = "between-characters"
             elif kind == "key":
                 key = payload.get("key")
                 if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9_+]{1,100}", key):
@@ -776,6 +803,8 @@ class DesktopSession:
                     **payload["_input_receipt"],
                     "input_completed_at": datetime.now(timezone.utc).isoformat(),
                     "input_completed_monotonic_ns": time.monotonic_ns(),
+                    **({"submitted_characters": payload["_submitted_characters"]}
+                       if "_submitted_characters" in payload else {}),
                     **({"observation_id": observation.id} if observation is not None else {})}
         except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as exc:
             if attempted:

@@ -67,6 +67,10 @@ visibility. An older supervisor may refuse the dedicated action: use the menu
 launcher and refresh at a safe logout checkpoint. Closing the window,
 disconnecting RDP, logout, and restarting the supervisor
 preserve the choice. Ordinary RDP input does not detect human intervention.
+Local approved control changes persist before the supervisor status query, so
+server-paced text can stop between characters. The UI bounds idle status polling;
+browser control requests still queue behind active supervisor operations. Neither
+route provides compositor-level emergency interruption of an in-flight X event.
 
 Only explicit human approval or UI interaction permits changing the state.
 An approved CLI transition uses `desktop control enabled|human-override|disabled

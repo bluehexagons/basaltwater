@@ -952,7 +952,8 @@ class BoundCaptureTests(unittest.TestCase):
 
     def test_bound_debian_pacing_is_refused_without_sending_any_character(self):
         observed = self.observe(self.debian)
-        with patch.object(runtime, "request") as request:
+        with patch.object(runtime, "status", return_value={"input_capabilities": []}), \
+                patch.object(runtime, "request") as request:
             result = client.send_action({"action": "input", "kind": "text", "text": "abc", "delay_ms": 10,
                 "observation_id": observed["observation_id"], "generation": self.debian.generation,
                 "geometry": [10, 20], "control_revision": self.debian.control_revision})
@@ -971,7 +972,8 @@ class BoundCaptureTests(unittest.TestCase):
 
     def test_debian_bound_unicode_cannot_silently_use_unpaced_batch(self):
         observed = self.observe(self.debian)
-        with patch.object(runtime, "request") as request:
+        with patch.object(runtime, "status", return_value={"input_capabilities": []}), \
+                patch.object(runtime, "request") as request:
             result = client.send_action({"action": "input", "kind": "text", "text": "日本語",
                 "observation_id": observed["observation_id"], "generation": self.debian.generation,
                 "geometry": [10, 20], "control_revision": self.debian.control_revision})
@@ -979,6 +981,102 @@ class BoundCaptureTests(unittest.TestCase):
         self.assertEqual(result["submitted_characters"], 0)
         self.assertEqual(self.debian.observation.id, observed["observation_id"])
         request.assert_not_called()
+
+    def paced_text(self, text="Aé中", **options):
+        observed = self.observe(self.debian)
+        self.tool.reset_mock()
+        return {"action": "input", "kind": "text", "text": text, "delay_ms": 10,
+                "observation_id": observed["observation_id"], "generation": self.debian.generation,
+                "geometry": [10, 20], "control_revision": self.debian.control_revision, **options}
+
+    def test_debian_bound_pacing_uses_one_request_and_consumes_token(self):
+        payload = self.paced_text()
+        with patch.object(runtime, "status", side_effect=lambda **kw: self.debian.snapshot_status()), \
+                patch.object(runtime, "request", side_effect=self.debian.handle) as request, \
+                patch.object(time, "sleep") as sleep:
+            result = client.send_action(payload)
+        request.assert_called_once()
+        self.assertEqual(request.call_args.args[0]["text"], payload["text"])
+        self.assertEqual(result["submitted_characters"], 3)
+        self.assertEqual(result["input_delivery"], "completed")
+        self.assertEqual([c.args[0][-1] for c in self.tool.call_args_list], list(payload["text"]))
+        self.assertEqual(sleep.call_count, 2)
+        with self.assertRaisesRegex(ValueError, "consumed|invalidated"):
+            self.debian.handle(payload)
+        self.assertEqual(self.tool.call_count, 3)
+
+    def test_debian_pacing_stops_between_characters_with_known_prefix(self):
+        for cause in ("expiry", "deadline", "takeover", "resize", "window"):
+            control_state.change("enabled", human_approved=True)
+            payload = self.paced_text()
+            window = {"id": "0x123", "origin": [0, 0], "geometry": [10, 20]}
+            self.debian.observation.window = window
+            def interrupt(_seconds):
+                if cause == "expiry":
+                    self.debian_marker.started -= 61
+                elif cause == "deadline":
+                    self.now += 9
+                elif cause == "takeover":
+                    control_state.change("disabled", human_approved=True)
+                elif cause == "resize":
+                    size.return_value = [20, 20]
+                else:
+                    active.return_value = ["0x124"]
+            self.debian_marker = self.debian.observation
+            with self.subTest(cause=cause), patch.object(time, "sleep", side_effect=interrupt), \
+                    patch.object(runtime, "window_details", return_value=window), \
+                    patch.object(runtime, "window_ids", return_value=["0x123"]) as active, \
+                    patch.object(runtime, "geometry", return_value=[10, 20]) as size, \
+                    self.assertRaises((ValueError, RuntimeError)) as caught:
+                self.debian.handle(payload)
+            receipt = caught.exception.receipt
+            self.assertEqual(receipt["submitted_characters"], 1)
+            self.assertEqual(receipt["input_delivery"], "partial")
+            self.assertFalse(receipt["completion_unknown"])
+            self.assertNotIn("input_completed_at", receipt)
+            self.tool.assert_called_once()
+
+    def test_debian_pacing_failed_character_keeps_unknown_suffix(self):
+        payload = self.paced_text(_submitted_characters=999)
+        self.tool.side_effect = ["", subprocess.TimeoutExpired("xdotool", 1)]
+        with patch.object(time, "sleep"), self.assertRaises(subprocess.TimeoutExpired) as caught:
+            self.debian.handle(payload)
+        receipt = caught.exception.receipt
+        self.assertEqual(receipt["submitted_characters"], 1)
+        self.assertEqual(receipt["input_delivery"], "unknown")
+        self.assertTrue(receipt["completion_unknown"])
+        self.assertEqual(self.tool.call_count, 2)
+
+    def test_local_control_persists_before_waiting_for_busy_supervisor(self):
+        previous = control_state.status()["control_revision"]
+        def busy_supervisor(payload):
+            current = control_state.status()
+            self.assertEqual(current["agent_control"], "disabled")
+            self.assertNotEqual(current["control_revision"], previous)
+            self.assertEqual(payload, {"action": "status"})
+            raise TimeoutError("busy supervisor")
+        with patch.object(runtime, "configuration"), patch.object(runtime, "request", side_effect=busy_supervisor):
+            result = runtime.set_control("disabled", human_approved=True)
+        self.assertEqual(result["state"], "unknown")
+        self.assertEqual(result["agent_control"], "disabled")
+        self.assertIn("Control saved", result["detail"])
+        self.assertEqual(control_state.status()["agent_control"], "disabled")
+
+    def test_unapproved_local_control_never_writes_or_queries_supervisor(self):
+        before = control_state.status()
+        with patch.object(runtime, "configuration"), patch.object(runtime, "request") as request, \
+                self.assertRaises(PermissionError):
+            runtime.set_control("disabled")
+        self.assertEqual(control_state.status(), before)
+        request.assert_not_called()
+
+    def test_debian_worker_rejects_invalid_pacing_before_injection(self):
+        for delay in (True, 0, 101, "10"):
+            payload = self.paced_text(delay_ms=delay)
+            with self.subTest(delay=delay), self.assertRaises(ValueError) as caught:
+                self.debian.handle(payload)
+            self.assertEqual(caught.exception.receipt["input_delivery"], "not-sent")
+            self.tool.assert_not_called()
 
 
 if __name__ == "__main__":
