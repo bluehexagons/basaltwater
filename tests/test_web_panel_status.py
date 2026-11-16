@@ -10,6 +10,7 @@ from pathlib import Path
 import socket
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import Mock, patch
 
@@ -238,6 +239,36 @@ class StatusTest(unittest.TestCase):
             server.shutdown()
             worker.join(5)
             server.server_close()
+
+    def test_loopback_probe_deadline_interrupts_a_dribbling_response(self) -> None:
+        listener = socket.socket()
+        self.addCleanup(listener.close)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        listener.settimeout(2)
+        stop = threading.Event()
+        def peer() -> None:
+            connection, _ = listener.accept()
+            with connection:
+                connection.settimeout(2)
+                connection.recv(4096)
+                try:
+                    connection.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n")
+                    while not stop.wait(0.02):
+                        connection.sendall(b" ")
+                except OSError:
+                    pass
+        worker = threading.Thread(target=peer, daemon=True)
+        worker.start()
+        started = time.monotonic()
+        try:
+            with patch.object(panel, "_SERVICE_PROBE_TIMEOUT_SECONDS", 0.1):
+                result = panel._probe_homebox(listener.getsockname()[1])
+            self.assertEqual(result[0], "unavailable")
+            self.assertLess(time.monotonic() - started, 1)
+        finally:
+            stop.set()
+            worker.join(3)
 
 
 if __name__ == "__main__":

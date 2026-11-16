@@ -185,7 +185,7 @@ class HostSnapshotTest(unittest.TestCase):
                 self.assertIn("Mounted storage", rendered)
                 self.assertIn("/home", rendered)
                 self.assertIn("Resource pressure", rendered)
-                self.assertNotIn("Root disk", rendered)
+                self.assertNotIn("<dt>Root disk</dt>", rendered)
                 for failed_rows in (
                     [host._issue("Query timed out")],
                     [host._filesystem(_mount(size=None)), host._issue("Query timed out")],

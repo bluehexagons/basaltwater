@@ -27,8 +27,8 @@ under the panel account; no T3 Code installation is required.
 | Review audit activity | Audit activity | Sanitized recent events and collection health |
 | Receive remote notifications | Notifications | Recent accepted events and an optional sender endpoint |
 
-Navigation and read-only views work without JavaScript. The dashboard caches
-host and service snapshots for up to 30 seconds. See the [web panel
+Navigation and read-only views work without JavaScript. Passive summaries update
+in place when JavaScript is available. See the [web panel
 reference](web-panel-reference.md) for data limits, diagnostic behavior, and
 the notification API contract.
 
@@ -130,11 +130,57 @@ run link to view that report directly in Agents. Counts use private saved panel
 state without launching diagnostics or prompts; other terminal-agent sessions
 are not included. Missing task storage and scheduler errors remain explicit.
 
+## Automatic status updates
+
+Each eligible region shows its source health, **Updated … ago** and update
+controls. The timestamp is when the source was observed or exported; a successful
+request does not make an old export fresh. Hover the age for its UTC timestamp.
+Missing or future source times show **Unknown**. **Incomplete** means coverage
+is limited; **Stale** means the source exceeded its freshness limit.
+**Unavailable** means collection could not provide values. Warnings remain
+visible alongside any retained values.
+
+| Region | Automatic update |
+| --- | --- |
+| Host readings | Every 30 seconds from the shared host cache |
+| Web service summary and existing readiness labels | Every minute from shared discovery and probe caches |
+| Proxmox inventory summary | Every minute, following the exported snapshot |
+| Audit snapshot summary | Every five minutes, following the exported snapshot |
+| Agent activity summary | Every five seconds while a panel task runs; otherwise 30 seconds |
+| Storage diagnostic state | Every five seconds while scanning; otherwise every minute |
+| Loaded local service status | Every 30 seconds after **Load local service status** |
+
+**Pause updates** applies to all eligible regions in the current tab and survives
+page navigation. **Resume updates** resumes them; other tabs keep their own
+preference. **Refresh status** reads one region immediately, including while
+paused. Hidden pages suspend polling and read again when visible. Requests have
+jitter, a 30-second timeout and bounded retry backoff; server retry hints also
+apply to manual requests. A delayed connection retains the last values and
+their increasing source age. Authorization errors stop automatic retries until
+you sign in and refresh status.
+
+Only named summaries and readings change. Mounted filesystem rows, Proxmox
+tables, audit history, agent reports and review decisions remain as loaded;
+reload or open their existing links to inspect newer details. Changed agent
+activity asks you to inspect runs or review requests again. Focus, disclosures,
+filters and unsaved fields stay in place. Approval forms never update or submit
+automatically.
+
+Jobs, journals, runner inspection, agent readiness, notifications, certificate
+trust and scans retain their explicit controls or page-load behavior. Polling
+never starts a scan, prompt or privileged action. With JavaScript disabled,
+the same initial readings, timestamps, navigation and forms remain available;
+use page refresh links for newer snapshots. See the
+[status API contract](web-panel-reference.md#passive-status-api) for budgets and
+freshness thresholds.
+
 ## Storage usage diagnostic
 
 Open **Storage** in the Inspect menu and choose **Run diagnostic**. Collection
-runs in the background; use **Refresh status** to check progress. The previous
-result remains visible during a rerun. Opening the page does not scan the filesystem.
+runs in the background; its state and elapsed time update automatically.
+**Load latest scan results** loads the finished report, preserving the selected
+view. The previous result remains visible during a rerun, labelled with its own
+scan time. Opening the page does not scan the filesystem.
 Results remain in memory until the panel restarts.
 
 Choose a **Scan depth** before starting: **Quick** allows 15 seconds and 200,000
@@ -724,8 +770,9 @@ finished runs and puts execution settings inside each report's disclosure.
 Outcome badges distinguish blocked or failed work from a completed CLI process.
 These are retained-history
 totals, not lifetime usage or spending estimates. Active runs show elapsed time
-and remaining runtime at page load. Use **Refresh status** to update results
-and timing without automatic reloads that would discard a prompt draft.
+and remaining runtime at page load. The safe activity summary updates run counts
+and elapsed time in place. Open or refresh a report to inspect its latest
+evidence; unsaved prompts and review forms remain as loaded.
 Refreshing a selected run, task context, or receipt keeps that evidence open.
 Unreadable task storage shows unavailable counts and a retry link on the task
 list; it does not claim that the account has no tasks or run history. A submitted

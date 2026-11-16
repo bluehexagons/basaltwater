@@ -133,7 +133,7 @@ class Scenario:
         state = self.state
         self.replace(state, "features", return_value=self.features)
         self.replace(approval, "configured_panel_features", return_value=self.features)
-        self.replace(state, "system_overview", return_value=[
+        self.replace(panel, "collect_system_overview", return_value=[
             {"label": label, "value": value, "description": "Synthetic development data"}
             for label, value in (("Uptime", "2d 6h"), ("Memory", "94% used" if self.name == "degraded" else "24% used"),
                                  ("Swap", "8% used"), ("Root disk", "96% used" if self.name == "degraded" else "52% used"),
@@ -144,7 +144,7 @@ class Scenario:
             "issues": ["Synthetic audit collector unavailable"] if self.name == "degraded" else [],
         })
         self.replace(state, "notification_events", return_value=[])
-        self.replace(state, "service_health", return_value=[] if self.name == "empty" else [
+        self.replace(panel, "collect_service_health", return_value=[] if self.name == "empty" else [
             {"label": "Synthetic web service", "value": "failed" if self.name == "degraded" else "active",
              "description": "Simulated service; no host query"},
         ])

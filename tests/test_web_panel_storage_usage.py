@@ -16,6 +16,7 @@ from common.service_tools.web_panel_features import PanelFeatures
 from common.service_tools.web_panel_service import WebPanelHandler, WebPanelState, _PAGE_STYLE
 from common.service_tools.web_panel_storage_usage import parse_storage_query, parse_storage_scan, render_storage_usage
 from common.service_tools.web_panel_templates import panel_navigation
+from common.service_tools.web_panel_status import PanelStatus, StatusCache
 from scripts.panel_scenarios import Scenario
 from scripts.panel_storage_samples import storage_snapshot
 
@@ -27,6 +28,8 @@ class StorageDashboardTests(unittest.TestCase):
         self.manager.snapshot.side_effect = lambda: self.snapshot
         self.state = SimpleNamespace(storage_diagnostics=self.manager, manifest={"host": "vm.example.test"},
                                      csrf_token="test-csrf", navigation=lambda current: panel_navigation(current=current))
+        self.state.status_cache = StatusCache()
+        self.state.status = PanelStatus(self.state)
 
     def render(self, view: str = "areas") -> str:
         return render_storage_usage(self.state, _PAGE_STYLE, view)
@@ -115,11 +118,11 @@ class StorageDashboardTests(unittest.TestCase):
         self.snapshot["report"]["entries_scanned"] = 2000000
         self.assertNotIn("Quick scan limit reached", self.render())
 
-    def test_running_keeps_last_report_and_refresh_requires_user_action(self) -> None:
+    def test_running_keeps_last_report_and_results_require_user_action(self) -> None:
         self.snapshot = storage_snapshot(loaded=True)
         self.snapshot["state"] = "running"
         document = self.render("projects")
-        for expected in ('Use Refresh status to check progress', "Previous results remain visible", " disabled", "infra-tools", 'href="/storage?view=projects" aria-current="page"'):
+        for expected in ('Use Refresh status to check progress', "Existing results and scan controls stay as loaded", " disabled", "infra-tools", 'href="/storage?view=projects" aria-current="page"'):
             self.assertIn(expected, document)
         self.assertNotIn('http-equiv="refresh"', document)
         self.manager.start.assert_not_called()

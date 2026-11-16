@@ -55,6 +55,7 @@ from common.service_tools.web_panel_share_actions import (
 from common.service_tools import web_panel_routine_actions as routine_actions
 from common.service_tools import web_panel_headscale
 from common.service_tools import web_panel_status as status_model
+from common.service_tools import web_panel_refresh as refresh_ui
 from lib.storage_diagnostics import StorageDiagnostics
 from common.service_tools.web_panel_github_runner import parse_runner_query, render_runner_page
 from common.service_tools.web_panel_features import AGENT_TOOLS, PanelFeatures, discover_features, unit_installed
@@ -685,8 +686,20 @@ def _probe_homebox(port: int) -> tuple[str, str]:
     connection = http.client.HTTPConnection(
         "127.0.0.1", port, timeout=_SERVICE_PROBE_TIMEOUT_SECONDS
     )
+    deadline = None
     try:
         connection.request("GET", "/api/v1/status")
+        # A socket timeout alone restarts on every received byte. Bound the
+        # complete response too, including a peer that dribbles its headers.
+        transport = connection.sock
+        def interrupt() -> None:
+            try:
+                transport.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        deadline = threading.Timer(_SERVICE_PROBE_TIMEOUT_SECONDS, interrupt)
+        deadline.daemon = True
+        deadline.start()
         response = connection.getresponse()
         body = response.read(_MAX_SERVICE_PROBE_BYTES + 1)
         if response.status != HTTPStatus.OK or len(body) > _MAX_SERVICE_PROBE_BYTES:
@@ -700,6 +713,8 @@ def _probe_homebox(port: int) -> tuple[str, str]:
     ):
         return "unavailable", "HomeBox is not responding"
     finally:
+        if deadline is not None:
+            deadline.cancel()
         connection.close()
 
     if not isinstance(status, dict) or status.get("health") is not True:
@@ -1654,8 +1669,9 @@ def render_service_status(state: WebPanelState, load: bool) -> str:
     if load:
         health = state.service_health()
         cards = "".join(
-            '<div class="metric"><dt>{}</dt><dd><span class="metric-value {}">{}</span>'
+            '<div class="metric" data-panel-metric="{}"><dt>{}</dt><dd><span class="metric-value {}">{}</span>'
             '<span class="metric-description">{}</span>{}</dd></div>'.format(
+                html.escape(record["label"]),
                 html.escape(record["label"]),
                 {"active": "active", "failed": "failed", "Unavailable": "unavailable"}.get(record["value"], ""),
                 html.escape(record["value"]),
@@ -1676,13 +1692,14 @@ def render_service_status(state: WebPanelState, load: bool) -> str:
             f'<dl class="overview-grid">{cards}</dl>' if cards else
             '<p class="empty">No supported local services were found.</p>'
         )
+        content = refresh_ui.state_region(state, "services", "Local service status", content)
     header = f'''<header><p class="eyebrow">Basaltwater web panel</p><h1>Local service status</h1>
 <p class="lede">Process state for supported services on <code>{host}</code>.</p></header>'''
     scope = "fixed system services and the panel user's T3 Code service" if features.t3 else "fixed system services"
     body = f'''<form class="job-load" method="get" action="/services"><button name="load" value="1">Load local service status</button></form>
 <p class="endpoint">This checks {scope}. It does not prove public DNS, TLS, or application readiness.</p>
 {tool_link("checkup", "Prepare a system checkup") if prompts else ""}{content}'''
-    footer = '<footer><a href="/">Back to dashboard</a><span>Loaded on request · no automatic refresh</span></footer>'
+    footer = '<footer><a href="/">Back to dashboard</a><span>Fixed process state updates after loading</span></footer>' if load else '<footer><a href="/">Back to dashboard</a><span>Loaded on request · no automatic refresh</span></footer>'
     return render_document(
         title=f"Local service status · {state.manifest['host']}",
         style=_PAGE_STYLE,
@@ -1694,7 +1711,7 @@ def render_service_status(state: WebPanelState, load: bool) -> str:
 
 
 def _render_audit_section(state: WebPanelState) -> str:
-    snapshot = state.audit_snapshot()
+    snapshot = state.status_cache.read("audit", 300, state.audit_snapshot).value or {}
     events = snapshot.get("events", [])
     status = str(snapshot.get("status", "unavailable"))
     generated_at = str(snapshot.get("generated_at", ""))
@@ -1784,7 +1801,8 @@ def _render_audit_section(state: WebPanelState) -> str:
     return f'''<section aria-labelledby="audit-heading"><div class="section-heading"><div>
 {render_heading("System audit log", "security", heading_id="audit-heading")}</div>
 <span class="count">{count} event{"" if count == 1 else "s"}{warning_label} · {html.escape(status_label)}</span>
-</div>{issue_html}{suppression_html}{content}</section>'''
+</div>{refresh_ui.state_region(state, "audit", "Audit snapshot", '<p class="panel-summary" data-panel-summary>Audit history below reflects the page-load snapshot.</p>')}
+{issue_html}{suppression_html}{content}</section>'''
 
 
 def _render_notification_section(state: WebPanelState) -> str:
@@ -1928,18 +1946,21 @@ def render_page(state: WebPanelState, *, proxmox_query: ProxmoxQuery | None = No
             status_html = '<span class="card-status {}">{}</span>'.format(
                 status_class, html.escape(status_text)
             )
+        if not status_html:
+            status_html = '<span class="card-status unchecked">{}</span>'.format(html.escape(record["status_text"]))
         service_states[status_class] += 1
         icon, category = {
             "Published site": ("web-services", "sea"),
             "HTTPS service": ("service-status", "workspace"),
         }.get(kind, ("web-services", "water"))
         service_cards += (
-            '<a class="card service-card tone-{}" href="{}"><span class="card-top"><span class="action-icon">{}</span>'
+            '<a class="card service-card tone-{}" data-panel-service="{}" href="{}"><span class="card-top"><span class="action-icon">{}</span>'
             '<span class="service-title"><strong>{}</strong><span class="service-kind">{}</span></span>'
             '<span class="service-arrow" aria-hidden="true">&#8599;</span></span>'
             '<span class="service-detail">{}{}</span><span class="card-url">{}</span></a>'
         ).format(
             category,
+            record["id"],
             html.escape(record["url"], quote=True),
             render_icon(icon),
             html.escape(label),
@@ -1992,10 +2013,10 @@ def render_page(state: WebPanelState, *, proxmox_query: ProxmoxQuery | None = No
         elif value == "Unavailable":
             tone = "unavailable"
         card = (
-            '<div class="metric"><dt>{}</dt><dd><span class="metric-value {}">{}</span>{}'
+            '<div class="metric" data-panel-metric="{}"><dt>{}</dt><dd><span class="metric-value {}">{}</span>{}'
             '<span class="metric-description">{}</span></dd></div>'
         ).format(
-            html.escape(record["label"]), tone, html.escape(value), meter,
+            html.escape(record["label"], quote=True), html.escape(record["label"]), tone, html.escape(value), meter,
             html.escape(record["description"]),
         )
         if record.get("kind") == "pressure":
@@ -2010,11 +2031,16 @@ def render_page(state: WebPanelState, *, proxmox_query: ProxmoxQuery | None = No
     )
     filesystem_section = render_filesystems(overview, _format_bytes)
     proxmox_section = (
-        render_proxmox(load_proxmox_snapshot(), manifest, _format_bytes, _format_uptime, query=proxmox_query)
+        render_proxmox(state.status_cache.read("proxmox", 60, state.proxmox_snapshot).value or {"available": False, "issues": []},
+                       manifest, _format_bytes, _format_uptime, query=proxmox_query)
         if manifest["system_type"] == "server_proxmox" else ""
     )
+    if proxmox_section:
+        proxmox_section = refresh_ui.state_region(state, "proxmox", "Proxmox snapshot",
+            '<p class="panel-summary" data-panel-summary>Proxmox snapshot summary</p>'
+            '<p class="filesystem-note">Summary updates automatically. Filtered inventory and details below reflect the page-load snapshot; reload to inspect a newer export.</p>' + proxmox_section)
     if filesystem_section:
-        filesystem_section += '<p><a class="refresh-link" href="/storage">Explore storage usage →</a></p>'
+        filesystem_section += '<p class="filesystem-note">Mounted storage reflects the page-load readings. Reload the dashboard for new filesystem details.</p><p><a class="refresh-link" href="/storage">Explore storage usage →</a></p>'
     trust = state.certificate_trust()
     trust_section = _render_certificate_trust(trust) if trust else ""
     audit_section = _render_audit_section(state)
@@ -2069,16 +2095,18 @@ def render_page(state: WebPanelState, *, proxmox_query: ProxmoxQuery | None = No
     ) + '</nav>'
     services_section = f'''<section aria-labelledby="services-heading"><div class="section-heading"><div>
 {render_heading("Web services", "web-services", heading_id="services-heading")}</div>
-<span class="count">{service_count}</span></div><div class="grid service-grid">{service_cards}</div></section>''' if services else ""
+<span class="count" data-web-summary>{service_count}</span></div><div class="grid service-grid">{service_cards}</div></section>''' if services else ""
+    if services_section:
+        services_section = refresh_ui.state_region(state, "web", "Web services", services_section)
     access_section = f'''<section aria-labelledby="access-heading"><div class="section-heading"><div>
 {render_heading("Access", "access", heading_id="access-heading")}</div>
 <span class="count">{access_label}</span></div>{access_content}</section>''' if access_rows else ""
     body = f'''{section_nav}<section aria-labelledby="overview-heading"><div class="section-heading"><div>
 {render_heading("System overview", "dashboard", heading_id="overview-heading")}</div>
-<span class="count">Snapshot on page load · cached up to 30 seconds</span></div>
-<dl class="overview-grid host-overview">{overview_cards}</dl>{pressure_section}</section>
+<span class="count">Host readings · cached up to 30 seconds</span></div>
+{refresh_ui.state_region(state, "host", "System overview", '<dl class="overview-grid host-overview">' + overview_cards + '</dl>' + pressure_section)}</section>
 {proxmox_section}{filesystem_section}
-{render_agent_activity(state) if features.prompts else ""}
+{refresh_ui.state_region(state, "agents", "Agent activity", '<p class="panel-summary" data-panel-summary>Saved agent activity</p><span data-panel-elapsed hidden></span><p class="filesystem-note">Summary updates automatically. Open Agents to inspect changed runs and review decisions.</p>' + render_agent_activity(state)) if features.prompts else ""}
 {services_section}
 {audit_section}{notification_section}
 {access_section}{'<div id="trust">' + trust_section + '</div>' if trust_section else ""}{action}
@@ -2153,9 +2181,9 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", f"{content_type}; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
-        script_policy = f"script-src {CA_SCRIPT_CSP}; " if content_type == "text/html" else ""
+        script_policy = f"script-src {CA_SCRIPT_CSP} {refresh_ui.SCRIPT_CSP}; connect-src 'self'; " if content_type == "text/html" else ""
         if content_type == "text/html" and self.state.manifest.get("system_type") == "server_proxmox":
-            script_policy = f"script-src {CA_SCRIPT_CSP} {PROXMOX_SCRIPT_CSP}; "
+            script_policy = f"script-src {CA_SCRIPT_CSP} {PROXMOX_SCRIPT_CSP} {refresh_ui.SCRIPT_CSP}; connect-src 'self'; "
         self.send_header("Content-Security-Policy", f"default-src 'none'; {script_policy}img-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -2186,10 +2214,19 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         )
 
     def do_GET(self) -> None:
+        try:
+            self._get()
+        except status_model.StatusBusy:
+            self._send(HTTPStatus.SERVICE_UNAVAILABLE, "Status busy; retry shortly\n", "text/plain", headers={"Retry-After": "5"})
+
+    def _get(self) -> None:
         parsed = urllib.parse.urlsplit(self.path)
         path = parsed.path
         if path.startswith(status_model.API_PREFIX):
             self._handle_status(path.removeprefix(status_model.API_PREFIX), parsed.query)
+            return
+        if path == "/assets/panel-refresh.js" and not parsed.query:
+            self._send(HTTPStatus.OK, refresh_ui.SCRIPT, "text/javascript")
             return
         if path == "/favicon.svg":
             self._send(HTTPStatus.OK, render_favicon(), "image/svg+xml")
@@ -2247,7 +2284,8 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             except ValueError:
                 self._send(HTTPStatus.BAD_REQUEST, "Invalid agent view\n", "text/plain")
                 return
-            self._send(HTTPStatus.OK, render_agents(self.state, _PAGE_STYLE, query), "text/html")
+            body = render_agents(self.state, _PAGE_STYLE, query)
+            self._send(HTTPStatus.OK, refresh_ui.agent_document(self.state, body), "text/html")
             return
         if path == "/agent-tools":
             try:

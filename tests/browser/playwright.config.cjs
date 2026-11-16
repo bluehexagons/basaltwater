@@ -6,7 +6,7 @@ const { defineConfig } = require(require(path.join(modulePath, 'package.json')).
 
 module.exports = defineConfig({
   testDir: __dirname,
-  testMatch: ['surfaces.spec.cjs', 'headscale.spec.cjs'],
+  testMatch: ['surfaces.spec.cjs', 'headscale.spec.cjs', 'status.spec.cjs'],
   // One browser at a time bounds memory even on small or ballooned VMs and
   // keeps the single disposable desktop's session ownership deterministic.
   workers: 1,

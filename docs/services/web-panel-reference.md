@@ -68,13 +68,26 @@ request I/O after 15 seconds; excess connections receive a bounded 503 retry
 response. These bounds apply independently of browser tab count.
 
 Web discovery commands have ten-second and 256 KiB output limits, with at most
-64 displayed services and four one-second HomeBox probes per collection. Probe
+64 displayed services and four HomeBox probes per collection. Each probe has a
+one-second socket timeout and a one-second total response deadline after its
+request is sent, preventing a slow stream from holding a collector. Probe
 results and certificate-trust checks have separate 60-second caches; TLS checks
 remain page-load work and are not polled. Responses are capped at 24 KiB and
 contain only fixed summary fields. They exclude mounted paths, credentials,
 URLs, prompts, reports, logs and raw collector diagnostics. On-demand jobs,
 journals, runner checks, notification histories and approval forms have no
 polling endpoint.
+
+The browser uses the CSP hash-pinned `/assets/panel-refresh.js` script and
+same-origin fetches. Each named region has one request in flight. Initial
+requests jitter by 0.5–3 seconds; ordinary intervals add up to 10% jitter.
+Failures use exponential backoff capped at five minutes plus up to 20% jitter,
+and honor `Retry-After` seconds or HTTP dates. Requests abort after 30 seconds,
+on page hide, or when paused. The pause preference lives in `sessionStorage`.
+Relative ages advance locally; unchanged 304 responses do not announce a value
+change. A source-health transition or changed value uses a polite status region
+without moving focus. Detailed tables and editable forms remain page-load
+snapshots. Mounted storage does not inherit the live host region's timestamp.
 
 ## Host snapshot
 

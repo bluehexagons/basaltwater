@@ -23,6 +23,7 @@ from common.service_tools.web_panel_templates import (
 )
 from common.service_tools import web_panel_service as panel
 from common.service_tools import web_panel_agents as agents
+from common.service_tools import web_panel_refresh as refresh_ui
 from common.service_tools import web_panel_diagnostics as diagnostics
 from common.service_tools import web_panel_jobs as jobs
 from common.service_tools import web_panel_storage as storage
@@ -239,6 +240,7 @@ def export_assets(assets: Path) -> None:
     }, agent_home="/home/operator")
     state.csrf_token = "brand-preview-not-a-runtime-token"
     patchers = (
+        patch("common.service_tools.web_panel_status.time.time", return_value=1767258000),
         patch.object(panel, "discover_basaltwater_web_services", return_value=[]),
         patch.object(panel, "discover_certificate_trust", return_value=None),
         patch.object(state, "system_overview", return_value=[
@@ -339,6 +341,8 @@ def export_assets(assets: Path) -> None:
             "logs.html": diagnostics.render_diagnostics(diagnostics.DiagnosticQuery(load=True, priority="7"), panel._PAGE_STYLE, state.manifest["host"], navigation=state.navigation("logs"), agent_tools=True),
         }
         for name, document in pages.items():
+            # Static review specimens have no status server to poll.
+            document = document.replace(refresh_ui.SCRIPT_TAG, "")
             document = document.replace('href="/favicon.svg"', 'href="favicon.svg"')
             for route, filename in (("/", "panel.html"), ("/agents", "agents.html"),
                                     ("/maintenance-agent", "maintenance-agent.html"), ("/agent-inbox", "agent-inbox.html"),
