@@ -29,6 +29,10 @@ when adopting these conventions.
 
 ## Keep evidence focused
 
+On an unfamiliar Basaltwater host, run `basaltw agent context` once for installed
+tools, guidance and feature help routes. It works outside a project checkout.
+Use features relevant to the task; the report does not verify session access.
+
 Select the needed capability in `basaltw agent manifest` or `doctor`; use
 `--help` for selectors. Read a skill entrypoint once, then only references
 relevant to the current operation. Search for paths or symbols before opening
