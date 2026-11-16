@@ -30,10 +30,11 @@ class GamepadTests(unittest.TestCase):
         self.connection = Mock()
 
     def test_mapping_and_input_bounds(self):
-        self.assertEqual(qa.validate_action({"buttons": ["south", "start"],
+        self.assertEqual(qa.validate_action({"buttons": ["south", "start", "west", "north"],
                                             "axes": {"right-x": -32768, "right-trigger": 255},
                                             "hold_ms": 5000}),
-                         [(1, 304, 1), (1, 315, 1), (3, 3, -32768), (3, 5, 255)])
+                         [(1, 304, 1), (1, 315, 1), (1, 307, 1), (1, 308, 1),
+                          (3, 3, -32768), (3, 5, 255)])
         for change in ({"hold_ms": True}, {"hold_ms": 5001}, {"hold_ms": -1},
                        {"buttons": ["invalid"]}, {"buttons": ["south", "south"]},
                        {"axes": {"left-trigger": -1}}, {"axes": {"left-x": 32768}},
@@ -137,7 +138,7 @@ class GamepadTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             qa.receive(right)
 
-    def test_server_status_stop_and_owned_cleanup(self):
+    def test_server_rejection_recapture_stop_and_owned_cleanup(self):
         path = self.folder / "pad.sock"
         output = self.folder / "evidence"
         self.pad.device.device = "/fake/event1"
@@ -164,6 +165,20 @@ class GamepadTests(unittest.TestCase):
             self.assertTrue(ready.wait(2), "server did not become ready")
             self.assertFalse(failures)
             try:
+                self.assertTrue(qa.call({"action": "status"})["running"])
+                invalid = {**self.payload, "action": "press", "observation": {**self.current, "observation_id": "old"}}
+                rejected = qa.call(invalid)
+                self.assertEqual(rejected["delivery"], "not-sent")
+                self.assertTrue(rejected["rejected"])
+                self.assertEqual(json.loads(Path(rejected["artifact"]).read_text())["delivery"], "not-sent")
+                self.pad.write.assert_not_called()
+                self.assertTrue(qa.call({"action": "status"})["running"])
+                completed = qa.call({**self.payload, "action": "press"})
+                self.assertEqual(completed["delivery"], "completed")
+                self.assertTrue(completed["neutralized"])
+                self.pad.write.assert_called_once_with([(1, 304, 1)])
+                reused = qa.call({**self.payload, "action": "press"})
+                self.assertEqual(reused["delivery"], "not-sent")
                 self.assertTrue(qa.call({"action": "status"})["running"])
             finally:
                 qa.call({"action": "stop"})

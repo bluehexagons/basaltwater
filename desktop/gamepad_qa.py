@@ -25,7 +25,9 @@ from lib.atomic_io import read_json_file, write_json_atomic
 from lib.validation import validate_filesystem_path
 
 BUTTONS = {
-    "south": 304, "east": 305, "north": 307, "west": 308,
+    # The Xbox mapping follows xpad's historical BTN_X/BTN_Y aliases. Linux's
+    # BTN_NORTH/BTN_WEST symbol names do not describe these physical positions.
+    "south": 304, "east": 305, "north": 308, "west": 307,
     "left-shoulder": 310, "right-shoulder": 311,
     "select": 314, "start": 315, "guide": 316,
     "left-stick": 317, "right-stick": 318,
@@ -37,6 +39,10 @@ AXES = {
     "dpad-x": (16, -1, 1), "dpad-y": (17, -1, 1),
 }
 MAX_MESSAGE = 16384
+
+
+class InputRejected(ValueError):
+    """Invalid input/capture detected before any device event was dispatched."""
 
 
 def helper_status() -> dict:
@@ -53,21 +59,21 @@ def enabled(current: dict) -> None:
 
 def validate_action(payload: dict) -> list[tuple[int, int, int]]:
     if type(payload.get("hold_ms")) is not int or not 0 <= payload["hold_ms"] <= 5000:
-        raise ValueError("hold_ms must be an integer from 0 to 5000")
+        raise InputRejected("hold_ms must be an integer from 0 to 5000")
     buttons, axes = payload.get("buttons", []), payload.get("axes", {})
     if (not isinstance(buttons, list) or len(buttons) > len(BUTTONS)
             or any(not isinstance(name, str) or name not in BUTTONS for name in buttons)
             or len(set(buttons)) != len(buttons)):
-        raise ValueError("Unknown or repeated button")
+        raise InputRejected("Unknown or repeated button")
     if not isinstance(axes, dict) or any(name not in AXES for name in axes):
-        raise ValueError("Unknown axis")
+        raise InputRejected("Unknown axis")
     if not buttons and not axes:
-        raise ValueError("At least one button or axis is required")
+        raise InputRejected("At least one button or axis is required")
     events = [(1, BUTTONS[name], 1) for name in buttons]
     for name, value in axes.items():
         code, low, high = AXES[name]
         if type(value) is not int or not low <= value <= high:
-            raise ValueError(f"{name} must be an integer from {low} to {high}")
+            raise InputRejected(f"{name} must be an integer from {low} to {high}")
         events.append((3, code, value))
     return events
 
@@ -76,10 +82,10 @@ def validate_observation(observation: dict, current: dict, used: set[str]) -> st
     enabled(current)
     for key in ("generation", "control_revision", "observation_id", "geometry"):
         if not current.get(key) or observation.get(key) != current[key]:
-            raise ValueError(f"Observation has stale or missing {key}")
+            raise InputRejected(f"Observation has stale or missing {key}")
     identity = current["observation_id"]
     if not current.get("capture_freshness", {}).get("fresh") or identity in used:
-        raise ValueError("A fresh unused inspected capture is required")
+        raise InputRejected("A fresh unused inspected capture is required")
     return identity
 
 
@@ -137,7 +143,7 @@ class Bridge:
         events = validate_action(payload)
         observation = payload.get("observation")
         if not isinstance(observation, dict):
-            raise ValueError("An inspected screenshot receipt is required")
+            raise InputRejected("An inspected screenshot receipt is required")
         self.guard()
         identity = validate_observation(observation, helper_status(), self.used)
         self.used.add(identity)  # Never replay an uncertain action on this capture.
@@ -254,6 +260,19 @@ def serve(output: str, lifetime: int) -> dict:
                                 result = bridge.press(payload, connection)
                             else:
                                 raise ValueError("Unknown gamepad action")
+                        except InputRejected as exc:
+                            # Rejection precedes device writes. Keep the neutral
+                            # device connected so recapturing can recover without
+                            # changing the game's controller/camera mode.
+                            result = {"error": str(exc), "delivery": "not-sent", "rejected": True,
+                                      "requested": stamp(), "observation": payload.get("observation")}
+                            artifact = folder / f"{uuid.uuid4().hex}.json"
+                            try:
+                                write_json_atomic(str(artifact), result, mode=0o600)
+                                result["artifact"] = str(artifact)
+                            except OSError:
+                                bridge.stopping = True
+                                raise
                         except Exception as exc:
                             # Persistence/release failure after dispatch must
                             # never be mislabeled as a rejected input.

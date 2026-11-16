@@ -9,13 +9,25 @@ or a new portal input capability.
 
 A native KDE Wayland check on 2026-11-16 used Godot 4.7.2's joypad inspector.
 It recognized the Xbox mapping and observed face/shoulder/menu/stick buttons,
-d-pad diagonal, both sticks and both triggers. Controls returned to neutral
+d-pad diagonal, both sticks and both triggers. That initial simultaneous-button
+check did not distinguish X from Y; a later game run exposed swapped north/west
+positions in the adapter. The mapping now follows the Xbox driver's historical
+BTN_X/BTN_Y aliases (west=307, north=308), rather than the misleading
+BTN_NORTH/BTN_WEST names. See the [Linux xpad driver](https://github.com/torvalds/linux/blob/master/drivers/input/joystick/xpad.c).
+Qualify each face button independently against the consumer's semantic button
+index before claiming binding coverage. Controls returned to neutral
 (Godot's signed-stick center can be approximately 0.000015). Client disconnect
 released held input and removed the device. SIGKILL during a held button/stick
 removed the device and cleared the inspector's state; that action has no final
 release receipt. A 60-second lifetime removed the idle device at expiry (task
 exit 1 reports expiry). Raw captures, event logs and task receipts remain private.
 Live human takeover, helper loss, rumble and physical devices remain unqualified.
+
+A subsequent individual-button inspector retest observed south=A (Godot 0),
+east=B (1), west=X (2), north=Y (3), each with release. An expired one-second
+capture was rejected as `not-sent` with no additional inspector events; the
+same device remained connected and accepted a fresh-capture X press afterward.
+Normal stop removed that device and both supervised tasks exited zero.
 
 Run from the Basaltwater checkout with the intended Python. Create a private
 evidence parent outside Git, then launch the server as a supervised development
@@ -60,10 +72,12 @@ observation provenance and delivery/neutralization status in private JSON.
 The native screenshot recorder does **not** record these pad events; retain both
 inventories and link them in the playtest handoff. A completed receipt proves
 injection and release, not visible game response. An uncertain/error result must
-be inspected and reconciled, never automatically retried. A rejected press
-conservatively ends this bridge; inspect live state before a new server/capture.
-Cleanup/status accept
-no screenshot because stopping must remain possible after control is blocked.
+be inspected and reconciled, never automatically retried. Invalid or stale
+observations detected before dispatch return `delivery: not-sent` and a retained
+rejection receipt. They keep the neutral controller connected; take and inspect
+a fresh capture before another action. Session/control changes and uncertain
+device failures still end the bridge. Cleanup/status accept no screenshot
+because stopping must remain possible after control is blocked.
 
 Before gameplay, verify button release, d-pad, both sticks, triggers, neutral,
 disconnect, expiry and owned-device removal. Offline mocked tests cover blocked
