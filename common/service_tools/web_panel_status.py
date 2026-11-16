@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from http import HTTPStatus
 import hashlib
 import json
 import math
@@ -21,6 +22,38 @@ MAX_COLLECTORS = 2
 
 class StatusBusy(Exception):
     """No cached value is available within the nonblocking collection budget."""
+
+
+def serve(handler: Any, resource: str, query: str) -> None:
+    """Dispatch only authenticated, gated, bounded passive GET resources."""
+    # The private listener trusts only the identity supplied by the panel proxy.
+    state = handler.state
+    if handler.headers.get_all("X-Basaltwater-User") != [state.manifest.get("username")]:
+        handler._send(HTTPStatus.FORBIDDEN, "Authenticated panel proxy required\n", "text/plain")
+        return
+    if not state.status.available(resource):
+        handler._send(HTTPStatus.NOT_FOUND, "Status resource unavailable\n", "text/plain")
+        return
+    if query:
+        handler._send(HTTPStatus.BAD_REQUEST, "Invalid status query\n", "text/plain")
+        return
+    if not state.status.requests.acquire(blocking=False):
+        handler._send(HTTPStatus.SERVICE_UNAVAILABLE, "Status busy\n", "text/plain", headers={"Retry-After": "5"})
+        return
+    try:
+        try:
+            value = state.status.read(resource)
+        except (StatusBusy, OSError, RuntimeError, ValueError):
+            handler._send(HTTPStatus.SERVICE_UNAVAILABLE, "Status temporarily unavailable\n", "text/plain", headers={"Retry-After": "5"})
+            return
+        validator = '"' + value["revision"] + '"'
+        if handler.headers.get_all("If-None-Match") == [validator]:
+            handler._send(HTTPStatus.NOT_MODIFIED, "", "application/json", headers={"ETag": validator})
+        else:
+            handler._send(HTTPStatus.OK, json.dumps(value, separators=(",", ":"), allow_nan=False),
+                          "application/json", headers={"ETag": validator})
+    finally:
+        state.status.requests.release()
 
 
 @dataclass(frozen=True)
@@ -171,12 +204,6 @@ def agent_summary(manager: Any) -> dict[str, Any]:
             "scheduler_error": bool(manager.error)}
 
 
-def storage_summary(manager: Any) -> dict[str, Any]:
-    value = manager.snapshot()
-    return {**{key: value.get(key) for key in ("state", "scan_mode", "started_at", "finished_at")},
-            "report_generated_at": (value.get("report") or {}).get("generated_at")}
-
-
 class PanelStatus:
     """Project existing owners into fixed, safe, read-only resources."""
 
@@ -202,8 +229,12 @@ class PanelStatus:
                                 row["value"] == "Unavailable" for row in data["metrics"]))
         if resource == "web":
             reading = state.web_services()
-            return snapshot(resource, web_data(reading.value or []), reading.observed_at, interval=60, stale_after=180,
-                            unavailable=reading.value is None, incomplete=reading.failed,
+            observations = [reading.observed_at, *[row["probe_observed_at"] for row in reading.value or []
+                                                  if "probe_observed_at" in row]]
+            observed_at = min(observations) if all(value is not None for value in observations) else None
+            return snapshot(resource, web_data(reading.value or []), observed_at, interval=60, stale_after=180,
+                            unavailable=reading.value is None,
+                            incomplete=reading.failed or bool(reading.value and any(row.get("limited") for row in reading.value)),
                             warnings=("Service discovery is limited to 64 entries and four local probes.",)
                             if reading.value and any(row.get("limited") for row in reading.value) else ())
         if resource == "services":
@@ -237,10 +268,12 @@ class PanelStatus:
                             incomplete=reading.failed or value.get("status") == "degraded" or bool(value.get("issues")),
                             warnings=("Kernel audit is not applicable on this machine.",) if not applicable else ())
         if resource == "storage":
-            reading = state.status_cache.read("storage", 5, lambda: storage_summary(state.storage_diagnostics))
-            value = reading.value
-            return snapshot(resource, value or {}, reading.observed_at, interval=5 if value and value["state"] == "running" else 60,
-                            stale_after=180, unavailable=value is None, incomplete=reading.failed)
+            # Operation metadata is already in memory. Read it directly so a
+            # just-started scan cannot inherit a cached idle polling interval.
+            observed_at = time.time()
+            value = state.storage_diagnostics.status_summary()
+            return snapshot(resource, value, observed_at, interval=5 if value["state"] == "running" else 60,
+                            stale_after=180)
         if resource == "agents":
             reading = state.status_cache.read("agents", 5, lambda: agent_summary(state.agent_tasks))
             value = reading.value

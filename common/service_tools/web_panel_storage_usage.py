@@ -151,7 +151,7 @@ def render_storage_usage(state, base_style: str, view: str = "areas") -> str:
     actions = f'''<div class="storage-actions"><a href="/storage?view={view}">Refresh status</a><form method="post" action="/actions/storage-scan"><input type="hidden" name="csrf" value="{_escape(state.csrf_token)}"><label>Scan depth<select name="mode"{" disabled" if running else ""}>{options}</select></label><button type="submit"{" disabled" if running else ""}>{button}</button></form></div>'''
     content = f'''<div class="storage-heading"><div><p class="eyebrow">On-demand diagnostic</p><h2>Understand this host’s storage</h2></div>{actions}</div>
 {state_region(state, "storage", "Storage diagnostic", '<p class="panel-summary" data-panel-summary>' + title + '</p><span data-panel-elapsed hidden></span><p class="storage-footnote">State updates automatically. Existing results and scan controls stay as loaded.</p><a data-panel-results href="/storage?view=' + view + '"' + (' hidden' if running or status == 'idle' else '') + '>Load latest scan results</a>')}
-<div class="storage-status {status}"><strong>{title} at page load</strong><p>{_escape(snapshot.get("message", ""))}</p><noscript><p>Use Refresh status to check progress.</p></noscript></div>'''
+<div class="storage-status {status}" role="status"><strong>{title} at page load</strong><p>{_escape(snapshot.get("message", ""))}</p><noscript><p>Use Refresh status to check progress.</p></noscript></div>'''
     if report:
         content += f'<p class="storage-footnote">Showing scan recorded at <time>{_escape(report["generated_at"])}</time>.</p>'
         limits = report["limits"]

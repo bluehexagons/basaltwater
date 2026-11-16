@@ -177,6 +177,10 @@ class Scenario:
         self.replace(state.storage_diagnostics, "snapshot", side_effect=lambda: storage_snapshot(
             loaded=bool(self.data.get("storage_loaded")), degraded=self.name == "degraded",
             mode=self.data.get("storage_mode", "quick")))
+        self.replace(state.storage_diagnostics, "status_summary", side_effect=lambda: {
+            key: value for key, value in state.storage_diagnostics.snapshot().items()
+            if key in {"state", "scan_mode", "started_at", "finished_at"}
+        })
         self.replace(state.storage_diagnostics, "start", side_effect=self.collect_storage)
         self.replace(state.git_settings, "snapshot", side_effect=self.identity)
         self.replace(state.git_settings, "set_identity", side_effect=self.set_identity)

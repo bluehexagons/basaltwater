@@ -43,7 +43,7 @@ state. Query fields are rejected. All responses remain `no-store`.
 | `proxmox` | Existing minute export; read at most once per minute | 60 seconds | 180 seconds |
 | `audit` | Existing five-minute export; read at most once per five minutes | Five minutes | 15 minutes |
 | `agents` | Bounded saved task state; Codex feature required | Five seconds while running, otherwise 30 seconds | 90 seconds |
-| `storage` | Existing diagnostic state; never starts a scan | Five seconds while running, otherwise 60 seconds | 180 seconds |
+| `storage` | Fixed in-memory diagnostic metadata; never copies the report or starts a scan | Five seconds while running, otherwise 60 seconds | 180 seconds |
 | `services` | Existing fixed-unit cache; unavailable until explicitly loaded | 30 seconds | 90 seconds |
 
 The schema-1 envelope contains `resource`, UTC `observed_at` (or null),
@@ -58,6 +58,8 @@ An in-memory client may send the returned quoted `ETag` in `If-None-Match`.
 An unchanged resource returns 304 with no snapshot body. Authentication and
 feature checks still run. Validators cover observation time, values, warnings
 and freshness, excluding browser fetch time. No public cache is introduced.
+Storage metadata is observed directly on each read so a just-started scan cannot
+inherit a cached idle interval. Exported reports retain their separate timestamps.
 
 Each panel admits eight concurrent status requests, two source collectors
 across all sources, and one collector per source. Followers immediately receive
@@ -77,6 +79,8 @@ contain only fixed summary fields. They exclude mounted paths, credentials,
 URLs, prompts, reports, logs and raw collector diagnostics. On-demand jobs,
 journals, runner checks, notification histories and approval forms have no
 polling endpoint.
+The web summary uses the oldest contributing probe observation, so a newer
+discovery read cannot make an older independently cached probe appear fresh.
 
 The browser uses the CSP hash-pinned `/assets/panel-refresh.js` script and
 same-origin fetches. Each named region has one request in flight. Initial

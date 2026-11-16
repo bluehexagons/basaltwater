@@ -171,14 +171,31 @@ class StatusTest(unittest.TestCase):
         self.assertEqual(value["data"]["running"], 1)
         self.assertNotIn("SECRET", json.dumps(value))
         self.assertNotIn("/private", json.dumps(value))
-        with patch.object(self.state.storage_diagnostics, "snapshot", return_value={
+        self.state.storage_diagnostics._snapshot.update({
             "state": "running", "started_at": "2026-01-01T00:00:00Z", "scan_mode": "quick",
             "message": "SECRET", "report": {"generated_at": "2025-01-01T00:00:00Z", "paths": ["/private"]},
-        }):
+        })
+        with patch("lib.storage_diagnostics.deepcopy", side_effect=AssertionError("No report copy")):
             value = self.state.status.read("storage")
         self.assertNotIn("SECRET", json.dumps(value))
         self.assertNotIn("/private", json.dumps(value))
         self.assertEqual(value["data"]["report_generated_at"], "2025-01-01T00:00:00Z")
+
+    def test_scan_state_changes_immediately_without_a_cached_idle_interval(self) -> None:
+        self.assertEqual(self.state.status.read("storage")["interval_seconds"], 60)
+        self.state.storage_diagnostics._snapshot["state"] = "running"
+        value = self.state.status.read("storage")
+        self.assertEqual(value["data"]["state"], "running")
+        self.assertEqual(value["interval_seconds"], 5)
+
+    def test_partial_service_discovery_remains_incomplete_with_configured_entries(self) -> None:
+        self.state.manifest["services"] = [{"label": "Configured", "url": "https://example.test/"}]
+        discovered = panel._DiscoveredServices()
+        discovered.incomplete = True
+        with patch.object(panel, "discover_basaltwater_web_services", return_value=discovered):
+            value = self.state.status.read("web")
+        self.assertEqual(value["freshness"], "incomplete")
+        self.assertTrue(value["warnings"])
 
     def test_exported_partial_unavailable_and_stale_sources(self) -> None:
         self.state.manifest["system_type"] = "server_proxmox"
@@ -208,6 +225,16 @@ class StatusTest(unittest.TestCase):
         discover.assert_called_once()
         probe.assert_called_once()
         self.assertNotIn("example.test", json.dumps(value))
+
+    def test_independently_cached_probe_cannot_receive_a_new_discovery_timestamp(self) -> None:
+        self.state.manifest["services"] = [{"label": "HomeBox", "url": "https://example.test/",
+                                            "probe": {"kind": "homebox", "port": 8444}}]
+        with patch.object(status.time, "time", return_value=100):
+            self.state.status_cache.read("homebox-8444", 60, lambda: ("ready", "HomeBox is ready"))
+        with patch.object(panel, "discover_basaltwater_web_services", return_value=[]), \
+             patch.object(status.time, "time", return_value=200):
+            value = self.state.status.read("web")
+        self.assertEqual(status.timestamp(value["observed_at"]), 100)
 
     def test_real_transport_headers_and_server_thread_overload(self) -> None:
         class Handler(panel.WebPanelHandler):

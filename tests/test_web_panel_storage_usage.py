@@ -26,6 +26,10 @@ class StorageDashboardTests(unittest.TestCase):
         self.snapshot = storage_snapshot(loaded=False)
         self.manager = Mock()
         self.manager.snapshot.side_effect = lambda: self.snapshot
+        self.manager.status_summary.side_effect = lambda: {
+            key: value for key, value in self.snapshot.items()
+            if key in {"state", "scan_mode", "started_at", "finished_at"}
+        }
         self.state = SimpleNamespace(storage_diagnostics=self.manager, manifest={"host": "vm.example.test"},
                                      csrf_token="test-csrf", navigation=lambda current: panel_navigation(current=current))
         self.state.status_cache = StatusCache()

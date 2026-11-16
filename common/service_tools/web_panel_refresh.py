@@ -271,7 +271,7 @@ def region(resource: str, label: str, content: str, value: dict[str, Any] | None
 <div class="panel-status"><span data-source-health>{health.capitalize()}</span>{time_html}
 <span data-panel-transport>Snapshot on page load</span><span data-update-controls hidden>
 <button type="button" data-panel-refresh>Refresh status</button><button type="button" data-panel-pause>Pause updates</button></span>
-<span data-source-warnings>{html.escape(warnings)}</span><span class="panel-announcement" data-panel-announcement role="status" aria-live="polite" aria-atomic="true"></span></div>{content}</div>'''
+<span data-source-warnings>{html.escape(warnings)}</span><span class="panel-announcement" data-panel-announcement aria-live="polite" aria-atomic="true"></span></div>{content}</div>'''
 
 
 def state_region(state: Any, resource: str, label: str, content: str) -> str:

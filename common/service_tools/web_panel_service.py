@@ -954,6 +954,8 @@ class WebPanelState:
                     if probes < 4:
                         probe = self.status_cache.read("homebox-" + str(port), 60, lambda: _probe_homebox(port))
                         record["status"], record["status_text"] = probe.value or ("unavailable", "Probe unavailable")
+                        record["probe_observed_at"] = probe.observed_at
+                        limited = limited or probe.failed
                     else:
                         record.update(status="unchecked", status_text="Probe limit reached")
                         limited = True
@@ -2223,7 +2225,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlsplit(self.path)
         path = parsed.path
         if path.startswith(status_model.API_PREFIX):
-            self._handle_status(path.removeprefix(status_model.API_PREFIX), parsed.query)
+            status_model.serve(self, path.removeprefix(status_model.API_PREFIX), parsed.query)
             return
         if path == "/assets/panel-refresh.js" and not parsed.query:
             self._send(HTTPStatus.OK, refresh_ui.SCRIPT, "text/javascript")
@@ -2391,36 +2393,6 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         else:
             body = render_page(self.state)
         self._send(HTTPStatus.OK, body, "text/html")
-
-    def _handle_status(self, resource: str, query: str) -> None:
-        # Nginx strips client identity headers and supplies the authenticated
-        # username. The Unix socket/loopback listener is never a public API.
-        if self.headers.get_all("X-Basaltwater-User") != [self.state.manifest.get("username")]:
-            self._send(HTTPStatus.FORBIDDEN, "Authenticated panel proxy required\n", "text/plain")
-            return
-        if not self.state.status.available(resource):
-            self._send(HTTPStatus.NOT_FOUND, "Status resource unavailable\n", "text/plain")
-            return
-        if query:
-            self._send(HTTPStatus.BAD_REQUEST, "Invalid status query\n", "text/plain")
-            return
-        if not self.state.status.requests.acquire(blocking=False):
-            self._send(HTTPStatus.SERVICE_UNAVAILABLE, "Status busy\n", "text/plain", headers={"Retry-After": "5"})
-            return
-        try:
-            try:
-                value = self.state.status.read(resource)
-            except (status_model.StatusBusy, OSError, RuntimeError, ValueError):
-                self._send(HTTPStatus.SERVICE_UNAVAILABLE, "Status temporarily unavailable\n", "text/plain", headers={"Retry-After": "5"})
-                return
-            validator = '"' + value["revision"] + '"'
-            if self.headers.get_all("If-None-Match") == [validator]:
-                self._send(HTTPStatus.NOT_MODIFIED, "", "application/json", headers={"ETag": validator})
-            else:
-                self._send(HTTPStatus.OK, json.dumps(value, separators=(",", ":"), allow_nan=False),
-                           "application/json", headers={"ETag": validator})
-        finally:
-            self.state.status.requests.release()
 
     def do_POST(self) -> None:
         parsed = urllib.parse.urlsplit(self.path)

@@ -562,6 +562,12 @@ class StorageDiagnostics:
         with self._lock:
             return deepcopy(self._snapshot)
 
+    def status_summary(self) -> dict:
+        """Read fixed operation metadata without copying a retained report."""
+        with self._lock:
+            return {**{key: self._snapshot[key] for key in ("state", "scan_mode", "started_at", "finished_at")},
+                    "report_generated_at": (self._snapshot["report"] or {}).get("generated_at")}
+
     def start(self, *, mode: str = "quick") -> bool:
         """Atomically start one background scan; return false while it runs."""
         if not isinstance(mode, str) or mode not in SCAN_LIMITS:
