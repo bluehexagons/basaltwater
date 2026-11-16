@@ -105,6 +105,19 @@ budget when comparing model workflows.
 
 Remaining implementation tasks, independently assignable after qualification:
 
+- [x] Add Debian receipt-bound coordinate mapping, manual evidence journals,
+  offline verification/analysis, and supervised development tasks. See
+  [desktop evidence](../workstations/desktop-automation.md#map-and-record-debian-observations)
+  and [Debian task ownership](../workstations/debian-development.md). Mocked
+  checks cover stale context, recorder failures, queued generation/control
+  changes and scoped cgroup cleanup. Live task/descendant cleanup, helper
+  replacement and shared-session transitions remain post-refresh qualification.
+  Conditional execution and live audio retain separate backend requirements.
+- [ ] Prototype persistent X11 input with owned press/release accounting and an
+  independent worker-death watchdog before enabling drag, physical keycodes or
+  holds on Debian. Closing an X connection alone does not establish release of
+  injected state; do not extend the current subprocess adapter with long holds.
+
 - [ ] Apply the [reported Windows game-testing feedback](windows-game-testing.md#consuming-game-feedback-and-next-windows-pass):
   multi-key/timeline leases, wheel and mouse gestures, and specific target-stop
   diagnostics. Parent input help is fixed in source; native revalidation is open.

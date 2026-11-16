@@ -311,7 +311,7 @@ def load_project_environment(repository: str) -> dict[str, object]:
     }
 
 
-def _native_development(repository: str) -> dict[str, object]:
+def _desktop_development(repository: str, *, native: bool) -> dict[str, object]:
     """Advertise project-specific tasks using the existing bounded metadata reader."""
     from desktop.development import project_info
     from desktop.development_workflows import package_info
@@ -322,7 +322,7 @@ def _native_development(repository: str) -> dict[str, object]:
     package = root / "package.json"
     if godot and (package.exists() or package.is_symlink()):
         project["node"] = package_info(root)
-    prefix = ["basaltw", "desktop", "--native", "develop"]
+    prefix = ["basaltw", "desktop", *(["--native"] if native else []), "develop"]
     target = ["--project", repository, "--json"]
     return {
         "role": {"godot": "remote-godot-development", "node": "node-development",
@@ -331,7 +331,8 @@ def _native_development(repository: str) -> dict[str, object]:
         "intended_use": "development-and-testing", "final_build_host": "debian",
         "secondary_workflows": ["electron", "native-applications", "native-games"],
         "readiness": "unverified",
-        "guide": "https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos-development.md",
+        "guide": "https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/"
+                 + ("cachyos-development.md" if native else "debian-development.md"),
         "doctor_argv": [*prefix, "doctor", *target],
         "godot_editor_argv": [*prefix, "editor", *target] if godot else None,
         "godot_run_argv": [*prefix, "run", *target] if godot else None,
@@ -339,12 +340,16 @@ def _native_development(repository: str) -> dict[str, object]:
         "node_script_prefix_argv": [*prefix, "node", *target] if "node" in project else None,
         "recipe_check_prefix_argv": [*prefix, "check", *target],
         "application_prefix_argv": [*prefix, "exec", "--project", repository, "--"],
-        "instructions": "Launch explicitly in the owned logged-in KDE session from T3 or SSH. "
+        "instructions": ("Launch explicitly in the owned logged-in KDE session from T3 or SSH. " if native else
+                         "Launch through the running shared XRDP supervisor; do not guess display/bus variables. "
+                         "The supervisor's PATH selects installed tools; use absolute executable paths when needed. ")
         + ("Import Godot assets before testing; bounded headless runs do not verify GPU/input. " if godot else "")
         + "Use node for a declared package script with the project's selected installed Node runtime, "
         "and check for a declared project recipe with private revision/settings evidence. "
-        "Tasks retain bounded logs and status after client disconnect. Capture/input still require "
-        "separate approved portal control. Follow persistent desktop control states; do not "
+        "Tasks retain bounded logs and status after client disconnect. "
+        + ("Capture/input still require separate approved portal control. " if native else
+           "Queued starts recheck the original desktop generation; started tasks have independent user-systemd ownership. ")
+        + "Follow persistent desktop control states; do not "
         "change state from a task request alone. Record actual playtest outcomes "
         "separately from prerequisites and process exit status.",
     }
@@ -464,7 +469,7 @@ def inspect_environment(repository: str, *, project_runtime: bool = False,
         },
         "desktop_applications": desktop,
         "desktop_skills": desktop_skills if desktop else [],
-        "development": _native_development(root) if native_desktop else None,
+        "development": None if wsl else _desktop_development(root, native=native_desktop),
         "project_runtime": runtime,
         "workspace": {
             "repository": root, "branch": state["branch"], "commit": state["head"],

@@ -611,11 +611,15 @@ class BoundCaptureTests(unittest.TestCase):
         completed = self.move(self.debian, first, kind="text", text="private-text")
         second = self.observe(self.debian)
         self.assertEqual(second["last_input"]["input_id"], completed["input_id"])
+        self.debian.record_evidence({"action": "development", "operation": "exec",
+                                    "options": {"argv": ["private-command"]}}, {"task": "a" * 32, "state": "running"})
         finished = self.debian.handle({**context, "operation": "finish"})
         record = Path(finished["artifact"])
         data = json.loads(record.read_text())
         self.assertNotIn("private-text", record.read_text())
+        self.assertNotIn("private-command", record.read_text())
         self.assertEqual(data["events"][2]["related_input_id"], completed["input_id"])
+        self.assertEqual(data["events"][3]["result"]["task"], "a" * 32)
         self.assertEqual(second["artifact_sha256"], hashlib.sha256(self.png_header()).hexdigest())
         self.assertTrue(verify(str(record))["healthy"])
         Path(second["output"]).write_bytes(b"altered")
@@ -676,6 +680,73 @@ class BoundCaptureTests(unittest.TestCase):
             self.assertEqual(run_desktop_command(args), 0, output.getvalue())
         status.assert_not_called()
         request.assert_not_called()
+
+    def test_debian_development_uses_supervisor_generation_and_blocks_stale_launches(self):
+        from desktop import development
+        parser = argparse.ArgumentParser()
+        add_desktop_subparser(parser.add_subparsers())
+        args = parser.parse_args(["desktop", "develop", "exec", "--project", str(self.home),
+                                 "--json", "--", "/usr/bin/fixture", "literal argument"])
+        with patch.object(runtime, "status", side_effect=self.debian.snapshot_status), \
+                patch.object(runtime, "request", side_effect=self.debian.handle) as request, \
+                patch.object(development, "launch", return_value={"ok": True, "task": "a" * 32}) as launch:
+            observed = self.observe(self.debian)
+            with patch("sys.stdout", new_callable=io.StringIO) as output:
+                self.assertEqual(run_desktop_command(args), 0, output.getvalue())
+            payload = request.call_args.args[0]
+            launch.assert_called_once_with(str(self.home), "exec", argv=["--", "/usr/bin/fixture", "literal argument"],
+                dry_run=False, session_generation=self.debian.generation, control_revision=self.debian.control_revision)
+            self.assertIsNone(self.debian.observation)
+            launch.reset_mock()
+            for changes in ({"generation": "stale"}, {"control_revision": "stale"}):
+                with self.subTest(changes=changes), self.assertRaises((RuntimeError, ValueError)):
+                    self.debian.handle({**payload, **changes})
+            launch.assert_not_called()
+            self.assertIsNotNone(observed["observation_id"])
+
+    def test_debian_development_previews_preserve_observation_while_control_is_blocked(self):
+        from desktop import development
+        control_state.change("disabled", human_approved=True)
+        observed = self.observe(self.debian)
+        payload = {"action": "development", "operation": "exec", "project": str(self.home),
+                   "generation": self.debian.generation, "control_revision": self.debian.control_revision,
+                   "options": {"dry_run": True, "argv": ["/usr/bin/fixture"]}}
+        with patch.object(development, "launch", return_value={"ok": True}) as launch:
+            self.debian.handle(payload)
+            self.assertEqual(self.debian.observation.id, observed["observation_id"])
+            launch.reset_mock()
+            with self.assertRaisesRegex(RuntimeError, "disabled"):
+                self.debian.handle({**payload, "options": {**payload["options"], "dry_run": False}})
+            launch.assert_not_called()
+
+    def test_debian_development_refuses_old_helpers_and_invalid_wire_options(self):
+        from desktop import debian_development, development
+        args = SimpleNamespace(project=str(self.home), development_command="exec")
+        with patch.object(runtime, "status", return_value={"state": "running", "capabilities": []}), \
+                patch.object(runtime, "request") as request, self.assertRaisesRegex(RuntimeError, "lacks supervised"):
+            debian_development.request_task(args)
+        request.assert_not_called()
+        with patch.object(development, "launch") as launch:
+            for options in ({"dry_run": "true"}, {"argv": "fixture"}, {"argv": [42]},
+                            {"session_generation": "spoofed"}, {"headless": 1}):
+                with self.subTest(options=options), self.assertRaises(ValueError):
+                    debian_development.handle_task({"project": str(self.home), "operation": "exec", "options": options},
+                                                   self.debian.generation)
+            launch.assert_not_called()
+
+    def test_debian_development_forwards_global_preview_and_never_retries_lost_reply(self):
+        from desktop import debian_development, development
+        args = SimpleNamespace(project=str(self.home), development_command="exec", argv=["/usr/bin/fixture"], dry_run=False)
+        with patch.object(runtime, "status", side_effect=self.debian.snapshot_status), \
+                patch.object(runtime, "request", return_value={"ok": True}) as request, \
+                patch.object(development, "is_dry_run", return_value=True):
+            debian_development.request_task(args)
+            self.assertIs(request.call_args.args[0]["options"]["dry_run"], True)
+            request.reset_mock()
+            request.side_effect = TimeoutError("lost reply")
+            with self.assertRaisesRegex(RuntimeError, "task may already have started"):
+                debian_development.request_task(args)
+            request.assert_called_once()
 
     def test_debian_expired_frame_proves_no_dispatch_and_ignores_caller_receipt(self):
         observation = self.observe(self.debian)

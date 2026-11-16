@@ -16,7 +16,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from desktop import control_state, development, development_worker
+from desktop import control_state, debian_development, development, development_worker, session_runtime
 from lib import desktop_cli
 from lib import agent_environment, agent_workspace
 from lib.atomic_io import write_json_atomic
@@ -258,6 +258,27 @@ class TestDevelopmentTasks(unittest.TestCase):
         native = development.load_task(Path(self.launch(kind="exec", argv=["--", str(self.engine), "literal argument"])["directory"]))
         self.assertEqual(native["argv"], [str(self.engine), "literal argument"])
 
+    def test_debian_tasks_keep_session_identity_without_kde_lifecycle_dependencies(self):
+        environment = {"DISPLAY": ":10", "XAUTHORITY": str(self.home / ".Xauthority"),
+                       "DBUS_SESSION_BUS_ADDRESS": "unix:path=/tmp/fixture-bus"}
+        with patch.object(debian_development, "supervisor_environment", return_value=(environment, "available")):
+            launched = self.launch(session_generation="d" * 32, control_revision="e" * 32)
+        command = self.probe.call_args_list[0].args[0]
+        self.assertIn("--setenv=DISPLAY=:10", command)
+        self.assertIn("--setenv=DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/fixture-bus", command)
+        self.assertIn("WAYLAND_DISPLAY", next(value for value in command if value.startswith("--property=UnsetEnvironment=")))
+        self.assertFalse(any("graphical-session.target" in value for value in command))
+        self.environment.assert_not_called()
+        self.control.assert_called_once_with("e" * 32)
+        self.assertEqual(launched["session_generation"], "d" * 32)
+        record = development.load_task(Path(launched["directory"]))
+        self.assertEqual(record["session_generation"], "d" * 32)
+        for value in (None, True, "invalid", "a" * 33):
+            with self.subTest(value=value):
+                write_json_atomic(str(Path(launched["directory"]) / "task.json"), {**record, "session_generation": value})
+                with self.assertRaisesRegex(ValueError, "session generation"):
+                    development.load_task(Path(launched["directory"]))
+
     def test_stop_targets_only_owned_transient_invocation_and_survives_cleared_identity(self):
         launched = self.launch()
         result = development.task_status(launched["task"], stop=True)
@@ -443,14 +464,16 @@ class TestDevelopmentTasks(unittest.TestCase):
             self.launch()
         self.probe.assert_not_called()
 
-    def test_cli_routes_without_starting_portal_and_requires_native(self):
+    def test_cli_routes_to_selected_backend_without_starting_portal(self):
         parser = argparse.ArgumentParser()
         desktop_cli.add_desktop_subparser(parser.add_subparsers(dest="command"))
-        for native, expected in ((True, 0), (False, 1)):
+        for native in (True, False):
             args = parser.parse_args(["desktop", *(["--native"] if native else []), "develop", "doctor", "--project", str(self.project), "--json"])
-            with redirect_stdout(output := StringIO()), patch("desktop.native_session.start") as portal:
-                self.assertEqual(desktop_cli.run_desktop_command(args), expected)
-            self.assertEqual(json.loads(output.getvalue())["ok"], native)
+            with redirect_stdout(output := StringIO()), patch("desktop.native_session.start") as portal, \
+                    patch.object(debian_development, "request_task", return_value={"ok": True}) as request:
+                self.assertEqual(desktop_cli.run_desktop_command(args), 0)
+            self.assertTrue(json.loads(output.getvalue())["ok"])
+            self.assertEqual(request.call_count, 0 if native else 1)
             portal.assert_not_called()
 
 
@@ -503,11 +526,41 @@ class TestDevelopmentSession(unittest.TestCase):
             with self.subTest(text=text), patch.object(development, "_owned_socket", return_value=True), patch.object(development, "_probe", side_effect=[("ok", "ActiveState=active"), ("ok", text)]):
                 self.assertFalse(development.session_environment(1234)[0])
 
-    def test_root_and_other_distributions_are_rejected(self):
+    def test_root_is_rejected_and_debian_requires_configured_desktop_owner(self):
         with patch.object(development.os, "getuid", return_value=0), self.assertRaises(RuntimeError):
             development._guard()
-        with patch.object(development.os, "getuid", return_value=1234), patch.object(development.os, "geteuid", return_value=1234), patch.object(development, "is_cachyos", return_value=False), self.assertRaises(RuntimeError):
-            development._guard()
+        with patch.object(development.os, "getuid", return_value=1234), \
+                patch.object(development.os, "geteuid", return_value=1234), \
+                patch.object(development, "is_cachyos", return_value=False), \
+                patch.object(session_runtime, "configuration") as configuration:
+            self.assertEqual(development._guard(), 1234)
+            configuration.assert_called_once()
+            configuration.side_effect = PermissionError("Wrong desktop owner")
+            with self.assertRaises(PermissionError):
+                development._guard()
+
+    def test_debian_environment_uses_owned_supervisor_state_without_global_imports(self):
+        home = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        authority = home / ".Xauthority"
+        authority.write_text("fixture authority")
+        authority.chmod(0o600)
+        with patch.object(session_runtime, "runtime_directory", return_value=home / "runtime/desktop"), \
+                patch.object(development, "_owned_socket", return_value=True), \
+                patch.object(development, "_probe") as probe, \
+                patch.dict(os.environ, {"DISPLAY": ":10.0", "XAUTHORITY": str(authority),
+                    "DBUS_SESSION_BUS_ADDRESS": "unix:path=/tmp/fixture-bus,guid=" + "b" * 32,
+                    "WAYLAND_DISPLAY": "unrelated-wayland", "PROVIDER_TOKEN": "private"}):
+            environment, _ = debian_development.supervisor_environment(os.getuid())
+            self.assertEqual(environment["DISPLAY"], ":10.0")
+            self.assertEqual(environment["XAUTHORITY"], str(authority))
+            self.assertNotIn("PROVIDER_TOKEN", environment)
+            self.assertNotIn("WAYLAND_DISPLAY", environment)
+            (home / "linked").symlink_to(authority)
+            for changes in ({"DISPLAY": "remote:0"}, {"DBUS_SESSION_BUS_ADDRESS": "tcp:host=remote"},
+                            {"XAUTHORITY": str(home)}, {"XAUTHORITY": str(home / "linked")}):
+                with self.subTest(changes=changes), patch.dict(os.environ, changes):
+                    self.assertFalse(debian_development.supervisor_environment(os.getuid())[0])
+            probe.assert_not_called()
 
     def test_persisted_control_blocks_mutations_without_contacting_native_backend(self):
         home = Path(self.enterContext(tempfile.TemporaryDirectory()))
@@ -674,8 +727,36 @@ class TestDevelopmentWorker(unittest.TestCase):
             popen.assert_not_called()
             self.assertEqual(json.loads((directory / "result.json").read_text())["returncode"], 1)
 
+    def test_debian_queued_task_rechecks_supervisor_generation_before_spawning(self):
+        for state, generation in (("stopped", "d" * 32), ("running", "e" * 32)):
+            with self.subTest(state=state, generation=generation), tempfile.TemporaryDirectory() as temporary, \
+                    patch.object(development_worker, "load_task", return_value={"argv": ["fixture"],
+                        "project": temporary, "control_revision": "c" * 32, "session_generation": "d" * 32}), \
+                    patch.object(session_runtime, "status", return_value={"state": state, "generation": generation}), \
+                    patch.object(development_worker.subprocess, "Popen") as popen, \
+                    patch.object(development_worker.signal, "signal"), \
+                    patch.object(development_worker, "_honor_agent_control"):
+                self.assertEqual(development_worker.run_task(Path(temporary)), 0)
+                popen.assert_not_called()
+                result = json.loads((Path(temporary) / "result.json").read_text())
+                self.assertNotEqual(result["returncode"], 0)
+
 
 class TestDevelopmentManifest(unittest.TestCase):
+    def test_debian_discovery_advertises_plain_commands_without_session_access(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(development, "session_environment") as native_environment, \
+                patch.object(session_runtime, "request") as request:
+            Path(temporary, "package.json").write_text('{"scripts":{"test":"must never execute"}}')
+            commands = agent_environment._desktop_development(temporary, native=False)
+        self.assertEqual(commands["doctor_argv"], ["basaltw", "desktop", "develop", "doctor", "--project", temporary, "--json"])
+        self.assertEqual(commands["node_script_prefix_argv"][:4], ["basaltw", "desktop", "develop", "node"])
+        self.assertEqual(commands["project"]["node"]["scripts"], ["test"])
+        self.assertEqual(commands["readiness"], "unverified")
+        self.assertNotIn("--native", commands["application_prefix_argv"])
+        native_environment.assert_not_called()
+        request.assert_not_called()
+
     def test_native_task_commands_are_discovered_without_project_execution(self):
         with tempfile.TemporaryDirectory() as temporary, patch.object(agent_workspace, "_repository_root", return_value=temporary), patch.object(agent_workspace, "_effective_home", return_value=temporary), patch.object(agent_workspace, "_worktree_record", return_value={"branch": "main", "head": "a" * 40, "dirty": False}), patch.object(agent_environment, "is_cachyos", return_value=True), patch.object(agent_environment.shutil, "which", return_value=None), patch.object(agent_environment.subprocess, "run") as execute:
             Path(temporary, "project.godot").write_text('[application]\nconfig/features=PackedStringArray("4.7")\n')
@@ -733,7 +814,7 @@ class TestDevelopmentManifest(unittest.TestCase):
                         else:
                             metadata.write_bytes(b" " * (1024 * 1024 + 1))
                         with self.assertRaises((OSError, ValueError)):
-                            agent_environment._native_development(temporary)
+                            agent_environment._desktop_development(temporary, native=True)
                         metadata.unlink()
             execute.assert_not_called()
 

@@ -445,6 +445,7 @@ class DesktopSession:
             "pid": self.process.pid,
             "control_active": False,
             "input_capabilities": ["observation-input", "server-paced-text"],
+            "capabilities": ["supervised-development", "manual-evidence", "receipt-mapping"],
             "observation_id": self.observation.id if self.observation is not None and state == "running" else None,
             "capture_freshness": self.observation.freshness() if self.observation is not None and state == "running"
                                  else capture_freshness(),
@@ -615,6 +616,17 @@ class DesktopSession:
                 self.evidence = None
                 return result
             raise ValueError("Evidence operation must be start or finish")
+        if action == "development":
+            from desktop.debian_development import handle_task
+            options = payload.get("options", {})
+            preview = isinstance(options, dict) and options.get("dry_run") is True
+            if self.maintenance or self.snapshot_status()["state"] != "running":
+                raise RuntimeError("Desktop is not ready for development tasks")
+            if payload.get("operation") != "doctor" and not preview:
+                control_state.require_enabled(payload)
+                self.elements.clear()
+                self.observation = None
+            return handle_task(payload, self.generation)
         if action == "inspect":
             result = accessibility.worker_request({**payload, "operation": "inspect"})
             for row in result["elements"]:

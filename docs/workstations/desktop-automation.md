@@ -292,8 +292,9 @@ retryable failure. No capture is created automatically by recording.
 `desktop evidence verify ARTIFACT`, offline crop/point-preview/excerpt/export/
 timeline tools and `desktop audio analyze WAV` work without `--native` or a live
 helper. Finalization can inventory the configured Debian owner's development
-task records. Legacy `desktop exec` still tracks only its immediate child;
-recording does not add process ownership. Live audio capture and conditional
+task records, including [supervised Debian jobs](debian-development.md). Legacy
+`desktop exec` still tracks only its immediate child; recording does not add
+process ownership. Live audio capture and conditional
 execution retain their native backend requirements.
 
 ## Small Geany check
