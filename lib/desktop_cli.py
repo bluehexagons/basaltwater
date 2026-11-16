@@ -46,7 +46,7 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     instructions.add_argument("--json", action="store_true")
     from desktop.development import add_development_parser
     add_development_parser(commands)
-    evidence = commands.add_parser("evidence", help="Native: record manual launches, inputs and captures with project/task provenance")
+    evidence = commands.add_parser("evidence", help="Record manual launches, inputs and captures with project/task provenance")
     evidence_commands = evidence.add_subparsers(dest="evidence_command", required=True)
     from desktop.qa_cli import add_qa_parser
     add_qa_parser(commands, evidence_commands)
@@ -102,7 +102,7 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     target = screenshot.add_mutually_exclusive_group()
     target.add_argument("--window", help="Capture a window ID from 'desktop windows'")
     target.add_argument("--active-window", action="store_true", help="Capture the active application without changing focus")
-    mapping = commands.add_parser("map-point", help="Native: convert source-PNG or presented-view points to monitor pixels without input")
+    mapping = commands.add_parser("map-point", help="Convert source-PNG or presented-view points to desktop/monitor pixels without input")
     mapping.add_argument("--geometry", nargs=2, type=int, metavar=("WIDTH", "HEIGHT"),
                          help="Full-monitor geometry from the screenshot metadata")
     point_space = mapping.add_mutually_exclusive_group(required=True)
@@ -234,13 +234,11 @@ def run_desktop_command(args: argparse.Namespace) -> int:
             from desktop.accessibility_recording import run_recording_command
             result = run_recording_command(args)
         elif command == "audio" or (command == "evidence" and args.evidence_command in ("crop", "point-preview", "excerpt", "export", "timeline")):
-            if backend is runtime:
+            if backend is runtime and command == "audio" and args.audio_command != "analyze":
                 raise ValueError("Native QA tools require --native")
             from desktop.qa_cli import run_qa_command
             result = run_qa_command(args)
         elif command == "map-point":
-            if backend is runtime:
-                raise ValueError("Selected-monitor coordinate mapping requires --native")
             from desktop.coordinates import map_capture_points, map_observation_points
             if args.capture:
                 if args.geometry is not None or args.crop is not None:
@@ -265,8 +263,6 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                                             crop=args.crop, to_x=args.to_x, to_y=args.to_y,
                                             image_coordinates=args.image_coordinates)
         elif command == "evidence":
-            if backend is runtime:
-                raise ValueError("Manual desktop evidence requires --native")
             from desktop.evidence import finalize, verify
             operation = args.evidence_command
             if operation == "verify":

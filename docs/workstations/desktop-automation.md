@@ -264,6 +264,38 @@ inspect before retrying. Failed paced sequence actions stop subsequent actions.
 For longer trusted Blender operations, write a script file and type a short loader
 command rather than entering the entire script through the UI.
 
+## Map and record Debian observations
+
+Debian supports receipt-bound coordinate mapping without input:
+
+```bash
+basaltw desktop screenshot --output /tmp/desktop-check-1.png > /tmp/frame.json
+basaltw desktop map-point --capture /tmp/frame.json --image-coordinates --x 400 --y 300 --json
+```
+
+Inspect the image first. Mapping adds a window image's origin once and checks
+the current generation, control revision, observation identity, geometry and
+freshness. It neither consumes nor renews the token. Input still revalidates the
+window and token. For resized previews, use `--view-geometry WIDTH HEIGHT` with
+the actual displayed image dimensions; viewer margins require `--view-origin`.
+Arithmetic cannot establish the viewer's scale or that a semantic target stayed
+in place.
+
+`desktop evidence start --project /absolute/project` and `desktop evidence finish`
+now work with Debian's supervisor. Journals checkpoint input receipts, launch
+status and screenshot file hashes in private state. They omit typed text and
+command arguments, expose bounded capacity, and checkpoint on orderly helper
+shutdown. Lost transport replies and truncated history remain uncertain. A
+checkpoint failure adds `evidence_error` without turning completed input into a
+retryable failure. No capture is created automatically by recording.
+
+`desktop evidence verify ARTIFACT`, offline crop/point-preview/excerpt/export/
+timeline tools and `desktop audio analyze WAV` work without `--native` or a live
+helper. Finalization can inventory the configured Debian owner's development
+task records. Legacy `desktop exec` still tracks only its immediate child;
+recording does not add process ownership. Live audio capture and conditional
+execution retain their native backend requirements.
+
 ## Small Geany check
 
 Run the repeatable live check on a running desktop:

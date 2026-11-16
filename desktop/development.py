@@ -101,8 +101,11 @@ def add_development_parser(commands: argparse._SubParsersAction) -> None:
 
 def _guard() -> int:
     uid = os.getuid()
-    if uid == 0 or os.geteuid() != uid or not is_cachyos():
-        raise RuntimeError("Run as the existing desktop account on CachyOS, without sudo")
+    if uid == 0 or os.geteuid() != uid:
+        raise RuntimeError("Run as the existing desktop account, without sudo")
+    if not is_cachyos():
+        from desktop.session_runtime import configuration
+        configuration()  # Debian inventory uses the configured non-root owner.
     return uid
 
 

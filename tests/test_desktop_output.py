@@ -600,6 +600,83 @@ class BoundCaptureTests(unittest.TestCase):
             "generation": session.generation, "geometry": [10, 20],
             "control_revision": session.control_revision, "observation_id": observation["observation_id"], **options})
 
+    def test_debian_recording_links_private_captures_and_completed_input(self):
+        context = {"generation": self.debian.generation, "action": "evidence"}
+        with patch("desktop.evidence.revision", return_value={"commit": None, "dirty": None}):
+            started = self.debian.handle({**context, "operation": "start", "project": str(self.home)})
+        with self.assertRaises(DesktopRequestError) as duplicate:
+            self.debian.handle({**context, "operation": "start", "project": str(self.home)})
+        self.assertEqual(duplicate.exception.receipt["artifact"], started["artifact"])
+        first = self.observe(self.debian)
+        completed = self.move(self.debian, first, kind="text", text="private-text")
+        second = self.observe(self.debian)
+        self.assertEqual(second["last_input"]["input_id"], completed["input_id"])
+        finished = self.debian.handle({**context, "operation": "finish"})
+        record = Path(finished["artifact"])
+        data = json.loads(record.read_text())
+        self.assertNotIn("private-text", record.read_text())
+        self.assertEqual(data["events"][2]["related_input_id"], completed["input_id"])
+        self.assertEqual(second["artifact_sha256"], hashlib.sha256(self.png_header()).hexdigest())
+        self.assertTrue(verify(str(record))["healthy"])
+        Path(second["output"]).write_bytes(b"altered")
+        self.assertFalse(verify(str(record))["healthy"])
+
+    def test_debian_journal_failure_preserves_completion_and_close_checkpoints(self):
+        self.debian.evidence = Mock()
+        self.debian.evidence.event.side_effect = OSError("disk full")
+        observed = self.observe(self.debian)
+        result = self.move(self.debian, observed)
+        self.assertEqual(result["input_delivery"], "completed")
+        self.assertIn("evidence_error", result)
+        self.assertNotIn("error", result)
+        recorder = self.debian.evidence
+        self.debian.close()
+        recorder.finish.assert_called_once_with(self.debian.launches, reason="helper-stopped")
+        self.assertFalse(self.debian.snapshot_status()["evidence_recording"])
+        self.debian.process.terminate.assert_not_called()
+
+    def test_debian_receipt_mapping_preserves_token_and_rejects_expiry_and_consumption(self):
+        parser = argparse.ArgumentParser()
+        add_desktop_subparser(parser.add_subparsers())
+        observed = self.observe(self.debian)
+        receipt = self.home / "frame.json"
+        receipt.write_text(json.dumps(observed))
+        args = parser.parse_args(["desktop", "map-point", "--capture", str(receipt),
+                                  "--image-coordinates", "--x", "1", "--y", "2", "--json"])
+        with patch.object(runtime, "status", side_effect=self.debian.snapshot_status), \
+                patch.object(runtime, "request") as request:
+            for stage in ("fresh", "expired", "consumed"):
+                if stage == "expired":
+                    self.now += 61
+                elif stage == "consumed":
+                    self.now -= 61
+                    self.move(self.debian, observed)
+                with self.subTest(stage=stage), patch("sys.stdout", new_callable=io.StringIO) as output:
+                    self.assertEqual(run_desktop_command(args), 0 if stage == "fresh" else 1)
+                    result = json.loads(output.getvalue())
+                    if stage == "fresh":
+                        self.assertEqual(result["input_coordinates"], {"x": 1, "y": 2})
+                        self.assertFalse(result["input_sent"])
+                        self.assertEqual(self.debian.observation.id, observed["observation_id"])
+                    else:
+                        self.assertIn("error", result)
+            request.assert_not_called()
+
+    def test_debian_evidence_verification_needs_no_running_helper(self):
+        with patch("desktop.evidence.revision", return_value={}):
+            self.debian.handle({"action": "evidence", "operation": "start",
+                               "generation": self.debian.generation, "project": str(self.home)})
+        self.observe(self.debian)
+        self.debian.close()
+        parser = argparse.ArgumentParser()
+        add_desktop_subparser(parser.add_subparsers())
+        args = parser.parse_args(["desktop", "evidence", "verify", self.debian.last_evidence, "--json"])
+        with patch.object(runtime, "status") as status, patch.object(runtime, "request") as request, \
+                patch("sys.stdout", new_callable=io.StringIO) as output:
+            self.assertEqual(run_desktop_command(args), 0, output.getvalue())
+        status.assert_not_called()
+        request.assert_not_called()
+
     def test_debian_expired_frame_proves_no_dispatch_and_ignores_caller_receipt(self):
         observation = self.observe(self.debian)
         self.now += 61

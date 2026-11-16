@@ -222,7 +222,7 @@ class CaptureCoordinateTests(unittest.TestCase):
                 patch.object(client, "artifact_path") as artifact:
             for prefix, suffix, code in ((["desktop", "--native"], [], 0),
                                          (["desktop", "--native"], ["--to-x", "400", "--to-y", "10"], 1),
-                                         (["desktop"], [], 1)):
+                                         (["desktop"], [], 0)):
                 output = StringIO()
                 with self.subTest(prefix=prefix, suffix=suffix), redirect_stdout(output):
                     self.assertEqual(desktop_cli.run_desktop_command(parser.parse_args(prefix + arguments + suffix)), code)
