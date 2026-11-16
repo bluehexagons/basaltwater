@@ -190,7 +190,7 @@ class HostSnapshotTest(unittest.TestCase):
                     [host._issue("Query timed out")],
                     [host._filesystem(_mount(size=None)), host._issue("Query timed out")],
                 ):
-                    state._overview = []
+                    state.status_cache = panel.status_model.StatusCache()
                     collect.return_value = [overview[1], *failed_rows]
                     fallback = panel.render_page(state)
                     self.assertIn("Root disk", fallback)

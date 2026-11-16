@@ -171,11 +171,13 @@ def _command_issue(command: list[str], code: int, output: str) -> str:
     return ""
 
 
-def _bounded_command(command: list[str]) -> tuple[str, str]:
-    """Drain at most 64 KiB from a fixed command and reap it on every exit."""
+def _bounded_command(command: list[str], *, timeout: float | None = None,
+                     max_bytes: int | None = None) -> tuple[str, str]:
+    """Bound a fixed command's runtime and captured output; always reap it."""
 
     output = bytearray()
-    deadline = time.monotonic() + _TIMEOUT
+    limit = _MAX_BYTES if max_bytes is None else max_bytes
+    deadline = time.monotonic() + (_TIMEOUT if timeout is None else timeout)
     try:
         with subprocess.Popen(
             command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -188,14 +190,14 @@ def _bounded_command(command: list[str]) -> tuple[str, str]:
                         remaining = deadline - time.monotonic()
                         if remaining <= 0 or not selector.select(remaining):
                             return output.decode("utf-8", errors="replace"), "Query timed out; results may be incomplete."
-                        chunk = os.read(process.stdout.fileno(), min(4096, _MAX_BYTES + 1 - len(output)))
+                        chunk = os.read(process.stdout.fileno(), min(4096, limit + 1 - len(output)))
                         if not chunk:
                             code = process.wait(timeout=max(0.01, deadline - time.monotonic()))
                             decoded = output.decode("utf-8", errors="replace")
                             return decoded, _command_issue(command, code, decoded)
                         output.extend(chunk)
-                        if len(output) > _MAX_BYTES:
-                            return output[:_MAX_BYTES].decode("utf-8", errors="replace"), "Output limit reached; narrow the time window or priority."
+                        if len(output) > limit:
+                            return output[:limit].decode("utf-8", errors="replace"), "Output limit reached; narrow the time window or priority."
             finally:
                 if process.poll() is None:
                     process.kill()

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import hashlib
 import http.client
 import ipaddress
 import json
@@ -34,6 +35,7 @@ if SOURCE_ROOT not in sys.path:
 from common.t3code_steps import _temporary_t3_loginctl_shim
 from common.service_tools.web_panel_diagnostics import (
     SYSTEM_UNITS,
+    _bounded_command,
     parse_query as parse_diagnostic_query,
     render_diagnostics,
 )
@@ -52,6 +54,7 @@ from common.service_tools.web_panel_share_actions import (
 )
 from common.service_tools import web_panel_routine_actions as routine_actions
 from common.service_tools import web_panel_headscale
+from common.service_tools import web_panel_status as status_model
 from lib.storage_diagnostics import StorageDiagnostics
 from common.service_tools.web_panel_github_runner import parse_runner_query, render_runner_page
 from common.service_tools.web_panel_features import AGENT_TOOLS, PanelFeatures, discover_features, unit_installed
@@ -242,23 +245,18 @@ def _safe_url(value: object) -> str | None:
 
 
 def _run_json(command: list[str]) -> dict[str, Any]:
-    try:
-        result = subprocess.run(
-            command,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return {}
-    if result.returncode != 0 or len(result.stdout.encode("utf-8")) > _MAX_CONFIG_BYTES:
+    output, issue = _bounded_command(command, timeout=10, max_bytes=_MAX_CONFIG_BYTES)
+    if issue:
         return {}
     try:
-        value = json.loads(result.stdout)
-    except (TypeError, ValueError):
+        value = json.loads(output)
+    except (TypeError, ValueError, RecursionError):
         return {}
     return value if isinstance(value, dict) else {}
+
+
+class _DiscoveredServices(list[dict[str, str]]):
+    incomplete = False
 
 
 def _internal_web_landing_service(
@@ -301,7 +299,7 @@ def discover_basaltwater_web_services() -> list[dict[str, str]]:
     utility = shutil.which("basaltwater-web")
     if not utility:
         return []
-    services: list[dict[str, str]] = []
+    services = _DiscoveredServices()
     landing = _internal_web_landing_service(utility)
     if landing:
         services.append(landing)
@@ -312,6 +310,7 @@ def discover_basaltwater_web_services() -> list[dict[str, str]]:
         payload = _run_json(command)
         records = payload.get(collection)
         if not isinstance(records, list):
+            services.incomplete = True
             continue
         for record in records:
             if not isinstance(record, dict):
@@ -813,12 +812,8 @@ class WebPanelState:
         self.action_message = ""
         self.action_output = ""
         self.action_started_at: float | None = None
-        self._overview: list[dict[str, str]] = []
-        self._overview_at = 0.0
-        self._overview_lock = threading.Lock()
-        self._service_health: list[dict[str, str]] = []
-        self._service_health_at = float("-inf")
-        self._service_health_lock = threading.Lock()
+        self.status_cache = status_model.StatusCache()
+        self.status = status_model.PanelStatus(self)
         self.publishing = Publishing(agent_home)
         self.publishing_auth = PublishingAuth(self.publishing)
         self.agent_tasks = AgentTasks(agent_home, background_tick=self.publishing_tick)
@@ -913,25 +908,50 @@ class WebPanelState:
             )
 
     def system_overview(self) -> list[dict[str, str]]:
-        """Return a briefly cached host report to keep refreshes inexpensive."""
-
-        with self._overview_lock:
-            now = time.monotonic()
-            if self._overview and now - self._overview_at < _SYSTEM_OVERVIEW_CACHE_SECONDS:
-                return list(self._overview)
-            self._overview = collect_system_overview()
-            self._overview_at = time.monotonic()
-            return list(self._overview)
+        """Share bounded host collection with HTML and passive status clients."""
+        return list(self.status_cache.read("host", _SYSTEM_OVERVIEW_CACHE_SECONDS, collect_system_overview).value or [])
 
     def service_health(self) -> list[dict[str, str]]:
         """Cache local service state for thirty seconds, including failures."""
 
-        with self._service_health_lock:
-            now = time.monotonic()
-            if now - self._service_health_at >= _SYSTEM_OVERVIEW_CACHE_SECONDS:
-                self._service_health = collect_service_health(user_services=self.features().t3)
-                self._service_health_at = now
-            return list(self._service_health)
+        return list(self.status_cache.read("services", _SYSTEM_OVERVIEW_CACHE_SECONDS,
+                    lambda: collect_service_health(user_services=self.features().t3)).value or [])
+
+    def proxmox_snapshot(self) -> dict[str, Any]:
+        return load_proxmox_snapshot()
+
+    def web_services(self) -> status_model.Reading:
+        """Cache discovery and a bounded number of independently cached probes."""
+        def collect() -> list[dict[str, Any]]:
+            discovered = discover_basaltwater_web_services()
+            services = _deduplicate_services(self.manifest.get("services", []), discovered)
+            incomplete = bool(getattr(discovered, "incomplete", False))
+            if not services and incomplete:
+                raise RuntimeError("Service discovery unavailable")
+            limited = len(services) > 64 or incomplete
+            probes = 0
+            for record in services[:64]:
+                description = record["description"]
+                record.update(id=hashlib.sha256(record["url"].encode()).hexdigest()[:24],
+                              status="ready" if description == "live" else "unavailable" if description == "not responding" else "unchecked",
+                              status_text="Responding" if description == "live" else "Not responding" if description == "not responding" else "Not checked")
+                if (port := _homebox_probe_port(record)) is not None:
+                    if probes < 4:
+                        probe = self.status_cache.read("homebox-" + str(port), 60, lambda: _probe_homebox(port))
+                        record["status"], record["status_text"] = probe.value or ("unavailable", "Probe unavailable")
+                    else:
+                        record.update(status="unchecked", status_text="Probe limit reached")
+                        limited = True
+                    probes += 1
+                record["limited"] = limited
+            return services[:64]
+        return self.status_cache.read("web", 60, collect)
+
+    def certificate_trust(self) -> dict[str, str | bool] | None:
+        def collect() -> dict[str, str | bool] | None:
+            return (discover_certificate_trust(self.manifest) if self.manifest.get("system_type") == "server_proxmox"
+                    else discover_certificate_trust())
+        return self.status_cache.read("trust", 60, collect).value
 
     def t3_update_available(self) -> bool:
         """Return whether T3 Code is both configured and present for this user."""
@@ -1878,9 +1898,7 @@ def render_page(state: WebPanelState, *, proxmox_query: ProxmoxQuery | None = No
 
     manifest = state.manifest
     features = state.features()
-    services = _deduplicate_services(
-        manifest["services"], discover_basaltwater_web_services()
-    )
+    services = state.web_services().value or []
     service_cards = ""
     service_states = {"ready": 0, "attention": 0, "unavailable": 0, "unchecked": 0}
     for record in services:
@@ -1906,7 +1924,7 @@ def render_page(state: WebPanelState, *, proxmox_query: ProxmoxQuery | None = No
             status_class = tone
             description = ""
         if (probe_port := _homebox_probe_port(record)) is not None:
-            status_class, status_text = _probe_homebox(probe_port)
+            status_class, status_text = record["status"], record["status_text"]
             status_html = '<span class="card-status {}">{}</span>'.format(
                 status_class, html.escape(status_text)
             )
@@ -1997,8 +2015,7 @@ def render_page(state: WebPanelState, *, proxmox_query: ProxmoxQuery | None = No
     )
     if filesystem_section:
         filesystem_section += '<p><a class="refresh-link" href="/storage">Explore storage usage →</a></p>'
-    trust = (discover_certificate_trust(manifest) if manifest["system_type"] == "server_proxmox"
-             else discover_certificate_trust())
+    trust = state.certificate_trust()
     trust_section = _render_certificate_trust(trust) if trust else ""
     audit_section = _render_audit_section(state)
     notification_section = _render_notification_section(state)
@@ -2081,6 +2098,10 @@ class WebPanelHandler(BaseHTTPRequestHandler):
     server_version = "basaltwater-web-panel/1"
     sys_version = ""
     state: WebPanelState
+
+    def setup(self) -> None:
+        super().setup()
+        self.connection.settimeout(15)
 
     def _feature_available(self, path: str) -> bool:
         if path in {"/headscale", "/actions/headscale"}:
@@ -2167,6 +2188,9 @@ class WebPanelHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urllib.parse.urlsplit(self.path)
         path = parsed.path
+        if path.startswith(status_model.API_PREFIX):
+            self._handle_status(path.removeprefix(status_model.API_PREFIX), parsed.query)
+            return
         if path == "/favicon.svg":
             self._send(HTTPStatus.OK, render_favicon(), "image/svg+xml")
             return
@@ -2329,6 +2353,36 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         else:
             body = render_page(self.state)
         self._send(HTTPStatus.OK, body, "text/html")
+
+    def _handle_status(self, resource: str, query: str) -> None:
+        # Nginx strips client identity headers and supplies the authenticated
+        # username. The Unix socket/loopback listener is never a public API.
+        if self.headers.get_all("X-Basaltwater-User") != [self.state.manifest.get("username")]:
+            self._send(HTTPStatus.FORBIDDEN, "Authenticated panel proxy required\n", "text/plain")
+            return
+        if not self.state.status.available(resource):
+            self._send(HTTPStatus.NOT_FOUND, "Status resource unavailable\n", "text/plain")
+            return
+        if query:
+            self._send(HTTPStatus.BAD_REQUEST, "Invalid status query\n", "text/plain")
+            return
+        if not self.state.status.requests.acquire(blocking=False):
+            self._send(HTTPStatus.SERVICE_UNAVAILABLE, "Status busy\n", "text/plain", headers={"Retry-After": "5"})
+            return
+        try:
+            try:
+                value = self.state.status.read(resource)
+            except (status_model.StatusBusy, OSError, RuntimeError, ValueError):
+                self._send(HTTPStatus.SERVICE_UNAVAILABLE, "Status temporarily unavailable\n", "text/plain", headers={"Retry-After": "5"})
+                return
+            validator = '"' + value["revision"] + '"'
+            if self.headers.get_all("If-None-Match") == [validator]:
+                self._send(HTTPStatus.NOT_MODIFIED, "", "application/json", headers={"ETag": validator})
+            else:
+                self._send(HTTPStatus.OK, json.dumps(value, separators=(",", ":"), allow_nan=False),
+                           "application/json", headers={"ETag": validator})
+        finally:
+            self.state.status.requests.release()
 
     def do_POST(self) -> None:
         parsed = urllib.parse.urlsplit(self.path)
@@ -2972,12 +3026,44 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         return
 
 
-class _ThreadingUnixHTTPServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+class _BoundedThreadingMixIn(socketserver.ThreadingMixIn):
+    """Admit at most 32 request threads, including slow request headers."""
     daemon_threads = True
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self._request_slots = threading.BoundedSemaphore(32)
+        super().__init__(*args, **kwargs)
 
-class _ThreadingTCPHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
-    daemon_threads = True
+    def process_request(self, request: socket.socket, client_address: Any) -> None:
+        if not self._request_slots.acquire(blocking=False):
+            try:
+                request.settimeout(0.2)
+                request.sendall(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n"
+                                b"Cache-Control: no-store\r\nRetry-After: 5\r\nConnection: close\r\n\r\n")
+            except OSError:
+                pass
+            finally:
+                self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._request_slots.release()
+            raise
+
+    def process_request_thread(self, request: socket.socket, client_address: Any) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._request_slots.release()
+
+
+class _ThreadingUnixHTTPServer(_BoundedThreadingMixIn, socketserver.UnixStreamServer):
+    pass
+
+
+class _ThreadingTCPHTTPServer(_BoundedThreadingMixIn, HTTPServer):
+    pass
 
 
 def _parser() -> argparse.ArgumentParser:

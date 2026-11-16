@@ -291,7 +291,7 @@ class DashboardTest(unittest.TestCase):
         state = panel.WebPanelState({"features": {}})
         with (
             patch.object(panel, "collect_service_health", return_value=[]) as collect,
-            patch.object(panel.time, "monotonic", side_effect=[0, 1, 31]),
+            patch.object(panel.time, "monotonic", side_effect=[0, 0, 1, 31, 31]),
         ):
             for _ in range(3):
                 self.assertEqual(state.service_health(), [])

@@ -29,6 +29,53 @@ list installed fixed units; an explicit saved service link can still inspect
 historical logs after removal. The fixed unit allowlist remains the validation
 boundary for such links.
 
+## Passive status API
+
+`GET /api/panel/v1/RESOURCE` reads a fixed passive resource through the existing
+authenticated panel proxy. It requires the proxy-supplied account identity;
+unknown resources and absent optional features return 404 before inspecting
+state. Query fields are rejected. All responses remain `no-store`.
+
+| Resource | Owner and cache | Poll interval | Stale after |
+| --- | --- | --- | --- |
+| `host` | Shared host overview; 30 seconds | 30 seconds | 90 seconds |
+| `web` | Shared service discovery; 60 seconds, independently cached loopback probes | 60 seconds | 180 seconds |
+| `proxmox` | Existing minute export; read at most once per minute | 60 seconds | 180 seconds |
+| `audit` | Existing five-minute export; read at most once per five minutes | Five minutes | 15 minutes |
+| `agents` | Bounded saved task state; Codex feature required | Five seconds while running, otherwise 30 seconds | 90 seconds |
+| `storage` | Existing diagnostic state; never starts a scan | Five seconds while running, otherwise 60 seconds | 180 seconds |
+| `services` | Existing fixed-unit cache; unavailable until explicitly loaded | 30 seconds | 90 seconds |
+
+The schema-1 envelope contains `resource`, UTC `observed_at` (or null),
+`freshness`, `warnings`, `interval_seconds`, `stale_after_seconds`, bounded
+`data`, and `revision`. Source freshness is `fresh`, `stale`, `unknown`,
+`incomplete`, or `unavailable`. Missing or future observations are unknown;
+missing metrics are never converted to healthy zeroes. Stale partial snapshots
+retain their collection warning. Export timestamps belong to their exporter;
+reading an old export does not make it new.
+
+An in-memory client may send the returned quoted `ETag` in `If-None-Match`.
+An unchanged resource returns 304 with no snapshot body. Authentication and
+feature checks still run. Validators cover observation time, values, warnings
+and freshness, excluding browser fetch time. No public cache is introduced.
+
+Each panel admits eight concurrent status requests, two source collectors
+across all sources, and one collector per source. Followers immediately receive
+the previous reading, or 503 with `Retry-After: 5` on a cold/busy source.
+Failed collection is negatively cached and retains the last observation time.
+The production listener admits at most 32 request threads and times out idle
+request I/O after 15 seconds; excess connections receive a bounded 503 retry
+response. These bounds apply independently of browser tab count.
+
+Web discovery commands have ten-second and 256 KiB output limits, with at most
+64 displayed services and four one-second HomeBox probes per collection. Probe
+results and certificate-trust checks have separate 60-second caches; TLS checks
+remain page-load work and are not polled. Responses are capped at 24 KiB and
+contain only fixed summary fields. They exclude mounted paths, credentials,
+URLs, prompts, reports, logs and raw collector diagnostics. On-demand jobs,
+journals, runner checks, notification histories and approval forms have no
+polling endpoint.
+
 ## Host snapshot
 
 The overview caches local host readings for up to 30 seconds. It shows uptime,

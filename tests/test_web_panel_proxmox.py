@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import io
 import os
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -215,13 +214,13 @@ class ProxmoxPanelTrustTest(unittest.TestCase):
                 output = io.StringIO()
                 with redirect_stdout(output):
                     web_panel_tls.main(command[2:])
-                return subprocess.CompletedProcess(command, 0, output.getvalue(), "")
+                return output.getvalue(), ""
 
             with (
                 patch.object(tls, "GODOT_WEB_CA_DOWNLOAD", ca),
                 patch("common.service_tools.basaltwater_web._verify_live_tls") as verify,
                 patch.object(panel.shutil, "which", return_value=None),
-                patch.object(panel.subprocess, "run", side_effect=collect) as subprocess_json,
+                patch.object(panel, "_bounded_command", side_effect=collect) as subprocess_json,
             ):
                 trust = panel.discover_certificate_trust(manifest)
             verify.assert_called_once_with("pve.example.test", 9443, ca)
@@ -238,7 +237,7 @@ class ProxmoxPanelTrustTest(unittest.TestCase):
         manifest["certificate_trust"] = {
             "certificate": "/etc/letsencrypt/live/pve.example.test/fullchain.pem", "local_ca": False,
         }
-        run_process = subprocess.run
+        bounded_command = panel._bounded_command
         with tempfile.TemporaryDirectory() as temporary:
             entered_dns = os.path.join(temporary, "dns-entered")
 
@@ -258,9 +257,9 @@ class ProxmoxPanelTrustTest(unittest.TestCase):
                 # Retain the real subprocess kill/wait behavior with a shorter
                 # test deadline; only DNS and the TLS context are simulated.
                 kwargs["timeout"] = 2
-                return run_process([command[0], "-c", script, *command[2:]], **kwargs)
+                return bounded_command([command[0], "-c", script, *command[2:]], **kwargs)
 
-            with patch.object(panel.subprocess, "run", side_effect=stalled_collector):
+            with patch.object(panel, "_bounded_command", side_effect=stalled_collector):
                 trust = panel.discover_certificate_trust(manifest)
             self.assertTrue(os.path.isfile(entered_dns))
         self.assertEqual(trust["status"], "unknown")
