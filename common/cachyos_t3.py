@@ -363,13 +363,16 @@ def _wait_for_ui(url: str) -> None:
                     if response.status == 200 and same_origin(response.geturl()):
                         invocation = run([
                             "systemctl", "--user", "show", T3_SERVICE,
-                            "--property=InvocationID", "--value",
+                            "--property=InvocationID,ActiveState",
                         ], check=False, capture_output=True, timeout=15)
-                        current = (invocation.stdout or "").strip().lower()
-                        if invocation.returncode == 0 and re.fullmatch(r"[0-9a-f]{32}", current):
+                        properties = dict(line.split("=", 1) for line in (invocation.stdout or "").splitlines()
+                                          if "=" in line)
+                        current = properties.get("InvocationID", "").lower()
+                        if (invocation.returncode == 0 and properties.get("ActiveState") == "active"
+                                and re.fullmatch(r"[0-9a-f]{32}", current)):
                             stable = stable + 1 if current == stable_invocation else 1
                             stable_invocation = current
-                            if stable >= _T3_READINESS_STABLE_CHECKS:
+                            if stable >= _T3_READINESS_STABLE_CHECKS and time.monotonic() < deadline:
                                 print(f"  T3 HTTP UI reachable: {url}")
                                 print("  Provider threads and interactive terminals still require a client test")
                                 return

@@ -1212,7 +1212,8 @@ class T3UITests(unittest.TestCase):
 
     @staticmethod
     def system_command(argv, **kwargs):
-        return subprocess.CompletedProcess(argv, 0, "a" * 32 if "show" in argv else "", "")
+        output = "InvocationID=" + "a" * 32 + "\nActiveState=active\n" if "show" in argv else ""
+        return subprocess.CompletedProcess(argv, 0, output, "")
 
     def test_ui_check_requires_consecutive_direct_successes_and_labels_its_limit(self):
         responses = []
@@ -1248,7 +1249,8 @@ class T3UITests(unittest.TestCase):
             with self.subTest(interruption=interruption):
                 invocations = iter(["a" * 32, "a" * 32, interruption, "b" * 32, "b" * 32, "b" * 32])
                 def command(argv, **kwargs):
-                    return subprocess.CompletedProcess(argv, 0, next(invocations) if "show" in argv else "", "")
+                    output = "InvocationID=" + next(invocations) + "\nActiveState=active\n" if "show" in argv else ""
+                    return subprocess.CompletedProcess(argv, 0, output, "")
                 self.system.side_effect = command
                 self.opener.return_value.open.reset_mock()
                 t3._wait_for_ui("http://127.0.0.1:3773/")
@@ -1262,6 +1264,35 @@ class T3UITests(unittest.TestCase):
             t3._wait_for_ui("http://127.0.0.1:3773/")
         self.assertEqual(self.clock, 3)
         self.assertEqual(self.opener.return_value.open.call_count, 3)
+
+    def test_service_exit_during_final_http_probe_never_reports_success(self):
+        observations = 0
+
+        def command(argv, **kwargs):
+            nonlocal observations
+            if "show" in argv:
+                observations += 1
+                # systemd retains InvocationID even after the process exits.
+                output = ("InvocationID=" + "a" * 32 + "\nActiveState=" +
+                          ("failed" if observations == 3 else "active") + "\n")
+                return subprocess.CompletedProcess(argv, 0, output, "")
+            return self.system_command(argv, **kwargs)
+
+        self.system.side_effect = command
+        with patch.object(t3, "_T3_READINESS_TIMEOUT", 3), self.assertRaises(RuntimeError):
+            t3._wait_for_ui("http://127.0.0.1:3773/")
+        self.assertNotIn("HTTP UI reachable", self.output.getvalue())
+
+    def test_slow_final_http_probe_cannot_pass_after_deadline(self):
+        def response(*args, **kwargs):
+            if self.opener.return_value.open.call_count == 3:
+                self.advance(2)
+            return self.response
+
+        self.opener.return_value.open.side_effect = response
+        with patch.object(t3, "_T3_READINESS_TIMEOUT", 3), self.assertRaisesRegex(RuntimeError, "within 3 seconds"):
+            t3._wait_for_ui("http://127.0.0.1:3773/")
+        self.assertNotIn("HTTP UI reachable", self.output.getvalue())
 
     def test_failed_service_stops_waiting_without_http_or_sleep(self):
         def command(argv, **kwargs):

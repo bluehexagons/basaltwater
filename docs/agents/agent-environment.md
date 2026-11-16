@@ -11,6 +11,8 @@ Different may mean older or edited: inspect before refreshing and preserve
 personal changes. Unsafe or
 incomplete bundles are omitted and counted. It uses the existing known-skill
 catalog checks; it does not scan personal skills or execute discovered tools.
+Like the manifest, it inventories the effective account's home directory rather
+than an overridden `HOME` value. Run it as the intended agent account.
 CLI routes describe available command surfaces, not installed services.
 CachyOS routes use native desktop tools and its own doctor; Debian routes use
 the managed desktop and agent doctor. Other distributions and WSL retain the

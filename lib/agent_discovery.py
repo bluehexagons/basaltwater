@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import platform
 import shutil
 
+from lib import agent_workspace
 from lib.agent_skill_catalog import inspect_skill_catalogs
 from lib.agent_environment import DESKTOP_APPLICATIONS, MUSESCORE_EXECUTABLES
 from lib.cachyos import is_cachyos
@@ -39,7 +39,7 @@ def inspect_context() -> dict[str, object]:
     except OSError:
         distribution = "unknown"
     host = f"{distribution}-wsl" if wsl else "cachyos-workstation" if cachyos else distribution
-    inventory = inspect_skill_catalogs(os.path.expanduser("~"))
+    inventory = inspect_skill_catalogs(agent_workspace._effective_home())
     skills: dict[str, list[dict[str, str]]] = {}
     issues = 0
     for catalog in inventory["catalogs"]:

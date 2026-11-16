@@ -21,11 +21,17 @@ class AgentDiscoveryTests(unittest.TestCase):
               patch("lib.agent_discovery.platform.release", return_value=release),
               patch("lib.agent_discovery.platform.freedesktop_os_release", return_value={"ID": distro}),
               patch("lib.agent_discovery.is_cachyos", return_value=distro == "cachyos"),
-              patch("lib.agent_discovery.inspect_skill_catalogs", return_value=catalog),
-              patch("lib.agent_discovery.os.path.expanduser", return_value="/home/example"),
+              patch("lib.agent_discovery.inspect_skill_catalogs", return_value=catalog) as inventory,
+              patch("lib.agent_workspace._effective_home", return_value="/home/example"),
               patch("lib.agent_discovery.shutil.which", side_effect=lambda name: "/usr/bin/" + name if name in {"codex", "t3code", "blender", "shotcut", "lmms", "obs", "musescore4"} else None),
               patch("subprocess.Popen", side_effect=AssertionError("Discovery must not execute tools"))):
-            return inspect_context()
+            result = inspect_context()
+            inventory.assert_called_once_with("/home/example")
+            return result
+
+    def test_guidance_uses_effective_account_home_when_home_is_overridden(self):
+        with patch.dict("os.environ", {"HOME": "/home/other-account"}):
+            self.inspect()
 
     def test_presence_never_promotes_readiness_and_bad_guidance_is_omitted(self):
         result = self.inspect()
