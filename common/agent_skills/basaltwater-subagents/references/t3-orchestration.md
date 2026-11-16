@@ -2,7 +2,7 @@
 
 Follow T3's injected orchestration instructions and active tool schemas first.
 This reference adds Basaltwater workspace, cost, and context boundaries; use
-only the section needed. The baseline is stable 0.1.8. Terminal agents do not
+only the section needed. The baseline is stable 0.1.9. Terminal agents do not
 gain T3 tools merely because T3 is installed.
 
 ## Discovery and delegation fallback
@@ -174,8 +174,18 @@ requires reconciliation; the tool discourages routine end-of-work list calls.
 For requested monitoring, the parent uses `watch_pull_request` then ends its
 turn; children cannot own a watch. Handle existing comments first, since only
 new ones wake it. Watches
-persist across wakeups; do not register the same watch again after each wake. Call
-`unwatch_pull_request` before handing back. Watching grants no merge authority.
+persist across wakeups; do not register the same active watch again after each
+wake. If it was unwatched and authorized work still awaits checks or reviews,
+register it again before ending the turn. Call `unwatch_pull_request` before
+handing back. Watching grants no merge authority.
+
+In 0.1.9, GitHub workflows awaiting maintainer approval produce one approval-wait
+notification per head. T3 retains that hold across missing approval reads,
+rewatching and server recovery; it clears when the awaited checks finish or the
+head changes. Missing approval data does not establish passing checks or an
+absence of checks. Inspect the awaited run and current head before reporting
+readiness; rewatching does not approve or retry the workflow. See the
+[upstream approval-hold fix](https://github.com/pingdotgg/t3code/pull/24599).
 
 Use `read_pull_request_guide` to inspect an existing guide and its run state
 without starting model work. `write_pull_request_guides` starts asynchronous
@@ -186,7 +196,7 @@ joined; inspect that run before retrying. Check the completed guide against
 `currentHeadSha` and `stale` before citing it. Guides supplement actual diff,
 checks, and unresolved findings.
 
-Upstream: [0.1.8 release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.8),
+Upstream: [0.1.9 release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.9),
 [session reset](https://github.com/pingdotgg/t3code/blob/v0.1.8/docs/user/composer.md),
 [child approvals](https://github.com/pingdotgg/t3code/blob/v0.1.7/docs/user/permission-modes.md),
 [thread sharing](https://github.com/pingdotgg/t3code/blob/v0.1.7/docs/user/prompt-links.md#share-a-thread),
@@ -196,4 +206,4 @@ Upstream: [0.1.8 release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.
 [launch retry contract](https://github.com/pingdotgg/t3code/blob/v0.1.6/apps/server/src/mcp/toolkits/project/tools.ts),
 [handoff history](https://github.com/pingdotgg/t3code/blob/v0.1.6/packages/provider-core/src/server/handoffBudget.ts),
 [thread controls](https://github.com/pingdotgg/t3code/blob/v0.1.6/apps/server/src/mcp/toolkits/thread/tools.ts),
-and [PR tools](https://github.com/pingdotgg/t3code/blob/v0.1.6/apps/server/src/mcp/toolkits/pullRequests/tools.ts).
+and [PR tools](https://github.com/pingdotgg/t3code/blob/v0.1.9/apps/server/src/mcp/toolkits/pullRequests/tools.ts).

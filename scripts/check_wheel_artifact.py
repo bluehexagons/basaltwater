@@ -24,6 +24,7 @@ REQUIRED_WHEEL_PATHS = (
     "lib/agent_skill_catalog.py",
     "lib/agent_models.py",
     "lib/t3code_native_probe.cjs",
+    "lib/t3code_service_env_probe.cjs",
     "plugins/common.py",
     "common/agent_steps.py",
     "lib/admin_actions.py",

@@ -181,6 +181,15 @@ do not copy the file into diagnostics or remove unrelated owner settings.
 An explicit `T3CODE_HOST` takes precedence over upstream's LAN setting.
 Changes require an arranged service restart, not merely selecting a version.
 
+For Debian's managed service, `basaltw agent doctor --capability t3code` requires
+the `service_environment` check. It uses the selected runtime's Node dotenv
+parser to compare persisted bind overrides with the managed drop-in and reports
+only conflicting key names. Missing files or matching settings pass. Files that
+cannot be inspected safely, including symlinks and files larger than 1 MiB,
+remain unverified. Reconcile conflicts privately before an arranged restart.
+`--fix` preserves the file and skips runtime repair and service restart until
+this check passes; `--wait-for-t3-startup` also skips its long wait on failure.
+
 **Settings → Maintenance → Reclaim** is offline database repair: it stops
 agents and the server, rebuilds the database and restarts it. Arrange downtime
 and a private recovery copy first. Free-space requirements include about twice

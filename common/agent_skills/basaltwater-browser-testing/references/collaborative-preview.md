@@ -103,6 +103,16 @@ expected change occurred, report successful input with uncertain acknowledgment;
 otherwise report transport failure or timeout as observed, and leave the input
 outcome unverified when state cannot be inspected.
 
+Stable 0.1.9 shares snapshot metadata space between visible page text and the
+accessibility tree so a large tree does not consume the whole budget. Metadata
+is still bounded: inspect `omitted` and the screenshot before inferring that
+text or controls are absent. For requested browser work, `preview_evaluate`
+accepts top-level `await`, allowing bounded, read-only asynchronous checks
+without an async wrapper. Keep results small and inspect the returned state;
+an evaluation error or timeout does not justify repeating a mutation. Sources:
+[snapshot metadata](https://github.com/pingdotgg/t3code/pull/33745) and
+[async evaluation](https://github.com/pingdotgg/t3code/pull/31925).
+
 Scope diagnostics to the retained tab, requested URL, and navigation time/action.
 Label Electron/preload/preview-host errors separately from gateway/network and
 application errors. Historical `about:blank` errors do not establish a current

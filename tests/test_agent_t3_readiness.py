@@ -352,6 +352,28 @@ class T3ReadinessTests(unittest.TestCase):
         self.assertEqual(result['status'], 'unhealthy')
         self.assertEqual(agent_cli._readiness_failure_details(record), ['t3code: failed checks: endpoint'])
 
+    def test_service_env_conflict_blocks_readiness_without_restart_or_startup_wait(self):
+        for fix, wait, native in (
+            (False, False, True), (True, False, False),
+            (False, True, True), (True, True, False),
+        ):
+            with self.subTest(fix=fix, wait=wait, native=native), \
+                    patch.object(agent_cli, '_t3_service_environment_ready', return_value=(
+                        False, 'T3 service.env overrides managed T3CODE_HOST')) as probe, \
+                    patch.object(agent_cli, '_wait_for_t3_startup') as startup:
+                result, record, commands = self.inspect(
+                    fix=fix, wait_for_startup=wait, native=native, initial_service_status=3)
+            probe.assert_called_once()
+            startup.assert_not_called()
+            self.assertFalse(result['healthy'])
+            self.assertFalse(record['healthy'])
+            self.assertFalse(result['checks']['service_environment'])
+            self.assertIn('service_environment', result['required_checks'])
+            self.assertIn('T3 service.env overrides managed T3CODE_HOST', result['warnings'])
+            self.assertFalse(any('restart' in command for command in commands))
+            if wait:
+                self.assertFalse(result['checks']['startup_ready'])
+
     def test_diagnostics_do_not_restart_or_reauthenticate(self):
         for fix in (False, True):
             with self.subTest(fix=fix):

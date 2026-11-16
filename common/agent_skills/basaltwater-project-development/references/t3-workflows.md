@@ -227,8 +227,13 @@ and keep secrets in the project's existing private configuration.
 worktree. Use it only for an intended, repeatable project operation; do not
 attach broad cleanup, publication, or deployment as an incidental setup step.
 Settling is separate from merging Git changes and may make a worktree eligible
-for configured automatic cleanup. A script's `previewUrl` is a desktop-build
-feature; use the browser skill's server-tab workflow for remote automation.
+for configured automatic cleanup.
+
+In 0.1.9, an action with `autoOpenPreview: true` and a `previewUrl` can open
+Preview in web clients as well as desktop clients when Preview is available for
+the selected environment. Opening a tab does not establish application readiness
+or make a desktop-local tab automatable by server tools. For requested browser
+work, use the browser skill's server-tab workflow and inspect the tab's runtime.
 
 In 0.1.8, `stopOnSettle: true` can stop an action's terminal and child processes
 when its thread settles. It applies to commands started through that action;
@@ -236,7 +241,8 @@ provider shell commands retain their provider's lifecycle. Inspect this setting
 alongside `runOnSettle`, including automatic settlement, before starting a
 long-lived command. Do not add it to existing actions incidentally.
 
-Contract: [project file schema](https://github.com/pingdotgg/t3code/blob/v0.1.8/packages/contracts/src/t3ProjectFile.ts),
+Contract: [project file schema](https://github.com/pingdotgg/t3code/blob/v0.1.9/packages/contracts/src/t3ProjectFile.ts),
+[action preview availability](https://github.com/pingdotgg/t3code/blob/v0.1.9/apps/web/src/components/chat/useChatTerminalActions.ts),
 [settle actions](https://github.com/pingdotgg/t3code/blob/v0.1.8/docs/user/thread-sidebar.md),
 and [settings and cleanup](https://github.com/pingdotgg/t3code/blob/v0.1.8/docs/user/project-settings.md).
 
