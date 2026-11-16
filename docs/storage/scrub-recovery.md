@@ -111,6 +111,16 @@ panel; the broker authorizes the request automatically without a separate approv
 visit. Deletion requires the displayed `DELETE N FILES` confirmation. Repair,
 restore and acceptance stay individual operations.
 
+Quarantine automatically verifies a selected file against existing parity when
+its recorded identity is stale or absent. Healthy files stay in place and their
+findings resolve. Stable files confirmed as repairable or unrepairable are moved
+using their freshly verified identities. Missing files, missing or invalid parity,
+I/O errors and other inconclusive checks are skipped with their new classification;
+the remaining files continue. A file changing during verification or before the
+move is never automatically retried. Inspect per-file outcomes in activity.
+Permanent deletion still requires matching recorded identities; use **Verify
+selected files**, wait for the next export and review deletion again if needed.
+
 Quarantine retains corrupt bytes under the source root's private, root-owned
 `.basaltwater-quarantine` directory. For files in a nested mount, bind mount or
 Btrfs subvolume, quarantine lives at that boundary inside the scrub root, keeping

@@ -221,10 +221,17 @@ def recover_batch(parameters: dict, saved: dict, value: dict) -> None:
         entry = report.data["files"].get(relative, {})
         if entry.get("state") != "open" or not secrets.compare_digest(finding_revision(entry), item["finding"]):
             raise DataJobRejected("finding_changed")
-        if "file_identity" not in entry:
-            raise DataJobRejected("identity_unavailable")
-        if entry["file_identity"] != file_identity(item["file"]):
-            raise DataJobRejected("file_changed")
+        if parameters["action"] in {"verify", "quarantine"}:
+            # Verification refreshes stale (or legacy) identities. Pin the
+            # current observation for examine's check immediately before PAR2.
+            current = file_identity(item["file"])
+            entry = {**entry, "file_identity": current,
+                     "needs_verification": "file_identity" not in entry or entry["file_identity"] != current or current is None}
+        else:
+            if "file_identity" not in entry:
+                raise DataJobRejected("identity_unavailable")
+            if entry["file_identity"] != file_identity(item["file"]):
+                raise DataJobRejected("file_changed")
         if parameters["action"] != "verify":
             # Disposition updates one report. Reject other protecting tasks,
             # including paused ones, rather than leave their evidence stale.
@@ -238,7 +245,8 @@ def recover_batch(parameters: dict, saved: dict, value: dict) -> None:
                     raise DataJobRejected("overlapping_scrubs")
             if report.disposition_blocked(relative, entry["file_identity"]):
                 raise DataJobRejected("execution_rejected")
-            disposition_preflight(item["file"], directory, database, parameters["job_id"])
+            if parameters["action"] != "quarantine" or entry["file_identity"] is not None:
+                disposition_preflight(item["file"], directory, database, parameters["job_id"])
         return entry
 
     try:
@@ -263,6 +271,19 @@ def recover_batch(parameters: dict, saved: dict, value: dict) -> None:
                 result = examine(item["file"], directory, database, reviewed_identity=entry["file_identity"])
                 Findings(directory, database).record(os.path.relpath(item["file"], directory), result)
             else:
+                if parameters["action"] == "quarantine" and entry["needs_verification"]:
+                    result = examine(item["file"], directory, database, reviewed_identity=entry["file_identity"])
+                    # Only a stable, conclusive comparison can authorize moving
+                    # changed bytes. Healthy and inconclusive results stay put.
+                    if result["category"] in {"healthy", "repairable", "unrepairable"} and (
+                            result.get("file_identity") != entry["file_identity"]
+                            or file_identity(item["file"]) != entry["file_identity"]):
+                        result.update(category="changed_during_scan")
+                    Findings(directory, database).record(os.path.relpath(item["file"], directory), result)
+                    if result["category"] not in {"repairable", "unrepairable"}:
+                        item.update(status="completed" if result["category"] == "healthy" else "skipped",
+                                    category=result["category"])
+                        continue
                 result = dispose(item["file"], directory, database, parameters["action"],
                                  entry["file_identity"], parameters["job_id"])
             item.update(status="completed", category=result["category"], destination=result.get("destination", ""))
