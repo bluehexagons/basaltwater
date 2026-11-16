@@ -1,142 +1,174 @@
-# Test suite maintenance plan
+# Test suite maintenance
 
-Status: implementation and measured review in progress.
-Original inventory reviewed: 2026-11-16 on `main`; counts below describe that
-snapshot. Use `python3 scripts/test_inventory.py` for the current inventory.
+Status: maintenance tooling, execution policy and initial pruning review
+implemented. Further assertion-level pruning is ongoing maintenance, with the
+acceptance rules below.
 
-This plan aims to keep regression protection for observable contracts while
-making the ordinary edit/PR loop short. Long-running, live-environment and
-high-cost qualification should run at deliberate checkpoints rather than on
-every small change. Treat every proposed deletion as unapproved until its
-assertions, failure inputs, callers and coverage impact have been reviewed.
+## Decisions from the review
 
-## Current inventory
+Keep `make check-fast` as the short local edit loop. Retain full offline PR
+coverage: one uninstrumented baseline is insufficient evidence for a safe
+changed-path selector. Shared configuration, generated code, validators and
+plugin composition have cross-domain dependencies.
 
-Static inventory from `tests/test_*.py` (including nested Python tests):
+Add nightly and merge-queue coverage without weakening the existing PR gate.
+A schedule defined on a feature branch does not establish an active nightly
+replacement: GitHub schedules start after the workflow reaches the default
+branch. Branch protection remains administrator-owned.
 
-| Measure | Current observation |
-| --- | ---: |
-| Python test modules | 501 |
-| `test*` methods/functions | 10,133 |
-| Test source lines | 193,625 |
-| Largest modules | `test_t3code_steps.py` (2,449 lines), `test_web_panel.py` (2,212), `test_agent_tools.py` (2,018), `test_build_retention.py` (1,897), `test_gogs_steps.py` (1,788) |
+Prune only assertions with named retained behavioral coverage. File size,
+regression age, similar assertion text, coverage overlap and suite membership
+overlap are not sufficient reasons to delete tests. The five largest modules
+were reviewed; their size did not justify splitting related fixtures or dropping
+distinct security, interruption and recovery inputs.
 
-Counts are structural, not a measure of useful coverage or runtime. They include
-different assertion types and may count helper-like `test*` functions. No test
-suite was run for this inventory, so this plan makes no runtime or flakiness
-claims.
+## Inventory and measurements
 
-The runner exposes `smoke`, `integration`, `node`, ten domain suites, and
-`all`. Seventeen modules appear in multiple domain suites and are deduplicated
-by test ID when selections are combined. Review their suite ownership, but
-treat this selection overlap as distinct from duplicate test cases.
+Run these from the repository's isolated development environment:
 
-Current execution boundaries:
+```bash
+python3 scripts/test_inventory.py
+python3 scripts/test_inventory.py --json
+python3 run_tests.py --list-suites
+python3 run_tests.py --durations 30 --timings-json /tmp/test-timings.json
+```
 
-- `make check-fast` runs static checks and the six-module smoke selection by
-  default; an explicit suite or test replaces smoke.
-- Branch CI runs the complete branch-covered suite on pushes and pull requests,
-  plus a Node 26 compatibility selection. Release CI runs full checks at both
-  supported Python endpoints.
-- `make browser-test` is a separate local, intensive Chromium/Firefox check and
-  is not a CI dependency.
-- `run_tests.py` declares `live_proxmox`, `network`, and `slow` expensive
-  categories. The live Proxmox module uses its gate. Static search found no
-  current test consumers of the `slow` or `network` decorators/categories, so
-  these gates may be stale or the search should be confirmed during the first
-  inventory pass.
-- The repo already has strong pruning guidance in
-  [the contributor guide](../agents/contributing/README.md#maintaining-tests):
-  preserve distinct failure inputs and observable contracts; remove settled
-  presence/identity/catalog checks only when behavioral coverage exists; avoid
-  Cartesian products; use small fixtures and controlled clocks/events.
+The inventory validates every named suite selector, domain pattern and discovered
+module's domain ownership without importing test modules. JSON includes all
+memberships, line/definition counts and candidate process/sleep sites. Its
+attribute-call scan is a heuristic: aliases, bare imported functions, dynamic
+calls and polling-loop structure still need manual review. It does not establish
+I/O, expense, flakiness or redundancy.
 
-## Recommended test cadence
+The original recommendation snapshot listed 501 modules, 10,133 `test*`
+definitions and 193,625 source lines. It was already stale when implementation
+began: that checkout had 503 tracked modules. Recompute structural counts instead
+of enforcing them as snapshots. Definitions include nested/helper functions;
+runtime loading can generate cases, so definitions and attempted cases are
+different measures and must refer to the same revision before comparison.
 
-Keep a short, useful gate on every edit and pull request, and reserve the
-complete, slower qualification for merge/release checkpoints:
+The initial default run passed **10,173 attempted cases, including 26 skips**,
+with **160.465 seconds inside test cases**. Repeating the accumulated top modules
+on the same development runner measured install-script fixtures at 8.421 seconds,
+Headscale controller fixtures at 5.934 seconds, and Guacamole at 3.001 seconds.
+The first two exercise real CLI/cancellation/composition contracts and remain in
+routine offline coverage.
 
-| Tier | When | Suggested contents | Decision |
-| --- | --- | --- | --- |
-| Fast local | Every edit | `make check-fast` default smoke; run the affected domain suite or exact test while editing | Keep as the normal inner loop. Add a documented duration budget only after measuring representative machines. |
-| Pull request | Every PR | Compile/docs/package metadata, smoke, affected domain suites, and small cross-domain selections when shared boundaries change; retain Node compatibility checks for JS-touching changes | Rework CI so every PR does not pay for the full coverage suite. Use explicit path/domain mapping plus a safe fallback for unknown paths; shared config, validators, runner, plugin composition and test infrastructure trigger broad coverage. |
-| Full regression | Scheduled (nightly or equivalent) and before merge to protected `main` when a high-risk area changes | One complete branch-coverage run, ranked module/test timings, static checks and artifact checks | Move routine full coverage out of every PR only after the scheduled job is required/visible and failures have an owner. Preserve a blocking full run at critical checkpoints. |
-| Release/platform qualification | Release candidates and platform/runtime changes | Full checks at supported Python endpoints, Node matrix as applicable, wheel/install checks, browser qualification and separately approved native/live workflows | Keep hardware, real-host and destructive testing explicit, gated, disposable and owned. Do not make ordinary CI depend on personal infrastructure. |
+The bounded transport experiment targeted Guacamole's real two-second watcher
+wait. Acceptance required unchanged connection/EOF/idle/input-release contracts
+and at least one second saved, with one implementation variant and a ten-minute
+experiment budget. Replacing fixed sleeps/polling with events and controlling only
+the owning module's watcher reduced the module to 1.042 seconds; the lifecycle
+case went from 2.057 to 0.068 seconds. Console forwarding also waits for processing
+instead of assuming a 30 ms delay. The actual loopback WebSockets remain in use.
+These are same-runner observations, not a suite-wide speedup or flakiness claim.
 
-The exact PR suite policy is a follow-up decision after measurement. In
-particular, a changed-file-only test selector is not sufficient: shared code
-and generated/runtime boundaries need a broad fallback. Do not drop full CI
-coverage until a scheduled replacement is active and its result is visible to
-maintainers.
+Per-case duration includes `setUp`, `tearDown` and cleanups. Suite elapsed time
+also includes class/module fixtures and runner overhead; discovery/import time
+is excluded. The JSON records both measures, counts, success and every case
+duration, including on test failure, without captured logs, skip reasons or
+tracebacks. Keep raw host-specific measurements outside Git. Coverage
+instrumentation and the lab machine are separate workloads; compare unchanged
+selections on the same runner before setting duration budgets.
 
-## Audit and change backlog
+## Execution policy
 
-Work in small batches. Record each decision (retain, consolidate, split,
-reclassify, or remove), the contract still covered, the reason, and the checks
-run. Add results below as changes land; keep detailed raw timings outside the
-repository if they contain host-specific data.
+| Tier | Trigger | Checks |
+| --- | --- | --- |
+| Fast local | Every edit | `make check-fast` defaults to six smoke modules plus compile/docs/package metadata; an explicit suite/test replaces smoke. Run all affected domains while editing. |
+| PR / merge queue | Every PR and merge-group request | All static, brand and wheel checks; one full branch-covered suite on Node 24; Node 26 compatibility suite; latest-platform wheel qualification. |
+| Full baseline | Nightly at 05:23 UTC, protected-branch pushes and manual dispatch | The same full validation and Node compatibility jobs, with result summaries and timing evidence. |
+| Release | Release tags and runtime/platform qualification | Full checks at both supported Python endpoints, wheel/install checks, and separately selected browser/native/live qualification. |
 
-| ID | Recommendation | Scope and review criteria | Priority / state |
-| --- | --- | --- | --- |
-| TM-01 | Establish a timing baseline | Run the full suite once with `--durations 30`, preserve total/module/test time and skipped counts, and repeat the top accumulated modules on a stable runner. Separate fixture/setup overhead from test-body time. Do not compare timings from different hosts as if they were equivalent. | High / not started |
-| TM-02 | Inventory expensive and flaky behavior | Search all test modules for real sleeps, polling loops, repeated subprocess launches, browser/Node startup, external calls and broad integration fixtures. Confirm each is mocked, event/timer controlled, bounded, or intentionally qualified. Convert fixed sleeps to events/fake clocks where behavior permits. Use real transport only where lifecycle is the contract. | High / not started |
-| TM-03 | Revisit execution tiers | Inspect `tests/expensive_support.py`, all gate call sites and the CI wrapper. Classify long unit tests separately from live network/host qualification. Apply the existing `slow` gate only to tests whose duration is not useful in the normal edit/PR loop; retain deterministic, fast failure-path tests in domain CI. Remove unused category machinery only after confirming no external command contract depends on it. | High / not started |
-| TM-04 | Consolidate redundant assertions | Across every domain suite, compare same-contract tests for settled feature-presence assertions, import/re-export identity, catalog snapshots, duplicated parser/config expectations and repeated setup fixtures. Remove only when an owning behavioral test calls production code and retains each distinct failure input, permission boundary and externally observable result. Prefer `subTest` for truly shared contracts. | High / not started |
-| TM-05 | Reduce combinatorial variants | For option sweeps, keep each independent option's boundary cases and a small set of interaction cases. Avoid Cartesian products unless options interact. For order/dependency tests, use minimal catalogs/fixtures rather than the whole built-in catalog. For space/time tests, lower fixture limits and advance controlled timestamps instead of creating data or waiting. | High / not started |
-| TM-06 | Review oversized modules by behavioral seam | Start with the five largest modules listed above, then modules above roughly 1,000 lines. Split only when cases have distinct owners/contracts; keep related variants together and reuse immutable fixtures/parsers. A split is organization, not a test reduction, and must not alter selection coverage. | Medium / not started |
-| TM-07 | Simplify suite ownership and selection | Review `TEST_SUITE_PATTERNS`, the default discovered-module membership assertion, and 17 cross-domain overlaps. Keep legitimate multi-domain memberships; make the owning domain clear and eliminate only accidental pattern duplication or stale selectors. Verify combining suites still runs each test ID once. | Medium / not started |
-| TM-08 | Make the runtime policy real | Confirm whether any current network or generally slow tests need gates. If so, use categorized decorators and prerequisite checks; otherwise delete unused categories from runner docs/tests rather than implying they currently protect long tests. Keep live Proxmox gated and never let routine CI access a real host. | Medium / not started |
-| TM-09 | Separate coverage cadence in CI | Update `.github/workflows/tests.yml` and `scripts/run_debian_ci.py` after the timing and tier review: keep fast/high-value checks on PRs, schedule complete coverage, retain a blocking full run for critical merges/releases, and preserve Node-version coverage for generated JavaScript. Document ownership, trigger, timeout and failure visibility. | High / not started |
-| TM-10 | Reassess tests with no maintained behavior | Identify tests that assert implementation trivia or settled historical regressions. For each, trace the current production path and replacement behavioral coverage. Remove only proven obsolete checks; regression age by itself is not a deletion reason. | Ongoing / not started |
+The **Tests** Actions workflow preserves its existing check names. Its Debian
+jobs have a 25-minute deadline; the wrapper bounds the container run to 15
+minutes and each registry pull to two minutes. Only registry pulls fall back:
+failed setup/check commands are not replayed. Event-specific concurrency keeps
+pushes from cancelling scheduled or PR runs. Job summaries publish result counts
+and suite overhead, logs rank modules/tests, and JSON artifacts are retained
+for 14 days.
 
-### Suite-by-suite review register
+Maintainers own failures through the **Tests** workflow and normal GitHub
+notifications: inspect the failing phase/contract, reproduce with native commands,
+fix or revert, and rerun before merging. A nightly success does not override a
+failed PR. Verify the first scheduled run after merging to the default branch.
 
-Review every suite in its owning domain. This is a coverage boundary map, not a
-recommendation to delete whole suites. Cross-listed modules should be recorded
-once under their primary owner with secondary suite references.
+A future reduction of PR coverage needs repeated hosted timing evidence, an
+active visible replacement, explicit path-to-domain ownership with full fallback,
+and an agreed blocking merge policy before disabling the existing gate.
+Unknown paths and shared/generated/runtime boundaries must select the full suite.
 
-| Suite | Modules | Review emphasis |
-| --- | ---: | --- |
-| `agent` | 122 | Process/CLI seams, generated hooks, browser automation fixtures, pairing/readiness boundaries, repeated service setup. Keep provider/network behavior offline unless explicitly qualified. |
-| `core` | 54 | Parser/config/validation contract duplication, utility boundary tests, runner self-tests, snapshots and catalog-style assertions. Preserve invalid-input and serialization distinctions. |
-| `desktop` | 39 | Native desktop lifecycle versus mocked orchestration; event-driven waits; fixture reuse across desktop/session/output cases. Keep native/browser qualification out of routine CI. |
-| `deployment` | 81 | Setup composition and rollback/failure propagation; install/upgrade subprocess fixture cost; overlap with integration and web coverage. Keep distinct recovery states. |
-| `network` | 45 | Distinguish offline policy/protocol unit tests from real DNS/download/SSH/network qualification. Verify whether the declared network gate is used or needed. |
-| `proxmox` | 41 | Keep fast mocked inventory/plan/state contracts in normal checks; retain live guest round-trips behind explicit gate and critical qualification window. |
-| `security` | 17 | Preserve denial, boundary, credential, permission and audit failure cases. Consolidate only identical contracts, not distinct hostile inputs. |
-| `services` | 32 | Split deterministic policy checks from real service/process integration; reuse controlled service fixtures and avoid repeated installer setup. |
-| `storage` | 27 | Keep exact threshold/boundary and failure/rollback cases; lower mocked limits rather than generating large datasets; separate disk/device stress from routine tests. |
-| `web` | 60 | Separate generated HTML/config behavior from browser lifecycle; preserve escaping/access/activation assertions; reuse common render fixtures. |
-| `integration` | 9 | Check whether cross-boundary tests add unique wiring/failure propagation beyond domain suites; keep representative end-to-end composition cases. |
-| `node` | 7 | Preserve actual generated-JavaScript behavior on each supported Node major; avoid duplicate Python harness assertions when the Node behavior check already proves the contract. |
-| `smoke` | 6 | Keep small, stable high-value checks; review additions for runtime and breadth so smoke remains a quick default. |
+`live_proxmox` is the only advertised expensive category and the only production
+decorator consumer. Unused `slow`/`network` listings were removed; custom category
+decorators/environment flags still work. The `network` domain remains offline
+policy/protocol coverage. Ordinary tests can use bounded local processes and
+loopback transports. Hosted CI receives no personal infrastructure credentials.
+`make browser-test` and real-host/destructive workflows stay separate and gated.
 
-## Acceptance rules for pruning
+## Review register
 
-Before removing or merging a test:
+All domains' module ownership and selectors were checked. All 17 cross-domain
+memberships are legitimate and retained; combined selections still deduplicate
+test IDs. This is a selection review, not a claim that every assertion in every
+domain has been audited.
 
-1. Name the production behavior and observable contract it checks.
-2. Find the retained test(s) that still invoke the application code for that
-   contract, including every distinct failure input and security boundary.
-3. Check selection membership and branch coverage for removed execution paths;
-   overlap in suite membership or similar assertion text is not proof of
-   redundancy.
-4. Run the affected module/domain selection. For a broad cleanup or moved
-   execution paths, run `make check-ci` once rather than separately repeating
-   full test and coverage commands.
+| Suite | Review outcome / retained boundary |
+| --- | --- |
+| `agent` | Reviewed the large tooling/T3 modules. Fixed the symlink preservation fixture to inspect the actual redirected `auth.json`. Retain provider, credential, failure and rollback cases. |
+| `core` | Runner tests now detect stale explicit suites and empty globs as well as unowned modules. Structured timing and registry-fallback failure contracts have focused tests. |
+| `desktop` | Retain native lifecycle versus mocked orchestration boundaries; no assertion pruning in this batch. |
+| `deployment` | Reviewed all build-retention cases: distinct durable states/permissions/faults use small payloads and controlled clocks/events. Retain them and the real installer lifecycle checks. |
+| `network` | Retain offline policy/protocol cases and native CLI wiring. No new external-network gate is justified. |
+| `proxmox` | Retain mocked inventory/plan/state checks and explicit live guest gate. |
+| `security` | Lab qualification exposed ambient `SSH_CONNECTION` leaking into generic firewall fixtures. Set their connection context explicitly; dedicated allowed/excluded/invalid peer tests retain the guard contract. Keep distinct hostile inputs, permission and credential boundaries. |
+| `services` | Keep deterministic policy and bounded local process coverage; no pruning in this batch. |
+| `storage` | Keep exact thresholds and failure/rollback inputs; no pruning in this batch. |
+| `web` | Reviewed the large panel/Gogs modules and Guacamole transport fixtures. Gogs caller tests retain supplied/generated password redaction with explicit placeholder checks; removed a helper-only assertion against a password it never received. |
+| `integration` | Removed deleted `tests.test_cicd`; the eight remaining wiring modules stay selected and checked. |
+| `node` | Keep all seven modules executing generated JavaScript on both supported Node majors. |
+| `smoke` | Keep the six-module default unchanged. |
+
+## Backlog disposition
+
+| ID | Disposition |
+| --- | --- |
+| TM-01: baseline | Complete locally, with full run and repeated top modules. Hosted trend collection continues through retained JSON reports. |
+| TM-02: cost/flakiness inventory | Static scan and focused process/transport review complete. Event-controlled Guacamole fixtures landed; future candidates require runtime evidence. One pass cannot establish absence of flakes. |
+| TM-03: tiers | Complete. Keep useful deterministic cases in offline coverage; no duration-only slow gate added. |
+| TM-04: redundant assertions | Initial credential/redaction batch complete. Further per-domain pruning remains ongoing under the rules below. |
+| TM-05: combinatorial variants | Reviewed candidates retained: Gogs exception type, prior publication state and interrupted link interact; retention fixtures already use small limits and controlled time. |
+| TM-06: large modules | All five largest reviewed. Retain current ownership and related variants. Optional T3 service-fixture reuse or a panel class seam can follow a concrete maintenance need. |
+| TM-07: suite ownership | Complete: stale integration entry repaired; all explicit selectors, globs and domain memberships validated. |
+| TM-08: runtime policy | Complete: only implemented category advertised, custom flags retained, live qualification remains explicit. |
+| TM-09: cadence | Implemented: nightly/merge-group triggers and measurements; full PR/push/manual/release checks retained. Scheduling activation must be verified after default-branch merge. |
+| TM-10: obsolete tests | Initial batch complete; ongoing behavioral review, with no age-based deletion policy. |
+
+## Acceptance and verification
+
+Before deleting or consolidating a test:
+
+1. Name the production behavior and observable contract.
+2. Name retained tests that invoke application code for every distinct failure
+   input and security boundary; similar assertions or line coverage alone are
+   insufficient.
+3. Verify selection membership and inspect affected branch paths.
+4. Run the affected module/domain. Broad cleanup or runner changes require one
+   `make check-ci`, rather than separately repeating full tests and coverage.
 5. Review the final diff and record retained coverage in the commit description.
 
-For CI cadence changes, demonstrate the full job remains scheduled, visible and
-blocking at the agreed critical checkpoints before removing it from ordinary
-PR runs. Keep `make browser-test` and destructive/native qualification separate
-unless project owners explicitly choose a different policy.
+Verification completed on 2026-11-16:
 
-## Decision log
+| Check | Result |
+| --- | --- |
+| Local `make -j2 check-ci` at `349f1afc` | 10,181 attempted cases, 26 skips; 82% branch-aware coverage. Static, documentation, compilation and wheel checks passed. |
+| SSH firewall fixture isolation | All 100 access-filter/security-step cases passed with an injected local SSH context and in a real lab SSH session. |
+| Final source in a disposable lab VM, `make -j2 check-ci` | 10,181 attempted cases, 23 skips; 82% branch-aware coverage. All changed implementation/test file hashes matched the local source. |
+| Lab Node 26 compatibility | All 79 cases passed, without skips. |
+| [Hosted manual dispatch](https://github.com/bluehexagons/basaltwater/actions/runs/43917682189) at `349f1afc` | Full Debian validation, Node 26 compatibility and latest-platform packaging passed. Both timing artifacts downloaded and validated. |
+| Inventory, workflow lint and final independent review | All selectors/patterns current; actionlint passed; no unresolved material review findings. |
 
-| Date | Change | Evidence and retained coverage |
-| --- | --- | --- |
-| 2026-11-16 | Created inventory and recommendations; no test cases or CI behavior changed. | Static inventory: 501 modules, 10,133 `test*` definitions, 193,625 test-source lines. Runtime baseline and assertion-level redundancy review remain open. |
-| 2026-11-16 | Repair integration selection and validate all suite selectors/patterns. | Removed the deleted `tests.test_cicd` selector. All discovered modules remain owned; all 17 cross-domain memberships are legitimate and retained. Existing combined-selection tests retain deduplication coverage. |
-| 2026-11-16 | Advertise only implemented expensive categories. | `live_proxmox` is the only production decorator consumer. Removed unused `slow`/`network` listings and an incorrect compatibility comment; custom decorators/environment flags still work. Offline network-domain tests remain in routine CI. |
-| 2026-11-16 | Add reproducible inventory and timing evidence. | Baseline passed 10,173 tests (26 skipped), 160.465 seconds of test-case time. JSON timings distinguish suite elapsed time from time inside cases; static inventory does not import tests. Absolute timing applies only to this runner. |
-| 2026-11-16 | Strengthen credential coverage and consolidate a redundant helper check. | The symlink preservation fixture now checks the actual redirected `auth.json`. Gogs caller tests retain supplied/generated password redaction and now assert the placeholder; removed the helper-only assertion against a password it never received. |
+The lab's first full run exposed the SSH environment dependency described above;
+the corrected full run passed. Its failed-run timing report also retained counts
+and per-case measurements as intended. The disposable fixture was removed, and
+pre-existing guest configurations and process identities were unchanged. Private
+raw operational evidence remains outside this repository.
