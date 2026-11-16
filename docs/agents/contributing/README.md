@@ -331,7 +331,9 @@ distinct failure inputs, even if their assertion bodies match. Use `subTest`
 for a shared behavioral contract when it improves clarity. Sweep independent
 options separately and keep representative interaction cases; avoid Cartesian
 products unless the options interact. Reuse parsers and immutable fixtures
-within the owning test class. Generated HTML and
+within the owning test class. Use temporary repositories or checked-in examples
+for manifest fixtures so results do not depend on unrelated sibling checkouts.
+Generated HTML and
 service configuration assertions remain useful when they verify access,
 escaping, activation, or other behavior. Run the affected selection and review
 coverage when pruning execution paths; a broad cleanup warrants `make check-ci`.

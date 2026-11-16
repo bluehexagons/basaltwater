@@ -128,6 +128,32 @@ domain has been audited.
 | `node` | Keep all seven modules executing generated JavaScript on both supported Node majors. |
 | `smoke` | Keep the six-module default unchanged. |
 
+### Follow-up assertion review
+
+Another bounded review covered 18 modules and their owning production paths:
+
+- Configuration/CLI: `test_config`, `test_project_manifest`,
+  `test_arg_parser_hosted`, `test_plugin_registry`, `test_sysadmin_user_cli`,
+  `test_operation_log`. Retain distinct serialization, command transport,
+  credential, registry ordering, refusal and log retention contracts.
+- Setup/integration: `test_remote_setup`, `test_headscale_setup`,
+  `test_headscale_config`, `test_headscale_composition`,
+  `test_build_setup_transport`, `test_proxmox_maintenance`. Retain stage ordering,
+  enrollment authority, transport/cache, lock, no-fallback and diagnostic cases.
+- Native/runtime fixtures: `test_cachyos_ssh`, `test_cachyos_ssh_options`,
+  `test_cachyos_ssh_defaults`, `test_desktop_output`, `test_kiosk_runtime`,
+  `test_swap_configuration`. Retain ownership/adoption/rollback, option persistence,
+  token lifecycle, recovery and interrupted swap/resume cases.
+
+The optional sibling-checkout manifest check was replaced by stronger assertions
+in `TestLoadManifest.test_loads_from_disk`: it loads a temporary repository and
+checks component names and the templated domain. Placeholder parsing remains in
+`TestRejects.test_domain_placeholder_accepted`. The shipped manifests retain
+`BuildSetupPlanTests.test_documented_projects_plan_with_their_complete_enrollment_templates`,
+which validates all four checked-in examples through delivery planning and
+target authorization. This removes an implicit dependency on another workspace
+while keeping reproducible application behavior in routine coverage.
+
 ## Backlog disposition
 
 | ID | Disposition |
@@ -135,7 +161,7 @@ domain has been audited.
 | TM-01: baseline | Complete locally, with full run and repeated top modules. Hosted trend collection continues through retained JSON reports. |
 | TM-02: cost/flakiness inventory | Static scan and focused process/transport review complete. Event-controlled Guacamole fixtures landed; future candidates require runtime evidence. One pass cannot establish absence of flakes. |
 | TM-03: tiers | Complete. Keep useful deterministic cases in offline coverage; no duration-only slow gate added. |
-| TM-04: redundant assertions | Initial credential/redaction batch complete. Further per-domain pruning remains ongoing under the rules below. |
+| TM-04: redundant assertions | Credential/redaction and self-contained manifest batches complete. Further per-domain pruning remains ongoing under the rules below. |
 | TM-05: combinatorial variants | Reviewed candidates retained: Gogs exception type, prior publication state and interrupted link interact; retention fixtures already use small limits and controlled time. |
 | TM-06: large modules | All five largest reviewed. Retain current ownership and related variants. Optional T3 service-fixture reuse or a panel class seam can follow a concrete maintenance need. |
 | TM-07: suite ownership | Complete: stale integration entry repaired; all explicit selectors, globs and domain memberships validated. |
@@ -156,13 +182,13 @@ Before deleting or consolidating a test:
    `make check-ci`, rather than separately repeating full tests and coverage.
 5. Review the final diff and record retained coverage in the commit description.
 
-Verification completed on 2026-11-16:
+Initial implementation verification through `564ddccb` completed on 2026-11-16:
 
 | Check | Result |
 | --- | --- |
 | Local `make -j2 check-ci` at `349f1afc` | 10,181 attempted cases, 26 skips; 82% branch-aware coverage. Static, documentation, compilation and wheel checks passed. |
 | SSH firewall fixture isolation | All 100 access-filter/security-step cases passed with an injected local SSH context and in a real lab SSH session. |
-| Final source in a disposable lab VM, `make -j2 check-ci` | 10,181 attempted cases, 23 skips; 82% branch-aware coverage. All changed implementation/test file hashes matched the local source. |
+| Full lab check, `make -j2 check-ci` | 10,181 attempted cases, 23 skips; 82% branch-aware coverage. All changed implementation/test file hashes matched the local source. |
 | Lab Node 26 compatibility | All 79 cases passed, without skips. |
 | [Hosted manual dispatch](https://github.com/bluehexagons/basaltwater/actions/runs/43917682189) at `349f1afc` | Full Debian validation, Node 26 compatibility and latest-platform packaging passed. Both timing artifacts downloaded and validated. |
 | Inventory, workflow lint and final independent review | All selectors/patterns current; actionlint passed; no unresolved material review findings. |
@@ -172,3 +198,9 @@ the corrected full run passed. Its failed-run timing report also retained counts
 and per-case measurements as intended. The disposable fixture was removed, and
 pre-existing guest configurations and process identities were unchanged. Private
 raw operational evidence remains outside this repository.
+
+The follow-up manifest cleanup passed all 106 cases in `test_project_manifest`
+and `test_build_setup_plan` locally and in a fresh disposable lab fixture, without
+skips. The lab's test-source hash matched the final local file. Documentation
+checks and diff review passed. That fixture was also removed, with pre-existing
+guest configurations and process identities verified unchanged.

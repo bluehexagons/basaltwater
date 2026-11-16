@@ -565,10 +565,11 @@ class TestLoadManifest(unittest.TestCase):
     def test_loads_from_disk(self):
         with tempfile.TemporaryDirectory() as repo:
             with open(os.path.join(repo, MANIFEST_FILENAME), "w", encoding="utf-8") as f:
-                json.dump(_manifest(_static(), _service()), f)
+                json.dump(_manifest(_static(domain="{{domain}}"), _service()), f)
             manifest = load_manifest(repo)
             assert manifest is not None
-            self.assertEqual(len(manifest.components), 2)
+            self.assertEqual([component.name for component in manifest.components], ["site", "api"])
+            self.assertEqual(manifest.components[0].domain, "{{domain}}")
 
     def test_retired_manifest_stops_deployment_instead_of_falling_back(self):
         with tempfile.TemporaryDirectory() as repo:
@@ -625,18 +626,6 @@ class TestLoadManifest(unittest.TestCase):
             with open(os.path.join(repo, "go.mod"), "w", encoding="utf-8") as f:
                 f.write("module example.com/library\n\ngo 1.25\n")
             self.assertIsNone(infer_manifest(repo))
-
-    def test_bluehexagons_example(self):
-        """The shipped bluehexagons basaltwater.json must validate, if present."""
-        repo = os.path.join(os.path.dirname(__file__), "..", "..", "bluehexagons")
-        manifest_path = os.path.join(repo, MANIFEST_FILENAME)
-        if not os.path.exists(manifest_path):
-            self.skipTest("bluehexagons repo not checked out alongside basaltwater")
-        manifest = load_manifest(repo)
-        assert manifest is not None
-        names = {c.name for c in manifest.components}
-        self.assertEqual(names, {"site"})
-        self.assertEqual(manifest.components[0].domain, "{{domain}}")
 
 
 if __name__ == "__main__":
