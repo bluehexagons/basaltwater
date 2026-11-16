@@ -282,8 +282,9 @@ Arithmetic cannot establish the viewer's scale or that a semantic target stayed
 in place.
 
 `desktop evidence start --project /absolute/project` and `desktop evidence finish`
-now work with Debian's supervisor. Journals checkpoint input receipts, launch
-status and screenshot file hashes in private state. They omit typed text and
+now work with Debian's supervisor. Journals checkpoint input receipts, including
+acknowledged character counts and completion uncertainty, launch status and
+screenshot file hashes in private state. They omit typed text and
 command arguments, expose bounded capacity, and checkpoint on orderly helper
 shutdown. Lost transport replies and truncated history remain uncertain. A
 checkpoint failure adds `evidence_error` without turning completed input into a
