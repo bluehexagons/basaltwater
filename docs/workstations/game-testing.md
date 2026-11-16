@@ -6,6 +6,10 @@ rules, saves, acceptance criteria and testing brief. Basaltwater supplies
 capture/input and private evidence collection. Installation or a previous
 successful match does not establish readiness for the next run.
 
+For a concrete dispatch/read/preview/handoff sequence, use
+[small controller preparation](playtest-preparation.md). It keeps required
+reading in individual bounded replies and reporting with the coordinator.
+
 Generic learning tools now provide [immutable records](learning-records.md),
 [closed-corpus summaries](learning-corpus.md), [offline region perception](local-perception.md)
 and [conditional execution/event waits](conditional-execution.md). These have
