@@ -191,6 +191,35 @@ def web_data(records: list[dict[str, Any]]) -> dict[str, Any]:
     ]}
 
 
+def host_snapshot(reading: Reading) -> dict[str, Any]:
+    """Keep host values and their observation metadata in one reading."""
+    data = host_data(reading.value or [])
+    return snapshot("host", data, reading.observed_at, interval=30, stale_after=90,
+                    unavailable=not data["metrics"], incomplete=reading.failed or any(
+                        row["value"] == "Unavailable" for row in data["metrics"]))
+
+
+def web_snapshot(reading: Reading) -> dict[str, Any]:
+    """Date discovery conservatively, including independently cached probes."""
+    records = reading.value or []
+    observations = [reading.observed_at, *[row["probe_observed_at"] for row in records
+                                          if "probe_observed_at" in row]]
+    observed_at = min(observations) if all(value is not None for value in observations) else None
+    limited = any(row.get("limited") for row in records)
+    return snapshot("web", web_data(records), observed_at, interval=60, stale_after=180,
+                    unavailable=reading.value is None, incomplete=reading.failed or limited,
+                    warnings=("Service discovery is limited to 64 entries and four local probes.",) if limited else ())
+
+
+def service_snapshot(reading: Reading) -> dict[str, Any]:
+    """Keep loaded process state and its observation metadata together."""
+    metrics = [{"label": row["label"][:80], "value": row["value"][:40],
+                "description": row["description"][:120]} for row in (reading.value or [])[:48]]
+    return snapshot("services", {"metrics": metrics}, reading.observed_at, interval=30, stale_after=90,
+                    unavailable=reading.value is None,
+                    incomplete=reading.failed or any(row["value"] == "Unavailable" for row in metrics))
+
+
 def agent_summary(manager: Any) -> dict[str, Any]:
     value = manager.snapshot()
     tasks, runs = value["tasks"], value["runs"]
@@ -221,32 +250,14 @@ class PanelStatus:
     def read(self, resource: str) -> dict[str, Any]:
         state = self.state
         if resource == "host":
-            records = state.system_overview()
-            reading = state.status_cache.peek("host")
-            data = host_data(records)
-            return snapshot(resource, data, reading.observed_at if reading else None, interval=30, stale_after=90,
-                            unavailable=not data["metrics"], incomplete=bool(reading and reading.failed) or any(
-                                row["value"] == "Unavailable" for row in data["metrics"]))
+            return host_snapshot(state.system_overview())
         if resource == "web":
-            reading = state.web_services()
-            observations = [reading.observed_at, *[row["probe_observed_at"] for row in reading.value or []
-                                                  if "probe_observed_at" in row]]
-            observed_at = min(observations) if all(value is not None for value in observations) else None
-            return snapshot(resource, web_data(reading.value or []), observed_at, interval=60, stale_after=180,
-                            unavailable=reading.value is None,
-                            incomplete=reading.failed or bool(reading.value and any(row.get("limited") for row in reading.value)),
-                            warnings=("Service discovery is limited to 64 entries and four local probes.",)
-                            if reading.value and any(row.get("limited") for row in reading.value) else ())
+            return web_snapshot(state.web_services())
         if resource == "services":
             # A passive read must not opt an operator into on-demand inspection.
             if state.status_cache.peek("services") is None:
                 raise StatusBusy
-            records = state.service_health()
-            reading = state.status_cache.peek("services")
-            metrics = [{"label": row["label"][:80], "value": row["value"][:40],
-                        "description": row["description"][:120]} for row in records[:48]]
-            return snapshot(resource, {"metrics": metrics}, reading.observed_at, interval=30, stale_after=90,
-                            incomplete=reading.failed or any(row["value"] == "Unavailable" for row in metrics))
+            return service_snapshot(state.service_health())
         if resource == "proxmox":
             reading = state.status_cache.read("proxmox", 60, state.proxmox_snapshot)
             value = reading.value or {}

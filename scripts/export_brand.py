@@ -243,7 +243,7 @@ def export_assets(assets: Path) -> None:
         patch("common.service_tools.web_panel_status.time.time", return_value=1767258000),
         patch.object(panel, "discover_basaltwater_web_services", return_value=[]),
         patch.object(panel, "discover_certificate_trust", return_value=None),
-        patch.object(state, "system_overview", return_value=[
+        patch.object(panel, "collect_system_overview", return_value=[
             {"label": "Uptime", "value": "2d 6h", "description": "Since the last boot"},
             {"label": "Load average (1m)", "value": "0.32", "description": "5m 0.41 · 15m 0.36 · 4 logical CPUs"},
             {"label": "Memory", "value": "24% used", "description": "6.1 GiB available of 8.0 GiB"},

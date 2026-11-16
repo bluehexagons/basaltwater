@@ -205,7 +205,7 @@ class HostSnapshotTest(unittest.TestCase):
                 patch.object(panel.time, "monotonic", side_effect=[0, 0, 1, 31, 31]),
             ):
                 for _ in range(3):
-                    self.assertEqual(state.system_overview(), failed)
+                    self.assertEqual(state.system_overview().value, failed)
             self.assertEqual(collect.call_count, 2)
 
 

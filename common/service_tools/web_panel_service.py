@@ -922,15 +922,15 @@ class WebPanelState:
                 path=self._notification_log_path,
             )
 
-    def system_overview(self) -> list[dict[str, str]]:
-        """Share bounded host collection with HTML and passive status clients."""
-        return list(self.status_cache.read("host", _SYSTEM_OVERVIEW_CACHE_SECONDS, collect_system_overview).value or [])
+    def system_overview(self) -> status_model.Reading:
+        """Share host values and observation metadata atomically with clients."""
+        return self.status_cache.read("host", _SYSTEM_OVERVIEW_CACHE_SECONDS, collect_system_overview)
 
-    def service_health(self) -> list[dict[str, str]]:
-        """Cache local service state for thirty seconds, including failures."""
+    def service_health(self) -> status_model.Reading:
+        """Cache process state and its observation metadata, including failures."""
 
-        return list(self.status_cache.read("services", _SYSTEM_OVERVIEW_CACHE_SECONDS,
-                    lambda: collect_service_health(user_services=self.features().t3)).value or [])
+        return self.status_cache.read("services", _SYSTEM_OVERVIEW_CACHE_SECONDS,
+                    lambda: collect_service_health(user_services=self.features().t3))
 
     def proxmox_snapshot(self) -> dict[str, Any]:
         return load_proxmox_snapshot()
@@ -1669,7 +1669,8 @@ def render_service_status(state: WebPanelState, load: bool) -> str:
         'system and current-user services.</p></div>'
     )
     if load:
-        health = state.service_health()
+        reading = state.service_health()
+        health = reading.value or []
         cards = "".join(
             '<div class="metric" data-panel-metric="{}"><dt>{}</dt><dd><span class="metric-value {}">{}</span>'
             '<span class="metric-description">{}</span>{}</dd></div>'.format(
@@ -1694,7 +1695,7 @@ def render_service_status(state: WebPanelState, load: bool) -> str:
             f'<dl class="overview-grid">{cards}</dl>' if cards else
             '<p class="empty">No supported local services were found.</p>'
         )
-        content = refresh_ui.state_region(state, "services", "Local service status", content)
+        content = refresh_ui.region("services", "Local service status", content, status_model.service_snapshot(reading))
     header = f'''<header><p class="eyebrow">Basaltwater web panel</p><h1>Local service status</h1>
 <p class="lede">Process state for supported services on <code>{host}</code>.</p></header>'''
     scope = "fixed system services and the panel user's T3 Code service" if features.t3 else "fixed system services"
@@ -1918,7 +1919,8 @@ def render_page(state: WebPanelState, *, proxmox_query: ProxmoxQuery | None = No
 
     manifest = state.manifest
     features = state.features()
-    services = state.web_services().value or []
+    web_reading = state.web_services()
+    services = web_reading.value or []
     service_cards = ""
     service_states = {"ready": 0, "attention": 0, "unavailable": 0, "unchecked": 0}
     for record in services:
@@ -1983,7 +1985,8 @@ def render_page(state: WebPanelState, *, proxmox_query: ProxmoxQuery | None = No
     )
     access_content = f'<ul class="access-list">{access_rows}</ul>' if access_rows else ""
 
-    overview = state.system_overview()
+    overview_reading = state.system_overview()
+    overview = overview_reading.value or []
     overview_cards = ""
     pressure_cards = ""
     has_root_filesystem = any(
@@ -2099,14 +2102,14 @@ def render_page(state: WebPanelState, *, proxmox_query: ProxmoxQuery | None = No
 {render_heading("Web services", "web-services", heading_id="services-heading")}</div>
 <span class="count" data-web-summary>{service_count}</span></div><div class="grid service-grid">{service_cards}</div></section>''' if services else ""
     if services_section:
-        services_section = refresh_ui.state_region(state, "web", "Web services", services_section)
+        services_section = refresh_ui.region("web", "Web services", services_section, status_model.web_snapshot(web_reading))
     access_section = f'''<section aria-labelledby="access-heading"><div class="section-heading"><div>
 {render_heading("Access", "access", heading_id="access-heading")}</div>
 <span class="count">{access_label}</span></div>{access_content}</section>''' if access_rows else ""
     body = f'''{section_nav}<section aria-labelledby="overview-heading"><div class="section-heading"><div>
 {render_heading("System overview", "dashboard", heading_id="overview-heading")}</div>
 <span class="count">Host readings · cached up to 30 seconds</span></div>
-{refresh_ui.state_region(state, "host", "System overview", '<dl class="overview-grid host-overview">' + overview_cards + '</dl>' + pressure_section)}</section>
+{refresh_ui.region("host", "System overview", '<dl class="overview-grid host-overview">' + overview_cards + '</dl>' + pressure_section, status_model.host_snapshot(overview_reading))}</section>
 {proxmox_section}{filesystem_section}
 {refresh_ui.state_region(state, "agents", "Agent activity", '<p class="panel-summary" data-panel-summary>Saved agent activity</p><span data-panel-elapsed hidden></span><p class="filesystem-note">Summary updates automatically. Activity cards and run links reflect the page-load snapshot. Open Agents to inspect changed runs and review decisions.</p>' + render_agent_activity(state)) if features.prompts else ""}
 {services_section}

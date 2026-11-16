@@ -1139,7 +1139,7 @@ class AgentScreenTest(unittest.TestCase):
                 patch.object(agents.time, "time", return_value=225),
                 patch.object(panel, "discover_basaltwater_web_services", return_value=[]),
                 patch.object(panel, "discover_certificate_trust", return_value=None),
-                patch.object(self.state, "system_overview", return_value=[]),
+                patch.object(panel, "collect_system_overview", return_value=[]),
                 patch.object(self.state, "audit_snapshot", return_value={"status": "ok", "events": []}),
                 patch.object(self.state, "service_health") as health,
                 patch.object(self.state.agent_diagnostics, "trigger") as checks,

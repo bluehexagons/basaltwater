@@ -140,7 +140,7 @@ class DashboardTest(unittest.TestCase):
         with (
             patch.object(panel, "discover_basaltwater_web_services", return_value=[]),
             patch.object(panel, "discover_certificate_trust", return_value=None),
-            patch.object(state, "system_overview", return_value=[]),
+            patch.object(panel, "collect_system_overview", return_value=[]),
             patch.object(state, "audit_snapshot", return_value={"status": "ok", "events": []}),
             patch.object(state, "service_health") as service_health,
             patch.object(jobs, "collect_jobs") as collect_jobs,
@@ -178,7 +178,7 @@ class DashboardTest(unittest.TestCase):
             patch.object(panel, "discover_basaltwater_web_services", return_value=[]),
             patch.object(panel, "discover_certificate_trust", return_value=None),
             patch.object(panel, "_probe_homebox", return_value=("attention", "Registration is open")) as probe,
-            patch.object(state, "system_overview", return_value=[]),
+            patch.object(panel, "collect_system_overview", return_value=[]),
             patch.object(state, "audit_snapshot", return_value={"status": "ok", "events": []}),
         ):
             page = panel.render_page(state)
@@ -198,11 +198,12 @@ class DashboardTest(unittest.TestCase):
             ("85% used", 1), ("Unavailable", 0), ("101% used", 0),
             ('<script>% used', 0), ("²% used", 0), ("9" * 5000 + "% used", 0),
         ):
+            state.status_cache = panel.status_model.StatusCache()
             with (
                 self.subTest(value=value),
                 patch.object(panel, "discover_basaltwater_web_services", return_value=[]),
                 patch.object(panel, "discover_certificate_trust", return_value=None),
-                patch.object(state, "system_overview", return_value=[{"label": "Memory", "value": value, "description": "Example data"}]),
+                patch.object(panel, "collect_system_overview", return_value=[{"label": "Memory", "value": value, "description": "Example data"}]),
                 patch.object(state, "audit_snapshot", return_value={"status": "ok", "events": []}),
             ):
                 page = panel.render_page(state)
@@ -264,7 +265,7 @@ class DashboardTest(unittest.TestCase):
             with (
                 patch.object(panel, "discover_basaltwater_web_services", return_value=[]),
                 patch.object(panel, "discover_certificate_trust", return_value=None),
-                patch.object(state, "system_overview", return_value=[]),
+                patch.object(panel, "collect_system_overview", return_value=[]),
                 patch.object(state, "audit_snapshot", return_value={"status": "ok", "events": []}),
             ):
                 page = panel.render_page(state)
@@ -294,7 +295,7 @@ class DashboardTest(unittest.TestCase):
             patch.object(panel.time, "monotonic", side_effect=[0, 0, 1, 31, 31]),
         ):
             for _ in range(3):
-                self.assertEqual(state.service_health(), [])
+                self.assertEqual(state.service_health().value, [])
         self.assertEqual(collect.call_count, 2)
 
     def test_navigation_and_history_preserve_escaped_content(self) -> None:
@@ -306,7 +307,7 @@ class DashboardTest(unittest.TestCase):
         with (
             patch.object(panel, "discover_basaltwater_web_services", return_value=[]),
             patch.object(panel, "discover_certificate_trust", return_value=None),
-            patch.object(state, "system_overview", return_value=[]),
+            patch.object(panel, "collect_system_overview", return_value=[]),
             patch.object(state, "audit_snapshot", return_value={"events": events, "status": "ok"}),
         ):
             page = panel.render_page(state)
@@ -344,11 +345,11 @@ class DashboardTest(unittest.TestCase):
             "label": "HomeBox", "value": "failed",
             "description": "homebox.service · failed", "unit": "homebox.service",
         }]
-        with patch.object(state, "service_health", return_value=health) as collect:
+        with patch.object(panel, "collect_service_health", return_value=health) as collect:
             unloaded = panel.render_service_status(state, False)
         collect.assert_not_called()
         self.assertIn("no automatic refresh", unloaded)
-        with patch.object(state, "service_health", return_value=health) as collect:
+        with patch.object(panel, "collect_service_health", return_value=health) as collect:
             loaded = panel.render_service_status(state, True)
         collect.assert_called_once()
         self.assertIn("1 inactive or unavailable", loaded)

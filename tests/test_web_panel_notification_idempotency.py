@@ -239,7 +239,10 @@ class WebPanelNotificationIdempotencyTest(unittest.TestCase):
                     "common.service_tools.web_panel_service.discover_certificate_trust",
                     return_value=None,
                 ),
-                patch.object(state, "system_overview", return_value=[]),
+                patch(
+                    "common.service_tools.web_panel_service.collect_system_overview",
+                    return_value=[],
+                ),
             ):
                 rendered = render_page(state)
 

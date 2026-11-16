@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from email.message import Message
+from html.parser import HTMLParser
 import http.client
 import json
 from pathlib import Path
@@ -17,6 +18,18 @@ from unittest.mock import Mock, patch
 from common.service_tools import web_panel_service as panel
 from common.service_tools import web_panel_status as status
 from common.service_tools.web_panel_features import PanelFeatures
+
+
+class _StatusRegions(HTMLParser):
+    def __init__(self, document: str) -> None:
+        super().__init__()
+        self.snapshots: dict[str, dict[str, object]] = {}
+        self.feed(document)
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = dict(attrs)
+        if values.get("data-panel-resource"):
+            self.snapshots[values["data-panel-resource"]] = json.loads(values["data-panel-snapshot"])
 
 
 class StatusTest(unittest.TestCase):
@@ -154,6 +167,96 @@ class StatusTest(unittest.TestCase):
         self.assertEqual(failed.observed_at, 100)
         self.assertTrue(failed.failed)
         collect.assert_called_once()
+
+    def test_concurrent_publication_cannot_redate_returned_host_or_service_values(self) -> None:
+        for resource, collector, label in (("host", "collect_system_overview", "Memory"),
+                                            ("services", "collect_service_health", "Nginx")):
+            with self.subTest(resource=resource):
+                old = [{"label": label, "value": "old", "description": "Earlier observation"}]
+                new = [{"label": label, "value": "new", "description": "Later observation"}]
+                cache = self.state.status_cache
+                with patch.object(status.time, "time", return_value=1000):
+                    cache.read(resource, 30, lambda: old)
+                read = cache.read
+                def publish_after_read(*args, **kwargs):
+                    reading = read(*args, **kwargs)
+                    # A concurrent collector can publish after a follower has
+                    # obtained its saved Reading but before snapshot assembly.
+                    with cache._lock:
+                        cache._readings[resource] = status.Reading(new, 1001, True)
+                    return reading
+                with patch.object(cache, "read", side_effect=publish_after_read), \
+                     patch.object(panel, collector, side_effect=AssertionError("Saved source expected")), \
+                     patch.object(status.time, "time", return_value=1001):
+                    value = self.state.status.read(resource)
+                self.assertEqual(value["data"]["metrics"][0]["value"], "old")
+                self.assertEqual(status.timestamp(value["observed_at"]), 1000)
+                self.assertEqual(value["freshness"], "fresh")
+
+    def test_dashboard_html_and_embedded_status_use_the_same_readings(self) -> None:
+        self.state.manifest["services"] = [{
+            "label": "Editor", "url": "https://example.test:8444/", "description": "live",
+        }]
+        old_host = [{"label": "Memory", "value": "24% used", "description": "Earlier observation"}]
+        cache = self.state.status_cache
+        with patch.object(status.time, "time", return_value=1000), \
+             patch.object(panel, "collect_system_overview", return_value=old_host), \
+             patch.object(panel, "discover_basaltwater_web_services", return_value=[]):
+            self.state.system_overview()
+            old_web = self.state.web_services()
+
+        def publish_during_render() -> None:
+            # Other page-load work may cross the TTL or allow a concurrent
+            # request to publish after cards have been rendered.
+            with cache._lock:
+                cache._readings["host"] = status.Reading([
+                    {"label": "Memory", "value": "80% used", "description": "Later observation"},
+                ], 1001, True)
+                cache._readings["web"] = status.Reading([
+                    {**row, "description": "not responding", "status": "unavailable", "status_text": "Not responding"}
+                    for row in old_web.value
+                ], 1001, True)
+
+        with patch.object(status.time, "time", return_value=1001), \
+             patch.object(panel, "collect_system_overview", side_effect=AssertionError("Saved source expected")), \
+             patch.object(panel, "discover_basaltwater_web_services", side_effect=AssertionError("Saved source expected")), \
+             patch.object(self.state, "certificate_trust", side_effect=publish_during_render), \
+             patch.object(self.state, "audit_snapshot", return_value={"status": "not_applicable"}):
+            document = panel.render_page(self.state)
+        snapshots = _StatusRegions(document).snapshots
+        self.assertIn('class="metric-value ">24% used', document)
+        self.assertIn('class="card-status ready">Responding', document)
+        self.assertEqual(snapshots["host"]["data"]["metrics"][0]["value"], "24% used")
+        self.assertEqual(snapshots["web"]["data"]["services"][0]["status"], "ready")
+        for resource in ("host", "web"):
+            self.assertEqual(status.timestamp(snapshots[resource]["observed_at"]), 1000)
+            self.assertEqual(snapshots[resource]["freshness"], "fresh")
+            self.assertEqual(cache.peek(resource).observed_at, 1001)
+
+    def test_loaded_service_html_and_embedded_status_use_the_same_reading(self) -> None:
+        cache = self.state.status_cache
+        old = [{"label": "Web gateway", "value": "active", "description": "Earlier observation"}]
+        with patch.object(status.time, "time", return_value=1000):
+            cache.read("services", 30, lambda: old)
+        read = cache.read
+
+        def publish_after_read(*args, **kwargs):
+            reading = read(*args, **kwargs)
+            with cache._lock:
+                cache._readings["services"] = status.Reading([
+                    {"label": "Web gateway", "value": "failed", "description": "Later observation"},
+                ], 1001, True)
+            return reading
+
+        with patch.object(cache, "read", side_effect=publish_after_read), \
+             patch.object(panel, "collect_service_health", side_effect=AssertionError("Saved source expected")), \
+             patch.object(status.time, "time", return_value=1001):
+            document = panel.render_service_status(self.state, True)
+        value = _StatusRegions(document).snapshots["services"]
+        self.assertIn('class="metric-value active">active', document)
+        self.assertEqual(value["data"]["metrics"][0]["value"], "active")
+        self.assertEqual(status.timestamp(value["observed_at"]), 1000)
+        self.assertEqual(value["freshness"], "fresh")
 
     def test_warm_followers_do_not_wait_or_duplicate_collection(self) -> None:
         cache = status.StatusCache()
