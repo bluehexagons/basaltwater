@@ -9,6 +9,9 @@ Other architectures and platforms need separate qualification.
 For routine managed machines, use `setup --tailscale NAME --tailscale-tag
 tag:service`. The controller prepares the client and completes private enrollment
 in the same operation. See the [three-VM walkthrough](headscale-vms.md).
+Preparation installs the required HTTPS and network tools from Debian's signed
+repositories before checking/installing the native client, including on minimal
+cloud images. No separate package-install command is needed.
 
 `common.tailscale_steps.configure_tailscale(config)` leaves omitted configuration
 inert. Enable installs the daemon and preserves existing managed enrollment.

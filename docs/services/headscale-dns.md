@@ -147,6 +147,9 @@ state changes. Inspect again after completion before a fresh operation.
    (null for absent nodes). The helper checks exact CAS state, verifies retained
    resolver/control/peer state and releases only the unused guard. Already
    acknowledged releases are observed without replay. Stale inspection fails.
+   If guard deletion was interrupted, the exact journal-derived unpublished
+   reservation can be reconciled after repeating those checks; unrelated
+   reservations remain blocked.
 4. After successful reconciliation, inspect again before requesting a fresh
    publication. Node disable/leave and native expiry/removal remain blocked
    while either a reservation or effective native nameserver references them.

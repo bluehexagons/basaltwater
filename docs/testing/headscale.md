@@ -1,6 +1,6 @@
 # Headscale and Unbound qualification
 
-Updated 2026-11-15 UTC. Implementation and selected Debian qualification are
+Updated 2026-11-16 UTC. Implementation and selected Debian qualification are
 integrated on the feature branch. This evidence does not replace the six
 [project acceptance milestones](../plans/headscale.md#milestones).
 Real endpoints, credentials, inventories and raw evidence remain private.
@@ -175,6 +175,16 @@ ownership and lifecycle locking, setup power-option admission, hosted onboarding
 disable, and per-host fan failure reporting. The three-VM guide still passes its
 five-block/eight-command offline fixture execution. The command help describes
 the management and DNS actions, and the walkthrough uses saved VM names.
+
+The merge-readiness review adds fault coverage for minimal-guest client
+prerequisites and interrupted management-reservation deletion. Setup installs
+and verifies missing bootstrap tools before native client configuration;
+failed installation stops enrollment. DNS recovery accepts only the exact
+journal-derived unpublished intermediate binding and repeats native/peer checks
+before cleanup. Foreign bindings and unconfirmed peer checks remain blocked.
+These new failure cases use mocked faults rather than native interruption.
+The final candidate passes `make check-ci`: 10,135 tests, 26 skipped, 82%
+coverage and all static/documentation/brand/package/wheel checks.
 
 The frozen full application run passed 84/84 checks across Chromium and Firefox,
 including all 18 Headscale checks. This resolves earlier unrelated Firefox form

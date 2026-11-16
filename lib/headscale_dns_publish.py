@@ -226,7 +226,14 @@ def reconcile_dns(*, expected_journal: dict, keep: str, peer: DNSBinding,
         new = parse_dns_binding(journal["new"]) if journal["new"] else None
         retained, released = (new, old) if keep == "after" else (old, new)
         retained_remote, released_remote = (new_remote, old_remote) if keep == "after" else (old_remote, new_remote)
-        if lease.binding not in (old, new):
+        allowed = (old, new)
+        if retained is None:
+            # Clearing a guard first persists its unpublished form. Withdrawal
+            # or reconciliation may stop between that save and durable removal.
+            # Accept only this journal's exact intermediate identity; all native
+            # and remote release checks below still precede cleanup.
+            allowed += (replace(released, advertised=False, publication_id=None),)
+        if lease.binding not in allowed:
             raise ValueError("Management reservation changed")
         if retained:
             if retained_remote is None:

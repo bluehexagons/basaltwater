@@ -22,11 +22,25 @@ def prepare_tailscale_client(config: SetupConfig) -> None:
     from common.headscale_preflight import preflight_network_services
     from common.tailscale_steps import configure_tailscale
     from security.steps import configure_firewall
-    from lib.remote_utils import run
+    from lib.remote_utils import is_dry_run, missing_packages, run
 
     if not config.tailscale or config.headscale or config.unbound or config.deploy_specs:
         raise ValueError("Client preparation requires only native client intent")
     preflight_network_services(config)
+    if config.dry_run or is_dry_run():
+        return
+    # Preparation runs before the profile's ordinary base-package installation.
+    # Minimal cloud images need these tools before client admission/downloads.
+    required = ["ca-certificates", "curl", "iproute2", "iptables"]
+    packages = missing_packages(required)
+    if packages:
+        apt = ["apt-get", "-o", "DPkg::Lock::Timeout=60",
+               "-o", "APT::Get::AllowUnauthenticated=false",
+               "-o", "Acquire::AllowInsecureRepositories=false"]
+        run([*apt, "update"], timeout=180)
+        run([*apt, "install", "-y", *packages], timeout=300)
+        if missing_packages(required):
+            raise ValueError("Native client prerequisite installation not verified")
     active = run("ufw status 2>/dev/null | grep -q 'Status: active'", check=False)
     if active.returncode != 0:
         configure_firewall(config)

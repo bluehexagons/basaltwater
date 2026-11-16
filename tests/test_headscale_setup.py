@@ -160,6 +160,8 @@ class SetupTests(unittest.TestCase):
 
         config = replace(self.config, unbound=None)
         with patch("common.headscale_preflight.preflight_network_services"), \
+                patch("lib.remote_utils.is_dry_run", return_value=False), \
+                patch("lib.remote_utils.missing_packages", return_value=[]), \
                 patch("lib.remote_utils.run") as run, \
                 patch("security.steps.configure_firewall") as firewall, \
                 patch("common.tailscale_steps.configure_tailscale", side_effect=ValueError("identity differs")):
@@ -167,6 +169,75 @@ class SetupTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "identity differs"):
                 prepare_tailscale_client(config)
             firewall.assert_not_called()
+
+    def test_minimal_guest_installs_verified_tools_before_client_preflight(self):
+        from plugins.headscale import prepare_tailscale_client
+
+        events = []
+        required = ["ca-certificates", "curl", "iproute2", "iptables"]
+        installed = set()
+        def run(command, **kwargs):
+            events.append(command)
+            if isinstance(command, list) and "install" in command:
+                installed.update(command[command.index("-y") + 1:])
+            return type("Result", (), {"returncode": 0})()
+
+        def configure(config):
+            self.assertEqual(set(required), installed)
+            events.append("client")
+
+        with patch("common.headscale_preflight.preflight_network_services"), \
+                patch("lib.remote_utils.is_dry_run", return_value=False), \
+                patch("lib.remote_utils.missing_packages", side_effect=[required, []]) as packages, \
+                patch("lib.remote_utils.run", side_effect=run), \
+                patch("security.steps.configure_firewall") as firewall, \
+                patch("common.tailscale_steps.configure_tailscale", side_effect=configure):
+            prepare_tailscale_client(replace(self.config, unbound=None))
+        self.assertEqual(2, packages.call_count)
+        self.assertTrue(all(c.args == (required,) for c in packages.call_args_list))
+        self.assertEqual("update", events[0][-1])
+        self.assertEqual(["install", "-y", *required], events[1][-6:])
+        firewall.assert_not_called()
+        self.assertEqual("client", events[-1])
+
+    def test_preparation_does_not_continue_after_package_failure(self):
+        from plugins.headscale import prepare_tailscale_client
+
+        for fail_at in ("update", "install", "verify"):
+            with self.subTest(fail_at=fail_at):
+                def run(command, **kwargs):
+                    if fail_at in command:
+                        raise RuntimeError("package failure")
+                with patch("common.headscale_preflight.preflight_network_services"), \
+                        patch("lib.remote_utils.is_dry_run", return_value=False), \
+                        patch("lib.remote_utils.missing_packages", return_value=["curl"]), \
+                        patch("lib.remote_utils.run", side_effect=run), \
+                        patch("security.steps.configure_firewall") as firewall, \
+                        patch("common.tailscale_steps.configure_tailscale") as client:
+                    with self.assertRaises((RuntimeError, ValueError)):
+                        prepare_tailscale_client(replace(self.config, unbound=None))
+                firewall.assert_not_called()
+                client.assert_not_called()
+
+    def test_preparation_admission_and_dry_run_precede_package_mutation(self):
+        from plugins.headscale import prepare_tailscale_client
+
+        for dry_run in (False, True):
+            with self.subTest(dry_run=dry_run), \
+                    patch("common.headscale_preflight.preflight_network_services",
+                          side_effect=None if dry_run else ValueError("unsupported guest")), \
+                    patch("lib.remote_utils.missing_packages") as packages, \
+                    patch("lib.remote_utils.run") as run, \
+                    patch("common.tailscale_steps.configure_tailscale") as client:
+                config = replace(self.config, unbound=None, dry_run=dry_run)
+                if dry_run:
+                    prepare_tailscale_client(config)
+                else:
+                    with self.assertRaisesRegex(ValueError, "unsupported guest"):
+                        prepare_tailscale_client(config)
+                packages.assert_not_called()
+                run.assert_not_called()
+                client.assert_not_called()
 
     def test_enrolled_rerun_reobserves_without_issuing_key(self):
         from lib import headscale_management as management

@@ -13,7 +13,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from lib.atomic_io import read_json_file
-from lib.headscale_dns_binding import DNSBinding, dns_binding_lease, read_dns_binding, resolver_lifecycle_guard
+from lib.headscale_dns_binding import DNSBinding, DNSBindingLease, dns_binding_lease, read_dns_binding, resolver_lifecycle_guard
 from lib.headscale_dns_peer import DNSRemote
 from lib.headscale_admin import NativeAdmin
 from lib.headscale_server import ServerPaths
@@ -227,6 +227,63 @@ class PublicationTests(unittest.TestCase):
             pub.reconcile_dns(expected_journal=journal, keep="before", peer=self.peer,
                               peer_remote=self.peer_remote, new_remote=self.old_remote)
         self.assertTrue(self.states["old"].advertised)
+
+    def test_interrupted_withdraw_guard_clear_can_be_reconciled(self):
+        self.publish()
+        with patch.object(DNSBindingLease, "clear", side_effect=OSError("interrupted removal")):
+            with self.assertRaisesRegex(OSError, "interrupted removal"):
+                pub.withdraw_dns(self.states["old"], dns_remote=self.old_remote,
+                                 peer=self.peer, peer_remote=self.peer_remote)
+        inspected = pub.inspect_dns()
+        self.assertEqual(self.binding.to_dict(), inspected["binding"])
+        self.assertEqual(self.binding, self.states["old"])
+        self.events.clear()
+        pub.reconcile_dns(expected_journal=inspected["journal"], keep="after", peer=self.peer,
+                          peer_remote=self.peer_remote, old_remote=self.old_remote)
+        self.assertEqual([("peer", "withdrawn"), ("old", "inspect")], self.events)
+        self.assertIsNone(pub.inspect_dns()["binding"])
+        self.assertIsNone(pub.inspect_dns()["journal"])
+        self.assertFalse((self.paths.private / "operation.json").exists())
+
+    def test_interrupted_reconciliation_guard_clear_rechecks_before_cleanup(self):
+        with patch.object(pub, "publish_config", side_effect=RuntimeError("activation uncertain")):
+            with self.assertRaisesRegex(RuntimeError, "activation uncertain"):
+                self.publish()
+        journal = pub.inspect_dns()["journal"]
+        with patch.object(DNSBindingLease, "clear", side_effect=OSError("interrupted removal")):
+            with self.assertRaisesRegex(OSError, "interrupted removal"):
+                pub.reconcile_dns(expected_journal=journal, keep="before", peer=self.peer,
+                                  peer_remote=self.peer_remote, new_remote=self.old_remote)
+        self.assertEqual(self.binding.to_dict(), pub.inspect_dns()["binding"])
+        before = (self.paths.private / "dns-publication.json").read_bytes()
+        with patch.object(pub, "_peer", side_effect=ValueError("peer unconfirmed")):
+            with self.assertRaisesRegex(ValueError, "peer unconfirmed"):
+                pub.reconcile_dns(expected_journal=journal, keep="before", peer=self.peer,
+                                  peer_remote=self.peer_remote, new_remote=self.old_remote)
+        self.assertEqual(before, (self.paths.private / "dns-publication.json").read_bytes())
+        self.assertEqual(journal, pub.inspect_dns()["journal"])
+        self.events.clear()
+        pub.reconcile_dns(expected_journal=journal, keep="before", peer=self.peer,
+                          peer_remote=self.peer_remote, new_remote=self.old_remote)
+        self.assertEqual([("peer", "withdrawn"), ("old", "inspect")], self.events)
+        self.assertIsNone(pub.inspect_dns()["binding"])
+        self.assertIsNone(pub.inspect_dns()["journal"])
+
+    def test_reconciliation_rejects_unrelated_unpublished_guard(self):
+        with patch.object(pub, "publish_config", side_effect=RuntimeError("activation uncertain")):
+            with self.assertRaises(RuntimeError):
+                self.publish()
+        journal = pub.inspect_dns()["journal"]
+        guard = str(self.paths.private / "dns-publication.json")
+        with dns_binding_lease(guard) as lease:
+            lease.save(self.new)
+        self.events.clear()
+        with self.assertRaisesRegex(ValueError, "Management reservation changed"):
+            pub.reconcile_dns(expected_journal=journal, keep="before", peer=self.peer,
+                              peer_remote=self.peer_remote, new_remote=self.old_remote)
+        self.assertEqual([], self.events)
+        self.assertEqual(self.new, read_dns_binding(guard))
+        self.assertEqual(journal, pub.inspect_dns()["journal"])
 
 
 class SSHValidationTests(unittest.TestCase):
