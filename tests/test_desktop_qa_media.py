@@ -396,6 +396,27 @@ class QAMediaTests(unittest.TestCase):
                     run_checkpoint.update(str(path), operation)
                 self.assertEqual(path.read_bytes(), before)
 
+    def test_journal_retains_paced_input_prefix_and_development_uncertainty_without_content(self):
+        with patch.object(Path, "home", return_value=self.root), patch.object(evidence, "revision", return_value={}):
+            recorder = evidence.Recorder(str(self.root), "g")
+            recorder.event({"action": "input", "kind": "text", "text": "private-text"},
+                           {"error": "Interrupted character", "input_delivery": "unknown",
+                            "submitted_characters": 2, "completion_unknown": True})
+            recorder.event({"action": "development", "operation": "exec", "argv": ["private-command"]},
+                           {"error": "Launch reply unavailable"})
+            saved = recorder.path.read_text()
+            receipt = json.loads(saved)["events"][0]["result"]
+            self.assertEqual(receipt["submitted_characters"], 2)
+            self.assertIs(receipt["completion_unknown"], True)
+            self.assertNotIn("private-text", saved)
+            self.assertNotIn("private-command", saved)
+            before = recorder.path.read_bytes()
+            checked = evidence.verify(str(recorder.path))
+            self.assertEqual(checked["uncertain_events"], 2)
+            self.assertEqual(checked["uncertain_by_action"], {"input": 1, "development": 1})
+            self.assertFalse(checked["healthy"])
+            self.assertEqual(recorder.path.read_bytes(), before)
+
     def test_closeout_retains_failure_then_links_new_receipt_after_path_restoration(self):
         with patch.object(Path, "home", return_value=self.root), patch.object(evidence, "revision", return_value={}):
             recorder = evidence.Recorder(str(self.root), "g")

@@ -600,6 +600,154 @@ class BoundCaptureTests(unittest.TestCase):
             "generation": session.generation, "geometry": [10, 20],
             "control_revision": session.control_revision, "observation_id": observation["observation_id"], **options})
 
+    def test_debian_recording_links_private_captures_and_completed_input(self):
+        context = {"generation": self.debian.generation, "action": "evidence"}
+        with patch("desktop.evidence.revision", return_value={"commit": None, "dirty": None}):
+            started = self.debian.handle({**context, "operation": "start", "project": str(self.home)})
+        with self.assertRaises(DesktopRequestError) as duplicate:
+            self.debian.handle({**context, "operation": "start", "project": str(self.home)})
+        self.assertEqual(duplicate.exception.receipt["artifact"], started["artifact"])
+        first = self.observe(self.debian)
+        completed = self.move(self.debian, first, kind="text", text="private-text")
+        second = self.observe(self.debian)
+        self.assertEqual(second["last_input"]["input_id"], completed["input_id"])
+        self.debian.record_evidence({"action": "development", "operation": "exec",
+                                    "options": {"argv": ["private-command"]}}, {"task": "a" * 32, "state": "running"})
+        finished = self.debian.handle({**context, "operation": "finish"})
+        record = Path(finished["artifact"])
+        data = json.loads(record.read_text())
+        self.assertNotIn("private-text", record.read_text())
+        self.assertNotIn("private-command", record.read_text())
+        self.assertEqual(data["events"][2]["related_input_id"], completed["input_id"])
+        self.assertEqual(data["events"][3]["result"]["task"], "a" * 32)
+        self.assertEqual(second["artifact_sha256"], hashlib.sha256(self.png_header()).hexdigest())
+        self.assertTrue(verify(str(record))["healthy"])
+        Path(second["output"]).write_bytes(b"altered")
+        self.assertFalse(verify(str(record))["healthy"])
+
+    def test_debian_journal_failure_preserves_completion_and_close_checkpoints(self):
+        self.debian.evidence = Mock()
+        self.debian.evidence.event.side_effect = OSError("disk full")
+        observed = self.observe(self.debian)
+        result = self.move(self.debian, observed)
+        self.assertEqual(result["input_delivery"], "completed")
+        self.assertIn("evidence_error", result)
+        self.assertNotIn("error", result)
+        recorder = self.debian.evidence
+        self.debian.close()
+        recorder.finish.assert_called_once_with(self.debian.launches, reason="helper-stopped")
+        self.assertFalse(self.debian.snapshot_status()["evidence_recording"])
+        self.debian.process.terminate.assert_not_called()
+
+    def test_debian_receipt_mapping_preserves_token_and_rejects_expiry_and_consumption(self):
+        parser = argparse.ArgumentParser()
+        add_desktop_subparser(parser.add_subparsers())
+        observed = self.observe(self.debian)
+        receipt = self.home / "frame.json"
+        receipt.write_text(json.dumps(observed))
+        args = parser.parse_args(["desktop", "map-point", "--capture", str(receipt),
+                                  "--image-coordinates", "--x", "1", "--y", "2", "--json"])
+        with patch.object(runtime, "status", side_effect=self.debian.snapshot_status), \
+                patch.object(runtime, "request") as request:
+            for stage in ("fresh", "expired", "consumed"):
+                if stage == "expired":
+                    self.now += 61
+                elif stage == "consumed":
+                    self.now -= 61
+                    self.move(self.debian, observed)
+                with self.subTest(stage=stage), patch("sys.stdout", new_callable=io.StringIO) as output:
+                    self.assertEqual(run_desktop_command(args), 0 if stage == "fresh" else 1)
+                    result = json.loads(output.getvalue())
+                    if stage == "fresh":
+                        self.assertEqual(result["input_coordinates"], {"x": 1, "y": 2})
+                        self.assertFalse(result["input_sent"])
+                        self.assertEqual(self.debian.observation.id, observed["observation_id"])
+                    else:
+                        self.assertIn("error", result)
+            request.assert_not_called()
+
+    def test_debian_evidence_verification_needs_no_running_helper(self):
+        with patch("desktop.evidence.revision", return_value={}):
+            self.debian.handle({"action": "evidence", "operation": "start",
+                               "generation": self.debian.generation, "project": str(self.home)})
+        self.observe(self.debian)
+        self.debian.close()
+        parser = argparse.ArgumentParser()
+        add_desktop_subparser(parser.add_subparsers())
+        args = parser.parse_args(["desktop", "evidence", "verify", self.debian.last_evidence, "--json"])
+        with patch.object(runtime, "status") as status, patch.object(runtime, "request") as request, \
+                patch("sys.stdout", new_callable=io.StringIO) as output:
+            self.assertEqual(run_desktop_command(args), 0, output.getvalue())
+        status.assert_not_called()
+        request.assert_not_called()
+
+    def test_debian_development_uses_supervisor_generation_and_blocks_stale_launches(self):
+        from desktop import development
+        parser = argparse.ArgumentParser()
+        add_desktop_subparser(parser.add_subparsers())
+        args = parser.parse_args(["desktop", "develop", "exec", "--project", str(self.home),
+                                 "--json", "--", "/usr/bin/fixture", "literal argument"])
+        with patch.object(runtime, "status", side_effect=self.debian.snapshot_status), \
+                patch.object(runtime, "request", side_effect=self.debian.handle) as request, \
+                patch.object(development, "launch", return_value={"ok": True, "task": "a" * 32}) as launch:
+            observed = self.observe(self.debian)
+            with patch("sys.stdout", new_callable=io.StringIO) as output:
+                self.assertEqual(run_desktop_command(args), 0, output.getvalue())
+            payload = request.call_args.args[0]
+            launch.assert_called_once_with(str(self.home), "exec", argv=["--", "/usr/bin/fixture", "literal argument"],
+                dry_run=False, session_generation=self.debian.generation, control_revision=self.debian.control_revision)
+            self.assertIsNone(self.debian.observation)
+            launch.reset_mock()
+            for changes in ({"generation": "stale"}, {"control_revision": "stale"}):
+                with self.subTest(changes=changes), self.assertRaises((RuntimeError, ValueError)):
+                    self.debian.handle({**payload, **changes})
+            launch.assert_not_called()
+            self.assertIsNotNone(observed["observation_id"])
+
+    def test_debian_development_previews_preserve_observation_while_control_is_blocked(self):
+        from desktop import development
+        control_state.change("disabled", human_approved=True)
+        observed = self.observe(self.debian)
+        payload = {"action": "development", "operation": "exec", "project": str(self.home),
+                   "generation": self.debian.generation, "control_revision": self.debian.control_revision,
+                   "options": {"dry_run": True, "argv": ["/usr/bin/fixture"]}}
+        with patch.object(development, "launch", return_value={"ok": True}) as launch:
+            self.debian.handle(payload)
+            self.assertEqual(self.debian.observation.id, observed["observation_id"])
+            launch.reset_mock()
+            with self.assertRaisesRegex(RuntimeError, "disabled"):
+                self.debian.handle({**payload, "options": {**payload["options"], "dry_run": False}})
+            launch.assert_not_called()
+
+    def test_debian_development_refuses_old_helpers_and_invalid_wire_options(self):
+        from desktop import debian_development, development
+        args = SimpleNamespace(project=str(self.home), development_command="exec")
+        with patch.object(runtime, "status", return_value={"state": "running", "capabilities": []}), \
+                patch.object(runtime, "request") as request, self.assertRaisesRegex(RuntimeError, "lacks supervised"):
+            debian_development.request_task(args)
+        request.assert_not_called()
+        with patch.object(development, "launch") as launch:
+            for options in ({"dry_run": "true"}, {"argv": "fixture"}, {"argv": [42]},
+                            {"session_generation": "spoofed"}, {"headless": 1}):
+                with self.subTest(options=options), self.assertRaises(ValueError):
+                    debian_development.handle_task({"project": str(self.home), "operation": "exec", "options": options},
+                                                   self.debian.generation)
+            launch.assert_not_called()
+
+    def test_debian_development_forwards_global_preview_and_never_retries_lost_reply(self):
+        from desktop import debian_development, development
+        args = SimpleNamespace(project=str(self.home), development_command="exec", argv=["/usr/bin/fixture"], dry_run=False)
+        with patch.object(runtime, "status", side_effect=self.debian.snapshot_status), \
+                patch.object(runtime, "request", return_value={"ok": True}) as request, \
+                patch.object(development, "is_dry_run", return_value=True):
+            debian_development.request_task(args)
+            self.assertIs(request.call_args.args[0]["options"]["dry_run"], True)
+            request.reset_mock()
+            request.side_effect = TimeoutError("lost reply")
+            with self.assertRaisesRegex(RuntimeError, "task may already have started"):
+                debian_development.request_task(args)
+            request.assert_called_once()
+
     def test_debian_expired_frame_proves_no_dispatch_and_ignores_caller_receipt(self):
         observation = self.observe(self.debian)
         self.now += 61
@@ -952,7 +1100,8 @@ class BoundCaptureTests(unittest.TestCase):
 
     def test_bound_debian_pacing_is_refused_without_sending_any_character(self):
         observed = self.observe(self.debian)
-        with patch.object(runtime, "request") as request:
+        with patch.object(runtime, "status", return_value={"input_capabilities": []}), \
+                patch.object(runtime, "request") as request:
             result = client.send_action({"action": "input", "kind": "text", "text": "abc", "delay_ms": 10,
                 "observation_id": observed["observation_id"], "generation": self.debian.generation,
                 "geometry": [10, 20], "control_revision": self.debian.control_revision})
@@ -971,7 +1120,8 @@ class BoundCaptureTests(unittest.TestCase):
 
     def test_debian_bound_unicode_cannot_silently_use_unpaced_batch(self):
         observed = self.observe(self.debian)
-        with patch.object(runtime, "request") as request:
+        with patch.object(runtime, "status", return_value={"input_capabilities": []}), \
+                patch.object(runtime, "request") as request:
             result = client.send_action({"action": "input", "kind": "text", "text": "日本語",
                 "observation_id": observed["observation_id"], "generation": self.debian.generation,
                 "geometry": [10, 20], "control_revision": self.debian.control_revision})
@@ -979,6 +1129,102 @@ class BoundCaptureTests(unittest.TestCase):
         self.assertEqual(result["submitted_characters"], 0)
         self.assertEqual(self.debian.observation.id, observed["observation_id"])
         request.assert_not_called()
+
+    def paced_text(self, text="Aé中", **options):
+        observed = self.observe(self.debian)
+        self.tool.reset_mock()
+        return {"action": "input", "kind": "text", "text": text, "delay_ms": 10,
+                "observation_id": observed["observation_id"], "generation": self.debian.generation,
+                "geometry": [10, 20], "control_revision": self.debian.control_revision, **options}
+
+    def test_debian_bound_pacing_uses_one_request_and_consumes_token(self):
+        payload = self.paced_text()
+        with patch.object(runtime, "status", side_effect=lambda **kw: self.debian.snapshot_status()), \
+                patch.object(runtime, "request", side_effect=self.debian.handle) as request, \
+                patch.object(time, "sleep") as sleep:
+            result = client.send_action(payload)
+        request.assert_called_once()
+        self.assertEqual(request.call_args.args[0]["text"], payload["text"])
+        self.assertEqual(result["submitted_characters"], 3)
+        self.assertEqual(result["input_delivery"], "completed")
+        self.assertEqual([c.args[0][-1] for c in self.tool.call_args_list], list(payload["text"]))
+        self.assertEqual(sleep.call_count, 2)
+        with self.assertRaisesRegex(ValueError, "consumed|invalidated"):
+            self.debian.handle(payload)
+        self.assertEqual(self.tool.call_count, 3)
+
+    def test_debian_pacing_stops_between_characters_with_known_prefix(self):
+        for cause in ("expiry", "deadline", "takeover", "resize", "window"):
+            control_state.change("enabled", human_approved=True)
+            payload = self.paced_text()
+            window = {"id": "0x123", "origin": [0, 0], "geometry": [10, 20]}
+            self.debian.observation.window = window
+            def interrupt(_seconds):
+                if cause == "expiry":
+                    self.debian_marker.started -= 61
+                elif cause == "deadline":
+                    self.now += 9
+                elif cause == "takeover":
+                    control_state.change("disabled", human_approved=True)
+                elif cause == "resize":
+                    size.return_value = [20, 20]
+                else:
+                    active.return_value = ["0x124"]
+            self.debian_marker = self.debian.observation
+            with self.subTest(cause=cause), patch.object(time, "sleep", side_effect=interrupt), \
+                    patch.object(runtime, "window_details", return_value=window), \
+                    patch.object(runtime, "window_ids", return_value=["0x123"]) as active, \
+                    patch.object(runtime, "geometry", return_value=[10, 20]) as size, \
+                    self.assertRaises((ValueError, RuntimeError)) as caught:
+                self.debian.handle(payload)
+            receipt = caught.exception.receipt
+            self.assertEqual(receipt["submitted_characters"], 1)
+            self.assertEqual(receipt["input_delivery"], "partial")
+            self.assertFalse(receipt["completion_unknown"])
+            self.assertNotIn("input_completed_at", receipt)
+            self.tool.assert_called_once()
+
+    def test_debian_pacing_failed_character_keeps_unknown_suffix(self):
+        payload = self.paced_text(_submitted_characters=999)
+        self.tool.side_effect = ["", subprocess.TimeoutExpired("xdotool", 1)]
+        with patch.object(time, "sleep"), self.assertRaises(subprocess.TimeoutExpired) as caught:
+            self.debian.handle(payload)
+        receipt = caught.exception.receipt
+        self.assertEqual(receipt["submitted_characters"], 1)
+        self.assertEqual(receipt["input_delivery"], "unknown")
+        self.assertTrue(receipt["completion_unknown"])
+        self.assertEqual(self.tool.call_count, 2)
+
+    def test_local_control_persists_before_waiting_for_busy_supervisor(self):
+        previous = control_state.status()["control_revision"]
+        def busy_supervisor(payload):
+            current = control_state.status()
+            self.assertEqual(current["agent_control"], "disabled")
+            self.assertNotEqual(current["control_revision"], previous)
+            self.assertEqual(payload, {"action": "status"})
+            raise TimeoutError("busy supervisor")
+        with patch.object(runtime, "configuration"), patch.object(runtime, "request", side_effect=busy_supervisor):
+            result = runtime.set_control("disabled", human_approved=True)
+        self.assertEqual(result["state"], "unknown")
+        self.assertEqual(result["agent_control"], "disabled")
+        self.assertIn("Control saved", result["detail"])
+        self.assertEqual(control_state.status()["agent_control"], "disabled")
+
+    def test_unapproved_local_control_never_writes_or_queries_supervisor(self):
+        before = control_state.status()
+        with patch.object(runtime, "configuration"), patch.object(runtime, "request") as request, \
+                self.assertRaises(PermissionError):
+            runtime.set_control("disabled")
+        self.assertEqual(control_state.status(), before)
+        request.assert_not_called()
+
+    def test_debian_worker_rejects_invalid_pacing_before_injection(self):
+        for delay in (True, 0, 101, "10"):
+            payload = self.paced_text(delay_ms=delay)
+            with self.subTest(delay=delay), self.assertRaises(ValueError) as caught:
+                self.debian.handle(payload)
+            self.assertEqual(caught.exception.receipt["input_delivery"], "not-sent")
+            self.tool.assert_not_called()
 
 
 if __name__ == "__main__":

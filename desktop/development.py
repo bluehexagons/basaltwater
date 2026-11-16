@@ -1,4 +1,4 @@
-"""Project-aware development tasks in the existing CachyOS user's KDE session."""
+"""Project-aware tasks owned by the existing desktop user's systemd manager."""
 
 from __future__ import annotations
 
@@ -73,7 +73,7 @@ def add_development_parser(commands: argparse._SubParsersAction) -> None:
             action.add_argument("argv", nargs=argparse.REMAINDER, help="Explicit application/project command following --")
     for name in ("node", "check"):
         action = actions.add_parser(name, script_arguments=(name == "node"),
-                                    help="Run a declared package script" if name == "node" else "Run a declared project rendering/test recipe in the native session")
+                                    help="Run a declared package script" if name == "node" else "Run a declared project rendering/test recipe in the existing desktop session")
         action.add_argument("script" if name == "node" else "recipe")
         action.add_argument("--project", required=True)
         action.add_argument("--json", action="store_true")
@@ -101,8 +101,11 @@ def add_development_parser(commands: argparse._SubParsersAction) -> None:
 
 def _guard() -> int:
     uid = os.getuid()
-    if uid == 0 or os.geteuid() != uid or not is_cachyos():
-        raise RuntimeError("Run as the existing desktop account on CachyOS, without sudo")
+    if uid == 0 or os.geteuid() != uid:
+        raise RuntimeError("Run as the existing desktop account, without sudo")
+    if not is_cachyos():
+        from desktop.session_runtime import configuration
+        configuration()  # Debian inventory uses the configured non-root owner.
     return uid
 
 
@@ -251,18 +254,28 @@ def session_environment(uid: int) -> tuple[dict[str, str], str]:
     return environment, "Owned graphical-session target and Wayland/user-bus sockets are available; live UI readiness is unverified"
 
 
-def doctor(project: str, engine: str | None = None, *, export_check: bool = False) -> dict:
+def doctor(project: str, engine: str | None = None, *, export_check: bool = False,
+           session_generation: str | None = None) -> dict:
     uid = _guard()
     info = project_info(_project(project), engine)
     if export_check:
         from desktop.development_exports import inspect_exports
         info["export_check"] = inspect_exports(info)
-    environment, reason = session_environment(uid)
+    environment, reason = _environment(uid, session_generation)
     return {"schema_version": 1, "ok": bool(environment) and not info["missing_tools"]
             and (not export_check or info["export_check"]["ok"]),
             "prerequisites_only": True, "project": info,
             "session": {"state": "available" if environment else "deferred", "reason": reason},
             "gpu_readiness": "unverified", "input_readiness": "unverified"}
+
+
+def _environment(uid: int, generation: str | None) -> tuple[dict[str, str], str]:
+    if generation is None:
+        return session_environment(uid)
+    if not isinstance(generation, str) or not TASK_ID.fullmatch(generation):
+        raise ValueError("Invalid desktop session generation")
+    from desktop.debian_development import supervisor_environment
+    return supervisor_environment(uid)
 
 
 def _private_directory(path: Path) -> Path:
@@ -321,7 +334,7 @@ def parse_task_timestamp(value: str) -> datetime:
 def load_task(directory: Path) -> dict:
     _private_directory(directory)
     value = _private_json(directory / "task.json")
-    if (set(value) - {"schema_version", "task", "unit", "kind", "project", "argv", "owner_uid", "created_at", "invocation_id", "recipe", "control_revision"}
+    if (set(value) - {"schema_version", "task", "unit", "kind", "project", "argv", "owner_uid", "created_at", "invocation_id", "recipe", "control_revision", "session_generation"}
             or type(value.get("schema_version")) is not int or value["schema_version"] != 1
             or value.get("task") != directory.name or not TASK_ID.fullmatch(directory.name)
             or value.get("unit") != f"{UNIT_PREFIX}{directory.name}.service"
@@ -334,6 +347,9 @@ def load_task(directory: Path) -> dict:
     if "control_revision" in value and (not isinstance(value["control_revision"], str)
                                         or not TASK_ID.fullmatch(value["control_revision"])):
         raise ValueError("Invalid development task control revision")
+    if "session_generation" in value and (not isinstance(value["session_generation"], str)
+                                          or not TASK_ID.fullmatch(value["session_generation"])):
+        raise ValueError("Invalid development task session generation")
     if value["kind"] == "check":
         recipe = value.get("recipe")
         if not isinstance(recipe, str) or not 1 <= len(recipe) <= 256 or recipe.startswith("-"):
@@ -416,6 +432,8 @@ def task_status(task_id: str, *, stop: bool = False, dry_run: bool = False) -> d
               "log": str(directory / "output.log"), "report": str(directory / "result.json"),
               "state": "unavailable", "returncode": None, "elapsed_seconds": None,
               "processes": None}
+    if "session_generation" in task:
+        result["session_generation"] = task["session_generation"]
     if task["kind"] == "check":
         result.update(recipe=task["recipe"], evidence=str(directory / "check"),
                       check_report=str(directory / "check" / "check.json"))
@@ -524,7 +542,8 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
            argv: list[str] | None = None, dry_run: bool = False, headless: bool = False,
            quit_after: int | None = None, rendering_method: str | None = None,
            script: str | None = None, manager: str | None = None, recipe: str | None = None,
-           settings: str | None = None, timeout: int = 600) -> dict:
+           settings: str | None = None, timeout: int = 600,
+           session_generation: str | None = None, control_revision: str | None = None) -> dict:
     uid = _guard()
     if kind not in KINDS:
         raise ValueError("Unknown development task kind")
@@ -577,7 +596,7 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
         if user_arguments:
             arguments.extend(["--", *user_arguments])
     validate_argv(arguments)
-    environment, reason = session_environment(uid)
+    environment, reason = _environment(uid, session_generation)
     if not environment:
         raise RuntimeError(reason)
     # Retain the caller's explicit project runtime selection without importing
@@ -590,8 +609,9 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
         environment["COREPACK_ENABLE_NETWORK"] = "0"
     if dry_run or is_dry_run():
         return {"schema_version": 1, "ok": True, "dry_run": True, "kind": kind,
-                "project": str(path), "argv": arguments, "session": "existing-kde-wayland"}
-    revision = _honor_agent_control()
+                "project": str(path), "argv": arguments,
+                "session": "existing-xrdp" if session_generation else "existing-kde-wayland"}
+    revision = _honor_agent_control(control_revision)
     directory = _root(create=True) / secrets.token_hex(16)
     directory.mkdir(mode=0o700)  # A collision must never replace an existing task.
     _private_directory(directory)
@@ -602,18 +622,21 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
             "kind": kind, "project": str(path), "argv": arguments, "owner_uid": uid,
             "created_at": datetime.now(timezone.utc).isoformat()}
     task["control_revision"] = revision
+    if session_generation is not None:
+        task["session_generation"] = session_generation
     if kind == "check":
         task["recipe"] = recipe
     write_json_atomic(str(directory / "task.json"), task, mode=0o600)
     unset = ["PYTHONPATH", "PYTHONHOME", "AT_SPI_BUS_ADDRESS"]
-    unset.extend(name for name in ("DISPLAY", "XAUTHORITY") if name not in environment)
+    unset.extend(name for name in ("DISPLAY", "XAUTHORITY", "WAYLAND_DISPLAY", "XDG_CURRENT_DESKTOP") if name not in environment)
     command = ["/usr/bin/systemd-run", "--user", "--quiet", f"--unit={task['unit']}",
         f"--description=Basaltwater development task {directory.name}", "--service-type=exec",
         "--expand-environment=no", "--property=ExitType=cgroup",
         "--property=KillMode=control-group", "--property=TimeoutStopSec=10s",
-        "--property=PartOf=graphical-session.target", "--property=After=graphical-session.target",
         "--property=StandardOutput=null", "--property=StandardError=null",
         "--property=UnsetEnvironment=" + " ".join(unset)]
+    if session_generation is None:
+        command.extend(["--property=PartOf=graphical-session.target", "--property=After=graphical-session.target"])
     # systemd-run already escapes percent specifiers in environment and argv.
     command.extend(f"--setenv={name}={value}" for name, value in environment.items())
     command.extend(["--", sys.executable,
@@ -637,10 +660,11 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
 
 def run_development_command(args: argparse.Namespace) -> int:
     try:
-        if not getattr(args, "native", False):
-            raise ValueError("Development tasks require 'desktop --native develop'")
         action = args.development_command
-        if action == "doctor":
+        if not getattr(args, "native", False) and action not in ("list", "status", "stop", "wait"):
+            from desktop.debian_development import request_task
+            result = request_task(args)
+        elif action == "doctor":
             result = doctor(args.project, args.engine, export_check=getattr(args, "export_check", False))
         elif action == "list":
             result = list_tasks(args.project, since=getattr(args, "since", None), until=getattr(args, "until", None))

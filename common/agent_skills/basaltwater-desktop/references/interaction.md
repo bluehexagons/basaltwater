@@ -148,11 +148,26 @@ input completion despite a failed capture. Never replay automatically. Old
 worker string errors remain unknown; a client update cannot add worker evidence.
 
 On Debian, non-ASCII text defaults to revocable per-character pacing to avoid
-character loss from rapid X11 keymap changes. This path requires omitting
-`--observation` until server-paced text is supported; token-bound Unicode is
-refused before dispatch. Prefer accessible `element set-text` and read-back.
-Otherwise inspect the intended control in a fresh capture, use paced text
-without a token, and verify the delivered text before submitting it.
+character loss from rapid X11 keymap changes. Updated supervisors advertise
+`server-paced-text` and accept token-bound Unicode or `--delay-ms` in one request,
+rechecking the original observation and control revision before each character.
+Older supervisors refuse token-bound pacing before dispatch. Prefer accessible
+`element set-text` and read-back. Always verify delivered text before submitting;
+`submitted_characters` counts acknowledged injections, not application text.
+
+Debian also supports `desktop map-point --capture /absolute/frame.json
+--image-coordinates --x X --y Y` against a saved screenshot receipt. It adds the
+image origin and checks current observation identity and freshness without
+injecting input or renewing the token. Presented-view coordinates require the
+actual image display dimensions via `--view-geometry WIDTH HEIGHT`.
+
+Use `desktop evidence start --project /absolute/project` before a bounded manual
+run and `desktop evidence finish` afterward. Private journals retain input
+receipts and hashed capture references, omit typed text and command arguments,
+and checkpoint when the helper stops. `desktop evidence verify ARTIFACT` works
+offline; finalization records available task status and Git provenance. Keep
+these artifacts outside Git and inspect them before sharing. Recording never
+establishes application success or repairs uncertain delivery.
 
 For example:
 

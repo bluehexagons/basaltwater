@@ -56,6 +56,19 @@ For bounded script/render jobs needing logs, timing and timeout cleanup, use a
 project recipe with `basaltw agent visuals check` from the invoking terminal;
 that command does not attach to XRDP or supply its display environment.
 
+For durable owned work, updated Debian supervisors advertise
+`supervised-development`. Use `desktop develop exec --project /absolute/project
+-- /absolute/executable ARGS`, then `develop status TASK_ID`, `develop wait
+TASK_ID`, or `develop stop TASK_ID`. Each task has a private bounded log and
+separate user-systemd cgroup. Queued starts recheck the original generation and
+control revision. Started jobs remain independently owned; a helper replacement
+does not request cancellation. Status/list work without the helper. Stop verifies
+only that task's transient unit/invocation and can remain `stopping` until cleanup
+finishes. A lost launch reply requires listing and reconciling tasks before retry.
+The supervisor's PATH selects tools; use absolute paths for a particular runtime.
+See [Debian development tasks](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/debian-development.md)
+for environment checks, lifetime boundaries and post-refresh qualification.
+
 ## Human handoff and logout
 
 The human can open **Shared Desktop Control** from the application menu and
@@ -67,6 +80,10 @@ visibility. An older supervisor may refuse the dedicated action: use the menu
 launcher and refresh at a safe logout checkpoint. Closing the window,
 disconnecting RDP, logout, and restarting the supervisor
 preserve the choice. Ordinary RDP input does not detect human intervention.
+Local approved control changes persist before the supervisor status query, so
+server-paced text can stop between characters. The UI bounds idle status polling;
+browser control requests still queue behind active supervisor operations. Neither
+route provides compositor-level emergency interruption of an in-flight X event.
 
 Only explicit human approval or UI interaction permits changing the state.
 An approved CLI transition uses `desktop control enabled|human-override|disabled

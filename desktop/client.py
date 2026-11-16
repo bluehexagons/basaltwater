@@ -381,7 +381,7 @@ def send_action(payload: dict[str, Any], *, deadline: float | None = None, backe
     pending = False
     result: dict[str, Any] = {"generation": payload["generation"], "geometry": payload["geometry"]}
     try:
-        if backend is not runtime:
+        if backend is not runtime or payload.get("observation_id") is not None:
             capabilities = backend.status(deadline=deadline).get("input_capabilities", [])
             if isinstance(capabilities, list) and "server-paced-text" in capabilities:
                 remaining_seconds(deadline)

@@ -39,6 +39,12 @@ def run_task(directory: Path) -> int:
         if "control_revision" not in task:
             raise RuntimeError("Legacy queued task has no control revision; submit a fresh launch")
         _honor_agent_control(task["control_revision"])
+        if "session_generation" in task:
+            from desktop import session_runtime
+            current = session_runtime.status()
+            if current.get("state") != "running" or current.get("generation") != task["session_generation"]:
+                raise RuntimeError("Queued task's desktop session changed; submit a fresh launch")
+            _honor_agent_control(task["control_revision"])
         descriptor = os.open(directory / "output.log", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         with os.fdopen(descriptor, "wb", buffering=0) as log:
             process = subprocess.Popen(task["argv"], cwd=task["project"], stdin=subprocess.DEVNULL,

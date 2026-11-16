@@ -6,6 +6,7 @@ from pathlib import Path
 import queue
 import sys
 import threading
+import time
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -68,7 +69,7 @@ def main() -> int:
             except queue.Empty:
                 action, seconds = "status", 900
             try:
-                responses.put(runtime.status() if action == "status" else runtime.set_control(
+                responses.put(runtime.status(deadline=time.monotonic() + 0.5) if action == "status" else runtime.set_control(
                     action, seconds=seconds, human_approved=True))
             except (OSError, ValueError, RuntimeError) as exc:
                 responses.put({"error": str(exc)})

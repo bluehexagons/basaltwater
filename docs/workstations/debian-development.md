@@ -1,0 +1,115 @@
+# Supervised development tasks on Debian desktops
+
+Use plain `basaltw desktop develop` on the configured shared XRDP desktop.
+`--native` selects the CachyOS KDE backend. Run as the configured desktop owner,
+without sudo. A refreshed running supervisor must advertise
+`supervised-development` in `desktop status`; save work and use a normal logout
+checkpoint to load it. These source changes do not restart the shared desktop.
+
+```bash
+basaltw desktop develop doctor --project /absolute/project --json
+basaltw desktop develop exec --project /absolute/project --dry-run -- /usr/bin/python3 script.py
+basaltw desktop develop exec --project /absolute/project -- /usr/bin/python3 script.py
+basaltw desktop develop list --project /absolute/project --json
+basaltw desktop develop status TASK_ID --json
+basaltw desktop develop wait TASK_ID --timeout 120 --json
+```
+
+`doctor` inspects project declarations and prerequisites. It does not run the
+application or establish rendering, sound or input readiness. `--dry-run`
+validates arguments and the existing session environment without creating a
+task or service. Both remain available under human override/disabled control.
+Launch and stop require enabled control. No command changes that permission.
+
+Godot `editor`, `run` and `import`, declared `node` scripts, and project `check`
+recipes use the same bounded argument/metadata readers as the
+[CachyOS development workflow](cachyos-development.md). Tools must already be
+installed; task launch installs no engine, runtime or dependencies. The Debian
+supervisor's PATH selects tools, rather than the invoking SSH shell's PATH.
+Use an absolute `--engine` or explicit executable path for a particular build.
+Project scripts and recipes still own application behavior and acceptance.
+
+## Environment and ownership
+
+The actual shared-session supervisor supplies its local X11 display, validated
+owned X authority file and owned local session-bus socket. The user manager's
+bus is checked separately for systemd operations. No GUI environment is imported
+into the global user manager. Remote/abstract session-bus addresses and unsafe
+authority files are refused. Live use requires qualifying the actual VM's
+session configuration, rather than guessing display or authority values.
+Session-bus sockets may live in a root-owned sticky directory such as `/tmp`,
+as `dbus-run-session` normally arranges. This route checks socket ownership and
+the connected peer's UID with a bounded local connection; it does not relax
+the user-manager bus's private-directory check.
+
+Each task gets a random ID and a private directory beneath the account's
+`~/.local/state/basaltwater/development/`. Its transient user-systemd service has
+an exact task-specific description, invocation identity, `ExitType=cgroup` and
+`KillMode=control-group`. XFCE does not own KDE's `graphical-session.target`, so
+Debian tasks do not use that target as their lifetime boundary.
+
+Queued workers recheck the originating desktop generation and control revision
+before starting project code. A session/control change before admission refuses
+the queued launch. Started jobs have independent user-manager ownership:
+disconnecting the controller or replacing the desktop helper does not discard
+their task records or request a restart. They are not automatically cancelled
+when control changes. Normal logout, user-manager shutdown, an X server closing
+or the application itself can end them. This is not a guarantee of surviving
+logout or reconnect; verify current task/window state after each transition.
+
+The worker retains `task.json`, a live bounded `output.log` (16 MiB), initial
+launch PID, completion code, elapsed time and truncation/error status. It drains
+output after the log fills. Status reports the specific service's current
+cgroup/process count when available. A parent exiting successfully cannot
+establish completion while task descendants remain active. Tasks that ask an
+already running application to open a document do not own that application's
+existing process; inspect actual window/process identities.
+
+Task status/list/wait use private records and the user manager without the
+desktop helper. A missing or uninspectable service with no sufficient evidence
+stays unavailable/unverified. Status does not automatically repair or restart
+anything. Logs, argv and raw receipts may contain project information; retain
+them privately and inspect before sharing.
+
+## Stop and reconcile
+
+Prefer the owned application's normal exit. For a task needing cancellation:
+
+```bash
+basaltw desktop develop stop TASK_ID --dry-run --json
+basaltw desktop develop stop TASK_ID --json
+basaltw desktop develop status TASK_ID --json
+```
+
+Stop first verifies the recorded transient service description and pinned
+invocation. It requests only that unit's stop; it never kills a desktop process
+group or signals arbitrary recorded PIDs. An acknowledged asynchronous stop
+can still report `stopping`. Inspect again until cleanup is verified; do not
+claim success from queue acknowledgement. The service's ten-second stop limit
+bounds escalation for its own cgroup. Identity changes refuse cleanup.
+
+A lost reply can leave a started task without a returned ID. Before another
+launch, use `develop list --project PATH` (optionally `--since`/`--until`) and
+inspect candidate task status/logs. Do not automatically relaunch. Listing is
+bounded to 500 scanned records and 50 returned matches; heed truncation.
+Records and logs are retained for explicit review, not automatically pruned.
+
+`desktop evidence start/finish` records supervised-launch task IDs and permits
+finalization against durable task status. [Manual evidence](desktop-automation.md#map-and-record-debian-observations)
+and task completion still do not establish that the application produced its
+intended result. Independently verify saved/exported files and UI state.
+
+Legacy `desktop exec` remains the lightweight session-local immediate-child
+route. It has no durable log or task stop. Existing launch receipts do not
+become supervised tasks after refreshing.
+
+## Qualification after refresh
+
+First use a disposable program/profile. Verify a small logged success and a
+nonzero exit, live output, a bounded task stop with a descendant, and refusal
+when a queued task's control/session changes. Recheck task inventory after safe
+helper replacement and RDP reconnect while preserving unrelated applications.
+Never end the shared desktop merely to test process cleanup. Record revision,
+running-helper provenance and which transitions were actually exercised.
+Mocked regression tests cover contracts and failure handling; these live
+session/cgroup checks remain required on the refreshed VM.

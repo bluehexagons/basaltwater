@@ -14,6 +14,13 @@ starts control. Complete scripting, editable-source and export checks
 autonomously and report any unavailable UI checks. Use the collaborative
 browser policy for web applications.
 
+Debian's [supervised development tasks](debian-development.md) use the shared
+supervisor's actual display/bus environment, private bounded logs, durable task
+IDs and service-specific cancellation. Use `desktop develop` for owned jobs and
+`desktop exec` for lightweight session-local launches. `agent manifest
+--capability development` advertises the platform's commands without launching
+project code or establishing readiness.
+
 ## Blender
 
 Agent-assisted desktop work is a primary Blender use case on agentic desktop

@@ -113,7 +113,7 @@ class Recorder:
 
     def event(self, payload: dict, result: dict | None):
         action = payload.get("action")
-        if action not in ("input", "element", "exec", "screenshot", "launch-status", "control"):
+        if action not in ("input", "element", "exec", "screenshot", "launch-status", "control", "development"):
             return
         if len(self.data["events"]) >= EVENT_LIMIT:
             self.data["events_truncated"] = True
@@ -129,8 +129,10 @@ class Recorder:
             if result is not None:
                 row["result"] = compact_capture(result) if action == "screenshot" else {
                     key: result[key] for key in ("pid", "launch", "returncode", "state", "generation",
+                        "task", "unit", "directory", "log", "report", "elapsed_seconds", "session_generation",
                         "input_completed_at", "input_completed_monotonic_ns", "observation_id",
                         "input_received_at", "input_received_monotonic_ns", "input_dispatch_at", "input_dispatch_monotonic_ns",
+                        "submitted_characters", "completion_unknown",
                         "capture_freshness",
                         "input_id", "reason", "dispatch_stage", "input_delivery") if key in result}
                 if "error" in result:
@@ -188,7 +190,7 @@ def _verify_captures(path: str, data: dict, *, retention: list[list[str]] | None
     for index, row in enumerate(data["events"]):
         if row.get("outcome") == "uncertain":
             action = row.get("action")
-            if action not in ("input", "element", "exec", "screenshot", "launch-status", "control"):
+            if action not in ("input", "element", "exec", "screenshot", "launch-status", "control", "development"):
                 action = "unknown"
             uncertain_by_action[action] = uncertain_by_action.get(action, 0) + 1
             if len(uncertain_details) < 10:

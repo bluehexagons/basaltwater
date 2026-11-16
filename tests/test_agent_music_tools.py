@@ -189,7 +189,7 @@ class MusicToolsTests(unittest.TestCase):
                         patch.object(agent_environment, "inspect_skill_catalogs", return_value={"catalogs": []}),
                         patch.object(agent_environment, "browser_context_inventory", return_value={}),
                         patch.object(agent_environment, "inspect_installation_provenance", return_value={}),
-                        patch.object(agent_environment, "_native_development", return_value={}),
+                        patch.object(agent_environment, "_desktop_development", return_value={}),
                         patch.object(agent_environment.shutil, "which", side_effect=lambda name:
                                      executable if name == alias else
                                      ("/old/musescore" if name == "musescore" and alias.endswith(("3", "4")) else None)),

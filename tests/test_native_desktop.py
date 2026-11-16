@@ -535,8 +535,9 @@ class BackendControlTests(PrivateHomeTestCase):
                     self.assertEqual(result["agent_control"], "human-override")
                     self.assertIsNone(result["override_until"])
                     self.assertEqual(result["control_revision"], control_state.status()["control_revision"])
-                    request.assert_called_once_with({"action": "control", "mode": "human-override",
-                                                    "seconds": None, "human_approved": True})
+                    request.assert_called_once_with(
+                        {"action": "control", "mode": "human-override", "seconds": None, "human_approved": True}
+                        if backend is native else {"action": "status"})
                     start.assert_not_called()
 
     def test_lost_control_reply_does_not_replay_or_replace_persistent_choice(self):
@@ -544,10 +545,16 @@ class BackendControlTests(PrivateHomeTestCase):
         for backend in (native, desktop_cli.runtime):
             with self.subTest(backend=backend.__name__), patch.object(desktop_cli.runtime, "configuration"), \
                     patch.object(backend, "request", side_effect=ConnectionResetError("reply lost")) as request:
-                with self.assertRaises(ConnectionResetError):
-                    backend.set_control("disabled", human_approved=True)
+                if backend is native:
+                    with self.assertRaises(ConnectionResetError):
+                        backend.set_control("disabled", human_approved=True)
+                    self.assertEqual(control_state.status(), before)
+                else:
+                    result = backend.set_control("disabled", human_approved=True)
+                    self.assertEqual(result["state"], "unknown")
+                    self.assertEqual(result["agent_control"], "disabled")
+                    self.assertEqual(result["control_revision"], control_state.status()["control_revision"])
                 request.assert_called_once()
-                self.assertEqual(control_state.status(), before)
 
 
 class PortalContractTests(unittest.TestCase):
