@@ -122,6 +122,23 @@ class TestListBackups(unittest.TestCase):
         backups = list_backups(_host(), 999)
         self.assertEqual(backups, [])
 
+    @patch("lib.proxmox_backup._ssh_run")
+    def test_storage_states_are_validated_and_disabled_pools_skipped(self, mock_run):
+        base = {"storage": "local", "content": "backup", "active": 1}
+        for update in ({"active": "0"}, {"active": 2}, {"enabled": "false"}, {"enabled": None}):
+            with self.subTest(update=update):
+                mock_run.side_effect = [_ok(json.dumps([{**base, **update}]))]
+                with self.assertRaisesRegex(ProxmoxBackupError, "Invalid backup storage"):
+                    list_backups(_host(), 100)
+        mock_run.side_effect = [_ok(json.dumps([base, base]))]
+        with self.assertRaisesRegex(ProxmoxBackupError, "Invalid backup storage"):
+            list_backups(_host(), 100)
+        for update in ({"active": 0}, {"enabled": 0}, {"active": False}):
+            with self.subTest(update=update):
+                mock_run.side_effect = [_ok(json.dumps([{**base, **update}]))]
+                self.assertEqual(list_backups(_host(), 100), [])
+                self.assertIn("--enabled 1", mock_run.call_args.args[3])
+
     def test_backup_info_storage_property(self) -> None:
         b = BackupInfo(volid="local:backup/foo.vma.zst", vmid=100, size=0)
         self.assertEqual(b.storage, "local")
@@ -202,6 +219,18 @@ class TestCreateBackup(unittest.TestCase):
                 self.inspect.side_effect = [*self.preflight, result]
                 with self.assertRaisesRegex(ProxmoxBackupError, "Could not verify.*before retrying"):
                     create_backup(_host(), 100)
+
+    def test_malformed_archive_measurements_and_duplicates_cannot_verify_success(self) -> None:
+        for field, value in (("size", True), ("size", 1.5), ("size", "4096"),
+                             ("size", -1), ("ctime", False), ("ctime", 1.5), ("ctime", -1)):
+            with self.subTest(field=field, value=value):
+                archive = {**self.archive, field: value}
+                self.inspect.side_effect = [*self.preflight, _ok(json.dumps([archive]))]
+                with self.assertRaisesRegex(ProxmoxBackupError, "Could not verify.*before retrying"):
+                    create_backup(_host(), 100)
+        self.inspect.side_effect = [*self.preflight, _ok(json.dumps([self.archive, self.archive]))]
+        with self.assertRaisesRegex(ProxmoxBackupError, "Could not verify.*before retrying"):
+            create_backup(_host(), 100)
 
     def test_failed_initial_archive_inventory_blocks_mutation(self) -> None:
         for result in (_fail("storage offline"), _ok("{}")):

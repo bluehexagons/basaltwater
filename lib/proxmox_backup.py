@@ -59,10 +59,11 @@ def _backup_storages(host: ProxmoxHost) -> list[str]:
     """Return active storage names that support the backup content type."""
     result = _run(
         host,
-        "pvesh get /nodes/$(hostname -s)/storage --output-format json",
+        "pvesh get /nodes/$(hostname -s)/storage --enabled 1 --output-format json",
     )
     data = _inventory(result, f"storage on {host.address}")
     pools: list[str] = []
+    seen: set[str] = set()
     for entry in data:
         content = entry.get("content")
         storage = entry.get("storage")
@@ -72,7 +73,14 @@ def _backup_storages(host: ProxmoxHost) -> list[str]:
             validate_proxmox_storage_name(storage, "storage")
         except ValueError as exc:
             raise ProxmoxBackupError(f"Invalid backup storage inventory on {host.address}") from exc
-        if "backup" in content.split(",") and entry.get("active", 0):
+        if storage in seen or any(
+            type(entry[flag]) not in (int, bool) or entry[flag] not in (0, 1)
+            for flag in ("active", "enabled") if flag in entry
+        ):
+            raise ProxmoxBackupError(f"Invalid backup storage inventory on {host.address}")
+        seen.add(storage)
+        if ("backup" in content.split(",") and entry.get("active", 0)
+                and entry.get("enabled", 1)):
             pools.append(storage)
     return pools
 
@@ -99,17 +107,21 @@ def _storage_backups(host: ProxmoxHost, storage: str, vmid: int) -> list[BackupI
         f" --content backup --output-format json"
     )
     entries = _inventory(_run(host, cmd), f"backups in {storage} on {host.address}")
+    seen: set[str] = set()
     for entry in entries:
         try:
             entry_vmid = validate_positive_integer(str(entry["vmid"]), "VMID")
-            size = int(entry["size"])
-            ctime = int(entry["ctime"]) if entry.get("ctime") is not None else None
+            size = entry["size"]
+            ctime = entry.get("ctime")
             volid = entry["volid"]
-            if (size < 0 or not isinstance(volid, str)
+            if (type(size) is not int or size < 0
+                    or ctime is not None and (type(ctime) is not int or ctime < 0)
+                    or not isinstance(volid, str) or volid in seen
                     or not volid.startswith(f"{storage}:") or not volid.split(":", 1)[1]):
                 raise ValueError("invalid backup fields")
         except (KeyError, TypeError, ValueError) as exc:
             raise ProxmoxBackupError(f"Invalid backup entry in {storage}") from exc
+        seen.add(volid)
         if entry_vmid != vmid:
             continue
         backups.append(BackupInfo(

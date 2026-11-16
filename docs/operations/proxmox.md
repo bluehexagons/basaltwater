@@ -1283,6 +1283,11 @@ freshness or archive integrity, or prove an isolated restore.
 
 Backup listing reports failed or malformed storage inventories as errors,
 including a failure in one pool after another pool was read successfully.
+Storage queries select enabled pools and reject duplicate pool identities or
+invalid active/enabled flags. Disabled or inaccessible pools are not selected.
+Archive size and optional creation time must be nonnegative JSON integers;
+booleans, fractional values, and duplicate volume identities are rejected.
+These checks also apply to the fresh inventory used to verify backup completion.
 An empty result means the queried active pools contained no matching backups;
 it does not establish that offline pools contain none.
 
@@ -1545,6 +1550,13 @@ active marker. Dry runs do not create or consume checkpoints.
 `notifications install-webhook` configures Proxmox's native notification
 matcher; repeat `--severity` to limit routing, and use `--dry-run` before
 writing the endpoint. Treat webhook URLs as sensitive values.
+Command previews redact the entire URL, including userinfo and path tokens.
+Notification commands suppress raw native output and transport exception details
+because those can echo credentials. Failures report the affected host and exit
+status when available; inspect notification configuration on that node for
+diagnosis. A timeout leaves completion uncertain and does not replay the command.
+Malformed URLs, invalid ports, and control characters are rejected locally
+without echoing the URL in validation errors.
 Endpoint and matcher names must differ because Proxmox shares their namespace.
 The JSON payload preserves event metadata in the `details` string, including
 quotes and line breaks. The built-in test has empty metadata; also check delivery

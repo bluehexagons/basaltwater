@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import shlex
-from subprocess import CompletedProcess
+from contextlib import redirect_stdout
+from io import StringIO
+from subprocess import CompletedProcess, TimeoutExpired
+import traceback
 import unittest
 from unittest.mock import patch
 
@@ -11,6 +14,7 @@ from lib.proxmox_hosts import ProxmoxHost
 from lib.proxmox_manage import (
     ProxmoxManageError, configure_guest_autostart, delete_snapshot,
     health_check, rollback_guest, snapshot_guest,
+    install_webhook_notifications, send_webhook_test_notification,
 )
 
 
@@ -85,3 +89,83 @@ class TestManagementSafety(unittest.TestCase):
                     with self.subTest(name=name), self.assertRaises(ValueError):
                         operation(self.host, 100, name)
                 run.assert_not_called()
+
+
+class TestWebhookPrivacy(unittest.TestCase):
+    def setUp(self) -> None:
+        self.host = ProxmoxHost(name="pve1", address="192.0.2.10")
+        self.url = "https://user:fake-password@notify.example/fake-path-token?key=fake-query#fake-fragment"
+
+    @patch("lib.proxmox_manage._ssh_run", return_value=CompletedProcess([], 0, "", ""))
+    def test_actual_url_is_sent_but_all_display_components_are_redacted(self, run):
+        install_webhook_notifications(self.host, self.url)
+        call = run.call_args_list[0]
+        self.assertIn(self.url, call.args[3])
+        for secret in ("fake-password", "fake-path-token", "fake-query", "fake-fragment"):
+            self.assertNotIn(secret, call.kwargs["log_cmd"])
+        self.assertTrue(all(call.kwargs["quiet"] for call in run.call_args_list))
+
+    def test_native_stderr_is_not_printed_by_ssh_helper(self) -> None:
+        output = StringIO()
+        with patch("lib.proxmox_manage._ssh_opts", return_value=[]), patch(
+            "lib.proxmox_guest._proxmox_ssh_command", return_value=["ssh", "placeholder"],
+        ), patch("lib.proxmox_guest.subprocess.run", return_value=CompletedProcess(
+            [], 1, "", self.url,
+        )), redirect_stdout(output):
+            with self.assertRaises(ProxmoxManageError):
+                install_webhook_notifications(self.host, self.url)
+        self.assertNotIn(self.url, output.getvalue())
+
+    def test_dry_run_shows_redacted_plan_without_execution(self) -> None:
+        output = StringIO()
+        with patch("lib.proxmox_manage._ssh_opts", return_value=[]), patch(
+            "lib.proxmox_guest._proxmox_ssh_command",
+        ) as command, redirect_stdout(output):
+            install_webhook_notifications(self.host, self.url, dry_run=True)
+        self.assertIn("--url", output.getvalue())
+        self.assertIn("redacted-url", output.getvalue())
+        for secret in ("fake-password", "fake-path-token", "fake-query", "fake-fragment"):
+            self.assertNotIn(secret, output.getvalue())
+        command.assert_not_called()
+
+    def test_failures_do_not_echo_native_diagnostics_or_transport_commands(self) -> None:
+        for operation in (
+            lambda: install_webhook_notifications(self.host, self.url),
+            lambda: send_webhook_test_notification(self.host),
+        ):
+            for outcome in (CompletedProcess([], 1, self.url, self.url),
+                            TimeoutExpired(["ssh", self.url], 120, stderr=self.url),
+                            OSError(self.url)):
+                with self.subTest(outcome=type(outcome).__name__), patch(
+                    "lib.proxmox_manage._ssh_run",
+                    **({"side_effect": outcome} if isinstance(outcome, Exception) else {"return_value": outcome}),
+                ) as run:
+                    try:
+                        operation()
+                    except ProxmoxManageError:
+                        formatted = traceback.format_exc()
+                        self.assertNotIn(self.url, formatted)
+                    else:
+                        self.fail("Notification failure was not reported")
+                    self.assertTrue(run.call_args.kwargs["quiet"])
+                    run.assert_called_once()  # No fallback or replay after uncertainty.
+
+    def test_invalid_urls_and_control_suffixes_fail_before_ssh(self) -> None:
+        with patch("lib.proxmox_manage._ssh_run") as run:
+            for url in ("https://user:fake-password@/hook", "https://notify.example:bad/fake-path-token",
+                        "https://notify.example/fake-path-token\n", "https://[broken/fake-path-token",
+                        "https://bad host/fake-path-token"):
+                with self.subTest(url=url), self.assertRaises(ValueError) as raised:
+                    install_webhook_notifications(self.host, url)
+                self.assertNotIn("fake-password", str(raised.exception))
+                self.assertNotIn("fake-path-token", str(raised.exception))
+            for field in ("endpoint_name", "matcher_name"):
+                with self.subTest(field=field), self.assertRaises(ValueError):
+                    install_webhook_notifications(self.host, self.url, **{field: "valid-name\n"})
+            run.assert_not_called()
+
+    @patch("lib.proxmox_manage._ssh_run", return_value=CompletedProcess([], 0, "", ""))
+    def test_ipv6_webhook_host_remains_supported(self, run):
+        url = "https://[2001:db8::1]:9443/hook"
+        install_webhook_notifications(self.host, url)
+        self.assertIn(url, run.call_args_list[0].args[3])
