@@ -34,16 +34,19 @@ def _run_remote(
     ssh_key: Optional[str],
 ) -> tuple[str, int, str, str]:
     """Run a command on one host, return (host, returncode, stdout, stderr)."""
-    resolved_host, resolved_user, resolved_key = _resolve_connection(host, username, ssh_key)
-    cmd = build_ssh_command(
-        resolved_host,
-        resolved_user,
-        resolved_key,
-        batch_mode=ssh_batch_mode(),
-        connect_timeout=15,
-        remote_command=command,
-    )
-    result = run_command(cmd, capture_output=True, text=True)
+    try:
+        resolved_host, resolved_user, resolved_key = _resolve_connection(host, username, ssh_key)
+        cmd = build_ssh_command(
+            resolved_host,
+            resolved_user,
+            resolved_key,
+            batch_mode=ssh_batch_mode(),
+            connect_timeout=15,
+            remote_command=command,
+        )
+        result = run_command(cmd, capture_output=True, text=True)
+    except (ValueError, OSError) as exc:
+        return host, 255, "", f"SSH target unavailable: {exc}"
     return host, result.returncode, result.stdout, result.stderr
 
 

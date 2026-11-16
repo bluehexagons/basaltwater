@@ -172,6 +172,31 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(0, self.run_command("setup", *flags))
         self.assert_no_mutations()
 
+    def test_automatic_dry_run_and_real_setup_reject_invalid_power_and_provider_options(self):
+        self.load.return_value = None
+        flags = ("--headscale", "--headscale-name", "mesh", "--headscale-domain", "control.example.com",
+                 "--headscale-base-domain", "mesh.example.net", "--headscale-public-ipv4", "192.0.2.10")
+        for mode in ((), ("--dry-run",)):
+            for option in ("--shutdown", "--verify-provider"):
+                with self.subTest(mode=mode, option=option), \
+                        patch("basaltwater._load_cached_provisioning_metadata", side_effect=AssertionError("provider")), \
+                        patch("basaltwater._prepare_runtime_config_for_cli", side_effect=AssertionError("runtime")):
+                    self.assertEqual(1, self.run_command("setup", *flags, option, *mode))
+        self.assert_no_mutations()
+
+    def test_disable_hosted_control_keeps_onboarding_endpoint_and_reaches_target(self):
+        from lib.headscale_onboarding import resolve_control_url
+
+        self.load.return_value = SetupConfig(host=self.cached.host, username="agent", system_type="server_lite",
+            headscale=True, headscale_domain="control.example.com", headscale_base_domain="mesh.example.net",
+            headscale_public_ipv4="192.0.2.10", headscale_onboarding_domain="join.example.com")
+        self.assertEqual(0, self.run_command("setup", "--no-headscale", "--dry-run"))
+        disabled = self.remote.call_args.args[0]
+        self.assertIs(disabled.headscale, False)
+        self.assertEqual("https://control.example.com", resolve_control_url(disabled))
+        disabled.to_remote_args()
+        self.save.assert_not_called()
+
     def test_fresh_automatic_dry_run_does_not_create_cache_directory(self):
         from lib.cache import load_setup_command
 

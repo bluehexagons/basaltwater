@@ -98,7 +98,7 @@ their own [administrator approval](headscale-onboarding.md).
 
 ```bash
 basaltw headscale-manage dns-inspect mesh
-basaltw fan mesh-dns mesh-app -- systemctl is-active tailscaled
+basaltw fan mesh-dns mesh-app -- hostname
 ```
 
 `fan` resolves the names saved by setup in the active workspace and uses each

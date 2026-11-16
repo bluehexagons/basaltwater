@@ -56,6 +56,14 @@ requires strict host-key verification, runs one fixed helper and bounds input,
 output and execution time. Endpoint discovery supplies no SSH authority. Never
 include private endpoints, keys, inventory or raw results in tracked documents.
 
+Publication keys are restricted to the root-observed network endpoint, native
+node ID and resolver or peer role. A retained key cannot inspect or release
+another network's guards after migration. The normal hookup narrows an exact
+legacy Basaltwater authorization after root verifies the client again; other
+authorization changes require explicit root review. The advanced interface must
+use the same scoped forced-command authorization on each target. Unscoped keys
+are refused by the helper.
+
 On both DNS node and peer, the helper first verifies private retained client
 state and effective systemd/running-process privacy. It then observes network,
 node and assigned interface addresses, validates
@@ -69,6 +77,9 @@ Any retained resolver operation or recovery snapshot also blocks observation
 for publication and new reservations, even when health checks would succeed.
 Explicitly reconcile that recovery state first. Releasing an existing guard
 remains possible during an outage or recovery; evidence is preserved.
+Publication, node checks and peer proof also require exact enrolled client
+ownership, serialized against leave, migration and resume. Incomplete client
+lifecycle operations must be reconciled before publication.
 
 The control server independently checks native node IDs and addresses. It holds
 the management DNS binding lease through every mutation, journals exact prior

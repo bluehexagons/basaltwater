@@ -208,7 +208,7 @@ def validate_headscale_settings(config: SetupConfig, *, complete: bool = False) 
     # Static hosting metadata never selects the local native client. The legacy
     # client URL remains a fallback only when no dedicated endpoint was given.
     page_control = (control if config.headscale else
-                    urlsplit(onboarding_control or config.tailscale_login_server or "").hostname)
+                    urlsplit(onboarding_control or config.tailscale_login_server or "").hostname or control)
     if onboarding and page_control and onboarding == page_control:
         raise ValueError("Control and onboarding hostnames must differ")
     if control and onboarding and control == onboarding:

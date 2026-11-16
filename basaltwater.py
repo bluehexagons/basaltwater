@@ -2001,16 +2001,24 @@ def run_setup_command(args: argparse.Namespace) -> int:
         validate_final_selection(config, workspace=getattr(args, "workspace", None))
         from lib.headscale_setup import automated_setup, preflight_setup, print_setup_plan
 
+        # Pure admission applies equally to the offline automatic plan. Provider
+        # discovery, credential checks and target work still happen afterwards.
+        if getattr(args, "verify_provider", False) and not config.hosted_node:
+            raise ValueError("--verify-provider requires --provision-on")
+        if shutdown and (not config.hosted_node or config.machine_type != "vm"):
+            raise ValueError("--shutdown requires a provisioned QEMU VM (--provision-on)")
+        if not validate_username(config.username):
+            raise ValueError(f"Invalid username: {config.username}")
+        if not validate_host(config.host):
+            raise ValueError(f"Invalid IP address or hostname: {config.host}")
+        if config.hosted_node and config.activate_network is True:
+            raise ValueError("--activate-network is for patching an already saved Proxmox guest; provisioned guests boot directly on their requested address")
         if config.dry_run and automated_setup(config):
             preflight_setup(config, workspace=getattr(args, "workspace", None))
             return print_setup_plan(config)
     except (ValueError, OSError, ResourceBusyError, ResourceLockSafetyError) as exc:
         print(f"Error: {exc}")
         return 1
-    if getattr(args, "verify_provider", False) and not config.hosted_node:
-        print("Error: --verify-provider requires --provision-on")
-        return 1
-
     cached_provisioning = _load_cached_provisioning_metadata(config)
     provider_rebind = _provider_rebind_requested(
         config,
@@ -2068,17 +2076,6 @@ def run_setup_command(args: argparse.Namespace) -> int:
         )
         return 1
 
-    if not validate_username(config.username):
-        print(f"Error: Invalid username: {config.username}")
-        return 1
-
-    if config.hosted_node and config.activate_network is True:
-        print(
-            "Error: --activate-network is for patching an already saved Proxmox "
-            "guest; provisioned guests boot directly on their requested address"
-        )
-        return 1
-    
     try:
         from lib.build_enrollment_cli import prepare_cli_build_enrollments
 
@@ -2089,14 +2086,6 @@ def run_setup_command(args: argparse.Namespace) -> int:
         print(f"Error: {e}")
         return 1
 
-    if shutdown and (not config.hosted_node or config.machine_type != "vm"):
-        print("Error: --shutdown requires a provisioned QEMU VM (--provision-on)")
-        return 1
-
-    if not validate_host(config.host):
-        print(f"Error: Invalid IP address or hostname: {config.host}")
-        return 1
-    
     description = f"{args.system_type.replace('_', ' ').title()} Setup"
     try:
         if automated_setup(runtime_config):

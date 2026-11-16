@@ -334,23 +334,44 @@ class AuthorityTests(unittest.TestCase):
                 info = original(fd)
                 return SimpleNamespace(st_mode=info.st_mode, st_uid=0, st_nlink=info.st_nlink, st_size=info.st_size)
             with patch.object(authority.os, 'fstat', side_effect=root_stat):
-                authority.authorize(KEY, directory=directory)
+                authority.authorize(KEY, URL, NODE.node_id, 'resolver', directory=directory)
                 before = path.read_bytes()
-                authority.authorize(KEY, directory=directory)
+                authority.authorize(KEY, URL, NODE.node_id, 'resolver', directory=directory)
                 self.assertEqual(before, path.read_bytes())
                 self.assertTrue(before.startswith(unrelated))
-                self.assertIn(('restrict,command="' + authority.COMMAND + '"').encode(), before)
+                self.assertIn(('restrict,command="' + authority.COMMAND + ' --scope ' + authority.publication_scope(URL, NODE.node_id, 'resolver') + '"').encode(), before)
+                for endpoint, node, role in (('https://other.example.com', NODE.node_id, 'resolver'),
+                                             (URL, '99', 'resolver'), (URL, NODE.node_id, 'peer')):
+                    with self.assertRaisesRegex(ValueError, 'foreign authorization'):
+                        authority.authorize(KEY, endpoint, node, role, directory=directory)
+                    self.assertEqual(before, path.read_bytes())
+                for ending in (b'\n', b'\r\n', b''):
+                    with self.subTest(ending=ending):
+                        path.write_bytes(unrelated + f'restrict,command="{authority.COMMAND}" {KEY}'.encode() + ending)
+                        authority.authorize(KEY, URL, NODE.node_id, 'resolver', directory=directory)
+                        self.assertEqual(before, path.read_bytes())
                 path.chmod(0o644)
                 with self.assertRaises(ValueError):
-                    authority.authorize(KEY, directory=directory)
+                    authority.authorize(KEY, URL, NODE.node_id, 'resolver', directory=directory)
                 path.chmod(0o600)
                 path.write_text(KEY + '\n')
                 with self.assertRaisesRegex(ValueError, 'foreign authorization'):
-                    authority.authorize(KEY, directory=directory)
+                    authority.authorize(KEY, URL, NODE.node_id, 'resolver', directory=directory)
                 path.unlink()
                 path.symlink_to('missing')
                 with self.assertRaises((OSError, ValueError)):
-                    authority.authorize(KEY, directory=directory)
+                    authority.authorize(KEY, URL, NODE.node_id, 'resolver', directory=directory)
+
+    def test_authorization_scope_uses_root_observed_node_not_request_identity(self):
+        request = {'endpoint': URL, 'action': 'authorize', 'parameters': {'key': KEY, 'role': 'resolver'}}
+        with patch.object(authority.os, 'geteuid', return_value=0), \
+                patch.object(authority, 'observe', return_value={'binding': NODE.to_dict()}), \
+                patch.object(authority, 'authorize', return_value={'authorized': True}) as authorize:
+            self.assertTrue(authority.execute_request(json.dumps(request).encode())['ok'])
+            authorize.assert_called_once_with(KEY, URL, NODE.node_id, 'resolver')
+            request['parameters']['node_id'] = '99'
+            self.assertFalse(authority.execute_request(json.dumps(request).encode())['ok'])
+            self.assertEqual(1, authorize.call_count)
 
     def test_root_schemas_and_endpoint_fail_closed_without_secret_errors(self):
         for module in (authority, control):

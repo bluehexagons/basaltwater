@@ -154,7 +154,7 @@ class TestHeadscaleConfig(unittest.TestCase):
                 validate_headscale_url(value)
 
     def test_opt_out_survives_cache_merge_and_transport(self):
-        cached = self.hosting(headscale_onboarding_control_url="https://vpn.example.com")
+        cached = self.hosting()
         disabled = merge_setup_configs(cached, self.parse("--no-headscale --no-tailscale --no-unbound"))
         with tempfile.TemporaryDirectory() as workspace, patch("lib.cache.get_setup_cache_dir", return_value=workspace):
             save_setup_command(disabled)

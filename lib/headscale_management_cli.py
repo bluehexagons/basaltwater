@@ -8,13 +8,24 @@ import sys
 
 
 def add_headscale_management_parser(subparsers) -> argparse.ArgumentParser:
-    parser = subparsers.add_parser("headscale-manage", help="Explicit SSH management and tagged enrollment")
+    parser = subparsers.add_parser("headscale-manage", help="Manage saved networks, machine enrollment and DNS hookup")
     commands = parser.add_subparsers(dest="headscale_management_action", required=True)
-    for action in ("bind", "show", "remove", "enroll", "inspect", "reconcile", "dns-publish", "dns-withdraw", "dns-inspect", "dns-reconcile"):
-        command = commands.add_parser(action)
+    for action, help_text in (
+        ("bind", "Bind a saved network to a verified root SSH connection"),
+        ("show", "Show the saved management connection"),
+        ("remove", "Remove the local management connection"),
+        ("enroll", "Enroll a prepared machine with approved service tags"),
+        ("inspect", "Inspect retained enrollment and optional native metadata"),
+        ("reconcile", "Recover an uncertain machine enrollment"),
+        ("dns-publish", "Verify and publish an Unbound resolver using saved VM names"),
+        ("dns-withdraw", "Verify withdrawal before retiring the DNS VM"),
+        ("dns-inspect", "Show DNS publication and retained transaction state"),
+        ("dns-reconcile", "Complete an exactly reviewed uncertain DNS attempt"),
+    ):
+        command = commands.add_parser(action, help=help_text, description=help_text)
         command.add_argument("reference", help="Saved server name or stable ID")
         command.add_argument("--workspace")
-        command.add_argument("--dry-run", action="store_true")
+        command.add_argument("--dry-run", action="store_true", help="Validate local inputs without connecting or changing state")
         if action == "dns-reconcile":
             command.add_argument("--expected-attempt", required=True, help="Absolute private JSON containing the exact inspected controller attempt")
         if action in {"dns-publish", "dns-withdraw"}:

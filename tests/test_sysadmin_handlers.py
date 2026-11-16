@@ -117,6 +117,29 @@ class TestSysadminFan(unittest.TestCase):
         self.assertIn("Summary: 1/2 succeeded, failed: beta", output)
         self.assertIn("bad", stderr.getvalue())
 
+    def test_invalid_saved_target_is_reported_without_losing_other_results(self) -> None:
+        from lib.cache import get_cache_path_for_host, save_setup_command
+        from lib.config import SetupConfig
+        from lib.workspace import WORKSPACE_ENV_VAR
+
+        with tempfile.TemporaryDirectory() as workspace, \
+                patch.dict(os.environ, {WORKSPACE_ENV_VAR: workspace}):
+            good, bad = "192.0.2.11", "192.0.2.12"
+            save_setup_command(SetupConfig(host=good, username="agent", system_type="server_lite"))
+            path = get_cache_path_for_host(bad)
+            with open(path, "wb") as stream:
+                stream.write(b"{corrupt")
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with patch.object(sysadmin_fan, "run_command", return_value=completed(stdout="connected\n")) as run, \
+                    redirect_stdout(stdout), redirect_stderr(stderr):
+                self.assertEqual(1, sysadmin_fan.run_fan([bad, good], ["hostname"]))
+            run.assert_called_once()
+            self.assertIn("agent@" + good, run.call_args.args[0])
+            self.assertIn("Summary: 1/2 succeeded", stdout.getvalue())
+            self.assertIn("File retained", stderr.getvalue())
+            with open(path, "rb") as stream:
+                self.assertEqual(b"{corrupt", stream.read())
+
     def test_run_df_filters_failures_and_marks_high_usage(self) -> None:
         def run_remote(host: str, command: str, username: str | None, ssh_key: str | None):
             del command, username, ssh_key

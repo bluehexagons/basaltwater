@@ -18,6 +18,7 @@ from lib.atomic_io import parse_json, write_bytes_atomic
 from lib.concurrency import resource_lock
 from lib.headscale_config import validate_headscale_url
 from lib.setup_directories import directory_fd
+from common.service_tools.headscale_dns import publication_scope
 
 COMMAND = '/usr/bin/python3 -I /opt/basaltwater/common/service_tools/headscale_dns.py'
 
@@ -62,17 +63,27 @@ def private_bytes(path: str) -> bytes | None:
     return result
 
 
-def authorize(key: str, *, directory: str = '/root/.ssh') -> dict:
+def authorize(key: str, endpoint: str, node_id: str, role: str, *, directory: str = '/root/.ssh') -> dict:
     key = public_key(key)
+    command = COMMAND + ' --scope ' + publication_scope(endpoint, node_id, role)
     root_directory(directory, create=True)
     path = directory + '/authorized_keys'
     with resource_lock('headscale-dns-authorize', directory):
         before = private_bytes(path) or b''
-        line = f'restrict,command="{COMMAND}" {key}\n'.encode()
+        line = f'restrict,command="{command}" {key}\n'.encode()
         # Refuse the same material with broader/different options, including comments.
         occurrences = [entry for entry in before.splitlines() if key.split()[1].encode() in entry.split()]
+        legacy = f'restrict,command="{COMMAND}" {key}'.encode()
         if occurrences:
-            if occurrences != [line.rstrip(b'\n')]:
+            if occurrences == [legacy]:
+                # Root has just re-observed the intended client. Narrow only
+                # our exact legacy command, preserving every other entry.
+                after = b''.join(line if entry.rstrip(b'\r\n') == legacy else entry
+                                 for entry in before.splitlines(keepends=True))
+                if len(after) > 65536:
+                    raise ValueError("Authorization exceeds limit")
+                write_bytes_atomic(path, after, mode=0o600)
+            elif occurrences != [line.rstrip(b'\n')]:
                 raise ValueError("Publication key has foreign authorization")
         else:
             after = before + (b'\n' if before and not before.endswith(b'\n') else b'') + line
@@ -122,8 +133,9 @@ def execute_request(payload: bytes) -> dict:
         if request['action'] == 'observe' and set(p) == {'role'} and p['role'] in {'resolver', 'peer'}:
             result = observe(endpoint, p['role'])
         elif request['action'] == 'authorize' and set(p) == {'key', 'role'} and p['role'] in {'resolver', 'peer'}:
-            observe(endpoint, p['role'])  # Authority is never installed on a foreign/unowned client.
-            result = authorize(p['key'])
+            # The scope comes from root-observed ownership, never a caller's node ID.
+            observed = observe(endpoint, p['role'])['binding']
+            result = authorize(p['key'], endpoint, observed['node_id'], p['role'])
         else:
             raise ValueError()
         return {'ok': True, 'result': result}
