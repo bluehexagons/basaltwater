@@ -1,7 +1,8 @@
 # Test suite maintenance plan
 
-Status: audit and recommendations; no test cases have been removed or changed.
-Inventory reviewed: 2026-11-16 on `main`.
+Status: implementation and measured review in progress.
+Original inventory reviewed: 2026-11-16 on `main`; counts below describe that
+snapshot. Use `python3 scripts/test_inventory.py` for the current inventory.
 
 This plan aims to keep regression protection for observable contracts while
 making the ordinary edit/PR loop short. Long-running, live-environment and
@@ -135,3 +136,7 @@ unless project owners explicitly choose a different policy.
 | Date | Change | Evidence and retained coverage |
 | --- | --- | --- |
 | 2026-11-16 | Created inventory and recommendations; no test cases or CI behavior changed. | Static inventory: 501 modules, 10,133 `test*` definitions, 193,625 test-source lines. Runtime baseline and assertion-level redundancy review remain open. |
+| 2026-11-16 | Repair integration selection and validate all suite selectors/patterns. | Removed the deleted `tests.test_cicd` selector. All discovered modules remain owned; all 17 cross-domain memberships are legitimate and retained. Existing combined-selection tests retain deduplication coverage. |
+| 2026-11-16 | Advertise only implemented expensive categories. | `live_proxmox` is the only production decorator consumer. Removed unused `slow`/`network` listings and an incorrect compatibility comment; custom decorators/environment flags still work. Offline network-domain tests remain in routine CI. |
+| 2026-11-16 | Add reproducible inventory and timing evidence. | Baseline passed 10,173 tests (26 skipped), 160.465 seconds of test-case time. JSON timings distinguish suite elapsed time from time inside cases; static inventory does not import tests. Absolute timing applies only to this runner. |
+| 2026-11-16 | Strengthen credential coverage and consolidate a redundant helper check. | The symlink preservation fixture now checks the actual redirected `auth.json`. Gogs caller tests retain supplied/generated password redaction and now assert the placeholder; removed the helper-only assertion against a password it never received. |

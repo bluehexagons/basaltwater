@@ -93,6 +93,14 @@ and remain failures. Its Linux installed-CLI check also exercises offline deskto
 instruction paging, coordinate mapping and durable run continuation/refusal in
 private temporary files, without contacting or starting a desktop helper.
 Use `python3 run_tests.py --list-suites` to see concise suite names and sizes.
+`python3 scripts/test_inventory.py` validates every suite selector and pattern
+and reports structural counts without importing tests. Add `--json` for module
+ownership, legitimate overlaps, and candidate sleep/process sites for review.
+`run_tests.py --durations 30 --timings-json /tmp/test-timings.json` exports
+result counts and every test duration, including on test failure. Per-case time
+includes `setUp`, `tearDown` and cleanups; suite elapsed time also includes
+class/module fixtures and runner overhead. Discovery/import time is excluded.
+The JSON contains test IDs and counts, without captured output or tracebacks.
 Choose all affected domains; shared configuration, validators, plugin composition,
 test infrastructure, or uncertain dependencies warrant a full local run.
 Use `make check-ci` for that broad validation or when CI is unavailable.
@@ -291,9 +299,10 @@ qualification under the [optimization plan](../../plans/resource-aware-optimizat
 ## Maintaining tests
 
 Use the [test suite maintenance plan](../../plans/test-maintenance.md) for the
-current suite inventory, recommended pruning review, and proposed fast/full
-testing cadence. Treat its backlog as recommendations until each change is
-reviewed against the observable contract and retained coverage.
+suite inventory, measured baseline, pruning decisions and execution cadence.
+Recompute counts with the inventory command instead of treating dated counts as
+fixed requirements. Review each pruning candidate against the observable contract
+and retained coverage.
 
 The shell-safety scan checks normalized keyword spelling before parsing source;
 unrelated Unicode text does not require an AST walk. Keep its positive Unicode

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import os
 from pathlib import Path
 import sys
@@ -14,7 +15,7 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import run_tests
-from scripts import check_development
+from scripts import check_development, test_inventory
 
 
 class TestDevelopmentChecks(unittest.TestCase):
@@ -78,16 +79,26 @@ class TestRunTestsSuites(unittest.TestCase):
         self.assertEqual(len(test_ids), len(set(test_ids)))
 
     def test_domain_suites_cover_all_discovered_modules(self) -> None:
-        test_root = run_tests._REPO_ROOT / "tests"
-        discovered = {
-            ".".join(path.relative_to(run_tests._REPO_ROOT).with_suffix("").parts)
-            for path in test_root.rglob("test_*.py")
-            if path.is_file()
-        }
-        grouped = set().union(
-            *(run_tests.TEST_SUITES[name] for name in run_tests.TEST_SUITE_PATTERNS)
+        errors = test_inventory.selection_errors(
+            run_tests._REPO_ROOT, run_tests.TEST_SUITE_PATTERNS, run_tests.TEST_SUITES,
         )
-        self.assertEqual(discovered, grouped)
+        self.assertEqual(errors, [])
+
+    def test_inventory_reports_unowned_modules_and_stale_selections_without_imports(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "tests/nested").mkdir(parents=True)
+            (root / "tests/test_owned.py").write_text("raise RuntimeError('must not import')\ndef test_one(): pass\n")
+            (root / "tests/nested/test_new.py").write_text("async def test_two(): pass\n")
+            report = test_inventory.inventory(root, {"core": ("tests/test_owned.py", "tests/test_removed.py")},
+                                              {"core": ["tests.test_owned"], "integration": ["tests.test_removed"]})
+        self.assertEqual(report["modules"], 2)
+        self.assertEqual(report["definitions"], 2)
+        self.assertEqual(report["errors"], [
+            "Unowned test module: tests.nested.test_new",
+            "Stale selector in integration: tests.test_removed",
+            "Empty pattern in core: tests/test_removed.py",
+        ])
 
     def test_list_suites_output(self) -> None:
         stdout = io.StringIO()
@@ -133,6 +144,48 @@ class TestRunTestsExpensivePrereqs(unittest.TestCase):
 
 
 class TestRunTestsDurations(unittest.TestCase):
+    def test_suite_time_includes_class_fixtures_outside_test_case_timings(self) -> None:
+        result = run_tests.TimedTextTestResult(io.StringIO(), True, 0)
+        case = unittest.FunctionTestCase(lambda: None)
+        with patch.object(run_tests.time, "perf_counter", side_effect=[10, 12, 15, 18]):
+            result.startTestRun()
+            result.startTest(case)
+            result.stopTest(case)
+            result.stopTestRun()
+        self.assertEqual(result.total_duration, 8)
+        self.assertEqual(result.test_durations, [(3, case.id())])
+
+    def test_json_timings_include_results_even_on_failure_without_captured_secrets(self) -> None:
+        class Sample(unittest.TestCase):
+            def test_failure(self):
+                print("secret captured output")
+                self.fail("secret traceback")
+
+            @unittest.skip("private skip reason")
+            def test_skip(self):
+                pass
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "timings.json"
+            with (patch.object(run_tests, "_build_suite", return_value=unittest.defaultTestLoader.loadTestsFromTestCase(Sample)),
+                  contextlib.redirect_stdout(io.StringIO())):
+                self.assertEqual(run_tests.main(["--timings-json", str(path)]), 1)
+            report = json.loads(path.read_text())
+        self.assertEqual((report["tests_run"], report["skipped"], report["failures"]), (2, 1, 1))
+        self.assertFalse(report["successful"])
+        self.assertEqual(len(report["tests"]), 2)
+        self.assertGreaterEqual(report["suite_seconds"], report["test_case_seconds"])
+        self.assertNotIn("secret captured output", json.dumps(report))
+        self.assertNotIn("secret traceback", json.dumps(report))
+        self.assertNotIn("private skip reason", json.dumps(report))
+
+    def test_unwritable_report_path_is_rejected_before_tests_start(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            with (patch.object(run_tests, "_build_suite") as build,
+                  contextlib.redirect_stderr(io.StringIO())):
+                self.assertEqual(run_tests.main(["--timings-json", str(Path(temporary) / "missing/report.json")]), 2)
+            build.assert_not_called()
+
     def test_duration_output_can_be_requested(self) -> None:
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):

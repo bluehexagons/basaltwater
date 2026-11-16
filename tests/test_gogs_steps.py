@@ -854,15 +854,6 @@ class TestGenerateGogsConfig(unittest.TestCase):
         )
         self.assertNotIn("$http_cf_connecting_ip", content)
 
-    def test_redacted_admin_create_user_command_hides_password(self):
-        command = gogs_steps._redacted_admin_create_user_command(
-            "/srv/gogs/custom/conf/app.ini",
-            "admin",
-            "admin@localhost",
-        )
-        self.assertIn("[REDACTED]", command)
-        self.assertNotIn("supersecret", command)
-
     @patch("web.gogs_steps._get_git_home", return_value="/home/git")
     def test_admin_command_places_config_after_subcommand(self, _git_home):
         command = gogs_steps.build_gogs_admin_command(
@@ -1351,6 +1342,7 @@ class TestGogsRequiredSetupSteps(unittest.TestCase):
         display_command = mock_run.call_args.kwargs["display_cmd"]
         self.assertIn("--password chosen-password", command)
         self.assertNotIn("chosen-password", display_command)
+        self.assertIn("[REDACTED]", display_command)
         mock_write_credentials.assert_called_once_with("gitadmin", "chosen-password")
 
     @patch("web.gogs_steps._write_admin_credentials")
@@ -1380,6 +1372,9 @@ class TestGogsRequiredSetupSteps(unittest.TestCase):
 
         mock_generate_password.assert_called_once_with(24)
         self.assertIn("--password generated-password", mock_run.call_args.args[0])
+        display_command = mock_run.call_args.kwargs["display_cmd"]
+        self.assertNotIn("generated-password", display_command)
+        self.assertIn("[REDACTED]", display_command)
         mock_write_credentials.assert_called_once_with("gitadmin", "generated-password")
 
     @patch("web.gogs_steps._write_admin_credentials")

@@ -1,9 +1,8 @@
 """Helpers for marking tests that should not run with the default suite.
 
 Tests decorated with :func:`expensive` are skipped unless the user explicitly
-opts in. This keeps the default ``python3 -m unittest discover -s tests`` run
-fast and free of side-effects (network, real Proxmox hosts, etc.) while still
-allowing those tests to be exercised on demand.
+opts in. The live Proxmox category protects real-host mutations; ordinary tests
+can still exercise bounded local processes and loopback transports.
 
 Categories
 ----------
@@ -49,8 +48,6 @@ CATEGORY_ENV_PREFIX = "BASALTWATER_RUN_"
 # sync with what's actually decorated in the test tree.
 KNOWN_CATEGORIES: dict[str, str] = {
     "live_proxmox": "Talks to a real Proxmox host (creates/destroys real VMs or LXCs)",
-    "network": "Requires outbound network access (downloads, DNS, etc.)",
-    "slow": "Long-running tests that aren't useful for the inner dev loop",
 }
 
 _TRUTHY = {"1", "true", "yes", "on"}
@@ -100,9 +97,6 @@ def expensive(category: str = "general", reason: str | None = None):
     )
 
 
-# Backwards-compatible alias: old call sites used `@expensive("reason text")`
-# with a single positional reason. New call sites should prefer
-# `@expensive("category", "reason")`. Both forms still work.
 __all__ = [
     "EXPENSIVE_ENV_VAR",
     "CATEGORY_ENV_PREFIX",
