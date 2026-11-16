@@ -134,8 +134,10 @@ Remaining implementation tasks, independently assignable after qualification:
   [desktop evidence](../workstations/desktop-automation.md#map-and-record-debian-observations)
   and [Debian task ownership](../workstations/debian-development.md). Mocked
   checks cover stale context, recorder failures, queued generation/control
-  changes and scoped cgroup cleanup. Live task/descendant cleanup, helper
-  replacement and shared-session transitions remain post-refresh qualification.
+  changes and scoped cgroup cleanup. The refreshed fixture follow-up above
+  exercised task/descendant cleanup through the corrected adapter. Its public
+  launch route after restart, helper replacement and shared-session transitions
+  remain open.
   Conditional execution and live audio retain separate backend requirements.
 - [ ] Prototype persistent X11 input with owned press/release accounting and an
   independent worker-death watchdog before enabling drag, physical keycodes or
@@ -161,8 +163,8 @@ Remaining implementation tasks, independently assignable after qualification:
   acknowledged-prefix/uncertain-character receipts. Offline regression checks
   cover expiry, deadline, takeover, resize and active-window loss. See
   [paced text](../workstations/desktop-automation.md#pace-text-for-custom-editors).
-  Live refreshed-supervisor multilingual read-back, UI takeover and reconnect
-  qualification remain open; the 2026-11-03 fixture above retains its old scope.
+  Refreshed-supervisor multilingual read-back passed in the 2026-11-16 fixture
+  above. Live UI takeover and reconnect qualification remain open.
 - [ ] Prototype guarded revalidation of a completed plan against a fresh
   observation. Bind the expected target and relevant scene conditions; start
   with conservative comparisons and measure false refusals from animation.
