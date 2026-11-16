@@ -1006,7 +1006,8 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
     async def test_websocket_consumes_ticket_and_filters_modified_client_input(self):
         attachment = await self.session()
         reader = asyncio.StreamReader()
-        writer = MagicMock(drain=AsyncMock(), is_closing=MagicMock(return_value=False))
+        processed = asyncio.Event()
+        writer = MagicMock(drain=AsyncMock(side_effect=processed.set), is_closing=MagicMock(return_value=False))
         self.stack.enter_context(patch.object(service.asyncio, "open_connection", new=AsyncMock(return_value=(reader, writer))))
         handshake_mock = self.stack.enter_context(patch.object(service, "handshake", new=AsyncMock(return_value="$native")))
         ws = await self.client.ws_connect("/desktop/ws?attachment=" + attachment, headers=self.headers, protocols=("guacamole",))
@@ -1023,16 +1024,18 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
             await self.client.ws_connect("/desktop/ws?attachment=" + attachment, headers=self.headers, protocols=("guacamole",))
         self.assertEqual(replay.exception.status, 403)
         await ws.send_str(instruction("key", "65", "1") + instruction("sync", "1"))
-        await asyncio.sleep(.05)
+        await asyncio.wait_for(processed.wait(), 2)
         self.assertEqual(b"".join(c.args[0] for c in writer.write.call_args_list), instruction("sync", "1").encode())
+        processed.clear()
         await self.post("control", session=attachment, action="take")
         await ws.send_str(instruction("key", "65", "1"))
-        await asyncio.sleep(.05)
+        await asyncio.wait_for(processed.wait(), 2)
         self.assertIn(instruction("key", "65", "1").encode(), [c.args[0] for c in writer.write.call_args_list])
+        processed.clear()
         writer.write.reset_mock()
         self.snapshot["paused"] = False
         await ws.send_str(instruction("key", "65", "1") + instruction("sync", "2"))
-        await asyncio.sleep(.05)
+        await asyncio.wait_for(processed.wait(), 2)
         self.assertEqual(b"".join(c.args[0] for c in writer.write.call_args_list), (instruction("key", "65", "0") + instruction("sync", "2")).encode())
         await ws.send_str(instruction("clipboard", "1", "text/plain"))
         message = await ws.receive(timeout=2)
@@ -1062,8 +1065,25 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(current.pointer)
 
     async def test_socket_close_native_eof_and_idle_expiry_preserve_human_override(self):
+        tick = asyncio.Event()
+        retired = asyncio.Event()
+        timer = SimpleNamespace(**vars(asyncio))
+        async def sleep(seconds):
+            if seconds == 2:  # Control only the gateway watcher's cadence.
+                await tick.wait()
+                tick.clear()
+            else:
+                await asyncio.sleep(seconds)
+        timer.sleep = sleep
+        self.stack.enter_context(patch.object(service, "asyncio", timer))
+        retire = self.gateway.retire
+        async def retire_session(session):
+            await retire(session)
+            retired.set()
+        self.stack.enter_context(patch.object(self.gateway, "retire", side_effect=retire_session))
         for ending in ("browser", "native", "idle"):
             with self.subTest(ending=ending):
+                retired.clear()
                 attachment = await self.session()
                 reader = asyncio.StreamReader()
                 writer = MagicMock(drain=AsyncMock(), is_closing=MagicMock(return_value=False))
@@ -1085,13 +1105,11 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
                         reader.feed_eof()
                     else:
                         current.activity -= service.IDLE_TIMEOUT + 1
+                        tick.set()
                     message = await ws.receive(timeout=3)
                     self.assertIn(message.type, (WSMsgType.CLOSE, WSMsgType.CLOSED))
                     await ws.close()
-                for _ in range(100):
-                    if self.gateway.session is None:
-                        break
-                    await asyncio.sleep(.01)
+                await asyncio.wait_for(retired.wait(), 2)
                 self.assertIsNone(self.gateway.session)
                 self.assertTrue(self.snapshot["paused"])
                 self.assertEqual(self.snapshot["agent_control"], "human-override")

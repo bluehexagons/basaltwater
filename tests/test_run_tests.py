@@ -7,15 +7,17 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import run_tests
-from scripts import check_development, test_inventory
+from scripts import check_development, run_debian_ci, test_inventory
 
 
 class TestDevelopmentChecks(unittest.TestCase):
@@ -64,6 +66,72 @@ class TestDevelopmentChecks(unittest.TestCase):
                 if missing:
                     self.assertIn("Missing development modules: aiohttp", output.getvalue())
                     self.assertIn(".[dev,completion]", output.getvalue())
+
+
+class TestDebianCI(unittest.TestCase):
+    def setUp(self) -> None:
+        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.python = self.root / "python/bin/python3"
+        self.node = self.root / "node/bin/node"
+        for path in (self.python, self.node):
+            path.parent.mkdir(parents=True)
+            path.touch()
+        self.enterContext(patch.object(run_debian_ci, "run_probe", return_value=SimpleNamespace(issue=None, output="v24.22.1")))
+
+    def run_ci(self, **options):
+        return run_debian_ci.run_debian_ci(str(self.python), str(self.root), node=str(self.node), **options)
+
+    def test_modes_keep_measurements_and_full_suite_coverage_separate(self) -> None:
+        for options, expected in (({}, "make check TEST_ARGS="),
+                                  ({"coverage": True, "check_jobs": 2}, "make -j2 check-ci TIMINGS_JSON="),
+                                  ({"node_only": True}, "make test SUITE=node TEST_ARGS=")):
+            with self.subTest(options=options), patch.object(run_debian_ci.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as run:
+                self.assertEqual(self.run_ci(**options), 0)
+            launch = next(call for call in run.call_args_list if call.args[0][1] == "run")
+            script = launch.args[0][-1]
+            self.assertIn("ci_phase checks " + expected, script)
+            self.assertIn("artifacts/test-timings.json", script)
+            self.assertIn("mkdir -p artifacts", script)
+
+    def test_registry_fallback_never_repeats_a_failed_check(self) -> None:
+        pulls = 0
+        def execute(command, **kwargs):
+            nonlocal pulls
+            if command[1] == "pull":
+                pulls += 1
+                if pulls == 1:
+                    raise subprocess.TimeoutExpired(command, 120)
+                return SimpleNamespace(returncode=1 if pulls == 2 else 0)
+            return SimpleNamespace(returncode=7 if command[1] == "run" else 0)
+        with patch.object(run_debian_ci.subprocess, "run", side_effect=execute) as run:
+            self.assertEqual(self.run_ci(coverage=True), 7)
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertEqual([command[1] for command in commands], ["pull", "pull", "pull", "run", "rm"])
+        self.assertEqual(commands[-1][-1], commands[-2][commands[-2].index("--name") + 1])
+
+    def test_all_registries_failing_does_not_start_checks(self) -> None:
+        with patch.object(run_debian_ci.subprocess, "run", return_value=SimpleNamespace(returncode=1)) as run:
+            with self.assertRaisesRegex(RuntimeError, "checks were not started"):
+                self.run_ci()
+        self.assertTrue(all(call.args[0][1] == "pull" for call in run.call_args_list))
+
+    def test_timeout_removes_only_the_owned_container(self) -> None:
+        def execute(command, **kwargs):
+            if command[1] == "run":
+                raise subprocess.TimeoutExpired(command, 900)
+            return SimpleNamespace(returncode=0)
+        with patch.object(run_debian_ci.subprocess, "run", side_effect=execute) as run:
+            with self.assertRaises(subprocess.TimeoutExpired):
+                self.run_ci()
+        launch, cleanup = run.call_args_list[-2:]
+        self.assertEqual(cleanup.args[0], ["docker", "rm", "--force", launch.args[0][launch.args[0].index("--name") + 1]])
+
+    def test_invalid_modes_or_allocations_fail_before_any_external_command(self) -> None:
+        for options in ({"coverage": True, "node_only": True}, {"check_jobs": True}, {"check_jobs": 3}):
+            with self.subTest(options=options), patch.object(run_debian_ci.subprocess, "run") as run:
+                with self.assertRaises(ValueError):
+                    self.run_ci(**options)
+                run.assert_not_called()
 
 
 class TestRunTestsSuites(unittest.TestCase):

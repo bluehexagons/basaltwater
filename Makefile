@@ -4,6 +4,7 @@
 SUITE ?=
 TEST ?=
 TEST_ARGS ?=
+TIMINGS_JSON ?=
 BROWSER_ARGS ?=
 PANEL_ARGS ?=
 TEST_SELECTION = $(foreach suite,$(SUITE),--suite $(suite)) $(TEST)
@@ -81,7 +82,7 @@ panel-dev:
 # optional dev dependency is intentionally separate from the normal check.
 coverage: dev-check
 	python3 -m coverage erase
-	python3 -m coverage run --branch --source=. --omit='tests/*,build/*,dist/*,.venv/*,*/__pycache__/*' run_tests.py --durations 10
+	python3 -m coverage run --branch --source=. --omit='tests/*,build/*,dist/*,.venv/*,*/__pycache__/*' run_tests.py --durations 10 $(if $(TIMINGS_JSON),--timings-json "$(TIMINGS_JSON)")
 	python3 -m coverage report --show-missing
 
 # Run all tests with verbose output

@@ -207,8 +207,15 @@ Both jobs retain the Debian environment and registry fallback. Release CI still
 runs full checks at both supported Python version endpoints.
 
 CI replaces obsolete runs when a newer revision is pushed to the same branch
-or pull request. The coverage run reports the ten slowest modules and tests;
-module totals reveal accumulated fixture cost that individual timings can hide.
+or pull request within the same event type. Full checks also run for merge
+queues and nightly at 05:23 UTC; scheduled triggers activate after the workflow
+reaches the default branch. PR coverage remains full. The Tests workflow summary
+reports results and elapsed time; its per-job JSON timing artifacts last 14 days.
+The coverage run reports the ten slowest modules and tests; module totals reveal
+accumulated fixture cost that individual timings can hide. Use
+`make check-ci TIMINGS_JSON=/tmp/test-timings.json` to retain full local timings.
+The output parent must already exist. Maintainers triage failures in Actions
+before merging; see the maintenance document for the cadence and future gates.
 
 ```bash
 python3 -m py_compile file.py
