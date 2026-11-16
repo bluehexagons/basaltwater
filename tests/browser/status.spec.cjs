@@ -185,6 +185,7 @@ test('status polling updates values without navigation, focus or disclosure loss
   const url = page.url();
   await page.clock.runFor(3001);
   await expect(host(page).locator('[data-panel-metric="Memory"] .metric-value')).toHaveText('83% used');
+  await expect(host(page).locator('[data-panel-metric="Uptime"] .metric-value')).toHaveText('Unavailable');
   await expect(page.locator('.trust-disclosure')).toHaveAttribute('open', '');
   await expect(page.locator('.trust-disclosure > summary')).toBeFocused();
   await expect(host(page).locator('[data-panel-announcement]')).toContainText('status changed');
@@ -293,6 +294,12 @@ test('status polling separates missing, stale, future, partial and authorization
   await update();
   await expect(host(page)).toHaveAttribute('data-transport', 'authorization-error');
   const stopped = reads;
+  await host(page).locator('[data-panel-pause]').click();
+  await host(page).locator('[data-panel-pause]').click();
+  await page.evaluate(() => { Object.defineProperty(document, 'hidden', {configurable: true, get: () => true}); document.dispatchEvent(new Event('visibilitychange')); });
+  await page.evaluate(() => { Object.defineProperty(document, 'hidden', {configurable: true, get: () => false}); document.dispatchEvent(new Event('visibilitychange')); });
+  await expect(host(page)).toHaveAttribute('data-transport', 'authorization-error');
+  await expect(host(page).locator('[data-panel-transport]')).toContainText('Sign in again');
   await page.clock.runFor(900000);
   expect(reads).toBe(stopped);
   next = observation('host', memory('74% used'));
@@ -305,11 +312,18 @@ test('status polling preserves scan forms and filters and updates only explicitl
   await page.clock.pauseAt(new Date(Date.now() + 1000));
   await page.goto(origin + '/storage?view=projects');
   const scan = page.locator('[data-panel-resource="storage"]');
-  await page.route(api + 'storage', route => route.fulfill({json: observation('storage', {state: 'complete', started_at: null, report_generated_at: null})}));
+  const started = new Date(Date.now() - 30000).toISOString();
+  let scanData = {state: 'running', started_at: started, finished_at: null, report_generated_at: null};
+  await page.route(api + 'storage', route => route.fulfill({json: observation('storage', scanData)}));
   await page.getByLabel('Scan depth').selectOption('extended');
   await page.getByLabel('Scan depth').focus();
   await page.clock.runFor(3001);
+  await expect(scan.locator('[data-panel-summary]')).toHaveText('Diagnostic running');
+  await expect(scan.locator('[data-panel-elapsed]')).toHaveText(/\d+s elapsed/);
+  scanData = {...scanData, state: 'complete', finished_at: new Date().toISOString()};
+  await scan.locator('[data-panel-refresh]').evaluate(element => element.click());
   await expect(scan.locator('[data-panel-summary]')).toHaveText('Diagnostic complete');
+  await expect(scan.locator('[data-panel-elapsed]')).toBeHidden();
   await expect(page.getByLabel('Scan depth')).toHaveValue('extended');
   await expect(page.getByLabel('Scan depth')).toBeFocused();
   expect(page.url()).toContain('view=projects');
@@ -324,6 +338,18 @@ test('status polling preserves scan forms and filters and updates only explicitl
   await page.clock.runFor(3001);
   await expect.poll(() => services).toBe(1);
   await expect(page.locator('[data-panel-resource="services"]')).toHaveAttribute('data-transport', 'current');
+  const localServices = page.locator('[data-panel-resource="services"]');
+  await page.route(api + 'services', route => route.fulfill({json: observation('services', {metrics: [
+    {label: 'Synthetic service', value: 'failed', description: 'Failed since page load'},
+  ]})}));
+  await localServices.locator('[data-panel-refresh]').click();
+  await expect(localServices.locator('.metric-value')).toHaveText('failed');
+  await expect(localServices.locator('[data-service-summary]')).toHaveText('1 records · 1 inactive or unavailable · cached up to 30 seconds');
+  await page.route(api + 'services', route => route.fulfill({json: observation('services', {metrics: []})}));
+  await localServices.locator('[data-panel-refresh]').click();
+  await expect(localServices.locator('.metric-value')).toHaveText('Unavailable');
+  await expect(localServices.locator('.metric-description')).toContainText('Not reported in the latest snapshot');
+  await expect(localServices.locator('[data-service-summary]')).toHaveText('0 records · cached up to 30 seconds');
 });
 
 test.describe('status no JavaScript fallback', () => {

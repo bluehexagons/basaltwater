@@ -54,6 +54,12 @@ missing metrics are never converted to healthy zeroes. Stale partial snapshots
 retain their collection warning. Export timestamps belong to their exporter;
 reading an old export does not make it new.
 
+Host, web, and loaded-service values travel with their observation metadata in
+one cache reading. The initial HTML and its embedded status use that same
+reading, so concurrent collection cannot attach a newer timestamp to older
+displayed values. If a newer successful snapshot omits a displayed metric, the
+browser marks it unavailable and offers a reload to inspect the current list.
+
 An in-memory client may send the returned quoted `ETag` in `If-None-Match`.
 An unchanged resource returns 304 with no snapshot body. Authentication and
 feature checks still run. Validators cover observation time, values, warnings
@@ -88,6 +94,8 @@ requests jitter by 0.5–3 seconds; ordinary intervals add up to 10% jitter.
 Failures use exponential backoff capped at five minutes plus up to 20% jitter,
 and honor `Retry-After` seconds or HTTP dates. Requests abort after 30 seconds,
 on page hide, or when paused. The pause preference lives in `sessionStorage`.
+Authorization failures stop automatic reads and retain the sign-in notice
+across pause and visibility changes; a manual refresh retries after sign-in.
 Relative ages advance locally; unchanged 304 responses do not announce a value
 change. A source-health transition or changed value uses a polite status region
 without moving focus. Detailed tables and editable forms remain page-load

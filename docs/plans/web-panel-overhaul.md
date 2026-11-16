@@ -349,6 +349,41 @@ was no measured need for cross-tab coordination or a persistent transport.
   check under the [browser-testing guide](../agents/browser-testing.md); it was
   not performed by this automated Chromium/Firefox qualification.
 
+### Follow-up review
+
+A second review on 2026-11-16 corrected these remaining status issues:
+
+- Host and loaded-service API assembly could read values and then obtain a
+  different cache generation's timestamp or failure state. Initial host, web,
+  and service HTML could also disagree with its embedded snapshot after a
+  concurrent publication or a cache expiry during rendering. Values and
+  metadata now travel in one `Reading`, reused by both HTML and snapshot
+  builders; deterministic regressions cover API and initial-page races.
+- Pause/resume and visibility changes could replace a sign-in error with a
+  paused or suspended message while automatic requests remained stopped. The
+  authorization notice now persists until an explicit retry.
+- Completed storage scans retained their start time, causing the browser to
+  keep increasing elapsed time. Elapsed time is now shown only while running.
+- A metric omitted from a newer successful snapshot could retain its previous
+  healthy value beside the newer observation time. Existing rows now become
+  explicitly unavailable, and loaded-service record/attention counts follow
+  the latest snapshot.
+
+Browser diagnostics now retain intentionally canceled passive status GETs as
+separate evidence. Navigation, pause, and hidden-tab cancellation no longer
+produce false failures in the older page scenarios; other request failures
+remain errors.
+
+Follow-up validation passed `make check-ci` with 10,165 tests, 26 skipped, and
+82% branch coverage. The 102-case browser run passed 101 cases; its only failure
+was the navigation diagnostic for intentionally canceled status reads. After
+correcting that diagnostic and updating service counts, the final focused run
+passed all 20 status/navigation cases in Chromium and Firefox. The 52 focused
+status/dashboard/host tests also passed after the final HTML change, and
+documentation and generated-brand checks passed. Follow-up fixes were qualified
+locally; the stopped deployment fixture was not redeployed. The native Firefox
+ESR qualification limit above remains unchanged.
+
 ## Out of scope
 
 - A wholesale SPA, JavaScript framework, web-server framework, or frontend

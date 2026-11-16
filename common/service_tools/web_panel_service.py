@@ -1690,7 +1690,7 @@ def render_service_status(state: WebPanelState, load: bool) -> str:
         summary = f"{len(health)} records"
         if attention:
             summary += f" · {attention} inactive or unavailable"
-        content = f'<p class="count">{summary} · cached up to 30 seconds</p>'
+        content = f'<p class="count" data-service-summary>{summary} · cached up to 30 seconds</p>'
         content += (
             f'<dl class="overview-grid">{cards}</dl>' if cards else
             '<p class="empty">No supported local services were found.</p>'

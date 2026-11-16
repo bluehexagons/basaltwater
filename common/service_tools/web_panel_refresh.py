@@ -48,8 +48,9 @@ SCRIPT = r'''(() => {
   }
   function metrics(root, rows) {
     for (const element of root.querySelectorAll('[data-panel-metric]')) {
-      const row = rows.find(item => item.label === element.dataset.panelMetric);
-      if (!row) continue;
+      const row = rows.find(item => item.label === element.dataset.panelMetric) || {
+        value: 'Unavailable', description: 'Not reported in the latest snapshot. Reload to inspect the current list.',
+      };
       text(element, '.metric-value', row.value);
       text(element, '.metric-description', row.description);
       const value = element.querySelector('.metric-value');
@@ -70,6 +71,10 @@ SCRIPT = r'''(() => {
   function apply(region, value) {
     const root = region.root, data = value.data;
     if (['host', 'services'].includes(region.name)) metrics(root, data.metrics);
+    if (region.name === 'services') {
+      const attention = data.metrics.filter(row => row.value !== 'active').length;
+      text(root, '[data-service-summary]', `${data.metrics.length} records${attention ? ` · ${attention} inactive or unavailable` : ''} · cached up to 30 seconds`);
+    }
     if (region.name === 'web') {
       const counts = data.counts;
       if (!counts || !Array.isArray(data.services) || data.services.length > 64) throw Error('Invalid web summary');
@@ -109,7 +114,8 @@ SCRIPT = r'''(() => {
       if (link) link.hidden = data.state === 'running' || data.state === 'idle';
     }
     const elapsed = root.querySelector('[data-panel-elapsed]');
-    if (elapsed) { elapsed.dataset.startedAt = data.started_at ?? ''; elapsed.hidden = !data.started_at; }
+    if (elapsed) { elapsed.dataset.startedAt = data.started_at ?? '';
+      elapsed.hidden = !data.started_at || region.name === 'storage' && data.state !== 'running'; }
   }
   function announce(region, message) { text(region.root, '[data-panel-announcement]', message); }
   function renderAge(region) {
@@ -135,6 +141,9 @@ SCRIPT = r'''(() => {
     region.root.dataset.transport = state;
     text(region.root, '[data-panel-transport]', message);
   }
+  function authorizationError(region) {
+    transport(region, 'authorization-error', 'Sign in again, then refresh status.');
+  }
   function schedule(region, delay) {
     clearTimeout(region.timer);
     if (!paused && !document.hidden && !region.authorization) region.timer = setTimeout(() => refresh(region), delay);
@@ -156,7 +165,7 @@ SCRIPT = r'''(() => {
       });
       if ([401, 403].includes(response.status)) {
         region.authorization = true;
-        transport(region, 'authorization-error', 'Sign in again, then refresh status.');
+        authorizationError(region);
         announce(region, `${region.label}: sign in again to update status.`);
         return;
       }
@@ -202,12 +211,14 @@ SCRIPT = r'''(() => {
     for (const region of regions) {
       clearTimeout(region.timer);
       if (region.controller) { region.cancelled = true; region.controller.abort(); }
-      transport(region, paused ? 'paused' : 'suspended', paused ? 'Updates paused' : 'Updates suspended while hidden');
+      if (region.authorization) authorizationError(region);
+      else transport(region, paused ? 'paused' : 'suspended', paused ? 'Updates paused' : 'Updates suspended while hidden');
     }
   }
   function resume() {
     for (const region of regions) {
-      if (region.inflight) region.resume = true;
+      if (region.authorization) authorizationError(region);
+      else if (region.inflight) region.resume = true;
       else schedule(region, Math.random() * 1000);
     }
   }

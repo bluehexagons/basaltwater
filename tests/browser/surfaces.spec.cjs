@@ -111,6 +111,7 @@ const test = base.extend({
     const failures = [];
     const downloads = new Set();
     const optional = [];
+    const cancelledStatus = [];
     const authChallenges = new Set();
     await context.route('**/*', route => {
       const url = new URL(route.request().url());
@@ -126,7 +127,7 @@ const test = base.extend({
           && !expectedConsole.some(prefix => message.text().includes(prefix))) errors.push(`Console: ${message.text()}`);
     });
     page.on('requestfailed', request => {
-      failures.push({ url: request.url(), error: request.failure()?.errorText });
+      failures.push({ url: request.url(), method: request.method(), error: request.failure()?.errorText });
     });
     page.on('download', download => downloads.add(download.url()));
     page.on('response', response => {
@@ -139,6 +140,13 @@ const test = base.extend({
     });
     await use({ allowed, expectedConsole });
     for (const failure of failures) {
+      // The status controller cancels passive reads on navigation, pause and
+      // hidden tabs. status.spec.cjs verifies cancellation and resumption.
+      if (failure.method === 'GET' && /^\/api\/panel\/v1\/(host|web|audit|proxmox|agents|storage|services)$/.test(new URL(failure.url).pathname)
+          && /ERR_ABORTED|NS_BINDING_ABORTED/.test(failure.error)) {
+        cancelledStatus.push(failure);
+        continue;
+      }
       // Browsers abort the document navigation when handing it to the
       // download manager. The download test independently verifies completion.
       if (new URL(failure.url).pathname === '/favicon.svg' && /ERR_ABORTED|NS_BINDING_ABORTED/.test(failure.error)) {
@@ -153,6 +161,7 @@ const test = base.extend({
       else errors.push(`Unresolved authentication challenge: ${url}`);
     }
     await info.attach('optional-favicon-diagnostics', { body: JSON.stringify(optional), contentType: 'application/json' });
+    await info.attach('cancelled-status-reads', { body: JSON.stringify(cancelledStatus), contentType: 'application/json' });
     await info.attach('required-request-and-console-errors', { body: JSON.stringify(errors), contentType: 'application/json' });
     expect(errors, 'No unexpected console errors or failed required requests').toEqual([]);
   }, { auto: true }],
