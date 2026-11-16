@@ -79,7 +79,29 @@ class TriageTests(unittest.TestCase):
         self.assertEqual(data_job.run_action(self.value), 1)
         self.assertTrue(all(path.exists() for path in self.paths))
         self.assertEqual([item["status"] for item in self.result()["items"]], ["skipped"] * 2)
+        self.assertEqual([item["failure"] for item in data_job._record()["items"]], ["batch_preflight", "file_changed"])
         self.assertFalse(self.report().data.get("dispositions"))
+
+    def test_preflight_retains_distinct_failures_without_processing_files(self):
+        def reject(path, *args):
+            raise OSError(errno.EROFS if path == str(self.paths[0]) else errno.EACCES, "private evidence")
+        with patch.object(data_job, "disposition_preflight", side_effect=reject), patch.object(data_job, "dispose") as dispose:
+            self.assertEqual(data_job.run_action(self.value), 1)
+            dispose.assert_not_called()
+        self.assertEqual([item["failure"] for item in data_job._record()["items"]], ["read_only", "permission_denied"])
+        self.assertNotIn("private evidence", self.state.read_text())
+
+    def test_quarantine_rechecks_inconclusive_finding_even_when_identity_matches(self):
+        report = self.report()
+        report.record("one", {"category": "missing_parity", "file_identity": findings.file_identity(str(self.paths[0]))})
+        self.value["items"][0]["finding"] = finding_revision(report.data["files"]["one"])
+        identity = findings.file_identity(str(self.paths[0]))
+        with patch.object(data_job, "examine", return_value={"category": "healthy", "file_identity": identity}) as examine:
+            self.assertEqual(data_job.run_action(self.value), 0)
+        examine.assert_called_once()
+        self.assertTrue(self.paths[0].exists())
+        self.assertFalse(self.report().active("one"))
+        self.assertEqual(self.result()["items"][0]["category"], "healthy")
 
     def test_verify_batch_refreshes_changed_identity_before_quarantine(self):
         self.value["action"] = "verify"

@@ -32,7 +32,7 @@ from sync.service_tools.scrub_manage import execute, selected_jobs
 from sync.service_tools.storage_ops import LOCK_FILE, OperationLock, resolve_scrub_database_path
 
 RESULTS = {"running", "succeeded", "findings", "failed", "interrupted"}
-FAILURES = {"", "storage_busy", "setup_recovery_required", "finding_changed", "file_changed", "identity_unavailable", "overlapping_scrubs", "reserved_path", "execution_rejected", "job_interrupted", "read_only", "permission_denied", "no_space", "cross_device"}
+FAILURES = {"", "storage_busy", "setup_recovery_required", "finding_changed", "file_changed", "identity_unavailable", "overlapping_scrubs", "reserved_path", "execution_rejected", "job_interrupted", "read_only", "permission_denied", "no_space", "cross_device", "batch_preflight"}
 
 
 class DataJobRejected(ValueError):
@@ -226,7 +226,8 @@ def recover_batch(parameters: dict, saved: dict, value: dict) -> None:
             # current observation for examine's check immediately before PAR2.
             current = file_identity(item["file"])
             entry = {**entry, "file_identity": current,
-                     "needs_verification": "file_identity" not in entry or entry["file_identity"] != current or current is None}
+                     "needs_verification": ("file_identity" not in entry or entry["file_identity"] != current
+                                            or current is None or entry["category"] not in {"repairable", "unrepairable"})}
         else:
             if "file_identity" not in entry:
                 raise DataJobRejected("identity_unavailable")
@@ -249,14 +250,16 @@ def recover_batch(parameters: dict, saved: dict, value: dict) -> None:
                 disposition_preflight(item["file"], directory, database, parameters["job_id"])
         return entry
 
-    try:
-        for item in value["items"]:
+    preflight_failures = {}
+    for index, item in enumerate(value["items"]):
+        try:
             check(item)
-    except (OSError, ValueError, RuntimeError) as exc:
-        reason = _failure(exc)
-        for item in value["items"]:
-            item.update(status="skipped", failure=reason, finished=time.time())
-        raise DataJobRejected(reason) from exc
+        except (OSError, ValueError, RuntimeError) as exc:
+            preflight_failures[index] = _failure(exc)
+    if preflight_failures:
+        for index, item in enumerate(value["items"]):
+            item.update(status="skipped", failure=preflight_failures.get(index, "batch_preflight"), finished=time.time())
+        raise DataJobRejected(next(iter(preflight_failures.values())))
     for item in value["items"]:
         try:
             entry = check(item)

@@ -111,6 +111,22 @@ class ScrubTriagePanelTests(unittest.TestCase):
         self.assertNotIn('value="delete"', body)
         self.assertNotIn('value="quarantine"', body)
 
+    def test_quarantine_activity_distinguishes_healthy_from_moved_files(self):
+        _, parameters = self.manager.prepare(self.fields(action="quarantine"))
+        latest = {"parameters": parameters, "status": "succeeded", "started": 1, "finished": 2,
+                  "items": [{"index": 0, "status": "completed", "category": "healthy"},
+                            {"index": 1, "status": "completed", "category": "quarantine"}]}
+        body = actions.render_status({**status(), "latest": latest}, "CSRF")
+        self.assertIn('class="badge success">succeeded', body)
+        self.assertIn("Verified healthy; kept in place.", body)
+        self.assertIn("Moved into private quarantine", body)
+        latest.update(status="failed", items=[{"index": 0, "status": "skipped", "failure": "batch_preflight"},
+                                             {"index": 1, "status": "skipped", "failure": "read_only"}])
+        body = actions.render_status({**status(), "latest": latest}, "CSRF")
+        self.assertIn('class="badge error">failed', body)
+        self.assertIn("This file passed preflight.", body)
+        self.assertIn("read-only", body)
+
     def test_batch_summary_counts_all_states_without_repeating_target_list(self):
         _, parameters = self.manager.prepare(self.fields(action="verify", count=7))
         states = ("pending", "running", "completed", "skipped", "failed", "unresolved")

@@ -112,7 +112,8 @@ visit. Deletion requires the displayed `DELETE N FILES` confirmation. Repair,
 restore and acceptance stay individual operations.
 
 Quarantine automatically verifies a selected file against existing parity when
-its recorded identity is stale or absent. Healthy files stay in place and their
+its recorded identity is stale or absent, or its finding does not confirm
+repairable or unrepairable damage. Healthy files stay in place and their
 findings resolve. Stable files confirmed as repairable or unrepairable are moved
 using their freshly verified identities. Missing files, missing or invalid parity,
 I/O errors and other inconclusive checks are skipped with their new classification;
@@ -120,6 +121,13 @@ the remaining files continue. A file changing during verification or before the
 move is never automatically retried. Inspect per-file outcomes in activity.
 Permanent deletion still requires matching recorded identities; use **Verify
 selected files**, wait for the next export and review deletion again if needed.
+
+All selected paths are checked in preflight before any file is processed. If a check fails,
+activity identifies each failing file and marks the others as having passed
+preflight but skipped because the batch was stopped. This does not mean every
+selected file has the same problem. Worker badges distinguish success, findings
+and failure; per-file results distinguish files kept healthy from files moved
+into quarantine.
 
 Quarantine retains corrupt bytes under the source root's private, root-owned
 `.basaltwater-quarantine` directory. For files in a nested mount, bind mount or
