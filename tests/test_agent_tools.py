@@ -1910,14 +1910,16 @@ class TestAgentPayloadInstallation(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as directory:
             source = os.path.join(directory, 'auth.json')
-            outside = os.path.join(directory, 'outside.json')
+            outside_dir = os.path.join(directory, 'outside')
+            os.makedirs(outside_dir)
+            outside = os.path.join(outside_dir, 'auth.json')
             home = os.path.join(directory, 'home')
             os.makedirs(home)
             with open(source, 'w', encoding='utf-8') as file_obj:
                 file_obj.write('secret')
             with open(outside, 'w', encoding='utf-8') as file_obj:
                 file_obj.write('untouched')
-            os.symlink(directory, os.path.join(home, '.codex'))
+            os.symlink(outside_dir, os.path.join(home, '.codex'))
 
             with self.assertRaisesRegex(RuntimeError, 'symlinked agent destination'):
                 _copy_secret_file(

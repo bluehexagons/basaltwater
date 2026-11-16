@@ -93,6 +93,14 @@ and remain failures. Its Linux installed-CLI check also exercises offline deskto
 instruction paging, coordinate mapping and durable run continuation/refusal in
 private temporary files, without contacting or starting a desktop helper.
 Use `python3 run_tests.py --list-suites` to see concise suite names and sizes.
+`python3 scripts/test_inventory.py` validates every suite selector and pattern
+and reports structural counts without importing tests. Add `--json` for module
+ownership, legitimate overlaps, and candidate sleep/process sites for review.
+`run_tests.py --durations 30 --timings-json /tmp/test-timings.json` exports
+result counts and every test duration, including on test failure. Per-case time
+includes `setUp`, `tearDown` and cleanups; suite elapsed time also includes
+class/module fixtures and runner overhead. Discovery/import time is excluded.
+The JSON contains test IDs and counts, without captured output or tracebacks.
 Choose all affected domains; shared configuration, validators, plugin composition,
 test infrastructure, or uncertain dependencies warrant a full local run.
 Use `make check-ci` for that broad validation or when CI is unavailable.
@@ -199,8 +207,15 @@ Both jobs retain the Debian environment and registry fallback. Release CI still
 runs full checks at both supported Python version endpoints.
 
 CI replaces obsolete runs when a newer revision is pushed to the same branch
-or pull request. The coverage run reports the ten slowest modules and tests;
-module totals reveal accumulated fixture cost that individual timings can hide.
+or pull request within the same event type. Full checks also run for merge
+queues and nightly at 05:23 UTC; scheduled triggers activate after the workflow
+reaches the default branch. PR coverage remains full. The Tests workflow summary
+reports results and elapsed time; its per-job JSON timing artifacts last 14 days.
+The coverage run reports the ten slowest modules and tests; module totals reveal
+accumulated fixture cost that individual timings can hide. Use
+`make check-ci TIMINGS_JSON=/tmp/test-timings.json` to retain full local timings.
+The output parent must already exist. Maintainers triage failures in Actions
+before merging; see the maintenance document for the cadence and future gates.
 
 ```bash
 python3 -m py_compile file.py
@@ -291,9 +306,10 @@ qualification under the [optimization plan](../../plans/resource-aware-optimizat
 ## Maintaining tests
 
 Use the [test suite maintenance plan](../../plans/test-maintenance.md) for the
-current suite inventory, recommended pruning review, and proposed fast/full
-testing cadence. Treat its backlog as recommendations until each change is
-reviewed against the observable contract and retained coverage.
+suite inventory, measured baseline, pruning decisions and execution cadence.
+Recompute counts with the inventory command instead of treating dated counts as
+fixed requirements. Review each pruning candidate against the observable contract
+and retained coverage.
 
 The shell-safety scan checks normalized keyword spelling before parsing source;
 unrelated Unicode text does not require an AST walk. Keep its positive Unicode
@@ -315,9 +331,10 @@ distinct failure inputs, even if their assertion bodies match. Use `subTest`
 for a shared behavioral contract when it improves clarity. Sweep independent
 options separately and keep representative interaction cases; avoid Cartesian
 products unless the options interact. Reuse parsers and immutable fixtures
-within the owning test class. Generated HTML and
-service configuration assertions remain useful when they verify access,
-escaping, activation, or other behavior. Run the affected selection and review
+within the owning test class. Use temporary repositories or checked-in examples
+for manifest fixtures so results do not depend on unrelated sibling checkouts.
+Generated HTML and service configuration assertions remain useful when they
+verify access, escaping, activation, or other behavior. Run the affected selection and review
 coverage when pruning execution paths; a broad cleanup warrants `make check-ci`.
 
 Keep related variants in the owning module: optional development bundles share

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Test runner for basaltwater.
 
-By default, expensive tests (live Proxmox round-trips, network downloads, etc.)
-are skipped. Opt in with ``--expensive CATEGORY`` (repeatable) or
+By default, live Proxmox round-trips are skipped. Opt in with
+``--expensive CATEGORY`` (repeatable) or
 ``--expensive all``.
 
 Examples:
@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 from collections import deque
+import json
 import os
 import sys
 import threading
@@ -48,6 +49,7 @@ from tests.expensive_support import (  # noqa: E402  (after sys.path tweak)
     KNOWN_CATEGORIES,
     category_env_var,
 )
+from lib.validation import validate_filesystem_path  # noqa: E402
 
 
 TEST_SUITE_PATTERNS: dict[str, tuple[str, ...]] = {
@@ -256,7 +258,6 @@ TEST_SUITES: dict[str, list[str]] = {
         "tests.test_expensive_support",
     ],
     "integration": [
-        "tests.test_cicd",
         "tests.test_deploy_utils",
         "tests.test_legacy_deployment",
         "tests.test_orchestrator_bootstrap",
@@ -336,6 +337,11 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="N",
         default=0,
         help="Show the N slowest modules and tests after the run.",
+    )
+    parser.add_argument(
+        "--timings-json",
+        metavar="PATH",
+        help="Write test timings and result counts as JSON (also on test failure).",
     )
     parser.add_argument(
         "--check-prereqs",
@@ -557,6 +563,16 @@ class TimedTextTestResult(unittest.TextTestResult):
         super().__init__(*args, **kwargs)
         self.test_durations: list[tuple[float, str]] = []
         self._test_started_at = 0.0
+        self._run_started_at = 0.0
+        self.total_duration = 0.0
+
+    def startTestRun(self) -> None:
+        self._run_started_at = time.perf_counter()
+        super().startTestRun()
+
+    def stopTestRun(self) -> None:
+        self.total_duration = time.perf_counter() - self._run_started_at
+        super().stopTestRun()
 
     def startTest(self, test) -> None:
         self._test_started_at = time.perf_counter()
@@ -576,6 +592,9 @@ def _print_durations(result: unittest.TestResult, count: int) -> None:
         return
     print()
     print(f"Total test time: {sum(elapsed for elapsed, _ in durations):.3f}s")
+    if result.total_duration:
+        overhead = max(0.0, result.total_duration - sum(elapsed for elapsed, _ in durations))
+        print(f"Suite elapsed time: {result.total_duration:.3f}s ({overhead:.3f}s outside test cases)")
     modules: dict[str, tuple[float, int]] = {}
     for elapsed, test_id in durations:
         module = test_id.rsplit(".", 2)[0]
@@ -587,6 +606,26 @@ def _print_durations(result: unittest.TestResult, count: int) -> None:
     print(f"Slowest {min(count, len(durations))} tests:")
     for elapsed, test_id in sorted(durations, reverse=True)[:count]:
         print(f"  {elapsed:8.3f}s  {test_id}")
+
+
+def _write_timings(path: Path, result: TimedTextTestResult) -> None:
+    """Export measurements without captured output, tracebacks or host details."""
+    case_seconds = sum(elapsed for elapsed, _ in result.test_durations)
+    report = {
+        "schema_version": 1,
+        "tests_run": result.testsRun,
+        "skipped": len(result.skipped),
+        "failures": len(result.failures),
+        "errors": len(result.errors),
+        "expected_failures": len(result.expectedFailures),
+        "unexpected_successes": len(result.unexpectedSuccesses),
+        "successful": result.wasSuccessful(),
+        "suite_seconds": result.total_duration,
+        "test_case_seconds": case_seconds,
+        "outside_test_case_seconds": max(0.0, result.total_duration - case_seconds),
+        "tests": [{"id": test_id, "seconds": elapsed} for elapsed, test_id in result.test_durations],
+    }
+    path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
 
 
 class _TestOutput(TextIOBase):
@@ -656,6 +695,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.list_tests:
         return _list_tests()
 
+    timings_path = None
+    if args.timings_json is not None:
+        try:
+            validate_filesystem_path(args.timings_json)
+            timings_path = Path(args.timings_json).absolute()
+            validate_filesystem_path(str(timings_path), check_writable=True)
+        except ValueError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 2
+
     enabled = _apply_expensive_flags(args.expensive)
     if enabled:
         print(f"Expensive categories enabled: {', '.join(enabled)}")
@@ -707,6 +756,12 @@ def main(argv: list[str] | None = None) -> int:
                 sys.stdout.write(test_output.getvalue())
 
     _print_durations(result, args.durations)
+    if timings_path is not None:
+        try:
+            _write_timings(timings_path, result)
+        except OSError as exc:
+            print(f"Error writing timings: {exc}", file=sys.stderr)
+            return 2
 
     print()
     skipped = len(result.skipped)
