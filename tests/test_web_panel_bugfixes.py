@@ -12,6 +12,7 @@ from unittest.mock import patch
 from common import web_panel_events
 from common.service_tools import web_panel_audit_export as exporter
 from common.service_tools import web_panel_service as panel
+from common.service_tools.web_panel_status import PanelStatus, StatusCache
 from lib.machine_state import can_manage_auditd, machine_type_context
 
 
@@ -36,7 +37,9 @@ class PanelBugfixTests(unittest.TestCase):
                         else:
                             self.assertEqual(snapshot['status'], 'not_applicable')
                             self.assertEqual(snapshot['issues'], [])
-                            rendered = panel._render_audit_section(SimpleNamespace(audit_snapshot=lambda: snapshot))
+                            state = SimpleNamespace(audit_snapshot=lambda: snapshot, status_cache=StatusCache())
+                            state.status = PanelStatus(state)
+                            rendered = panel._render_audit_section(state)
                             self.assertIn('Not applicable', rendered)
                             self.assertNotIn('needs attention', rendered)
                             self.assertNotIn('No matching audit events were recorded', rendered)

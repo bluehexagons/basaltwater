@@ -176,7 +176,9 @@ def development_handler(state: panel.WebPanelState, settings: dict, generation: 
 
         def send_header(self, keyword, value) -> None:
             if keyword.lower() == "content-security-policy":
-                value = value.replace("script-src ", "connect-src 'self'; script-src 'self' ")
+                value = value.replace("script-src ", "script-src 'self' ")
+                if "connect-src " not in value:
+                    value += "; connect-src 'self'"
             super().send_header(keyword, value)
 
         def proxy_approval(self) -> None:

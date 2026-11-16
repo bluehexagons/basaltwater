@@ -19,6 +19,7 @@ from common.service_tools import web_panel_maintenance as view
 from common.service_tools import web_panel_agents as agents
 from common.service_tools import web_panel_service as panel
 from common.service_tools.web_panel_features import PanelFeatures
+from common.service_tools.web_panel_status import PanelStatus, StatusCache
 from common.service_tools.web_panel_templates import panel_navigation
 from lib import maintenance_agent as agent
 from lib import agent_maintenance as holds
@@ -53,6 +54,8 @@ class WebPanelMaintenanceTest(unittest.TestCase):
         self.state = SimpleNamespace(csrf_token="csrf-fixture", agent_tasks=SimpleNamespace(home=self.home),
                                      manifest={"host": "host.example"})
         self.state.features = lambda: PanelFeatures(tools=frozenset({"codex"}), maintenance=True)
+        self.state.status_cache = StatusCache()
+        self.state.status = PanelStatus(self.state)
         self.state.navigation = lambda current: panel_navigation(current=current, available=self.state.features().pages)
         handler = type("FixtureHandler", (panel.WebPanelHandler,), {"state": self.state})
         self.server = panel._ThreadingTCPHTTPServer(("127.0.0.1", 0), handler)

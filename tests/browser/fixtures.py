@@ -282,12 +282,12 @@ class FixtureEnvironment:
                                          "description": "Synthetic managed share access",
                                      }]}, agent_home=str(home))
         self.stack.enter_context(patch.object(state, "features", return_value=PanelFeatures()))
-        self.stack.enter_context(patch.object(state, "system_overview", return_value=[
+        self.stack.enter_context(patch.object(panel, "collect_system_overview", return_value=[
             {"label": label, "value": value, "description": "Synthetic host data"}
             for label, value in (("Memory", "42% used"), ("Swap", "0% used"), ("CPU load", "0.20"),
                                  ("Root disk", "25% used"), ("Root inodes", "12% used"), ("Uptime", "1 day"))]))
         self.stack.enter_context(patch.object(state, "audit_snapshot", return_value={"status": "ok", "events": []}))
-        self.stack.enter_context(patch.object(state, "service_health", return_value=[
+        self.stack.enter_context(patch.object(panel, "collect_service_health", return_value=[
             {"label": "Synthetic service", "value": "active", "description": "Fixture only"}]))
         self.stack.enter_context(patch.object(state, "t3_update_available", return_value=True))
         self.stack.enter_context(patch.object(state, "trigger_t3_update", side_effect=self.synthetic_update))
@@ -347,7 +347,7 @@ class FixtureEnvironment:
         headers = {key: value for key, value in request.headers.items() if key.lower() not in {"connection", "transfer-encoding", "x-forwarded-proto", "x-real-ip", "x-basaltwater-user"}}
         source = "192.0.2.2" if request.headers.get("X-Fixture-Engine") == "firefox" else "192.0.2.1"
         headers.update({"X-Forwarded-Proto": "https", "X-Forwarded-Host": request.host, "X-Real-IP": source})
-        if backend == "headscale":
+        if backend in {"panel", "headscale"}:
             headers["X-Basaltwater-User"] = self.username
             # Explicit negative admission controls exist only on this fixture.
             if request.headers.get("X-Fixture-Admission") == "http":

@@ -133,7 +133,7 @@ class Scenario:
         state = self.state
         self.replace(state, "features", return_value=self.features)
         self.replace(approval, "configured_panel_features", return_value=self.features)
-        self.replace(state, "system_overview", return_value=[
+        self.replace(panel, "collect_system_overview", return_value=[
             {"label": label, "value": value, "description": "Synthetic development data"}
             for label, value in (("Uptime", "2d 6h"), ("Memory", "94% used" if self.name == "degraded" else "24% used"),
                                  ("Swap", "8% used"), ("Root disk", "96% used" if self.name == "degraded" else "52% used"),
@@ -144,7 +144,7 @@ class Scenario:
             "issues": ["Synthetic audit collector unavailable"] if self.name == "degraded" else [],
         })
         self.replace(state, "notification_events", return_value=[])
-        self.replace(state, "service_health", return_value=[] if self.name == "empty" else [
+        self.replace(panel, "collect_service_health", return_value=[] if self.name == "empty" else [
             {"label": "Synthetic web service", "value": "failed" if self.name == "degraded" else "active",
              "description": "Simulated service; no host query"},
         ])
@@ -177,6 +177,10 @@ class Scenario:
         self.replace(state.storage_diagnostics, "snapshot", side_effect=lambda: storage_snapshot(
             loaded=bool(self.data.get("storage_loaded")), degraded=self.name == "degraded",
             mode=self.data.get("storage_mode", "quick")))
+        self.replace(state.storage_diagnostics, "status_summary", side_effect=lambda: {
+            key: value for key, value in state.storage_diagnostics.snapshot().items()
+            if key in {"state", "scan_mode", "started_at", "finished_at"}
+        })
         self.replace(state.storage_diagnostics, "start", side_effect=self.collect_storage)
         self.replace(state.git_settings, "snapshot", side_effect=self.identity)
         self.replace(state.git_settings, "set_identity", side_effect=self.set_identity)

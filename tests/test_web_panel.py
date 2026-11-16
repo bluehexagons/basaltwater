@@ -1141,7 +1141,7 @@ class WebPanelRenderingTest(unittest.TestCase):
                 "common.service_tools.web_panel_service._probe_homebox",
                 return_value=("ready", "HomeBox is ready"),
             ),
-            patch.object(state, "system_overview", return_value=[]),
+            patch.object(panel, "collect_system_overview", return_value=[]),
         ):
             rendered = render_page(state)
 
@@ -1614,7 +1614,7 @@ class WebPanelEventTest(unittest.TestCase):
                     "common.service_tools.web_panel_service.discover_basaltwater_web_services",
                     return_value=[],
                 ),
-                patch.object(state, "system_overview", return_value=[]),
+                patch.object(panel, "collect_system_overview", return_value=[]),
             ):
                 rendered = render_page(state)
 
@@ -1711,7 +1711,7 @@ class WebPanelEventTest(unittest.TestCase):
         with (
             patch("common.service_tools.web_panel_service.discover_basaltwater_web_services", return_value=[]),
             patch("common.service_tools.web_panel_service.discover_certificate_trust", return_value=None),
-            patch.object(state, "system_overview", return_value=[]),
+            patch.object(panel, "collect_system_overview", return_value=[]),
             patch.object(state, "audit_snapshot", return_value={"status": "ok", "events": []}),
         ):
             rendered = render_page(state)
@@ -1849,7 +1849,7 @@ class WebPanelEventTest(unittest.TestCase):
                 "common.service_tools.web_panel_service.discover_certificate_trust",
                 return_value=trust,
             ),
-            patch.object(state, "system_overview", return_value=[]),
+            patch.object(panel, "collect_system_overview", return_value=[]),
             patch(
                 "common.service_tools.web_panel_service.os.path.isdir",
                 return_value=True,
@@ -1929,7 +1929,7 @@ class WebPanelEventTest(unittest.TestCase):
                 "common.service_tools.web_panel_service.discover_basaltwater_web_services",
                 return_value=[],
             ),
-            patch.object(state, "system_overview", return_value=overview),
+            patch.object(panel, "collect_system_overview", return_value=overview),
             patch(
                 "common.service_tools.web_panel_service.os.path.isdir",
                 return_value=True,

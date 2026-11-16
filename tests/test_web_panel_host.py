@@ -185,12 +185,12 @@ class HostSnapshotTest(unittest.TestCase):
                 self.assertIn("Mounted storage", rendered)
                 self.assertIn("/home", rendered)
                 self.assertIn("Resource pressure", rendered)
-                self.assertNotIn("Root disk", rendered)
+                self.assertNotIn("<dt>Root disk</dt>", rendered)
                 for failed_rows in (
                     [host._issue("Query timed out")],
                     [host._filesystem(_mount(size=None)), host._issue("Query timed out")],
                 ):
-                    state._overview = []
+                    state.status_cache = panel.status_model.StatusCache()
                     collect.return_value = [overview[1], *failed_rows]
                     fallback = panel.render_page(state)
                     self.assertIn("Root disk", fallback)
@@ -205,7 +205,7 @@ class HostSnapshotTest(unittest.TestCase):
                 patch.object(panel.time, "monotonic", side_effect=[0, 0, 1, 31, 31]),
             ):
                 for _ in range(3):
-                    self.assertEqual(state.system_overview(), failed)
+                    self.assertEqual(state.system_overview().value, failed)
             self.assertEqual(collect.call_count, 2)
 
 

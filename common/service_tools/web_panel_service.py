@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import hashlib
 import http.client
 import ipaddress
 import json
@@ -34,6 +35,7 @@ if SOURCE_ROOT not in sys.path:
 from common.t3code_steps import _temporary_t3_loginctl_shim
 from common.service_tools.web_panel_diagnostics import (
     SYSTEM_UNITS,
+    _bounded_command,
     parse_query as parse_diagnostic_query,
     render_diagnostics,
 )
@@ -52,6 +54,8 @@ from common.service_tools.web_panel_share_actions import (
 )
 from common.service_tools import web_panel_routine_actions as routine_actions
 from common.service_tools import web_panel_headscale
+from common.service_tools import web_panel_status as status_model
+from common.service_tools import web_panel_refresh as refresh_ui
 from lib.storage_diagnostics import StorageDiagnostics
 from common.service_tools.web_panel_github_runner import parse_runner_query, render_runner_page
 from common.service_tools.web_panel_features import AGENT_TOOLS, PanelFeatures, discover_features, unit_installed
@@ -242,23 +246,18 @@ def _safe_url(value: object) -> str | None:
 
 
 def _run_json(command: list[str]) -> dict[str, Any]:
-    try:
-        result = subprocess.run(
-            command,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return {}
-    if result.returncode != 0 or len(result.stdout.encode("utf-8")) > _MAX_CONFIG_BYTES:
+    output, issue = _bounded_command(command, timeout=10, max_bytes=_MAX_CONFIG_BYTES)
+    if issue:
         return {}
     try:
-        value = json.loads(result.stdout)
-    except (TypeError, ValueError):
+        value = json.loads(output)
+    except (TypeError, ValueError, RecursionError):
         return {}
     return value if isinstance(value, dict) else {}
+
+
+class _DiscoveredServices(list[dict[str, str]]):
+    incomplete = False
 
 
 def _internal_web_landing_service(
@@ -301,7 +300,7 @@ def discover_basaltwater_web_services() -> list[dict[str, str]]:
     utility = shutil.which("basaltwater-web")
     if not utility:
         return []
-    services: list[dict[str, str]] = []
+    services = _DiscoveredServices()
     landing = _internal_web_landing_service(utility)
     if landing:
         services.append(landing)
@@ -312,6 +311,7 @@ def discover_basaltwater_web_services() -> list[dict[str, str]]:
         payload = _run_json(command)
         records = payload.get(collection)
         if not isinstance(records, list):
+            services.incomplete = True
             continue
         for record in records:
             if not isinstance(record, dict):
@@ -686,8 +686,20 @@ def _probe_homebox(port: int) -> tuple[str, str]:
     connection = http.client.HTTPConnection(
         "127.0.0.1", port, timeout=_SERVICE_PROBE_TIMEOUT_SECONDS
     )
+    deadline = None
     try:
         connection.request("GET", "/api/v1/status")
+        # A socket timeout alone restarts on every received byte. Bound the
+        # complete response too, including a peer that dribbles its headers.
+        transport = connection.sock
+        def interrupt() -> None:
+            try:
+                transport.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        deadline = threading.Timer(_SERVICE_PROBE_TIMEOUT_SECONDS, interrupt)
+        deadline.daemon = True
+        deadline.start()
         response = connection.getresponse()
         body = response.read(_MAX_SERVICE_PROBE_BYTES + 1)
         if response.status != HTTPStatus.OK or len(body) > _MAX_SERVICE_PROBE_BYTES:
@@ -701,6 +713,8 @@ def _probe_homebox(port: int) -> tuple[str, str]:
     ):
         return "unavailable", "HomeBox is not responding"
     finally:
+        if deadline is not None:
+            deadline.cancel()
         connection.close()
 
     if not isinstance(status, dict) or status.get("health") is not True:
@@ -813,12 +827,8 @@ class WebPanelState:
         self.action_message = ""
         self.action_output = ""
         self.action_started_at: float | None = None
-        self._overview: list[dict[str, str]] = []
-        self._overview_at = 0.0
-        self._overview_lock = threading.Lock()
-        self._service_health: list[dict[str, str]] = []
-        self._service_health_at = float("-inf")
-        self._service_health_lock = threading.Lock()
+        self.status_cache = status_model.StatusCache()
+        self.status = status_model.PanelStatus(self)
         self.publishing = Publishing(agent_home)
         self.publishing_auth = PublishingAuth(self.publishing)
         self.agent_tasks = AgentTasks(agent_home, background_tick=self.publishing_tick)
@@ -912,26 +922,53 @@ class WebPanelState:
                 path=self._notification_log_path,
             )
 
-    def system_overview(self) -> list[dict[str, str]]:
-        """Return a briefly cached host report to keep refreshes inexpensive."""
+    def system_overview(self) -> status_model.Reading:
+        """Share host values and observation metadata atomically with clients."""
+        return self.status_cache.read("host", _SYSTEM_OVERVIEW_CACHE_SECONDS, collect_system_overview)
 
-        with self._overview_lock:
-            now = time.monotonic()
-            if self._overview and now - self._overview_at < _SYSTEM_OVERVIEW_CACHE_SECONDS:
-                return list(self._overview)
-            self._overview = collect_system_overview()
-            self._overview_at = time.monotonic()
-            return list(self._overview)
+    def service_health(self) -> status_model.Reading:
+        """Cache process state and its observation metadata, including failures."""
 
-    def service_health(self) -> list[dict[str, str]]:
-        """Cache local service state for thirty seconds, including failures."""
+        return self.status_cache.read("services", _SYSTEM_OVERVIEW_CACHE_SECONDS,
+                    lambda: collect_service_health(user_services=self.features().t3))
 
-        with self._service_health_lock:
-            now = time.monotonic()
-            if now - self._service_health_at >= _SYSTEM_OVERVIEW_CACHE_SECONDS:
-                self._service_health = collect_service_health(user_services=self.features().t3)
-                self._service_health_at = now
-            return list(self._service_health)
+    def proxmox_snapshot(self) -> dict[str, Any]:
+        return load_proxmox_snapshot()
+
+    def web_services(self) -> status_model.Reading:
+        """Cache discovery and a bounded number of independently cached probes."""
+        def collect() -> list[dict[str, Any]]:
+            discovered = discover_basaltwater_web_services()
+            services = _deduplicate_services(self.manifest.get("services", []), discovered)
+            incomplete = bool(getattr(discovered, "incomplete", False))
+            if not services and incomplete:
+                raise RuntimeError("Service discovery unavailable")
+            limited = len(services) > 64 or incomplete
+            probes = 0
+            for record in services[:64]:
+                description = record["description"]
+                record.update(id=hashlib.sha256(record["url"].encode()).hexdigest()[:24],
+                              status="ready" if description == "live" else "unavailable" if description == "not responding" else "unchecked",
+                              status_text="Responding" if description == "live" else "Not responding" if description == "not responding" else "Not checked")
+                if (port := _homebox_probe_port(record)) is not None:
+                    if probes < 4:
+                        probe = self.status_cache.read("homebox-" + str(port), 60, lambda: _probe_homebox(port))
+                        record["status"], record["status_text"] = probe.value or ("unavailable", "Probe unavailable")
+                        record["probe_observed_at"] = probe.observed_at
+                        limited = limited or probe.failed
+                    else:
+                        record.update(status="unchecked", status_text="Probe limit reached")
+                        limited = True
+                    probes += 1
+                record["limited"] = limited
+            return services[:64]
+        return self.status_cache.read("web", 60, collect)
+
+    def certificate_trust(self) -> dict[str, str | bool] | None:
+        def collect() -> dict[str, str | bool] | None:
+            return (discover_certificate_trust(self.manifest) if self.manifest.get("system_type") == "server_proxmox"
+                    else discover_certificate_trust())
+        return self.status_cache.read("trust", 60, collect).value
 
     def t3_update_available(self) -> bool:
         """Return whether T3 Code is both configured and present for this user."""
@@ -1632,10 +1669,12 @@ def render_service_status(state: WebPanelState, load: bool) -> str:
         'system and current-user services.</p></div>'
     )
     if load:
-        health = state.service_health()
+        reading = state.service_health()
+        health = reading.value or []
         cards = "".join(
-            '<div class="metric"><dt>{}</dt><dd><span class="metric-value {}">{}</span>'
+            '<div class="metric" data-panel-metric="{}"><dt>{}</dt><dd><span class="metric-value {}">{}</span>'
             '<span class="metric-description">{}</span>{}</dd></div>'.format(
+                html.escape(record["label"]),
                 html.escape(record["label"]),
                 {"active": "active", "failed": "failed", "Unavailable": "unavailable"}.get(record["value"], ""),
                 html.escape(record["value"]),
@@ -1651,18 +1690,19 @@ def render_service_status(state: WebPanelState, load: bool) -> str:
         summary = f"{len(health)} records"
         if attention:
             summary += f" · {attention} inactive or unavailable"
-        content = f'<p class="count">{summary} · cached up to 30 seconds</p>'
+        content = f'<p class="count" data-service-summary>{summary} · cached up to 30 seconds</p>'
         content += (
             f'<dl class="overview-grid">{cards}</dl>' if cards else
             '<p class="empty">No supported local services were found.</p>'
         )
+        content = refresh_ui.region("services", "Local service status", content, status_model.service_snapshot(reading))
     header = f'''<header><p class="eyebrow">Basaltwater web panel</p><h1>Local service status</h1>
 <p class="lede">Process state for supported services on <code>{host}</code>.</p></header>'''
     scope = "fixed system services and the panel user's T3 Code service" if features.t3 else "fixed system services"
     body = f'''<form class="job-load" method="get" action="/services"><button name="load" value="1">Load local service status</button></form>
 <p class="endpoint">This checks {scope}. It does not prove public DNS, TLS, or application readiness.</p>
 {tool_link("checkup", "Prepare a system checkup") if prompts else ""}{content}'''
-    footer = '<footer><a href="/">Back to dashboard</a><span>Loaded on request · no automatic refresh</span></footer>'
+    footer = '<footer><a href="/">Back to dashboard</a><span>Fixed process state updates after loading</span></footer>' if load else '<footer><a href="/">Back to dashboard</a><span>Loaded on request · no automatic refresh</span></footer>'
     return render_document(
         title=f"Local service status · {state.manifest['host']}",
         style=_PAGE_STYLE,
@@ -1674,7 +1714,7 @@ def render_service_status(state: WebPanelState, load: bool) -> str:
 
 
 def _render_audit_section(state: WebPanelState) -> str:
-    snapshot = state.audit_snapshot()
+    snapshot = state.status_cache.read("audit", 300, state.audit_snapshot).value or {}
     events = snapshot.get("events", [])
     status = str(snapshot.get("status", "unavailable"))
     generated_at = str(snapshot.get("generated_at", ""))
@@ -1764,7 +1804,8 @@ def _render_audit_section(state: WebPanelState) -> str:
     return f'''<section aria-labelledby="audit-heading"><div class="section-heading"><div>
 {render_heading("System audit log", "security", heading_id="audit-heading")}</div>
 <span class="count">{count} event{"" if count == 1 else "s"}{warning_label} · {html.escape(status_label)}</span>
-</div>{issue_html}{suppression_html}{content}</section>'''
+</div>{refresh_ui.state_region(state, "audit", "Audit snapshot", '<p class="panel-summary" data-panel-summary>Audit snapshot summary</p><p class="filesystem-note">Event history and header totals reflect the page-load snapshot. Reload the dashboard to inspect a newer export.</p>')}
+{issue_html}{suppression_html}{content}</section>'''
 
 
 def _render_notification_section(state: WebPanelState) -> str:
@@ -1878,9 +1919,8 @@ def render_page(state: WebPanelState, *, proxmox_query: ProxmoxQuery | None = No
 
     manifest = state.manifest
     features = state.features()
-    services = _deduplicate_services(
-        manifest["services"], discover_basaltwater_web_services()
-    )
+    web_reading = state.web_services()
+    services = web_reading.value or []
     service_cards = ""
     service_states = {"ready": 0, "attention": 0, "unavailable": 0, "unchecked": 0}
     for record in services:
@@ -1906,22 +1946,25 @@ def render_page(state: WebPanelState, *, proxmox_query: ProxmoxQuery | None = No
             status_class = tone
             description = ""
         if (probe_port := _homebox_probe_port(record)) is not None:
-            status_class, status_text = _probe_homebox(probe_port)
+            status_class, status_text = record["status"], record["status_text"]
             status_html = '<span class="card-status {}">{}</span>'.format(
                 status_class, html.escape(status_text)
             )
+        if not status_html:
+            status_html = '<span class="card-status unchecked">{}</span>'.format(html.escape(record["status_text"]))
         service_states[status_class] += 1
         icon, category = {
             "Published site": ("web-services", "sea"),
             "HTTPS service": ("service-status", "workspace"),
         }.get(kind, ("web-services", "water"))
         service_cards += (
-            '<a class="card service-card tone-{}" href="{}"><span class="card-top"><span class="action-icon">{}</span>'
+            '<a class="card service-card tone-{}" data-panel-service="{}" href="{}"><span class="card-top"><span class="action-icon">{}</span>'
             '<span class="service-title"><strong>{}</strong><span class="service-kind">{}</span></span>'
             '<span class="service-arrow" aria-hidden="true">&#8599;</span></span>'
             '<span class="service-detail">{}{}</span><span class="card-url">{}</span></a>'
         ).format(
             category,
+            record["id"],
             html.escape(record["url"], quote=True),
             render_icon(icon),
             html.escape(label),
@@ -1942,7 +1985,8 @@ def render_page(state: WebPanelState, *, proxmox_query: ProxmoxQuery | None = No
     )
     access_content = f'<ul class="access-list">{access_rows}</ul>' if access_rows else ""
 
-    overview = state.system_overview()
+    overview_reading = state.system_overview()
+    overview = overview_reading.value or []
     overview_cards = ""
     pressure_cards = ""
     has_root_filesystem = any(
@@ -1974,10 +2018,10 @@ def render_page(state: WebPanelState, *, proxmox_query: ProxmoxQuery | None = No
         elif value == "Unavailable":
             tone = "unavailable"
         card = (
-            '<div class="metric"><dt>{}</dt><dd><span class="metric-value {}">{}</span>{}'
+            '<div class="metric" data-panel-metric="{}"><dt>{}</dt><dd><span class="metric-value {}">{}</span>{}'
             '<span class="metric-description">{}</span></dd></div>'
         ).format(
-            html.escape(record["label"]), tone, html.escape(value), meter,
+            html.escape(record["label"], quote=True), html.escape(record["label"]), tone, html.escape(value), meter,
             html.escape(record["description"]),
         )
         if record.get("kind") == "pressure":
@@ -1992,13 +2036,17 @@ def render_page(state: WebPanelState, *, proxmox_query: ProxmoxQuery | None = No
     )
     filesystem_section = render_filesystems(overview, _format_bytes)
     proxmox_section = (
-        render_proxmox(load_proxmox_snapshot(), manifest, _format_bytes, _format_uptime, query=proxmox_query)
+        render_proxmox(state.status_cache.read("proxmox", 60, state.proxmox_snapshot).value or {"available": False, "issues": []},
+                       manifest, _format_bytes, _format_uptime, query=proxmox_query)
         if manifest["system_type"] == "server_proxmox" else ""
     )
+    if proxmox_section:
+        proxmox_section = refresh_ui.state_region(state, "proxmox", "Proxmox snapshot",
+            '<p class="panel-summary" data-panel-summary>Proxmox snapshot summary</p>'
+            '<p class="filesystem-note">Summary updates automatically. Filtered inventory and details below reflect the page-load snapshot; reload to inspect a newer export.</p>' + proxmox_section)
     if filesystem_section:
-        filesystem_section += '<p><a class="refresh-link" href="/storage">Explore storage usage →</a></p>'
-    trust = (discover_certificate_trust(manifest) if manifest["system_type"] == "server_proxmox"
-             else discover_certificate_trust())
+        filesystem_section += '<p class="filesystem-note">Mounted storage reflects the page-load readings. Reload the dashboard for new filesystem details.</p><p><a class="refresh-link" href="/storage">Explore storage usage →</a></p>'
+    trust = state.certificate_trust()
     trust_section = _render_certificate_trust(trust) if trust else ""
     audit_section = _render_audit_section(state)
     notification_section = _render_notification_section(state)
@@ -2052,16 +2100,18 @@ def render_page(state: WebPanelState, *, proxmox_query: ProxmoxQuery | None = No
     ) + '</nav>'
     services_section = f'''<section aria-labelledby="services-heading"><div class="section-heading"><div>
 {render_heading("Web services", "web-services", heading_id="services-heading")}</div>
-<span class="count">{service_count}</span></div><div class="grid service-grid">{service_cards}</div></section>''' if services else ""
+<span class="count" data-web-summary>{service_count}</span></div><div class="grid service-grid">{service_cards}</div></section>''' if services else ""
+    if services_section:
+        services_section = refresh_ui.region("web", "Web services", services_section, status_model.web_snapshot(web_reading))
     access_section = f'''<section aria-labelledby="access-heading"><div class="section-heading"><div>
 {render_heading("Access", "access", heading_id="access-heading")}</div>
 <span class="count">{access_label}</span></div>{access_content}</section>''' if access_rows else ""
     body = f'''{section_nav}<section aria-labelledby="overview-heading"><div class="section-heading"><div>
 {render_heading("System overview", "dashboard", heading_id="overview-heading")}</div>
-<span class="count">Snapshot on page load · cached up to 30 seconds</span></div>
-<dl class="overview-grid host-overview">{overview_cards}</dl>{pressure_section}</section>
+<span class="count">Host readings · cached up to 30 seconds</span></div>
+{refresh_ui.region("host", "System overview", '<dl class="overview-grid host-overview">' + overview_cards + '</dl>' + pressure_section, status_model.host_snapshot(overview_reading))}</section>
 {proxmox_section}{filesystem_section}
-{render_agent_activity(state) if features.prompts else ""}
+{refresh_ui.state_region(state, "agents", "Agent activity", '<p class="panel-summary" data-panel-summary>Saved agent activity</p><span data-panel-elapsed hidden></span><p class="filesystem-note">Summary updates automatically. Activity cards and run links reflect the page-load snapshot. Open Agents to inspect changed runs and review decisions.</p>' + render_agent_activity(state)) if features.prompts else ""}
 {services_section}
 {audit_section}{notification_section}
 {access_section}{'<div id="trust">' + trust_section + '</div>' if trust_section else ""}{action}
@@ -2081,6 +2131,10 @@ class WebPanelHandler(BaseHTTPRequestHandler):
     server_version = "basaltwater-web-panel/1"
     sys_version = ""
     state: WebPanelState
+
+    def setup(self) -> None:
+        super().setup()
+        self.connection.settimeout(15)
 
     def _feature_available(self, path: str) -> bool:
         if path in {"/headscale", "/actions/headscale"}:
@@ -2130,19 +2184,26 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         payload = body.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", f"{content_type}; charset=utf-8")
-        self.send_header("Content-Length", str(len(payload)))
+        if status != HTTPStatus.NOT_MODIFIED:
+            self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
-        script_policy = f"script-src {CA_SCRIPT_CSP}; " if content_type == "text/html" else ""
+        script_policy = f"script-src {CA_SCRIPT_CSP} {refresh_ui.SCRIPT_CSP}; connect-src 'self'; " if content_type == "text/html" else ""
         if content_type == "text/html" and self.state.manifest.get("system_type") == "server_proxmox":
-            script_policy = f"script-src {CA_SCRIPT_CSP} {PROXMOX_SCRIPT_CSP}; "
+            script_policy = f"script-src {CA_SCRIPT_CSP} {PROXMOX_SCRIPT_CSP} {refresh_ui.SCRIPT_CSP}; connect-src 'self'; "
         self.send_header("Content-Security-Policy", f"default-src 'none'; {script_policy}img-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         for name, value in (headers or {}).items():
             self.send_header(name, value)
-        self.end_headers()
-        self.wfile.write(payload)
+        try:
+            self.end_headers()
+            if payload:
+                self.wfile.write(payload)
+        except (BrokenPipeError, ConnectionResetError):
+            # Navigation and hidden-tab suspension cancel passive GETs. A
+            # disconnected client needs no response or server traceback.
+            self.close_connection = True
 
     def _headscale_authorized(self) -> bool:
         try:
@@ -2165,8 +2226,20 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         )
 
     def do_GET(self) -> None:
+        try:
+            self._get()
+        except status_model.StatusBusy:
+            self._send(HTTPStatus.SERVICE_UNAVAILABLE, "Status busy; retry shortly\n", "text/plain", headers={"Retry-After": "5"})
+
+    def _get(self) -> None:
         parsed = urllib.parse.urlsplit(self.path)
         path = parsed.path
+        if path.startswith(status_model.API_PREFIX):
+            status_model.serve(self, path.removeprefix(status_model.API_PREFIX), parsed.query)
+            return
+        if path == "/assets/panel-refresh.js" and not parsed.query:
+            self._send(HTTPStatus.OK, refresh_ui.SCRIPT, "text/javascript")
+            return
         if path == "/favicon.svg":
             self._send(HTTPStatus.OK, render_favicon(), "image/svg+xml")
             return
@@ -2223,7 +2296,8 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             except ValueError:
                 self._send(HTTPStatus.BAD_REQUEST, "Invalid agent view\n", "text/plain")
                 return
-            self._send(HTTPStatus.OK, render_agents(self.state, _PAGE_STYLE, query), "text/html")
+            body = render_agents(self.state, _PAGE_STYLE, query)
+            self._send(HTTPStatus.OK, refresh_ui.agent_document(self.state, body), "text/html")
             return
         if path == "/agent-tools":
             try:
@@ -2972,12 +3046,44 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         return
 
 
-class _ThreadingUnixHTTPServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+class _BoundedThreadingMixIn(socketserver.ThreadingMixIn):
+    """Admit at most 32 request threads, including slow request headers."""
     daemon_threads = True
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self._request_slots = threading.BoundedSemaphore(32)
+        super().__init__(*args, **kwargs)
 
-class _ThreadingTCPHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
-    daemon_threads = True
+    def process_request(self, request: socket.socket, client_address: Any) -> None:
+        if not self._request_slots.acquire(blocking=False):
+            try:
+                request.settimeout(0.2)
+                request.sendall(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n"
+                                b"Cache-Control: no-store\r\nRetry-After: 5\r\nConnection: close\r\n\r\n")
+            except OSError:
+                pass
+            finally:
+                self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._request_slots.release()
+            raise
+
+    def process_request_thread(self, request: socket.socket, client_address: Any) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._request_slots.release()
+
+
+class _ThreadingUnixHTTPServer(_BoundedThreadingMixIn, socketserver.UnixStreamServer):
+    pass
+
+
+class _ThreadingTCPHTTPServer(_BoundedThreadingMixIn, HTTPServer):
+    pass
 
 
 def _parser() -> argparse.ArgumentParser:
