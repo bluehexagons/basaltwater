@@ -3,7 +3,12 @@
 Start a new thread with `basaltw agent context` for a small host feature index
 in T3 Code or another coding agent. It works outside Git and reports observed
 PATH tools, installed Basaltwater guidance names, and task-oriented CLI help
-routes. `--json` adds installed skill paths and comparison statuses. Unsafe or
+routes. The asset list reuses the manifest's desktop application catalog,
+including versioned MuseScore executable aliases, without launching GUI tools.
+Text output marks differing or personal guidance, including mixed statuses
+across provider catalogs; `--json` adds individual skill paths and statuses.
+Different may mean older or edited: inspect before refreshing and preserve
+personal changes. Unsafe or
 incomplete bundles are omitted and counted. It uses the existing known-skill
 catalog checks; it does not scan personal skills or execute discovered tools.
 CLI routes describe available command surfaces, not installed services.

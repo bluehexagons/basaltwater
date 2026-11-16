@@ -23,7 +23,7 @@ class AgentDiscoveryTests(unittest.TestCase):
               patch("lib.agent_discovery.is_cachyos", return_value=distro == "cachyos"),
               patch("lib.agent_discovery.inspect_skill_catalogs", return_value=catalog),
               patch("lib.agent_discovery.os.path.expanduser", return_value="/home/example"),
-              patch("lib.agent_discovery.shutil.which", side_effect=lambda name: "/usr/bin/" + name if name in {"codex", "t3code", "blender"} else None),
+              patch("lib.agent_discovery.shutil.which", side_effect=lambda name: "/usr/bin/" + name if name in {"codex", "t3code", "blender", "shotcut", "lmms", "obs", "musescore4"} else None),
               patch("subprocess.Popen", side_effect=AssertionError("Discovery must not execute tools"))):
             return inspect_context()
 
@@ -31,7 +31,7 @@ class AgentDiscoveryTests(unittest.TestCase):
         result = self.inspect()
         self.assertEqual(result["readiness"], "unverified")
         self.assertEqual(result["tools_on_path"]["agents"], ["codex", "t3code"])
-        self.assertEqual(result["tools_on_path"]["assets"], ["blender"])
+        self.assertEqual(result["tools_on_path"]["assets"], ["blender", "shotcut", "lmms", "obs", "musescore4"])
         self.assertEqual(result["tools_on_path"]["containers"], [])
         self.assertEqual(set(result["installed_guidance"]), {"basaltwater-subagents"})
         self.assertEqual(result["unusable_guidance_count"], 2)
@@ -75,6 +75,27 @@ class AgentDiscoveryTests(unittest.TestCase):
               patch("sys.stdout", new_callable=io.StringIO) as output):
             self.assertEqual(run_context_command(Namespace(json=True)), 1)
         self.assertFalse(json.loads(output.getvalue())["ok"])
+
+    def test_text_exposes_differing_and_personal_copies_without_duplicate_names(self):
+        from lib.agent_discovery import run_context_command
+        from argparse import Namespace
+
+        context = self.inspect()
+        context["installed_guidance"] = {
+            "basaltwater-subagents": [
+                {"path": "/codex/SKILL.md", "status": "current"},
+                {"path": "/claude/SKILL.md", "status": "different"}],
+            "basaltwater-desktop": [{"path": "/personal/SKILL.md", "status": "personal"}],
+        }
+        with (patch("lib.agent_discovery.inspect_context", return_value=context),
+              patch("sys.stdout", new_callable=io.StringIO) as output):
+            self.assertEqual(run_context_command(Namespace(json=False)), 0)
+        text = output.getvalue()
+        self.assertIn("basaltwater-subagents (current/different)", text)
+        self.assertEqual(text.count("basaltwater-subagents"), 1)
+        self.assertIn("basaltwater-desktop (personal)", text)
+        self.assertIn("basaltw agent context --json", text)
+        self.assertNotIn("/personal/", text)
 
 
 if __name__ == "__main__":

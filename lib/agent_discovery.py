@@ -9,6 +9,7 @@ import platform
 import shutil
 
 from lib.agent_skill_catalog import inspect_skill_catalogs
+from lib.agent_environment import DESKTOP_APPLICATIONS, MUSESCORE_EXECUTABLES
 from lib.cachyos import is_cachyos
 
 
@@ -17,7 +18,8 @@ TOOL_GROUPS = {
     "agents": ("codex", "claude", "opencode", "gh", "t3code", "t3"),
     "development": ("git", "node", "npm", "pnpm", "python3", "uv", "go", "gcc", "clang", "godot", "dotnet"),
     "containers": ("podman", "docker"),
-    "assets": ("blender", "krita", "gimp", "inkscape", "ffmpeg", "magick", "audacity", "kdenlive"),
+    "assets": tuple(dict.fromkeys((*DESKTOP_APPLICATIONS, *MUSESCORE_EXECUTABLES,
+                                  "ffmpeg", "ffprobe", "magick", "convert", "exiftool"))),
     "browser": ("basaltwater-playwright-mcp", "firefox", "firefox-esr", "chromium"),
 }
 
@@ -94,7 +96,14 @@ def run_context_command(args: argparse.Namespace) -> int:
     print(f"Basaltwater agent context: {result['host_profile']} (readiness unverified)")
     for group, names in result["tools_on_path"].items():
         print(f"PATH {group}: {', '.join(names) or 'none observed'}")
-    print("Installed guidance: " + (", ".join(result["installed_guidance"]) or "none observed"))
+    guidance = []
+    for name, copies in result["installed_guidance"].items():
+        statuses = sorted({copy["status"] for copy in copies})
+        qualifier = " (" + "/".join(statuses) + ")" if statuses != ["current"] else ""
+        guidance.append(name + qualifier)
+    print("Installed guidance: " + (", ".join(guidance) or "none observed"))
+    if any(copy["status"] != "current" for copies in result["installed_guidance"].values() for copy in copies):
+        print("Guidance differs from source or is personal; inspect paths/status with basaltw agent context --json.")
     if result["unusable_guidance_count"]:
         print(f"Unsafe/incomplete guidance omitted: {result['unusable_guidance_count']}")
     print("CLI routes (check relevant help before use):")
