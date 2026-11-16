@@ -378,9 +378,11 @@ worker, another platform route, or any unmeasured telemetry.
 ## Controller capability boundaries
 
 The native CLI currently provides keyboard, text, pointer and drag input.
-Gamepad events are not implemented. Package/device presence, keyboard remapping
-and a physical pad are separate conditions and do not qualify a virtual-pad
-route. Record Steam Input or other remapping separately from game-native input.
+An optional [experimental Linux QA pad](gamepad-qa.md) supplies bounded uinput
+events outside the portal helper while honoring shared human control. Qualify
+its device, interruption paths and target game before use. Package/device
+presence, keyboard remapping and a physical pad are separate conditions.
+Record Steam Input or other remapping separately from game-native input.
 The [game-testing capability plan](../plans/game-testing.md) defines the remaining
 adapter, failure-path and game-recognition acceptance work. Do not use an
 independent input script to bypass human override or disabled control.
