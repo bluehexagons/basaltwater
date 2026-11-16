@@ -37,6 +37,10 @@ bus is checked separately for systemd operations. No GUI environment is imported
 into the global user manager. Remote/abstract session-bus addresses and unsafe
 authority files are refused. Live use requires qualifying the actual VM's
 session configuration, rather than guessing display or authority values.
+Session-bus sockets may live in a root-owned sticky directory such as `/tmp`,
+as `dbus-run-session` normally arranges. This route checks socket ownership and
+the connected peer's UID with a bounded local connection; it does not relax
+the user-manager bus's private-directory check.
 
 Each task gets a random ID and a private directory beneath the account's
 `~/.local/state/basaltwater/development/`. Its transient user-systemd service has

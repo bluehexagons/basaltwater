@@ -75,6 +75,30 @@ failed harness attempts and captures remain private. This pass did not qualify
 RDP reconnect, display resize, human takeover, helper replacement during input,
 clipboard transfer or actual games.
 
+### Debian refreshed fixture follow-up, 2026-11-16
+
+A fresh XFCE supervisor on `a5d0b922` passed doctor and the Geany smoke check.
+The disposable text fixture passed token-bound multilingual pacing with exact
+UTF-8 application-state read-back, consumed-token refusal, receipt-bound window
+coordinate mapping, one counted click and normal close with an exited-zero
+launch. Manual recording finalized and verified all five referenced captures
+with zero uncertain events. These are instrumented fixture checks, not gameplay.
+
+The public development doctor/launch route exposed an over-strict session-bus
+check: `dbus-run-session` uses an owned socket under root-owned sticky `/tmp`,
+while the reused KDE check requires a private owned parent. The Debian fix
+accepts private or root-sticky parents only with an owned socket and matching
+connected peer UID. The user-manager bus retains its private-parent check.
+Mocked failures and a fresh process supplied by `desktop exec` qualified the
+corrected adapter against the actual session: logged success, nonzero failure,
+live running status, and stop of an owned descendant in a separate process
+session. Stop progressed from `stopping` to `stopped`; unrelated windows survived.
+
+That adapter check used the corrected source in a fresh process; it did not
+reload the original supervisor's cached module or qualify the corrected public
+launch route after restart. Retained raw evidence stays private. RDP reconnect,
+display resize, local/browser takeover and helper replacement remain open.
+
 ### Remaining platform acceptance
 
 Run the following against disposable fixtures on each platform, recording the

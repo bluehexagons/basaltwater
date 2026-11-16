@@ -7,10 +7,30 @@ import os
 from pathlib import Path
 import pwd
 import re
+import socket
 import stat
+import struct
 
 from desktop import development, session_runtime
 from lib.validation import validate_filesystem_path, validate_no_control_characters
+
+
+def _session_bus_owned(path: Path, uid: int) -> bool:
+    """Accept dbus-run-session sockets in sticky /tmp with peer authentication."""
+    try:
+        info, parent = path.lstat(), path.parent.lstat()
+        private = parent.st_uid == uid and not parent.st_mode & 0o022
+        sticky = parent.st_uid == 0 and bool(parent.st_mode & stat.S_ISVTX)
+        if (not stat.S_ISSOCK(info.st_mode) or info.st_uid != uid
+                or not stat.S_ISDIR(parent.st_mode) or not (private or sticky)):
+            return False
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            connection.settimeout(1)
+            connection.connect(str(path))
+            _, peer_uid, _ = struct.unpack("3i", connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+            return peer_uid == uid
+    except OSError:
+        return False
 
 
 def supervisor_environment(uid: int) -> tuple[dict[str, str], str]:
@@ -25,7 +45,7 @@ def supervisor_environment(uid: int) -> tuple[dict[str, str], str]:
         return {}, "Supervisor has no supported local X11 display/session bus"
     socket = Path(match[1])
     validate_filesystem_path(str(socket))
-    if not socket.is_absolute() or not development._owned_socket(socket, uid):
+    if not socket.is_absolute() or not _session_bus_owned(socket, uid):
         return {}, "Supervisor session bus is unavailable or not owned by the desktop account"
     authority = os.environ.get("XAUTHORITY") or str(Path(pwd.getpwuid(uid).pw_dir) / ".Xauthority")
     validate_filesystem_path(authority, must_exist=True)

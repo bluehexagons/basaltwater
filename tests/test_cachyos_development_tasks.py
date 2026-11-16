@@ -7,6 +7,8 @@ from contextlib import redirect_stdout
 from io import StringIO
 import json
 import os
+import stat
+import struct
 from pathlib import Path
 import subprocess
 import tempfile
@@ -546,6 +548,7 @@ class TestDevelopmentSession(unittest.TestCase):
         authority.chmod(0o600)
         with patch.object(session_runtime, "runtime_directory", return_value=home / "runtime/desktop"), \
                 patch.object(development, "_owned_socket", return_value=True), \
+                patch.object(debian_development, "_session_bus_owned", return_value=True), \
                 patch.object(development, "_probe") as probe, \
                 patch.dict(os.environ, {"DISPLAY": ":10.0", "XAUTHORITY": str(authority),
                     "DBUS_SESSION_BUS_ADDRESS": "unix:path=/tmp/fixture-bus,guid=" + "b" * 32,
@@ -561,6 +564,24 @@ class TestDevelopmentSession(unittest.TestCase):
                 with self.subTest(changes=changes), patch.dict(os.environ, changes):
                     self.assertFalse(debian_development.supervisor_environment(os.getuid())[0])
             probe.assert_not_called()
+
+    def test_debian_bus_accepts_root_sticky_parent_only_with_owned_socket_and_peer(self):
+        for parent_uid, mode, owner, peer, expected in (
+                (0, 0o1777, 1234, 1234, True), (1234, 0o700, 1234, 1234, True),
+                (0, 0o777, 1234, 1234, False), (42, 0o1777, 1234, 1234, False),
+                (0, 0o1777, 42, 1234, False), (0, 0o1777, 1234, 42, False)):
+            with self.subTest(mode=mode, owner=owner, peer=peer), \
+                    patch.object(Path, "lstat", side_effect=[
+                        SimpleNamespace(st_mode=stat.S_IFSOCK | 0o777, st_uid=owner),
+                        SimpleNamespace(st_mode=stat.S_IFDIR | mode, st_uid=parent_uid)]), \
+                    patch.object(debian_development.socket, "socket") as create:
+                connection = create.return_value.__enter__.return_value
+                connection.getsockopt.return_value = struct.pack("3i", 5, peer, 1234)
+                self.assertEqual(debian_development._session_bus_owned(Path("/tmp/fixture-bus"), 1234), expected)
+                if expected:
+                    connection.settimeout.assert_called_once_with(1)
+                if owner != 1234 or (parent_uid, mode) in ((0, 0o777), (42, 0o1777)):
+                    create.assert_not_called()
 
     def test_persisted_control_blocks_mutations_without_contacting_native_backend(self):
         home = Path(self.enterContext(tempfile.TemporaryDirectory()))
