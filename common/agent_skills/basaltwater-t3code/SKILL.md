@@ -7,6 +7,10 @@ metadata:
 
 # Managed T3 Code
 
+For a fresh thread's host feature inventory, run `basaltw agent context` in
+the thread's execution environment. Follow its help routes only as relevant;
+installed guidance and executables do not prove access to live session tools.
+
 The service commands here apply to Debian's upstream `t3code.service`.
 CachyOS uses `basaltwater-cachyos-t3code` for its separate web unit or packaged
 desktop. Native Windows uses the packaged desktop app; follow the

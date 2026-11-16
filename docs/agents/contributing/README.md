@@ -290,6 +290,11 @@ qualification under the [optimization plan](../../plans/resource-aware-optimizat
 
 ## Maintaining tests
 
+Use the [test suite maintenance plan](../../plans/test-maintenance.md) for the
+current suite inventory, recommended pruning review, and proposed fast/full
+testing cadence. Treat its backlog as recommendations until each change is
+reviewed against the observable contract and retained coverage.
+
 The shell-safety scan checks normalized keyword spelling before parsing source;
 unrelated Unicode text does not require an AST walk. Keep its positive Unicode
 keyword and negative comment/string cases when changing that prefilter.
