@@ -244,7 +244,14 @@ SCRIPT = r'''(() => {
   }
   document.addEventListener('visibilitychange', () => { if (document.hidden) suspend(); else { for (const region of regions) renderAge(region); resume(); } });
   window.addEventListener('pagehide', suspend);
-  window.addEventListener('pageshow', event => { if (event.persisted) resume(); });
+  window.addEventListener('pageshow', event => {
+    if (!event.persisted) return;
+    // A restored document retains its old closure; another page in this tab
+    // may have changed the session pause preference while it was away.
+    try { paused = sessionStorage.getItem(key) === '1'; } catch (_) {}
+    for (const region of regions) text(region.root, '[data-panel-pause]', paused ? 'Resume updates' : 'Pause updates');
+    if (paused) suspend(); else resume();
+  });
   setInterval(() => { if (!document.hidden) for (const region of regions) renderAge(region); }, 1000);
 })();'''
 

@@ -231,6 +231,23 @@ test('status polling pause persists per tab, manual reads work paused, hidden ta
   await other.goto(origin);
   await expect(host(other).locator('[data-panel-pause]')).toHaveText('Pause updates');
   await other.close();
+  // A Back/Forward cache restoration keeps the old script closure, but must
+  // honor pause changes made on another page in the same tab.
+  await page.evaluate(() => {
+    sessionStorage.setItem('basaltwater.panel.updates-paused', '1');
+    window.dispatchEvent(new PageTransitionEvent('pageshow', {persisted: true}));
+  });
+  await expect(host(page)).toHaveAttribute('data-transport', 'paused');
+  await expect(host(page).locator('[data-panel-pause]')).toHaveText('Resume updates');
+  await page.clock.runFor(120000);
+  expect(reads).toBe(3);
+  await page.evaluate(() => {
+    sessionStorage.setItem('basaltwater.panel.updates-paused', '0');
+    window.dispatchEvent(new PageTransitionEvent('pageshow', {persisted: true}));
+  });
+  await expect(host(page).locator('[data-panel-pause]')).toHaveText('Pause updates');
+  await page.clock.runFor(1001);
+  await expect.poll(() => reads).toBe(4);
 });
 
 test('status polling bounds overlap and timeout, backs off on overload, honors retry hints and recovers', async ({page}) => {

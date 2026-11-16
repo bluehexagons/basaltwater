@@ -384,6 +384,19 @@ documentation and generated-brand checks passed. Follow-up fixes were qualified
 locally; the stopped deployment fixture was not redeployed. The native Firefox
 ESR qualification limit above remains unchanged.
 
+### Final integration review
+
+Merged the current `main` before the final backend and browser review. The
+browser review found that Back/Forward cache restoration retained an old pause
+preference in the script closure. Restored documents now reread the current
+tab-session preference, update their controls, and suspend or resume accordingly.
+The existing pause regression exercises restoration after both pause and resume
+changes. The backend review found no remaining material issues.
+The corrected browser behavior and remaining frontend review are clean; all
+20 final status/navigation scenarios passed in Chromium and Firefox. The
+restoration case dispatches a persisted page-show event deterministically;
+native browser history-cache eligibility remains browser-dependent.
+
 ## Out of scope
 
 - A wholesale SPA, JavaScript framework, web-server framework, or frontend
