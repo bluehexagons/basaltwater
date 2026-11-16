@@ -37,6 +37,14 @@ from lib.arg_parser import add_setup_arguments
 from lib.agent_cli import add_agent_subparser, run_agent_command
 from lib.gogs_cli import add_gogs_subparser, run_gogs_command
 from lib.homebox_cli import add_homebox_subparser, run_homebox_command
+from lib.headscale_cli import add_headscale_parser, run_headscale_command
+from lib.headscale_selection import resolve_cli_selection, validate_final_selection
+from lib.headscale_admin_cli import add_headscale_admin_parser, run_headscale_admin_command
+from lib.headscale_client_cli import add_headscale_client_parser, run_headscale_client_command
+from lib.headscale_management_cli import add_headscale_management_parser, run_headscale_management_command
+from lib.headscale_dns_cli import add_headscale_dns_parser, run_headscale_dns_command
+from lib.headscale_maintenance_cli import add_headscale_maintenance_parser, run_headscale_maintenance_command
+from lib.concurrency import ResourceBusyError, ResourceLockSafetyError
 from lib.scrub_cli import add_scrub_subparser, run_scrub_command
 from lib.homebox_config import validate_homebox_settings
 from lib.kiosk_config import validate_kiosk_settings
@@ -91,7 +99,7 @@ from lib.proxmox_lifecycle import LIFECYCLE_FIELD_FLAGS
 from lib.privilege_setup import resolve_approval_panel_args
 from lib.proxmox_cli import add_proxmox_subparser, run_proxmox_command
 from lib.vm_cli import add_vm_subparser, run_vm_command
-from lib.sysadmin_cli import add_sysadmin_subparsers, run_sysadmin_command
+from lib.sysadmin_cli import SysadminArgumentParser, add_sysadmin_subparsers, run_sysadmin_command
 from lib.python_setup import run_local_python_setup
 from lib.recall import run_recall_command
 from lib.reconstruct import run_reconstruct_command
@@ -169,12 +177,18 @@ def _build_basaltwater_epilog() -> str:
     manifest init|validate      Initialize or validate project build/deploy settings
     node status|env|exec|install Select a project-specific Node runtime
     publish status|prepare|upload Manage VM publishing and reviewed release writing
+    headscale add|list|show|rename|remove|onboarding Manage saved Headscale references
+    headscale-admin ...          Root local native Headscale administration
+    headscale-client ...         Root local native client enrollment and recovery
+    headscale-manage ...         Explicit SSH management and tagged enrollment
+    headscale-dns ...            Root local DNS publication and recovery
+    headscale-maintenance ...    Root local backup, restore and upgrade
 
 Sysadmin Shortcuts:
     mount <host:path> <local>   Mount a remote directory via sshfs
     umount <local|host>         Unmount an sshfs mount
     health <host>               Show uptime, disk, memory, failed units, pending upgrades
-    ssh <host> [-- cmd]         Open SSH session using saved config
+    ssh <host> [options] [-- cmd] Open SSH session using saved config
     push <local> <host:path>    Rsync a local path to a remote host
     pull <host:path> [local]    Rsync a remote path to local
     key push <host>             Install local public key on a remote host
@@ -261,7 +275,7 @@ def run_tool_upgrade_command(args: argparse.Namespace | None = None) -> int:
         return 1
 
 
-class _CommandArgumentParser(argparse.ArgumentParser):
+class _CommandArgumentParser(SysadminArgumentParser):
     """Keep an inherited workspace unless this command explicitly replaces it."""
 
     def add_argument(self, *args: str, **kwargs) -> argparse.Action:
@@ -678,6 +692,19 @@ def create_basaltwater_parser(*, _command: str | None = None) -> Tuple[argparse.
     add_project_manifest_subparser(subparsers)
     add_node_subparser(subparsers)
     add_publishing_subparser(subparsers)
+    add_headscale_parser(subparsers)
+    add_headscale_admin_parser(subparsers)
+    add_headscale_client_parser(subparsers)
+    add_headscale_management_parser(subparsers)
+    add_headscale_dns_parser(subparsers)
+    add_headscale_maintenance_parser(subparsers)
+    if _command is None or _command in {"setup", "patch"}:
+        from lib.headscale_cli import _complete_server_names
+
+        for command_parser in (setup_parser, patch_parser):
+            for action in command_parser._actions:
+                if action.dest == "tailscale_server":
+                    action.completer = _complete_server_names
 
     shell_parser = subparsers.add_parser(
         "shell",
@@ -1084,7 +1111,7 @@ def _execute_patch_config(config: SetupConfig) -> int:
 
     try:
         runtime_config = _prepare_runtime_config_for_cli(config)
-    except ValueError as exc:
+    except (ValueError, ResourceBusyError, ResourceLockSafetyError) as exc:
         print(f"Error: {exc}")
         return 1
 
@@ -1102,6 +1129,9 @@ def _execute_patch_config(config: SetupConfig) -> int:
                 runtime_config,
                 previous_host,
             )
+    except (ResourceBusyError, ResourceLockSafetyError):
+        returncode = 1
+        print("Error: operation lock busy or unsafe; preserve state and reconcile before retry")
     finally:
         end_time = time.time()
         success = returncode == 0
@@ -1783,6 +1813,11 @@ def _refresh_existing_managed_guest_host_keys(
 
 
 def _prepare_runtime_config_for_cli(config: SetupConfig) -> SetupConfig:
+    from lib.headscale_config import validate_headscale_settings
+    from common.headscale_preflight import validate_ingress
+
+    validate_headscale_settings(config, complete=True)
+    validate_ingress(config)
     validate_kiosk_settings(config)
     if config.privilege_broker_auth and config.privilege_broker_port is None:
         raise ValueError("--approval-panel-password requires a standalone --approval-panel")
@@ -1954,20 +1989,36 @@ def run_setup_command(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        from lib.build_role_setup import BUILD_ROLE_PROFILES, setup_config_with_saved_build_roles
+        from lib.build_role_setup import setup_config_with_saved_build_roles
+        from lib.headscale_config import merge_headscale_settings
 
-        cached_build_roles = (
-            load_setup_command(_provisioning_cache_target(args.host))
-            if args.system_type in BUILD_ROLE_PROFILES else None
-        )
-        config = setup_config_with_saved_build_roles(args, cached_build_roles)
-    except ValueError as exc:
+        cached_config = load_setup_command(_provisioning_cache_target(args.host))
+        resolve_cli_selection(args, cached_config)
+        config = setup_config_with_saved_build_roles(args, cached_config)
+        if cached_config is not None:
+            for name, value in merge_headscale_settings(cached_config, config).items():
+                setattr(config, name, value)
+        validate_final_selection(config, workspace=getattr(args, "workspace", None))
+        from lib.headscale_setup import automated_setup, preflight_setup, print_setup_plan
+
+        # Pure admission applies equally to the offline automatic plan. Provider
+        # discovery, credential checks and target work still happen afterwards.
+        if getattr(args, "verify_provider", False) and not config.hosted_node:
+            raise ValueError("--verify-provider requires --provision-on")
+        if shutdown and (not config.hosted_node or config.machine_type != "vm"):
+            raise ValueError("--shutdown requires a provisioned QEMU VM (--provision-on)")
+        if not validate_username(config.username):
+            raise ValueError(f"Invalid username: {config.username}")
+        if not validate_host(config.host):
+            raise ValueError(f"Invalid IP address or hostname: {config.host}")
+        if config.hosted_node and config.activate_network is True:
+            raise ValueError("--activate-network is for patching an already saved Proxmox guest; provisioned guests boot directly on their requested address")
+        if config.dry_run and automated_setup(config):
+            preflight_setup(config, workspace=getattr(args, "workspace", None))
+            return print_setup_plan(config)
+    except (ValueError, OSError, ResourceBusyError, ResourceLockSafetyError) as exc:
         print(f"Error: {exc}")
         return 1
-    if getattr(args, "verify_provider", False) and not config.hosted_node:
-        print("Error: --verify-provider requires --provision-on")
-        return 1
-
     cached_provisioning = _load_cached_provisioning_metadata(config)
     provider_rebind = _provider_rebind_requested(
         config,
@@ -2025,35 +2076,25 @@ def run_setup_command(args: argparse.Namespace) -> int:
         )
         return 1
 
-    if not validate_username(config.username):
-        print(f"Error: Invalid username: {config.username}")
-        return 1
-
-    if config.hosted_node and config.activate_network is True:
-        print(
-            "Error: --activate-network is for patching an already saved Proxmox "
-            "guest; provisioned guests boot directly on their requested address"
-        )
-        return 1
-    
     try:
         from lib.build_enrollment_cli import prepare_cli_build_enrollments
 
+        validate_final_selection(config, workspace=getattr(args, "workspace", None))
         prepare_cli_build_enrollments(config, args)
         runtime_config = _prepare_runtime_config_for_cli(config)
-    except ValueError as e:
+    except (ValueError, ResourceBusyError, ResourceLockSafetyError) as e:
         print(f"Error: {e}")
         return 1
 
-    if shutdown and (not config.hosted_node or config.machine_type != "vm"):
-        print("Error: --shutdown requires a provisioned QEMU VM (--provision-on)")
-        return 1
-
-    if not validate_host(config.host):
-        print(f"Error: Invalid IP address or hostname: {config.host}")
-        return 1
-    
     description = f"{args.system_type.replace('_', ' ').title()} Setup"
+    try:
+        if automated_setup(runtime_config):
+            preflight_setup(runtime_config, workspace=getattr(args, "workspace", None))
+            config.headscale_registration_id = runtime_config.headscale_registration_id
+            config.headscale_registration_binding = runtime_config.headscale_registration_binding
+    except (ValueError, OSError) as exc:
+        print(f"Error: {exc}")
+        return 1
     print_setup_summary(config, description)
     if config.kiosk_destinations is not None:
         print(f"Kiosk destinations: {len(config.kiosk_destinations)}")
@@ -2237,15 +2278,37 @@ def run_setup_command(args: argparse.Namespace) -> int:
     replaced_cache_host: Optional[str] = None
     start_time = time.time()
     returncode = 1
+    def finish_automated_setup(verified: SetupConfig) -> int:
+        if shutdown:
+            return shutdown_after_setup(verified)
+        if restart_if_needed:
+            return restart_after_setup(verified, wait_for_restart=wait_for_restart)
+        return 0
+
     try:
-        returncode = run_remote_setup(runtime_config)
+        if automated_setup(config):
+            returncode = run_remote_setup(runtime_config, after_setup=finish_automated_setup)
+        else:
+            returncode = run_remote_setup(runtime_config)
         if returncode == 0:
             replaced_cache_host = adopt_verified_network_host(
                 config,
                 runtime_config,
                 previous_host,
             )
+    except (ResourceBusyError, ResourceLockSafetyError):
+        returncode = 1
+        print("Error: operation lock busy or unsafe; preserve state and reconcile before retry")
+    except (ValueError, RuntimeError, OSError) as exc:
+        returncode = 1
+        if not automated_setup(config):
+            raise
+        print(f"Error: automated Headscale setup failed: {exc}")
     finally:
+        if automated_setup(config) and runtime_config.host != previous_host:
+            replaced_cache_host = adopt_verified_network_host(config, runtime_config, previous_host)
+        config.headscale_registration_id = runtime_config.headscale_registration_id
+        config.headscale_registration_binding = runtime_config.headscale_registration_binding
         end_time = time.time()
         success = (returncode == 0)
         if (
@@ -2278,9 +2341,9 @@ def run_setup_command(args: argparse.Namespace) -> int:
     )
     print("=" * 60)
 
-    if shutdown:
+    if shutdown and not automated_setup(config):
         return shutdown_after_setup(config)
-    if restart_if_needed:
+    if restart_if_needed and not automated_setup(config):
         return restart_after_setup(config, wait_for_restart=wait_for_restart)
 
     return 0
@@ -2347,23 +2410,22 @@ def run_patch_command(args: argparse.Namespace) -> int:
 
     try:
         resolve_approval_panel_args(args, saved_port=cached_config.privilege_broker_port)
+        resolve_cli_selection(args, cached_config)
         new_config = SetupConfig.from_args(args, cached_config.system_type)
         merged_config = merge_setup_configs(
             cached_config,
             new_config,
             preserve_keys=_patch_preserve_keys(args),
         )
+        if getattr(args, "web_panel_port", None) is WEB_PANEL_DEFAULT_PORT_SENTINEL:
+            merged_config.web_panel_port = 443 if merged_config.enable_ssl else 80
         from lib.build_enrollment_cli import prepare_cli_build_enrollments
 
+        validate_final_selection(merged_config, workspace=getattr(args, "workspace", None))
         prepare_cli_build_enrollments(merged_config, args)
-    except ValueError as exc:
+    except (ValueError, OSError, ResourceBusyError, ResourceLockSafetyError) as exc:
         print(f"Error: {exc}")
         return 1
-    if (
-        getattr(args, "web_panel_port", None)
-        is WEB_PANEL_DEFAULT_PORT_SENTINEL
-    ):
-        merged_config.web_panel_port = 443 if merged_config.enable_ssl else 80
     return _execute_patch_config(merged_config)
 
 
@@ -2516,7 +2578,11 @@ def main() -> int:
     if args.command == "setup":
         return run_setup_command(args)
     elif args.command == "patch":
-        return run_patch_command(args)
+        try:
+            return run_patch_command(args)
+        except StateReadError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
     elif args.command == "shares":
         return run_shares_command(args)
     elif args.command in {"list", "ls"}:
@@ -2621,6 +2687,22 @@ def main() -> int:
         return run_node_command(args)
     elif args.command == "publish":
         return run_publishing_command(args)
+    elif args.command == "headscale":
+        try:
+            return run_headscale_command(args)
+        except (ValueError, OSError, ResourceBusyError, ResourceLockSafetyError) as exc:
+            print(f"Error: {exc}")
+            return 1
+    elif args.command == "headscale-admin":
+        return run_headscale_admin_command(args)
+    elif args.command == "headscale-client":
+        return run_headscale_client_command(args)
+    elif args.command == "headscale-manage":
+        return run_headscale_management_command(args)
+    elif args.command == "headscale-dns":
+        return run_headscale_dns_command(args)
+    elif args.command == "headscale-maintenance":
+        return run_headscale_maintenance_command(args)
     elif args.command in {"mount", "umount", "health", "ssh", "push", "pull", "key", "ssh-key", "df", "fan", "svc", "logs", "upgrade", "reachable", "user"}:
         return run_sysadmin_command(args)
     elif args.command == "shell":

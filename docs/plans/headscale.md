@@ -1,7 +1,9 @@
 # Headscale integration
 
-Status: ready for implementation handoff; hosting, enrollment and managed
-Unbound support are not implemented. Provide an optional private network for
+Status: implementation integrated, selected Debian qualification and final code
+review passed; broader platform acceptance remains open. See the
+[qualification record](../testing/headscale.md) for tested
+behavior and remaining gaps. Provide an optional private network for
 managed servers, workstations, agent VMs and builders, including access to SSH
 and management services across NAT.
 
@@ -45,7 +47,7 @@ identity and resolved URL so renaming a record preserves selection and changing
 its endpoint requires an explicit client migration. Enrollment authority is
 separate from endpoint discovery.
 
-Proposed commands (not yet implemented):
+Implemented commands:
 
 ```bash
 basaltw headscale add office --url https://vpn.example.com
@@ -130,9 +132,9 @@ public-relay limitations, Unbound topology and connectivity acceptance.
    steps through optional post-setup composition. Define explicit disable,
    leave and data-removal behavior; ordinary reruns preserve state.
    Include named managed/external server records, endpoint-change guards and
-   CLI completion. Proposed flags include `--headscale`, `--tailscale NAME` and
-   `--tailscale-login-server URL`; finalize their contracts before documenting
-   them as available commands.
+   CLI completion. Hosting uses `--headscale`; client selection uses
+   `--tailscale NAME` or `--tailscale-login-server URL`. See the
+   [configuration reference](../services/headscale-configuration.md) for the complete contract.
    **Acceptance:** dry runs and mocked tests cover composition, round trips,
    unsupported profiles, invalid inputs, duplicate/missing names, record renames,
    endpoint changes and conflicting ingress/listeners, without system mutation
@@ -200,7 +202,8 @@ public-relay limitations, Unbound topology and connectivity acceptance.
 
 ## Delivery and checks
 
-Commit and push this plan, then each coherent, validated milestone to `main`.
+Commit and push coherent, validated milestones on the project feature branch,
+then open a pull request for final checks and review before merging.
 Update operator/reference documentation with the behavior it introduces. Keep
 focused tests in their owning suites, mock system calls and use temporary
 directories. Run documentation checks and `git diff --check` for this plan;

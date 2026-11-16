@@ -105,6 +105,14 @@ the [operator recovery guide](../../operations/transaction-recovery.md) to
 inspect the recorded identity, phase, and resource state. Keep private recovery
 evidence until the operation is verified complete.
 
+Root resource locks live in the private `/var/lib/basaltwater-root-locks`
+directory. Privileged services and SSH commands must use this same host-visible
+directory even when a service has `PrivateTmp=true`. The privilege broker owns
+it through `StateDirectory`; its Headscale configuration and database paths
+remain read-only. Non-root controller locks retain their private temporary
+directory. Restart the installed broker after updating its unit and lock code
+before running portal and SSH administration concurrently.
+
 ## Contributor checks
 
 Required mutations use the strict default of `lib.remote_utils.run()`. An

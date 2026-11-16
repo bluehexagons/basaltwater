@@ -45,13 +45,60 @@ class TestSysadminDeadlines(unittest.TestCase):
 
 class TestSysadminFan(unittest.TestCase):
     def test_run_remote_resolves_saved_credentials_and_invokes_ssh(self) -> None:
-        config = SimpleNamespace(username="saved", ssh_key="/tmp/saved")
+        config = SimpleNamespace(host="192.0.2.11", username="saved", ssh_key="/tmp/saved")
         with patch.object(sysadmin_fan, "load_setup_command", return_value=config), patch.object(sysadmin_fan, "ssh_batch_mode", return_value=True), patch.object(sysadmin_fan, "build_ssh_command", return_value=["ssh"]) as build, patch.object(sysadmin_fan, "run_command", return_value=completed(stdout="ok")) as run:
             result = sysadmin_fan._run_remote("server", "uname -a", None, None)
 
         self.assertEqual(result, ("server", 0, "ok", ""))
-        build.assert_called_once_with("server", "saved", "/tmp/saved", batch_mode=True, connect_timeout=15, remote_command="uname -a")
+        build.assert_called_once_with("192.0.2.11", "saved", "/tmp/saved", batch_mode=True, connect_timeout=15, remote_command="uname -a")
         run.assert_called_once_with(["ssh"] , capture_output=True, text=True)
+
+    def test_saved_name_resolution_preserves_explicit_credentials(self) -> None:
+        config = SimpleNamespace(host="192.0.2.11", username="saved", ssh_key="/tmp/saved")
+        with patch.object(sysadmin_fan, "load_setup_command", return_value=config), \
+                patch.object(sysadmin_fan, "build_ssh_command", return_value=["ssh"]) as build, \
+                patch.object(sysadmin_fan, "run_command", return_value=completed()):
+            sysadmin_fan._run_remote("mesh-dns", "uptime", "operator", "/tmp/override")
+        self.assertEqual(("192.0.2.11", "operator", "/tmp/override"), build.call_args.args)
+
+    def test_unsaved_host_keeps_its_address_and_default_credentials(self) -> None:
+        with patch.object(sysadmin_fan, "load_setup_command", return_value=None), \
+                patch.object(sysadmin_fan, "build_ssh_command", return_value=["ssh"]) as build, \
+                patch.object(sysadmin_fan, "run_command", return_value=completed(stdout="ok")):
+            result = sysadmin_fan._run_remote("unmanaged.example.com", "uptime", None, None)
+        self.assertEqual(("unmanaged.example.com", "root", None), build.call_args.args)
+        self.assertEqual(("unmanaged.example.com", 0, "ok", ""), result)
+
+    def test_public_fan_resolves_saved_names_in_selected_workspace(self) -> None:
+        from basaltwater import main
+        from lib.cache import save_setup_command
+        from lib.config import SetupConfig
+        from lib.workspace import WORKSPACE_ENV_VAR
+
+        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as other, \
+                patch.dict(os.environ, {WORKSPACE_ENV_VAR: workspace}):
+            for host, name, username in (("192.0.2.11", "mesh-dns", "dnsadmin"),
+                                          ("192.0.2.12", "mesh-app", "appadmin")):
+                save_setup_command(SetupConfig(host=host, friendly_name=name, username=username,
+                    system_type="server_lite", ssh_key="/private/" + name))
+            output = io.StringIO()
+            with patch.dict(os.environ, {WORKSPACE_ENV_VAR: other}), \
+                    patch("sys.argv", ["basaltw", "--workspace", workspace, "fan", "mesh-dns", "mesh-app",
+                                       "--", "systemctl", "is-active", "tailscaled"]), \
+                    patch.object(sysadmin_fan, "run_command", return_value=completed(stdout="active\n")) as run, \
+                    redirect_stdout(output):
+                self.assertEqual(0, main())
+            commands = {call.args[0][-2]: call.args[0] for call in run.call_args_list}
+            self.assertEqual({"dnsadmin@192.0.2.11", "appadmin@192.0.2.12"}, set(commands))
+            for target, command in commands.items():
+                name = "mesh-dns" if target.startswith("dnsadmin@") else "mesh-app"
+                self.assertEqual("/private/" + name, command[command.index("-i") + 1])
+                self.assertIn("UserKnownHostsFile=" + os.path.join(workspace, "known_hosts"), command)
+                self.assertIn("StrictHostKeyChecking=yes", command)
+                self.assertEqual("systemctl is-active tailscaled", command[-1])
+            self.assertIn("mesh-dns  [OK]", output.getvalue())
+            self.assertIn("mesh-app  [OK]", output.getvalue())
+            self.assertIn("Summary: 2/2 succeeded", output.getvalue())
 
     def test_run_fan_sorts_hosts_and_reports_failures(self) -> None:
         def run_remote(host: str, command: str, username: str | None, ssh_key: str | None):
@@ -69,6 +116,29 @@ class TestSysadminFan(unittest.TestCase):
         self.assertLess(output.index("alpha"), output.index("beta"))
         self.assertIn("Summary: 1/2 succeeded, failed: beta", output)
         self.assertIn("bad", stderr.getvalue())
+
+    def test_invalid_saved_target_is_reported_without_losing_other_results(self) -> None:
+        from lib.cache import get_cache_path_for_host, save_setup_command
+        from lib.config import SetupConfig
+        from lib.workspace import WORKSPACE_ENV_VAR
+
+        with tempfile.TemporaryDirectory() as workspace, \
+                patch.dict(os.environ, {WORKSPACE_ENV_VAR: workspace}):
+            good, bad = "192.0.2.11", "192.0.2.12"
+            save_setup_command(SetupConfig(host=good, username="agent", system_type="server_lite"))
+            path = get_cache_path_for_host(bad)
+            with open(path, "wb") as stream:
+                stream.write(b"{corrupt")
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with patch.object(sysadmin_fan, "run_command", return_value=completed(stdout="connected\n")) as run, \
+                    redirect_stdout(stdout), redirect_stderr(stderr):
+                self.assertEqual(1, sysadmin_fan.run_fan([bad, good], ["hostname"]))
+            run.assert_called_once()
+            self.assertIn("agent@" + good, run.call_args.args[0])
+            self.assertIn("Summary: 1/2 succeeded", stdout.getvalue())
+            self.assertIn("File retained", stderr.getvalue())
+            with open(path, "rb") as stream:
+                self.assertEqual(b"{corrupt", stream.read())
 
     def test_run_df_filters_failures_and_marks_high_usage(self) -> None:
         def run_remote(host: str, command: str, username: str | None, ssh_key: str | None):

@@ -159,6 +159,8 @@ TEST_SUITE_PATTERNS: dict[str, tuple[str, ...]] = {
         "tests/test_wheel_artifact.py",
     ),
     "network": (
+        "tests/test_headscale*.py",
+        "tests/test_unbound*.py",
         "tests/test_apt_sources.py",
         "tests/test_cloudflare*.py",
         "tests/test_mdns.py",

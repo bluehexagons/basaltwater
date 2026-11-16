@@ -6,7 +6,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 
-from lib.sysadmin_fan import _resolve_credentials, _run_remote
+from lib.sysadmin_fan import _run_remote
 
 _UPGRADE_COMMAND = (
     "sudo apt-get update -qq"

@@ -44,6 +44,11 @@ When adding a setup feature, implement it in its owning package, wire it into
 the relevant plugin builder or extension, add focused tests, and update the
 operator documentation.
 
+Routine setup guides should use a few `setup` commands that describe the desired
+machines and automate prerequisite ordering. Do not recommend `patch` as part of
+routine setup. Keep detailed inspection and recovery procedures in the owning
+service documentation, linked from the normal workflow.
+
 For `--build-on`, the public remote-setup hook holds the controller setup-target
 lock across preflight, minimal target enrollment, artifact delivery and guarded
 final profile application. Minimal enrollment preserves the saved profile; final

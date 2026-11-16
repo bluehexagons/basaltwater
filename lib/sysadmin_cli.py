@@ -3,7 +3,71 @@
 from __future__ import annotations
 
 import argparse
-from typing import Optional
+from collections.abc import Sequence
+import sys
+
+
+class SysadminArgumentParser(argparse.ArgumentParser):
+    """Separate remote argv before argparse can consume it as host operands."""
+
+    def parse_known_args(
+        self,
+        args: Sequence[str] | None = None,
+        namespace: argparse.Namespace | None = None,
+    ) -> tuple[argparse.Namespace, list[str]]:
+        cmd = self.get_default("_sysadmin_cmd")
+        if cmd not in {"ssh", "fan"} or getattr(self, "_connection_parse", False):
+            return super().parse_known_args(args, namespace)
+        words = list(sys.argv[1:] if args is None else args)
+        explicit = cmd == "fan" and "--" in words
+        boundary = words.index("--") if explicit else len(words)
+        if cmd == "ssh":
+            # The first command word after the host starts the legacy direct
+            # command form. Once started, its options belong to that command.
+            host_seen = False
+            index = 0
+            while index < len(words):
+                word = words[index]
+                if word == "--":
+                    explicit = True
+                    boundary = index
+                    break
+                option = word.split("=", 1)[0]
+                action = self._option_string_actions.get(option)
+                if action is None and self.allow_abbrev and option.startswith("--"):
+                    matches = [
+                        value for name, value in self._option_string_actions.items()
+                        if name.startswith(option)
+                    ]
+                    if len(matches) == 1:
+                        action = matches[0]
+                if action is None and word[:2] in {"-u", "-i", "-p"}:
+                    action = self._option_string_actions[word[:2]]
+                    option = word[:2]
+                if action is not None:
+                    index += 1
+                    if action.nargs != 0 and word == option:
+                        index += 1
+                elif word.startswith("-"):
+                    self.error(f"unrecognized arguments: {word}")
+                elif host_seen:
+                    boundary = index
+                    break
+                else:
+                    host_seen = True
+                    index += 1
+        prefix = words[:boundary]
+        remote = words[boundary + 1:] if explicit else words[boundary:]
+        # Intermixed parsing allows connection options between fan hosts too.
+        # Its two internal parse_known_args calls must use ordinary argparse.
+        self._connection_parse = True
+        try:
+            parsed, unknown = self.parse_known_intermixed_args(prefix, namespace)
+        finally:
+            self._connection_parse = False
+        parsed.remote_command = remote
+        parsed._remote_delimiter = explicit
+        return parsed, unknown
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +153,7 @@ def _add_ssh_parser(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--username", "-u", help="SSH username (overrides saved config)")
     p.add_argument("--key", "-i", dest="ssh_key", help="SSH identity file (overrides saved config)")
     p.add_argument("--port", "-p", type=int, help="SSH port")
-    p.add_argument("remote_command", nargs=argparse.REMAINDER, help="Optional remote command")
+    p.usage = "%(prog)s [options] host [-- command ...]"
     p.set_defaults(_sysadmin_cmd="ssh")
 
 
@@ -254,11 +318,7 @@ def _add_fan_parser(sub: argparse._SubParsersAction) -> None:
     p.add_argument("hosts", nargs="+", help="Remote hosts (IP or hostname)")
     p.add_argument("--username", "-u", help="SSH username (overrides saved config)")
     p.add_argument("--key", "-i", dest="ssh_key", help="SSH identity file")
-    p.add_argument(
-        "remote_command",
-        nargs=argparse.REMAINDER,
-        help="Command to run (after --)",
-    )
+    p.usage = "%(prog)s [options] hosts [hosts ...] -- command ..."
     p.set_defaults(_sysadmin_cmd="fan")
 
 
@@ -469,9 +529,9 @@ def run_sysadmin_command(args: argparse.Namespace) -> int:
     if cmd == "ssh":
         from lib.sysadmin_ssh import run_ssh
         remote_command = getattr(args, "remote_command", [])
-        # strip leading '--' from REMAINDER
-        if remote_command and remote_command[0] == "--":
-            remote_command = remote_command[1:]
+        if getattr(args, "_remote_delimiter", False) and not remote_command:
+            print("Error: a remote command is required after --", file=sys.stderr)
+            return 1
         return run_ssh(
             args.host,
             username=getattr(args, "username", None),
@@ -524,7 +584,6 @@ def run_sysadmin_command(args: argparse.Namespace) -> int:
             return 1
 
     if cmd == "key":
-        import sys
         print("Error: key subcommand required (push)", file=sys.stderr)
         return 1
 
@@ -539,10 +598,7 @@ def run_sysadmin_command(args: argparse.Namespace) -> int:
     if cmd == "fan":
         from lib.sysadmin_fan import run_fan
         remote_command = getattr(args, "remote_command", [])
-        if remote_command and remote_command[0] == "--":
-            remote_command = remote_command[1:]
         if not remote_command:
-            import sys
             print("Error: a remote command is required after --", file=sys.stderr)
             return 1
         return run_fan(
@@ -606,6 +662,5 @@ def run_sysadmin_command(args: argparse.Namespace) -> int:
             resume=getattr(args, "resume", None),
         )
 
-    import sys
     print(f"Error: unknown sysadmin command {cmd!r}", file=sys.stderr)
     return 1

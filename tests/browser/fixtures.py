@@ -21,6 +21,7 @@ import ssl
 import subprocess
 import threading
 import time
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from aiohttp import ClientSession, web
@@ -29,6 +30,7 @@ from common.service_tools import device_pairing_service as pairing
 from common.service_tools import guacamole_service as guacamole
 from common.service_tools import web_panel_jobs as jobs
 from common.service_tools import web_panel_service as panel
+from common.service_tools import web_panel_headscale
 from common.service_tools.privilege_approval import ApprovalServer
 from common.service_tools.web_panel_features import PanelFeatures
 from lib.privilege_auth import password_record
@@ -36,6 +38,74 @@ from lib.atomic_io import write_json_atomic
 from lib.validation import validate_filesystem_path
 from scripts.panel_samples import job_rows
 from scripts.panel_specialized import SyntheticDesktop
+from lib.headscale_onboarding import render_onboarding_html, render_stylesheet
+from lib.headscale_portal import TransientRegistrations, validate_action
+
+
+ONBOARDING_PAGE = "https://join.example.test/"
+CONTROL_URL = "https://vpn.example.test"
+# Fixed PNG, not qrencode output. Metadata binds its intended payload only.
+ONBOARDING_PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWQAAAABJRU5ErkJggg==")
+
+
+class SyntheticHeadscaleBroker:
+    """Fixed inventory and review records; no executor or native adapter exists."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.records = {}
+        self.registrations = TransientRegistrations()
+        self.inventory = {"users": [{"id": "12", "name": "alice <script>bad()</script>"},
+                                    {"id": "13", "name": "unused & person"}],
+                          "nodes": [{"id": "7", "node_id": "native-7", "user_id": "12",
+                                     "hostname": "laptop <img src=x onerror=bad()>",
+                                     "addresses": ["100.64.0.7"], "tags": ["tag:sample"],
+                                     "online": True, "expiry": "2030-01-01T00:00:00Z"}]}
+
+    def __call__(self, message: dict) -> dict:
+        with self.lock:
+            action = message["action"]
+            if action == "headscale-inspect":
+                return copy.deepcopy(self.inventory)
+            if action in {"request", "headscale-register"}:
+                if action == "headscale-register":
+                    if message["user"] not in {row["id"] for row in self.inventory["users"]}:
+                        raise ValueError("Unknown fixture user")
+                    token = self.registrations.capture(1000, message["user"], message["auth_id"])
+                    parameters = {"action": "register", "user": message["user"], "token": token}
+                else:
+                    if message["operation"] != "headscale.admin":
+                        raise ValueError("Unexpected fixture operation")
+                    parameters = validate_action(message["parameters"])
+                    if parameters["action"] == "register":
+                        raise ValueError("Registration requires transient input")
+                identifier = f"{len(self.records) + 1:032x}"
+                row = {"id": identifier, "digest": "d" * 64, "created": time.time(),
+                       "expires": time.time() + 300, "state": "pending", "uid": 1000,
+                       "reason": "Synthetic Headscale review only", "operation": "headscale.admin",
+                       "review_url": self.review_origin + "/requests/" + identifier,
+                       "plan": {"machine": "c" * 32, "uid": 1000, "operation": "headscale.admin",
+                                "argv": [], "parameters": parameters, "effect": "Review synthetic Headscale action"}}
+                self.records[identifier] = row
+                if action == "headscale-register":
+                    self.registrations.bind(token, row)
+                return copy.deepcopy(row)
+            if action == "list":
+                return {"requests": copy.deepcopy(list(self.records.values()))}
+            if action == "status":
+                return copy.deepcopy(self.records[message["id"]])
+            raise ValueError("No execution or decisions in Headscale browser fixture")
+
+
+class SyntheticHeadscaleHandler(panel.WebPanelHandler):
+    """Test-only admission simulation; never qualifies production AF_UNIX peers."""
+
+    def _headscale_authorized(self) -> bool:
+        if (self.headers.get_all("X-Basaltwater-User") == [self.state.manifest["username"]]
+                and self.headers.get_all("X-Forwarded-Proto") == ["https"]):
+            return True
+        self._send(403, "Authenticated HTTPS fixture proxy required\n", "text/plain")
+        return False
 
 
 def create_certificates(directory: Path) -> dict[str, Path]:
@@ -116,6 +186,7 @@ class FixtureEnvironment:
         self.username, self.password = "browser-fixture", secrets.token_urlsafe(24)
         self.authorization = "Basic " + base64.b64encode(f"{self.username}:{self.password}".encode()).decode()
         self.broker = SyntheticBroker()
+        self.headscale_broker = SyntheticHeadscaleBroker()
         self.urls: dict[str, str] = {}
         self.updates = 0
         self.issues = 0
@@ -130,6 +201,7 @@ class FixtureEnvironment:
             # Fail closed for every unexpected external command from a handler.
             self.stack.enter_context(patch.object(subprocess, "run", side_effect=self.provider_command))
             self.stack.enter_context(patch.object(subprocess, "Popen", side_effect=AssertionError("No processes in browser fixtures")))
+            self.stack.enter_context(patch.object(web_panel_headscale, "exchange", side_effect=self.headscale_broker))
             self.stack.enter_context(patch.object(panel, "discover_certificate_trust", side_effect=self.certificate_trust))
             self.stack.enter_context(patch.object(panel, "discover_basaltwater_web_services", return_value=[]))
             self.stack.enter_context(patch.object(guacamole, "desktop_call", side_effect=self.desktop.call))
@@ -151,7 +223,21 @@ class FixtureEnvironment:
             self.backends["approval"] = ApprovalServer(("127.0.0.1", 0), password_record(self.username, self.password),
                                                         "https://localhost", self.broker)
             self.start_http(self.backends["approval"])
+            self.backends["headscale"] = self.http_server(SyntheticHeadscaleHandler)
+            admin = SimpleNamespace(integrated=False, approval_url="https://placeholder.example.test",
+                                    snapshot=lambda: {"blocked": {}, "unit_state": "inactive", "requests": [],
+                                                      "privilege_requests": self.headscale_broker({"action": "list"})["requests"]})
+            self.backends["headscale"].RequestHandlerClass.state = SimpleNamespace(
+                manifest={"username": self.username, "host": "fixture-host"}, csrf_token=secrets.token_urlsafe(24),
+                features=lambda: PanelFeatures(headscale=True, admin=True), admin=admin,
+                navigation=lambda current: panel.panel_navigation(current=current))
+            self.backends["headscale-review"] = ApprovalServer(
+                ("127.0.0.1", 0), password_record(self.username, self.password), "https://localhost", self.headscale_broker)
+            self.start_http(self.backends["headscale-review"])
             asyncio.run_coroutine_threadsafe(self.start_frontends(), self.loop).result(15)
+            self.headscale_broker.review_origin = self.urls["headscale-review"]
+            self.backends["headscale-review"].origin = self.urls["headscale-review"]
+            admin.approval_url = self.urls["headscale-review"]
             self.backends["approval"].origin = self.urls["approval"]
             port = int(self.urls["pairing"].rsplit(":", 1)[1])
             providers["t3code"].update(public_port=port, https_public_port=port)
@@ -241,13 +327,33 @@ class FixtureEnvironment:
         if request.path == "/ca.crt":
             return web.Response(body=self.certificates["ca"].read_bytes(), content_type="application/x-x509-ca-cert",
                                 headers={"Content-Disposition": 'attachment; filename="fixture-ca.crt"'})
+        if backend == "onboarding":
+            if request.path == "/":
+                return web.Response(text=render_onboarding_html(CONTROL_URL, ONBOARDING_PAGE), content_type="text/html")
+            if request.path == "/style.css":
+                return web.Response(text=render_stylesheet(), content_type="text/css")
+            if request.path == "/onboarding-qr.png":
+                return web.Response(body=ONBOARDING_PNG, content_type="image/png")
+            if request.path == "/favicon.ico":
+                return web.Response(status=204)
+            raise web.HTTPNotFound()
+        if backend == "headscale" and request.path == "/__fixture__/headscale":
+            return web.json_response({"requests": self.headscale_broker({"action": "list"})["requests"],
+                                      "inventory": self.headscale_broker.inventory})
         if request.path in {"/project/", "/pair"}:
             return web.Response(text="<!doctype html><title>Disposable project</title><h1>Synthetic destination</h1>", content_type="text/html")
         if request.path == "/__fixture__/state":
             return web.json_response({"updates": self.updates, "pairing_links": self.issues})
-        headers = {key: value for key, value in request.headers.items() if key.lower() not in {"connection", "transfer-encoding", "x-forwarded-proto", "x-real-ip"}}
+        headers = {key: value for key, value in request.headers.items() if key.lower() not in {"connection", "transfer-encoding", "x-forwarded-proto", "x-real-ip", "x-basaltwater-user"}}
         source = "192.0.2.2" if request.headers.get("X-Fixture-Engine") == "firefox" else "192.0.2.1"
         headers.update({"X-Forwarded-Proto": "https", "X-Forwarded-Host": request.host, "X-Real-IP": source})
+        if backend == "headscale":
+            headers["X-Basaltwater-User"] = self.username
+            # Explicit negative admission controls exist only on this fixture.
+            if request.headers.get("X-Fixture-Admission") == "http":
+                headers["X-Forwarded-Proto"] = "http"
+            if request.headers.get("X-Fixture-Admission") == "anonymous":
+                del headers["X-Basaltwater-User"]
         async with self.client.request(request.method, f"http://127.0.0.1:{self.backends[backend].server_port}{request.rel_url}",
                                        headers=headers, data=await request.read(), allow_redirects=False) as response:
             body = await response.read()
@@ -256,7 +362,7 @@ class FixtureEnvironment:
             return web.Response(body=body, status=response.status, headers=response_headers)
 
     async def start_frontends(self) -> None:
-        for name in ("panel", "pairing", "approval", "invalid", "guacamole"):
+        for name in ("panel", "pairing", "approval", "invalid", "guacamole", "headscale", "headscale-review", "onboarding"):
             if name == "guacamole" and self.guacamole_assets is None:
                 continue
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -307,6 +413,8 @@ class FixtureEnvironment:
 
     def metadata(self) -> dict:
         return {"urls": self.urls, "ca": str(self.certificates["ca"]),
+                "headscale": {"page_url": ONBOARDING_PAGE, "control_url": CONTROL_URL,
+                              "qr_payload": ONBOARDING_PAGE, "qr_boundary": "fixed PNG; not qrencode qualification"},
                 "username": self.username, "password": self.password,
                 "boundary": "synthetic first-party services and disposable Guacamole protocol; no upstream application UI"}
 

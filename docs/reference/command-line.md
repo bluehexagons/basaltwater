@@ -76,6 +76,14 @@ basaltw node exec [--project PATH] [--version VERSION_OR_RANGE] -- COMMAND...
 basaltw node resolve [--project PATH] [--version VERSION]
 basaltw node install [--project PATH] [--version VERSION] [--package-manager NAME@VERSION]...
 basaltw publish <command> ... [--json]
+basaltw headscale <add|list|show|rename|remove|onboarding> ...
+basaltw headscale-admin <users-list|users-create|users-delete|nodes-list|approve|expire|revoke> ... [--dry-run]
+basaltw headscale-client <status|enroll-personal|enroll-machine|reconcile|adopt|disable|leave|migrate|abandon> --url HTTPS_URL [options] [--dry-run]
+basaltw headscale-client reconcile --url HTTPS_URL [--confirm-logged-out] [--dry-run]
+basaltw headscale-client reconcile-selection HOST --expected-url HTTPS_URL [--expected-server-id ID] --server REFERENCE --new-url HTTPS_URL --node-id ID --target-host HOST --target-key PATH --target-known-hosts PATH [options] [--dry-run]
+basaltw headscale-manage <bind|show|remove|enroll|inspect|reconcile|dns-publish|dns-withdraw|dns-inspect|dns-reconcile> REFERENCE [options] [--dry-run]
+basaltw headscale-dns <publish|withdraw|inspect|reconcile> [--input PRIVATE_JSON] [--dry-run]
+basaltw headscale-maintenance <backup|validate|restore|upgrade|unbound-backup|unbound-validate|unbound-restore|unbound-recover-fresh|unbound-records-inspect|unbound-records-replace|adopt-inspect|adopt> [options] [--dry-run]
 basaltw desktop <command> ...
 basaltw kiosk <status|doctor|start|stop|restart> [--json]
 basaltw firmware <audit|update> [options]
@@ -118,10 +126,52 @@ basaltw shell
 basaltw network ...
 basaltw proxmox ...
 basaltw ssh-key enroll <host> [--port PORT] [--fingerprint SHA256:FINGERPRINT | --yes]
+basaltw ssh <host> [connection-options] [-- <command> ...]
+basaltw fan <host> [<host> ...] [connection-options] -- <command> ...
 ```
 
 `basaltw --version` prints one stable line containing the installed project
 version, suitable for feedback and support records.
+
+`headscale-admin` provides root local native administration over independent SSH
+recovery; see [administration](../services/headscale-administration.md).
+`headscale-client` provides explicit root local enrollment and lifecycle actions;
+see [client commands](../services/headscale-clients.md#local-recovery-commands).
+`reconcile --confirm-logged-out` confirms an independently reviewed logout;
+`reconcile-selection` reconciles a controller's saved binding after migration.
+See the [multi-VM Headscale walkthrough](../services/headscale-vms.md) for
+separate control, client, and DNS VMs. Fresh service VMs can run root-local
+commands as root with `python3 /opt/basaltwater/basaltwater.py` even when no
+`basaltw` launcher is installed.
+Saved `headscale` references provide discovery only, without management authority.
+`headscale-manage` uses explicit pinned SSH authority in the selected workspace;
+see [management and tagged enrollment](../services/headscale-management.md).
+Its `dns-publish` and `dns-withdraw` actions also require `--resolver NAME`
+and `--peer NAME`; `dns-inspect` inspects the saved publication state. See the
+[Headscale VM guide](../services/headscale-vms.md) for the separated control,
+client, and DNS roles.
+For interrupted DNS operations, `dns-reconcile` requires
+`--expected-attempt /private/reviewed-attempt.json` and verifies the exact
+retained controller attempt against native settled state and the peer; it never
+replays activation. See [interrupted DNS operations](../services/headscale-dns.md#interrupted-operations).
+`headscale-dns` performs explicit root local DNS publication and recovery.
+Its mutating actions require a private root-owned JSON request; `inspect`
+rejects `--input`. Dry runs retain handler input and privilege validation.
+`headscale-maintenance` provides explicit local backup, restore and reviewed
+upgrade operations; see [recovery commands](../services/headscale-recovery.md).
+Its dry run validates paths and private metadata without native calls or locks.
+Setup and patch validate the complete merged network configuration and ingress
+before provisioning or uploading source. Active named selections follow stable
+IDs across renames and reject removed/replaced records or changed endpoints.
+`--no-tailscale` preserves the endpoint binding without requiring the reference
+to remain registered. Omitted network flags retain saved settings on reruns.
+`--tailscale NAME` completion reads names from the selected workspace.
+For managed hosting, `setup --headscale --headscale-name NAME` installs
+Headscale and registers/binds that server. For a named client setup, repeat
+`--tailscale-tag tag:service` as needed to privately enroll the client before
+its final profile and Unbound configuration are applied. Without tags, setup
+with a named network or a direct `--tailscale-login-server URL` keeps enrollment
+manual. Routine configuration changes use setup reruns.
 
 `basaltw refresh` upgrades the installed source on its selected channel and
 repeats this machine's last successful setup using the updated code. It supports
@@ -395,6 +445,19 @@ contract, unattended job ownership, exact-text review, recovery and limits.
 | `--gateway6 IP` | IPv6 default gateway; requires `--ipv6` |
 | `--dns IP` | DNS server; repeatable and accepts IPv4 or IPv6 addresses |
 | `--network-interface NAME` | Interface to configure; defaults to the interface carrying the default route |
+| `--headscale` / `--no-headscale` | Manage native Headscale hosting on supported Debian profiles; disable preserves data |
+| `--headscale-name NAME` | Register and bind the managed Headscale server during hosted setup |
+| `--headscale-domain HOSTNAME` | Hosted public control hostname |
+| `--headscale-base-domain HOSTNAME` | MagicDNS suffix, separate from public hostnames |
+| `--headscale-onboarding-domain HOSTNAME` | Separate static HTTPS device instruction hostname |
+| `--headscale-onboarding-control-url HTTPS_ORIGIN` | Non-secret external control endpoint for static onboarding; does not select a local client; requires an onboarding domain |
+| `--headscale-public-ipv4 IP`, `--headscale-public-ipv6 IP` | Public relay addresses for hosted Headscale |
+| `--headscale-resolver IP` | Candidate overlay resolver metadata; repeatable, does not publish DNS |
+| `--tailscale NAME` | Select a saved Headscale reference for local native client setup |
+| `--tailscale-tag TAG` | Authorize private automatic enrollment; repeatable for named client setup |
+| `--tailscale-login-server HTTPS_ORIGIN` | Explicit local native client selection |
+| `--no-tailscale` | Disable managed client setup while retaining device identity |
+| `--unbound` / `--no-unbound` | Manage Unbound on a separate explicitly enrolled Debian DNS node |
 | `--activate-network` | Safely make requested addresses live, verify SSH on each address, then persist the configuration |
 | `--workspace PATH` | Workspace root for config, credentials, known_hosts, and history |
 | `--machine TYPE` | Machine type override; defaults to `auto` on the target |
@@ -2362,6 +2425,16 @@ Useful shell commands:
 See [`sysadmin.md`](../operations/sysadmin.md) for the host shortcut commands (`mount`,
 `health`, `ssh`, `push`, `pull`, `df`, `fan`, `svc`, `logs`, `upgrade`,
 `reachable`, `key`).
+
+For `ssh` and `fan`, connection options may appear before or after hosts
+(and between `fan` hosts), before the first `--`. The delimiter separates
+remote argv: all following tokens, including flags and later literal `--`,
+are passed to the remote command. Unknown connection options are rejected.
+`fan` requires the delimiter and a command. `ssh` without a command opens an
+interactive session; an explicit delimiter with no command is an error.
+SSH also accepts a direct command without the delimiter, such as
+`basaltw ssh myserver -u root id -u`; the first command word ends connection
+option parsing. Prefer the explicit delimiter for scripts.
 
 Interactive remote setup confirms a new host key through OpenSSH's normal
 fingerprint prompt, saves it in the workspace, and continues without a separate

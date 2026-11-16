@@ -27,6 +27,7 @@ class PanelFeatures:
     console: bool = False
     github_runner: bool = False
     admin_page: bool = True
+    headscale: bool = False
 
     @property
     def prompts(self) -> bool:
@@ -57,6 +58,8 @@ class PanelFeatures:
             pages.add("console")
         if self.github_runner:
             pages.add("github-runner")
+        if self.headscale:
+            pages.add("headscale")
         return frozenset(pages)
 
 
@@ -114,6 +117,7 @@ def discover_features(
         t3=t3,
         maintenance=agents and os.path.isfile(POLICY_FILE) and unit_installed(SERVICE_NAME + ".service", home),
         admin=admin,
+        headscale=configured.get("managed_headscale") is True and os.path.isfile("/usr/bin/headscale") and unit_installed("headscale.service", home),
         desktop=unit_installed(DESKTOP_SERVICE + ".service", home),
         console=unit_installed(SSH_SERVICE + ".socket", home),
         github_runner=os.path.isfile(RUNNER_POLICY) and unit_installed(RUNNER_SERVICE, home),

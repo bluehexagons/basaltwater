@@ -36,6 +36,8 @@ class BuildSetupHistoryTests(BuildDeliveryFixture, unittest.TestCase):
         self.attempt.mkdir(mode=0o700)
         self.journal = self.host_root / "setup.json"
         self.enterContext(patch("lib.concurrency.tempfile.gettempdir", return_value=str(self.root)))
+        self.root_locks = self.root / "root-locks"
+        self.enterContext(patch("lib.concurrency.ROOT_LOCK_DIRECTORY", str(self.root_locks)))
         prepared = {"schema": 1, "plans": [dict(asdict(plan), source_path=str(plan.source_path)) for plan in self.plans]}
         self.write(self.attempt / "prepared.json", prepared)
         context = {"schema": 1, "host": self.host, "builder": "builder.example", "attempt": str(self.attempt),
@@ -147,6 +149,7 @@ class BuildSetupHistoryTests(BuildDeliveryFixture, unittest.TestCase):
     def test_unsafe_resource_lock_file_and_directory_have_fixed_refusals(self):
         report = self.maintain()
         path = Path(resource_lock_path("setup-target", self.host))
+        self.assertTrue(path.is_relative_to(self.root))
         os.mkfifo(path, 0o600)
         self.assert_refused("invalid_evidence", report["revision"])
         path.unlink()
@@ -253,7 +256,12 @@ class BuildSetupHistoryTests(BuildDeliveryFixture, unittest.TestCase):
         package = self.root / "cli"
         shutil.copytree(Path(__file__).resolve().parents[1] / "lib", package / "lib",
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-        command = [sys.executable, "-B", "-m", "lib.build_setup_history", "--journal", str(self.journal),
+        # Root CLI children also need the fixture's shared-lock directory;
+        # TMPDIR intentionally cannot redirect a production root lock.
+        runner = ("import runpy, sys; import lib.concurrency as concurrency; "
+                  "concurrency.ROOT_LOCK_DIRECTORY = sys.argv.pop(1); "
+                  "runpy.run_module('lib.build_setup_history', run_name='__main__')")
+        command = [sys.executable, "-B", "-c", runner, str(self.root_locks), "--journal", str(self.journal),
                    "--attempt", self.attempt.name]
         options = {"capture_output": True, "stdin": subprocess.DEVNULL, "timeout": 10,
                    "env": dict(os.environ, TMPDIR=str(self.root)), "cwd": str(package)}

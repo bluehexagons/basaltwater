@@ -24,6 +24,7 @@ from lib.validation import (
     validate_vm_storage_name,
 )
 from lib.workspace import get_history_dir, get_setup_cache_dir
+from lib.setup_directories import directory_fd
 
 
 def _get_entrypoint_metadata(operation: str) -> dict[str, str]:
@@ -45,7 +46,10 @@ def _cache_path_for_host(host: str, workspace: str | None = None) -> str:
 
 def get_cache_path_for_host(host: str) -> str:
     cache_path = _cache_path_for_host(host)
-    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+    with directory_fd(os.path.dirname(cache_path), create=True, mode=0o700) as directory:
+        if os.fstat(directory).st_uid != os.geteuid():
+            raise ValueError("Setup cache directory must belong to this account")
+        os.fchmod(directory, 0o700)
     return cache_path
 
 
@@ -431,7 +435,7 @@ def _find_cache_by_name(name: str) -> Optional[SetupConfig]:
 
 def load_setup_command(host: str) -> Optional[SetupConfig]:
     """Load the exact host, or resolve a non-IP name/tag to its selected setup."""
-    cache_path = get_cache_path_for_host(host)
+    cache_path = _cache_path_for_host(host)
     if os.path.lexists(cache_path):
         return _load_cache_file(cache_path, host)
     try:
@@ -704,4 +708,7 @@ def merge_setup_configs(
             merged_dict[field] = new_dict[field]
         merged_dict["disable_git_auth"] = new_config.disable_git_auth
     
+    from lib.headscale_config import merge_headscale_settings
+
+    merged_dict.update(merge_headscale_settings(cached_config, new_config, preserve_keys=preserve_keys))
     return SetupConfig(**merged_dict)

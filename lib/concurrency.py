@@ -12,6 +12,8 @@ from collections.abc import Iterator
 
 from lib.validation import validate_no_control_characters
 
+ROOT_LOCK_DIRECTORY = "/var/lib/basaltwater-root-locks"
+
 
 class ResourceBusyError(RuntimeError):
     """Raised when another process owns a requested controller resource."""
@@ -22,7 +24,10 @@ class ResourceLockSafetyError(RuntimeError):
 
 
 def _lock_root() -> str:
-    path = os.path.join(tempfile.gettempdir(), f"basaltwater-locks-{os.getuid()}")
+    # Root service and SSH callers must share inodes even with PrivateTmp or a
+    # different TMPDIR. The broker exposes only this directory for lock writes.
+    path = (ROOT_LOCK_DIRECTORY if os.getuid() == 0 else
+            os.path.join(tempfile.gettempdir(), f"basaltwater-locks-{os.getuid()}"))
     os.makedirs(path, mode=0o700, exist_ok=True)
     info = os.lstat(path)
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:

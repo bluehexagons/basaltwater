@@ -143,7 +143,19 @@ basaltw ssh <host> [options] [-- <remote_command>]
 basaltw ssh myserver
 basaltw ssh myserver -- journalctl -f
 basaltw ssh myserver -- systemctl status nginx
+basaltw ssh myserver -u root -- id
+basaltw ssh -u root myserver -- python3 /opt/basaltwater/basaltwater.py headscale-client status --url https://control.example.com
 ```
+
+Connection options may precede or follow the host, before the first `--`.
+That delimiter is consumed once; every following token belongs to the remote
+command, including flags and later literal `--` tokens. Unknown connection
+options before it are errors. An explicit `--` requires a command; omit it
+to open an interactive session. The direct form `basaltw ssh myserver id -u`
+also works: the first command word ends connection-option parsing.
+
+Fresh service VMs may not have a `basaltw` launcher. For root-local commands,
+use `python3 /opt/basaltwater/basaltwater.py` as root on the VM, as above.
 
 Uses `execvp` to replace the current process, so the terminal is fully
 interactive (signals, terminal size, etc. all work correctly).
@@ -265,6 +277,11 @@ Hosts that cannot be reached are reported as warnings and omitted from the table
 Run a shell command on multiple hosts concurrently, printing each host's output
 in a labeled block followed by a pass/fail summary.
 
+Hosts can be names saved with `setup --name`, IP addresses, or DNS hostnames.
+Saved names resolve to their configured host address and SSH credentials in the
+active workspace. Output keeps the names you supplied. Use `--username` or
+`--key` to override the saved credentials.
+
 ```
 basaltw fan <host> [<host2> ...] [options] -- <command>
 ```
@@ -280,7 +297,14 @@ basaltw fan <host> [<host2> ...] [options] -- <command>
 basaltw fan web1 web2 -- uptime
 basaltw fan web1 web2 db1 -- systemctl restart myapp
 basaltw fan web1 web2 -u deploy -- git -C /srv/app pull
+basaltw fan mesh-dns mesh-app -- systemctl is-active tailscaled
+basaltw fan -u root mesh-dns mesh-app -- journalctl -u tailscaled --no-pager -n 20
 ```
+
+The first `--` is required to separate hosts and connection options from the
+remote command. Options may appear before, between, or after hosts, before
+the delimiter. All remote tokens, including flags and later literal `--`,
+are preserved. A missing command or unknown connection option is an error.
 
 All hosts run concurrently. Output is serialized per host after all results are
 collected, sorted by hostname for stable output.
