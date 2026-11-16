@@ -30,10 +30,12 @@ from typing import Optional
 import urllib.parse
 
 from lib.proxmox_hosts import ProxmoxHost
-from lib.proxmox_guest import _proxmox_ssh_command, _ssh_opts, _ssh_run
+from lib.proxmox_guest import ProvisionError, _proxmox_ssh_command, _ssh_opts, _ssh_run
+from lib.proxmox_lifecycle import parse_guest_startup
 from lib.proxmox_tasks import ProxmoxTaskError, resize_vm_disk, vm_disk_resize_command
 from lib.types import StrList
 from lib.validation import validate_positive_integer
+from lib.validators import validate_ip_address
 
 
 class ProxmoxManageError(Exception):
@@ -130,7 +132,7 @@ class ProxmoxWebhookNotificationConfig:
 
 
 _GUEST_OPTION_RE = re.compile(r"^[a-z][a-z0-9-]*$")
-_SNAPSHOT_NAME_RE = re.compile(r"^[a-zA-Z0-9_]{1,40}$")
+_SNAPSHOT_NAME_RE = re.compile(r"[a-zA-Z][a-zA-Z0-9_-]{1,39}")
 _DISK_SIZE_RE = re.compile(r"[0-9]+[KkMmGgTt]")
 _MISSING_GUEST_PATTERNS = (
     "does not exist",
@@ -406,7 +408,8 @@ def get_container_ip(
         match = _NET0_IP_RE.search(line)
         if not match:
             continue
-        return match.group(1).split("/", 1)[0].strip() or None
+        address = match.group(1).split("/", 1)[0].strip()
+        return address if validate_ip_address(address) else None
     return None
 
 
@@ -651,22 +654,16 @@ def get_container_config(
     return config
 
 
-def _parse_startup_config(value: str) -> dict[str, int]:
-    parsed: dict[str, int] = {}
-    for item in value.split(","):
-        key, separator, raw_value = item.strip().partition("=")
-        if separator and key in {"order", "up", "down"}:
-            try:
-                parsed[key] = max(0, int(raw_value))
-            except ValueError:
-                continue
-    return parsed
-
-
 def get_guest_autostart(host: ProxmoxHost, vmid: int) -> GuestAutostart:
     """Return typed guest start-at-boot and ordering settings."""
     config = get_container_config(host, vmid)
-    startup = _parse_startup_config(config.get("startup", ""))
+    try:
+        startup = {
+            key: int(value)
+            for key, value in parse_guest_startup(config.get("startup", "")).items()
+        }
+    except ProvisionError as exc:
+        raise ProxmoxManageError(f"Invalid startup settings for guest {vmid}: {exc}") from exc
     enabled = config.get("onboot", "0").strip().lower() in {
         "1",
         "on",
@@ -912,10 +909,10 @@ def unlock_guest(
 
 
 def _validate_snapshot_name(name: str) -> None:
-    if not _SNAPSHOT_NAME_RE.match(name):
+    if not _SNAPSHOT_NAME_RE.fullmatch(name):
         raise ValueError(
             f"Invalid snapshot name: {name!r}. "
-            "Use letters, digits, and underscores only (1–40 characters)."
+            "Use a letter followed by letters, digits, underscores, or hyphens (2–40 characters)."
         )
 
 
@@ -1248,6 +1245,7 @@ def health_check(
     Proxmox host occasionally lacks ``ping`` or the guest may be on an
     isolated bridge.
     """
+    timeout = validate_positive_integer(str(timeout), "health probe timeout")
     report = HealthReport(vmid=vmid, status="unknown")
     try:
         report.guest_type, report.status = _get_guest_status(host, vmid)
@@ -1258,7 +1256,9 @@ def health_check(
     ip = get_container_ip(host, vmid)
     report.ip = ip
     if not ip:
-        report.notes.append("No IPv4 address configured on net0")
+        report.notes.append(
+            "No IPv4 static address configured on net0/ipconfig0; DHCP addresses are not discovered"
+        )
         return report
 
     if report.status != "running":
@@ -1276,10 +1276,8 @@ def health_check(
         report.notes.append("ping probe could not be executed")
 
     if probe_ssh:
-        ssh_cmd = (
-            f"timeout {int(timeout)} bash -c "
-            f"'</dev/tcp/{shlex.quote(ip)}/22' && echo OK || echo FAIL"
-        )
+        probe = shlex.quote(f"</dev/tcp/{ip}/22")
+        ssh_cmd = f"timeout {timeout} bash -c {probe} && echo OK || echo FAIL"
         ssh_result = _run_on_host(host, ssh_cmd)
         if ssh_result.returncode == 0:
             report.ssh_open = "OK" in (ssh_result.stdout or "")

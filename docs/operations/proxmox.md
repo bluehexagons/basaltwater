@@ -1008,6 +1008,9 @@ Lower order values start first and stop last. Put infrastructure dependencies
 such as storage and DNS first, give slow services enough delay, and leave
 disposable build or test VMs disabled. Unspecified order and delay values are
 preserved when autostart is enabled again.
+Proxmox's shorthand `startup: 2,up=30` is read as `order=2,up=30`, so changing
+only a delay preserves the order. Malformed, duplicate, or unknown startup
+members block schedule edits instead of silently discarding existing settings.
 
 For a small host, a practical routine is:
 
@@ -1070,6 +1073,12 @@ basaltw proxmox pause pve1 101
 basaltw proxmox resume pve1 101
 basaltw proxmox health pve1 101
 ```
+
+Guest health probes use a validated static IPv4 address from `net0` (LXC) or
+`ipconfig0` (QEMU). DHCP and missing or invalid addresses leave network probes
+unavailable and the health result unhealthy; this command does not discover
+DHCP leases or query the guest agent for an address. Probe timeouts must be
+positive whole seconds.
 
 For compatibility, the older `proxmox stop` command keeps its original
 behavior: it requests a graceful shutdown unless `--force` is supplied. New
@@ -1191,6 +1200,10 @@ basaltw proxmox delsnapshot pve1 101 pre_upgrade
 Snapshot deletion requires typing `yes`, or `--yes` for automation. `--dry-run`
 previews the command without confirmation or deletion. The interactive shell
 uses the same confirmation and dry-run options.
+Snapshot names follow Proxmox's configuration ID format: 2–40 ASCII characters,
+starting with a letter and continuing with letters, digits, underscores, or
+hyphens (for example, `pre-upgrade`). See the
+[native schema](https://github.com/proxmox/pve-common/blob/master/src/PVE/JSONSchema.pm).
 
 `vm destroy` is permanent and asks for confirmation. For a Basaltwater
 provisioned VM, use its exact saved local name; Basaltwater resolves the
