@@ -92,6 +92,24 @@ frame requires another capture and inspection, never replay of the completed inp
 Omit `--output` on screenshots and `input --observe` to generate a unique private
 PNG path. Retain the returned path rather than reusing a round-based filename.
 
+On Debian, keep unrelated desktop content out of the follow-up image by selecting
+the application's window explicitly:
+
+```bash
+basaltw desktop screenshot --window WINDOW --compact
+basaltw desktop input --generation GENERATION --geometry WIDTH HEIGHT \
+  --observation OBSERVATION_ID click --x X --y Y --observe --observe-window WINDOW
+```
+
+Use the window ID from `desktop windows` and the input coordinates from the
+inspected capture, including its `image_origin`. `--observe-window` selects only
+the subsequent capture; it does not focus the window or change the input target.
+The follow-up retains full-desktop `geometry`, window `image_origin` and a new
+observation ID. A closed, hidden or otherwise uncapturable window fails that
+observation, preserving completed input without a full-desktop fallback. Inspect
+dialogs separately when they are outside the selected window. This option requires
+`--observe`; native monitor capture rejects it before sending input.
+
 `--view-geometry` is the presented image content size; `--view-origin` is its
 top-left offset inside the viewer (default zero). Points include that offset.
 Both drag endpoints use the same transform. The read-only status comparison
@@ -254,6 +272,8 @@ captures again. It checks the output path before input, refusing existing files,
 dangling symlinks and invalid/unwritable parent directories. The precheck does
 not reserve a path; a later filesystem change can still cause post-input capture
 failure, which retains completed input and never replays it.
+Without `--observe-window`, Debian captures the desktop and CachyOS captures the
+selected monitor, regardless of the scope of the preceding screenshot.
 Completion receipts retain the geometry admitted for input;
 take a new capture to observe current dimensions. Debian records completion
 without a final geometry query that could obscure successfully submitted input.

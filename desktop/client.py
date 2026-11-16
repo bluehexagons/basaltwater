@@ -420,10 +420,20 @@ def send_action(payload: dict[str, Any], *, deadline: float | None = None, backe
     return {**result, "submitted_characters": submitted}
 
 
-def observe_after_input(result: dict, payload: dict, output: str, *, settle_ms: int, backend) -> dict:
+def validate_followup_window(window: str | None, *, backend=runtime) -> str | None:
+    if window is None:
+        return None
+    if backend is not runtime:
+        raise ValueError("--observe-window requires the Debian desktop; native capture supports a selected monitor only")
+    return runtime.normalize_window_id(window)
+
+
+def observe_after_input(result: dict, payload: dict, output: str, *, settle_ms: int, backend,
+                        window: str | None = None) -> dict:
     """Retain completed input evidence even when its subsequent capture fails."""
     from desktop.observations import compact_capture
     try:
+        window = validate_followup_window(window, backend=backend)
         time.sleep(settle_ms / 1000)
         observed = backend.status()
         if (observed.get("generation") != payload["generation"] or
@@ -431,7 +441,12 @@ def observe_after_input(result: dict, payload: dict, output: str, *, settle_ms: 
             raise RuntimeError("Desktop control changed after input; observe before further input")
         capture = backend.request({"action": "screenshot", "generation": payload["generation"],
                                    "control_revision": payload["control_revision"],
-                                   "output": output, **({"next_frame": True} if backend is not runtime else {})})
+                                   "output": output, **({"window": window} if window is not None else {}),
+                                   **({"next_frame": True} if backend is not runtime else {})})
+        if window is not None:
+            captured_window = capture.get("window")
+            if not isinstance(captured_window, dict) or captured_window.get("id") != window:
+                raise RuntimeError("Backend did not confirm the requested window capture; inspect before further input")
         if backend is not runtime and capture.get("initial_frame_skipped") is not True:
             raise RuntimeError("Backend did not confirm subsequent-frame capture; restart the native helper")
         if (capture.get("generation") != payload["generation"] or

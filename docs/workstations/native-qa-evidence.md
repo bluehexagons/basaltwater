@@ -5,6 +5,28 @@ default devices, move application playback, start a portal, install packages,
 or establish physical audibility. Use the checkout's CLI until a refresh delivers
 it; inspect [source provenance](cachyos-provenance.md) when comparing runs.
 
+## Choose an evidence output directory
+
+Omit optional `--output` to create a private temporary bundle automatically. For
+an explicit path, the final directory must be new and its immediate parent must
+already exist, belong to the current account, and have no group or other access
+(normally mode 0700). Both must be outside Git worktrees and must not traverse
+symlinks. For example, create a dedicated parent first, then use a new child for
+each result:
+
+```sh
+mkdir -m 700 /absolute/private-qa
+basaltw desktop evidence crop /absolute/private/frame.png \
+  --rectangle 100 80 640 360 --caption 'Pause menu' \
+  --output /absolute/private-qa/new-crop --json
+```
+
+Substitute a writable location outside Git. The tool creates only `new-crop`;
+it does not create missing parents, change existing permissions, or overwrite a
+bundle. A typical mode-0755 project or temporary directory is not a private
+parent. Export requires an explicit output path; the other examples below can
+omit it and retain the returned bundle path.
+
 ## Retain process identities
 
 Before a normal quit or controller context change, retain the selected live

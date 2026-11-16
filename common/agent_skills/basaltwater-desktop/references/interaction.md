@@ -84,7 +84,7 @@ Capture a new private PNG (existing files are never overwritten), then inspect
 it using your available image viewer:
 
 ```bash
-basaltw desktop screenshot --output /tmp/desktop-check-1.png
+basaltw desktop screenshot --compact --output /tmp/desktop-check-1.png
 ```
 
 Omit `--output` to retain a unique capture in private `~/Pictures/basaltwater/`.
@@ -95,8 +95,8 @@ Prefer an application screenshot when the result concerns one application:
 
 ```bash
 basaltw desktop windows
-basaltw desktop screenshot --window 0x123456 --output /tmp/application-check-1.png
-basaltw desktop screenshot --active-window --output /tmp/active-application-1.png
+basaltw desktop screenshot --window 0x123456 --compact --output /tmp/application-check-1.png
+basaltw desktop screenshot --active-window --compact --output /tmp/active-application-1.png
 ```
 
 Use a current ID from `windows`; do not guess IDs or select by an ambiguous title.
@@ -135,8 +135,13 @@ more thinking time in a stable, untimed scene (1–600 seconds; default 60).
 Tokens are invalidated by mutations, newer captures and control changes;
 status and window queries do not renew them. Window tokens recheck placement,
 identity and active state, and pointer targets must lie inside the image.
-`input --observe` retains completion and captures again after settling; capture
-failure never replays input. See the shared
+`input --observe` retains completion and captures again after settling. Add
+`--observe-window WINDOW` on Debian to capture only the selected application;
+otherwise the follow-up captures the whole desktop. It changes neither focus nor
+the input target and never falls back to the desktop if the window disappears.
+Native capture supports only the selected monitor and rejects this window option
+before input. Capture failure never replays input. `screenshot --compact` keeps
+capture metadata and omits the diagnostic status envelope. See the shared
 [observation contract](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/desktop-observations.md)
 for coordinate spaces, receipts and planner/operator guidance.
 
@@ -162,7 +167,11 @@ injecting input or renewing the token. Presented-view coordinates require the
 actual image display dimensions via `--view-geometry WIDTH HEIGHT`.
 
 Use `desktop evidence start --project /absolute/project` before a bounded manual
-run and `desktop evidence finish` afterward. Private journals retain input
+run. When cleanup is part of the run, capture the terminal application state,
+quit the owned application normally, verify window absence and its owned launch
+status, then call `desktop evidence finish`. Finishing stops the recorder; it
+does not close the application or prove exit. Leave the shared desktop session
+running. See the [close-and-verify sequence](windows.md). Private journals retain input
 receipts and hashed capture references, omit typed text and command arguments,
 and checkpoint when the helper stops. `desktop evidence verify ARTIFACT` works
 offline; finalization records available task status and Git provenance. Keep
@@ -173,7 +182,7 @@ For example:
 
 ```bash
 basaltw desktop input --generation GENERATION --geometry 1280 720 \
-  --observation OBSERVATION_ID click --x 400 --y 300 --button 1 --observe
+  --observation OBSERVATION_ID click --x 400 --y 300 --button 1 --observe --observe-window WINDOW
 basaltw desktop input --generation GENERATION --geometry 1280 720 text --text 'example'
 basaltw desktop input --generation GENERATION --geometry 1280 720 key --key ctrl+s
 ```

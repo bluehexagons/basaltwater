@@ -40,9 +40,20 @@ def new_bundle(output: str | None = None) -> Path:
         raise ValueError("Evidence output must not traverse symlinks or parent components")
     if any((parent / ".git").exists() for parent in (path.parent, *path.parents)):
         raise ValueError("Keep evidence outside Git worktrees")
-    parent = path.parent.stat()
-    if not stat.S_ISDIR(parent.st_mode) or parent.st_uid != os.getuid() or parent.st_mode & 0o077:
-        raise ValueError("Evidence output requires an existing private owned parent directory")
+    remedy = ("Create a dedicated parent directory owned by you with mode 0700 outside Git, "
+              "or omit --output when optional for a private temporary bundle")
+    try:
+        parent = path.parent.stat()
+    except FileNotFoundError as exc:
+        raise ValueError(f"Evidence output parent directory does not exist. {remedy}") from exc
+    except NotADirectoryError as exc:
+        raise ValueError(f"Evidence output parent is not a directory. {remedy}") from exc
+    if not stat.S_ISDIR(parent.st_mode):
+        raise ValueError(f"Evidence output parent is not a directory. {remedy}")
+    if parent.st_uid != os.getuid():
+        raise ValueError(f"Evidence output parent is not owned by the current account. {remedy}")
+    if parent.st_mode & 0o077:
+        raise ValueError(f"Evidence output parent is not private (group/other permissions are set). {remedy}")
     path.mkdir(mode=0o700)
     return path
 

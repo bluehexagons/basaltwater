@@ -54,7 +54,10 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     add_recording_parser(commands)
     recording = evidence_commands.add_parser("start")
     recording.add_argument("--project", required=True)
-    finishing = evidence_commands.add_parser("finish")
+    finishing = evidence_commands.add_parser("finish", help="Stop and finalize recording; does not close the application",
+        description="Stop and finalize recording. This does not close applications or prove their exit. "
+                    "When recording cleanup, quit the owned application normally and verify its window and launch status first. "
+                    "Leave the shared desktop session running.")
     finalizing = evidence_commands.add_parser("finalize", help="Finalize a saved recording after helper exit or interrupted collection")
     finalizing.add_argument("artifact")
     verifying = evidence_commands.add_parser("verify", help="Check recorded capture files without contacting the desktop or modifying evidence")
@@ -129,7 +132,9 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     opening.add_argument("--reveal", action="store_true", help="Open its parent directory")
     opening.add_argument("--wait-window")
     opening.add_argument("--timeout", type=float, default=15)
-    window = commands.add_parser("window", help="Request a normal window-manager action")
+    window = commands.add_parser("window", help="Request a normal window-manager action",
+        description="Request a window-manager action, then verify its result. Close can be blocked by an application dialog. "
+                    "Use wait --condition absent and check the owned launch status; a close request alone does not prove exit.")
     window.add_argument("operation", choices=("focus", "move", "resize", "maximize", "minimize", "restore", "close"))
     window.add_argument("--window", required=True)
     window.add_argument("--identity", required=True, help="Window identity from 'desktop windows'")
@@ -205,6 +210,7 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     action.add_argument("--button", type=int, choices=range(1, 8), default=1,
                         help="Integer: 1 left, 2 middle, 3 right, 4/5 vertical wheel, 6/7 horizontal wheel; drag uses 1–3")
     action.add_argument("--observe", action="store_true", help="After completed input, settle and capture again; native skips the initial sample; never replay on capture failure")
+    action.add_argument("--observe-window", help="Debian: capture only this window ID after input (requires --observe); never falls back to the desktop")
     action.add_argument("--settle-ms", type=int, default=120, help="Settling delay for --observe, 0–5000 ms (default: 120)")
     action.add_argument("--output", help="New PNG path for --observe; defaults to private artifact storage")
 
@@ -433,8 +439,9 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                         payload["observation_id"] = args.observation
                     if not 0 <= args.settle_ms <= 5000:
                         raise ValueError("Observation settling delay must be 0–5000 ms")
-                    if not args.observe and (args.output is not None or args.settle_ms != 120):
-                        raise ValueError("Observation output and settling delay require --observe")
+                    if not args.observe and (args.output is not None or args.settle_ms != 120 or args.observe_window is not None):
+                        raise ValueError("Observation output, window and settling delay require --observe")
+                    observation_window = client.validate_followup_window(args.observe_window, backend=backend)
                     observation_output = None
                     if args.observe:
                         observation_output = str(Path(args.output).absolute()) if args.output else client.artifact_path()
@@ -454,7 +461,7 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                 result = client.send_action(payload, backend=backend)
                 if command == "input" and args.observe and "error" not in result:
                     result = client.observe_after_input(result, payload, observation_output,
-                                                        settle_ms=args.settle_ms, backend=backend)
+                                                        settle_ms=args.settle_ms, backend=backend, window=observation_window)
                 if wait_title:
                     result["window_baseline"] = baseline
                     try:

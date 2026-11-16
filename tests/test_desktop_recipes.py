@@ -14,7 +14,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from desktop import client, control_state, evidence, native_session, observations
+from desktop import client, control_state, evidence, native_session, observations, qa_artifacts
 from desktop.receipts import DesktopRequestError
 from lib import desktop_cli
 from scripts import desktop_observation_probe as probe
@@ -349,6 +349,129 @@ class RecipeTransportTests(unittest.TestCase):
                     self.assertRaisesRegex(ValueError, "finite monotonic"):
                 client.runtime.request({"action": "screenshot", "deadline": value})
             socket.assert_not_called()
+
+
+class WindowFollowupRecipeTests(unittest.TestCase):
+    def setUp(self):
+        self.home = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.parser = argparse.ArgumentParser()
+        desktop_cli.add_desktop_subparser(self.parser.add_subparsers())
+        self.current = {"state": "running", "generation": "g", "control_revision": "r",
+                        "input_capabilities": ["observation-input"]}
+        self.completed = {"input_delivery": "completed", "input_id": "one",
+                          "input_completed_monotonic_ns": 42, "geometry": [800, 600]}
+        self.capture = {"generation": "g", "control_revision": "r", "geometry": [800, 600],
+                        "window": {"id": "0x2a", "geometry": [400, 300], "origin": [100, 80]},
+                        "image_geometry": [400, 300], "image_origin": [100, 80],
+                        "coordinate_space": "desktop", "observation_id": "b" * 32,
+                        "output": str(self.home / "next.png"), "unneeded_status": "omit"}
+
+    def args(self, *extra, native=False):
+        return self.parser.parse_args(["desktop", *(["--native"] if native else []), "input",
+            "--generation", "g", "--geometry", "800", "600", "--observation", "a" * 32,
+            "click", "--x", "120", "--y", "110", *extra])
+
+    def test_selected_window_followup_keeps_mapping_and_completed_input(self):
+        with patch.object(client.runtime, "status", return_value=self.current), \
+                patch.object(client.runtime, "request", side_effect=[self.completed, self.capture]) as request, \
+                patch.object(client.time, "sleep"), redirect_stdout(out := StringIO()):
+            code = desktop_cli.run_desktop_command(self.args("--observe", "--observe-window", "42",
+                "--output", self.capture["output"]))
+        self.assertEqual(code, 0)
+        result = json.loads(out.getvalue())
+        self.assertEqual(result["input_id"], "one")
+        self.assertEqual(result["input_completed_monotonic_ns"], 42)
+        self.assertEqual(result["geometry"], [800, 600])
+        followup = result["observation"]
+        for key in ("geometry", "image_geometry", "image_origin", "window", "coordinate_space", "observation_id"):
+            self.assertEqual(followup[key], self.capture[key])
+        self.assertNotIn("unneeded_status", followup)
+        sent, captured = [call.args[0] for call in request.call_args_list]
+        self.assertEqual(sent["action"], "input")
+        self.assertEqual(sent["observation_id"], "a" * 32)
+        self.assertNotIn("window", sent)
+        self.assertEqual(captured, {"action": "screenshot", "generation": "g", "control_revision": "r",
+                                    "output": self.capture["output"], "window": "0x2a"})
+
+    def test_invalid_window_options_are_refused_before_input_or_output_allocation(self):
+        cases = [(False, ["--observe-window", "42"], "require --observe"),
+                 (True, ["--observe", "--observe-window", "42"], "requires the Debian desktop"),
+                 (False, ["--observe", "--observe-window", "title"], "decimal or hexadecimal")]
+        for native, extra, message in cases:
+            with self.subTest(native=native, extra=extra), \
+                    patch.object(client.runtime, "status", return_value=self.current), \
+                    patch.object(native_session, "status", return_value=self.current), \
+                    patch.object(client.runtime, "request") as debian_request, \
+                    patch.object(native_session, "request") as native_request, \
+                    patch.object(client, "artifact_path") as allocate, \
+                    redirect_stdout(out := StringIO()):
+                self.assertEqual(desktop_cli.run_desktop_command(self.args(*extra, native=native)), 1)
+                result = json.loads(out.getvalue())
+                self.assertIn(message, result["error"])
+                self.assertEqual(result["input_delivery"], "not-sent")
+                self.assertEqual(result["dispatch_stage"], "before-input")
+                debian_request.assert_not_called()
+                native_request.assert_not_called()
+                allocate.assert_not_called()
+
+    def test_capture_failure_or_wrong_window_never_replays_or_falls_back(self):
+        for capture in (RuntimeError("Window is no longer visible"),
+                        {**self.capture, "window": None}, {**self.capture, "window": {"id": "0x99"}}):
+            with self.subTest(capture=capture), patch.object(client.runtime, "status", return_value=self.current), \
+                    patch.object(client.runtime, "request", side_effect=[self.completed, capture]) as request, \
+                    patch.object(client.time, "sleep"), redirect_stdout(out := StringIO()):
+                self.assertEqual(desktop_cli.run_desktop_command(self.args("--observe", "--observe-window", "0x2A",
+                    "--output", self.capture["output"])), 1)
+                result = json.loads(out.getvalue())
+                self.assertEqual(result["input_id"], "one")
+                self.assertEqual(result["input_completed_monotonic_ns"], 42)
+                self.assertEqual(result["input_delivery"], "completed")
+                self.assertEqual(result["dispatch_stage"], "post-input-observation")
+                self.assertIn("Do not replay input", result["error"])
+                self.assertNotIn("observation", result)
+                self.assertEqual([call.args[0]["action"] for call in request.call_args_list], ["input", "screenshot"])
+                self.assertEqual(request.call_args.args[0]["window"], "0x2a")
+
+    def test_human_control_change_prevents_followup_capture(self):
+        with patch.object(client.runtime, "status", side_effect=[self.current, {**self.current, "control_revision": "new"}]), \
+                patch.object(client.runtime, "request", return_value=self.completed) as request, \
+                patch.object(client.time, "sleep"), redirect_stdout(out := StringIO()):
+            self.assertEqual(desktop_cli.run_desktop_command(self.args("--observe", "--observe-window", "42",
+                "--output", self.capture["output"])), 1)
+        result = json.loads(out.getvalue())
+        self.assertEqual(result["input_delivery"], "completed")
+        self.assertIn("control changed", result["error"])
+        request.assert_called_once()
+        self.assertEqual(request.call_args.args[0]["action"], "input")
+
+
+class EvidenceDirectoryRecipeTests(unittest.TestCase):
+    def test_parent_errors_explain_remedy_without_creating_or_changing_parents(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            root.chmod(0o700)
+            missing = root / "missing"
+            regular = root / "file"
+            regular.write_text("keep")
+            public = root / "public"
+            public.mkdir(mode=0o755)
+            public.chmod(0o755)
+            for parent, reason in ((missing, "does not exist"), (regular, "not a directory"),
+                                   (regular / "nested", "not a directory"), (public, "not private")):
+                with self.subTest(parent=parent), self.assertRaisesRegex(ValueError, reason) as failure:
+                    qa_artifacts.new_bundle(str(parent / "new-bundle"))
+                self.assertIn("mode 0700 outside Git", str(failure.exception))
+                self.assertIn("omit --output when optional", str(failure.exception))
+            self.assertFalse(missing.exists())
+            self.assertEqual(regular.read_text(), "keep")
+            self.assertEqual(public.stat().st_mode & 0o777, 0o755)
+            self.assertEqual(list(public.iterdir()), [])
+            with patch.object(qa_artifacts.os, "getuid", return_value=root.stat().st_uid + 1), \
+                    self.assertRaisesRegex(ValueError, "not owned by the current account"):
+                qa_artifacts.new_bundle(str(root / "foreign-output"))
+            self.assertFalse((root / "foreign-output").exists())
+            bundle = qa_artifacts.new_bundle(str(root / "valid-output"))
+            self.assertEqual(bundle.stat().st_mode & 0o777, 0o700)
 
 
 class PublishedRecipeTests(unittest.TestCase):

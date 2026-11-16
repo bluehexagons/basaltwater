@@ -19,6 +19,26 @@ Use `wait --condition absent` afterward, and inspect dialogs on timeout.
 Wait selectors combine window ID, literal title substring, and PID with AND.
 Waits remain usable during human override or disabled control.
 
+When recording cleanup, keep the recorder active through normal application
+exit. First capture the terminal application state with `screenshot --window
+WINDOW --compact`, then use the current window identity and the owned launch ID:
+
+```bash
+basaltw desktop window close --window WINDOW --identity IDENTITY --generation GENERATION
+basaltw desktop wait --window WINDOW --generation GENERATION --condition absent --timeout 10
+basaltw desktop launch-status LAUNCH --generation GENERATION
+basaltw desktop evidence finish --json
+basaltw desktop evidence verify ARTIFACT --json
+```
+
+Proceed to `finish` after checking the wait and launch results. Window absence
+does not establish process exit; record any surviving owned child separately.
+If close times out, take a fresh screenshot and inspect any modal dialog. Choose
+the authorized normal-exit action before requesting close again; repeating close
+blindly or finishing the recorder early loses cleanup evidence. `finish` only
+stops and finalizes recording. Leave unrelated applications and the shared
+desktop session running.
+
 For a brief, already-observed interaction, `desktop sequence /absolute/steps.json
 --generation GENERATION` accepts 1–20 JSON action objects (`input`, `window`,
 `screenshot`, `windows`), using the same fields as the underlying operations.
