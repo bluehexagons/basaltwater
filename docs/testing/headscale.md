@@ -120,6 +120,17 @@ resolver file permissions, recovery exclusion and endpoint-bound administration.
   health and completes only the controller record. Normal setup then disables
   the withdrawn resolver and client while retaining the enrolled identity and
   native state. All owned lab guests finish stopped with autostart disabled.
+- Final review qualification repeats retained-client resume, Unbound setup and
+  public DNS publication with endpoint/node/role-scoped forced-command keys.
+  The real restricted key accepts matching inspection and returns helper-level
+  refusals for five foreign network, node or role requests, even when the SSH
+  caller requests a different scope. The advertised resolver guard remains
+  byte-for-byte unchanged. Peer OS MagicDNS lookup and default UDP/TCP recursion
+  pass, followed by public withdrawal. Saved-name `fan` reaches the actual
+  configured VM addresses using saved SSH credentials. Normal setup disables
+  the withdrawn resolver/client, retaining its exact enrolled identity and
+  native state. Original control keys/policy, peer records and the separate
+  inactive control files remain byte-preserved.
 
 ## Offline and browser boundaries
 
@@ -155,6 +166,15 @@ Independent review covers enrollment ordering, saved authority, active-firewall
 preservation and guarded DNS completion. The final corrected-tag admission and
 malformed-cache fixes in `2d120e08` pass 48 focused tests, retaining native
 identity checks and private recovery evidence.
+
+The final merged-main review passes local `make check-ci`: 10,129 tests,
+26 skipped, 82% coverage and all static/documentation/brand/package/wheel checks.
+The final CRLF authorization-narrowing correction separately passes 36 focused
+DNS tests. Independent reviews cover publication-key scope, retained client
+ownership and lifecycle locking, setup power-option admission, hosted onboarding
+disable, and per-host fan failure reporting. The three-VM guide still passes its
+five-block/eight-command offline fixture execution. The command help describes
+the management and DNS actions, and the walkthrough uses saved VM names.
 
 The frozen full application run passed 84/84 checks across Chromium and Firefox,
 including all 18 Headscale checks. This resolves earlier unrelated Firefox form
