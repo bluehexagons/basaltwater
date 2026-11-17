@@ -701,6 +701,8 @@ def _run_configured_setup_locked(config: SetupConfig, args: argparse.Namespace) 
     print("\n" + "=" * 60)
     print("✓ Remote setup complete!")
     print("=" * 60)
+    if report is not None:
+        report.include_disk_usage(config.username)
     
     if config.notify_specs:
         _send_setup_notification(
@@ -789,6 +791,8 @@ def _run_cachyos_setup_locked(config: SetupConfig) -> int:
     report_reboot_notice(config)
     finalize_setup(config)
     print("\nCachyOS coding setup complete. Authenticate providers locally before starting work.")
+    if report := get_setup_report():
+        report.include_disk_usage(config.username)
     return 0
 
 

@@ -7,6 +7,10 @@ random delay. The job inventories root, managed `build-*` accounts whose passwd
 homes exactly match Basaltwater's build-home convention, and the setup account.
 Application service accounts are separate from build accounts; no service is
 stopped by cache maintenance.
+The target setup completion summary includes a concise disk-usage section:
+used/total capacity, available space and free inodes, once per relevant filesystem.
+It covers root, temporary, build, web and setup-account storage without scanning
+directory contents; unavailable observations do not change the setup result.
 The daily job also dispatches retention for installed managed builder and target
 roles. It does not require those roles on ordinary hosts.
 
