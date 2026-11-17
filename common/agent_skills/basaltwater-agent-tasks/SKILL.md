@@ -19,6 +19,11 @@ one-time follow-up in the conversation with `schedule: {type: "once", runAt: ...
 use the scheduling reference for timezone and dispatch semantics. Choose
 one scheduler per job; do not duplicate it.
 
+For explicitly requested interactive goals, T3 0.1.10 supports native Codex,
+Claude and OpenCode goals and stopped-thread Resume. Prefer those controls for
+T3-owned work; do not add a second continuation scheduler. They do not establish
+Basaltwater's independent lifetime limits or retained execution receipts.
+
 For access discovery, use available task MCP tools or:
 
 ```bash

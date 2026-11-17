@@ -1,7 +1,7 @@
 # T3 Code scheduling
 
 Use this reference when authorized deferred or recurring work should run through
-T3 Code. This reference follows stable 0.1.9; inspect the connected
+T3 Code. This reference follows stable 0.1.10; inspect the connected
 environment's live tools before acting. No scheduler grants additional scope,
 publication authority, or permission to exceed the user's cost limits.
 
@@ -22,6 +22,12 @@ If T3 is required and the exposed tool cannot express the needed limit, report
 that constraint instead of silently creating unbounded work. Do not schedule
 the same job in both systems or assume pausing one stops the other.
 For a request to watch a PR, use the native PR watcher rather than a timer.
+
+For an explicitly requested interactive goal, use T3's native Codex, Claude or
+OpenCode goal controls and Resume rather than scheduling another continuation
+loop. Provider stop/resume behavior differs; see the
+[goal manual](https://github.com/pingdotgg/t3code/blob/v0.1.10/docs/user/composer.md#goals).
+This does not replace the independent runner's lifetime limits and receipts.
 
 ## Create and inspect
 
@@ -66,7 +72,7 @@ Inspect both the binding and the current thread settings. Before changing that
 thread to fast service, `max`, `ultra`, or broader permission modes, pause its
 unattended schedules or ensure the change stays within the user's authorization.
 Creation inherits the caller's model selection; updates preserve the stored
-selection. The 0.1.9 MCP inputs cannot set model/options or a custom workspace,
+selection. The 0.1.10 MCP inputs cannot set model/options or a custom workspace,
 and task summaries omit those settings. Inspect/edit the task in T3's scheduled
 task settings when those details matter; do not claim MCP verified them.
 
@@ -198,12 +204,12 @@ storage is a separate Connect choice with its own data-retention implications;
 do not enable it incidentally. Inspect and remove authorized external hooks
 when retiring a workflow, rather than leaving senders targeting a deleted task.
 
-Upstream baseline: [0.1.9 release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.9),
-[schedule contract](https://github.com/pingdotgg/t3code/blob/v0.1.9/packages/contracts/src/scheduledTask.ts),
-[MCP input and result](https://github.com/pingdotgg/t3code/blob/v0.1.9/packages/contracts/src/orchestratorMcp.ts),
-[scheduling tools](https://github.com/pingdotgg/t3code/blob/v0.1.9/apps/server/src/mcp/toolkits/orchestrator/tools.ts),
-[run-now tool](https://github.com/pingdotgg/t3code/blob/v0.1.9/apps/server/src/mcp/toolkits/thread/tools.ts),
-[manual-run behavior](https://github.com/pingdotgg/t3code/blob/v0.1.9/apps/server/src/scheduledTasks/ScheduledTaskService.ts),
-[MCP binding, workspace preservation and caller limits](https://github.com/pingdotgg/t3code/blob/v0.1.9/apps/server/src/mcp/OrchestratorMcpService.ts),
+Upstream baseline: [0.1.10 release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.10),
+[schedule contract](https://github.com/pingdotgg/t3code/blob/v0.1.10/packages/contracts/src/scheduledTask.ts),
+[MCP input and result](https://github.com/pingdotgg/t3code/blob/v0.1.10/packages/contracts/src/orchestratorMcp.ts),
+[scheduling tools](https://github.com/pingdotgg/t3code/blob/v0.1.10/apps/server/src/mcp/toolkits/orchestrator/tools.ts),
+[run-now tool](https://github.com/pingdotgg/t3code/blob/v0.1.10/apps/server/src/mcp/toolkits/thread/tools.ts),
+[manual-run behavior](https://github.com/pingdotgg/t3code/blob/v0.1.10/apps/server/src/scheduledTasks/ScheduledTaskService.ts),
+[MCP binding, workspace preservation and caller limits](https://github.com/pingdotgg/t3code/blob/v0.1.10/apps/server/src/mcp/OrchestratorMcpService.ts),
 and [webhook settings](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/project-settings.md#webhook-automations).
 The active T3 tool schemas govern available schedule and signature fields.

@@ -46,7 +46,7 @@ environment to discover tools and Basaltwater help routes. Use
 `basaltw local cachyos-doctor` for CachyOS health; Debian's
 `agent doctor --capability t3code` checks a different service layout.
 For current shared T3 client behavior, see the
-[release integration](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-t3code/references/release-0.1.9.md).
+[release integration](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-t3code/references/release-0.1.10.md).
 
 For connection/account, loaded-skill or cross-platform command mismatches, use
 the shared [execution-environment checks](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/t3-workflows.md#establish-the-execution-environment).

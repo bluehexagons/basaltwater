@@ -1,6 +1,7 @@
 # T3 Code 0.1.10 integration
 
 Reviewed **2026-11-17 UTC** against [stable 0.1.10](https://github.com/pingdotgg/t3code/releases/tag/v0.1.10).
+Tagged commit: `7d32075e3757ded707914e2450c3e392a9665765`.
 This reference owns Basaltwater compatibility evidence; use tagged upstream
 manuals for ordinary client controls.
 
@@ -73,7 +74,10 @@ SQLite integrity. Upgrade migrations advanced from 81 to 96; fresh startup
 recorded 96. Raw evidence and disposable data remain outside Git.
 
 Focused regressions cover protocol-4 failed-update selection and retention,
-inconsistent update refusal, and unknown-protocol refusal. These component
+inconsistent update refusal, and unknown-protocol refusal. Repository
+`make check-ci` passed: **10,261 tests run, 25 skipped**, with **82%** reported
+coverage, plus static, documentation and wheel checks. All six affected skill
+bundles passed skill validation. These component
 checks do not qualify live systemd installation/update/reboot, authenticated
 provider turns/terminals, native Windows/CachyOS clients, Connect approval,
 goals/resume, power inhibition, or destructive cleanup. Use the

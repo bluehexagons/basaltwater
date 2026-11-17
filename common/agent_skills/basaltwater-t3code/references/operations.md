@@ -155,6 +155,19 @@ rejected cloud requests do not establish a gateway, TLS, or local pairing
 failure. Leave cloud sign-in unverified when it fails. Preserve managed
 TLS/authentication policy and upstream assets.
 
+## Connect device approval
+
+In 0.1.10 the owner can enable **Require approval for new devices** in the
+host's **Settings → Sharing & access**. A new Connect device shows a code;
+approve only the initiated device with a matching code from an already
+connected device, or use the host's `t3 auth connect-device list` and
+`t3 auth connect-device approve CODE`. Update older clients first and review
+devices already trusted before enabling the setting. Revoke through the same
+settings or `t3 auth connect-device revoke CODE`; with approval disabled that
+device can connect again through the account. This is distinct from outside-agent
+OAuth grants, direct-LAN pairing, and Basaltwater's root-action broker. Setup
+does not change it. See [upstream device approval](https://github.com/pingdotgg/t3code/blob/v0.1.10/docs/user/remote-access.md#approve-new-devices).
+
 ## Outside agents
 
 An independent agent can deliberately connect through T3's OAuth MCP endpoint

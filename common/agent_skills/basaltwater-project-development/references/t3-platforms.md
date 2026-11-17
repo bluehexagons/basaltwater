@@ -1,4 +1,4 @@
-# T3 Code 0.1.7 platform boundaries
+# T3 Code platform boundaries
 
 Use the selected environment's installed version and live controls. A desktop
 package update, an updated skill bundle, and a verified provider turn are
@@ -22,6 +22,17 @@ reload policy. For CachyOS's isolated web environment, use its
 rather than the desktop command. Keep policy output in private evidence.
 
 Contract: [bundled command](https://github.com/pingdotgg/t3code/blob/v0.1.7/docs/user/install.md#the-t3-command).
+
+## Windows background service
+
+Upstream 0.1.10 supports a per-user Windows service through Task Scheduler,
+including remote updates. It starts at sign-in and stops at sign-out; a locked
+screen retains the session. Basaltwater still installs the packaged desktop
+and manages its graceful refresh. Do not run `t3 up` or `t3 service install`
+as an incidental desktop repair: a service changes lifecycle and may contend
+for the same data home. A deliberate migration needs an explicit runtime/data
+choice and native login/logout/update qualification. See the
+[upstream service guide](https://github.com/pingdotgg/t3code/blob/v0.1.10/docs/user/background-service.md).
 
 ## Windows policy and Ubuntu WSL
 

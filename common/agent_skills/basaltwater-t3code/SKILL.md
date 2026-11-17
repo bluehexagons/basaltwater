@@ -93,7 +93,9 @@ Read only the route needed:
   distinguish server and desktop runtimes before offering optional client CA
   enrollment. Keep TLS intact and use the browser skill's recovery procedure.
 
-**No project** folders under `~/.t3/scratch` are retained user files, not cache.
+**No project** folders under `~/.t3/scratch` are user files, not Basaltwater cache.
+T3's opt-in native retention can remove them, including files without Git
+recovery; inspect its cleanup policy and preserve needed evidence first.
 Stable 0.1.5's **Turn into project** promotes a folder in place after its
 threads finish or stop; it also moves their scheduled tasks. Initialize Git
 before using branch/worktree controls. Do not move T3's data or relax Codex

@@ -2,8 +2,8 @@
 
 Reviewed **2026-11-11** against [stable 0.1.9](https://github.com/pingdotgg/t3code/releases/tag/v0.1.9),
 commit `24e77473ecf41bc1f7142529c7911c1c1aae1d76`; stable release and integration
-contracts rechecked **2026-11-15**. GitHub's latest stable remains 0.1.9.
-Nightly 0.1.10 is a separate track; Basaltwater setup continues to resolve stable.
+contracts rechecked **2026-11-15**. This is historical evidence; the current
+stable review is [0.1.10](release-0.1.10.md). Basaltwater setup resolves stable.
 
 ## Compatibility
 

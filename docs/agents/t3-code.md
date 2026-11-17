@@ -153,66 +153,6 @@ Antigravity recommends **1.5.1 to below 2**, retaining selected older versions;
 0.1.5 adds Claude/GPT model discovery and thinking controls to that integration.
 This does not qualify it as a Basaltwater-managed provider.
 
-The earlier 0.1.5 integration review verified the unchanged service protocol, runtime
-layout, and administrative permission contract against tagged source. Its
-checksum-verified Linux x64 archive passed fresh-home and 0.1.4-to-0.1.5 upgrade
-checks for setup/doctor runtime selection, managed wrapper execution, embedded
-native-module loading, filtered HTTP startup, all 16 administrative pairing
-scopes with bootstrap-session revocation, database integrity, host-side thread
-listing, and Basaltwater's idle activity query. Seeded project metadata survived
-the upgrade; both releases record 72 SQL migrations. The new preflight refused
-a fixture with a newer migration without changing its database; see the
-[preflight contract](https://github.com/pingdotgg/t3code/blob/v0.1.5/apps/server/src/cloud/servicePreflight.ts).
-The executable resolved its bundled `lib/libatomic.so.1` through `$ORIGIN/lib`;
-preserve the complete archive during recovery. No runtime compatibility patch
-was needed.
-The earlier 0.1.3-to-0.1.4 check covered the increase from 69 to 72 migrations.
-
-Native Windows/CachyOS source review found compatible installer names,
-executable paths, archive staging, and graceful completion handling. These
-checks do not qualify systemd installation/reboot, authenticated provider turns,
-linked-environment execution, native package installation or desktop/mobile
-clients, Connect, or the complete live matrix below. Update the desktop client
-itself for 0.1.5's Electron/Brotli security fix; a headless server update does not
-patch a separately installed client.
-
-Stable 0.1.3 defaults a background service without an explicit host to a
-private-network listener. Basaltwater supplies `T3CODE_HOST` in its Debian
-service drop-in and an explicit `--host` for CachyOS web, preserving the
-configured bind and source allowlist. The new RPC/media WebSocket-ticket
-distinction keeps the older ticket endpoint compatible; the managed HTTPS
-gateway forwards paths, queries, and WebSocket upgrades without rewriting
-those tickets. Connect's pinned relay client advances to cloudflared
-2026.10.4; T3 owns that download and verification.
-
-Stable 0.1.4 adds the opt-in **Linked environments** beta, remote delegation,
-environment-scoped thread links, and retry keys for top-level launch. Enable
-the beta on both machines only for a requested connection; Basaltwater setup
-does not enroll peers or change the owner's Labs settings. Below full access,
-a link can modify only its own threads and skips project setup scripts. Remote
-delegation uses the peer project checkout and rejects worktree isolation.
-See [link operations](../../common/agent_skills/basaltwater-t3code/references/operations.md#linked-environments)
-and the [delegation contract](../../common/agent_skills/basaltwater-subagents/references/t3-orchestration.md#linked-environments).
-
-On Linux, 0.1.4 adds `Delegate=yes` to T3's agent scopes so rootless containers
-can manage nested cgroups. T3 owns this scope configuration; it does not require
-a new Basaltwater service override or container installation. See the
-[tagged scope implementation](https://github.com/pingdotgg/t3code/blob/v0.1.4/apps/server/src/process/agentScope.ts).
-
-OpenCode 2 uses the separate `@opencode/cli` package and converts OpenCode's
-shared database on first run. Do not install/run 1.x and 2.x side by side or
-silently replace the managed OpenCode installation as part of a T3 update.
-Plan that provider migration separately with a private recovery copy. OpenCode
-1.x retains limited V2 support, but pending approvals/questions do not reappear
-after a T3 restart; answer or stop them before updating. Basaltwater does not
-claim OpenCode 2 qualification from installing the existing OpenCode tool.
-
-Stable 0.1.5 also lets users choose rows in the thread details card through its
-context menu or **Settings → Appearance → Thread details**. Enable **Usage**
-there for the selected provider account's limit windows and thread context;
-hidden rows retain their keyboard shortcuts. Setup preserves these UI choices.
-See the [usage guide](https://github.com/pingdotgg/t3code/blob/v0.1.5/docs/user/usage.md).
-
 ### Agent workflow integration
 
 The [0.1.10 integration](../../common/agent_skills/basaltwater-t3code/references/release-0.1.10.md)
@@ -220,210 +160,39 @@ records the protocol-4 review and disposable fresh/0.1.9-upgrade checks. HTTP
 startup, embedded native PTY, administrative pairing/revocation, idle detection,
 signal forwarding and SQLite integrity passed; migrations advanced from 81 to
 96. Live service lifecycle and native-client workflows remain unqualified.
-T3 now owns native goals for Codex/Claude/OpenCode, stopped-thread continuation,
-optional Connect device approval, Windows background services, and its cleanup
-policies. Basaltwater's Windows profile continues to manage the desktop.
+Earlier component evidence remains in the [0.1.9](../../common/agent_skills/basaltwater-t3code/references/release-0.1.9.md)
+and [0.1.8](../../common/agent_skills/basaltwater-t3code/references/release-0.1.8.md)
+integration records. These checks do not establish end-to-end qualification.
 
-The 0.1.9 review confirms compatible service protocol/runtime layout and
-administrative pairing. Its digest-verified Linux x64 archive passed disposable
-fresh-home HTTP startup through the managed filter, embedded native-PTY loading,
-administrative pairing with bootstrap-session revocation, signal forwarding and
-SQLite integrity checks. A disposable 0.1.8-to-0.1.9 upgrade passed the same
-checks and advanced from 80 to 81 migrations. The focused integration suite
-passed 244 tests. No runtime adapter change was required. See the
-[0.1.9 integration](../../common/agent_skills/basaltwater-t3code/references/release-0.1.9.md)
-for contracts and qualification limits. The new database migration is 81;
-preserve upstream downgrade checks.
+Use the relevant shared reference instead of copying upstream UI/tool details:
 
-The shared [0.1.9 client workflows](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-019-client-workflows)
-cover sending ordinary messages during attachment upload, Claude MCP session
-approvals, OpenCode native goals, anchored PR links, GitLab merged-MR revert,
-background command details and screen-reader announcements. OpenCode goals
-require **2.2.5+**, independently of the general 2.0.18 recommendation. This
-does not migrate the managed OpenCode installation. Connect now offers hosted
-account approval for outside-agent sign-in without a copied code; use the
-[outside-agent route](../../common/agent_skills/basaltwater-t3code/references/operations.md#outside-agents)
-for access selection, local fallback and revocation.
-
-The 0.1.8 stable review retains service-state protocol 3, `activeVersion`,
-the standalone archive/native-module layout, and all 16 administrative pairing
-permissions. No runtime adapter change is needed. On Debian 13 x64, the
-GitHub-digest-verified Linux archives passed disposable fresh 0.1.8 startup and
-a 0.1.7-to-0.1.8 upgrade through Basaltwater's output filter. Checks covered
-version, embedded native PTY, HTTP 200, administrative pairing, bootstrap-session
-revocation, signal forwarding/shutdown, and SQLite integrity. A host-CLI project
-fixture survived the upgrade; migrations advanced from 79 to 80. No live shared
-service was changed. These are component checks, not full setup/systemd lifecycle,
-authenticated provider/terminal, or native-client qualification.
-
-The shared [0.1.8 client workflows](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-018-client-workflows)
-cover `/clear`, private secret cards, optional API text generators and settlement.
-Side chats now inherit parent permissions/model/effort from their first reply.
-Schedules expose `freshSession: true` through MCP for one retained thread with a
-new provider session per run; the stored `threadMode` is not an MCP parameter.
-Use self-contained prompts and durable checkpoints. Native provider discovery
-refreshes the catalog, including Fable 5.2; preserve explicit selections and the
-[Sol/Opus recommendations](../../common/agent_skills/basaltwater-subagents/references/model-selection.md).
-Direct API text generators have separate credentials/billing from subscriptions.
-See the [release integration](../../common/agent_skills/basaltwater-t3code/references/release-0.1.8.md)
-for tagged contracts and qualification limits, and
-[service environment/maintenance](../../common/agent_skills/basaltwater-t3code/references/updates.md#018-service-environment-and-maintenance)
-for `service.env` precedence and offline database reclamation.
-
-The 0.1.7 source review retains service-state protocol 3, the standalone archive
-and native-module layout, provider recommendations, and the pairing helper's
-CLI session grant contract. Setup now distinguishes a repointed runtime from
-an activated service using systemd invocation identity and upstream's pending
-restart marker. Mocked regressions cover updater success/failure with and
-without activation; they do not qualify a live systemd upgrade.
-On Debian x64, the GitHub-digest-verified 0.1.7 archive passed version and
-embedded native-PTY probes, disposable fresh-home HTTP startup, administrative
-pairing with all 16 scopes and bootstrap-session revocation, and SQLite
-integrity checks. No live shared service was restarted for these component checks.
-
-0.1.7 adds one-time schedules (`type: "once"`, `runAt` with an explicit UTC
-offset), child approvals in the parent conversation, and shareable thread links.
-Use the [scheduling reference](../../common/agent_skills/basaltwater-subagents/references/t3-scheduling.md)
-for finite follow-ups. Kiro is an Early Access provider, not a newly managed
-Basaltwater tool. Machine-wide managed policy can restrict providers, permission
-modes, remote access and updates; invalid policy prevents startup. Inspect it
-with `t3 policy show` and validate proposed files with `t3 policy check`.
-Preserve administrator policy during troubleshooting; see the
-[policy guide](https://github.com/pingdotgg/t3code/blob/v0.1.7/docs/user/managed-policy.md).
-Native clients, managed-policy enforcement and live scheduling remain separate
-qualification work.
-
-The shipped [0.1.7 client workflows](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-017-client-workflows)
-explain responding to child approvals from the parent, copying a thread link
-instead of its PR reference, provider/model usage filters, model/effort change
-markers, and tagged-thread hiding for recordings. Thread links still require
-access to the owning environment; hiding a thread does not stop its work or
-redact its contents. Usage filters are per environment and apply before model
-mapping; estimated costs do not establish subscription billing.
-For browser work, 0.1.7 can open an environment-port target directly through
-`preview_open` when its live schema exposes `target`; older tools use open then
-navigate. See the [preview reference](../../common/agent_skills/basaltwater-t3-preview-testing/references/collaborative-preview.md#network-origin).
-
-Stable 0.1.6 adds these workflows to the existing integration:
-
-- **Side chats:** `/side` or `/btw`, or **Side chat** in the right panel's **+**
-  menu, asks a question with the thread's context while its work continues.
-  It shares the thread's folder; it is not an isolated editing worktree.
-  In current 0.1.8, the first reply inherits the parent composer's permissions,
-  model and effort; existing side chats retain their own settings after parent
-  changes. **Bring back** transfers the discussion with the
-  next main-thread message while that thread is idle.
-- **Project organization:** pin projects in pickers or **Settings → Projects**.
-  Archive there to hide a project from pickers while retaining files, threads,
-  and settings; unarchive from the same list. All checkouts must be connected
-  for a project spanning multiple machines. Archiving does not establish that
-  its running work or schedules stopped.
-- **Local review:** choose **Commits** in the Diff pane source picker to inspect
-  the newest 100 commits in the branch comparison. Merge diffs use the first
-  parent. This complements the existing turn and branch review routes.
-- **Secret providers:** **Settings → Secrets** can configure a 1Password account
-  for provider environment variables and source-control credentials in builds
-  enabling `T3CODE_FEATURE_SECRETS` at build time. If the screen is absent,
-  changing a running service's environment does not enable compiled UI features.
-  The server
-  needs a working `op` CLI and account access. Basaltwater does not install or
-  enroll 1Password as part of a T3 update. Preserve the owner's existing login
-  choices; agent-requested secrets still use `request_secret` and its one-use
-  reference or file delivery.
-
-See the tagged [side-chat guide](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/thread-sidebar.md#side-chats),
-[project organization](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/project-settings.md#pin-and-archive-projects),
-[commit review](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/source-control.md#review-turn-changes),
-and [secret-provider implementation](https://github.com/pingdotgg/t3code/blob/v0.1.6/packages/secret-provider-onepassword/src/server/driver.ts).
-
-The 0.1.6 source review retains service-state protocol 3, the standalone
-archive layout, administrative scopes, and provider compatibility recommendations
-above. Authentication changes redact tickets and OAuth fields internally;
-the administrative permission set is unchanged. Thread organization now rejects
-unknown arguments strictly. No pairing or scheduling adapter change was needed.
-The GitHub-digest-verified Linux x64 archive passed version, embedded native-PTY
-probe, disposable fresh-home HTTP startup, and SQLite integrity checks on
-CachyOS. The generated managed web unit passed native `systemd-analyze --user
-verify`; activation and pressure behavior were not exercised on the live host.
-An additional Debian 13 x64 component check at Basaltwater commit `2f01740b`
-passed fresh-home 0.1.6 startup and a disposable 0.1.5-to-0.1.6 upgrade using
-the GitHub-digest-verified 0.1.5 archive and installed 0.1.6 runtime. Both paths
-passed setup/doctor runtime selection, managed wrapper execution, embedded
-native-PTY loading, HTTP startup, administrative pairing, and SQLite integrity.
-Exchanging the pairing credential produced a browser cookie session with all
-16 administrative permissions, and the helper revoked its bootstrap session.
-A project registered through the 0.1.5 host CLI survived the upgrade; host-side
-thread listing still worked, and SQL migrations advanced from 72 to 76.
-The live Debian service/host doctor was healthy with no warnings. These are
-component checks, not fresh setup, updater/systemd lifecycle, client UI, or
-full live feature qualification.
-Upstream now lowers agent slice priorities and bounds their aggregate memory/tasks;
-Basaltwater leaves those slices under T3's ownership. The managed CachyOS web
-unit now matches upstream's server CPU/IO weights, memory-low request and OOM
-preferences. It also follows upstream's `OOMPolicy=continue` so systemd does
-not stop the entire unit when a helper is OOM-killed; a server exit still uses
-the unit's restart policy. The corrected generated unit passed native systemd
-verification on Debian; OOM behavior under pressure remains unqualified.
-These are relative protections, not reserved capacity: ancestor
-cgroup grants and delegated controllers determine their effect. Debian's
-upstream unit and the packaged desktop obtain their settings from T3 itself.
-See [upstream agent scopes](https://github.com/pingdotgg/t3code/blob/v0.1.6/apps/server/src/process/agentScope.ts)
-and [service priorities](https://github.com/pingdotgg/t3code/blob/v0.1.6/apps/server/src/cloud/bootService.ts).
-
-For deliberate Debian service pressure tuning, 0.1.6 adds `t3 service protect`
-and `--undo`. It previews privileged changes and prompts for confirmation/sudo;
-`t3 service status` reports protection. Memory protection applies immediately,
-but the server's OOM score needs a service restart. This command targets the
-upstream service, not Basaltwater's separate CachyOS web unit or desktop.
-Setup does not run it automatically. See the
-[protection guide](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/background-service.md#keep-the-server-responsive-when-agents-use-all-memory).
-
-The shared installed skills now route T3 agents to its native orchestration:
-
-| Work | Integration |
+| Work | Integration boundary |
 | --- | --- |
-| Delegated children | Discover provider/model IDs through `orchestrator_capabilities`; use native same-provider workers only when they support the chosen model and no options are requested/inherited, otherwise `delegate_task`. Retain task IDs, pass explicit context, and collect asynchronous results. Each independent review round is a fresh task. Read current questions/approvals through their appropriate flow; cancelling an old task also stops later work in its child thread. |
-| Linked environments | Opt in on both machines under Labs. Discover with `t3_environment_links`; query the peer's catalog with `environmentId`. Remote `delegate_task` uses `target.environmentId` and optional `target.projectId`, runs in the peer checkout, and rejects worktree isolation. Retain `taskId` when no local `childThreadId` exists. Respect both caller and link ceilings. |
-| Editing isolation | Select `delegate_task` worktree isolation or an explicit top-level thread workspace before starting work. T3 owns its worktree binding and cleanup; Basaltwater commands manage their own ownership records. A shell `cd` does not rebind a thread. |
-| Conversation/context | Fork and merge-back transfer context separately from Git integration. Provider switches can carry command output, filenames, and plans as budgeted historical text; native tool state, reasoning, and attachments are not replayed. Read omitted history in bounded pages. |
-| Queues and recovery | Choose queue versus steering explicitly and inspect pending messages before retrying. Persistent queues wait for user resume after restart; interrupted-turn auto-continuation and usage-reset resume have separate controls. |
-| Recurring work | Choose T3 schedules for work returning to a T3 thread, or Basaltwater tasks for independent Codex execution and bounded goals. `schedule_task` updates by ID and supports `freshSession` in 0.1.8. `run_scheduled_task_now` uses `taskId` for authorized immediate runs; dispatch is not completion. Bound runs follow current thread settings; unbound MCP tasks resolve the primary remote's default branch with `main`/`master` fallbacks. Inspect stored model/workspace settings in the task UI. Filter/deduplicate webhooks before provider work. Use one scheduler per job. |
-| Pull requests | Register PRs through `link_pull_request`. For requested monitoring, watch once, yield for wakeups, then unwatch before handoff. Watches persist across wakes. Read existing guides without starting a model run; generation is optional and uses project guide settings. Check head SHA/staleness alongside diff review and checks. |
-| Project actions | Reuse canonical project commands through imported `t3.json` actions. Set worktree setup `async: false` when it must finish before the agent starts. Preserve project/environment overrides and inspect settle actions before cleanup. |
-| Visual results | Use `html_preview` then `html_render` for useful interactive charts, diagrams, comparisons, or mockups. T3 embeds local images and publishes a sandboxed thread artifact; it does not deploy the project or verify its behavior. |
+| Delegation, linked environments and worktrees | Follow injected session instructions and the [orchestration reference](../../common/agent_skills/basaltwater-subagents/references/t3-orchestration.md). T3 owns thread/worktree binding; shell directory changes do not rebind a thread. Linked environments require deliberate enrollment and apply caller/peer access ceilings. |
+| Schedules and PR monitoring | Use [native scheduling](../../common/agent_skills/basaltwater-subagents/references/t3-scheduling.md) and PR watches for T3-owned work. Independent Basaltwater tasks do not inherit T3 tools, preview or conversation. Choose one scheduler per job. |
+| Goals, resume, project actions and visual replies | Use the [shared workflow](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md). T3 supports goals for Codex/Claude/OpenCode and native stopped-thread continuation. Keep project commands canonical and inspect settle actions before cleanup. |
+| Pairing, Connect device approval and outside agents | Use [operations](../../common/agent_skills/basaltwater-t3code/references/operations.md) and upstream [device approval](https://github.com/pingdotgg/t3code/blob/v0.1.10/docs/user/remote-access.md#approve-new-devices). Setup does not enable public access, enroll outside agents or change owner approval settings. |
+| Updates, policy and service recovery | Use [managed updates](../../common/agent_skills/basaltwater-t3code/references/updates.md). Preserve downgrade guards, administrator policy and selected provider/package ownership. |
 
-The shipped [T3 orchestration reference](../../common/agent_skills/basaltwater-subagents/references/t3-orchestration.md)
-and [T3 scheduling reference](../../common/agent_skills/basaltwater-subagents/references/t3-scheduling.md)
-are shared by Debian, CachyOS, and WSL. They cover retries, cancellation,
-questions, workspace preparation, scheduler ownership, webhook signatures and
-private secret entry. They use T3's injected tools rather than a second
-Basaltwater orchestration service. Tool availability still depends on the active
-provider session. Managed setup reloads these resources by refreshing T3.
-For changes outside setup, finish the current turn and use **Restart agent
-session** to reload one thread.
+OpenCode 2 uses the separate `@opencode/cli` package and converts its shared
+database on first run. A T3 update does not migrate Basaltwater's managed
+OpenCode installation. Qualify that provider migration separately with a private
+recovery copy; native goals require OpenCode 2.2.5+.
 
-The project-development skill's [T3 workflow reference](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md)
-provides the project-action and visual-reply routes. For deliberate outside-agent
-access, use T3's OAuth `/mcp` integration described in the
-[operations reference](../../common/agent_skills/basaltwater-t3code/references/operations.md#outside-agents).
-It does not automatically connect independent Basaltwater tasks or give them a
-thread's tools. Outside OAuth approval without a code starts at read only;
-0.1.9 adds hosted approval through the environment's linked Connect account;
-the environment-local code/browser route remains available. The wizard retains
-the chosen grant. `T3-Mode-Limit` may
-narrow their modes, never widen them. Use returned thread `link` values verbatim:
-current native links include environment and thread IDs, while outside OAuth
-clients receive browser URLs. Stable 0.1.4's `t3_thread_launch` accepts a stable
-`clientRequestId` for retries of one launch. Optional device-local
-completion/input/approval alerts live in
-**Settings → General → Notifications** and require an open client.
+T3 owns its agent cgroup/resource priorities and supported keep-awake behavior.
+For deliberate Debian memory protection, use upstream `t3 service protect`
+only within an authorized host-tuning operation; it may require sudo and a
+service restart. It targets the upstream service, not CachyOS's separate web
+unit or desktop. See [upstream service protection](https://github.com/pingdotgg/t3code/blob/v0.1.10/docs/user/background-service.md#keep-the-server-responsive-when-agents-use-all-memory).
 
-Inspect project overrides and environment settings before relying on tracked
-`t3.json`: repository defaults have lower precedence than both. Preserve setup
-actions, submodule policy, and branch naming when preparing a worktree. T3's
-opt-in cleanup can discard ignored files depending on its local-file setting;
-inspect retention before settling work or removing a checkout. Keep its cleanup
-separate from Basaltwater's owned-worktree ancestry checks and cache maintenance.
+Native Windows 0.1.10 adds an upstream background service. Basaltwater continues
+to manage the packaged desktop; read the [platform boundary](../../common/agent_skills/basaltwater-project-development/references/t3-platforms.md#windows-background-service)
+before a deliberate migration. Setup does not create a second service.
+
+Refresh delivers shared skills through each platform's existing bundles.
+Updating this repository does not refresh other machines or reload an active
+provider session. Outside setup, finish the current turn and use **Restart
+agent session** to reload one thread without restarting the whole server.
 
 ### Feature ownership and reduction candidates
 
@@ -436,7 +205,7 @@ them. Prioritize these reductions when evolving the integration:
 | --- | --- | --- |
 | Interactive goals and continuation | T3's native Codex/Claude/OpenCode goals and Resume; avoid a second continuation loop around a T3 thread | Independent Codex tasks with lifetime limits, checkpoints and receipts |
 | Ordinary prompts, schedules and PR monitoring | T3 schedules/webhooks and native PR watches; reduce duplicate generic task forms on T3-focused installations | Host jobs that must operate independently of T3 and fixed storage operations |
-| Worktrees, scratch, captures and logs | T3's opt-in retention for its own data; assess replacing overlapping numbered-log retention after matching its limits and custom data roots | Basaltwater-owned worktrees, runtime rollback protection, host pressure inventory and recovery |
+| Worktrees, scratch, captures and logs | T3's opt-in retention for its own data; assess replacing overlapping numbered-log retention after matching its limits and custom data roots | Basaltwater-owned worktrees, runtime rollback protection, credential redaction, host pressure inventory and recovery |
 | Pairing and remote access | T3 Connect device approval and OAuth for T3 access; consider making the extra pairing portal optional for Connect-only setups | Direct/private-LAN enrollment, gateway TLS and source restrictions, other hosted services |
 | Browser and power management | T3 preview and native keep-awake behavior for T3 work | Explicit terminal-agent Playwright, application test suites, desktop access and host readiness |
 | Updates and client documentation | T3's updater and tagged manuals; keep local guidance focused on integration differences | Initial installation, package ownership, setup reconciliation, security policy and failed-start recovery |
@@ -450,7 +219,7 @@ part of an ordinary integration refresh.
 
 ### Stable feature qualification
 
-The shared [client workflow reference](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-019-client-workflows)
+The shared [client workflow reference](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-0110-client-workflows)
 ships in the existing project-development bundle on Debian, CachyOS, native
 Windows, and Ubuntu WSL. The shared scheduling reference also covers 0.1.7's
 one-time triggers and 0.1.8's fresh-session mode. No additional skill catalog entry is needed.
@@ -765,7 +534,8 @@ use the normal upstream update path; application data stays under
 Stable T3 `0.1.0` changes the client/server orchestration protocol from 1 to 2.
 Update the desktop/mobile client as well as the server; an old client can
 disconnect even while the server is healthy. This is separate from the
-service-state protocol, which remains 3 and is already supported. The matching
+service-state protocol, which was 3 for that release; 0.1.10 uses launcher
+protocol 4. The matching
 desktop release is `0.1.0`; the mobile release is `2.0`. If the mobile update
 has not reached your app store, use the server's web app in a mobile browser.
 See the [release's client compatibility notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.0).
@@ -920,7 +690,8 @@ and [release notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.0)
 for the global update action.
 
 **No project** threads use individual folders under `~/.t3/scratch` on the
-managed Debian service. Deleting a thread keeps its files. The host doctor
+managed Debian service. T3's enabled native retention can remove projectless
+folders; without a Git repository their files may have no recovery. The host doctor
 includes their size as `agent_storage.size_bytes.t3_scratch`; automatic cache
 maintenance preserves them. CachyOS web installations use the `scratch` folder
 under their isolated T3 data directory. Stable 0.1.5 adds **Turn into project**
