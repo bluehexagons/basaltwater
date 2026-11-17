@@ -37,6 +37,14 @@ CACHES = (
 )
 
 
+class StoragePreflightError(OSError):
+    """Capacity is below the configured operation requirements."""
+
+    def __init__(self, message: str, required_bytes: int):
+        super().__init__(message)
+        self.required_bytes = required_bytes
+
+
 @contextmanager
 def storage_lock(*, cleanup: bool = False):
     """Exclude cleanup across setup and deployments, including nested calls."""
@@ -89,9 +97,10 @@ def preflight(phase: str, paths: list[str], *, reserve_bytes: int = 512 * MIB,
             failures.append(row)
     if failures:
         totals = inspect_storage(paths=[BUILD_HOMES], timeout=5)["candidates"]
-        raise OSError(f"Storage preflight failed during {phase}: {json.dumps(failures)}; "
+        raise StoragePreflightError(f"Storage preflight failed during {phase}: {json.dumps(failures)}; "
                       f"managed build storage: {json.dumps(totals)}. "
-                      "Preview managed storage cleanup or increase capacity/adjust peak estimates.")
+                      "Preview managed storage cleanup or increase capacity/adjust peak estimates.",
+                      reserve_bytes + peak_bytes)
     return rows
 
 
@@ -110,8 +119,36 @@ def configured_preflight(phase: str, paths: list[str]) -> list[dict]:
 
 
 @contextmanager
-def operation_guard(phase: str, paths: list[str]):
+def operation_guard(phase: str, paths: list[str], *, cleanup_accounts: list[str] | None = None):
     """One host-operation boundary, mocked by unrelated orchestration tests."""
+    if cleanup_accounts is not None:
+        # Catch only preflight refusal, before yielding to any setup mutation.
+        # Release shared ownership before attempting exclusive cache cleanup.
+        with storage_lock():
+            try:
+                configured_preflight(phase, paths)
+            except StoragePreflightError as exc:
+                target = max(1536 * MIB, exc.required_bytes)
+            else:
+                target = None
+        if target is not None:
+            print("Storage is below setup requirements; running one disposable-cache cleanup pass...", flush=True)
+            try:
+                with storage_lock(cleanup=True):
+                    result = maintain(names=cleanup_accounts, apply=True, budget=1024 * MIB, target=target)
+            except (OSError, ValueError) as exc:
+                print(f"  Warning: cache maintenance deferred or failed: {exc}")
+                result = {"accounts": []}
+            for account in result["accounts"]:
+                cleaned = sum(row["status"] == "cleaned" for row in account["candidates"])
+                print(f"  Cache maintenance for {account['account']}: {cleaned} cleaned")
+                if account.get("error"):
+                    print(f"  Warning: {account['error']}")
+                for row in account["candidates"]:
+                    if row["status"] in {"deferred", "skipped_unsafe_or_incomplete"} or row["status"].startswith("failed"):
+                        print(f"  {row['category']}: {row['status']}" + (f" ({row['reason']})" if row.get("reason") else ""))
+        # Recheck under shared ownership even if another operation or cleanup
+        # changed capacity while ownership was being transferred.
     with storage_lock():
         configured_preflight(phase, paths)
         try:
@@ -137,12 +174,28 @@ def guarded_setup(function):
                  os.environ.get("TMPDIR", "/tmp")]
         try:
             paths.append(pwd.getpwnam(config.username).pw_dir)
+            cleanup_accounts = [config.username]
         except KeyError:
             paths.append(f"/home/{config.username}")
+            cleanup_accounts = []
         if config.deploy_specs:
             paths.extend([BUILD_HOMES, "/var/www"])
-        with operation_guard("setup", paths):
-            return function(config, args)
+        operation_started = False
+        try:
+            with operation_guard("setup", paths, cleanup_accounts=cleanup_accounts):
+                operation_started = True
+                return function(config, args)
+        except StoragePreflightError as exc:
+            if operation_started:
+                # Preserve the setup runner's failure journal for a later
+                # deployment refusal after setup mutations have begun.
+                raise
+            print(f"Error: {exc}", file=sys.stderr)
+            print("On the target, inspect: sudo python3 -B -m lib.managed_storage\n"
+                  "Inspect the daily job: sudo journalctl -u basaltwater-storage.service -n 100 --no-pager\n"
+                  "Setup was stopped; disposable-cache cleanup could not provide the required capacity.",
+                  file=sys.stderr)
+            return 1
     return wrapped
 
 

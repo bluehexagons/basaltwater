@@ -14,6 +14,79 @@ from lib import managed_storage as storage
 
 
 class StorageManagementTests(unittest.TestCase):
+    def test_setup_pressure_cleans_once_under_exclusive_ownership_before_operation(self):
+        from contextlib import contextmanager
+        from tests import real_storage_operation_guard
+        held = []
+
+        @contextmanager
+        def lock(*, cleanup=False):
+            self.assertFalse(held)
+            held.append(cleanup)
+            try:
+                yield
+            finally:
+                held.pop()
+
+        def clean(**options):
+            self.assertEqual(held, [True])
+            self.assertEqual(options["target"], 2048 * storage.MIB)
+            self.assertTrue(options["apply"])
+            return {"accounts": []}
+
+        pressure = storage.StoragePreflightError("low space", 2048 * storage.MIB)
+        with patch.object(storage, "storage_lock", side_effect=lock), patch.object(
+                storage, "configured_preflight", side_effect=[pressure, None]) as check, patch.object(
+                storage, "maintain", side_effect=clean) as maintain:
+            with real_storage_operation_guard("setup", ["/srv"], cleanup_accounts=["fixture"]):
+                self.assertEqual(held, [False])
+            maintain.assert_called_once()
+            self.assertEqual(check.call_count, 2)
+
+    def test_setup_refuses_persistent_pressure_without_retrying_setup(self):
+        from contextlib import nullcontext
+        import io
+        from tests import real_storage_operation_guard
+        from unittest.mock import Mock
+        action = Mock()
+        setup = storage.guarded_setup(action)
+        pressure = storage.StoragePreflightError("low space", storage.MIB)
+        with patch.object(storage, "operation_guard", real_storage_operation_guard), patch.object(
+                storage, "storage_lock", side_effect=lambda **_: nullcontext()), patch.object(
+                storage, "configured_preflight", side_effect=pressure) as check, patch.object(
+                storage, "maintain", side_effect=ValueError("busy cache")) as maintain, patch.object(
+                storage.pwd, "getpwnam", side_effect=KeyError), patch("sys.stderr", new_callable=io.StringIO) as output:
+            self.assertEqual(setup(SimpleNamespace(username="fixture", deploy_specs=[]), SimpleNamespace(dry_run=False)), 1)
+            action.assert_not_called()
+            maintain.assert_called_once()
+            self.assertEqual(maintain.call_args.kwargs["names"], [])
+            self.assertEqual(check.call_count, 2)
+            self.assertIn("journalctl", output.getvalue())
+
+    def test_successful_preflight_and_body_failure_do_not_trigger_cleanup(self):
+        from contextlib import nullcontext
+        from tests import real_storage_operation_guard
+        with patch.object(storage, "storage_lock", side_effect=lambda **_: nullcontext()), patch.object(
+                storage, "configured_preflight"), patch.object(storage, "maintain") as maintain:
+            with self.assertRaisesRegex(RuntimeError, "setup step failed"):
+                with real_storage_operation_guard("setup", ["/srv"], cleanup_accounts=[]):
+                    raise RuntimeError("setup step failed")
+            maintain.assert_not_called()
+
+    def test_later_deployment_refusal_propagates_for_setup_failure_journaling(self):
+        from contextlib import nullcontext
+        from tests import real_storage_operation_guard
+        @storage.guarded_setup
+        def setup(config, args):
+            raise storage.StoragePreflightError("deployment pressure", storage.MIB)
+        with patch.object(storage, "operation_guard", real_storage_operation_guard), patch.object(
+                storage, "storage_lock", side_effect=lambda **_: nullcontext()), patch.object(
+                storage, "configured_preflight"), patch.object(storage, "maintain") as maintain, patch.object(
+                storage.pwd, "getpwnam", return_value=SimpleNamespace(pw_dir="/home/fixture")):
+            with self.assertRaisesRegex(storage.StoragePreflightError, "deployment pressure"):
+                setup(SimpleNamespace(username="fixture", deploy_specs=[]), SimpleNamespace(dry_run=False))
+            maintain.assert_not_called()
+
     def test_cli_role_dispatch_releases_cache_lock_and_reports_shortfall(self):
         from contextlib import contextmanager
         import io

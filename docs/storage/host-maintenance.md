@@ -34,8 +34,13 @@ Shared extents and other concurrent disk users can change the measured savings.
 The default combined cache budget is 1024 MiB **per account**; the free-space
 target is 1536 MiB on each candidate's filesystem. A cache is selected when the
 account exceeds its budget or its filesystem falls below the target. `--force`
-selects all eligible candidates. There is no automatic cleanup-and-retry loop
-during setup, avoiding repeated eviction and download cycles. Raise the target
+selects all eligible candidates. Before setup starts, a failed capacity check
+triggers one pass over these same disposable caches, under exclusive storage
+ownership. Setup then rechecks capacity under its normal shared lock. It never
+replays setup steps or repeats cleanup on a later build failure. Unsafe or active
+caches remain protected; insufficient space still stops setup. The cleanup target
+is at least 1536 MiB, increased to the configured setup requirement when larger.
+Deployment operations do not trigger automatic cleanup. Raise the target
 to accommodate your measured deployment peak plus a reserve. Use a systemd
 override for the service's `ExecStart` to persist different policy arguments.
 
@@ -148,6 +153,12 @@ A failed preflight reports phase, path, mount, available bytes/inodes, requireme
 and bounded managed-build-home storage measurements. Cleanup reports any remaining
 byte shortfall and exits unsuccessfully when its target cannot be reached; it does
 not remove runtimes, deployed releases, databases or swap to satisfy policy.
+The total reported for managed build homes includes retained runtimes and other
+protected files; it is not a reclaimable-byte estimate. If setup still refuses,
+preview `sudo python3 -B -m lib.managed_storage` on the target and inspect
+`sudo journalctl -u basaltwater-storage.service -n 100 --no-pager` for skipped
+caches or native-tool failures. Apply reviewed cleanup with `--apply`. Increase
+capacity if protected content and the workload's peak cannot fit together.
 
 ## npm maintenance
 
