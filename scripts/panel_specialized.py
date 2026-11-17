@@ -1,4 +1,4 @@
-"""Disposable adapters and server for pairing, Connect, approvals and Guacamole."""
+"""Disposable adapters and server for pairing, approvals and Guacamole."""
 
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ import ssl
 import subprocess
 import threading
 import time
-from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.parse import urlsplit
 import uuid
@@ -32,7 +31,7 @@ from scripts.panel_approval_samples import admin_preview, admin_request
 
 
 class SpecializedScenario:
-    """Keep synthetic decisions and relay state across source reloads only."""
+    """Keep synthetic approval decisions across source reloads only."""
 
     def __init__(self, home: Path, settings: dict, stack: ExitStack) -> None:
         self.path = home / "specialized.json"
@@ -51,47 +50,9 @@ class SpecializedScenario:
                     "plan": {"machine": "c" * 32, "uid": 1000, "operation": "development-only",
                              "argv": ["synthetic-no-executor"], "parameters": {}, "effect": "Record a sample decision only"},
                 }
-        self.data = read_json_file(str(self.path)) if self.path.exists() else {
-            "records": records, "desired": self.name == "full", "linked": self.name == "full",
-            "active": False, "output": "", "returncode": None, "error": None,
-        }
+        self.data = read_json_file(str(self.path)) if self.path.exists() else {"records": records}
         self.save()
         stack.enter_context(patch.object(subprocess, "run", side_effect=self.command))
-        scenario = self
-
-        class ConnectJob(pairing.ConnectJob):
-            def __init__(self, config):
-                super().__init__(config)
-                self.restore()
-
-            def restore(self):
-                self._process = SimpleNamespace(stdin=True) if scenario.data["active"] else None
-                self._output = scenario.data["output"]
-                self._returncode = scenario.data["returncode"]
-                self._error = scenario.data["error"]
-
-            def start(self):
-                with scenario.lock:
-                    if scenario.data["active"]:
-                        raise pairing.PairingError("A T3 Connect operation is already running")
-                    failed = scenario.name == "degraded"
-                    scenario.data.update(active=not failed, desired=True, linked=False,
-                        output="Synthetic authorization failed" if failed else
-                               "Open " + scenario.url + "/__dev__/authorize and enter any sample response.",
-                        returncode=1 if failed else None, error="Synthetic relay unavailable" if failed else None)
-                    scenario.save()
-                    self.restore()
-
-            def _write_input(self, process, content):
-                # The production send_input validates size/control characters.
-                # Discard the submitted response; no credential is persisted.
-                with scenario.lock:
-                    scenario.data.update(active=False, desired=True, linked=True,
-                        output="Synthetic authorization completed; no provider was contacted.", returncode=0, error=None)
-                    scenario.save()
-                    self.restore()
-
-        stack.enter_context(patch.object(pairing, "ConnectJob", ConnectJob))
 
     def save(self) -> None:
         write_json_atomic(str(self.path), self.data)
@@ -99,23 +60,11 @@ class SpecializedScenario:
     def providers(self) -> dict:
         port = urlsplit(self.url).port
         return {"t3code": {"label": "T3 Code", "command": ["development-pair"], "base_url_flag": "--base-url",
-            "url_field": "url", "expires_field": "expires", "public_port": port, "https_public_port": port,
-            "connect": {"link_command": ["development-link"], "unlink_command": ["development-unlink"],
-                        "status_command": ["development-status"], "restart_request": str(self.path.parent / "restart-request")}}}
+            "url_field": "url", "expires_field": "expires", "public_port": port, "https_public_port": port}}
 
     def command(self, command, **kwargs):
         with self.lock:
-            if command == ["development-status"]:
-                result = {"desired": self.data["desired"], "authenticated": self.data["linked"],
-                          "linked": self.data["linked"], "provisioned": self.data["linked"],
-                          "relayUrl": None, "publishEnabled": False}
-            elif command == ["development-unlink"]:
-                if self.name == "degraded":
-                    return subprocess.CompletedProcess(command, 1, "", "")
-                self.data.update(desired=False, linked=False)
-                self.save()
-                result = {}
-            elif (len(command) == 3 and command[:2] == ["development-pair", "--base-url"]
+            if (len(command) == 3 and command[:2] == ["development-pair", "--base-url"]
                   and command[2] in {self.url, self.url.replace("127.0.0.1", "localhost")}):
                 if self.name == "degraded":
                     return subprocess.CompletedProcess(command, 1, "", "")
@@ -262,7 +211,7 @@ def create_app(directory: Path, settings: dict, stack: ExitStack) -> web.Applica
         app.router.add_get("/favicon.svg", favicon)
     else:
         app = web.Application(client_max_size=8192)
-        if surface in {"pairing", "connect"}:
+        if surface == "pairing":
             backend = http_backend(pairing.PairingRequestHandler, stack)
             backend.pairing_state = pairing.PairingState(scenario.providers())
         else:
@@ -283,7 +232,7 @@ def create_app(directory: Path, settings: dict, stack: ExitStack) -> web.Applica
     @web.middleware
     async def development(request, handler):
         host = urlsplit(settings["url"]).netloc
-        allowed = {host, "localhost:" + host.rsplit(":", 1)[1]} if surface in {"pairing", "connect"} else {host}
+        allowed = {host, "localhost:" + host.rsplit(":", 1)[1]} if surface == "pairing" else {host}
         if len(request.headers.getall("Host", [])) != 1 or request.host not in allowed:
             return web.Response(status=403, text="Unexpected development host")
         if (len(request.headers.getall("Authorization", [])) != 1 or
@@ -309,10 +258,9 @@ def create_app(directory: Path, settings: dict, stack: ExitStack) -> web.Applica
             return web.Response(status=303, headers={"Location": settings["entry"]})
         if request.path == "/" and settings["entry"] != "/" and surface in {"desktop", "console"}:
             return web.Response(status=302, headers={"Location": settings["entry"]})
-        if request.path in {"/pair", "/__dev__/authorize"} and request.method == "GET":
+        if request.path == "/pair" and request.method == "GET":
             response = web.Response(text="<!doctype html><html><body><main><h1>Synthetic destination</h1>"
-                '<p>No device was enrolled. Return to <a href="/devices">device pairing</a> or '
-                '<a href="/connect/t3code">Connect</a> and enter any sample response.</p></main></body></html>', content_type="text/html")
+                '<p>No device was enrolled. Return to <a href="/devices">device pairing</a>.</p></main></body></html>', content_type="text/html")
         elif surface in {"desktop", "console"} and request.path in {"/desktop/assets/all.js", "/console/assets/all.js"}:
             response = web.Response(body=Path(settings["guacamole_assets"]).read_bytes(), content_type="application/javascript")
         else:

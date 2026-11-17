@@ -130,35 +130,49 @@ the environment when T3 reports that `access:write` is unavailable.
 
 ## T3 Connect management
 
-An authorization job remains active until its managed restart request has been
-written or its failure recorded. Another authorization or unlink cannot race
-that finalization. A successful command exit with a failed restart request is
-shown as needing attention; neither a completed command nor a restart request
-proves the service restarted or that a client can use the relay. Verify current
-relay status separately.
+The authenticated `/devices` page hands off to **Open T3 Code** on the primary
+T3 origin. Opening this link reuses native authentication; it does not issue a
+pairing credential. If the browser needs enrollment, use **Pair this browser**.
 
-The authenticated `/devices` page includes a **T3 Connect** section. Choose **Start
-authorization** to run T3's supported `t3 connect link --headless` flow. The
-page cleans up terminal control sequences and displays readable installation
-progress and authorization instructions. The known relay-install confirmation
-is accepted automatically; use the input only for an authorization code or
-other response requested by T3. T3 installs its pinned relay client;
-Basaltwater does not download or manage a second relay service.
+T3 owns account linking, relay installation and preferences, and Connect device
+approval. In the desktop app, use **Settings → Sharing & access**. A headless
+server's initial linking is a host operation: open its integrated T3 terminal
+or SSH, run the native command, and follow its prompts:
 
-After authorization, the portal shows a completion message and requests a
-restart of the per-user `t3code.service`. T3 then reconciles the saved Connect
-preference and starts the managed tunnel. The checkbox represents that desired
-startup state; choose **Apply setting** after changing it. Enabling it starts
-the headless authorization flow only when Connect is not already enabled,
-while clearing it runs `t3 connect unlink`. The relay binary may remain
-installed when Connect is disabled, but no tunnel is started.
+```bash
+t3 connect link --headless
+t3 service restart
+t3 connect status
+```
 
-The active Connect operation is held only in the pairing broker's memory and
-expires after fifteen minutes. While it is running, use **Refresh status** to
-see new CLI output; the page does not reload automatically while you are
-entering a response. Its CLI output is never written to the journal or a
-configuration file. A root-owned systemd path trigger accepts only a fixed
-request file from the target user's broker; it cannot run arbitrary commands.
+Wait for active turns to finish before restarting; a service restart interrupts
+them. The native command handles relay-install confirmation and authorization.
+Inspect the resulting relay status and verify a client connection. To turn
+Connect off, run `t3 connect unlink`, then `t3 service restart`.
+See upstream [remote access](https://github.com/pingdotgg/t3code/blob/v0.1.10/docs/user/remote-access.md)
+and [Connect troubleshooting](https://github.com/pingdotgg/t3code/blob/v0.1.10/docs/user/t3-connect-troubleshooting.md).
+
+### Migration from the portal console
+
+Setup no longer installs the portal's authorization/input/startup forms or its
+root restart bridge. Refreshing setup replaces the broker and removes the old
+`basaltwater-t3code-connect.path`, `basaltwater-t3code-connect.service` and
+`~/.t3/basaltwater-connect-restart` request marker. The retired
+`/connect/t3code` GET/POST routes return 404, including with an older provider
+configuration.
+
+Finish or cancel any active legacy authorization before refreshing setup; its
+process and output were temporary broker state. Use the native command above
+to retry an incomplete authorization. Migration preserves T3's saved Connect
+preferences, account credentials, device sessions and relay installation. It
+does not enable, disable or unlink Connect. If the handoff cannot determine a
+valid primary origin, it directs the user to their existing T3 connection
+instead of generating a URL.
+
+Direct/private-LAN enrollment, portal Basic Auth, gateway TLS and source
+restrictions remain available. Older repository revisions can recreate the
+legacy bridge on setup; prefer native controls for recovery and avoid running
+both authorization flows at once.
 
 ## Credentials, reruns, and removal
 
@@ -243,11 +257,11 @@ minutes also trigger a one-hour Fail2ban ban. The failure-only log contains the
 source address, timestamp, and a fixed marker; it never contains the Basic Auth
 header or a pairing URL. After authentication, requests use a single-use
 same-site form nonce, and the broker independently limits pairing issuance to
-five requests per minute per source. Pairing and Connect forms accept only
-their own action types, so an interactive Connect response cannot bypass the
-pairing issuance limit. Provider commands are fixed in a root-managed
-configuration, executed without a shell, restricted to the configured local
-T3 endpoint, and required to return a link for the expected T3 origin.
+five requests per minute per source. Pairing forms accept only enrollment
+actions; unknown intents cannot bypass the issuance limit. Provider commands
+are fixed in a root-managed configuration, executed without a shell, restricted
+to the configured local T3 endpoint, and required to return a link for the
+expected T3 origin.
 
 ## Files and services
 
@@ -255,8 +269,6 @@ T3 endpoint, and required to return a link for the expected T3 origin.
 ~/.config/systemd/user/t3code.service
 ~/.config/systemd/user/t3code.service.d/basaltwater.conf
 basaltwater-device-pairing.service
-basaltwater-t3code-connect.path
-basaltwater-t3code-connect.service
 /etc/nginx/sites-available/basaltwater-device-pairing
 /etc/basaltwater/internal-web/policy.json
 /etc/basaltwater/internal-web/forwards.json

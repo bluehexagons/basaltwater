@@ -27,7 +27,7 @@ class SpecializedDevelopmentTests(unittest.IsolatedAsyncioTestCase):
         self.enterContext(patch.object(subprocess, "run", side_effect=AssertionError("Unexpected command")))
         self.enterContext(patch.object(subprocess, "Popen", side_effect=AssertionError("Unexpected process")))
 
-    async def serve(self, surface="connect", scenario="full"):
+    async def serve(self, surface="pairing", scenario="full"):
         stack = ExitStack()
         self.addCleanup(stack.close)
         listener = socket.create_server(("127.0.0.1", 0))
@@ -43,37 +43,25 @@ class SpecializedDevelopmentTests(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(self.client.close)
         self.origin = self.settings["url"]
 
-    async def nonce(self, path="/connect/t3code"):
+    async def nonce(self, path="/devices"):
         response = await self.client.get(path)
         body = await response.text()
         cookie = SimpleCookie(response.headers["Set-Cookie"])
         nonce = cookie["basaltwater_pairing_nonce"].value
         return nonce, {"Cookie": f"basaltwater_pairing_nonce={nonce}"}, body
 
-    async def test_connect_input_validation_completion_unlink_and_nonce_replay(self):
+    async def test_pairing_handoff_and_retired_connect_routes(self):
         await self.serve()
         nonce, cookie, body = await self.nonce()
         self.assertIn('id="panel-development"', body)
-        fields = {"nonce": nonce, "intent": "start"}
-        response = await self.client.post("/connect/t3code", data=fields, headers=cookie)
-        self.assertEqual(response.status, 200)
-        self.assertIn("Authorization in progress", await response.text())
-        self.assertEqual((await self.client.post("/connect/t3code", data=fields, headers=cookie)).status, 403)
-        nonce, cookie, _ = await self.nonce()
-        response = await self.client.post("/connect/t3code", data={"nonce": nonce, "intent": "input", "input": "bad\ncode"}, headers=cookie)
-        self.assertEqual(response.status, 400)
-        nonce, cookie, _ = await self.nonce()
-        response = await self.client.post("/connect/t3code", data={"nonce": nonce, "intent": "input", "input": "discard-this-sample"}, headers=cookie)
-        self.assertEqual(response.status, 200)
-        self.assertIn("Authorization completed", await response.text())
-        saved = (self.directory / "home/specialized.json").read_text()
-        self.assertNotIn("discard-this-sample", saved)
-        self.assertTrue(read_json_file(str(self.directory / "home/specialized.json"))["linked"])
-        nonce, cookie, _ = await self.nonce()
-        response = await self.client.post("/connect/t3code", data={"nonce": nonce, "intent": "toggle"}, headers=cookie)
-        self.assertEqual(response.status, 200)
-        self.assertFalse(read_json_file(str(self.directory / "home/specialized.json"))["desired"])
-        self.assertTrue((self.directory / "home/restart-request").exists())
+        self.assertIn(f'href="{self.origin}/"', body)
+        self.assertIn("t3 connect link", body)
+        self.assertNotIn('action="/connect/', body)
+        self.assertEqual((await self.client.get("/connect/t3code")).status, 404)
+        for intent in ("start", "input", "toggle"):
+            response = await self.client.post("/connect/t3code", data={"nonce": nonce, "intent": intent}, headers=cookie)
+            self.assertEqual(response.status, 404)
+        self.assertFalse((self.directory / "home/restart-request").exists())
 
     async def test_pairing_fragment_destination_and_real_rate_limit(self):
         await self.serve("pairing")
@@ -121,10 +109,6 @@ class SpecializedDevelopmentTests(unittest.IsolatedAsyncioTestCase):
     async def test_degraded_provider_failures(self):
         await self.serve(scenario="degraded")
         nonce, cookie, _ = await self.nonce()
-        response = await self.client.post("/connect/t3code", data={"nonce": nonce, "intent": "start"}, headers=cookie)
-        self.assertEqual(response.status, 200)
-        self.assertIn("Authorization did not complete", await response.text())
-        nonce, cookie, _ = await self.nonce("/devices")
         self.assertEqual((await self.client.post("/pair/t3code", data={"nonce": nonce, "intent": "other"}, headers=cookie)).status, 502)
 
     async def test_empty_approval_has_no_requests(self):

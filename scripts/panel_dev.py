@@ -36,8 +36,8 @@ from lib.atomic_io import read_json_file, write_json_atomic
 from lib.validation import validate_filesystem_path, validate_network_port
 from scripts.panel_scenarios import SCENARIOS, Scenario
 
-SURFACES = ("panel", "pairing", "connect", "approval", "desktop", "console")
-ENTRY_PATHS = {"panel": "/", "pairing": "/devices", "connect": "/connect/t3code",
+SURFACES = ("panel", "pairing", "approval", "desktop", "console")
+ENTRY_PATHS = {"panel": "/", "pairing": "/devices",
                "approval": "/", "desktop": "/desktop/", "console": "/console/"}
 
 RELOAD_SCRIPT = """'use strict';

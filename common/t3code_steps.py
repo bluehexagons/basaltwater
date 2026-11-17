@@ -1665,35 +1665,6 @@ def _configure_device_pairing(
                 "url_field": "pairUrl",
                 "expires_field": "expiresAt",
                 "public_port": t3_port,
-                "connect": {
-                    "link_command": [
-                        t3_cli_wrapper,
-                        "connect",
-                        "link",
-                        "--headless",
-                        "--base-dir",
-                        t3_state_dir,
-                    ],
-                    "status_command": [
-                        t3_cli_wrapper,
-                        "connect",
-                        "status",
-                        "--json",
-                        "--base-dir",
-                        t3_state_dir,
-                    ],
-                    "unlink_command": [
-                        t3_cli_wrapper,
-                        "connect",
-                        "unlink",
-                        "--base-dir",
-                        t3_state_dir,
-                    ],
-                    "restart_request": os.path.join(
-                        t3_state_dir,
-                        "basaltwater-connect-restart",
-                    ),
-                },
             }
         },
     }
@@ -1913,66 +1884,8 @@ def _remove_device_pairing() -> None:
     remove_nginx_auth_failure_ban("device-pairing")
 
 
-def _configure_connect_restart_units(
-    state_dir: str,
-    username: str,
-    uid: int,
-) -> None:
-    """Install a root-owned path trigger for safe T3 service reconciliation."""
-
-    if os.geteuid() != 0:
-        return
-    if os.path.lexists(state_dir) and (
-        os.path.islink(state_dir) or not os.path.isdir(state_dir)
-    ):
-        raise RuntimeError(f"Refusing unsafe T3 Connect state directory: {state_dir}")
-    request_path = os.path.join(state_dir, "basaltwater-connect-restart")
-    path_content = f"""[Unit]
-Description=Watch for T3 Connect service reconciliation requests
-
-[Path]
-PathExists={request_path}
-Unit={T3_CONNECT_RESTART_SERVICE_UNIT}
-
-[Install]
-WantedBy=multi-user.target
-"""
-    service_content = f"""[Unit]
-Description=Reconcile the managed T3 Connect service
-After=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/rm -f {request_path}
-ExecStart=/usr/sbin/runuser -u {username} -- /usr/bin/env XDG_RUNTIME_DIR=/run/user/{uid} DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus /usr/bin/systemctl --user restart {T3_SERVICE_NAME}.service
-"""
-    path_changed = _write_text_if_changed(
-        T3_CONNECT_RESTART_PATH_FILE,
-        path_content,
-        0o644,
-    )
-    service_changed = _write_text_if_changed(
-        T3_CONNECT_RESTART_SERVICE_FILE,
-        service_content,
-        0o644,
-    )
-    if path_changed or service_changed:
-        run("systemctl daemon-reload")
-    enabled = run(
-        f"systemctl is-enabled {T3_CONNECT_RESTART_PATH_UNIT}",
-        check=False,
-    )
-    if enabled.returncode != 0:
-        run(f"systemctl enable {T3_CONNECT_RESTART_PATH_UNIT}")
-    active = run(
-        f"systemctl is-active {T3_CONNECT_RESTART_PATH_UNIT}",
-        check=False,
-    )
-    if active.returncode != 0:
-        run(f"systemctl start {T3_CONNECT_RESTART_PATH_UNIT}")
-
-
 def _remove_connect_restart_units(state_dir: str | None = None) -> None:
+    """Retire the legacy portal bridge without changing native Connect state."""
     if os.geteuid() != 0:
         return
     if state_dir is not None and os.path.lexists(state_dir) and (
@@ -2211,11 +2124,7 @@ def install_t3code_web(config: SetupConfig) -> None:
 
     if config.device_pairing_providers:
         _configure_device_pairing(config, home, t3_cli_wrapper, host, port)
-        _configure_connect_restart_units(
-            os.path.join(home, ".t3"),
-            config.username,
-            account.pw_uid,
-        )
+        _remove_connect_restart_units(os.path.join(home, ".t3"))
         https_endpoints = _configure_t3_https(
             config,
             port,

@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
-import time
 import unittest
 from email.message import Message
 from io import BytesIO
@@ -16,18 +14,17 @@ from urllib.parse import urlencode
 
 import remote_setup
 from common.service_tools.device_pairing_service import (
-    ConnectJob,
     PairingError,
     PairingRequestHandler,
     PairingState,
     _safe_pairing_url,
+    _load_provider_config,
     _public_base_url,
-    _connect_output_html,
-    _sanitize_connect_output,
 )
 from common.t3code_steps import (
     _configure_device_pairing,
     _configure_firewall,
+    _remove_connect_restart_units,
     _set_pairing_t3_https_port,
     _write_passthrough_wrapper,
     install_t3code_web,
@@ -346,152 +343,96 @@ class PairingBrokerTest(unittest.TestCase):
             "https://agent-vm:8444",
         )
 
-    def test_connect_output_links_authorization_url_without_raw_markup(self) -> None:
-        rendered = _connect_output_html(
-            "Authorize at https://connect.example/code?next=1&x=2."
-        )
-        self.assertIn(
-            'href="https://connect.example/code?next=1&amp;x=2"',
-            rendered,
-        )
-        self.assertNotIn("<script", rendered)
-
-    def test_connect_output_ignores_malformed_urls(self) -> None:
-        rendered = _connect_output_html("Output https://[malformed and continue")
-        self.assertIn("https://[malformed and continue", rendered)
-
-    def test_connect_output_sanitizer_hides_partial_terminal_sequences(self) -> None:
-        self.assertEqual(_sanitize_connect_output("\x1b[2"), "")
-        self.assertEqual(_sanitize_connect_output("\x1b]progress"), "")
-
-    def test_connect_status_refresh_route_is_not_a_404(self) -> None:
-        provider = self._provider()
-        provider["connect"] = {
-            "link_command": ["/opt/t3", "connect", "link"],
-            "status_command": ["/opt/t3", "connect", "status"],
-            "unlink_command": ["/opt/t3", "connect", "unlink"],
-            "restart_request": "/tmp/t3-connect-restart",
-        }
+    def test_pairing_page_hands_off_to_native_t3_without_issuing_credentials(self) -> None:
+        provider = {**self._provider(), "https_public_port": 8444}
         state = PairingState({"t3code": provider})
-        nonce = state.new_nonce()
-        headers = Message()
-        headers["X-Forwarded-Proto"] = "https"
-        headers["Cookie"] = f"basaltwater_pairing_nonce={nonce}"
-        handler = PairingRequestHandler.__new__(PairingRequestHandler)
-        handler.server = SimpleNamespace(pairing_state=state)
-        handler.path = "/connect/t3code"
-        handler.command = "GET"
-        handler.request_version = "HTTP/1.1"
-        handler.requestline = "GET /connect/t3code HTTP/1.1"
-        handler.headers = headers
-        handler.wfile = BytesIO()
-
-        with patch.object(
-            state,
-            "connect_snapshot",
-            return_value={"active": True, "output": "Waiting for authorization"},
-        ):
-            handler.do_GET()
-
-        response = handler.wfile.getvalue().decode("iso-8859-1")
-        self.assertIn(" 200 ", response)
-        self.assertNotIn(" 404 ", response)
-        self.assertIn("Response or authorization code", response)
-        self.assertIn("Refresh status", response)
-        self.assertIn("Authorization in progress", response)
-        self.assertIn("relay-install confirmation is accepted automatically", response)
-        self.assertIn("Show T3 command output", response)
-        self.assertNotIn('http-equiv="refresh"', response)
-        self.assertIn(f'name="nonce" value="{nonce}"', response)
-        self.assertIn("/connect/t3code", response)
-
-    def test_connect_page_explains_completed_authorization(self) -> None:
-        provider = self._provider()
-        provider["connect"] = {
-            "link_command": ["/opt/t3", "connect", "link"],
-            "status_command": ["/opt/t3", "connect", "status"],
-            "unlink_command": ["/opt/t3", "connect", "unlink"],
-            "restart_request": "/tmp/t3-connect-restart",
-        }
-        state = PairingState({"t3code": provider})
-        nonce = state.new_nonce()
-        headers = Message()
-        headers["X-Forwarded-Proto"] = "https"
-        headers["Cookie"] = f"basaltwater_pairing_nonce={nonce}"
-        handler = PairingRequestHandler.__new__(PairingRequestHandler)
-        handler.server = SimpleNamespace(pairing_state=state)
-        handler.path = "/connect/t3code"
-        handler.command = "GET"
-        handler.request_version = "HTTP/1.1"
-        handler.requestline = "GET /connect/t3code HTTP/1.1"
-        handler.headers = headers
-        handler.wfile = BytesIO()
-
-        with patch.object(
-            state,
-            "connect_snapshot",
-            return_value={
-                "active": False,
-                "returncode": 0,
-                "output": "Connect authorization completed",
-                "status": {
-                    "desired": True,
-                    "authenticated": True,
-                    "linked": True,
-                    "provisioned": True,
-                    "relayUrl": "https://relay.example/agent",
-                },
-            },
-        ):
-            handler.do_GET()
-
-        response = handler.wfile.getvalue().decode("iso-8859-1")
-        self.assertIn("Authorization completed", response)
-        self.assertIn("The managed service is applying the new relay state", response)
-        self.assertIn("Startup", response)
-        self.assertIn("Enabled", response)
-        self.assertIn("Relay address", response)
-        self.assertIn("Show T3 command output", response)
-        self.assertIn("Refresh status", response)
-        self.assertNotIn("Authorization did not complete", response)
-
-    def test_pairing_page_uses_clear_device_actions(self) -> None:
-        provider = self._provider()
-        provider["connect"] = {
-            "link_command": ["/opt/t3", "connect", "link"],
-            "status_command": ["/opt/t3", "connect", "status"],
-            "unlink_command": ["/opt/t3", "connect", "unlink"],
-            "restart_request": "/tmp/t3-connect-restart",
-        }
-        state = PairingState({"t3code": provider})
-        nonce = state.new_nonce()
-        headers = Message()
-        headers["X-Forwarded-Proto"] = "https"
-        headers["Cookie"] = f"basaltwater_pairing_nonce={nonce}"
         handler = PairingRequestHandler.__new__(PairingRequestHandler)
         handler.server = SimpleNamespace(pairing_state=state)
         handler.path = "/devices"
         handler.command = "GET"
         handler.request_version = "HTTP/1.1"
         handler.requestline = "GET /devices HTTP/1.1"
-        handler.headers = headers
+        handler.headers = Message()
+        handler.headers["X-Forwarded-Proto"] = "https"
+        handler.headers["X-Forwarded-Host"] = "agent-vm:8445"
         handler.wfile = BytesIO()
-
-        with patch.object(
-            state,
-            "connect_snapshot",
-            return_value={"active": False, "status": {"desired": False}},
+        with (
+            patch.object(state, "issue") as issue,
+            patch("common.service_tools.device_pairing_service.subprocess.run") as run,
+            patch("common.service_tools.device_pairing_service.subprocess.Popen") as popen,
         ):
             handler.do_GET()
-
-        response = handler.wfile.getvalue().decode("iso-8859-1")
+        response = handler.wfile.getvalue().decode("utf-8")
         self.assertIn("Pair a device", response)
         self.assertIn("Pair this browser", response)
         self.assertIn("Pair another T3 Code client", response)
-        self.assertIn("Startup behavior", response)
-        self.assertIn("Start authorization", response)
+        self.assertIn('href="https://agent-vm:8444/"', response)
+        self.assertIn('target="_blank" rel="noopener noreferrer"', response)
+        self.assertIn("t3 connect link", response)
+        self.assertIn("t3 service restart", response)
         self.assertIn("Never share a pairing link", response)
-        self.assertNotIn("Create a link for this browser", response)
+        self.assertNotIn('action="/connect/', response)
+        self.assertNotIn("Start authorization", response)
+        issue.assert_not_called()
+        run.assert_not_called()
+        popen.assert_not_called()
+
+    def test_t3_handoff_uses_validated_origin_or_existing_connection_guidance(self) -> None:
+        handler = PairingRequestHandler.__new__(PairingRequestHandler)
+        for scheme, host, expected in (
+            ("http", "agent-vm:3774", "http://agent-vm:3773/"),
+            ("https", "[2001:db8::1]:8445", "https://[2001:db8::1]:8444/"),
+            ("https", "", None),
+            ("https", "<script>", None),
+            ("javascript", "agent-vm", None),
+        ):
+            with self.subTest(scheme=scheme, host=host):
+                handler.headers = Message()
+                handler.headers["X-Forwarded-Proto"] = scheme
+                handler.headers["X-Forwarded-Host"] = host
+                body = handler._t3_connect_section({**self._provider(), "https_public_port": 8444})
+                if expected:
+                    self.assertIn(f'href="{expected}"', body)
+                else:
+                    self.assertNotIn("href=", body)
+                    self.assertIn("Open your existing T3 Code connection", body)
+
+    def test_retired_connect_routes_cannot_execute_legacy_provider_commands(self) -> None:
+        provider = self._provider()
+        provider["connect"] = {
+            "link_command": ["/opt/t3", "connect", "link"],
+            "status_command": ["/opt/t3", "connect", "status"],
+            "unlink_command": ["/opt/t3", "connect", "unlink"],
+            "restart_request": "/unused/t3-connect-restart",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            config_path = os.path.join(temporary, "providers.json")
+            with open(config_path, "w", encoding="utf-8") as file_obj:
+                json.dump({"version": 1, "providers": {"t3code": provider}}, file_obj)
+            state = PairingState(_load_provider_config(config_path))
+        with (
+            patch("common.service_tools.device_pairing_service.subprocess.run") as run,
+            patch("common.service_tools.device_pairing_service.subprocess.Popen") as popen,
+        ):
+            for method, intent in (("GET", ""), ("POST", "start"), ("POST", "input"), ("POST", "toggle")):
+                with self.subTest(method=method, intent=intent):
+                    nonce = state.new_nonce()
+                    body = urlencode({"nonce": nonce, "intent": intent, "input": "sample"}).encode()
+                    handler = PairingRequestHandler.__new__(PairingRequestHandler)
+                    handler.server = SimpleNamespace(pairing_state=state)
+                    handler.path = "/connect/t3code"
+                    handler.command = method
+                    handler.request_version = "HTTP/1.1"
+                    handler.requestline = f"{method} /connect/t3code HTTP/1.1"
+                    handler.headers = Message()
+                    handler.headers["Content-Type"] = "application/x-www-form-urlencoded"
+                    handler.headers["Content-Length"] = str(len(body))
+                    handler.headers["Cookie"] = f"basaltwater_pairing_nonce={nonce}"
+                    handler.rfile, handler.wfile = BytesIO(body), BytesIO()
+                    getattr(handler, "do_" + method)()
+                    self.assertIn(" 404 ", handler.wfile.getvalue().decode())
+        run.assert_not_called()
+        popen.assert_not_called()
 
     def test_basic_auth_entry_submits_a_nonce_protected_browser_login(self) -> None:
         state = PairingState({"t3code": self._provider()})
@@ -587,113 +528,6 @@ class PairingBrokerTest(unittest.TestCase):
         self.assertFalse(state.allow_request("192.168.0.12"))
         self.assertTrue(state.allow_request("192.168.0.13"))
 
-    def test_headless_connect_job_accepts_prompt_and_requests_restart(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            restart_request = os.path.join(temporary, "restart")
-            command = [
-                sys.executable,
-                "-c",
-                (
-                    "import sys; print('Authorize at https://connect.example/code', flush=True); "
-                    "value = sys.stdin.readline().strip(); print('received ' + value, flush=True)"
-                ),
-            ]
-            job = ConnectJob(
-                {
-                    "link_command": command,
-                    "status_command": command,
-                    "unlink_command": command,
-                    "restart_request": restart_request,
-                }
-            )
-            job.start()
-            deadline = time.monotonic() + 2
-            while "Authorize" not in str(job.snapshot()["output"]):
-                if time.monotonic() > deadline:
-                    self.fail("Connect prompt was not returned")
-                time.sleep(0.01)
-            job.send_input("approved")
-            deadline = time.monotonic() + 2
-            while job.snapshot()["active"]:
-                if time.monotonic() > deadline:
-                    self.fail("Connect job did not finish")
-                time.sleep(0.01)
-            snapshot = job.snapshot()
-            self.assertEqual(snapshot["returncode"], 0)
-            self.assertIn("received approved", str(snapshot["output"]))
-            self.assertTrue(os.path.isfile(restart_request))
-
-    def test_headless_connect_job_accepts_relay_install_and_cleans_terminal_output(
-        self,
-    ) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            restart_request = os.path.join(temporary, "restart")
-            command = [
-                sys.executable,
-                "-c",
-                (
-                    "import sys; "
-                    "sys.stdout.write('\\x1b[2K\\rThe T3 relay client is required for T3 Connect. "
-                    "Download and install version 1.2.3? (y/N)\\n'); sys.stdout.flush(); "
-                    "value = sys.stdin.readline().strip(); "
-                    "print('received ' + value, flush=True)"
-                ),
-            ]
-            job = ConnectJob(
-                {
-                    "link_command": command,
-                    "status_command": command,
-                    "unlink_command": command,
-                    "restart_request": restart_request,
-                }
-            )
-            job.start()
-            deadline = time.monotonic() + 2
-            while job.snapshot()["active"]:
-                if time.monotonic() > deadline:
-                    self.fail("Connect job did not accept the relay-install prompt")
-                time.sleep(0.01)
-            snapshot = job.snapshot()
-            output = str(snapshot["output"])
-            self.assertEqual(snapshot["returncode"], 0)
-            self.assertTrue(output.startswith("The T3 relay client is required"))
-            self.assertIn("received y", output)
-            self.assertNotIn("\x1b", output)
-            self.assertNotIn("\r", output)
-            self.assertTrue(os.path.isfile(restart_request))
-
-    def test_apply_preserves_an_already_enabled_connect_state(self) -> None:
-        provider = self._provider()
-        provider["connect"] = {
-            "link_command": ["/opt/t3", "connect", "link"],
-            "status_command": ["/opt/t3", "connect", "status"],
-            "unlink_command": ["/opt/t3", "connect", "unlink"],
-            "restart_request": "/tmp/t3-connect-restart",
-        }
-        state = PairingState({"t3code": provider})
-        job = state._connect_jobs["t3code"]
-        with (
-            patch.object(
-                state,
-                "connect_snapshot",
-                return_value={"status": {"desired": True}},
-            ),
-            patch.object(job, "start") as start,
-        ):
-            state.set_connect_enabled("t3code", True)
-        start.assert_not_called()
-
-        with (
-            patch.object(
-                state,
-                "connect_snapshot",
-                return_value={"status": {"desired": False}},
-            ),
-            patch.object(state, "unlink_connect") as unlink,
-        ):
-            state.set_connect_enabled("t3code", False)
-        unlink.assert_called_once_with("t3code")
-
     def test_http_portal_renders_explicit_single_use_provider_link(self) -> None:
         state = PairingState({"t3code": self._provider()})
         nonce = state.new_nonce()
@@ -787,6 +621,42 @@ class PairingBrokerTest(unittest.TestCase):
 
 
 class DevicePairingRemoteSetupTest(unittest.TestCase):
+    def test_connect_bridge_migration_preserves_native_state_and_is_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state_dir = os.path.join(temporary, ".t3")
+            os.mkdir(state_dir)
+            native_paths = [os.path.join(state_dir, name) for name in (
+                "connect.json", "settings.json", "auth.json", "state.sqlite",
+            )]
+            for path in native_paths:
+                with open(path, "w", encoding="utf-8") as file_obj:
+                    file_obj.write("native state preserved")
+            bridge_paths = [os.path.join(temporary, name) for name in ("connect.path", "connect.service")]
+            request = os.path.join(state_dir, "basaltwater-connect-restart")
+            for path in (*bridge_paths, request):
+                with open(path, "w", encoding="utf-8") as file_obj:
+                    file_obj.write("legacy bridge fixture")
+            with (
+                patch("common.t3code_steps.os.geteuid", return_value=0),
+                patch("common.t3code_steps.T3_CONNECT_RESTART_PATH_FILE", bridge_paths[0]),
+                patch("common.t3code_steps.T3_CONNECT_RESTART_SERVICE_FILE", bridge_paths[1]),
+                patch("common.t3code_steps.run") as run,
+            ):
+                _remove_connect_restart_units(state_dir)
+                self.assertEqual([call.args[0] for call in run.call_args_list], [
+                    "systemctl disable --now basaltwater-t3code-connect.path",
+                    "systemctl disable --now basaltwater-t3code-connect.service",
+                    "systemctl daemon-reload",
+                ])
+                run.reset_mock()
+                _remove_connect_restart_units(state_dir)
+                run.assert_not_called()
+            for path in (*bridge_paths, request):
+                self.assertFalse(os.path.lexists(path))
+            for path in native_paths:
+                with open(path, encoding="utf-8") as file_obj:
+                    self.assertEqual(file_obj.read(), "native state preserved")
+
     def test_pairing_rejects_symlinked_t3_state_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             home = os.path.join(temporary, "home")
@@ -957,6 +827,7 @@ class DevicePairingRemoteSetupTest(unittest.TestCase):
                 providers["providers"]["t3code"]["https_public_port"],
                 8444,
             )
+            self.assertNotIn("connect", providers["providers"]["t3code"])
             self.assertNotIn("$6$salt$hash", json.dumps(providers))
             with open(
                 os.path.join(temporary, "pairing.service"), encoding="utf-8"
@@ -999,7 +870,7 @@ class DevicePairingRemoteSetupTest(unittest.TestCase):
                 patch("common.t3code_steps._install_t3_service"),
                 patch("common.t3code_steps._ensure_t3_agent_skill"),
                 patch("common.t3code_steps._configure_device_pairing"),
-                patch("common.t3code_steps._configure_connect_restart_units"),
+                patch("common.t3code_steps._remove_connect_restart_units") as remove_connect_bridge,
                 patch(
                     "common.t3code_steps._configure_t3_https",
                     return_value=https_endpoints,
@@ -1020,6 +891,7 @@ class DevicePairingRemoteSetupTest(unittest.TestCase):
                 )
 
             set_https_port.assert_called_once_with(8444)
+            remove_connect_bridge.assert_called_once_with(os.path.join(home, ".t3"))
 
     def test_pairing_https_port_rejects_invalid_values(self) -> None:
         for value in (True, 443, 65536):

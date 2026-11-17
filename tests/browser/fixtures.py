@@ -214,10 +214,7 @@ class FixtureEnvironment:
             state = self.panel_state()
             self.backends["panel"].RequestHandlerClass.state = state
             providers = {"t3code": {"label": "T3 Code", "command": ["fixture-pair"], "base_url_flag": "--base-url",
-                                    "url_field": "url", "expires_field": "expires", "public_port": 1, "https_public_port": 1,
-                                    "connect": {"link_command": ["fixture-disabled"], "unlink_command": ["fixture-disabled"],
-                                                "status_command": ["fixture-connect-status"],
-                                                "restart_request": str(self.directory / "unused-restart")}}}
+                                    "url_field": "url", "expires_field": "expires", "public_port": 1, "https_public_port": 1}}
             self.backends["pairing"].pairing_state = pairing.PairingState(providers)
             self.backends["approval"] = ApprovalServer(("127.0.0.1", 0), password_record(self.username, self.password),
                                                         "https://localhost", self.broker)
@@ -293,9 +290,6 @@ class FixtureEnvironment:
 
 
     def provider_command(self, command, **kwargs):
-        if command == ["fixture-connect-status"]:
-            return subprocess.CompletedProcess(command, 0, json.dumps({"desired": True, "authenticated": True,
-                "linked": True, "provisioned": True, "relayUrl": None, "publishEnabled": False}), "")
         if command[0] != "fixture-pair":
             raise AssertionError(f"Unexpected command in browser fixture: {command[0]}")
         self.issues += 1

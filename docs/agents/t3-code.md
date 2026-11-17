@@ -208,8 +208,8 @@ Consider the remaining reductions below when evolving the integration:
 | --- | --- | --- |
 | Interactive goals and continuation | T3's native Codex/Claude/OpenCode goals and Resume; avoid a second continuation loop around a T3 thread | Independent Codex tasks with lifetime limits, checkpoints and receipts |
 | Ordinary prompts, schedules and PR monitoring | T3 schedules/webhooks and native PR watches; the panel repository starters have been removed | Host jobs that must operate independently of T3 and fixed storage operations |
-| Worktrees, scratch, captures and logs | T3's opt-in retention for its own data; assess replacing overlapping numbered-log retention after matching its limits and custom data roots | Basaltwater-owned worktrees, runtime rollback protection, credential redaction, host pressure inventory and recovery |
-| Pairing and remote access | T3 Connect device approval and OAuth for T3 access; consider making the extra pairing portal optional for Connect-only setups | Direct/private-LAN enrollment, gateway TLS and source restrictions, other hosted services |
+| Worktrees, scratch, captures and logs | T3's opt-in retention for its own data; native numbered-log expiry has no aggregate byte cap, so it does not fully replace Basaltwater cleanup | Basaltwater-owned worktrees, the 256 MiB rotated-log cap, runtime rollback protection, credential redaction, host pressure inventory and recovery |
+| Pairing and remote access | T3's native account linking, relay controls and Connect device approval; the duplicate portal console and root restart bridge have been removed | Direct/private-LAN enrollment, gateway TLS and source restrictions, other hosted services |
 | Browser and power management | T3 preview and native keep-awake behavior for T3 work | Explicit terminal-agent Playwright, application test suites, desktop access and host readiness |
 | Updates and client documentation | T3's updater and tagged manuals; the panel updater has been removed | Initial installation, package ownership, setup reconciliation, security policy and failed-start recovery |
 
@@ -615,9 +615,10 @@ The protected device-pairing broker uses port 3774 by default. Its Basic Auth
 credential is staged for setup and is not written to the saved setup command.
 Prefer the HTTPS endpoints printed during setup.
 Opening the protected HTTPS endpoint completes browser pairing and opens T3
-automatically. Its `/devices` page retains manual enrollment and T3 Connect
-controls. Use the primary T3 HTTPS URL after pairing; if a saved browser session
-stops working, reopen the protected entry to obtain a fresh native session.
+automatically. Its `/devices` page retains manual enrollment and links to native
+T3 Connect controls, with host CLI guidance for headless servers. Use the primary
+T3 HTTPS URL after pairing; if a saved browser session stops working, reopen the
+protected entry to obtain a fresh native session.
 See [device pairing](../services/device-pairing.md) for origin and cookie diagnostics.
 
 ### Browser authentication diagnostics
