@@ -48,9 +48,9 @@ BUILD_CACHES = (
 class StoragePreflightError(OSError):
     """Capacity is below the configured operation requirements."""
 
-    def __init__(self, message: str, required_bytes: int):
+    def __init__(self, message: str, failures: list[dict]):
         super().__init__(message)
-        self.required_bytes = required_bytes
+        self.failures = failures
 
 
 @contextmanager
@@ -108,8 +108,21 @@ def preflight(phase: str, paths: list[str], *, reserve_bytes: int = 512 * MIB,
         raise StoragePreflightError(f"Storage preflight failed during {phase}: {json.dumps(failures)}; "
                       f"managed build storage: {json.dumps(totals)}. "
                       "Preview managed storage cleanup or increase capacity/adjust peak estimates.",
-                      reserve_bytes + peak_bytes)
+                      failures)
     return rows
+
+
+def needs_reclamation(observed: dict, *, target: int, requirements: dict[str, dict] | None = None) -> bool:
+    """Select only constrained filesystems and include preflight inode needs."""
+    minimum_inodes = 0
+    if requirements is not None:
+        required = requirements.get(observed["mount"])
+        if required is None:
+            return False
+        target = max(target, required["required_bytes"])
+        minimum_inodes = required["required_inodes"]
+    return observed["free_bytes"] < target or bool(
+        minimum_inodes and observed["inodes_supported"] and observed["free_inodes"] < minimum_inodes)
 
 
 def configured_preflight(phase: str, paths: list[str]) -> list[dict]:
@@ -136,7 +149,8 @@ def operation_guard(phase: str, paths: list[str], *, cleanup_accounts: list[str]
             try:
                 configured_preflight(phase, paths)
             except StoragePreflightError as exc:
-                target = max(1536 * MIB, exc.required_bytes)
+                requirements = {row["mount"]: row for row in exc.failures}
+                target = max([1536 * MIB, *(row["required_bytes"] for row in exc.failures)])
             else:
                 target = None
         if target is not None:
@@ -145,12 +159,13 @@ def operation_guard(phase: str, paths: list[str], *, cleanup_accounts: list[str]
                 with storage_lock(cleanup=True):
                     from lib.storage_pressure import clean_system_storage
 
-                    for row in clean_system_storage(target=target, apply=True):
+                    for row in clean_system_storage(target=target, apply=True, requirements=requirements):
                         print(f"  {row['category']}: {row['status']}" + (f" ({row['reason']})" if row.get("reason") else ""))
-                    result = maintain(names=cleanup_accounts, apply=True, budget=1024 * MIB, target=target)
+                    result = maintain(names=cleanup_accounts, apply=True, budget=1024 * MIB,
+                                      target=target, requirements=requirements)
                     from lib.storage_pressure import clean_build_versions
 
-                    for row in clean_build_versions(target=target, apply=True):
+                    for row in clean_build_versions(target=target, apply=True, requirements=requirements):
                         print(f"  {row['path']}: {row['status']}" + (f" ({row['reason']})" if row.get("reason") else ""))
             except (OSError, ValueError) as exc:
                 print(f"  Warning: cache maintenance deferred or failed: {exc}")
@@ -385,18 +400,14 @@ def safe_cache_path(path: str, home: str, uid: int) -> bool:
     return False
 
 
-def maintain(*, names: list[str], apply: bool, budget: int, target: int, force: bool = False) -> dict:
+def maintain(*, names: list[str], apply: bool, budget: int, target: int, force: bool = False,
+             requirements: dict[str, dict] | None = None) -> dict:
     """Inventory all candidates; evict only when over budget or below reserve."""
     if min(budget, target) < 0:
         raise ValueError("Storage policy cannot be negative")
     result = {"read_only": not apply, "accounts": [], "shortfalls": []}
     for account in accounts(names):
         home = account.pw_dir
-        categories = CACHES
-        if (account.pw_name.startswith("build-") and home == f"{BUILD_HOMES}/{account.pw_name}"
-                and filesystem(home)["free_bytes"] < target):
-            categories += BUILD_CACHES
-        paths = [f"{home}/{relative}" for relative, _, _ in categories]
         record = {"account": account.pw_name, "uid": account.pw_uid, "candidates": []}
         result["accounts"].append(record)
         try:
@@ -405,6 +416,11 @@ def maintain(*, names: list[str], apply: bool, budget: int, target: int, force: 
                 record["status"] = "absent_home"
                 continue
             validate_filesystem_path(home, must_exist=True)
+            categories = CACHES
+            if (account.pw_name.startswith("build-") and home == f"{BUILD_HOMES}/{account.pw_name}"
+                    and needs_reclamation(filesystem(home), target=target, requirements=requirements)):
+                categories += BUILD_CACHES
+            paths = [f"{home}/{relative}" for relative, _, _ in categories]
             inventory = inspect_storage(home=home, paths=paths, timeout=10)
             if inventory["issues"] or len(inventory["candidates"]) != len(categories):
                 raise ValueError("Cache inventory incomplete")
@@ -418,13 +434,17 @@ def maintain(*, names: list[str], apply: bool, budget: int, target: int, force: 
                 row["after"] = row["before"]
                 if row["status"] == "absent":
                     continue
+                if requirements is not None and row["before"]["mount"] not in requirements:
+                    row["status"] = "outside_pressure_mounts"
+                    continue
                 allowed_issues = {"symlinks_skipped"} if (relative, category, cost) in BUILD_CACHES else set()
                 if (row["status"] != "measured" or set(row["issues"]) - allowed_issues or row["other_owner_entries"]
                         or row["owner_uid"] != account.pw_uid or row["is_mountpoint"]
                         or row["hardlinked_files"] or not safe_cache_path(row["path"], home, account.pw_uid)):
                     row["status"] = "skipped_unsafe_or_incomplete"
                     continue
-                if not force and total <= budget and row["before"]["free_bytes"] >= target:
+                if not force and total <= budget and not needs_reclamation(
+                        row["before"], target=target, requirements=requirements):
                     row["status"] = "below_limits"
                     continue
                 reason = activity(account.pw_uid)
@@ -480,9 +500,12 @@ def maintain(*, names: list[str], apply: bool, budget: int, target: int, force: 
             except (OSError, ValueError):
                 record["error"] = "Final filesystem observation unavailable"
                 continue
-            if row["after"]["free_bytes"] < target:
+            if needs_reclamation(row["after"], target=target, requirements=requirements):
+                required = (requirements or {}).get(row["after"]["mount"], {})
                 result["shortfalls"].append({"path": row["path"], "mount": row["after"]["mount"],
-                    "remaining_bytes": target - row["after"]["free_bytes"]})
+                    "remaining_bytes": max(0, max(target, required.get("required_bytes", 0)) - row["after"]["free_bytes"]),
+                    "remaining_inodes": max(0, required.get("required_inodes", 0) - row["after"].get("free_inodes", 0))
+                        if row["after"].get("inodes_supported") else 0})
     return result
 
 

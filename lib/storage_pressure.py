@@ -15,17 +15,22 @@ from lib.cleanup_paths import process_uses_path, remove_checked_path
 from lib.validation import validate_filesystem_path
 
 
-def clean_system_storage(*, target: int, apply: bool) -> list[dict]:
-    from lib.managed_storage import filesystem
+def clean_system_storage(*, target: int, apply: bool, requirements: dict[str, dict] | None = None) -> list[dict]:
+    from lib.managed_storage import filesystem, needs_reclamation
 
     result = []
-    for category, path, command in (
-        ("apt-downloads", "/var/cache/apt/archives", ["apt-get", "clean"]),
-        ("archived-journals", "/var/log", ["journalctl", "--rotate", "--vacuum-size=64M", "--vacuum-time=7d"]),
-    ):
-        if filesystem(path)["free_bytes"] >= target:
+    candidates = [
+        ("apt-downloads", "/var/cache/apt/archives",
+         ["apt-get", "-o", "Dir::Cache::archives=/var/cache/apt/archives", "clean"]),
+    ]
+    for path in ("/var/log/journal", "/run/log/journal"):
+        if os.path.isdir(path):
+            candidates.append(("archived-journals", path,
+                ["journalctl", f"--directory={path}", "--rotate", "--vacuum-size=64M", "--vacuum-time=7d"]))
+    for category, path, command in candidates:
+        if not needs_reclamation(filesystem(path), target=target, requirements=requirements):
             continue
-        row = {"category": category, "status": "preview", "command": command}
+        row = {"category": category, "path": path, "status": "preview", "command": command}
         result.append(row)
         if apply:
             try:
@@ -91,8 +96,8 @@ def _kept_versions(root: Path, versions: list[Path]) -> set[str]:
     return keep
 
 
-def clean_build_versions(*, target: int, apply: bool) -> list[dict]:
-    from lib.managed_storage import BUILD_HOMES, accounts, activity, filesystem, safe_cache_path
+def clean_build_versions(*, target: int, apply: bool, requirements: dict[str, dict] | None = None) -> list[dict]:
+    from lib.managed_storage import BUILD_HOMES, accounts, activity, filesystem, needs_reclamation, safe_cache_path
 
     result = []
     for account in accounts([]):
@@ -102,7 +107,7 @@ def clean_build_versions(*, target: int, apply: bool) -> list[dict]:
         root = Path(home) / ".nvm"
         descriptor = None
         try:
-            if not root.exists() or filesystem(home)["free_bytes"] >= target:
+            if not root.exists() or not needs_reclamation(filesystem(str(root)), target=target, requirements=requirements):
                 continue
             if activity(account.pw_uid):
                 continue
@@ -136,7 +141,7 @@ def clean_build_versions(*, target: int, apply: bool) -> list[dict]:
             keep = _kept_versions(root, versions)
             uids = _process_uids()
             for version in sorted(versions, key=lambda p: tuple(map(int, p.name[1:].split(".")))):
-                if version.name in keep or filesystem(home)["free_bytes"] >= target:
+                if version.name in keep or not needs_reclamation(filesystem(str(version)), target=target, requirements=requirements):
                     continue
                 row = {"path": str(version), "status": "deferred"}
                 result.append(row)
@@ -144,7 +149,11 @@ def clean_build_versions(*, target: int, apply: bool) -> list[dict]:
                     row["reason"] = "Version directory changed or is unsafe"
                     continue
                 identity = version.lstat()
-                scan = inspect_storage(home=home, paths=[str(version)], timeout=10)["candidates"][0]
+                measured = inspect_storage(home=home, paths=[str(version)], timeout=10)
+                if measured["issues"] or len(measured["candidates"]) != 1:
+                    row["reason"] = "Version inventory is unavailable or incomplete"
+                    continue
+                scan = measured["candidates"][0]
                 if (scan["status"] != "measured" or set(scan["issues"]) - {"symlinks_skipped"}
                         or scan["other_owner_entries"] or scan["hardlinked_files"] or scan["is_mountpoint"]):
                     row["reason"] = "Version inventory is unsafe or incomplete"

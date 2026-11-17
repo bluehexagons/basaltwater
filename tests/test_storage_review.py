@@ -79,6 +79,17 @@ class StorageReviewTests(unittest.TestCase):
                     storage, "activity", return_value=None), patch.object(storage, "filesystem", return_value={"free_bytes": 0}), patch.object(
                     pressure, "_process_uids", return_value={os.geteuid()}), patch.object(
                     pressure, "process_uses_path", side_effect=lambda path, **_: path.endswith("v24.1.0")):
+                with patch.object(storage, "filesystem", side_effect=lambda path: dict(
+                        mount="/" if path == str(home) else "/separate-node", free_bytes=0)):
+                    separate = pressure.clean_build_versions(target=1, apply=True,
+                        requirements={"/": dict(required_bytes=1, required_inodes=0)})
+                self.assertEqual(separate, [])
+                self.assertFalse((root / ".basaltwater-runtime.lock").exists())
+                with patch.object(pressure, "inspect_storage", return_value={
+                        "issues": ["mount_inventory_unavailable"], "candidates": []}):
+                    deferred = pressure.clean_build_versions(target=1, apply=True)
+                self.assertTrue(all(row["status"] == "deferred" for row in deferred))
+                self.assertEqual(sorted(p.name for p in parent.iterdir()), sorted(versions))
                 preview = pressure.clean_build_versions(target=1, apply=False)
                 self.assertTrue((parent / "v24.2.0").exists())
                 self.assertEqual([r["path"] for r in preview if r["status"] == "preview"], [str(parent / "v24.2.0")])
@@ -123,11 +134,77 @@ class StorageReviewTests(unittest.TestCase):
 
     def test_system_pressure_preview_does_not_run_commands(self):
         from lib import storage_pressure as pressure
-        with patch.object(storage, "filesystem", return_value={"free_bytes": 0}), patch.object(pressure.subprocess, "run") as run:
+        with patch.object(storage, "filesystem", return_value={"free_bytes": 0}), patch.object(
+                pressure.os.path, "isdir", return_value=True), patch.object(pressure.subprocess, "run") as run:
             report = pressure.clean_system_storage(target=1, apply=False)
             run.assert_not_called()
-            self.assertEqual([r["status"] for r in report], ["preview", "preview"])
-            self.assertEqual(report[1]["command"], ["journalctl", "--rotate", "--vacuum-size=64M", "--vacuum-time=7d"])
+            self.assertEqual([r["status"] for r in report], ["preview"] * 3)
+            self.assertEqual(report[1]["command"], ["journalctl", "--directory=/var/log/journal",
+                                                   "--rotate", "--vacuum-size=64M", "--vacuum-time=7d"])
+
+    def test_setup_tmpfs_refusal_does_not_clean_unrelated_root_filesystem(self):
+        from lib import storage_pressure as pressure
+        from tests import real_storage_operation_guard
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            cache = home / ".cache/go-build"
+            cache.mkdir(parents=True)
+            for path in (cache.parent, cache):
+                path.chmod(0o700)
+            (cache / "compiled").write_text("preserve")
+            account = SimpleNamespace(pw_name="fixture", pw_uid=os.geteuid(), pw_dir=directory)
+            def capacity(path):
+                return dict(path=path, mount="/tmp" if path == "/tmp" else "/",
+                            free_bytes=0 if path == "/tmp" else 1280 * storage.MIB,
+                            free_inodes=20000, inodes_supported=True)
+            inspect = storage.inspect_storage
+            def inventory(**options):
+                return {"candidates": []} if options["paths"] == [storage.BUILD_HOMES] else inspect(**options)
+            with patch.object(storage, "storage_lock", side_effect=lambda **_: nullcontext()), patch.object(
+                    storage, "filesystem", side_effect=capacity), patch.object(storage, "accounts", return_value=[account]), patch.object(
+                    storage, "inspect_storage", side_effect=inventory), patch.object(storage, "run_streamed") as worker, patch.object(
+                    pressure.subprocess, "run") as native, patch.object(pressure.os.path, "isdir", return_value=True), patch.dict(os.environ, {
+                        "BASALTWATER_STORAGE_PEAK_MIB": "512", "BASALTWATER_STORAGE_RESERVE_MIB": "512",
+                        "BASALTWATER_STORAGE_MIN_INODES": "10000", "BASALTWATER_STORAGE_TMP_PEAK_MIB": "128",
+                        "BASALTWATER_STORAGE_TMP_RESERVE_MIB": "64", "TMPDIR": "/tmp"}):
+                with self.assertRaises(storage.StoragePreflightError):
+                    with real_storage_operation_guard("setup", ["/opt/basaltwater", "/tmp"], cleanup_accounts=[]):
+                        self.fail("setup started with a full tmpfs")
+                worker.assert_not_called()
+                native.assert_not_called()
+            self.assertEqual((cache / "compiled").read_text(), "preserve")
+
+    def test_inode_pressure_selects_build_caches_and_reports_inode_shortfall(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory) / "build-fixture"
+            for relative in (".cache/go-build", "go/pkg/mod"):
+                cache = home / relative
+                cache.mkdir(parents=True)
+                (cache / "generated").write_text("reproducible")
+            for current, _dirs, _files in os.walk(home):
+                Path(current).chmod(0o700)
+            account = SimpleNamespace(pw_name="build-fixture", pw_uid=os.geteuid(), pw_dir=str(home))
+            with patch.object(storage, "BUILD_HOMES", directory), patch.object(storage, "accounts", return_value=[account]), patch.object(
+                    storage, "activity", return_value=None), patch.object(storage, "filesystem", return_value=dict(
+                        mount="/", free_bytes=4 * 1024**3, free_inodes=1, inodes_supported=True)), patch.object(storage, "run_streamed") as worker:
+                report = storage.maintain(names=[], apply=False, budget=1024 * storage.MIB, target=1536 * storage.MIB,
+                    requirements={"/": dict(required_bytes=1024 * storage.MIB, required_inodes=10000)})
+            worker.assert_not_called()
+            self.assertEqual([row["category"] for row in report["accounts"][0]["candidates"] if row["status"] == "preview"],
+                             ["go-build", "go-modules"])
+            self.assertTrue(all(row["remaining_bytes"] == 0 and row["remaining_inodes"] == 9999 for row in report["shortfalls"]))
+
+    def test_system_pressure_preserves_journals_on_other_mounts(self):
+        from lib import storage_pressure as pressure
+        def capacity(path):
+            return dict(mount="/" if path == "/var/cache/apt/archives" else "/separate-journal", free_bytes=0)
+        with patch.object(storage, "filesystem", side_effect=capacity), patch.object(pressure.os.path, "isdir", return_value=True), patch.object(
+                pressure.shutil, "which", return_value="/usr/bin/fixture-cleaner"), patch.object(
+                pressure.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")) as run:
+            report = pressure.clean_system_storage(target=1, apply=True,
+                requirements={"/": dict(required_bytes=1, required_inodes=0)})
+        self.assertEqual([row["category"] for row in report], ["apt-downloads"])
+        run.assert_called_once()
 
     def test_failed_build_cache_reports_worker_output_and_continues(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -154,6 +231,26 @@ class StorageReviewTests(unittest.TestCase):
             self.assertTrue(all("fixture diagnostic" in row["reason"] for row in failed))
             self.assertNotIn("error", record)
             self.assertEqual((home / "data").read_text(), "preserve")
+
+    def test_build_home_capacity_error_does_not_abort_other_accounts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory) / "build-fixture"
+            ordinary = Path(directory) / "ordinary"
+            build.mkdir(mode=0o700)
+            ordinary.mkdir(mode=0o700)
+            accounts = [SimpleNamespace(pw_name=name, pw_uid=os.geteuid(), pw_dir=str(path))
+                        for name, path in (("build-fixture", build), ("ordinary", ordinary))]
+            def capacity(path):
+                if path == str(build):
+                    raise OSError("Build filesystem unavailable")
+                return dict(mount="/", free_bytes=4 * 1024**3)
+            with patch.object(storage, "BUILD_HOMES", directory), patch.object(storage, "accounts", return_value=accounts), patch.object(
+                    storage, "filesystem", side_effect=capacity), patch.object(storage, "run_streamed") as worker:
+                report = storage.maintain(names=[], apply=True, budget=1024 * storage.MIB, target=1536 * storage.MIB)
+            worker.assert_not_called()
+            self.assertIn("Build filesystem unavailable", report["accounts"][0]["error"])
+            self.assertNotIn("error", report["accounts"][1])
+            self.assertEqual(len(report["accounts"][1]["candidates"]), len(storage.CACHES))
 
     def test_unrelated_test_fixtures_leave_real_guard_enabled(self):
         with patch.object(storage, "storage_lock", return_value=nullcontext()), patch.object(

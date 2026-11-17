@@ -44,6 +44,10 @@ rechecks capacity under its normal shared lock. It never replays setup steps or
 repeats cleanup on a later build failure. Unsafe or active
 caches remain protected; insufficient space still stops setup. The cleanup target
 is at least 1536 MiB, increased to the configured setup requirement when larger.
+Automatic cleanup selects only filesystems reported by the failed preflight and
+also responds to insufficient free inodes. A full separate tmpfs does not trigger
+cache or log deletion on an unrelated disk. Cleanup still cannot enlarge a tmpfs
+or reclaim storage outside its eligible paths.
 Deployment operations do not trigger automatic cleanup. Raise the target
 to accommodate your measured deployment peak plus a reserve. Use a systemd
 override for the service's `ExecStart` to persist different policy arguments.
@@ -67,7 +71,7 @@ lock so it remains held if the launcher exits unexpectedly. Missing or incomplet
 post-cleanup measurements are failures, rather than successful reclamation.
 
 Managed build accounts use additional disposable paths when their filesystem is
-below the free-space target: `.npm/_logs`, `.npm/_npx`, `go/pkg/mod`, `.cache/uv`
+below the free-space target (or below setup's inode requirement): `.npm/_logs`, `.npm/_npx`, `go/pkg/mod`, `.cache/uv`
 and `.cache/pip`. This discards npm diagnostics, downloaded tools and modules,
 including Go toolchains. Subsequent builds download them again and may take
 longer. For exact managed build homes only, a failed native cache command falls
@@ -76,7 +80,10 @@ Go cache directories are made writable first. Sources, configuration and other
 home content remain outside this policy. Missing homes are reported as absent.
 
 `--pressure` also cleans apt package archives and rotates/vacuums systemd journals
-to 64 MiB and seven days on filesystems below the target. It then removes unused
+to 64 MiB and seven days on filesystems below the target. Persistent journals in
+`/var/log/journal` and volatile journals in `/run/log/journal` are checked and
+vacuumed separately; apt cleanup explicitly selects `/var/cache/apt/archives`.
+It then removes unused
 older Node versions in inactive managed build homes, retaining the newest version
 of each installed major and every exact or partial version selected by an NVM
 alias. Versions referenced by running processes, unsafe inventories and busy
@@ -198,7 +205,8 @@ runtimes remain outside automatic global-tool changes; their owners must update
 them deliberately. Other global packages still require the ecosystem upgrade
 opt-in and automatic runtime ownership.
 
-Native command boundaries follow the [npm cache documentation](https://docs.npmjs.com/cli/cache/),
+Native command boundaries follow the [journalctl documentation](https://www.freedesktop.org/software/systemd/man/latest/journalctl.html),
+[npm cache documentation](https://docs.npmjs.com/cli/cache/),
 [nvm documentation](https://github.com/nvm-sh/nvm), and
 [Go clean documentation](https://pkg.go.dev/cmd/go#hdr-Remove_object_files_and_cached_files).
 Unit tests mock native commands and verify policy, preservation and exclusion.

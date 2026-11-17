@@ -32,9 +32,11 @@ class StorageManagementTests(unittest.TestCase):
             self.assertEqual(held, [True])
             self.assertEqual(options["target"], 2048 * storage.MIB)
             self.assertTrue(options["apply"])
+            self.assertEqual(options["requirements"]["/"]["required_inodes"], 10000)
             return {"accounts": []}
 
-        pressure = storage.StoragePreflightError("low space", 2048 * storage.MIB)
+        pressure = storage.StoragePreflightError("low space", [dict(
+            mount="/", required_bytes=2048 * storage.MIB, required_inodes=10000)])
         with patch.object(storage, "storage_lock", side_effect=lock), patch.object(
                 storage, "configured_preflight", side_effect=[pressure, None]) as check, patch(
                 "lib.storage_pressure.clean_system_storage", return_value=[]), patch(
@@ -52,7 +54,8 @@ class StorageManagementTests(unittest.TestCase):
         from unittest.mock import Mock
         action = Mock()
         setup = storage.guarded_setup(action)
-        pressure = storage.StoragePreflightError("low space", storage.MIB)
+        pressure = storage.StoragePreflightError("low space", [dict(
+            mount="/", required_bytes=storage.MIB, required_inodes=10000)])
         with patch.object(storage, "operation_guard", real_storage_operation_guard), patch.object(
                 storage, "storage_lock", side_effect=lambda **_: nullcontext()), patch(
                 "lib.storage_pressure.clean_system_storage", return_value=[]), patch(
@@ -82,7 +85,7 @@ class StorageManagementTests(unittest.TestCase):
         from tests import real_storage_operation_guard
         @storage.guarded_setup
         def setup(config, args):
-            raise storage.StoragePreflightError("deployment pressure", storage.MIB)
+            raise storage.StoragePreflightError("deployment pressure", [])
         with patch.object(storage, "operation_guard", real_storage_operation_guard), patch.object(
                 storage, "storage_lock", side_effect=lambda **_: nullcontext()), patch.object(
                 storage, "configured_preflight"), patch.object(storage, "maintain") as maintain, patch.object(
@@ -184,6 +187,7 @@ class StorageManagementTests(unittest.TestCase):
         for expected in ("build staging", '"mount": "/tmp"', '"mount": "/data"',
                          '"free_inodes": 1', '"allocated_bytes": 100', '"required_bytes": 1073741824'):
             self.assertIn(expected, message)
+        self.assertEqual([row["mount"] for row in failure.exception.failures], ["/tmp", "/data"])
 
     def test_lock_excludes_cleanup_and_releases_after_exception(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(storage, "LOCK", directory + "/lock"):
