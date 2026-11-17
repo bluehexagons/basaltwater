@@ -257,9 +257,13 @@ it. If the setup username changes, supply a new password. This login also
 authorizes integrated [privilege approvals](../agents/privilege-approvals.md).
 Keep it out of agent-controlled browsers and tools.
 
-With `--ssl`, the panel uses a suitable existing certificate or the managed VM
-CA. Enroll that CA on your client when required; see [Client CA trust](client-ca-trust.md).
-Without TLS, Basic Auth crosses the network as plaintext.
+Use HTTP only over localhost or in a controlled test environment. HTTP sends
+login credentials and any integrated approvals without encryption. The HTTP
+listener can be reachable from the network, so check its effective firewall
+rules before relying on local-only access. Use `--ssl` over shared or untrusted
+networks. With `--ssl`, the panel uses a suitable existing certificate or the
+managed VM CA. Enroll that CA on your client when required. See
+[Client CA trust](client-ca-trust.md).
 
 Setup checks ownership of both the panel Nginx site and its enabled link before
 replacing the site. An unrelated file, directory or symlink at either managed

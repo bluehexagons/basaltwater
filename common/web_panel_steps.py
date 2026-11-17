@@ -1353,8 +1353,6 @@ def configure_web_panel(config: SetupConfig) -> None:
         "  ✓ Web panel: "
         + _http_url(host, config.web_panel_port, scheme)
     )
-    if not config.enable_ssl:
-        print("  ⚠ Web panel Basic Auth uses plaintext HTTP; add --ssl for encrypted login")
     if config.web_panel_notification_ingest is True:
         print(
             "  ✓ Notification ingest: "

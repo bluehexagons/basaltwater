@@ -521,6 +521,9 @@ def print_setup_summary(config: SetupConfig, description: Optional[str] = None) 
             f"Web panel: {scheme} on TCP {config.web_panel_port} "
             f"(Basic Auth user: {config.username})"
         )
+        if not config.enable_ssl and not config.disable_web_panel:
+            print("Warning: Web panel HTTP sends login credentials and any integrated approvals without encryption.")
+            print("  Use HTTP only over localhost or in a controlled test environment. Add --ssl for HTTPS.")
         if config.web_panel_auth_password is not None:
             print("Web panel auth: supplied for this setup")
     elif config.disable_web_panel:
