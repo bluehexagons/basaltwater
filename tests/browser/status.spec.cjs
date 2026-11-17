@@ -282,6 +282,8 @@ test('status polling bounds overlap and timeout, backs off on overload, honors r
 
 test('status polling separates missing, stale, future, partial and authorization state without erasing values', async ({page}) => {
   await controlled(page);
+  // The page clock is paused; runner timestamps can advance into its future.
+  const observed = await page.evaluate(() => Date.now());
   let next = observation('host', memory('70% used'), {observed_at: null, freshness: 'unknown'});
   let reads = 0;
   await page.route(api + 'host', route => { reads++; return next === null ? route.fulfill({status: 403}) : route.fulfill({json: next}); });
@@ -293,13 +295,13 @@ test('status polling separates missing, stale, future, partial and authorization
   }
   await update();
   await expect(host(page)).toHaveAttribute('data-source-health', 'unknown');
-  next = observation('host', memory('71% used'), {observed_at: new Date(Date.now() - 1000000).toISOString(), freshness: 'stale'});
+  next = observation('host', memory('71% used'), {observed_at: new Date(observed - 1000000).toISOString(), freshness: 'stale'});
   await update();
   await expect(host(page)).toHaveAttribute('data-source-health', 'stale');
-  next = observation('host', memory('72% used'), {observed_at: new Date(Date.now() + 600000).toISOString()});
+  next = observation('host', memory('72% used'), {observed_at: new Date(observed + 600000).toISOString()});
   await update();
   await expect(host(page)).toHaveAttribute('data-source-health', 'unknown');
-  next = observation('host', memory('73% used'), {freshness: 'incomplete', warnings: ['Collection is incomplete.']});
+  next = observation('host', memory('73% used'), {observed_at: new Date(observed).toISOString(), freshness: 'incomplete', warnings: ['Collection is incomplete.']});
   await update();
   await expect(host(page)).toHaveAttribute('data-source-health', 'incomplete');
   await expect(host(page).locator('[data-source-warnings]')).toHaveText('Collection is incomplete.');
