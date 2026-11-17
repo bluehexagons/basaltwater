@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import pwd
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -34,6 +35,13 @@ CACHES = (
     (".npm/_cacache", "npm-content", "Packages must be downloaded again"),
     (".nvm/.cache", "nvm-downloads", "Node archives must be downloaded again"),
     (".cache/go-build", "go-build", "Go packages must be recompiled"),
+)
+BUILD_CACHES = (
+    (".npm/_logs", "npm-logs", "Old npm diagnostics are discarded"),
+    (".npm/_npx", "npx-builds", "Tools must be downloaded again"),
+    ("go/pkg/mod", "go-modules", "Modules and downloaded toolchains must be downloaded again"),
+    (".cache/uv", "uv-downloads", "Python packages must be downloaded again"),
+    (".cache/pip", "pip-downloads", "Python packages must be downloaded again"),
 )
 
 
@@ -135,7 +143,15 @@ def operation_guard(phase: str, paths: list[str], *, cleanup_accounts: list[str]
             print("Storage is below setup requirements; running one disposable-cache cleanup pass...", flush=True)
             try:
                 with storage_lock(cleanup=True):
+                    from lib.storage_pressure import clean_system_storage
+
+                    for row in clean_system_storage(target=target, apply=True):
+                        print(f"  {row['category']}: {row['status']}" + (f" ({row['reason']})" if row.get("reason") else ""))
                     result = maintain(names=cleanup_accounts, apply=True, budget=1024 * MIB, target=target)
+                    from lib.storage_pressure import clean_build_versions
+
+                    for row in clean_build_versions(target=target, apply=True):
+                        print(f"  {row['path']}: {row['status']}" + (f" ({row['reason']})" if row.get("reason") else ""))
             except (OSError, ValueError) as exc:
                 print(f"  Warning: cache maintenance deferred or failed: {exc}")
                 result = {"accounts": []}
@@ -191,7 +207,7 @@ def guarded_setup(function):
                 # deployment refusal after setup mutations have begun.
                 raise
             print(f"Error: {exc}", file=sys.stderr)
-            print("On the target, inspect: sudo python3 -B -m lib.managed_storage\n"
+            print("On the target, inspect: sudo python3 -B -m lib.managed_storage --pressure\n"
                   "Inspect the daily job: sudo journalctl -u basaltwater-storage.service -n 100 --no-pager\n"
                   "Setup was stopped; disposable-cache cleanup could not provide the required capacity.",
                   file=sys.stderr)
@@ -255,13 +271,17 @@ def activity(uid: int) -> str | None:
 
 def _native_cleanup(category: str, expected_home: str, device: int, inode: int) -> None:
     """Execute as the owner with fixed paths, no shell profiles or Go hooks."""
-    if category not in {item[1] for item in CACHES}:
+    categories = CACHES + BUILD_CACHES
+    if category not in {item[1] for item in categories}:
         raise ValueError("Unknown cache category")
     home = pwd.getpwuid(os.geteuid()).pw_dir
     validate_filesystem_path(home, must_exist=True)
     if home != expected_home:
         raise ValueError("Maintenance account home changed")
-    relative = next(relative for relative, name, _ in CACHES if name == category)
+    if category in {item[1] for item in BUILD_CACHES} and not (
+            home.startswith(BUILD_HOMES + "/build-") and Path(home).parent == Path(BUILD_HOMES)):
+        raise ValueError("Extended cleanup requires an exact managed build home")
+    relative = next(relative for relative, name, _ in categories if name == category)
     path = f"{home}/{relative}"
     if not safe_cache_path(path, home, os.geteuid()):
         raise ValueError("Cache path is unsafe")
@@ -272,22 +292,64 @@ def _native_cleanup(category: str, expected_home: str, device: int, inode: int) 
     if measurement["issues"] or not measurement["candidates"]:
         raise ValueError("Worker cache inventory unavailable")
     row = measurement["candidates"][0]
-    if (row["status"] != "measured" or row["issues"] or row["other_owner_entries"]
+    allowed_issues = {"symlinks_skipped"} if category in {item[1] for item in BUILD_CACHES} else set()
+    if (row["status"] != "measured" or set(row["issues"]) - allowed_issues or row["other_owner_entries"]
             or row["hardlinked_files"] or row["is_mountpoint"]):
         raise ValueError("Worker cache inventory is unsafe or incomplete")
+    if allowed_issues:
+        # These exact managed build caches are reproducible. rmtree unlinks
+        # internal symlinks and never follows them into persistent data.
+        _remove_build_cache(path)
+        return
     env = {"HOME": home, "PATH": "/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin",
            "GOENV": "off", "GOTOOLCHAIN": "local", "GOFLAGS": "", "GOCACHEPROG": "",
            "GOCACHE": f"{home}/.cache/go-build", "NVM_DIR": f"{home}/.nvm",
            "NPM_CONFIG_IGNORE_SCRIPTS": "true", "NPM_CONFIG_UPDATE_NOTIFIER": "false"}
     if category != "npm-content":
-        _run_native(category, env)
+        try:
+            _run_native(category, env)
+        except (OSError, subprocess.SubprocessError):
+            if home.startswith(BUILD_HOMES + "/build-") and Path(home).parent == Path(BUILD_HOMES):
+                _fallback_build_cache(category, path, home)
+            else:
+                raise
         return
     with tempfile.TemporaryDirectory(prefix="basaltwater-cache-config-") as directory:
         for name in ("user", "global"):
-            path = Path(directory) / (name + ".npmrc")
-            path.write_text("")
-            env["NPM_CONFIG_" + name.upper() + "CONFIG"] = str(path)
-        _run_native(category, env)
+            config_path = Path(directory) / (name + ".npmrc")
+            config_path.write_text("")
+            env["NPM_CONFIG_" + name.upper() + "CONFIG"] = str(config_path)
+        try:
+            _run_native(category, env)
+        except (OSError, subprocess.SubprocessError):
+            if home.startswith(BUILD_HOMES + "/build-") and Path(home).parent == Path(BUILD_HOMES):
+                _fallback_build_cache(category, path, home)
+            else:
+                raise
+
+
+def _fallback_build_cache(category: str, path: str, home: str) -> None:
+    """Retain runtime exclusion when a native Node cache cleaner fails."""
+    from lib.node_runtime_ownership import runtime_lock
+
+    root = Path(home) / ".nvm"
+    if category != "go-build" and os.path.lexists(root):
+        with runtime_lock(root):
+            _remove_build_cache(path)
+    else:
+        _remove_build_cache(path)
+
+
+def _remove_build_cache(path: str) -> None:
+    """Discard an already validated, inactive, owner-controlled build cache."""
+    if not os.path.exists(path):
+        return
+    for directory, _dirs, _files in os.walk(path, followlinks=False):
+        info = os.lstat(directory)
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid():
+            raise ValueError("Build cache changed during cleanup")
+        os.chmod(directory, stat.S_IMODE(info.st_mode) | 0o700, follow_symlinks=False)
+    shutil.rmtree(path)
 
 
 def _run_native(category: str, env: dict[str, str]) -> None:
@@ -330,17 +392,25 @@ def maintain(*, names: list[str], apply: bool, budget: int, target: int, force: 
     result = {"read_only": not apply, "accounts": [], "shortfalls": []}
     for account in accounts(names):
         home = account.pw_dir
-        paths = [f"{home}/{relative}" for relative, _, _ in CACHES]
+        categories = CACHES
+        if (account.pw_name.startswith("build-") and home == f"{BUILD_HOMES}/{account.pw_name}"
+                and filesystem(home)["free_bytes"] < target):
+            categories += BUILD_CACHES
+        paths = [f"{home}/{relative}" for relative, _, _ in categories]
         record = {"account": account.pw_name, "uid": account.pw_uid, "candidates": []}
         result["accounts"].append(record)
         try:
+            validate_filesystem_path(home)
+            if not os.path.lexists(home):
+                record["status"] = "absent_home"
+                continue
             validate_filesystem_path(home, must_exist=True)
             inventory = inspect_storage(home=home, paths=paths, timeout=10)
-            if inventory["issues"] or len(inventory["candidates"]) != len(CACHES):
+            if inventory["issues"] or len(inventory["candidates"]) != len(categories):
                 raise ValueError("Cache inventory incomplete")
             total = sum(row["allocated_bytes"] for row in inventory["candidates"])
             by_path = {row["path"]: row for row in inventory["candidates"]}
-            for relative, category, cost in CACHES:
+            for relative, category, cost in categories:
                 row = by_path[f"{home}/{relative}"]
                 row.update(category=category, rebuild_cost=cost)
                 record["candidates"].append(row)
@@ -348,7 +418,8 @@ def maintain(*, names: list[str], apply: bool, budget: int, target: int, force: 
                 row["after"] = row["before"]
                 if row["status"] == "absent":
                     continue
-                if (row["status"] != "measured" or row["issues"] or row["other_owner_entries"]
+                allowed_issues = {"symlinks_skipped"} if (relative, category, cost) in BUILD_CACHES else set()
+                if (row["status"] != "measured" or set(row["issues"]) - allowed_issues or row["other_owner_entries"]
                         or row["owner_uid"] != account.pw_uid or row["is_mountpoint"]
                         or row["hardlinked_files"] or not safe_cache_path(row["path"], home, account.pw_uid)):
                     row["status"] = "skipped_unsafe_or_incomplete"
@@ -374,15 +445,20 @@ def maintain(*, names: list[str], apply: bool, budget: int, target: int, force: 
                 if account.pw_uid != os.geteuid():
                     command = ["runuser", "-u", account.pw_name, "--", *command]
                 try:
+                    output_tail = []
+                    def capture(line):
+                        output_tail.append(line[-1000:])
+                        del output_tail[:-4]
                     status = run_streamed(command, cwd="/", env={"PATH": os.defpath},
-                                          on_output=lambda _line: None, timeout=150,
+                                          on_output=capture, timeout=150,
                                           pass_fds=(() if _lock_fd.get() is None else (_lock_fd.get(),)),
                                           cleanup_group_on_exit=True)
                     if status:
-                        raise OSError("Native cleanup failed")
+                        raise OSError(f"Native cleanup exit {status}: {''.join(output_tail)[-2000:]}")
                     row["status"] = "cleaned"
-                except (OSError, subprocess.SubprocessError):
+                except (OSError, subprocess.SubprocessError) as exc:
                     row["status"] = "failed_native_cleanup"
+                    row["reason"] = str(exc)[-2500:]
                 row["after"] = filesystem(row["path"])
                 measured = inspect_storage(home=home, paths=[row["path"]], timeout=5)
                 row["measurement_after"] = measured
@@ -390,7 +466,8 @@ def maintain(*, names: list[str], apply: bool, budget: int, target: int, force: 
                     row["status"] = "failed_verification"
                     raise ValueError("Post-cleanup measurement unavailable")
                 after = measured["candidates"][0]
-                if after["status"] not in {"measured", "absent"} or after["issues"] or after["other_owner_entries"]:
+                if (after["status"] not in {"measured", "absent"}
+                        or set(after["issues"]) - allowed_issues or after["other_owner_entries"]):
                     row["status"] = "failed_verification"
                     raise ValueError("Post-cleanup measurement incomplete or unsafe")
                 total -= max(0, row["allocated_bytes"] - after["allocated_bytes"])
@@ -416,6 +493,7 @@ def main() -> int:
     parser.add_argument("--budget-mib", type=int, default=1024, help="Combined cache budget per account")
     parser.add_argument("--target-mib", type=int, default=1536, help="Free-space target including build reserve")
     parser.add_argument("--force", action="store_true", help="Select eligible caches even below budget")
+    parser.add_argument("--pressure", action="store_true", help="Also reclaim archived journals, package downloads and unused build runtimes")
     parser.add_argument("--payloads", action="store_true", help="Also maintain installed builder/target terminal payloads")
     parser.add_argument("--payload-budget-mib", type=int, default=4096, help="Retained payload budget per installed role")
     parser.add_argument("--payload-min-age-hours", type=int, default=168, help="Minimum payload retention age")
@@ -429,8 +507,20 @@ def main() -> int:
         parser.error("Bundle release requires --payloads")
     try:
         with storage_lock(cleanup=True):
+            pressure = []
+            if args.pressure:
+                from lib.storage_pressure import clean_system_storage, clean_build_versions
+
+                pressure = clean_system_storage(target=args.target_mib * MIB, apply=args.apply)
             result = maintain(names=args.account, apply=args.apply, budget=args.budget_mib * MIB,
                               target=args.target_mib * MIB, force=args.force)
+            if args.pressure:
+                pressure.extend(clean_build_versions(target=args.target_mib * MIB, apply=args.apply))
+                result["pressure"] = pressure
+                result["shortfalls"] = [dict(path=row["path"], mount=observed["mount"],
+                    remaining_bytes=args.target_mib * MIB - observed["free_bytes"])
+                    for row in result["shortfalls"]
+                    if (observed := filesystem(row["path"]))["free_bytes"] < args.target_mib * MIB]
         # Release the cache lease before dispatch. Target collection reacquires
         # storage -> maintenance -> admission -> artifact; builder collection
         # uses its existing worker -> input -> payload -> job lock order.
@@ -447,7 +537,8 @@ def main() -> int:
                 for row in result["shortfalls"]
                 if (observed := filesystem(row["path"]))["free_bytes"] < args.target_mib * MIB]
         print(json.dumps(result, indent=2))
-        return int(bool(result["shortfalls"] or any(
+        return int(bool(result["shortfalls"] or any(row["status"] in {"failed", "deferred_or_failed"}
+            for row in result.get("pressure", [])) or any(
             row.get("status") == "deferred_or_failed" or row.get("remaining_bytes") or row.get("remaining_budget_bytes")
             for row in result.get("roles", [])) or any(
             record.get("error") or any(row["status"].startswith("failed") for row in record["candidates"])

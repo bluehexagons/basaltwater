@@ -18,6 +18,8 @@ On the target, from the installed source directory:
 cd /opt/basaltwater
 sudo python3 -m lib.managed_storage
 sudo python3 -m lib.managed_storage --apply
+sudo python3 -B -m lib.managed_storage --pressure
+sudo python3 -B -m lib.managed_storage --pressure --apply
 sudo python3 -m lib.managed_storage --account developer --budget-mib 768 --target-mib 2048
 sudo python3 -B -m lib.managed_storage --payloads
 sudo python3 -B -m lib.managed_storage --payloads --apply
@@ -27,24 +29,26 @@ Wheel installations also provide `basaltw-storage` with the same arguments.
 Output is JSON: per-account candidates include exact paths, UID ownership,
 allocated bytes, category, rebuild cost, status and free bytes/inodes before and
 after. Native failures are reported per candidate and do not abort other accounts.
-Partial inventories, symlinks, nested mounts, mixed ownership and hardlinks defer
-cleanup. Allocated usage is an observation, not guaranteed reclaimable space.
+Partial inventories, linked cache roots, nested mounts, mixed ownership and
+hardlinks defer cleanup. Internal symlinks also defer ordinary native caches;
+the disposable build paths described below unlink them without following them.
+Allocated usage is an observation, not guaranteed reclaimable space.
 Shared extents and other concurrent disk users can change the measured savings.
 
 The default combined cache budget is 1024 MiB **per account**; the free-space
 target is 1536 MiB on each candidate's filesystem. A cache is selected when the
 account exceeds its budget or its filesystem falls below the target. `--force`
 selects all eligible candidates. Before setup starts, a failed capacity check
-triggers one pass over these same disposable caches, under exclusive storage
-ownership. Setup then rechecks capacity under its normal shared lock. It never
-replays setup steps or repeats cleanup on a later build failure. Unsafe or active
+triggers one pressure cleanup pass, under exclusive storage ownership. Setup then
+rechecks capacity under its normal shared lock. It never replays setup steps or
+repeats cleanup on a later build failure. Unsafe or active
 caches remain protected; insufficient space still stops setup. The cleanup target
 is at least 1536 MiB, increased to the configured setup requirement when larger.
 Deployment operations do not trigger automatic cleanup. Raise the target
 to accommodate your measured deployment peak plus a reserve. Use a systemd
 override for the service's `ExecStart` to persist different policy arguments.
 
-Only these conventional cache paths are eligible:
+For root and explicitly selected host accounts, these conventional caches are eligible:
 
 | Path below home | Native operation | Preserved |
 | --- | --- | --- |
@@ -54,13 +58,33 @@ Only these conventional cache paths are eligible:
 
 Commands run as the owning account, with explicit cache paths and without login
 profiles. Go configuration, hooks and automatic toolchain downloads are disabled.
-Custom cache locations are outside this initial policy. Missing tools are failures,
-never a reason to substitute recursive deletion. npm/nvm cleanup also takes the
+Custom cache locations are outside this policy. Missing tools remain failures for
+root and ordinary host accounts. npm/nvm cleanup also takes the
 existing per-account Node runtime lock. When nvm is absent, npm cleanup uses the
 system npm executable. Each owner worker revalidates its home, cache inode and
 cache inventory before running a native command. Workers inherit the maintenance
 lock so it remains held if the launcher exits unexpectedly. Missing or incomplete
 post-cleanup measurements are failures, rather than successful reclamation.
+
+Managed build accounts use additional disposable paths when their filesystem is
+below the free-space target: `.npm/_logs`, `.npm/_npx`, `go/pkg/mod`, `.cache/uv`
+and `.cache/pip`. This discards npm diagnostics, downloaded tools and modules,
+including Go toolchains. Subsequent builds download them again and may take
+longer. For exact managed build homes only, a failed native cache command falls
+back to deleting its validated cache directory as the owning account. Read-only
+Go cache directories are made writable first. Sources, configuration and other
+home content remain outside this policy. Missing homes are reported as absent.
+
+`--pressure` also cleans apt package archives and rotates/vacuums systemd journals
+to 64 MiB and seven days on filesystems below the target. It then removes unused
+older Node versions in inactive managed build homes, retaining the newest version
+of each installed major and every exact or partial version selected by an NVM
+alias. Versions referenced by running processes, unsafe inventories and busy
+runtime locks defer deletion. Removed versions include their installed global
+packages. Current services stay running; application data and deployed releases
+are preserved. Pressure cleanup is automatic before a setup refused for capacity;
+the daily timer continues its ordinary cache and payload policy. Manual preview
+does not change logs or runtime directories.
 
 ## Managed build payloads
 
@@ -152,10 +176,11 @@ and verify the workload's actual peak before lowering estimates.
 A failed preflight reports phase, path, mount, available bytes/inodes, requirements
 and bounded managed-build-home storage measurements. Cleanup reports any remaining
 byte shortfall and exits unsuccessfully when its target cannot be reached; it does
-not remove runtimes, deployed releases, databases or swap to satisfy policy.
+not remove deployed releases, databases or swap to satisfy policy. Pressure
+cleanup can remove the unused older build runtimes described above.
 The total reported for managed build homes includes retained runtimes and other
 protected files; it is not a reclaimable-byte estimate. If setup still refuses,
-preview `sudo python3 -B -m lib.managed_storage` on the target and inspect
+preview `sudo python3 -B -m lib.managed_storage --pressure` on the target and inspect
 `sudo journalctl -u basaltwater-storage.service -n 100 --no-pager` for skipped
 caches or native-tool failures. Apply reviewed cleanup with `--apply`. Increase
 capacity if protected content and the workload's peak cannot fit together.

@@ -36,7 +36,9 @@ class StorageManagementTests(unittest.TestCase):
 
         pressure = storage.StoragePreflightError("low space", 2048 * storage.MIB)
         with patch.object(storage, "storage_lock", side_effect=lock), patch.object(
-                storage, "configured_preflight", side_effect=[pressure, None]) as check, patch.object(
+                storage, "configured_preflight", side_effect=[pressure, None]) as check, patch(
+                "lib.storage_pressure.clean_system_storage", return_value=[]), patch(
+                "lib.storage_pressure.clean_build_versions", return_value=[]), patch.object(
                 storage, "maintain", side_effect=clean) as maintain:
             with real_storage_operation_guard("setup", ["/srv"], cleanup_accounts=["fixture"]):
                 self.assertEqual(held, [False])
@@ -52,7 +54,9 @@ class StorageManagementTests(unittest.TestCase):
         setup = storage.guarded_setup(action)
         pressure = storage.StoragePreflightError("low space", storage.MIB)
         with patch.object(storage, "operation_guard", real_storage_operation_guard), patch.object(
-                storage, "storage_lock", side_effect=lambda **_: nullcontext()), patch.object(
+                storage, "storage_lock", side_effect=lambda **_: nullcontext()), patch(
+                "lib.storage_pressure.clean_system_storage", return_value=[]), patch(
+                "lib.storage_pressure.clean_build_versions", return_value=[]), patch.object(
                 storage, "configured_preflight", side_effect=pressure) as check, patch.object(
                 storage, "maintain", side_effect=ValueError("busy cache")) as maintain, patch.object(
                 storage.pwd, "getpwnam", side_effect=KeyError), patch("sys.stderr", new_callable=io.StringIO) as output:
