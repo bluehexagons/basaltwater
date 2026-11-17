@@ -14,6 +14,10 @@ unlimited: parallel workers consume allowance too, and paid credits or an API
 key can introduce additional charges. Do not switch authentication, buy credits,
 or enable overage merely to obtain a recommended model.
 
+GPT-6.2 Sol and Astra launched in ChatGPT Work, Codex, and the API. Access and
+speed options depend on the client, plan and workspace settings. See the
+[ChatGPT and Codex changelog](https://learn.chatgpt.com/docs/changelog).
+
 Optimize for an accepted result within the user's time and usage budget.
 Use GPT-6.2 Sol for routine coding and Opus 5.5 for demanding Claude work.
 GPT-6.2 Astra's lower rates and stronger performance on complex coding and
@@ -62,6 +66,12 @@ These sources describe different workloads; they do not establish a universal
 cross-provider winner. Check fresh provider evidence after releases, then run
 representative project trials before changing a proven policy.
 
+OpenAI's GDPval v2 evaluation of professional workflows reports a 6.2-point
+gain for GPT-6.2 Astra with 22% fewer output tokens than GPT-6 Astra, and a
+5.3-point gain for GPT-6.2 Sol over GPT-6.1 Sol. For Basaltwater trials, compare
+the same repository checks, rendered outputs or tool results before measuring
+usage and rework. See the [launch evaluations](https://openai.com/index/introducing-gpt-6-2-astra-sol/).
+
 For API fallback, standard uncached input/output USD per million tokens are
 Luna $0.10/$0.50, Terra $1/$5, GPT-6.2 Sol $2/$10, and GPT-6.2 Astra $8/$40.
 Claude rates are $0.10/$0.50 for Haiku 5.5 up to 100K input, $2/$10 for Sonnet
@@ -99,9 +109,10 @@ and [reasoning guidance](https://developers.openai.com/api/docs/guides/reasoning
 describe model-dependent support. Plan/account access and the runtime tool's
 available settings may be narrower than API documentation.
 
-Always choose standard service. Never select fast mode (including a `priority`
-service-tier alias), `max`, or `ultra` autonomously, inherit them into a worker,
-or use them as an automatic retry. If the user explicitly selects one, explain
+Choose Standard service by default. Fast and Ultrafast are speed settings.
+`max` and `ultra` are reasoning efforts. Keep these higher-cost settings out of
+autonomous choices, inherited worker settings and automatic retries. If the
+user explicitly selects one, explain
 the likely extra cost and ask for confirmation when their intent is ambiguous
 or the expected benefit is weak. A specific, already-confirmed selection is
 authorization; do not ask repeatedly. The recommendation command deliberately
@@ -170,6 +181,17 @@ The command also accepts Codex's public `models_cache.json` shape, with `slug`,
 `visibility`, and `supported_reasoning_levels`. That cache describes terminal
 Codex selection; use it only when it represents the task's actual interface.
 Do not substitute a broad API model list for a subagent tool's availability.
+
+In a T3 thread, `--available` also accepts the JSON payload from
+`orchestrator_capabilities`. Save the structured payload with its `providers`
+array in a private local file. If several Codex instances can run children,
+retain only the intended instance in that array. Use the target environment's
+result for linked work. A filtered search compares only the returned models.
+The selector reads `reasoningEffort` choices and skips models whose advertised
+service tiers exclude `default`. When applying a Standard recommendation with
+`delegate_task`, set `reasoningEffort` to the recommended value and explicitly
+set `serviceTier` to `default` when offered. Check the effective settings before
+launching if the tool omits a tier choice.
 
 Only models with fresh verified metadata and a supported safe effort are
 eligible. The task's requested effort is a minimum; shipped bounded Luna task

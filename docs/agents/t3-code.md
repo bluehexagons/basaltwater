@@ -153,6 +153,15 @@ Antigravity recommends **1.5.1 to below 2**, retaining selected older versions;
 0.1.5 adds Claude/GPT model discovery and thinking controls to that integration.
 This does not qualify it as a Basaltwater-managed provider.
 
+On a host with Codex 0.169.1 and T3 0.1.10, the live
+`orchestrator_capabilities` catalog showed `gpt-6.2-sol` and `gpt-6.2-astra`
+on November 17. Both advertised `low` through `xhigh` alongside higher-cost
+options. The bundled T3 manifest
+predates these IDs. Use the selected environment and provider instance's live
+catalog to check which models it lists. This check exercised model discovery only.
+See [model selection](agent-subagents.md) for Standard service and context
+guidance.
+
 ### Agent workflow integration
 
 The [0.1.10 integration](../../common/agent_skills/basaltwater-t3code/references/release-0.1.10.md)
@@ -172,6 +181,7 @@ Use the relevant shared reference instead of copying upstream UI/tool details:
 | Schedules and PR monitoring | Use [native scheduling](../../common/agent_skills/basaltwater-subagents/references/t3-scheduling.md) and PR watches for T3-owned work. Independent Basaltwater tasks do not inherit T3 tools, preview or conversation. Choose one scheduler per job. |
 | Goals, resume, project actions and visual replies | Use the [shared workflow](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md). T3 supports goals for Codex/Claude/OpenCode and native stopped-thread continuation. Keep project commands canonical and inspect settle actions before cleanup. |
 | Pairing, Connect device approval and outside agents | Use [operations](../../common/agent_skills/basaltwater-t3code/references/operations.md) and upstream [device approval](https://github.com/pingdotgg/t3code/blob/v0.1.10/docs/user/remote-access.md#approve-new-devices). Setup does not enable public access, enroll outside agents or change owner approval settings. |
+| Additional providers and guest collaboration | Review [ACP Registry and local commands](../../common/agent_skills/basaltwater-t3code/references/operations.md#additional-providers) for provider ownership, or [guest links](../../common/agent_skills/basaltwater-t3code/references/operations.md#guest-links) for owner-approved collaboration on one thread. |
 | Updates, policy and service recovery | Use [managed updates](../../common/agent_skills/basaltwater-t3code/references/updates.md). Preserve downgrade guards, administrator policy and selected provider/package ownership. |
 
 OpenCode 2 uses the separate `@opencode/cli` package and converts its shared

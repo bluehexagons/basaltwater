@@ -75,6 +75,10 @@ Read only the route needed:
 - **Stable 0.1.10 compatibility and changed workflows:** [release integration](references/release-0.1.10.md).
   Includes protocol 4, native goals/resume, Windows services, Connect device
   approval, cleanup ownership, and component-check limits.
+- **Codex accounts, ACP providers, outside apps, or guest collaboration:**
+  see [additional providers](references/operations.md#additional-providers),
+  [outside agents](references/operations.md#outside-agents), and
+  [guest links](references/operations.md#guest-links).
 - **Delegation/worktrees:** `basaltwater-subagents`. Use T3 workspace binding
   before starting editors; shell `cd` does not rebind a thread.
 - **Linked environments:** [operations](references/operations.md#linked-environments)

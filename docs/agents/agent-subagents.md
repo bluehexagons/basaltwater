@@ -139,8 +139,10 @@ Unobserved parent rework also remains unknown; reports expose a known subtotal
 and observation count rather than present missing observations as no rework.
 
 Recommendations intersect verified project metadata with current runtime
-availability and safe efforts. New IDs can be added without upgrading
-Basaltwater; no version whitelist controls selection. The result identifies
+availability and safe efforts. `--available` accepts a scoped T3
+`orchestrator_capabilities` payload as well as a flat inventory or Codex model
+cache. See the [input formats](../../common/agent_skills/basaltwater-subagents/references/model-selection.md#project-policy-and-outcomes).
+Project policies can add new IDs directly. The result identifies
 uncatalogued or stale models so the agent can verify official metadata, update
 the project policy, and evaluate candidates. Proven choices use recent outcomes
 for the same task, evaluation version, model ID, and effort. Untested candidates

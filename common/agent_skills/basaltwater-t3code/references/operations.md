@@ -75,6 +75,27 @@ installation. Refresh discovery in **Settings → Providers** and inspect the
 reported executable/version; a catalog entry alone does not establish readiness.
 See the [upstream mise fix](https://github.com/pingdotgg/t3code/pull/21524).
 
+## Additional providers
+
+T3's built-in Codex provider can use its managed ChatGPT connection or a CLI
+login on the selected host. Changing the CLI login leaves the managed connection
+in place. The managed ChatGPT connection offers Standard speed. Model and tool
+availability follow the selected instance's login, CLI version, and workspace
+settings. For multiple accounts, check the configured Codex home. A shadow home
+shares session history and configuration with the primary home while keeping its
+own login. Separate homes keep sessions isolated. For native image generation,
+check the selected instance's account, model, and client support. See the
+[tagged Codex provider guide](https://github.com/pingdotgg/t3code/blob/v0.1.10/docs/user/providers-codex.md).
+
+**Settings → Providers → Add provider → Show more** offers ACP Registry agents
+and local ACP commands. They run on the T3 environment host. Registry agents
+use their own authentication and sandbox controls. Local commands take an
+executable and literal arguments. T3 negotiates ACP v2 preview or v1 according
+to provider support, and model options and session import depend on capabilities
+the provider reports. Basaltwater's setup manages its selected CLI providers.
+Use the [tagged ACP guide](https://github.com/pingdotgg/t3code/blob/v0.1.10/docs/user/providers-acp.md)
+for deliberately adding or removing a T3-managed provider.
+
 ## 0.1.6 conversation, project, and credential workflows
 
 Use `/side` or `/btw` for an owner's side question, or **Side chat** in the right
@@ -195,13 +216,25 @@ OAuth request further; it cannot expand the grant and is ignored for injected
 provider-session callers. See the
 [mode-limit contract](https://github.com/pingdotgg/t3code/blob/v0.1.4/apps/server/src/mcp/McpInvocationContext.ts).
 
-This is separate from T3's injected thread tools and Basaltwater's task MCP.
-Installation does not connect terminal/panel agents automatically. External
-access does not make them delegated children of this thread or transfer its
-browser attachment. Do not register an outside agent or enable public access as
-an incidental repair. Use the
-[0.1.9 outside-agent guide](https://github.com/pingdotgg/t3code/blob/v0.1.9/docs/user/outside-agents.md)
-when that integration is requested.
+Use **Read only** for project, thread, and model discovery. Supply an explicit
+`projectId` or `threadId` when a tool normally takes it from its caller, and use
+`allProjects: true` for an environment-wide thread list. With an authorized
+write grant, use `t3_thread_launch` and follow it with `t3_thread_wait` or
+`t3_thread_read`. Delegation, interactive preview, secret requests, and device
+tools require an agent running inside a T3 thread. Outside-agent OAuth is an
+opt-in connection with its own grant. The
+[tagged outside-agent guide](https://github.com/pingdotgg/t3code/blob/v0.1.10/docs/user/outside-agents.md)
+covers setup from standalone Codex, Claude Code, ChatGPT, and other OAuth MCP clients.
+
+## Guest links
+
+For a requested one-thread collaboration, the owner can enable the **Guest
+links** beta in **Settings → Labs** on the host connected to T3 Connect. The
+thread's **Share with guest** link works in one browser for 24 hours. It exposes
+recent messages, attachments, reasoning and command output. A guest's message
+and files wait for the owner to send or dismiss. Use **Stop sharing** to revoke
+the link. Review the thread before sharing it. See the
+[tagged guest guide](https://github.com/pingdotgg/t3code/blob/v0.1.10/docs/user/guest-links.md).
 
 ## Linked environments
 
