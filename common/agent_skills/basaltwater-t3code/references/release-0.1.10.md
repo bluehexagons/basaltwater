@@ -1,0 +1,81 @@
+# T3 Code 0.1.10 integration
+
+Reviewed **2026-11-17 UTC** against [stable 0.1.10](https://github.com/pingdotgg/t3code/releases/tag/v0.1.10).
+This reference owns Basaltwater compatibility evidence; use tagged upstream
+manuals for ordinary client controls.
+
+## Runtime compatibility
+
+The service launcher advances to **protocol 4**. Protocol 3 launchers remain
+supported for remote updates; local update/service installation can replace the
+launcher. Protocol 4 coordinates selection writes and reconciles the installed
+unit, retaining protocol 3's durable `activeVersion` and update-record semantics.
+Basaltwater now recognizes protocol 4 for retained failed-update inspection and
+runtime retention. Unknown future protocols still fail closed for maintenance.
+Do not rewrite service state or bypass upstream selection locks. Sources:
+[protocol](https://github.com/pingdotgg/t3code/blob/v0.1.10/apps/server/src/cloud/serviceProtocol.ts),
+[launcher](https://github.com/pingdotgg/t3code/blob/v0.1.10/apps/server/src/serviceLauncher.ts).
+
+The standalone archive layout, embedded Node/native PTY probe, service launch
+command, and all **16 administrative pairing permissions** remain compatible.
+Preserve the entire archive, including bundled libraries. Database migrations
+advance from **81 to 96**; retain downgrade/preflight guards and private recovery
+copies. Basaltwater's read-only idle query works against the new schema. Sources:
+[auth](https://github.com/pingdotgg/t3code/blob/v0.1.10/packages/contracts/src/auth.ts),
+[migrations](https://github.com/pingdotgg/t3code/blob/v0.1.10/apps/server/src/persistence/Migrations.ts).
+
+Codex **0.159+**, Claude Code **2.1.301+**, Grok **1.0.13+**, OpenCode 2
+**2.0.18+**, and Pi **1.0+** remain recommended. Pi's supported minimum is now
+**0.84.3**; Antigravity recommends **1.5.1 to below 2**. Catalog entries do not
+install or qualify additional Basaltwater providers. OpenCode goals separately
+require **2.2.5+**. See the [provider manifest](https://github.com/pingdotgg/t3code/blob/v0.1.10/apps/server/src/provider/model-manifest.json).
+
+## Features and ownership
+
+- T3 now supports **goals with Codex, Claude and OpenCode**, and native resume
+  for stopped Claude, Codex, OpenCode and Cursor threads. Claude stop behavior
+  differs from Codex/OpenCode; inspect the goal before continuing. Use the
+  selected provider's exposed controls. Native resume does not add a new prompt
+  or grant further scope. See [goals and recovery](https://github.com/pingdotgg/t3code/blob/v0.1.10/docs/user/composer.md).
+- Upstream now supports a **Windows background service** through a per-user
+  Task Scheduler task, running between sign-in and sign-out with remote updates.
+  Basaltwater still provisions the packaged desktop and graceful refresh.
+  Do not install a second service as a desktop repair or silently migrate data.
+  See [background services](https://github.com/pingdotgg/t3code/blob/v0.1.10/docs/user/background-service.md).
+- The owner can require **host approval for new Connect devices**. Review
+  existing approved devices and update older clients first. This does not
+  replace direct-LAN pairing, TLS/source allowlists, outside-agent OAuth, or
+  host privilege approvals. See [device approval](https://github.com/pingdotgg/t3code/blob/v0.1.10/docs/user/remote-access.md#approve-new-devices).
+- Native **cleanup** covers worktrees, projectless scratch, browser captures
+  and rotated logs. It is opt-in; inspect enabled rules before settling or
+  deleting threads. Ignored files can be removed; projectless folders may have
+  no Git recovery. Keep needed evidence elsewhere. Basaltwater must not adopt
+  T3 worktrees/scratch as ordinary cache. See [retention rules](https://github.com/pingdotgg/t3code/blob/v0.1.10/docs/user/project-settings.md#storage-cleanup).
+- T3 owns keeping supported hosts awake during work, response replies, themes
+  and Settings languages. Setup preserves owner preferences.
+
+Prefer T3 schedules, PR watches, messaging, interactive goals, preview and
+worktree lifecycle for T3-owned work. Basaltwater retains independent Codex
+execution with lifetime attempt/deadline/token accounting and receipts, plus
+host diagnostics and privileged operations. Ordinary T3 scheduling does not
+establish equivalent lifetime goal limits. See the
+[ownership review](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/t3-code.md#feature-ownership-and-reduction-candidates).
+Refresh does not migrate existing jobs or their data.
+
+## Verification and limits
+
+GitHub-digest-verified Linux x64 **0.1.9 and 0.1.10** archives passed disposable
+0.1.9-to-0.1.10 upgrade checks; 0.1.10 also passed a separate fresh-home trial.
+Both 0.1.10 paths passed HTTP 200 startup through Basaltwater's output filter,
+embedded native-PTY loading, administrative pairing with all 16 permissions,
+bootstrap-session revocation, read-only idle detection, signal forwarding and
+SQLite integrity. Upgrade migrations advanced from 81 to 96; fresh startup
+recorded 96. Raw evidence and disposable data remain outside Git.
+
+Focused regressions cover protocol-4 failed-update selection and retention,
+inconsistent update refusal, and unknown-protocol refusal. These component
+checks do not qualify live systemd installation/update/reboot, authenticated
+provider turns/terminals, native Windows/CachyOS clients, Connect approval,
+goals/resume, power inhibition, or destructive cleanup. Use the
+[live matrix](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/t3-code.md#stable-feature-qualification)
+before claiming those paths. No shared service or user database was changed.

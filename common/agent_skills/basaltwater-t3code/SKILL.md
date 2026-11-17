@@ -72,9 +72,9 @@ Read only the route needed:
   compatibility blocks. Before a first upgrade from pre-0.1.0, also read
   [thread migration](references/thread-migration.md).
   Startup migration can take 30 minutes; inspect before interrupting/retrying.
-- **Stable 0.1.9 compatibility and changed workflows:** [release integration](references/release-0.1.9.md).
-  Includes Connect agent sign-in, Claude session approvals, OpenCode goals,
-  attachment sending, provider recommendations, and component-check limits.
+- **Stable 0.1.10 compatibility and changed workflows:** [release integration](references/release-0.1.10.md).
+  Includes protocol 4, native goals/resume, Windows services, Connect device
+  approval, cleanup ownership, and component-check limits.
 - **Delegation/worktrees:** `basaltwater-subagents`. Use T3 workspace binding
   before starting editors; shell `cd` does not rebind a thread.
 - **Linked environments:** [operations](references/operations.md#linked-environments)

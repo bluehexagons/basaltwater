@@ -132,23 +132,24 @@ credential contents, use `basaltw agent support-bundle`.
 
 ## Stable feature baseline
 
-As checked on **2026-11-11**, GitHub's latest stable release is **0.1.9**.
+As checked on **2026-11-17 UTC**, GitHub's latest stable release is **0.1.10**.
 Check AUR/WinGet availability and the installed desktop version separately. It retains
 the stable Orchestrator V2
-introduced in 0.1.0 and service-state protocol 3. Keep the
+introduced in 0.1.0 and advances the service launcher to protocol 4, with
+protocol 3 launchers still supported for remote updates. Keep the
 server and every connected desktop client on compatible V2 releases; mobile
-requires the 2.0 app. See the [upstream release notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.9)
+requires the 2.0 app. See the [upstream release notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.10)
 and [V2 migration notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.0).
 
 The release's recommended provider versions are Codex **0.159+**, Claude Code
 **2.1.301+**, Grok **1.0.13+**, OpenCode 2 **2.0.18+**, and Pi **1.0+**.
-The [provider compatibility manifest](https://github.com/pingdotgg/t3code/blob/v0.1.9/apps/server/src/provider/model-manifest.json)
-also marks Codex 0.156+, Claude Code 2.1.280+ and Pi 0.80.5+ supported; distinguish recommended
+The [provider compatibility manifest](https://github.com/pingdotgg/t3code/blob/v0.1.10/apps/server/src/provider/model-manifest.json)
+also marks Codex 0.156+, Claude Code 2.1.280+ and Pi 0.84.3+ supported; distinguish recommended
 versions from minimum support. Inspect **Settings → Providers** for the selected account,
 binary, version, and readiness. Setup manages only selected Basaltwater
 providers; T3's additional Pi, Muse Code, Cursor SDK, and ACP Registry choices
 do not imply that Basaltwater installed, authenticated, or qualified them.
-Antigravity recommends **1.4.5 or 1.4.1**, with 1.3.0 and 1.1.1 also supported;
+Antigravity recommends **1.5.1 to below 2**, retaining selected older versions;
 0.1.5 adds Claude/GPT model discovery and thinking controls to that integration.
 This does not qualify it as a Basaltwater-managed provider.
 
@@ -213,6 +214,15 @@ hidden rows retain their keyboard shortcuts. Setup preserves these UI choices.
 See the [usage guide](https://github.com/pingdotgg/t3code/blob/v0.1.5/docs/user/usage.md).
 
 ### Agent workflow integration
+
+The [0.1.10 integration](../../common/agent_skills/basaltwater-t3code/references/release-0.1.10.md)
+records the protocol-4 review and disposable fresh/0.1.9-upgrade checks. HTTP
+startup, embedded native PTY, administrative pairing/revocation, idle detection,
+signal forwarding and SQLite integrity passed; migrations advanced from 81 to
+96. Live service lifecycle and native-client workflows remain unqualified.
+T3 now owns native goals for Codex/Claude/OpenCode, stopped-thread continuation,
+optional Connect device approval, Windows background services, and its cleanup
+policies. Basaltwater's Windows profile continues to manage the desktop.
 
 The 0.1.9 review confirms compatible service protocol/runtime layout and
 administrative pairing. Its digest-verified Linux x64 archive passed disposable
@@ -415,6 +425,29 @@ opt-in cleanup can discard ignored files depending on its local-file setting;
 inspect retention before settling work or removing a checkout. Keep its cleanup
 separate from Basaltwater's owned-worktree ancestry checks and cache maintenance.
 
+### Feature ownership and reduction candidates
+
+Use T3 as the owner of coding-session behavior and Basaltwater as the owner of
+machine preparation, host operations and recovery. Existing independent tasks,
+worktrees and history remain supported; this review does not migrate or delete
+them. Prioritize these reductions when evolving the integration:
+
+| Area | Preferred owner and next step | Retain in Basaltwater |
+| --- | --- | --- |
+| Interactive goals and continuation | T3's native Codex/Claude/OpenCode goals and Resume; avoid a second continuation loop around a T3 thread | Independent Codex tasks with lifetime limits, checkpoints and receipts |
+| Ordinary prompts, schedules and PR monitoring | T3 schedules/webhooks and native PR watches; reduce duplicate generic task forms on T3-focused installations | Host jobs that must operate independently of T3 and fixed storage operations |
+| Worktrees, scratch, captures and logs | T3's opt-in retention for its own data; assess replacing overlapping numbered-log retention after matching its limits and custom data roots | Basaltwater-owned worktrees, runtime rollback protection, host pressure inventory and recovery |
+| Pairing and remote access | T3 Connect device approval and OAuth for T3 access; consider making the extra pairing portal optional for Connect-only setups | Direct/private-LAN enrollment, gateway TLS and source restrictions, other hosted services |
+| Browser and power management | T3 preview and native keep-awake behavior for T3 work | Explicit terminal-agent Playwright, application test suites, desktop access and host readiness |
+| Updates and client documentation | T3's updater and tagged manuals; keep local guidance focused on integration differences | Initial installation, package ownership, setup reconciliation, security policy and failed-start recovery |
+
+Before retiring a duplicate, inventory its users and saved state, establish the
+replacement's required controls, and supply migration/rollback instructions.
+In particular, T3 goals do not establish Basaltwater's lifetime attempt/deadline/
+token accounting, and Connect device approval is not a root-execution broker.
+Do not enable cleanup, change access policy, or install a Windows service as
+part of an ordinary integration refresh.
+
 ### Stable feature qualification
 
 The shared [client workflow reference](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-019-client-workflows)
@@ -445,7 +478,8 @@ blocked step. Mocked tests and service HTTP readiness cannot qualify these paths
 
 | Case | Required evidence |
 | --- | --- |
-| Providers and migration | Fresh 0.1.9 setup, 0.1.8-to-0.1.9 upgrade, and V1-to-V2 copy migration with matching client, selected Codex/Claude combinations, private recovery copy, pairing permissions, authenticated provider turn, and terminal. Qualify OpenCode 2 separately before claiming support. |
+| Providers and migration | Fresh 0.1.10 setup, 0.1.9-to-0.1.10 upgrade, and V1-to-V2 copy migration with matching client, selected Codex/Claude combinations, private recovery copy, pairing permissions, authenticated provider turn, and terminal. Qualify OpenCode 2 separately before claiming support. |
+| 0.1.10 workflows | Qualify protocol-3 launcher remote update and protocol-4 local reconciliation, native goals/stop/resume per provider, native continuation without an extra prompt, Connect device approval/revocation and older-client refusal, Windows service login/logout and remote updates, power inhibition/release, and opt-in worktree/scratch/capture/log retention with ignored-file protection. |
 | 0.1.6 workflows | Side-chat permission modes and idle Bring back, project pin/archive/unarchive across connected checkouts, local/merge commit review, optional 1Password resolution with missing/locked CLI failures, and server/agent priorities under pressure. Test service protection/undo separately on a disposable Debian host. |
 | 0.1.7 workflows | Parent-visible local/linked-child approvals reach the correct request; copied thread links open only for authorized recipients; one-time schedules respect offsets and do not repeat; usage filters apply before model mapping per environment; model/effort markers match changes; tagged-thread hiding does not stop work. Test managed-policy defaults/locks, cap enforcement, invalid-policy startup refusal and loaded-policy freshness on disposable hosts. Test direct preview-open targets only when exposed. |
 | 0.1.8 workflows | Verify `/clear` resets provider context while retaining visible history, and Restart agent session reloads guidance without that reset. Check inherited first-reply side-chat settings, fresh-session schedules and two-save task moves, existing schedule migration/run history, private secret-card/reference/file delivery with synthetic secrets and failure/cancellation paths, API generator routing/billing consent, HTML file input, delayed child-result wakeups and actual model reporting. Check `service.env` precedence, custom base-dir retention, offline Reclaim/disk refusal, and opt-in `stopOnSettle` with automatic settlement. Qualify outside-agent wizard grants/revocation and matching mobile/desktop clients separately. |
@@ -701,7 +735,7 @@ layout. This lets a protocol-only launcher update work without assuming that an
 unknown runtime layout is executable. Setup, the doctor, and the stable `t3`
 wrapper share the version and layout checks. Retained failed-update repair and
 cache cleanup can alter or delete runtime data, so they remain limited to
-explicitly reviewed protocols 2 and 3 and fail closed for newer protocols.
+explicitly reviewed protocols 2 through 4 and fail closed for newer protocols.
 When upstream changes the active state fields or executable layout, update the
 shared state/version/layout definitions and compatibility tests, then review
 whether the new protocol is safe for repair and cleanup. Both the standalone

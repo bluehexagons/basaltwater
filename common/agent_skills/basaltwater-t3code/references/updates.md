@@ -4,8 +4,9 @@ This procedure manages Debian's upstream `t3code.service`. CachyOS web uses
 `basaltwater-cachyos-t3.service` and staged setup activation; use its installed
 `basaltwater-cachyos-t3code` skill. CachyOS desktop and native Windows use their
 AUR and WinGet packages, respectively. On CachyOS, `t3 service install` creates
-a separate service and can select different data. Upstream background services
-are unsupported on native Windows; use its desktop installation workflow.
+a separate service and can select different data. Upstream 0.1.10 also supports
+Windows background services; Basaltwater's Windows profile still manages the
+desktop. Do not install a service as an incidental desktop repair.
 
 Basaltwater targets stable T3 releases. When T3 Code is selected, a setup
 rerun checks npm's `t3@latest` stable channel and updates the upstream service
@@ -52,7 +53,7 @@ launcher and runtime. The doctor validates the selected runtime. Do not pass
 `--allow-downgrade` or restore older application data over a newer database
 without release-specific upstream recovery instructions.
 Basaltwater recognizes service-state
-protocols 2 and 3, including the standalone executable runtime layout used by
+protocols 2 through 4, including the standalone executable runtime layout used by
 current T3 releases.
 
 For older npm-backed runtimes, keep those npm settings scoped to this trusted
@@ -97,6 +98,12 @@ first; do not assume the migration crashed or delete either database. Update
 Basaltwater and rerun the saved setup command to apply the readiness fix.
 
 ## Release tracks and archive layout
+
+Stable 0.1.10 advances the launcher to protocol 4, retaining protocol 3 launcher
+compatibility and the durable state/layout contracts. Basaltwater recognizes
+protocol 4 for retained failed-update inspection and runtime retention; future
+unknown protocols remain blocked for maintenance. Migrations advance to 96.
+See the [release integration](release-0.1.10.md) for evidence and ownership.
 
 Stable 0.1.9 retains protocol 3, the standalone archive layout and the
 administrative pairing contract. Its database adds migration 81; retain
