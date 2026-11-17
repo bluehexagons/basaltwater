@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Callable
 import hashlib
+import ipaddress
 import os
 from pathlib import Path
 import sys
@@ -14,6 +15,7 @@ import uuid
 from lib.atomic_io import ensure_directory_durable, read_json_file, write_json_atomic
 from lib.concurrency import resource_lock, ResourceBusyError, ResourceLockSafetyError
 from lib.validation import validate_filesystem_path, validate_no_control_characters
+from lib.validators import validate_host
 from lib.workspace import get_workspace_dir
 
 
@@ -36,6 +38,20 @@ def _path() -> Path:
     path = directory / f"{digest}.json"
     validate_filesystem_path(str(path))
     return path
+
+
+def _target_label(value: str) -> str:
+    if validate_host(value):
+        return value
+    try:
+        # Provisioning accepts CIDR targets; SSH can also accept IPv6. Do not
+        # retain arbitrary invalid host arguments, which may contain URL auth.
+        ipaddress.ip_interface(value)
+        if "%" not in value:
+            return value
+    except ValueError:
+        pass
+    return "[target omitted]"
 
 
 def _identifier(value: object) -> bool:
@@ -173,38 +189,38 @@ def _tracked(
 
 def track_command(args: argparse.Namespace, action: Callable[[], int]) -> int:
     """Record only recognized command metadata, never argv or output."""
-    if os.environ.get(_WRAPPED_ENV) == "1":
-        return action()
     try:
         label = f"basaltw {args.command}"
-        if args.command in {"setup", "patch", "shares"}:
-            label += f" {args.host}"
+        if args.command in {"setup", "patch", "shares", "ssh", "logs"}:
+            label += f" {_target_label(args.host)}"
         if getattr(args, "dry_run", False):
             label += " [dry run]"
         path = _path()
     except (OSError, ValueError, ResourceBusyError, ResourceLockSafetyError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
+    if os.environ.get(_WRAPPED_ENV) == str(path):
+        return action()
     # Avoid creating locks/directories for ordinary non-batch invocations.
     if not os.path.lexists(path):
         return action()
     batched_action = None
-    if args.command == "refresh":
-        # Refresh execs the upgraded CLI. Keep the batch owner alive across that
-        # handoff and let the child own its normal refresh/setup lifecycle.
+    if (args.command in {"refresh", "ssh"}
+            or (args.command == "logs" and getattr(args, "follow", False))):
+        # Keep the batch owner alive across commands that replace the CLI.
         batched_action = lambda: _run_external([
             sys.executable, str(Path(__file__).resolve().parents[1] / "basaltwater.py"),
             *sys.argv[1:],
-        ])
+        ], batch_path=path)
     return _tracked(path, label, action, required=False, batched_action=batched_action)
 
 
-def _run_external(argv: list[str]) -> int:
+def _run_external(argv: list[str], *, batch_path: Path) -> int:
     from lib.remote_utils import run
 
     # The wrapper owns the result for the whole child tree, including exec.
     # Nested basaltw invocations must not leave duplicate/incomplete records.
-    env = {**os.environ, _WRAPPED_ENV: "1"}
+    env = {**os.environ, _WRAPPED_ENV: str(batch_path)}
     try:
         result = run(argv, interactive=True, check=False, timeout=None,
                      env=env, display_cmd="batch command")
@@ -237,7 +253,8 @@ def run_batch_command(args: argparse.Namespace) -> int:
             if not argv:
                 raise ValueError("batch run requires -- COMMAND [ARG ...]")
 
-            return _tracked(path, _text(args.label), lambda: _run_external(argv), required=True)
+            return _tracked(path, _text(args.label), lambda: _run_external(argv, batch_path=path), required=True)
+        unfinished = False
         with resource_lock("batch", str(path), wait=True):
             data = _read(path)
             if args.batch_command == "start":
@@ -252,23 +269,32 @@ def run_batch_command(args: argparse.Namespace) -> int:
                         "started": time.time(), "ended": None, "entries": []}
                 _private_directory(path.parent)
                 write_json_atomic(str(path), data)
-                print(f"Started batch: {title}")
-                return 0
-            if args.batch_command == "status":
+            elif args.batch_command == "status":
                 if data is None:
                     raise ValueError("No batch found")
-                return _summary(data)
-            if data is None or data.get("ended") is not None:
-                raise ValueError("No active batch; run 'basaltw batch start' first")
-            if args.batch_command == "note":
-                _append(data, args.text, "note")
             else:
-                if not args.force and any(e["kind"] == "command" and e["code"] is None for e in data["entries"]):
-                    _summary(data)
-                    raise ValueError("Unfinished commands; wait, or inspect outcomes before 'batch end --force'")
-                data["ended"] = time.time()
-            write_json_atomic(str(path), data)
-            return _summary(data) if args.batch_command == "end" else 0
+                if data is None or data.get("ended") is not None:
+                    raise ValueError("No active batch; run 'basaltw batch start' first")
+                if args.batch_command == "note":
+                    _append(data, args.text, "note")
+                else:
+                    unfinished = not args.force and any(
+                        e["kind"] == "command" and e["code"] is None for e in data["entries"]
+                    )
+                    if not unfinished:
+                        data["ended"] = time.time()
+                if not unfinished:
+                    write_json_atomic(str(path), data)
+        # Never hold the state lock while writing to a terminal, pipe or pager.
+        if args.batch_command == "start":
+            print(f"Started batch: {data['title']}")
+            return 0
+        if args.batch_command == "note":
+            return 0
+        result = _summary(data)
+        if unfinished:
+            raise ValueError("Unfinished commands; wait, or inspect outcomes before 'batch end --force'")
+        return result
     except (OSError, ValueError, ResourceBusyError, ResourceLockSafetyError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from contextlib import redirect_stdout, redirect_stderr
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from io import StringIO
 import json
 import os
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch, Mock
 
@@ -66,7 +68,7 @@ class BatchTests(unittest.TestCase):
                                       "--", "tool", "a b", "--token=secret"), 23)
         run.assert_called_once_with(["tool", "a b", "--token=secret"],
                                     interactive=True, check=False, timeout=None,
-                                    env={**os.environ, batch._WRAPPED_ENV: "1"},
+                                    env={**os.environ, batch._WRAPPED_ENV: str(batch._path())},
                                     display_cmd="batch command")
         self.assertEqual(self.state()["entries"][0]["code"], 23)
         self.assertNotIn("secret", batch._path().read_text())
@@ -112,6 +114,16 @@ class BatchTests(unittest.TestCase):
             self.assertEqual(self.cli("patch", "web.example.com"), 1)
             action.assert_not_called()
         self.assertEqual(batch._path().read_text(), '{"schema_version": 99}')
+
+    def test_target_metadata_rejects_embedded_credentials_and_preserves_ip_targets(self) -> None:
+        self.cli("batch", "start")
+        for target, label in (("https://admin:private-password@web.example.com", "[target omitted]"),
+                              ("192.0.2.10/24", "192.0.2.10/24"),
+                              ("2001:db8::10", "2001:db8::10")):
+            with self.subTest(target=target), patch.object(basaltwater, "run_setup_command", return_value=1):
+                self.assertEqual(self.cli("setup", "server_web", target), 1)
+                self.assertEqual(self.state()["entries"][-1]["label"], f"basaltw setup {label}")
+        self.assertNotIn("private-password", batch._path().read_text())
 
     def test_malformed_states_refuse_status_start_and_command_without_rewriting(self) -> None:
         self.cli("batch", "start")
@@ -175,11 +187,93 @@ class BatchTests(unittest.TestCase):
             self.assertEqual(self.cli("refresh", "--dry-run"), 17)
             self.assertEqual(self.state()["entries"][0]["code"], 17)
             self.assertEqual(run.call_args.args[0][-2:], ["refresh", "--dry-run"])
-            self.assertEqual(run.call_args.kwargs["env"][batch._WRAPPED_ENV], "1")
+            self.assertEqual(run.call_args.kwargs["env"][batch._WRAPPED_ENV], str(batch._path()))
             self.assertEqual(self.cli("batch", "end"), 1)
             self.assertEqual(self.cli("refresh", "--dry-run"), 0)
             self.assertEqual(refresh.call_count, 2)
             self.assertEqual(run.call_count, 1)
+
+    def test_ssh_and_following_logs_are_supervised_without_retaining_remote_argv(self) -> None:
+        self.cli("batch", "start")
+        for argv in (("ssh", "web.example.com", "--", "tool", "secret-argument"),
+                     ("logs", "web.example.com", "example.service", "--follow")):
+            with self.subTest(argv=argv), patch("lib.remote_utils.run", return_value=Mock(returncode=11)) as run:
+                self.assertEqual(self.cli(*argv), 11)
+                self.assertEqual(run.call_args.args[0][2:], list(argv))
+                self.assertEqual(self.state()["entries"][-1]["code"], 11)
+        self.assertNotIn("secret-argument", batch._path().read_text())
+        self.assertEqual(self.state()["entries"][0]["label"], "basaltw ssh web.example.com")
+        with patch("lib.sysadmin_svc.run_logs", return_value=0) as logs, patch("lib.remote_utils.run") as run:
+            self.assertEqual(self.cli("logs", "web.example.com", "example.service"), 0)
+            logs.assert_called_once()
+            run.assert_not_called()
+
+    def test_wrapped_script_can_track_an_independent_batch(self) -> None:
+        self.cli("batch", "start")
+        outer_path = batch._path()
+        inner_path = None
+
+        def child(argv, **kwargs):
+            nonlocal inner_path
+            with patch.dict(os.environ, kwargs["env"]), patch.dict(
+                os.environ, {"BASALTWATER_BATCH": "independent"},
+            ):
+                inner_path = batch._path()
+                self.assertEqual(self.cli("batch", "start"), 0)
+                self.assertEqual(self.cli("patch", "web.example.com"), 7)
+                self.assertEqual(self.cli("batch", "end"), 1)
+            return Mock(returncode=0)
+
+        with patch("lib.remote_utils.run", side_effect=child), patch.object(
+            basaltwater, "run_patch_command", return_value=7,
+        ):
+            self.assertEqual(self.cli("batch", "run", "--", "script"), 0)
+        self.assertEqual(batch._path(), outer_path)
+        self.assertEqual([e["code"] for e in self.state()["entries"]], [0])
+        self.assertEqual([e["code"] for e in batch._read(inner_path)["entries"]], [7])
+
+    def test_report_output_releases_the_state_lock(self) -> None:
+        self.cli("batch", "start")
+        original = batch._summary
+
+        def summary(data):
+            with batch.resource_lock("batch", str(batch._path()), wait=False):
+                return original(data)
+
+        with patch.object(batch, "_summary", side_effect=summary):
+            self.assertEqual(self.cli("batch", "status"), 0)
+            self.assertEqual(self.cli("batch", "end"), 0)
+
+    def test_parallel_commands_retain_every_result(self) -> None:
+        self.cli("batch", "start")
+        path = batch._path()
+        admitted = threading.Barrier(4)
+
+        def worker(index):
+            def action():
+                admitted.wait(timeout=10)
+                return index
+            return batch._tracked(path, f"Check {index}", action, required=True)
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            self.assertEqual(list(pool.map(worker, range(4))), list(range(4)))
+        self.assertEqual(sorted(e["code"] for e in self.state()["entries"]), list(range(4)))
+        self.assertEqual(self.cli("batch", "end"), 1)
+
+    def test_late_completion_cannot_modify_a_replacement_batch(self) -> None:
+        self.cli("batch", "start")
+
+        def action():
+            self.assertEqual(self.cli("batch", "end", "--force"), 1)
+            self.assertEqual(self.cli("batch", "start", "Replacement"), 0)
+            return 0
+
+        self.assertEqual(batch._tracked(batch._path(), "Old command", action, required=True), 0)
+        self.assertEqual(self.state()["title"], "Replacement")
+        self.assertEqual(self.state()["entries"], [])
+        archived = next((batch._path().parent / "history").glob("*.json"))
+        self.assertIsNone(batch._read(archived)["entries"][0]["code"])
+        self.assertIn("closed or replaced", self.errors.getvalue())
 
     def test_unbatched_json_output_is_unchanged_and_creates_no_state(self) -> None:
         self.assertEqual(self.cli("list", "--json"), 0)

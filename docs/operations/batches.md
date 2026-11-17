@@ -23,11 +23,13 @@ Commands outside Basaltwater must use `batch run -- COMMAND [ARG ...]` to be
 recorded. This runs argv directly with inherited input/output and no time limit;
 it returns the command's exit code (128 plus signal number for signal exits).
 It does not interpret shell operators. Use an explicit `sh -c '...'` if needed.
-Basaltwater commands inside a wrapper are counted as part of that one wrapper
-result. The child environment carries `BASALTWATER_BATCH_WRAPPED=1` to suppress
-automatic nested records; do not export this internal flag in your own scripts.
-Refresh is supervised in a child process while a batch is active, allowing its
-replacement of the CLI with upgraded setup code to finish the original record.
+Ordinary Basaltwater commands inside a wrapper count toward that wrapper's
+result. The child environment carries an internal `BASALTWATER_BATCH_WRAPPED`
+value scoped to that batch's state path; do not export it in your own scripts.
+If a wrapped script selects another workspace or batch name, that independent
+batch still tracks its own commands. Refresh, SSH sessions, and following logs
+are supervised in a child process while a batch is active, allowing commands
+that replace the CLI process to finish the original record.
 Shell builtins, unrelated processes, parser errors, help/version requests,
 the retired migration command, and individual REPL commands are not tracked.
 
@@ -75,9 +77,12 @@ them. Wrapping sudo or SSH with `batch run` records the outer command locally.
 
 An active batch cannot be replaced by another start. Parallel commands may join
 one batch; wait for them before ending it. State updates use a short advisory
-lock and atomic writes. A command killed before it can record its result remains
-unfinished. End refuses unfinished commands; inspect the actual outcomes and
-use `batch end --force` to close with a nonzero report. Force does not cancel
+lock and atomic writes. Report output happens after releasing the lock, so a
+slow pipe or pager does not block other commands from recording results. A
+report represents the state at the time it was read. A command killed before
+recording a result remains unfinished. End refuses unfinished commands; inspect
+the actual outcomes and use `batch end --force` to close with a nonzero report.
+Force does not cancel
 commands. A late completion after forced closure cannot change the closed
 report. No command is retried or rolled back by batching.
 
@@ -89,10 +94,11 @@ preserved and reported as an error before command execution. Each batch is
 limited to 1000 commands and notes. Titles, labels, and notes accept up to 1000
 characters and reject control characters.
 
-Records contain command names, setup/patch/share targets, timings, exit codes,
-and explicit notes. Arguments and raw stdout/stderr are not captured; existing
-per-command output remains the source for service URLs and diagnostics. Use
-`batch note` to retain selected useful details, keeping secrets out of notes,
+Records contain command names, setup/patch/share/SSH/log targets, timings, exit
+codes, and explicit notes. Invalid targets are omitted from records so accidental
+URL credentials cannot be retained there. Arguments and raw stdout/stderr are
+not captured; existing per-command output remains the source for service URLs
+and diagnostics. Use `batch note` to retain selected useful details, keeping secrets out of notes,
 titles, and labels. These private reports are local operational state and
 should stay outside Git. To remove retained history, delete only reviewed,
 closed reports when no commands are using the batch slot.
