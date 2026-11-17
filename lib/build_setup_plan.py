@@ -104,8 +104,10 @@ def prepare_delivery_plan(
         raise ValueError("Delivery planning requires a version-1 deployment manifest")
     if set(vars(manifest)) != {"version", "components", "ci", "publishing", "build_runtimes"}:
         raise ValueError("Manifest has unsupported fields")
-    if manifest.ci or manifest.publishing:
-        raise ValueError("CI and publishing workflows are outside delivery planning")
+    if manifest.publishing:
+        raise ValueError("Publishing workflows are outside delivery planning")
+    # Deployment selects component commands. A coexisting CI declaration is
+    # used only by explicit workflow requests, never by artifact delivery.
     domain = _destination(destination)
     if not isinstance(source_path, str):
         raise ValueError("Source snapshot must be an absolute text path")

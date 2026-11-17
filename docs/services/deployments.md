@@ -199,8 +199,11 @@ A separately authorized application can retain a neighboring route such as
 `/neighbor` on the same domain. This example does not build an npm frontend.
 
 The selected-builder flow refuses Godot/interpreter services, `env_file`,
-unmanaged working or database paths, alternate proxy settings and CI/publishing
-workflows. Environment grants are literal administrator-approved configuration;
+unmanaged working or database paths, alternate proxy settings and publishing
+workflows. A manifest may also declare `ci`, but deployment runs only its
+component build commands; CI install/build/test steps require a separate workflow
+build. CI-only manifests cannot be deployed.
+Environment grants are literal administrator-approved configuration;
 do not put secrets in manifests or policy drafts. It also refuses target
 Go, Node and Godot installation flags, build-host and legacy app-server roles,
 network activation and custom setup steps. SSL and Cloudflare settings are
