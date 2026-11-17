@@ -47,6 +47,10 @@ class InputRejected(ValueError):
     """Invalid input/capture detected before any device event was dispatched."""
 
 
+class LifetimeExpired(RuntimeError):
+    """Normal idle expiry; an interrupted input still has uncertain delivery."""
+
+
 def backend_name(native: bool) -> str:
     return "cachyos-native" if native else "debian-desktop"
 
@@ -171,6 +175,7 @@ class Bridge:
         self.native = native
         self.used: set[str] = set()
         self.stopping = False
+        self.stop_reason = "stop-requested"
         self.checked = 0.0
 
     def validate_session(self, current: dict) -> None:
@@ -180,8 +185,11 @@ class Bridge:
             raise RuntimeError("Desktop session changed; start a new bridge")
 
     def guard(self) -> None:
-        if self.stopping or time.monotonic() >= self.until:
-            raise RuntimeError("Gamepad bridge stopped or expired")
+        if self.stopping:
+            raise RuntimeError("Gamepad bridge stopped")
+        if time.monotonic() >= self.until:
+            self.stop_reason = "lifetime-expired"
+            raise LifetimeExpired("Gamepad bridge expired")
         control_state.require_enabled(self.initial)
         if time.monotonic() - self.checked >= .2:
             current = helper_status(self.native)
@@ -220,6 +228,8 @@ class Bridge:
             receipt["delivery"] = "completed"
         except Exception as exc:
             self.stopping = True
+            if self.stop_reason != "lifetime-expired":
+                self.stop_reason = "input-failed"
             receipt["error"] = str(exc)
         finally:
             try:
@@ -228,6 +238,7 @@ class Bridge:
                 receipt["released"] = stamp()
             except Exception as exc:
                 self.stopping = True
+                self.stop_reason = "release-failed"
                 receipt["release_error"] = str(exc)
             write_json_atomic(str(path), receipt, mode=0o600)
         return {"artifact": str(path), **receipt}
@@ -263,6 +274,8 @@ def serve(output: str, lifetime: int, native: bool = True) -> dict:
     path = socket_path()
     descriptor = os.open(path.with_suffix(".lock"), os.O_CREAT | os.O_NOFOLLOW | os.O_RDWR, 0o600)
     pad = None
+    close_reason = "startup-failed"
+    cleanup = {}
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         if path.exists():
@@ -275,6 +288,7 @@ def serve(output: str, lifetime: int, native: bool = True) -> dict:
         bridge = Bridge(pad, folder, lifetime, current, native)
         previous = {}
         def stop(_signum, _frame):
+            bridge.stop_reason = signal.Signals(_signum).name.lower()
             bridge.stopping = True
         for signum in (signal.SIGTERM, signal.SIGINT):
             previous[signum] = signal.signal(signum, stop)
@@ -289,8 +303,12 @@ def serve(output: str, lifetime: int, native: bool = True) -> dict:
                     "name": pad.device.name, "mapping": "Linux Xbox 360 USB", "backend": backend_name(native),
                     "lifetime_seconds": lifetime, "generation": current["generation"],
                 }, mode=0o600)
+                close_reason = "bridge-failed"
                 while not bridge.stopping:
-                    bridge.guard()
+                    try:
+                        bridge.guard()
+                    except LifetimeExpired:
+                        break
                     try:
                         connection, _ = server.accept()
                     except socket.timeout:
@@ -340,25 +358,40 @@ def serve(output: str, lifetime: int, native: bool = True) -> dict:
                             connection.sendall(json.dumps(result).encode() + b"\n")
                         except OSError:
                             bridge.stopping = True
+                close_reason = bridge.stop_reason
         finally:
             for signum, handler in previous.items():
                 signal.signal(signum, handler)
     finally:
         # Closing uinput also removes the owned device after process death. No
         # other input device, user control setting or mapping is changed.
-        if pad is not None:
-            try:
-                pad.close()
-            finally:
-                path.unlink(missing_ok=True)
-        os.close(descriptor)
-        write_json_atomic(str(folder / "closed.json"), {"closed": stamp()}, mode=0o600)
-    return {"closed": True, "output": str(folder)}
+        try:
+            if pad is not None:
+                try:
+                    pad.close()
+                    cleanup["neutralized"] = True
+                except Exception as exc:
+                    cleanup["cleanup_error"] = str(exc)
+                    raise
+                finally:
+                    path.unlink(missing_ok=True)
+        finally:
+            os.close(descriptor)
+            write_json_atomic(str(folder / "closed.json"), {
+                "closed": stamp(), "reason": close_reason, **cleanup,
+            }, mode=0o600)
+    return {"closed": True, "reason": close_reason, "output": str(folder)}
 
 
 def call(payload: dict) -> dict:
     path = socket_path()
-    info = path.lstat()
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        if payload.get("action") in ("status", "stop"):
+            return {"running": False, "backend": payload.get("backend"),
+                    "already_stopped": payload["action"] == "stop"}
+        raise
     if not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
         raise RuntimeError("Unsafe pad socket")
     with socket.socket(socket.AF_UNIX) as connection:

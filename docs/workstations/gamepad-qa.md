@@ -114,6 +114,11 @@ Pre-dispatch invalid/stale captures return `delivery: not-sent`, `rejected: true
 and a retained rejection receipt, leaving the neutral device connected for a
 fresh-capture recovery. Device/persistence failures end the bridge. Stop/status
 need no screenshot; the watchdog also closes the device after blocked control.
+When no socket exists, status returns `running: false` and stop is idempotent;
+unsafe sockets and failed connections still report errors. Idle lifetime expiry
+is successful closeout with reason `lifetime-expired`. Expiry during a held
+action retains its uncertain delivery/error and release evidence. `closed.json`
+records the close reason and successful neutralization or a cleanup error.
 
 ## Qualification scope
 

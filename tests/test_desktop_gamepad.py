@@ -229,6 +229,45 @@ class GamepadTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             qa.receive(right)
 
+    def test_idle_status_and_stop_do_not_hide_unsafe_sockets_or_failed_presses(self):
+        path = self.folder / "missing.sock"
+        with patch.object(qa, "socket_path", return_value=path):
+            self.assertEqual(qa.call({"action": "status"})["running"], False)
+            self.assertTrue(qa.call({"action": "stop"})["already_stopped"])
+            with self.assertRaises(FileNotFoundError):
+                qa.call({"action": "press"})
+            path.write_text("not a socket")
+            with self.assertRaisesRegex(RuntimeError, "Unsafe"):
+                qa.call({"action": "status"})
+
+    def test_idle_lifetime_expiry_is_successful_closeout(self):
+        self.pad.device.device = "/fake/event1"
+        self.pad.device.name = "Fake QA pad"
+        self.bridge.until = 0
+        with patch.object(qa, "socket_path", return_value=self.folder / "pad.sock"), \
+                patch.object(qa, "Pad", return_value=self.pad), \
+                patch.object(qa, "Bridge", return_value=self.bridge), \
+                patch.object(qa.signal, "signal"):
+            result = qa.serve(str(self.folder / "expiry"), 60)
+        self.assertEqual(result["reason"], "lifetime-expired")
+        closed = json.loads((self.folder / "expiry/closed.json").read_text())
+        self.assertTrue(closed["neutralized"])
+        self.pad.close.assert_called_once()
+
+    def test_cleanup_failure_is_retained_and_never_claims_neutralization(self):
+        self.pad.device.device = "/fake/event1"
+        self.pad.device.name = "Fake QA pad"
+        self.pad.close.side_effect = OSError("close release failed")
+        self.bridge.until = 0
+        with patch.object(qa, "socket_path", return_value=self.folder / "pad.sock"), \
+                patch.object(qa, "Pad", return_value=self.pad), \
+                patch.object(qa, "Bridge", return_value=self.bridge), \
+                patch.object(qa.signal, "signal"), self.assertRaisesRegex(OSError, "close release"):
+            qa.serve(str(self.folder / "failed-cleanup"), 60)
+        closed = json.loads((self.folder / "failed-cleanup/closed.json").read_text())
+        self.assertIn("cleanup_error", closed)
+        self.assertNotIn("neutralized", closed)
+
     def test_server_rejection_recapture_stop_and_owned_cleanup(self):
         self._server_roundtrip(True)
 
