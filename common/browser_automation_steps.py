@@ -418,12 +418,12 @@ def _write_launchers() -> None:
 
 
 def reconcile_existing_browser_automation(config: SetupConfig) -> None:
-    """Refresh launchers for an existing managed browser installation."""
+    """Refresh the interpreter and launchers for existing managed browsers."""
     if config.browser_automation or config.disable_browser_automation:
         return
     if is_dry_run():
         print(
-            "  [DRY-RUN] Would reconcile existing managed Playwright launchers "
+            "  [DRY-RUN] Would reconcile service Node and managed Playwright launchers "
             "when installed"
         )
         return
@@ -440,7 +440,6 @@ def reconcile_existing_browser_automation(config: SetupConfig) -> None:
         return
 
     try:
-        verify_service_node()
         _verify_runtime_package(os.path.join(PLAYWRIGHT_ROOT, "node_modules/@playwright/mcp/package.json"),
                                 os.path.join(PLAYWRIGHT_ROOT, "package-lock.json"))
         _verify_runtime_package(os.path.join(PLAYWRIGHT_STABLE_ROOT, "node_modules/@playwright/test/package.json"),
@@ -448,6 +447,8 @@ def reconcile_existing_browser_automation(config: SetupConfig) -> None:
     except (OSError, RuntimeError, ValueError):
         print("  Browser runtime migration required; rerun saved setup with --browser-automation playwright")
         return
+    if install_service_node():
+        print("  ✓ Installed updated service Node for Playwright")
     _write_launchers()
     print("  ✓ Existing Playwright browser launchers reconciled")
 

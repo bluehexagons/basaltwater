@@ -55,12 +55,12 @@ jobs:
         # checks on the other supported Node major, in the same Debian image.
         include:
           - python-version: '3.13'
-            node-version: '24.22.1'
+            node-version: '24.x'
             check-name: Full validation
             check-mode: --coverage
             check-jobs: 2
           - python-version: '3.13'
-            node-version: '26.12.1'
+            node-version: '26.x'
             check-name: Node compatibility
             check-mode: --node-only
             check-jobs: 1
@@ -82,6 +82,7 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node-version }}
+          check-latest: true
 
       - name: Run Debian checks
         id: debian

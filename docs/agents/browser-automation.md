@@ -38,12 +38,11 @@ the VM also need the user-managed Node.js development environment.
 The interactive setup flow offers the same choice after agent selection. A
 saved setup command retains the provider choice, so a later full setup restores
 the browser capability without retaining any browser or website credentials.
-An agent setup that omits the option also refreshes launchers for a complete,
-current managed browser installation; this keeps safety defaults current when
-the controller updates the target source independently of optional capability
-selection. An explicit `--no-browser-automation` suppresses that reconciliation.
-An older installation reports that migration is required. Rerun the saved setup
-with `--browser-automation playwright` to provision both runtimes and Node.
+An agent setup that omits the option also refreshes Node and the launchers for a
+complete managed browser installation with current Playwright packages. An
+explicit `--no-browser-automation` suppresses that reconciliation. If setup
+reports that the Playwright packages need migration, rerun the saved setup with
+`--browser-automation playwright` to provision both packages and Node.
 For an explicit `--steps` setup, include `install_browser_automation` after
 installing the selected compatible agent; it is available as a registered
 custom step as well.
@@ -69,8 +68,9 @@ browser dependencies, and downloads each runtime's matching Chromium build into
 the target user's Playwright cache. Browser garbage collection is disabled to
 preserve the other runtime's payloads. npm lifecycle scripts are disabled during
 the root-owned package installs, which use isolated npm configuration.
-Both use Node 24.22.1 from `/opt/basaltwater-node/v24.22.1`, downloaded from the
-official release with pinned SHA-256 checksums for Linux x86_64 and aarch64.
+Both use Node 24 LTS from a versioned path under `/opt/basaltwater-node`.
+The [service runtime definition](../../lib/service_node.py) records the exact
+release and official SHA-256 checksums for Linux x86_64 and aarch64.
 Setup installs the Debian runtime libraries before executing that interpreter.
 Setup verifies root ownership, permissions and the interpreter version before
 installing or reusing browser packages. The distro interpreter is left to the

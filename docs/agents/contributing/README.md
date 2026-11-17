@@ -173,8 +173,9 @@ then Docker Hub, with a two-minute bound per pull. This keeps registry fallback
 inside a runnable step; job-container initialization would fail before fallback.
 The selected `actions/setup-python` interpreter and supported `actions/setup-node`
 runtime are mounted read-only from the runner tool cache. Python creates a private
-container venv; checks still run in Debian. Branch CI covers Node 24.22.1 and
-26.12.1. Only image pulls fall back:
+container venv; checks still run in Debian. Branch CI follows the latest
+available patches on Node 24 and 26, and release CI follows Node 24. Only image
+pulls fall back:
 failed package installation, checks and coverage are never replayed. Cleanup
 removes only that invocation's named container. An all-registry failure means
 checks did not start. Inspect the failed step before changing application code.
