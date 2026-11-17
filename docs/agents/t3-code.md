@@ -381,37 +381,31 @@ checks reuse a healthy session. The T3 client can also offer an explicit
 **Update server** action for this background service; prefer that action after
 active agent work and terminal commands finish. Keep the client open while the
 launcher downloads, installs, restarts, and reconnects. For a host-side update,
-set `T3_RELEASE` to the exact stable version required by the stable client. Use
-`latest` only when the client is also on the latest stable release; npm's
-`latest` does not select a newer nightly or preview. Stable `0.1.0` introduces
-orchestration V2 and requires a compatible client; a `0.0.45` client cannot
-continue against that server. Read
+use the native updater as the target account. Replace `CLIENT_VERSION` with
+the exact stable version required by the client; omit the version only when
+both sides should use the latest stable release. Check `t3 --version` first;
+if another installation owns that command, use
+`~/.local/bin/basaltwater-t3code-pairing-provider` instead. Stable `0.1.0`
+introduces orchestration V2 and requires a compatible client; a `0.0.45`
+client cannot continue against that server. Read
 [the migration procedure](#orchestration-v2-thread-migration) before the first
 V2 upgrade and arrange the interruption and private recovery copy.
 
 ```bash
-# As the target user, using T3 Code's documented updater:
-T3_RELEASE=CLIENT_VERSION
-T3_NPM_SHIM="$HOME/.local/share/basaltwater/t3-npm/bin"
-env -u npm_config_dangerously_allow_all_scripts \
-  -u NPM_CONFIG_DANGEROUSLY_ALLOW_ALL_SCRIPTS \
-  -u npm_config_allow_scripts \
-  -u NPM_CONFIG_ALLOW_SCRIPTS \
-  PATH="$T3_NPM_SHIM:$PATH" \
-  CC=gcc \
-  CXX=g++ \
-  npm_config_strict_allow_scripts=false \
-  npm_config_foreground_scripts=true \
-  npx --yes --package="t3@$T3_RELEASE" -c \
-  'env -u npm_config_allow_scripts \
-    -u NPM_CONFIG_ALLOW_SCRIPTS \
-    -u npm_config_dangerously_allow_all_scripts \
-    -u NPM_CONFIG_DANGEROUSLY_ALLOW_ALL_SCRIPTS \
-    t3 service install'
-basaltw agent doctor --capability t3code --fix --wait-for-t3-startup
+t3 update --channel stable CLIENT_VERSION
+basaltw agent doctor --capability t3code --wait-for-t3-startup
 ```
 
-The direct command and Basaltwater setup operate on the same upstream-managed
+The native updater asks before restarting in an interactive terminal. Arrange
+the interruption before accepting; without interactive input it stages the
+update unless `--yes` is supplied. If restart was deferred, run
+`t3 service restart` at the arranged time, then check readiness. A staged
+version is not necessarily running, and an older launcher can remain down
+after a crash or reboot until that restart. Preserve update-policy and
+downgrade refusals. See the tagged
+[native update guide](https://github.com/pingdotgg/t3code/blob/v0.1.10/docs/user/updating.md#update-a-connected-server).
+
+The native command and Basaltwater setup operate on the same upstream-managed
 user service. To update through setup, rerun the saved command with its
 existing options; `--refresh-packages` is only needed when APT packages should
 also be refreshed.
@@ -448,9 +442,9 @@ policy before T3 publishes the runtime. All other npm commands pass through
 unchanged, and the target user's normal npm configuration remains unchanged.
 
 If the client reports that its update needs a newer T3 Code service launcher,
-use the matching release's reconciliation command above. For a stable client,
-rerunning the same Basaltwater setup on that VM also updates the launcher and
-runtime; the doctor then validates the selected runtime. If npm 12 already
+rerun the same Basaltwater setup on that VM or follow the focused
+[launcher recovery procedure](../../common/agent_skills/basaltwater-t3code/references/updates.md#launcher-recovery).
+The doctor then validates the selected runtime. If npm 12 already
 produced an incomplete candidate and T3 rolled back, setup identifies the retained
 `failed` or `rolled-back` npm-backed candidate from reviewed service state
 and rebuilds its two trusted native dependencies without stopping the active
