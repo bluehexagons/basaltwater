@@ -96,6 +96,9 @@ def _validate_project_npm_config(content: bytes) -> None:
         if key in {b"ignore-scripts", b"engine-strict"}:
             if value not in {b"true", b"false"}:
                 raise ValueError(error)
+        elif key == b"allow-remote":
+            if value not in {b"all", b"none", b"root"}:
+                raise ValueError(error)
         elif key == b"min-release-age":
             if (re.fullmatch(rb"(?:0|[1-9][0-9]{0,5})", value) is None
                     or int(value) > 525600):
