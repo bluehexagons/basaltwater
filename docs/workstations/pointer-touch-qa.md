@@ -12,7 +12,7 @@ input inspector before game testing. Keep desktop input under one owner.
 
 | Route | Available testing path | Remaining qualification |
 | --- | --- | --- |
-| CachyOS KDE Wayland | RemoteDesktop portal; touch only when advertised and granted | Live new-helper, compositor and consuming-app checks |
+| CachyOS KDE Wayland | RemoteDesktop portal; touch only when advertised and granted | Contained GTK delivery qualified below; target-game and interruption checks remain separate |
 | Debian XRDP/Xfce | Existing absolute pointer and click/wheel input | No true multitouch/relative/extra-button route in this supervisor |
 | Other Linux portal sessions | Protocol support may differ | Not qualified by CachyOS or Debian tests |
 | Windows, physical touchscreen/pen/touchpad, browser mobile emulation | Separate routes | Not implemented or qualified by these commands |
@@ -76,7 +76,7 @@ these example coordinates with points inspected in the current input fixture:
 
 ```sh
 basaltw desktop --native input touch --generation GEN --geometry WIDTH HEIGHT \
-  --observation ID --frames /private/pinch.json --observe --json
+  --observation ID --frames /private/pinch.json --observe
 ```
 
 Limits: 2–128 frames, at most ten simultaneous IDs (0–9), integer pixel
@@ -105,11 +105,11 @@ replay. No contact can intentionally remain held across requests.
 
 ```sh
 basaltw desktop --native input relative --generation GEN --geometry WIDTH HEIGHT \
-  --observation ID --dx 40 --dy -20 --observe --json
+  --observation ID --dx 40 --dy -20 --observe
 basaltw desktop --native input scroll --generation GEN --geometry WIDTH HEIGHT \
-  --observation ID --dx 0 --dy -3 --observe --json
+  --observation ID --dx 0 --dy -3 --observe
 basaltw desktop --native input click --generation GEN --geometry WIDTH HEIGHT \
-  --observation ID --x X --y Y --button 8 --hold-ms 120 --observe --json
+  --observation ID --x X --y Y --button 8 --hold-ms 120 --observe
 ```
 
 Relative deltas are integer **logical pointer units**, each -4096..4096, with
@@ -121,6 +121,8 @@ before clicking. This route does not guarantee raw mouse or pointer-lock support
 Scroll deltas are discrete steps, each -100..100, at least one nonzero. Positive
 Y is down and positive X right. Diagonal requests send vertical then horizontal
 events. Smooth scrolling, inertia and touchpad gestures are separate checks.
+The consumer may expose smooth deltas with a different scale from the requested
+portal steps; record both rather than assuming equal numeric values.
 Existing click buttons 4–7 retain their single wheel-step behavior. Buttons
 8/9 mean side/extra, with the same bounded hold/release behavior as 1–3;
 drag still uses 1–3. All three new gesture kinds require a single-use screenshot.
@@ -146,6 +148,33 @@ Then test the target app's actual menus and gestures on its chosen backend.
 Record native Wayland versus XWayland, geometry/scaling, intended and received
 events, visible effects, interruptions and cleanup. Test physical hardware,
 touchpad gestures, pressure/tilt, Steam, browser APIs and other OSes separately.
-No new live touch/pointer qualification is asserted by this implementation.
+
+## Live qualification, 2026-11-17
+
+After the owner refreshed to `d82c81ea` and approved the new KDE touchscreen
+grant, the installed CLI and running helper passed a contained GTK 3.24.52
+native-Wayland probe at 2560×1440. Single-touch motion, two-contact expansion/
+contraction and independent lift/re-add, and ten concurrent contacts with motion
+and release reached the consumer. Mouse buttons 1/2/3/8/9 arrived distinctly
+with releases; right-button drag, relative movement and both scroll-axis signs
+were observed. A late invalid coordinate and consumed observation were refused
+before input with the probe log unchanged. The corrected probe closed normally
+with no pending contacts/buttons, callback errors or anomalous lifetimes.
+
+Contact-start timing affected delivery: ten contacts begun in the first snapshot
+produced two consumer contacts followed by cancellation. Starting one contact,
+then adding the other nine at 350 ms, delivered all ten; three contacts added at
+250 ms intervals also completed. The cancellation cause was not isolated. Keep
+clustered and staggered starts as separate cases; desktop gesture handling can
+affect application delivery. A successful portal receipt alone cannot qualify
+the intended contact count. Preserve cancellations and verify recovery before
+trying another inspected plan; do not change shared desktop gesture settings.
+
+The live run also found and fixed GTK/GDK version selection and generic mouse
+event button extraction in game-testing's probe. Original failed attempts and
+raw evidence remain private. The finalized recorder verified 30 of 30 captures.
+This qualifies the observed fixture paths, not target-game touch behavior,
+scaled/multiple monitors, raw pointer lock, held-touch interruption, hardware or
+another platform. Debian XRDP still has no true multitouch route here.
 
 Protocol reference: [RemoteDesktop portal methods and device grants](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.RemoteDesktop.html).

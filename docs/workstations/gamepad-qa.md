@@ -144,6 +144,14 @@ exited zero; the finalized recorder verified eight of eight retained captures.
 Event logs and receipts are private. This does not measure held-axis latency,
 repeat behavior or physical-controller performance.
 
+The refreshed `d82c81ea` CLI/helper passed another contained Godot 4.7.2 check
+on 2026-11-17: individual A/B/X/Y, both sticks, triggers, d-pad diagonal and
+neutral. Its supervised 60-second idle expiry returned zero, retained
+`reason: lifetime-expired` and `neutralized: true`, and removed the controller
+from the consumer. Absent status and idempotent stop also passed. The inspector
+closed normally; this adds live coverage for the closeout change, without
+qualifying expiry during a held action or the remaining platform boundaries.
+
 Debian supervisor routing has offline contract coverage; live device/game
 recognition needs its own host qualification. Live human
 takeover, supervisor loss, physical controllers, Steam Input, browser consumers

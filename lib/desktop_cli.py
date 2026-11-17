@@ -204,7 +204,7 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     action.add_argument("--y", type=int)
     action.add_argument("--dx", type=int, help="Native relative logical units (-4096..4096) or discrete scroll steps (-100..100)")
     action.add_argument("--dy", type=int, help="Native relative logical units or scroll steps; negative scroll is up/left")
-    action.add_argument("--frames", help="Native touch: JSON list of complete contact frames, 2–128 frames within 5000 ms, final contacts empty")
+    action.add_argument("--frames", metavar="FILE", help="Native touch: path to a JSON file containing 2–128 complete contact frames within 5000 ms, final contacts empty")
     action.add_argument("--to-x", type=int, help="Native drag endpoint in full-monitor capture pixels")
     action.add_argument("--to-y", type=int)
     action.add_argument("--duration-ms", type=int, help="Native drag duration, 1–5000 ms (default: 300)")
