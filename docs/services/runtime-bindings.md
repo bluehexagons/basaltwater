@@ -126,5 +126,6 @@ temporary files and mocked service/system commands. Selected native Debian
 checks also cover real systemd delivery, manual rotation and failed-rotation
 rollback on both deployment paths, retained artifact refresh and guest reboot.
 See the [dated qualification and limits](../testing/runtime-bindings.md).
-Full controller/SSH delivery with bindings, interrupted activation and power loss
-remain separate qualification.
+Managed target enrollment and actual controller-client SSH delivery also pass.
+Full selected-build setup with a remote worker, interrupted activation and power
+loss remain separate qualification.

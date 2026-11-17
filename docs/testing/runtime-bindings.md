@@ -31,13 +31,32 @@ retained. Existing guest configurations, states and running process identities
 were preserved. Raw commands, credentials, values, inventory and fixture handles
 remain outside Git.
 
+## Managed SSH follow-up
+
+**2026-11-17 UTC; source `eacbfd23`, same owned guest with a separate application
+and transport key.** The managed target installer validated a dry run without
+enrollment effects, then installed its root-owned account/key/sudo authority.
+The controller's real `BuildTargetClient` completed preflight, reservation,
+artifact streaming, activation and status through pinned SSH and the installed
+isolated-Python forced command. An arbitrary shell command was refused.
+
+The new unprivileged service received its target-only synthetic value and served
+verified loopback HTTPS. Values were absent from releases, retained target state
+and units; responses omitted resolved private paths. An actual guest reboot
+preserved the binding, unit, private file and completed admission; the same
+transport credential still authorized preflight/status. The earlier two service
+fixtures retained their expected values and private-file identities.
+
+Initial enrollment rejected a generated public key's trailing comment before
+creating enrollment resources. The canonical key was corrected before applying
+enrollment; no incomplete installer was replayed. Installed source was staged
+from a pinned archive, and this used the installer API rather than full setup.
+
 ## Remaining boundaries
 
-This pass directly invoked the target's typed handler and deployment components
-from a pinned source archive. Full controller setup, enrollment and the SSH
-transport with a runtime binding need their own end-to-end qualification. The
-selected artifact was packaged from a prepared native executable; this pass did
-not exercise a remote build worker or new target toolchain.
+Full selected-build controller setup with a runtime binding needs its own
+end-to-end qualification. These artifacts were packaged from a prepared native
+executable; neither pass exercised a remote build worker or new target toolchain.
 
 Public DNS, ACME/Tunnel ingress, external clients, browser rendering, interrupted
 activation, concurrent administrator edits and power loss remain unqualified.

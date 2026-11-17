@@ -24,8 +24,9 @@ ordinary/prebuilt installation, retained reconstruction, build-time revocation,
 privacy and failed-release preservation are covered. Selected native Debian
 component checks qualify real systemd delivery, manual rotation with rollback,
 retained reconciliation and guest reboot; see the
-[dated scope](../testing/runtime-bindings.md). Full controller/SSH delivery with
-bindings, interrupted activation and power loss remain separate qualification.
+[dated scope](../testing/runtime-bindings.md). Managed target enrollment and real
+controller-client SSH delivery also pass. Full selected-build setup with a remote
+worker, interrupted activation and power loss remain separate qualification.
 Deployment leaves administrator files unchanged; old values remain recoverable
 only while their old files are retained. No automatic value rotation is claimed.
 
