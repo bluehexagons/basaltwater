@@ -263,7 +263,7 @@ class StorageReviewTests(unittest.TestCase):
             accounts = [SimpleNamespace(pw_name=name, pw_uid=os.geteuid(), pw_dir=str(path))
                         for name, path in (("build-fixture", build), ("ordinary", ordinary))]
             def capacity(path):
-                if path == str(build):
+                if path.startswith(str(build) + "/"):
                     raise OSError("Build filesystem unavailable")
                 return dict(mount="/", free_bytes=4 * 1024**3)
             with patch.object(storage, "BUILD_HOMES", directory), patch.object(storage, "accounts", return_value=accounts), patch.object(

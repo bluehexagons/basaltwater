@@ -14,6 +14,9 @@ from lib.agent_storage_inventory import inspect_storage
 from lib.cleanup_paths import process_uses_path, remove_checked_path
 from lib.validation import validate_filesystem_path
 
+SYSTEM_STORAGE_PATHS = ("/var/cache/apt/archives", "/var/log/journal", "/run/log/journal",
+                        "/tmp", "/var/tmp", "/var/lib/systemd/coredump")
+
 
 def clean_system_storage(*, target: int, apply: bool, requirements: dict[str, dict] | None = None) -> list[dict]:
     from lib.managed_storage import filesystem, needs_reclamation

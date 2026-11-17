@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
+import io
+import json
 from pathlib import Path
 import os
+import sys
 from types import SimpleNamespace
 import tempfile
 import unittest
@@ -118,10 +122,103 @@ class StorageManagementTests(unittest.TestCase):
         with patch.object(sys, "argv", ["maintenance", "--payloads", "--apply"]), \
              patch.object(storage.os, "geteuid", return_value=0), \
              patch.object(storage, "storage_lock", side_effect=lock), \
+             patch.object(storage, "accounts", return_value=[]), \
+             patch.object(storage, "filesystem", return_value=dict(path="/", mount="/", free_bytes=10 * 1024**3,
+                 free_inodes=100000, inodes_supported=True)), \
              patch.object(storage, "maintain", return_value=dict(accounts=[], shortfalls=[])), \
              patch("lib.build_storage_maintenance.maintain_roles", side_effect=roles), \
              patch("sys.stdout", new_callable=io.StringIO):
             self.assertEqual(storage.main(), 1)
+
+    def test_maintenance_capacity_caps_separate_memory_filesystems_and_deduplicates_mounts(self):
+        def capacity(path):
+            memory = path == "/tmp"
+            return dict(path=path, mount="/tmp" if memory else "/", filesystem_type="tmpfs" if memory else "ext4",
+                        total_bytes=512 * storage.MIB, total_inodes=10000,
+                        free_bytes=100 * storage.MIB if memory else 2 * 1024**3,
+                        free_inodes=1500 if memory else 20000, inodes_supported=True)
+        with patch.object(storage, "filesystem", side_effect=capacity):
+            result = storage._maintenance_capacity(["/", "/tmp", "/root/cache"], target=1536 * storage.MIB, min_inodes=10000)
+        self.assertEqual(len(result["filesystems"]), 2)
+        self.assertEqual(result["shortfalls"], [])
+        self.assertEqual(result["requirements"]["/tmp"]["required_bytes"], 512 * storage.MIB // 10)
+        self.assertEqual(result["requirements"]["/tmp"]["required_inodes"], 1000)
+        self.assertEqual(result["requirements"]["/"]["required_bytes"], 1536 * storage.MIB)
+
+    def test_cli_pressure_reports_system_only_byte_inode_and_observation_failures(self):
+        for mode in ("bytes", "inodes", "unavailable"):
+            with self.subTest(mode=mode):
+                def capacity(path):
+                    temporary = path == "/tmp"
+                    if temporary and mode == "unavailable":
+                        raise OSError("Temporary filesystem unavailable")
+                    return dict(path=path, mount="/tmp" if temporary else "/", filesystem_type="ext4",
+                                total_bytes=8 * 1024**3, total_inodes=100000,
+                                free_bytes=0 if temporary and mode == "bytes" else 4 * 1024**3,
+                                free_inodes=1 if temporary and mode == "inodes" else 20000, inodes_supported=True)
+                with patch.object(sys, "argv", ["maintenance", "--pressure", "--apply"]), patch.object(
+                        storage.os, "geteuid", return_value=0), patch.object(storage, "accounts", return_value=[]), patch.object(
+                        storage, "storage_lock", return_value=nullcontext()), patch.object(storage, "filesystem", side_effect=capacity), patch.object(
+                        storage, "maintain", return_value=dict(accounts=[], shortfalls=[])) as caches, patch(
+                        "lib.storage_pressure.clean_system_storage", return_value=[]), patch(
+                        "lib.storage_pressure.clean_build_versions", return_value=[]), patch("sys.stdout", new_callable=io.StringIO) as output:
+                    self.assertEqual(storage.main(), 1)
+                result = json.loads(output.getvalue())
+                self.assertEqual(len(result["filesystems"]), 2)
+                if mode == "unavailable":
+                    self.assertEqual(result["filesystems"][1]["status"], "unavailable")
+                else:
+                    self.assertEqual(result["shortfalls"][0]["mount"], "/tmp")
+                    self.assertGreater(result["shortfalls"][0][f"remaining_{mode}"], 0)
+                    self.assertEqual(caches.call_args.kwargs["requirements"]["/tmp"]["required_inodes"], 10000)
+
+    def test_payload_reclamation_rechecks_inodes_before_reporting_success(self):
+        free_inodes = 1
+        def capacity(path):
+            return dict(path=path, mount="/", free_bytes=4 * 1024**3, free_inodes=free_inodes, inodes_supported=True)
+        def roles(**_):
+            nonlocal free_inodes
+            free_inodes = 20000
+            return []
+        with patch.object(sys, "argv", ["maintenance", "--payloads", "--apply"]), patch.object(
+                storage.os, "geteuid", return_value=0), patch.object(storage, "accounts", return_value=[]), patch.object(
+                storage, "storage_lock", return_value=nullcontext()), patch.object(storage, "filesystem", side_effect=capacity), patch.object(
+                storage, "maintain", return_value=dict(accounts=[], shortfalls=[dict(path="/", remaining_inodes=9999)])), patch(
+                "lib.build_storage_maintenance.maintain_roles", side_effect=roles), patch("sys.stdout", new_callable=io.StringIO) as output:
+            self.assertEqual(storage.main(), 0)
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["shortfalls"], [])
+        self.assertEqual(result["filesystems"][0]["free_inodes"], 20000)
+
+    def test_daily_job_enables_pressure_recovery_with_existing_payload_retention(self):
+        from common.storage_maintenance_steps import configure_storage_maintenance
+        with patch("common.storage_maintenance_steps.configure_maintenance_timer", return_value=True) as timer:
+            configure_storage_maintenance(SimpleNamespace(username="fixture"))
+        options = timer.call_args.kwargs
+        self.assertEqual(options["schedule"], "daily")
+        self.assertEqual(options["script_args"], ("--apply", "--account", "fixture", "--payloads", "--pressure"))
+
+    def test_extended_build_caches_follow_their_own_filesystem_pressure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory) / "build-fixture"
+            for relative in (".npm/_logs", "go/pkg/mod"):
+                cache = home / relative
+                cache.mkdir(parents=True)
+                (cache / "generated").write_text("reproducible")
+            for current, _dirs, _files in os.walk(home):
+                Path(current).chmod(0o700)
+            account = SimpleNamespace(pw_name="build-fixture", pw_uid=os.geteuid(), pw_dir=str(home))
+            def capacity(path):
+                separate = path == str(home / "go/pkg/mod")
+                return dict(path=path, mount="/modules" if separate else "/", free_bytes=0 if separate else 2)
+            with patch.object(storage, "BUILD_HOMES", directory), patch.object(storage, "accounts", return_value=[account]), patch.object(
+                    storage, "activity", return_value=None), patch.object(storage, "filesystem", side_effect=capacity), patch.object(
+                    storage, "run_streamed") as worker:
+                result = storage.maintain(names=[], apply=False, budget=0, target=1)
+            worker.assert_not_called()
+            self.assertEqual([row["category"] for row in result["accounts"][0]["candidates"] if row["status"] == "preview"],
+                             ["go-modules"])
+            self.assertTrue((home / ".npm/_logs/generated").exists())
 
     def test_setup_and_deployment_hold_guard_through_operation(self):
         from contextlib import contextmanager

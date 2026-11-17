@@ -1,4 +1,15 @@
 <# Explicit low-space recovery through Windows-owned cleanup operations. #>
+. (Join-Path $PSScriptRoot 'DevelopmentStorage.Common.ps1')
+
+function Resolve-NativeCleanupScratch([string]$Path) {
+    $resolved = Resolve-NativeStorageRoot $Path
+    if (-not (Test-Path -LiteralPath $resolved -PathType Container) -or
+        @(Get-ChildItem -LiteralPath $resolved -Force -ErrorAction Stop | Select-Object -First 1).Count) {
+        throw 'Servicing scratch requires an existing empty directory on a healthy local NTFS volume'
+    }
+    return $resolved
+}
+
 function Get-NativeStorageCapacity {
     $drive = [IO.Path]::GetPathRoot([Environment]::GetFolderPath('Windows')).Substring(0, 1)
     $volume = Get-Volume -DriveLetter $drive -ErrorAction Stop
@@ -20,7 +31,7 @@ function Test-NativeStorageRebootPending {
         (Test-Path -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired'))
 }
 
-function Invoke-NativeStorageAction([string]$Category) {
+function Invoke-NativeStorageAction([string]$Category, [string]$ScratchDirectory = '') {
     # Keep JSON output isolated from native diagnostic streams; errors still
     # terminate the action and become its structured failure reason.
     $WarningPreference = 'SilentlyContinue'
@@ -36,14 +47,20 @@ function Invoke-NativeStorageAction([string]$Category) {
         'superseded-components' {
             Import-Module Dism -ErrorAction Stop
             # Never use ResetBase, manually remove WinSxS, or reboot the host.
-            $result = Repair-WindowsImage -Online -StartComponentCleanup -NoRestart -ErrorAction Stop
+            $options = @{ Online = $true; StartComponentCleanup = $true; NoRestart = $true; ErrorAction = 'Stop' }
+            if ($ScratchDirectory) { $options.ScratchDirectory = Resolve-NativeCleanupScratch $ScratchDirectory }
+            $result = Repair-WindowsImage @options
             return [bool]$result.RestartNeeded
         }
         default { throw 'Unknown Windows storage cleanup category' }
     }
 }
 
-function Invoke-NativeStorageCleanup([switch]$Apply, [ValidateRange(1, 1024)][int]$TargetGiB = 5) {
+function Invoke-NativeStorageCleanup([switch]$Apply, [ValidateRange(1, 1024)][int]$TargetGiB = 5,
+                                     [string]$ScratchDirectory = '') {
+    # Validate before either native operation, including during preview. DISM
+    # owns its scratch contents; never point it at a populated directory.
+    if ($ScratchDirectory) { $ScratchDirectory = Resolve-NativeCleanupScratch $ScratchDirectory }
     $before = Get-NativeStorageCapacity
     $target = [long]$TargetGiB * 1GB
     # Preview works without elevation. Applying machine cleanup never silently
@@ -66,7 +83,7 @@ function Invoke-NativeStorageCleanup([switch]$Apply, [ValidateRange(1, 1024)][in
                 $reboot = $true
                 continue
             }
-            $reboot = (Invoke-NativeStorageAction $category) -or $reboot
+            $reboot = (Invoke-NativeStorageAction $category -ScratchDirectory $ScratchDirectory) -or $reboot
             $actions[-1].Status = 'cleaned'
         } catch {
             $actions[-1].Status = 'failed'
@@ -77,15 +94,16 @@ function Invoke-NativeStorageCleanup([switch]$Apply, [ValidateRange(1, 1024)][in
     $after = Get-NativeStorageCapacity
     return [pscustomobject]@{ Applied = [bool]$Apply; Before = $before; After = $after; TargetBytes = $target;
         NetFreedBytes = $after.FreeBytes - $before.FreeBytes; TargetMet = $after.FreeBytes -ge $target;
-        RebootRequired = $reboot; Actions = @($actions) }
+        RebootRequired = $reboot; ScratchDirectory = $ScratchDirectory; Actions = @($actions) }
 }
 
 function Invoke-NativeStorageCli([string[]]$Arguments) {
-    $apply = $false; $json = $false; $target = 5; $seen = @{}
+    $apply = $false; $json = $false; $target = 5; $scratch = ''; $seen = @{}
     if ($Arguments.Count -eq 1 -and $Arguments[0] -in @('--help', '-h', 'help')) {
-        Write-Host 'Usage: basaltw storage [--apply] [--target-gib 5] [--json]'
+        Write-Host 'Usage: basaltw storage [--apply] [--target-gib 5] [--scratch-dir PATH] [--json]'
         Write-Host 'Preview low-space recovery on the Windows system volume. Apply requires an administrator terminal.'
         Write-Host 'Clears unpinned Delivery Optimization downloads, then superseded Windows components until the target is met.'
+        Write-Host 'Use an existing empty NTFS directory on another disk for servicing scratch files.'
         return 0
     }
     for ($index = 0; $index -lt $Arguments.Count; $index++) {
@@ -95,6 +113,13 @@ function Invoke-NativeStorageCli([string[]]$Arguments) {
         switch ($option) {
             '--apply' { $apply = $true }
             '--json' { $json = $true }
+            '--scratch-dir' {
+                $index++
+                if ($index -ge $Arguments.Count -or -not $Arguments[$index] -or $Arguments[$index].StartsWith('-')) {
+                    throw 'Missing directory for --scratch-dir'
+                }
+                $scratch = $Arguments[$index]
+            }
             '--target-gib' {
                 $index++
                 if ($index -ge $Arguments.Count -or $Arguments[$index] -notmatch '\A[0-9]{1,4}\z' -or
@@ -103,13 +128,14 @@ function Invoke-NativeStorageCli([string[]]$Arguments) {
                 }
                 $target = [int]$Arguments[$index]
             }
-            default { throw 'Usage: basaltw storage [--apply] [--target-gib 5] [--json]' }
+            default { throw 'Usage: basaltw storage [--apply] [--target-gib 5] [--scratch-dir PATH] [--json]' }
         }
     }
-    $result = Invoke-NativeStorageCleanup -Apply:$apply -TargetGiB $target
+    $result = Invoke-NativeStorageCleanup -Apply:$apply -TargetGiB $target -ScratchDirectory $scratch
     if ($json) { Write-Host ($result | ConvertTo-Json -Depth 6) }
     else {
         Write-Host ('Disk {0}: {1:N2} GiB available; target {2} GiB' -f $result.After.Drive, ($result.After.FreeBytes / 1GB), $target)
+        if ($result.ScratchDirectory) { Write-Host ("Servicing scratch: " + $result.ScratchDirectory) }
         foreach ($action in $result.Actions) { Write-Host ("  {0}: {1} {2}" -f $action.Category, $action.Status, $action.Reason) }
         if ($apply) { Write-Host ('Net space change: {0:N2} GiB' -f ($result.NetFreedBytes / 1GB)) }
         else { Write-Host 'Preview only. Run basaltw storage --apply in an administrator terminal to clean.' }

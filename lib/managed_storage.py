@@ -88,7 +88,9 @@ def filesystem(path: str) -> dict:
     mounts = _mounts()
     mount = max((p for p in mounts if current == Path(p) or Path(p) in current.parents), key=len)
     usage = os.statvfs(current)
-    return {"path": path, "mount": mount, "free_bytes": usage.f_bavail * usage.f_frsize,
+    return {"path": path, "mount": mount, "filesystem_type": mounts[mount],
+            "total_bytes": usage.f_blocks * usage.f_frsize, "total_inodes": usage.f_files,
+            "free_bytes": usage.f_bavail * usage.f_frsize,
             "free_inodes": usage.f_favail, "inodes_supported": usage.f_files != 0}
 
 
@@ -417,9 +419,9 @@ def maintain(*, names: list[str], apply: bool, budget: int, target: int, force: 
                 continue
             validate_filesystem_path(home, must_exist=True)
             categories = CACHES
-            if (account.pw_name.startswith("build-") and home == f"{BUILD_HOMES}/{account.pw_name}"
-                    and needs_reclamation(filesystem(home), target=target, requirements=requirements)):
-                categories += BUILD_CACHES
+            if account.pw_name.startswith("build-") and home == f"{BUILD_HOMES}/{account.pw_name}":
+                categories += tuple(item for item in BUILD_CACHES if needs_reclamation(
+                    filesystem(f"{home}/{item[0]}"), target=target, requirements=requirements))
             paths = [f"{home}/{relative}" for relative, _, _ in categories]
             inventory = inspect_storage(home=home, paths=paths, timeout=10)
             if inventory["issues"] or len(inventory["candidates"]) != len(categories):
@@ -509,12 +511,43 @@ def maintain(*, names: list[str], apply: bool, budget: int, target: int, force: 
     return result
 
 
+def _maintenance_capacity(paths: list[str], *, target: int, min_inodes: int) -> dict:
+    """Observe each filesystem once for reporting and derive its cleanup target."""
+    root_mount = filesystem("/")["mount"]
+    rows = {}
+    errors = []
+    for path in dict.fromkeys(paths):
+        try:
+            row = filesystem(path)
+        except (OSError, ValueError) as exc:
+            errors.append(dict(path=path, status="unavailable", reason=str(exc)[-2000:]))
+            continue
+        if row["mount"] in rows:
+            continue
+        required_bytes, required_inodes = target, min_inodes
+        # A disk-sized reserve can never be reached on a small /tmp or /run
+        # tmpfs. Keep the ordinary reserve as a ceiling, with 10% headroom on
+        # separate memory filesystems. Setup still enforces its workload peak.
+        if row["mount"] != root_mount and row.get("filesystem_type") in {"tmpfs", "ramfs"}:
+            required_bytes = min(target, row["total_bytes"] // 10)
+            required_inodes = min(min_inodes, row["total_inodes"] // 10)
+        remaining_bytes = max(0, required_bytes - row["free_bytes"])
+        remaining_inodes = max(0, required_inodes - row["free_inodes"]) if row["inodes_supported"] else 0
+        row.update(required_bytes=required_bytes, required_inodes=required_inodes,
+                   remaining_bytes=remaining_bytes, remaining_inodes=remaining_inodes,
+                   status="below_target" if remaining_bytes or remaining_inodes else "available")
+        rows[row["mount"]] = row
+    return {"requirements": rows, "filesystems": [*rows.values(), *errors],
+            "shortfalls": [row for row in rows.values() if row["status"] == "below_target"]}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="Clean eligible caches; default is preview")
     parser.add_argument("--account", action="append", default=[], help="Additional host account (repeatable)")
     parser.add_argument("--budget-mib", type=int, default=1024, help="Combined cache budget per account")
     parser.add_argument("--target-mib", type=int, default=1536, help="Free-space target including build reserve")
+    parser.add_argument("--min-free-inodes", type=int, default=10000, help="Minimum free inodes; ignored where unsupported")
     parser.add_argument("--force", action="store_true", help="Select eligible caches even below budget")
     parser.add_argument("--pressure", action="store_true", help="Also reclaim archived journals, package downloads and unused build runtimes")
     parser.add_argument("--payloads", action="store_true", help="Also maintain installed builder/target terminal payloads")
@@ -524,26 +557,30 @@ def main() -> int:
     args = parser.parse_args()
     if os.geteuid() != 0:
         parser.error("Host maintenance must run as root")
-    if min(args.budget_mib, args.target_mib, args.payload_budget_mib, args.payload_min_age_hours) < 0:
+    if min(args.budget_mib, args.target_mib, args.min_free_inodes, args.payload_budget_mib, args.payload_min_age_hours) < 0:
         parser.error("Storage thresholds cannot be negative")
     if args.release_builder_bundles and not args.payloads:
         parser.error("Bundle release requires --payloads")
     try:
         with storage_lock(cleanup=True):
+            paths = ["/", BUILD_HOMES]
+            for account in accounts(args.account):
+                paths.append(account.pw_dir)
+                paths.extend(f"{account.pw_dir}/{relative}" for relative, _, _ in CACHES + BUILD_CACHES)
             pressure = []
             if args.pressure:
-                from lib.storage_pressure import clean_system_storage, clean_build_versions
+                from lib.storage_pressure import SYSTEM_STORAGE_PATHS, clean_system_storage, clean_build_versions
 
-                pressure = clean_system_storage(target=args.target_mib * MIB, apply=args.apply)
-            result = maintain(names=args.account, apply=args.apply, budget=args.budget_mib * MIB,
-                              target=args.target_mib * MIB, force=args.force)
+                paths.extend(SYSTEM_STORAGE_PATHS)
+            capacity = _maintenance_capacity(paths, target=args.target_mib * MIB, min_inodes=args.min_free_inodes)
+            requirements = capacity["requirements"]
             if args.pressure:
-                pressure.extend(clean_build_versions(target=args.target_mib * MIB, apply=args.apply))
+                pressure = clean_system_storage(target=0, apply=args.apply, requirements=requirements)
+            result = maintain(names=args.account, apply=args.apply, budget=args.budget_mib * MIB,
+                              target=0, force=args.force, requirements=requirements)
+            if args.pressure:
+                pressure.extend(clean_build_versions(target=0, apply=args.apply, requirements=requirements))
                 result["pressure"] = pressure
-                result["shortfalls"] = [dict(path=row["path"], mount=observed["mount"],
-                    remaining_bytes=args.target_mib * MIB - observed["free_bytes"])
-                    for row in result["shortfalls"]
-                    if (observed := filesystem(row["path"]))["free_bytes"] < args.target_mib * MIB]
         # Release the cache lease before dispatch. Target collection reacquires
         # storage -> maintenance -> admission -> artifact; builder collection
         # uses its existing worker -> input -> payload -> job lock order.
@@ -553,14 +590,13 @@ def main() -> int:
             result["roles"] = maintain_roles(apply=args.apply, budget=args.payload_budget_mib * MIB,
                 target=args.target_mib * MIB, min_age=args.payload_min_age_hours * 3600,
                 release_bundles=args.release_builder_bundles)
-            # Payload collection can resolve shortfalls first observed by cache
-            # inventory. Report final measurements, including protected storage.
-            result["shortfalls"] = [dict(path=row["path"], mount=observed["mount"],
-                remaining_bytes=args.target_mib * MIB - observed["free_bytes"])
-                for row in result["shortfalls"]
-                if (observed := filesystem(row["path"]))["free_bytes"] < args.target_mib * MIB]
+        # Include system-only mounts and inode pressure, even when no account
+        # caches exist there. Payload reclamation may have resolved a shortfall.
+        capacity = _maintenance_capacity(paths, target=args.target_mib * MIB, min_inodes=args.min_free_inodes)
+        result.update(filesystems=capacity["filesystems"], shortfalls=capacity["shortfalls"])
         print(json.dumps(result, indent=2))
-        return int(bool(result["shortfalls"] or any(row["status"] in {"failed", "deferred_or_failed"}
+        return int(bool(result["shortfalls"] or any(row["status"] == "unavailable" for row in result["filesystems"])
+            or any(row["status"] in {"failed", "deferred_or_failed"}
             for row in result.get("pressure", [])) or any(
             row.get("status") == "deferred_or_failed" or row.get("remaining_bytes") or row.get("remaining_budget_bytes")
             for row in result.get("roles", [])) or any(

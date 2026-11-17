@@ -393,6 +393,19 @@ without the scheduled task's usual 30-day grace period. It never uses
 reboot normally and retry. The command reports reboot requirements without
 restarting Windows. Servicing can take several minutes; leave the terminal open.
 
+When the system disk is short on temporary workspace, prepare an empty directory
+on another local healthy NTFS volume and select it for
+[servicing scratch files](https://learn.microsoft.com/en-us/powershell/module/dism/repair-windowsimage#-scratchdirectory):
+
+```powershell
+basaltw storage --apply --scratch-dir 'F:\servicing-scratch'
+```
+
+The directory must already exist and be empty. Linked directories and network
+paths are rejected. The command validates it before cleanup and again before
+servicing. This moves servicing workspace; Windows still needs enough space on
+the system volume to finish the operation.
+
 Capacity is rechecked between operations. Results include before/after free
 space, net space change, individual failures and an unmet target. Concurrent
 disk use can affect that net change; it is not a reclaimable-size estimate.

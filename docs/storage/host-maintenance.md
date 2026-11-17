@@ -29,6 +29,7 @@ sudo python3 -m lib.managed_storage --apply
 sudo python3 -B -m lib.managed_storage --pressure
 sudo python3 -B -m lib.managed_storage --pressure --apply
 sudo python3 -m lib.managed_storage --account developer --budget-mib 768 --target-mib 2048
+sudo python3 -m lib.managed_storage --min-free-inodes 20000
 sudo python3 -B -m lib.managed_storage --payloads
 sudo python3 -B -m lib.managed_storage --payloads --apply
 ```
@@ -37,6 +38,10 @@ Wheel installations also provide `basaltw-storage` with the same arguments.
 Output is JSON: per-account candidates include exact paths, UID ownership,
 allocated bytes, category, rebuild cost, status and free bytes/inodes before and
 after. Native failures are reported per candidate and do not abort other accounts.
+The final `filesystems` section reports capacity once per observed mount, including
+remaining byte and inode shortfalls. Pressure mode includes system-only mounts
+such as a separate `/tmp`. Unavailable observations and unmet targets cause a
+nonzero exit, including when payload cleanup could not resolve them.
 Partial inventories, linked cache roots, nested mounts, mixed ownership and
 hardlinks defer cleanup. Internal symlinks also defer ordinary native caches;
 the disposable build paths described below unlink them without following them.
@@ -44,7 +49,10 @@ Allocated usage is an observation, not guaranteed reclaimable space.
 Shared extents and other concurrent disk users can change the measured savings.
 
 The default combined cache budget is 1024 MiB **per account**; the free-space
-target is 1536 MiB on each candidate's filesystem. A cache is selected when the
+target is 1536 MiB, with 10,000 free inodes (`--min-free-inodes`), on each
+candidate's filesystem. On separate non-root tmpfs/ramfs mounts, maintenance caps
+each target at 10% of the filesystem's total bytes or inodes. Setup still enforces
+its configured workload estimates. A cache is selected when the
 account exceeds its budget or its filesystem falls below the target. `--force`
 selects all eligible candidates. Before setup starts, a failed capacity check
 triggers one pressure cleanup pass, under exclusive storage ownership. Setup then
@@ -79,13 +87,15 @@ lock so it remains held if the launcher exits unexpectedly. Missing or incomplet
 post-cleanup measurements are failures, rather than successful reclamation.
 
 Managed build accounts use additional disposable paths when their filesystem is
-below the free-space target (or below setup's inode requirement): `.npm/_logs`, `.npm/_npx`, `go/pkg/mod`, `.cache/uv`
+below the free-space or inode target: `.npm/_logs`, `.npm/_npx`, `go/pkg/mod`, `.cache/uv`
 and `.cache/pip`. This discards npm diagnostics, downloaded tools and modules,
 including Go toolchains. Subsequent builds download them again and may take
 longer. For exact managed build homes only, a failed native cache command falls
 back to deleting its validated cache directory as the owning account. Read-only
 Go cache directories are made writable first. Sources, configuration and other
 home content remain outside this policy. Missing homes are reported as absent.
+Each additional cache is selected using its own filesystem's capacity, including
+when its home has space available on another mount.
 
 `--pressure` also cleans apt package archives and rotates/vacuums systemd journals
 to 64 MiB and seven days on filesystems below the target. Persistent journals in
@@ -103,8 +113,9 @@ of each installed major and every exact or partial version selected by an NVM
 alias. Versions referenced by running processes, unsafe inventories and busy
 runtime locks defer deletion. Removed versions include their installed global
 packages. Current services stay running; application data and deployed releases
-are preserved. Pressure cleanup is automatic before a setup refused for capacity;
-the daily timer continues its ordinary cache and payload policy. Manual preview
+are preserved. Pressure cleanup is automatic before a setup refused for capacity
+and in the daily timer, alongside its ordinary cache and payload policy. Existing
+installations receive the timer change on their next setup. Manual preview
 does not change logs or runtime directories.
 
 ## Managed build payloads
@@ -196,8 +207,8 @@ and verify the workload's actual peak before lowering estimates.
 
 A failed preflight reports phase, path, mount, available bytes/inodes, requirements
 and bounded managed-build-home storage measurements. Cleanup reports any remaining
-byte shortfall and exits unsuccessfully when its target cannot be reached; it does
-not remove deployed releases, databases or swap to satisfy policy. Pressure
+byte or inode shortfall and exits unsuccessfully when its target cannot be reached;
+it does not remove deployed releases, databases or swap to satisfy policy. Pressure
 cleanup can remove the unused older build runtimes described above.
 The total reported for managed build homes includes retained runtimes and other
 protected files; it is not a reclaimable-byte estimate. If setup still refuses,

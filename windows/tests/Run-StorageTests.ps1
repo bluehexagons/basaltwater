@@ -17,21 +17,42 @@ function Assert-Throws([scriptblock]$Action, [string]$Pattern) {
 
 # Exercise native option boundaries without importing servicing modules.
 & {
-    $script:Imported = @(); $script:Delivery = $false; $script:Components = $false
+    $script:ScratchExists = $true; $script:ScratchEntries = @(); $script:Unsafe = $false
+    function Resolve-NativeStorageRoot($Path) {
+        if ($script:Unsafe) { throw 'Unsafe linked storage path' }
+        return $Path
+    }
+    function Test-Path($LiteralPath, $PathType) { return $script:ScratchExists }
+    function Get-ChildItem($LiteralPath, [switch]$Force, $ErrorAction) { return $script:ScratchEntries }
+    Assert-True ((Resolve-NativeCleanupScratch 'F:\servicing scratch') -eq 'F:\servicing scratch') 'Scratch validation changed the path'
+    $script:ScratchEntries = @('personal.txt')
+    Assert-Throws { Resolve-NativeCleanupScratch 'F:\servicing scratch' } 'empty directory'
+    $script:ScratchEntries = @(); $script:ScratchExists = $false
+    Assert-Throws { Resolve-NativeCleanupScratch 'F:\missing' } 'existing empty'
+    $script:Unsafe = $true
+    Assert-Throws { Resolve-NativeCleanupScratch 'F:\linked' } 'Unsafe linked'
+}
+
+& {
+    $script:Imported = @(); $script:Delivery = $false; $script:Components = $false; $script:NativeScratch = ''
+    function Resolve-NativeCleanupScratch($Path) { return $Path }
     function Import-Module($Name, $ErrorAction) { $script:Imported += $Name }
     function Delete-DeliveryOptimizationCache([switch]$Force, [switch]$IncludePinnedFiles, $ErrorAction) {
         Assert-True ($Force -and -not $IncludePinnedFiles) 'Cleanup selected pinned delivery content or prompted'
         $script:Delivery = $true
     }
     function Repair-WindowsImage([switch]$Online, [switch]$StartComponentCleanup, [switch]$ResetBase,
-                                 [switch]$NoRestart, $ErrorAction) {
+                                 [switch]$NoRestart, [string]$ScratchDirectory, $ErrorAction) {
         Assert-True ($Online -and $StartComponentCleanup -and $NoRestart -and -not $ResetBase) 'Unsafe component cleanup options'
         $script:Components = $true
+        $script:NativeScratch = $ScratchDirectory
         return [pscustomobject]@{ RestartNeeded = $true }
     }
     Assert-True (-not (Invoke-NativeStorageAction 'delivery-optimization')) 'Delivery cleanup requested a reboot'
     Assert-True (Invoke-NativeStorageAction 'superseded-components') 'Servicing reboot requirement was lost'
     Assert-True ($script:Delivery -and $script:Components -and ($script:Imported -join ',') -eq 'DeliveryOptimization,Dism') 'Native cleanup was not dispatched'
+    Invoke-NativeStorageAction 'superseded-components' -ScratchDirectory 'F:\servicing scratch' | Out-Null
+    Assert-True ($script:NativeScratch -eq 'F:\servicing scratch') 'Native servicing lost the scratch directory'
     Assert-Throws { Invoke-NativeStorageAction 'unknown' } 'Unknown'
 }
 
@@ -43,7 +64,13 @@ function Assert-Throws([scriptblock]$Action, [string]$Pattern) {
     }
     function Test-NativeStorageAdministrator { $script:AdminChecks++; return $script:Admin }
     function Test-NativeStorageRebootPending { return $script:Pending }
-    function Invoke-NativeStorageAction($Category) {
+    $script:Scratch = ''; $script:BadScratch = $false
+    function Resolve-NativeCleanupScratch($Path) {
+        if ($script:BadScratch) { throw 'Invalid scratch directory' }
+        return $Path
+    }
+    function Invoke-NativeStorageAction($Category, $ScratchDirectory) {
+        $script:Scratch = $ScratchDirectory
         $script:Calls += $Category
         if ($script:FailDelivery -and $Category -eq 'delivery-optimization') { throw 'fixture cleanup failure' }
         $script:Free += $script:Gain
@@ -75,15 +102,24 @@ function Assert-Throws([scriptblock]$Action, [string]$Pattern) {
     Assert-True ($pending.Actions[1].Status -eq 'deferred' -and $pending.RebootRequired -and
         ($script:Calls -join ',') -eq 'delivery-optimization') 'Pending servicing did not defer component cleanup'
 
+    $script:BadScratch = $true; $script:Calls = @()
+    Assert-Throws { Invoke-NativeStorageCleanup -Apply -ScratchDirectory 'F:\unsafe' } 'Invalid scratch'
+    Assert-True ($script:Calls.Count -eq 0) 'Invalid scratch allowed native cleanup before validation'
+    $script:BadScratch = $false
+
     foreach ($arguments in @(@('--unknown'), @('--apply','--apply'), @('--target-gib'),
-        @('--target-gib','0'), @('--target-gib','1025'), @('--target-gib','1.5'), @('--target-gib',"5`n"))) {
-        Assert-Throws { Invoke-NativeStorageCli -Arguments $arguments } 'Usage:|Duplicate|integer'
+        @('--target-gib','0'), @('--target-gib','1025'), @('--target-gib','1.5'), @('--target-gib',"5`n"),
+        @('--scratch-dir'), @('--scratch-dir','--apply'))) {
+        Assert-Throws { Invoke-NativeStorageCli -Arguments $arguments } 'Usage:|Duplicate|integer|Missing directory'
     }
     $response = @(Invoke-NativeStorageCli -Arguments @('--json') 6>&1)
     $json = ($response[0].ToString() | ConvertFrom-Json)
     Assert-True ($response[-1] -eq 0 -and -not $json.Applied -and $json.Actions.Count -eq 2) 'JSON preview lost its result or exit code'
     $response = @(Invoke-NativeStorageCli -Arguments @('--apply','--json','--target-gib','10') 6>&1)
     Assert-True ($response[-1] -eq 1 -and ($response[0].ToString() | ConvertFrom-Json).TargetBytes -eq 10GB) 'Unmet target or native failure returned success'
+    $response = @(Invoke-NativeStorageCli -Arguments @('--apply','--json','--scratch-dir','F:\servicing scratch') 6>&1)
+    Assert-True (($response[0].ToString() | ConvertFrom-Json).ScratchDirectory -eq 'F:\servicing scratch' -and
+        $script:Scratch -eq 'F:\servicing scratch') 'CLI lost the literal scratch directory in its result or dispatch'
 }
 
 # The public dispatch must load the installed source helper before parsing.
