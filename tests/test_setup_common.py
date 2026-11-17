@@ -832,7 +832,7 @@ class TestCloneRepository(unittest.TestCase):
 
             run_results = [
                 MagicMock(returncode=0),
-                MagicMock(returncode=0, stdout="origin/main\n"),
+                MagicMock(returncode=0),
                 MagicMock(returncode=0),
                 MagicMock(returncode=0),
                 MagicMock(returncode=0),
@@ -851,10 +851,11 @@ class TestCloneRepository(unittest.TestCase):
 
         self.assertEqual(result, (os.path.join(work_dir, repository_stage_name(git_url)), "abc123"))
         commands = [call.args[0] for call in mock_run.call_args_list]
-        self.assertIn(["git", "-C", cache_repo, "reset", "--hard", "origin/main"], commands)
+        self.assertEqual(commands[1], ["git", "-C", cache_repo, "remote", "set-head", "origin", "--auto"])
+        self.assertIn(["git", "-C", cache_repo, "reset", "--hard", "refs/remotes/origin/HEAD"], commands)
         self.assertIn(["git", "-C", cache_repo, "clean", "-fdx"], commands)
         self.assertLess(
-            commands.index(["git", "-C", cache_repo, "reset", "--hard", "origin/main"]),
+            commands.index(["git", "-C", cache_repo, "reset", "--hard", "refs/remotes/origin/HEAD"]),
             commands.index(["git", "-C", cache_repo, "clean", "-fdx"]),
         )
         foreground = ["-c", "maintenance.autoDetach=false", "-c", "gc.autoDetach=false"]

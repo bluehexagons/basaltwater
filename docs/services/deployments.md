@@ -38,7 +38,10 @@ basaltw setup server_web web.example.com deploy \
 
 Each source selector receives its own cache and upload path. Setup fetches the
 selected ref on every run and stops if it is missing, including during dry runs.
-Without a selector, deployments continue to follow the repository's default branch.
+Without a selector, every cache refresh checks the repository's current default
+branch, including changes to that default since the cache was created. If Git
+cannot determine it, setup stops instead of using a stale branch. Empty
+repositories and clones without a checked-out HEAD commit are also refused.
 
 For ordinary target builds, cache refresh and staging share a repository lock.
 Automatic Git maintenance finishes in the foreground, and staging uses Git's

@@ -198,31 +198,20 @@ def _refresh_repository_cache(git_url: str, cache_path: str, repo_name: str) -> 
         print(f"  Error fetching updates: {result.stderr}")
         return False
 
+    # Fetch updates branch contents but leaves origin/HEAD pointing at the
+    # cached default. Ask the remote again rather than replaying that old ref.
     result = subprocess.run(
-        ["git", "-C", cache_path, "symbolic-ref", "refs/remotes/origin/HEAD", "--short"],
+        ["git", "-C", cache_path, "remote", "set-head", "origin", "--auto"],
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=300,
     )
-    if result.returncode == 0:
-        default_branch = result.stdout.strip()
-    else:
-        for branch in ["origin/main", "origin/master"]:
-            result = subprocess.run(
-                ["git", "-C", cache_path, "rev-parse", "--verify", branch],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if result.returncode == 0:
-                default_branch = branch
-                break
-        else:
-            print("  Error: Could not determine default branch")
-            return False
+    if result.returncode != 0:
+        print(f"  Error determining remote default branch: {result.stderr}")
+        return False
 
     for command, label in (
-        (["git", "-C", cache_path, "reset", "--hard", default_branch], "resetting"),
+        (["git", "-C", cache_path, "reset", "--hard", "refs/remotes/origin/HEAD"], "resetting"),
         (["git", "-C", cache_path, "clean", "-fdx"], "cleaning"),
     ):
         result = subprocess.run(
@@ -238,7 +227,18 @@ def _refresh_repository_cache(git_url: str, cache_path: str, repo_name: str) -> 
     return True
 
 
-def clone_repository(git_url: str, temp_dir: str, cache_dir: Optional[str] = None, dry_run: bool = False) -> Optional[tuple[str, Optional[str]]]:
+def _repository_checkout(repo_path: str) -> Optional[tuple[str, str]]:
+    """Require a checked-out commit before accepting deployment source."""
+    from lib.deploy_utils import get_git_commit_hash
+
+    commit_hash = get_git_commit_hash(repo_path)
+    if not commit_hash:
+        print("  Error: repository has no checked-out HEAD commit; refusing deployment")
+        return None
+    return repo_path, commit_hash
+
+
+def clone_repository(git_url: str, temp_dir: str, cache_dir: Optional[str] = None, dry_run: bool = False) -> Optional[tuple[str, str]]:
     from lib.deploy_utils import extract_repo_name, parse_repository_source, repository_stage_name
 
     try:
@@ -269,9 +269,7 @@ def clone_repository(git_url: str, temp_dir: str, cache_dir: Optional[str] = Non
                 return None
             if ref and not _checkout_repository_ref(clone_path, ref, shallow=True):
                 return None
-            from lib.deploy_utils import get_git_commit_hash
-
-            return (clone_path, get_git_commit_hash(clone_path))
+            return _repository_checkout(clone_path)
         except Exception as exc:
             print(f"  Error cloning repository for preflight: {exc}")
             return None
@@ -299,8 +297,7 @@ def clone_repository(git_url: str, temp_dir: str, cache_dir: Optional[str] = Non
                         print(f"  Error {label}: {result.stderr}")
                         return None
             print(f"  ✓ Staged to {clone_path}")
-            from lib.deploy_utils import get_git_commit_hash
-            return (clone_path, get_git_commit_hash(clone_path))
+            return _repository_checkout(clone_path)
         except Exception as exc:
             print(f"  Error preparing repository cache: {exc}")
             return None
@@ -320,10 +317,7 @@ def clone_repository(git_url: str, temp_dir: str, cache_dir: Optional[str] = Non
             if ref and not _checkout_repository_ref(clone_path, ref):
                 return None
             
-            from lib.deploy_utils import get_git_commit_hash
-            commit_hash = get_git_commit_hash(clone_path)
-            
-            return (clone_path, commit_hash)
+            return _repository_checkout(clone_path)
         except Exception as e:
             print(f"  Error cloning repository: {e}")
             return None
