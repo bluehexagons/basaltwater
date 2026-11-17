@@ -25,7 +25,7 @@ function Install-NativeCli([string]$Source, [switch]$Plan) {
     $metadata = Get-Content -LiteralPath (Join-Path $Source 'pyproject.toml') -Raw
     if ($metadata -notmatch '(?m)^version\s*=\s*"([A-Za-z0-9.+-]+)"\s*$') { throw 'Missing Basaltwater package version' }
     $version = $Matches[1]
-    Write-Host "Native basaltw command: $bin (help, version, info, doctor, refresh)"
+    Write-Host "Native basaltw command: $bin (help, version, info, doctor, storage, refresh)"
     if ($Plan) { return }
     New-Item -ItemType Directory -Path $bin -Force | Out-Null
     $temporary = Join-Path $bin ('basaltw-' + [guid]::NewGuid().ToString('N') + '.exe')
@@ -74,6 +74,7 @@ Native Windows commands:
   --version, version Show the installed Basaltwater version
   info [--json]      Show this account's saved native setup
   doctor [--skills] [--json]  Check selected tools, or compare installed skill bundles
+  storage [--apply] [--target-gib 5] [--json]  Preview/apply low-space system cleanup
   refresh           Update Basaltwater from main and reapply saved selections
   desktop           Native desktop status, observation, control and handoff
   desktop develop   Supervise project tasks, logs and cancellation
@@ -122,6 +123,11 @@ function Invoke-NativeCli([string[]]$Arguments) {
     }
     $command = $Arguments[0]
     $options = @($Arguments | Select-Object -Skip 1)
+    if ($command -eq 'storage') {
+        $source = Get-NativeCliSource
+        . (Join-Path $source 'windows\Storage.Common.ps1')
+        return (Invoke-NativeStorageCli -Arguments $options)
+    }
     if ($command -eq 'desktop') {
         if (-not $options.Count -or $options[0] -in @('--help','help','-h')) {
             Write-Host @'

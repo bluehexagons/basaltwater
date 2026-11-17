@@ -1,5 +1,9 @@
 # Host storage maintenance
 
+Debian hosts use the automatic recovery and daily maintenance below. CachyOS
+has [setup-time package recovery](../workstations/cachyos.md#cleanup-during-setup);
+Windows provides [explicit native storage cleanup](../workstations/windows.md#low-space-recovery).
+
 Basaltwater's Debian setup and deployment paths share a storage exclusion lock.
 This feature does not require coding-agent tooling or the web-server profile.
 Ordinary setup installs `basaltwater-storage.timer`, which checks daily with a
@@ -87,6 +91,12 @@ home content remain outside this policy. Missing homes are reported as absent.
 to 64 MiB and seven days on filesystems below the target. Persistent journals in
 `/var/log/journal` and volatile journals in `/run/log/journal` are checked and
 vacuumed separately; apt cleanup explicitly selects `/var/cache/apt/archives`.
+Pressure cleanup also runs `systemd-tmpfiles --clean` separately for `/tmp`,
+`/var/tmp` and `/var/lib/systemd/coredump` when that path's filesystem needs
+reclamation. This applies the installed system administrator's age and exclusion
+rules; it does not shorten retention or use `--remove`, `--purge` or `--boot`.
+Absent directories are skipped. Paths without an age-based cleanup rule may
+reclaim nothing. Preview lists these native operations without executing them.
 It then removes unused
 older Node versions in inactive managed build homes, retaining the newest version
 of each installed major and every exact or partial version selected by an NVM
@@ -210,6 +220,7 @@ them deliberately. Other global packages still require the ecosystem upgrade
 opt-in and automatic runtime ownership.
 
 Native command boundaries follow the [journalctl documentation](https://www.freedesktop.org/software/systemd/man/latest/journalctl.html),
+[systemd-tmpfiles documentation](https://www.freedesktop.org/software/systemd/man/latest/systemd-tmpfiles.html),
 [npm cache documentation](https://docs.npmjs.com/cli/cache/),
 [nvm documentation](https://github.com/nvm-sh/nvm), and
 [Go clean documentation](https://pkg.go.dev/cmd/go#hdr-Remove_object_files_and_cached_files).

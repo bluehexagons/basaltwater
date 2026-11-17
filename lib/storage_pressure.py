@@ -27,8 +27,19 @@ def clean_system_storage(*, target: int, apply: bool, requirements: dict[str, di
         if os.path.isdir(path):
             candidates.append(("archived-journals", path,
                 ["journalctl", f"--directory={path}", "--rotate", "--vacuum-size=64M", "--vacuum-time=7d"]))
+    # Keep the OS administrator's age and exclusion policy. In particular,
+    # --remove/--purge would discard files regardless of their retention age.
+    for path in ("/tmp", "/var/tmp", "/var/lib/systemd/coredump"):
+        if os.path.isdir(path):
+            candidates.append(("expired-system-files", path,
+                ["systemd-tmpfiles", "--clean", f"--prefix={path}"]))
     for category, path, command in candidates:
-        if not needs_reclamation(filesystem(path), target=target, requirements=requirements):
+        try:
+            needed = needs_reclamation(filesystem(path), target=target, requirements=requirements)
+        except (OSError, ValueError) as exc:
+            result.append({"category": category, "path": path, "status": "failed", "reason": str(exc)[-2000:]})
+            continue
+        if not needed:
             continue
         row = {"category": category, "path": path, "status": "preview", "command": command}
         result.append(row)

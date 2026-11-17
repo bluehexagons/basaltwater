@@ -138,9 +138,12 @@ class StorageReviewTests(unittest.TestCase):
                 pressure.os.path, "isdir", return_value=True), patch.object(pressure.subprocess, "run") as run:
             report = pressure.clean_system_storage(target=1, apply=False)
             run.assert_not_called()
-            self.assertEqual([r["status"] for r in report], ["preview"] * 3)
+            self.assertEqual([r["status"] for r in report], ["preview"] * 6)
             self.assertEqual(report[1]["command"], ["journalctl", "--directory=/var/log/journal",
                                                    "--rotate", "--vacuum-size=64M", "--vacuum-time=7d"])
+            self.assertEqual([r["command"] for r in report[3:]], [
+                ["systemd-tmpfiles", "--clean", f"--prefix={path}"]
+                for path in ("/tmp", "/var/tmp", "/var/lib/systemd/coredump")])
 
     def test_setup_tmpfs_refusal_does_not_clean_unrelated_root_filesystem(self):
         from lib import storage_pressure as pressure
@@ -163,7 +166,9 @@ class StorageReviewTests(unittest.TestCase):
             with patch.object(storage, "storage_lock", side_effect=lambda **_: nullcontext()), patch.object(
                     storage, "filesystem", side_effect=capacity), patch.object(storage, "accounts", return_value=[account]), patch.object(
                     storage, "inspect_storage", side_effect=inventory), patch.object(storage, "run_streamed") as worker, patch.object(
-                    pressure.subprocess, "run") as native, patch.object(pressure.os.path, "isdir", return_value=True), patch.dict(os.environ, {
+                    pressure.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as native, patch.object(
+                    pressure.shutil, "which", return_value="/usr/bin/systemd-tmpfiles"), patch.object(
+                    pressure.os.path, "isdir", return_value=True), patch.dict(os.environ, {
                         "BASALTWATER_STORAGE_PEAK_MIB": "512", "BASALTWATER_STORAGE_RESERVE_MIB": "512",
                         "BASALTWATER_STORAGE_MIN_INODES": "10000", "BASALTWATER_STORAGE_TMP_PEAK_MIB": "128",
                         "BASALTWATER_STORAGE_TMP_RESERVE_MIB": "64", "TMPDIR": "/tmp"}):
@@ -171,7 +176,8 @@ class StorageReviewTests(unittest.TestCase):
                     with real_storage_operation_guard("setup", ["/opt/basaltwater", "/tmp"], cleanup_accounts=[]):
                         self.fail("setup started with a full tmpfs")
                 worker.assert_not_called()
-                native.assert_not_called()
+                native.assert_called_once()
+                self.assertEqual(native.call_args.args[0], ["/usr/bin/systemd-tmpfiles", "--clean", "--prefix=/tmp"])
             self.assertEqual((cache / "compiled").read_text(), "preserve")
 
     def test_inode_pressure_selects_build_caches_and_reports_inode_shortfall(self):
@@ -205,6 +211,22 @@ class StorageReviewTests(unittest.TestCase):
                 requirements={"/": dict(required_bytes=1, required_inodes=0)})
         self.assertEqual([row["category"] for row in report], ["apt-downloads"])
         run.assert_called_once()
+
+    def test_system_pressure_keeps_cleaning_after_unavailable_filesystem(self):
+        from lib import storage_pressure as pressure
+        def capacity(path):
+            if path == "/tmp":
+                raise OSError("Temporary filesystem unavailable")
+            return dict(mount="/", free_bytes=0)
+        with patch.object(storage, "filesystem", side_effect=capacity), patch.object(
+                pressure.os.path, "isdir", return_value=True), patch.object(
+                pressure.shutil, "which", return_value="/usr/bin/fixture-cleaner"), patch.object(
+                pressure.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run:
+            report = pressure.clean_system_storage(target=1, apply=True)
+        self.assertEqual(report[3]["status"], "failed")
+        self.assertIn("unavailable", report[3]["reason"])
+        self.assertEqual([row["status"] for row in report[4:]], ["cleaned", "cleaned"])
+        self.assertEqual(run.call_count, 5)
 
     def test_failed_build_cache_reports_worker_output_and_continues(self):
         with tempfile.TemporaryDirectory() as directory:

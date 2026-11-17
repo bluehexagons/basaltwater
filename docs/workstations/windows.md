@@ -306,6 +306,7 @@ basaltw info --json
 basaltw doctor
 basaltw doctor --json
 basaltw doctor --skills --json
+basaltw storage
 basaltw refresh --dry-run
 basaltw refresh
 basaltw refresh --godot
@@ -369,6 +370,49 @@ pwsh.exe -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\Basaltwater
 The direct installer/checkout scripts also accept literal paths through
 `-StorageRoot`. For Godot project paths use its real console executable,
 available as `BASALTWATER_GODOT_EXE` for Basaltwater's managed launcher.
+
+## Low-space recovery
+
+`basaltw storage` measures the Windows system volume and previews cleanup only
+when it has less than 5 GiB available. Use an administrator PowerShell terminal
+to apply it, or choose a larger target for a planned update:
+
+```powershell
+basaltw storage --json
+basaltw storage --apply
+basaltw storage --apply --target-gib 10 --json
+```
+
+The command first clears unpinned Delivery Optimization download cache through
+the [native cache cmdlet](https://learn.microsoft.com/en-us/powershell/module/deliveryoptimization/delete-deliveryoptimizationcache),
+then runs [Windows component cleanup](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/clean-up-the-winsxs-folder)
+with `Repair-WindowsImage -Online -StartComponentCleanup -NoRestart` if more
+space is needed. Component cleanup removes superseded components immediately,
+without the scheduled task's usual 30-day grace period. It never uses
+`ResetBase`. Pending Windows Update/servicing reboots defer component cleanup;
+reboot normally and retry. The command reports reboot requirements without
+restarting Windows. Servicing can take several minutes; leave the terminal open.
+
+Capacity is rechecked between operations. Results include before/after free
+space, net space change, individual failures and an unmet target. Concurrent
+disk use can affect that net change; it is not a reclaimable-size estimate.
+Preview requires no elevation and runs no cleanup commands. Apply exits nonzero
+for a native failure or an unmet target. Missing native modules are reported
+as failures while remaining operations are still attempted.
+
+This is an explicit command, without a scheduled job or setup retry. It targets
+the system volume; development storage on another drive needs separate review.
+Repositories, builds, provider history, Downloads, the Recycle Bin, WSL disks,
+Windows Installer caches and restore points remain outside this policy. Use
+Windows Storage settings to review other categories and their retention.
+Offline policy tests mock all Windows observations and native cleanup:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\tests\Run-StorageTests.ps1
+```
+
+The complete native suite includes these tests. Live cache reclamation and
+component servicing on Windows still require native qualification.
 
 ## Verify this account
 
