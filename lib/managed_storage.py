@@ -97,14 +97,22 @@ def filesystem(path: str) -> dict:
 def preflight(phase: str, paths: list[str], *, reserve_bytes: int = 512 * MIB,
               peak_bytes: int = 512 * MIB, min_inodes: int = 10000) -> list[dict]:
     """Require an estimated peak plus a reserve independently on every mount."""
+    rows = _preflight_observations(paths, reserve_bytes=reserve_bytes, peak_bytes=peak_bytes, min_inodes=min_inodes)
+    return _check_preflight(phase, rows)
+
+
+def _preflight_observations(paths: list[str], *, reserve_bytes: int, peak_bytes: int, min_inodes: int) -> list[dict]:
     if min(reserve_bytes, peak_bytes, min_inodes) < 0:
         raise ValueError("Storage thresholds cannot be negative")
     rows = [filesystem(path) for path in dict.fromkeys(paths)]
-    failures = []
     for row in rows:
         row.update(required_bytes=reserve_bytes + peak_bytes, required_inodes=min_inodes)
-        if row["free_bytes"] < row["required_bytes"] or (row["inodes_supported"] and row["free_inodes"] < min_inodes):
-            failures.append(row)
+    return rows
+
+
+def _check_preflight(phase: str, rows: list[dict]) -> list[dict]:
+    failures = [row for row in rows if row["free_bytes"] < row["required_bytes"] or (
+        row["inodes_supported"] and row["free_inodes"] < row["required_inodes"])]
     if failures:
         totals = inspect_storage(paths=[BUILD_HOMES], timeout=5)["candidates"]
         raise StoragePreflightError(f"Storage preflight failed during {phase}: {json.dumps(failures)}; "
@@ -130,15 +138,16 @@ def needs_reclamation(observed: dict, *, target: int, requirements: dict[str, di
 def configured_preflight(phase: str, paths: list[str]) -> list[dict]:
     """Environment overrides express estimated peak usage, not guarantees."""
     temporary = {"/tmp", os.environ.get("TMPDIR", "/tmp")}
-    rows = preflight(phase, [p for p in paths if p not in temporary],
+    rows = _preflight_observations([p for p in paths if p not in temporary],
         reserve_bytes=int(os.environ.get("BASALTWATER_STORAGE_RESERVE_MIB", "512")) * MIB,
         peak_bytes=int(os.environ.get("BASALTWATER_STORAGE_PEAK_MIB", "512")) * MIB,
         min_inodes=int(os.environ.get("BASALTWATER_STORAGE_MIN_INODES", "10000")))
-    rows.extend(preflight(phase, [p for p in paths if p in temporary],
+    rows.extend(_preflight_observations([p for p in paths if p in temporary],
         reserve_bytes=int(os.environ.get("BASALTWATER_STORAGE_TMP_RESERVE_MIB", "64")) * MIB,
         peak_bytes=int(os.environ.get("BASALTWATER_STORAGE_TMP_PEAK_MIB", "128")) * MIB,
         min_inodes=int(os.environ.get("BASALTWATER_STORAGE_MIN_INODES", "10000"))))
-    return rows
+    # Report every constrained filesystem before the single recovery pass.
+    return _check_preflight(phase, rows)
 
 
 @contextmanager
@@ -151,23 +160,29 @@ def operation_guard(phase: str, paths: list[str], *, cleanup_accounts: list[str]
             try:
                 configured_preflight(phase, paths)
             except StoragePreflightError as exc:
-                requirements = {row["mount"]: row for row in exc.failures}
-                target = max([1536 * MIB, *(row["required_bytes"] for row in exc.failures)])
+                requirements = {}
+                for row in exc.failures:
+                    reserve = 1536 * MIB
+                    if row["mount"] != "/" and row.get("filesystem_type") in {"tmpfs", "ramfs"}:
+                        reserve = min(reserve, row["total_bytes"] // 10)
+                    required = requirements.setdefault(row["mount"], dict(required_bytes=0, required_inodes=0))
+                    required["required_bytes"] = max(required["required_bytes"], reserve, row["required_bytes"])
+                    required["required_inodes"] = max(required["required_inodes"], row["required_inodes"])
             else:
-                target = None
-        if target is not None:
+                requirements = None
+        if requirements is not None:
             print("Storage is below setup requirements; running one disposable-cache cleanup pass...", flush=True)
             try:
                 with storage_lock(cleanup=True):
                     from lib.storage_pressure import clean_system_storage
 
-                    for row in clean_system_storage(target=target, apply=True, requirements=requirements):
+                    for row in clean_system_storage(target=0, apply=True, requirements=requirements):
                         print(f"  {row['category']}: {row['status']}" + (f" ({row['reason']})" if row.get("reason") else ""))
                     result = maintain(names=cleanup_accounts, apply=True, budget=1024 * MIB,
-                                      target=target, requirements=requirements)
+                                      target=0, requirements=requirements)
                     from lib.storage_pressure import clean_build_versions
 
-                    for row in clean_build_versions(target=target, apply=True, requirements=requirements):
+                    for row in clean_build_versions(target=0, apply=True, requirements=requirements):
                         print(f"  {row['path']}: {row['status']}" + (f" ({row['reason']})" if row.get("reason") else ""))
             except (OSError, ValueError) as exc:
                 print(f"  Warning: cache maintenance deferred or failed: {exc}")
@@ -567,6 +582,9 @@ def main() -> int:
             for account in accounts(args.account):
                 paths.append(account.pw_dir)
                 paths.extend(f"{account.pw_dir}/{relative}" for relative, _, _ in CACHES + BUILD_CACHES)
+                if (args.pressure and account.pw_name.startswith("build-")
+                        and account.pw_dir == f"{BUILD_HOMES}/{account.pw_name}"):
+                    paths.append(f"{account.pw_dir}/.nvm/versions/node")
             pressure = []
             if args.pressure:
                 from lib.storage_pressure import SYSTEM_STORAGE_PATHS, clean_system_storage, clean_build_versions

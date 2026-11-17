@@ -119,9 +119,10 @@ def clean_build_versions(*, target: int, apply: bool, requirements: dict[str, di
         if not account.pw_name.startswith("build-") or home != f"{BUILD_HOMES}/{account.pw_name}":
             continue
         root = Path(home) / ".nvm"
+        parent = root / "versions/node"
         descriptor = None
         try:
-            if not root.exists() or not needs_reclamation(filesystem(str(root)), target=target, requirements=requirements):
+            if not parent.exists() or not needs_reclamation(filesystem(str(parent)), target=target, requirements=requirements):
                 continue
             if activity(account.pw_uid):
                 continue
@@ -139,9 +140,6 @@ def clean_build_versions(*, target: int, apply: bool, requirements: dict[str, di
                 if not stat.S_ISREG(info.st_mode) or info.st_uid != account.pw_uid or info.st_mode & 0o077 or info.st_nlink != 1:
                     raise ValueError("Unsafe Node runtime lock")
                 fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            parent = root / "versions/node"
-            if not parent.exists():
-                continue
             if not safe_cache_path(str(parent), home, account.pw_uid):
                 raise ValueError("Unsafe Node versions directory")
             versions = []

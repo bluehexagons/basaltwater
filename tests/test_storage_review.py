@@ -75,8 +75,11 @@ class StorageReviewTests(unittest.TestCase):
             for current, _dirs, _files in os.walk(home):
                 Path(current).chmod(0o700)
             account = SimpleNamespace(pw_name="build-fixture", pw_uid=os.geteuid(), pw_gid=os.getegid(), pw_dir=str(home))
+            def capacity(path):
+                runtime = Path(path).is_relative_to(parent)
+                return dict(mount="/runtimes" if runtime else "/", free_bytes=0 if runtime else 2)
             with patch.object(storage, "BUILD_HOMES", directory), patch.object(storage, "accounts", return_value=[account]), patch.object(
-                    storage, "activity", return_value=None), patch.object(storage, "filesystem", return_value={"free_bytes": 0}), patch.object(
+                    storage, "activity", return_value=None), patch.object(storage, "filesystem", side_effect=capacity), patch.object(
                     pressure, "_process_uids", return_value={os.geteuid()}), patch.object(
                     pressure, "process_uses_path", side_effect=lambda path, **_: path.endswith("v24.1.0")):
                 with patch.object(storage, "filesystem", side_effect=lambda path: dict(

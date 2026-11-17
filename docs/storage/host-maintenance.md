@@ -58,8 +58,12 @@ selects all eligible candidates. Before setup starts, a failed capacity check
 triggers one pressure cleanup pass, under exclusive storage ownership. Setup then
 rechecks capacity under its normal shared lock. It never replays setup steps or
 repeats cleanup on a later build failure. Unsafe or active
-caches remain protected; insufficient space still stops setup. The cleanup target
-is at least 1536 MiB, increased to the configured setup requirement when larger.
+caches remain protected; insufficient space still stops setup. Preflight reports
+all failing temporary and ordinary paths together, so the single cleanup pass can
+address them all. Each disk's cleanup target is at least 1536 MiB, increased to
+that filesystem's configured setup requirement when larger. Separate non-root
+memory filesystems cap that reserve at 10% of capacity while still meeting their
+full setup requirement. Paths sharing a mount retain the strictest requirement.
 Automatic cleanup selects only filesystems reported by the failed preflight and
 also responds to insufficient free inodes. A full separate tmpfs does not trigger
 cache or log deletion on an unrelated disk. Cleanup still cannot enlarge a tmpfs
@@ -112,7 +116,9 @@ older Node versions in inactive managed build homes, retaining the newest versio
 of each installed major and every exact or partial version selected by an NVM
 alias. Versions referenced by running processes, unsafe inventories and busy
 runtime locks defer deletion. Removed versions include their installed global
-packages. Current services stay running; application data and deployed releases
+packages. Runtime capacity is checked at `.nvm/versions/node`, including when it
+uses a separate mount from the build home; pressure reports include that mount.
+Current services stay running; application data and deployed releases
 are preserved. Pressure cleanup is automatic before a setup refused for capacity
 and in the daily timer, alongside its ordinary cache and payload policy. Existing
 installations receive the timer change on their next setup. Manual preview

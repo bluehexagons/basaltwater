@@ -34,8 +34,9 @@ class StorageManagementTests(unittest.TestCase):
 
         def clean(**options):
             self.assertEqual(held, [True])
-            self.assertEqual(options["target"], 2048 * storage.MIB)
+            self.assertEqual(options["target"], 0)
             self.assertTrue(options["apply"])
+            self.assertEqual(options["requirements"]["/"]["required_bytes"], 2048 * storage.MIB)
             self.assertEqual(options["requirements"]["/"]["required_inodes"], 10000)
             return {"accounts": []}
 
@@ -50,6 +51,46 @@ class StorageManagementTests(unittest.TestCase):
                 self.assertEqual(held, [False])
             maintain.assert_called_once()
             self.assertEqual(check.call_count, 2)
+
+    def test_setup_recovery_handles_all_mounts_and_keeps_the_strictest_requirement(self):
+        from tests import real_storage_operation_guard
+        for separate in (True, False):
+            with self.subTest(separate=separate):
+                recovered = False
+                temporary = "/scratch-tmp"
+                def capacity(path):
+                    memory = path == temporary and separate
+                    return dict(path=path, mount=temporary if memory else "/healthy" if path == "/healthy" else "/",
+                                filesystem_type="tmpfs" if memory else "ext4", total_bytes=512 * storage.MIB if memory else 8 * 1024**3,
+                                free_bytes=(256 * storage.MIB if memory else 4 * 1024**3) if recovered or path == "/healthy" else 0,
+                                free_inodes=20000, inodes_supported=True)
+                def cleanup(**options):
+                    nonlocal recovered
+                    required = options["requirements"]
+                    self.assertEqual(options["target"], 0)
+                    self.assertEqual(set(required), {"/", temporary} if separate else {"/"})
+                    self.assertEqual(required["/"]["required_bytes"], 3072 * storage.MIB)
+                    if separate:
+                        self.assertEqual(required[temporary]["required_bytes"], 192 * storage.MIB)
+                    recovered = True
+                    return []
+                with patch.object(storage, "storage_lock", side_effect=lambda **_: nullcontext()), patch.object(
+                        storage, "filesystem", side_effect=capacity), patch.object(
+                        storage, "inspect_storage", return_value={"candidates": []}) as inventory, patch.object(
+                        storage, "maintain", return_value={"accounts": []}) as caches, patch(
+                        "lib.storage_pressure.clean_system_storage", side_effect=cleanup) as native, patch(
+                        "lib.storage_pressure.clean_build_versions", return_value=[]) as versions, patch.dict(os.environ, {
+                            "TMPDIR": temporary, "BASALTWATER_STORAGE_PEAK_MIB": "2560", "BASALTWATER_STORAGE_RESERVE_MIB": "512",
+                            "BASALTWATER_STORAGE_TMP_PEAK_MIB": "128", "BASALTWATER_STORAGE_TMP_RESERVE_MIB": "64",
+                            "BASALTWATER_STORAGE_MIN_INODES": "10000"}):
+                    with real_storage_operation_guard("setup", ["/srv", temporary, "/healthy"], cleanup_accounts=[]):
+                        self.assertTrue(recovered)
+                    inventory.assert_called_once()
+                    native.assert_called_once()
+                    caches.assert_called_once()
+                    versions.assert_called_once()
+                    self.assertEqual(caches.call_args.kwargs["requirements"], native.call_args.kwargs["requirements"])
+                    self.assertEqual(versions.call_args.kwargs["requirements"], native.call_args.kwargs["requirements"])
 
     def test_setup_refuses_persistent_pressure_without_retrying_setup(self):
         from contextlib import nullcontext
@@ -189,6 +230,22 @@ class StorageManagementTests(unittest.TestCase):
         result = json.loads(output.getvalue())
         self.assertEqual(result["shortfalls"], [])
         self.assertEqual(result["filesystems"][0]["free_inodes"], 20000)
+
+    def test_pressure_observes_separate_build_runtime_mount(self):
+        account = SimpleNamespace(pw_name="build-fixture", pw_dir=f"{storage.BUILD_HOMES}/build-fixture")
+        def capacity(path):
+            runtime = path == f"{account.pw_dir}/.nvm/versions/node"
+            return dict(path=path, mount="/runtimes" if runtime else "/", free_bytes=0 if runtime else 4 * 1024**3,
+                        free_inodes=20000, inodes_supported=True)
+        with patch.object(sys, "argv", ["maintenance", "--pressure"]), patch.object(
+                storage.os, "geteuid", return_value=0), patch.object(storage, "accounts", return_value=[account]), patch.object(
+                storage, "storage_lock", return_value=nullcontext()), patch.object(storage, "filesystem", side_effect=capacity), patch.object(
+                storage, "maintain", return_value=dict(accounts=[], shortfalls=[])), patch(
+                "lib.storage_pressure.clean_system_storage", return_value=[]), patch(
+                "lib.storage_pressure.clean_build_versions", return_value=[]) as versions, patch("sys.stdout", new_callable=io.StringIO) as output:
+            self.assertEqual(storage.main(), 1)
+        self.assertEqual(set(versions.call_args.kwargs["requirements"]), {"/", "/runtimes"})
+        self.assertEqual(json.loads(output.getvalue())["shortfalls"][0]["mount"], "/runtimes")
 
     def test_daily_job_enables_pressure_recovery_with_existing_payload_retention(self):
         from common.storage_maintenance_steps import configure_storage_maintenance
