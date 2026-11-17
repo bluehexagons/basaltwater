@@ -7,7 +7,10 @@ from contextlib import redirect_stdout
 from copy import deepcopy
 from io import StringIO
 import json
+import os
 from pathlib import Path
+import struct
+import subprocess
 import tempfile
 import time
 import unittest
@@ -15,6 +18,7 @@ from unittest.mock import Mock, call, patch
 
 from desktop import client, native_session as native, pointer_gestures as gestures
 from desktop import control_state
+from desktop import session_runtime as runtime
 from desktop.evidence import Recorder
 from desktop.observations import CaptureObservation
 from desktop.portal import Portal, REMOTE
@@ -308,6 +312,110 @@ class PointerGestureTests(unittest.TestCase):
                 patch.object(native.subprocess, "Popen") as launch, self.assertRaisesRegex(ValueError, "stop/start --touch"):
             native.start(touch=True)
         launch.assert_not_called()
+
+
+class InputCaptureAttributionTests(unittest.TestCase):
+    def setUp(self):
+        self.home = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.enterContext(patch.object(Path, "home", return_value=self.home))
+        self.enterContext(patch.dict(os.environ, DISPLAY=":99"))
+        self.enterContext(patch.object(runtime, "geometry", return_value=[10, 20]))
+        self.enterContext(patch.object(runtime, "window_manager_ready", return_value=True))
+        self.enterContext(patch("desktop.evidence.revision", return_value={}))
+        self.enterContext(patch.object(runtime, "run_tool", side_effect=self.x_tool))
+        self.enterContext(patch.object(native.subprocess, "run", side_effect=self.portal_capture))
+        self.interrupted = False
+        self.counter = 0
+
+    @staticmethod
+    def png_header():
+        return b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + struct.pack(">II", 10, 20)
+
+    def x_tool(self, argv, **kwargs):
+        if argv[0] == "scrot":
+            Path(argv[-1]).write_bytes(self.png_header())
+        elif self.interrupted:
+            raise RuntimeError("private backend diagnostic")
+        return "X=1\nY=2"
+
+    def portal_capture(self, argv, **kwargs):
+        os.write(kwargs["pass_fds"][-1], self.png_header())
+        return subprocess.CompletedProcess(argv, 0, json.dumps({"geometry": [10, 20]}))
+
+    def observe(self, session):
+        self.counter += 1
+        return session.handle({"action": "screenshot", "generation": session.generation,
+            "output": str(self.home / f"capture-{self.counter}.png")})
+
+    def move(self, session, observed, **changes):
+        return session.handle({"action": "input", "kind": "move", "x": 1, "y": 2,
+            "generation": session.generation, "geometry": [10, 20],
+            "control_revision": session.control_revision, "observation_id": observed["observation_id"], **changes})
+
+    def test_failed_attempt_supersedes_success_in_capture_and_journal_then_recovers(self):
+        for backend in ("native", "debian"):
+            for stage, delivery in (("before-input", "not-sent"), ("input-dispatch", "unknown")):
+                with self.subTest(backend=backend, stage=stage):
+                    self.interrupted = False
+                    portal = Mock(fd=42)
+                    if backend == "native":
+                        session = native.NativeSession(portal)
+                        session.state, session.node, session.logical_size = "running", 17, [10, 20]
+                    else:
+                        session = runtime.DesktopSession({"desktop": "xfce", "username": "agent"}, Mock(poll=lambda: None))
+                    recorder = Recorder(str(self.home), session.generation)
+                    session.evidence = recorder
+                    completed = self.move(session, self.observe(session))
+                    fresh = self.observe(session)
+                    changes = {"geometry": [11, 20]} if stage == "before-input" else {}
+                    if stage == "input-dispatch":
+                        self.interrupted = True
+                        portal.notify.side_effect = RuntimeError("private backend diagnostic")
+                    with self.assertRaises((ValueError, RuntimeError)) as failure:
+                        self.move(session, fresh, **changes)
+                    failed = failure.exception.receipt
+                    observed = self.observe(session)
+                    latest = observed["last_input"]
+                    self.assertNotEqual(latest["input_id"], completed["input_id"])
+                    self.assertEqual(latest["input_id"], failed["input_id"])
+                    self.assertEqual(latest["dispatch_stage"], stage)
+                    self.assertEqual(latest["input_delivery"], delivery)
+                    self.assertNotIn("input_completed_at", latest)
+                    self.assertNotIn("input_completed_monotonic_ns", latest)
+                    self.assertNotIn("private backend diagnostic", json.dumps(latest))
+                    self.assertEqual(recorder.data["events"][-1]["related_input_id"], failed["input_id"])
+                    self.interrupted = False
+                    portal.notify.side_effect = None
+                    recovered = self.move(session, observed)
+                    final = self.observe(session)
+                    self.assertEqual(final["last_input"]["input_id"], recovered["input_id"])
+                    self.assertEqual(final["last_input"]["input_delivery"], "completed")
+                    self.assertEqual(final["last_input"]["input_completed_at"], recovered["input_completed_at"])
+                    self.assertEqual(recorder.data["events"][-1]["related_input_id"], recovered["input_id"])
+
+    def test_native_older_input_finishing_after_a_newer_refusal_keeps_newer_identity(self):
+        for interrupted in (False, True):
+            with self.subTest(interrupted=interrupted):
+                session = native.NativeSession(Mock(fd=42))
+                session.state, session.node, session.logical_size = "running", 17, [10, 20]
+                observed = self.observe(session)
+                refused = []
+
+                def admit_during_hold(milliseconds, payload):
+                    with self.assertRaises(DesktopRequestError) as failure:
+                        self.move(session, observed)
+                    refused.append(failure.exception.receipt)
+                    if interrupted:
+                        raise RuntimeError("client disconnected")
+
+                with patch.object(session, "hold", side_effect=admit_during_hold):
+                    if interrupted:
+                        with self.assertRaises(DesktopRequestError):
+                            self.move(session, observed, kind="click")
+                    else:
+                        self.move(session, observed, kind="click")
+                self.assertEqual(self.observe(session)["last_input"]["input_id"], refused[0]["input_id"])
+                self.assertEqual(session.last_input["input_delivery"], "not-sent")
 
 
 class TouchPortalTests(unittest.TestCase):

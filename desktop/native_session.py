@@ -24,7 +24,7 @@ from desktop.observations import (
 )
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.validation import validate_filesystem_path
-from desktop.receipts import DesktopRequestError, input_failure
+from desktop.receipts import DesktopRequestError, input_failure, input_snapshot
 
 MAX_MESSAGE = 65536
 SESSION_SECONDS = 0
@@ -516,6 +516,7 @@ class NativeSession:
         except Exception as exc:
             if payload.get("action") == "input":
                 result = input_failure(exc, payload, stage=payload.get("_dispatch_stage", "before-input"))
+                self.remember_input(result)
                 self.record_evidence(payload, result)
                 raise DesktopRequestError(result) from exc
             result = dict(getattr(exc, "receipt", {"error": str(exc), "reason": "request-failed"}))
@@ -776,6 +777,7 @@ class NativeSession:
                 self.captured = started
                 self.capture_max_age = max_age
                 self.observation = CaptureObservation(started, max_age, geometry, region=expected)
+                payload["related_input_id"] = self.last_input.get("input_id") if self.last_input else None
                 return {**self.snapshot_status(), "output": output, "image_geometry": image_geometry, "image_origin": origin,
                     "coordinate_space": "monitor",
                     "captured_at": datetime.now(timezone.utc).isoformat(), "changed": changed,
@@ -812,6 +814,14 @@ class NativeSession:
             payload.setdefault("_input_receipt", {}).update(
                 input_dispatch_at=datetime.now(timezone.utc).isoformat(),
                 input_dispatch_monotonic_ns=time.monotonic_ns())
+
+    def remember_input(self, result):
+        with self.lock:
+            # Holds/capture yield the lock. An older result must not replace a
+            # newer refusal admitted while that request was still in flight.
+            if (self.last_input is None or result["input_received_monotonic_ns"] >=
+                    self.last_input.get("input_received_monotonic_ns", 0)):
+                self.last_input = input_snapshot(result)
 
     def input(self, payload):
         client.validate_text_delay(payload)
@@ -926,14 +936,15 @@ class NativeSession:
                         raise RuntimeError("Key release failed; native control stopped") from release_error
         else:
             raise ValueError("Unknown native input kind")
-        self.last_input = {"input_id": payload.get("input_id"),
-                           **payload.get("_input_receipt", {}),
-                           "input_completed_at": datetime.now(timezone.utc).isoformat(),
-                           "input_completed_monotonic_ns": time.monotonic_ns()}
-        return {"generation": self.generation, "geometry": self.geometry, **self.last_input,
+        result = {"generation": self.generation, "geometry": self.geometry,
+                **payload.get("_input_receipt", {}),
+                "input_completed_at": datetime.now(timezone.utc).isoformat(),
+                "input_completed_monotonic_ns": time.monotonic_ns(),
                 "input_id": payload.get("input_id"), "dispatch_stage": "input-completed", "input_delivery": "completed",
                 **({"observation_id": payload["observation_id"]} if payload.get("observation_id") is not None else {}),
                 **({"submitted_characters": len(keys)} if kind == "text" else {})}
+        self.remember_input(result)
+        return result
 
 
 def serve(*, remember=False, session_seconds=SESSION_SECONDS, touch=False):

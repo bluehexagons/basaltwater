@@ -174,7 +174,25 @@ The live run also found and fixed GTK/GDK version selection and generic mouse
 event button extraction in game-testing's probe. Original failed attempts and
 raw evidence remain private. The finalized recorder verified 30 of 30 captures.
 This qualifies the observed fixture paths, not target-game touch behavior,
-scaled/multiple monitors, raw pointer lock, held-touch interruption, hardware or
+scaled/multiple monitors, raw pointer lock, hardware or
 another platform. Debian XRDP still has no true multitouch route here.
+
+The owner's next refresh to `b119646c` restored the saved touchscreen grant and
+passed a crop-boundary rejection/recovery and a held two-contact client
+disconnect. The invalid later frame sent no events. Disconnect after two
+observed downs produced two consumer ups, no held helper contacts and an
+`unknown` partial-dispatch receipt; the planned later motion did not complete.
+Clustered ten-contact cancellation reproduced, followed by a clean two-contact
+gesture in the same consumer. The probe exited normally. All eight retained
+captures verified; the intentionally interrupted action correctly keeps the
+finalized journal unhealthy with one uncertain input event.
+
+That check exposed stale screenshot attribution after failed input. Updated
+Linux workers retain the latest attempt's ID, stage and delivery in
+[`last_input`](desktop-observations.md#native-input-failure-receipts), including
+refusals and interrupted dispatch, without copying backend error text. Offline
+regressions cover both workers; these code changes need a refreshed worker for
+live attribution acceptance. Human takeover, supervisor loss and the other
+platform/game boundaries remain separate checks.
 
 Protocol reference: [RemoteDesktop portal methods and device grants](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.RemoteDesktop.html).
