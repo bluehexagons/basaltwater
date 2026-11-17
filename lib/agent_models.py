@@ -69,6 +69,8 @@ def validate_model_policy(value: object) -> JSONDict:
         if identifier in seen or model.get("provider") != "openai" or model.get("family") not in _FAMILIES:
             raise ValueError("Models must have unique IDs and an OpenAI Luna, Sol, or Astra role")
         seen.add(identifier)
+        if type(model.get("preferred", False)) is not bool:
+            raise ValueError("Model preference must be a boolean")
         efforts = model.get("efforts")
         if not isinstance(efforts, list) or not efforts or any(effort not in SAFE_EFFORTS for effort in efforts):
             raise ValueError("Catalog efforts must exclude max and ultra")
@@ -306,8 +308,10 @@ def recommend_agent_model(
     pool = proven or fallback
     empirical = bool(proven) and all(candidate["cost_per_accepted_usd"] is not None for candidate in pool)
     cost_field = "cost_per_accepted_usd" if empirical else "estimated_token_cost_usd"
+    preferred = {model["id"] for model in policy["models"] if model.get("preferred")}
     selected = min(pool, key=lambda item: (
-        item[cost_field], SAFE_EFFORTS.index(item["effort"]), item["model"],
+        item[cost_field], SAFE_EFFORTS.index(item["effort"]),
+        not proven and item["model"] not in preferred, item["model"],
     )) if pool else None
     return {
         "task": task, "evaluation": rule["evaluation"], "selection": selected,

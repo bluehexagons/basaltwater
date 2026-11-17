@@ -113,6 +113,25 @@ class AgentModelsTests(unittest.TestCase):
         self.assertEqual(result["basis"], "reviewed_cost_per_accepted")
         self.assertFalse(result["provisional"])
 
+    def test_gpt_62_is_provisional_and_keeps_the_proven_older_sol(self) -> None:
+        self.available.extend([
+            {"id": "gpt-6.2-sol", "efforts": ["high", "max", "ultra"]},
+            {"id": "gpt-6.2-astra", "efforts": ["high", "max", "ultra"]},
+        ])
+        self._write(self.available_path, self.available)
+        result = self._recommend("coding")
+        self.assertEqual(result["selection"]["model"], "gpt-6.2-sol")
+        self.assertTrue(result["provisional"])
+        self.assertEqual(result["uncatalogued_models"], [])
+        self.assertIsNone(self._recommend("specialist")["selection"])
+        selection = self._recommend("specialist", astra_reason="Complex integration")["selection"]
+        self.assertEqual((selection["model"], selection["effort"]), ("gpt-6.2-astra", "high"))
+        for _ in range(3):
+            self._record("gpt-6.1-sol", task="coding", cost=0.5)
+        result = self._recommend("coding")
+        self.assertEqual(result["selection"]["model"], "gpt-6.1-sol")
+        self.assertFalse(result["provisional"])
+
     def test_failure_evidence_escalates_and_actual_costs_include_failed_attempts(self) -> None:
         for _ in range(3):
             self._record(effort="medium", outcome="failed", cost=1)

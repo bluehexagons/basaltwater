@@ -7,20 +7,19 @@ path for that environment.
 
 ## Subscription cost and performance
 
-Reviewed **2026-11-09**. Prefer an available subscription route when its included
+Reviewed **2026-11-17**. Prefer an available subscription route when its included
 usage covers the task. Check the active login/billing route, remaining allowance,
 reset time, and model access before comparing candidates. A subscription is not
 unlimited: parallel workers consume allowance too, and paid credits or an API
 key can introduce additional charges. Do not switch authentication, buy credits,
 or enable overage merely to obtain a recommended model.
 
-Optimize for an accepted result within the user's time and usage budget. Sol
-and Opus are the recommended higher-end frontier choices and are reasonably
-affordable through subscriptions. Astra and Fable are discouraged for general
-use: their extra cost typically yields too little improvement. This is the
-maintained project recommendation, not a claim of a universal benchmark result.
-Reserve either for a specific unmet need with evidence that the benefit
-justifies the cost; do not automatically escalate just because it is available.
+Optimize for an accepted result within the user's time and usage budget.
+Use GPT-6.2 Sol for routine coding and Opus 5.5 for demanding Claude work.
+GPT-6.2 Astra's lower rates and stronger performance on complex coding and
+professional artifacts make it a candidate for a bounded trial when the task
+has a specific unmet need. Use project outcomes to justify promotion. Apply
+the same evidence standard to Fable and check its separate credit requirements.
 
 A stronger included model can cost less overall when it avoids failed attempts
 and parent rework; a cheaper worker helps only when its result passes review.
@@ -30,10 +29,10 @@ subscription price into an invented per-task charge or mix API estimates and
 subscription observations as if they were the same measurement.
 
 [Codex pricing](https://learn.chatgpt.com/docs/pricing) lists approximate Plus
-and Standard Business local-message ranges per five hours: Luna 350–3,000,
-Terra 35–285, Sol 15–160, Astra 5–45. These overlap and depend on task/context;
-they indicate relative allowance pressure, not measured speed or a fixed number
-of worker jobs. Local and cloud usage share allowance; check the live dashboard.
+and Standard Business local-message ranges per five hours of 350–3,000 for
+Luna, 35–285 for Terra, 17–180 for GPT-6.2 Sol, and 6–50 for GPT-6.2 Astra.
+The ranges depend on the task and context. Local and cloud usage share an
+allowance. Check the live dashboard for actual usage and reset times.
 For Claude, check `/model` and the account's usage display: Fable can require
 separate credits even with a subscription. See
 [Claude billing and model access](https://code.claude.com/docs/en/model-config).
@@ -48,12 +47,14 @@ user choice and project evidence; availability in public docs is insufficient.
 | --- | --- | --- |
 | Bounded extraction, classification, small edits, named checks | GPT-6 Luna; Claude Haiku 5.5 | Low allowance pressure and latency; give narrow inputs and observable checks |
 | Writing, image/screen interpretation, app work | GPT-6.1 Terra | Efficient middle option; evaluate coding separately rather than assume Sol-level coding performance |
-| Broad coding, integration, substantive review | GPT-6.1 Sol | Recommended higher-end coding choice; start at high for this workload |
+| Broad coding, integration, substantive review | GPT-6.2 Sol | Start at high for this workload and retain a proven project setting pending representative trials |
 | Routine Claude coding and focused review | Claude Sonnet 5.5 | Faster option with lower usage than Opus; use project outcomes to decide whether it suffices |
 | Difficult debugging, architecture, long agentic coding and review | Claude Opus 5.5 | Recommended higher-end Claude choice; subscription affordability makes it practical when stronger reasoning helps |
-| Exceptional unmet need with demonstrated gain | GPT-6 Astra; Claude Fable 5.2 | Discouraged for general use; require a concrete benefit over Sol/Opus and check separate credit billing |
+| Difficult cross-service debugging, complex frontend work, or template-driven artifacts | GPT-6.2 Astra | Trial against Sol or Opus when the workload warrants it, and verify the rendered result or end-to-end behavior |
+| Exceptional Claude workload | Claude Fable 5.2 | Require a concrete benefit over Opus and check separate credit billing |
 
 Provider sources: [OpenAI model roles](https://learn.chatgpt.com/docs/models),
+[GPT-6.2 launch evaluations](https://openai.com/index/introducing-gpt-6-2-astra-sol/),
 [Terra capabilities](https://developers.openai.com/api/docs/models/gpt-6.1-terra),
 [Claude coding guidance](https://support.claude.com/en/articles/14552983-models-usage-and-limits-in-claude-code),
 and [Claude model comparison](https://platform.claude.com/docs/en/models/overview).
@@ -62,13 +63,22 @@ cross-provider winner. Check fresh provider evidence after releases, then run
 representative project trials before changing a proven policy.
 
 For API fallback, standard uncached input/output USD per million tokens are
-Luna $0.10/$0.50, Terra $1/$5, Sol $2/$10, Astra $10/$50; Claude Haiku 5.5
-$0.10/$0.50 up to 100K input, Sonnet 5.5 $2/$10, Opus 5.5 $4/$20, and Fable
-5.2 $8/$40. These omit caches, reasoning volume, tools and context surcharges.
+Luna $0.10/$0.50, Terra $1/$5, GPT-6.2 Sol $2/$10, and GPT-6.2 Astra $8/$40.
+Claude rates are $0.10/$0.50 for Haiku 5.5 up to 100K input, $2/$10 for Sonnet
+5.5, $4/$20 for Opus 5.5, and $8/$40 for Fable 5.2. These omit caches,
+reasoning volume, tools and context surcharges.
 See [context and pricing boundaries](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/agent-context.md)
 for exact model sources, long-prompt rates and client limits. A large inherited
 history can erase the savings of a cheap subagent; send a bounded fresh brief
 when the interface supports it. Leave headroom for tool results and output.
+
+For ongoing GPT-6.2 API conversations, keep the existing message prefix and
+append steering as new turns. OpenAI documents that prefix edits and model
+downgrades can discard retained reasoning. In Codex or T3, send corrections as
+follow-ups and retain a concise checkpoint before switching models or restarting
+a provider session. Give longer tasks explicit acceptance checks and authority
+to make routine, reversible decisions within scope. See
+[GPT-6.2 prompting and migration guidance](https://developers.openai.com/api/docs/guides/latest-model).
 
 ## OpenAI selector defaults
 
@@ -78,10 +88,9 @@ small fixes, focused tests, and app-script or export validation. Explicit,
 deterministic trivial work may use `low` when inputs and verification are
 straightforward. Use Luna `high` or `xhigh` only for a concrete complex task.
 Keep broad coding, integration, ambiguous cross-file changes, and substantive
-reviews on Sol `high`; use Astra only for an exceptional unmet need with evidence
-of benefit over Sol/Opus. These suggestions are not performance proof. Preserve
-existing project policy, check the live session, and record actual outcomes. A small independent
-task does not need the parent's model.
+reviews on GPT-6.2 Sol `high`. Use Astra for a specific unmet need, and record
+the outcome to establish whether it improves on Sol or Opus. Preserve existing
+project policy and check the live session. Match the worker to its own task.
 
 Check that the exact model **and the delegation tool** expose the chosen
 setting. Current
@@ -153,7 +162,7 @@ catalog is a dated seed that requires review, not a live availability assertion.
 ```json
 [
   {"id": "gpt-6-luna", "efforts": ["low", "medium", "high", "xhigh"]},
-  {"id": "gpt-6.1-sol", "efforts": ["low", "medium", "high", "xhigh"]}
+  {"id": "gpt-6.2-sol", "efforts": ["low", "medium", "high", "xhigh"]}
 ]
 ```
 
@@ -244,7 +253,11 @@ are returned as `trial_candidates`, not silently promoted over proven choices.
 
 With no proven setting, a provisional choice starts at the task's family or a
 stronger available family; poorly performing settings with enough evidence are
-excluded. Astra remains excluded unless `--astra-reason` explains the benefit.
+excluded. An optional catalog `preferred: true` breaks ties between provisional
+candidates at the same estimated cost and effort. The seed uses it for GPT-6.2
+Sol and keeps GPT-6.1 Sol available for older sessions. Reviewed settings keep
+their evidence-based ranking. Astra requires `--astra-reason` to explain the
+expected benefit.
 The default catalog lifetime is 30 days and the evidence window is 90 days.
 Recheck sooner after releases, deprecations, pricing/access changes, or repeated
 failures. Preserve older evidence for history while checking recent results.
