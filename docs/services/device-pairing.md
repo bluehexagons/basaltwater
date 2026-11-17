@@ -198,6 +198,11 @@ gateway confirms its current named endpoints, avoiding an HTTP-link window
 while the managed routes are refreshed.
 Setup also tracks the broker implementation revision and restarts that broker
 when its code changes, even if provider and networking settings are unchanged.
+A pending restart marker keeps broker configuration and HTTPS-port changes
+retryable if service activation fails. Rerun setup after resolving the service
+error; unchanged files do not suppress the pending restart. Nginx validation or
+reload failures restore the previous site and credentials so the next setup
+attempt validates and reloads the requested configuration again.
 
 To remove enrollment from a saved host:
 

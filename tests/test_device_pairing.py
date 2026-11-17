@@ -6,8 +6,10 @@ import json
 import os
 import tempfile
 import unittest
+from contextlib import ExitStack
 from email.message import Message
 from io import BytesIO
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.parse import urlencode
@@ -25,6 +27,7 @@ from common.t3code_steps import (
     _configure_device_pairing,
     _configure_firewall,
     _remove_connect_restart_units,
+    _remove_device_pairing,
     _set_pairing_t3_https_port,
     _write_passthrough_wrapper,
     install_t3code_web,
@@ -621,6 +624,156 @@ class PairingBrokerTest(unittest.TestCase):
 
 
 class DevicePairingRemoteSetupTest(unittest.TestCase):
+    def _pairing_setup_paths(self, temporary: str, stack: ExitStack) -> dict[str, str]:
+        config_dir = Path(temporary, "config")
+        config_dir.mkdir()
+        payload = Path(temporary, "payload.htpasswd")
+        payload.write_text("agent:$6$salt$hash\n", encoding="utf-8")
+        broker = Path(temporary, "broker.py")
+        broker.write_text("# broker fixture\n", encoding="utf-8")
+        paths = {
+            "DEVICE_PAIRING_CONFIG_DIR": str(config_dir),
+            "DEVICE_PAIRING_AUTH_FILE": str(config_dir / "htpasswd"),
+            "DEVICE_PAIRING_PROVIDERS_FILE": str(config_dir / "providers.json"),
+            "DEVICE_PAIRING_PAYLOAD_FILE": str(payload),
+            "DEVICE_PAIRING_SERVICE_FILE": str(Path(temporary, "pairing.service")),
+            "DEVICE_PAIRING_NGINX_SITE": str(Path(temporary, "nginx-available")),
+            "DEVICE_PAIRING_NGINX_LINK": str(Path(temporary, "nginx-enabled")),
+            "DEVICE_PAIRING_SOURCE": str(broker),
+        }
+        stack.enter_context(patch.multiple("common.t3code_steps", **paths))
+        account = SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid())
+        stack.enter_context(patch("common.t3code_steps.pwd.getpwnam", return_value=account))
+        stack.enter_context(patch("common.t3code_steps.os.chown"))
+        stack.enter_context(patch("common.t3code_steps.configure_nginx_auth_failure_ban"))
+        stack.enter_context(patch("web.web_steps.install_nginx"))
+        return paths
+
+    def test_broker_activation_failures_retry_even_with_an_active_old_process(self) -> None:
+        for failed_command in (
+            "systemctl daemon-reload",
+            "systemctl enable basaltwater-device-pairing.service",
+            "systemctl restart basaltwater-device-pairing.service",
+        ):
+            with self.subTest(command=failed_command), tempfile.TemporaryDirectory() as temporary, ExitStack() as stack:
+                paths = self._pairing_setup_paths(temporary, stack)
+                execute = stack.enter_context(patch("common.t3code_steps.run"))
+                execute.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+                _configure_device_pairing(_config(), temporary, "/opt/t3", "127.0.0.1", 3773)
+                providers_path = Path(paths["DEVICE_PAIRING_PROVIDERS_FILE"])
+                providers = json.loads(providers_path.read_text(encoding="utf-8"))
+                providers["providers"]["t3code"]["connect"] = {"legacy": True}
+                providers_path.write_text(json.dumps(providers), encoding="utf-8")
+                Path(paths["DEVICE_PAIRING_SOURCE"]).write_text("# replacement broker\n", encoding="utf-8")
+                marker = Path(paths["DEVICE_PAIRING_CONFIG_DIR"], ".broker-restart-pending")
+
+                def fail_activation(command: str, **_kwargs: object) -> SimpleNamespace:
+                    if command == failed_command:
+                        self.assertTrue(marker.is_file())
+                        raise RuntimeError("injected activation failure")
+                    disabled = command.startswith("systemctl is-enabled") and " enable " in failed_command
+                    return SimpleNamespace(returncode=int(disabled), stdout="", stderr="")
+
+                execute.side_effect = fail_activation
+                with self.assertRaisesRegex(RuntimeError, "injected activation failure"):
+                    _configure_device_pairing(_config(), temporary, "/opt/t3", "127.0.0.1", 3773)
+                self.assertTrue(marker.is_file())
+                self.assertEqual(marker.stat().st_mode & 0o777, 0o600)
+                self.assertNotIn("connect", json.loads(providers_path.read_text())["providers"]["t3code"])
+                execute.side_effect = None
+                execute.reset_mock()
+                _configure_device_pairing(_config(), temporary, "/opt/t3", "127.0.0.1", 3773)
+                execute.assert_any_call("systemctl daemon-reload")
+                execute.assert_any_call("systemctl restart basaltwater-device-pairing.service")
+                self.assertFalse(marker.exists())
+                execute.reset_mock()
+                _configure_device_pairing(_config(), temporary, "/opt/t3", "127.0.0.1", 3773)
+                self.assertFalse(any("systemctl restart" in call.args[0] for call in execute.call_args_list))
+
+    def test_https_port_restart_failure_retries_the_already_written_port(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary, ExitStack() as stack:
+            paths = self._pairing_setup_paths(temporary, stack)
+            execute = stack.enter_context(patch("common.t3code_steps.run"))
+            execute.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+            _configure_device_pairing(_config(), temporary, "/opt/t3", "127.0.0.1", 3773)
+
+            def fail_restart(command: str, **_kwargs: object) -> SimpleNamespace:
+                if command == "systemctl restart basaltwater-device-pairing.service":
+                    raise RuntimeError("injected restart failure")
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            execute.side_effect = fail_restart
+            with self.assertRaisesRegex(RuntimeError, "injected restart failure"):
+                _set_pairing_t3_https_port(8444)
+            providers = json.loads(Path(paths["DEVICE_PAIRING_PROVIDERS_FILE"]).read_text())
+            self.assertEqual(providers["providers"]["t3code"]["https_public_port"], 8444)
+            execute.side_effect = None
+            execute.reset_mock()
+            _set_pairing_t3_https_port(8444)
+            execute.assert_any_call("systemctl restart basaltwater-device-pairing.service")
+            execute.reset_mock()
+            _set_pairing_t3_https_port(8444)
+            execute.assert_not_called()
+
+    def test_pending_broker_restart_refuses_symlinks_and_is_removed_on_opt_out(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary, ExitStack() as stack:
+            paths = self._pairing_setup_paths(temporary, stack)
+            execute = stack.enter_context(patch("common.t3code_steps.run"))
+            execute.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+            stack.enter_context(patch("common.t3code_steps.remove_nginx_auth_failure_ban"))
+            stack.enter_context(patch("common.t3code_steps.shutil.which", return_value="/usr/sbin/nginx"))
+            marker = Path(paths["DEVICE_PAIRING_CONFIG_DIR"], ".broker-restart-pending")
+            victim = Path(temporary, "unrelated")
+            victim.write_text("preserved", encoding="utf-8")
+            marker.symlink_to(victim)
+            with self.assertRaisesRegex(RuntimeError, "unsafe device-pairing restart marker"):
+                _configure_device_pairing(_config(), temporary, "/opt/t3", "127.0.0.1", 3773)
+            self.assertEqual(victim.read_text(), "preserved")
+            execute.assert_not_called()
+            marker.unlink()
+            _configure_device_pairing(_config(), temporary, "/opt/t3", "127.0.0.1", 3773)
+            marker.write_text("pending\n", encoding="utf-8")
+            _remove_device_pairing()
+            self.assertFalse(Path(paths["DEVICE_PAIRING_CONFIG_DIR"]).exists())
+            self.assertEqual(victim.read_text(), "preserved")
+
+    def test_nginx_failure_restores_configuration_and_credentials_before_retry(self) -> None:
+        for installed, failed_command in (
+            (False, "nginx -t"), (False, "systemctl reload nginx"),
+            (True, "nginx -t"), (True, "systemctl reload nginx"),
+        ):
+            with self.subTest(installed=installed, command=failed_command), tempfile.TemporaryDirectory() as temporary, ExitStack() as stack:
+                paths = self._pairing_setup_paths(temporary, stack)
+                execute = stack.enter_context(patch("common.t3code_steps.run"))
+                execute.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+                site = Path(paths["DEVICE_PAIRING_NGINX_SITE"])
+                auth = Path(paths["DEVICE_PAIRING_AUTH_FILE"])
+                if installed:
+                    _configure_device_pairing(_config(), temporary, "/opt/t3", "127.0.0.1", 3773)
+                old_site = site.read_bytes() if installed else None
+                old_auth = auth.read_bytes() if installed else None
+                Path(paths["DEVICE_PAIRING_PAYLOAD_FILE"]).write_text("agent:$6$new$hash\n", encoding="utf-8")
+
+                def fail_nginx(command: str, **_kwargs: object) -> SimpleNamespace:
+                    if command == failed_command:
+                        if command == "nginx -t":
+                            return SimpleNamespace(returncode=1, stdout="", stderr="invalid")
+                        raise RuntimeError("injected reload failure")
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+                execute.side_effect = fail_nginx
+                with self.assertRaisesRegex(RuntimeError, "Nginx rejected|injected reload"):
+                    _configure_device_pairing(_config(device_pairing_port=4774), temporary, "/opt/t3", "127.0.0.1", 3773)
+                self.assertEqual(site.read_bytes() if site.exists() else None, old_site)
+                self.assertEqual(auth.read_bytes() if auth.exists() else None, old_auth)
+                self.assertEqual(os.path.islink(paths["DEVICE_PAIRING_NGINX_LINK"]), installed)
+                execute.side_effect = None
+                execute.reset_mock()
+                _configure_device_pairing(_config(device_pairing_port=4774), temporary, "/opt/t3", "127.0.0.1", 3773)
+                execute.assert_any_call("systemctl reload nginx")
+                self.assertIn("listen 127.0.0.1:4774", site.read_text())
+                self.assertEqual(auth.read_text(), "agent:$6$new$hash\n")
+
     def test_connect_bridge_migration_preserves_native_state_and_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             state_dir = os.path.join(temporary, ".t3")
