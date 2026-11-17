@@ -48,6 +48,7 @@ from lib.validators import validate_username
 from lib.node_toolchain import is_supported_node
 from lib.project_build_tools import node_build_command, node_cli, source_has_marker
 from lib.managed_storage import guarded_deployment
+from lib.runtime_bindings import resolve_runtime_binding
 
 
 SYSTEMD_UNIT_DIR = "/etc/systemd/system"
@@ -1022,6 +1023,7 @@ class DeploymentOrchestrator:
         dest_path = self.get_deployment_path(domain, path, git_url)
         self._validate_release_source(source_path, dest_path)
         parent_dir = os.path.dirname(dest_path)
+        self._check_manifest_runtime_bindings(manifest, dest_path)
         if parent_dir and not os.path.exists(parent_dir):
             os.makedirs(parent_dir, exist_ok=True)
 
@@ -1106,6 +1108,9 @@ class DeploymentOrchestrator:
                     self._run_component_build(component, staging_path, build_user, manifest.build_runtimes)
 
             self._validate_manifest_artifacts(manifest, staging_path)
+            # Builds may take a long time. Refuse revoked bindings before
+            # stopping any old service or replacing the working release.
+            self._check_manifest_runtime_bindings(manifest, dest_path)
 
             if os.path.exists(dest_path):
                 backup_path = tempfile.mkdtemp(
@@ -1568,6 +1573,15 @@ class DeploymentOrchestrator:
             return working_dir
         return os.path.normpath(os.path.join(dest_path, working_dir))
 
+    @staticmethod
+    def _check_manifest_runtime_bindings(manifest: Manifest, dest_path: str) -> None:
+        for component in manifest.components:
+            if component.runtime_binding is not None:
+                if not component.is_service or component.env_file is not None:
+                    raise ValueError("Runtime bindings require a service without env_file")
+                resolve_runtime_binding(component.runtime_binding,
+                                        deployment_root=dest_path, component=component.name)
+
     def _install_service_component(self, component: Component, dest_path: str,
                                    deploy_domain: Optional[str] = None) -> None:
         context = self._service_context(component, dest_path, deploy_domain)
@@ -1629,6 +1643,12 @@ class DeploymentOrchestrator:
                     f"writable by service user {username}, and its directory must not "
                     f"be writable by that user: {env_file}"
                 )
+
+        if component.runtime_binding is not None:
+            if component.env_file is not None:
+                raise ValueError("runtime_binding and env_file are mutually exclusive")
+            env_file = resolve_runtime_binding(component.runtime_binding,
+                                               deployment_root=dest_path, component=component.name)
 
         exec_start = render_template(component.exec, context) if component.exec else context['binary']
         create_managed_service(

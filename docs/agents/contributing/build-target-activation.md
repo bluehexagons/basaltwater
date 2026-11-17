@@ -16,7 +16,11 @@ Legacy service projections without `runtime` read implicit `PORT` and `HOST`
 values; `HOST` is `127.0.0.1`. An explicitly approved `runtime` mapping instead
 reconstructs the ordinary manifest's exact exec arguments, runtime environment,
 port, working directory, SQLite backup settings and UDP declarations. No implicit
-environment is added to that mapping. Secret bindings remain unsupported.
+environment is added to that mapping. A `runtime_binding` ID is reconstructed
+without its target-local path or values. Activation and retained refresh check
+the current root-owned registry and private file before release changes; the
+ordinary orchestrator rechecks before stopping services and installing the unit.
+See [runtime bindings](../../services/runtime-bindings.md) for scope and recovery.
 Service installation and backups use the existing orchestrator implementation.
 
 The administrator's deployment root is used exactly. Generated service users,

@@ -1,26 +1,30 @@
 # Deployment secret references
 
-Status: versioned deployment-secret references, optional-component gates and
-rotation tracking are not implemented. Ordinary manifests accept literal build
-environment values and target-local `env_file` paths. The selected-builder path
-rejects runtime environment values and `env_file`; it cannot use those bindings
-yet. See [current deployment limits](../services/deployments.md#build-on-a-saved-builder).
+Status: target-owned runtime bindings are implemented for ordinary and prebuilt
+service deployment. A root-owned local registry scopes each ID to one exact
+release root/component and maps it to a private environment file. Selected-builder
+runtime grants authorize the ID; paths and values remain target-local. See
+[operator setup and recovery](../services/runtime-bindings.md). Versioned secret
+values, optional-component gates, consumer inventory and rotation tracking remain
+planned. Literal build/runtime environment is public configuration.
 
 This work follows the [shared Debian build/CI host](cicd-manifest-reuse.md).
 Secret-free artifact builds do not need a new secret store.
 
-## First deliverable: target-owned runtime bindings
+## Delivered foundation: target-owned runtime bindings
 
-Let target policy map named binding IDs to administrator-owned environment
-files. Projects request IDs, never arbitrary target paths or secret values.
-Authorize and bind the IDs during admission; resolve and revalidate them on the
-target before activation. Keep runtime values out of builders, bundles,
-controller command reconstruction and durable request metadata.
+Projects request one `runtime_binding` ID per service. A separate target-local
+registry owns paths and exact component scopes so controller enrollment never
+needs private file locations. IDs are authorized during admission and rechecked
+with file metadata before activation and retained refresh. systemd reads the
+root-only environment file; Basaltwater does not read or copy its values.
 
-**Acceptance:** authorized bindings reach only their intended service;
-missing/revoked bindings fail before activation; interrupted changes preserve
-the previous working file and service. Ordinary and prebuilt activation share
-the same binding semantics without broadening project authority.
+**Automated acceptance:** scope and revocation, unsafe file/ancestor refusal,
+ordinary/prebuilt installation, retained reconstruction, build-time revocation,
+privacy and failed-release preservation are covered. Real systemd secret delivery,
+manual rotation with rollback, reboot and power loss remain live qualification.
+Deployment leaves administrator files unchanged; old values remain recoverable
+only while their old files are retained. No automatic value rotation is claimed.
 
 ## Subsequent work
 

@@ -166,6 +166,9 @@ Automatic and explicitly granted fixed ports, canonical health paths, managed
 working directories, SQLite backups and public UDP declarations are supported.
 Persistent data remains in the ordinary deployment's shared directory when
 the same target root and component names are retained.
+Services may request a target-owned `runtime_binding` ID, with a matching target
+runtime grant and a separately provisioned private file. See
+[runtime secret bindings](runtime-bindings.md) for setup, rotation and recovery.
 
 A ready SPA and Go API can share one application and release bundle:
 
@@ -543,9 +546,12 @@ In addition to the common fields (`name`, `type`, `domain`, `path`, `build`, and
 - `env_file`: absolute server path, or a path using deploy-time templates; the
   file must be readable but not writable by the component's dedicated service
   account, and its parent directory must not be writable by that account;
+- `runtime_binding`: a named administrator-owned environment file, scoped to
+  this release root and component; mutually exclusive with `env_file`. See
+  [runtime secret bindings](runtime-bindings.md);
 - `runtime_env`: environment values written directly into the generated
-  systemd unit; values may use deploy-time templates and override matching
-  entries from `env_file`;
+  systemd unit; values may use deploy-time templates. EnvironmentFile entries
+  take precedence over matching `Environment=` values;
 - `health`: optional URL path polled on `127.0.0.1:port` after startup;
 - `reverse_proxy`: set false for a worker or internal service that should not
   receive an Nginx route;

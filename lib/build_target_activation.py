@@ -28,6 +28,7 @@ from lib.operation_state import OperationStateStore
 from lib.project_manifest import Manifest, parse_manifest, collect_public_udp
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_host
+from lib.runtime_bindings import check_target_runtime_bindings
 
 
 MAX_REGISTRY_BYTES = 4 * 1024**2
@@ -415,6 +416,7 @@ class TargetReleaseActivator:
                 for app, record in sorted(state["applications"].items()):
                     binding = record["bindings"]
                     checked, manifest = _bindings_manifest(binding, record["request"], binding["principal"])
+                    check_target_runtime_bindings(checked["bindings"])
                     parent, basename = os.path.split(record["root"])
                     with _trusted_directory(parent, private=False):
                         pass
@@ -472,6 +474,7 @@ class TargetReleaseActivator:
             raise ValueError("Invalid target activation identity")
         checked, manifest = _bindings_manifest(bindings, request, principal)
         binding = checked["bindings"]
+        check_target_runtime_bindings(binding)
         job = parse_build_request(request)
         root = binding["deployment_root"]
         parent, basename = os.path.split(root)
