@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 import os
 from pathlib import Path
 import subprocess
@@ -117,6 +117,41 @@ class StorageReviewTests(unittest.TestCase):
             self.assertFalse(cache.exists())
             self.assertEqual((home / ".npmrc").read_text(), "preserve")
 
+    def test_npm_allocation_failure_falls_back_only_in_managed_build_homes(self):
+        for managed, allocation in ((True, "directory"), (True, "file"), (False, "directory"), (False, "file")):
+            with self.subTest(managed=managed, allocation=allocation), tempfile.TemporaryDirectory() as directory:
+                home = Path(directory) / ("build-fixture" if managed else "ordinary")
+                cache = home / ".npm/_cacache"
+                cache.mkdir(parents=True)
+                (cache / "download").write_text("reproducible")
+                (home / ".npmrc").write_text("preserve")
+                for path in (home, cache.parent, cache):
+                    path.chmod(0o700)
+                info = cache.stat()
+                with ExitStack() as mocks:
+                    mocks.enter_context(patch.object(storage, "BUILD_HOMES", directory))
+                    mocks.enter_context(patch.object(storage.pwd, "getpwuid", return_value=SimpleNamespace(pw_dir=str(home))))
+                    native = mocks.enter_context(patch.object(storage, "_run_native"))
+                    failure = OSError(28, "No space left on device")
+                    if allocation == "directory":
+                        mocks.enter_context(patch.object(storage.tempfile, "TemporaryDirectory", side_effect=failure))
+                    else:
+                        write = Path.write_text
+                        def full_configuration(path, *args, **kwargs):
+                            if path.name == "user.npmrc":
+                                raise failure
+                            return write(path, *args, **kwargs)
+                        mocks.enter_context(patch.object(Path, "write_text", full_configuration))
+                    if managed:
+                        storage._native_cleanup("npm-content", str(home), info.st_dev, info.st_ino)
+                    else:
+                        with self.assertRaises(OSError) as error:
+                            storage._native_cleanup("npm-content", str(home), info.st_dev, info.st_ino)
+                        self.assertEqual(error.exception.errno, 28)
+                    native.assert_not_called()
+                self.assertEqual(cache.exists(), not managed)
+                self.assertEqual((home / ".npmrc").read_text(), "preserve")
+
     def test_extended_build_cache_unlinks_symlinks_without_following_them(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory) / "build-fixture"
@@ -147,6 +182,39 @@ class StorageReviewTests(unittest.TestCase):
             self.assertEqual([r["command"] for r in report[3:]], [
                 ["systemd-tmpfiles", "--clean", f"--prefix={path}"]
                 for path in ("/tmp", "/var/tmp", "/var/lib/systemd/coredump")])
+            self.assertTrue(all(row["before"]["free_bytes"] == 0 and "net_freed_bytes" not in row for row in report))
+
+    def test_system_cleanup_reports_signed_capacity_changes_even_after_native_failure(self):
+        from lib import storage_pressure as pressure
+        for delta, exit_code, supported in ((64, 0, True), (0, 0, True), (-10, 1, True), (64, 0, False)):
+            with self.subTest(delta=delta, exit_code=exit_code, supported=supported):
+                before = dict(mount="/", free_bytes=100, free_inodes=10, inodes_supported=supported)
+                after = dict(before, free_bytes=100 + delta, free_inodes=11)
+                with patch.object(storage, "filesystem", side_effect=[before, after]), patch.object(
+                        pressure.os.path, "isdir", return_value=False), patch.object(
+                        pressure.shutil, "which", return_value="/usr/bin/fixture-cleaner"), patch.object(
+                        pressure.subprocess, "run", return_value=subprocess.CompletedProcess([], exit_code, "fixture diagnostic", "")) as native, \
+                        tempfile.TemporaryFile() as lease, patch.object(storage, "_lock_fd") as descriptor:
+                    descriptor.get.return_value = lease.fileno()
+                    row, = pressure.clean_system_storage(target=200, apply=True)
+                    self.assertEqual(native.call_args.kwargs["pass_fds"], (lease.fileno(),))
+                self.assertEqual(row["status"], "failed" if exit_code else "cleaned")
+                self.assertEqual(row["net_freed_bytes"], delta)
+                self.assertEqual(row.get("net_freed_inodes"), 1 if supported else None)
+                if exit_code:
+                    self.assertIn("fixture diagnostic", row["reason"])
+
+    def test_system_cleanup_refuses_unknown_or_changed_final_filesystem(self):
+        from lib import storage_pressure as pressure
+        for outcome in (OSError("Capacity unavailable"), dict(mount="/replacement", free_bytes=200)):
+            with self.subTest(outcome=outcome), patch.object(storage, "filesystem", side_effect=[dict(mount="/", free_bytes=0), outcome]), patch.object(
+                    pressure.os.path, "isdir", return_value=False), patch.object(
+                    pressure.shutil, "which", return_value="/usr/bin/fixture-cleaner"), patch.object(
+                    pressure.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)):
+                row, = pressure.clean_system_storage(target=1, apply=True)
+            self.assertEqual(row["status"], "failed")
+            self.assertIn("Final filesystem observation failed", row["reason"])
+            self.assertNotIn("net_freed_bytes", row)
 
     def test_setup_tmpfs_refusal_does_not_clean_unrelated_root_filesystem(self):
         from lib import storage_pressure as pressure

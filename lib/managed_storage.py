@@ -177,7 +177,12 @@ def operation_guard(phase: str, paths: list[str], *, cleanup_accounts: list[str]
                     from lib.storage_pressure import clean_system_storage
 
                     for row in clean_system_storage(target=0, apply=True, requirements=requirements):
-                        print(f"  {row['category']}: {row['status']}" + (f" ({row['reason']})" if row.get("reason") else ""))
+                        change = ""
+                        if "net_freed_bytes" in row:
+                            change = f"; free space change {row['net_freed_bytes'] / MIB:+.1f} MiB"
+                        if "net_freed_inodes" in row:
+                            change += f"; free inodes {row['net_freed_inodes']:+d}"
+                        print(f"  {row['category']}: {row['status']}{change}" + (f" ({row['reason']})" if row.get("reason") else ""))
                     result = maintain(names=cleanup_accounts, apply=True, budget=1024 * MIB,
                                       target=0, requirements=requirements)
                     from lib.storage_pressure import clean_build_versions
@@ -337,27 +342,23 @@ def _native_cleanup(category: str, expected_home: str, device: int, inode: int) 
            "GOENV": "off", "GOTOOLCHAIN": "local", "GOFLAGS": "", "GOCACHEPROG": "",
            "GOCACHE": f"{home}/.cache/go-build", "NVM_DIR": f"{home}/.nvm",
            "NPM_CONFIG_IGNORE_SCRIPTS": "true", "NPM_CONFIG_UPDATE_NOTIFIER": "false"}
-    if category != "npm-content":
-        try:
+    try:
+        if category != "npm-content":
             _run_native(category, env)
-        except (OSError, subprocess.SubprocessError):
-            if home.startswith(BUILD_HOMES + "/build-") and Path(home).parent == Path(BUILD_HOMES):
-                _fallback_build_cache(category, path, home)
-            else:
-                raise
-        return
-    with tempfile.TemporaryDirectory(prefix="basaltwater-cache-config-") as directory:
-        for name in ("user", "global"):
-            config_path = Path(directory) / (name + ".npmrc")
-            config_path.write_text("")
-            env["NPM_CONFIG_" + name.upper() + "CONFIG"] = str(config_path)
-        try:
-            _run_native(category, env)
-        except (OSError, subprocess.SubprocessError):
-            if home.startswith(BUILD_HOMES + "/build-") and Path(home).parent == Path(BUILD_HOMES):
-                _fallback_build_cache(category, path, home)
-            else:
-                raise
+        else:
+            # Allocation can fail before npm starts on a full temporary
+            # filesystem. Exact managed build caches still permit fallback.
+            with tempfile.TemporaryDirectory(prefix="basaltwater-cache-config-") as directory:
+                for name in ("user", "global"):
+                    config_path = Path(directory) / (name + ".npmrc")
+                    config_path.write_text("")
+                    env["NPM_CONFIG_" + name.upper() + "CONFIG"] = str(config_path)
+                _run_native(category, env)
+    except (OSError, subprocess.SubprocessError):
+        if home.startswith(BUILD_HOMES + "/build-") and Path(home).parent == Path(BUILD_HOMES):
+            _fallback_build_cache(category, path, home)
+        else:
+            raise
 
 
 def _fallback_build_cache(category: str, path: str, home: str) -> None:

@@ -19,7 +19,7 @@ SYSTEM_STORAGE_PATHS = ("/var/cache/apt/archives", "/var/log/journal", "/run/log
 
 
 def clean_system_storage(*, target: int, apply: bool, requirements: dict[str, dict] | None = None) -> list[dict]:
-    from lib.managed_storage import filesystem, needs_reclamation
+    from lib.managed_storage import _lock_fd, filesystem, needs_reclamation
 
     result = []
     candidates = [
@@ -38,26 +38,40 @@ def clean_system_storage(*, target: int, apply: bool, requirements: dict[str, di
                 ["systemd-tmpfiles", "--clean", f"--prefix={path}"]))
     for category, path, command in candidates:
         try:
-            needed = needs_reclamation(filesystem(path), target=target, requirements=requirements)
+            before = filesystem(path)
+            needed = needs_reclamation(before, target=target, requirements=requirements)
         except (OSError, ValueError) as exc:
             result.append({"category": category, "path": path, "status": "failed", "reason": str(exc)[-2000:]})
             continue
         if not needed:
             continue
-        row = {"category": category, "path": path, "status": "preview", "command": command}
+        row = {"category": category, "path": path, "status": "preview", "command": command, "before": before}
         result.append(row)
         if apply:
             try:
                 executable = shutil.which(command[0])
                 if not executable:
                     raise OSError("Cleanup tool is unavailable")
+                descriptor = _lock_fd.get()
                 outcome = subprocess.run([executable, *command[1:]], capture_output=True, text=True,
-                                         timeout=120, check=False)
+                                         timeout=120, check=False,
+                                         pass_fds=() if descriptor is None else (descriptor,))
                 row["status"] = "cleaned" if outcome.returncode == 0 else "failed"
                 if outcome.returncode:
-                    row["reason"] = outcome.stderr[-2000:]
+                    row["reason"] = f"Cleanup exit {outcome.returncode}: {(outcome.stderr or outcome.stdout or '')[-2000:]}"
             except (OSError, subprocess.SubprocessError) as exc:
                 row.update(status="failed", reason=str(exc)[-2000:])
+            try:
+                after = filesystem(path)
+                row["after"] = after
+                if after["mount"] != before["mount"]:
+                    raise ValueError("Cleanup filesystem changed during measurement")
+                row["net_freed_bytes"] = after["free_bytes"] - before["free_bytes"]
+                if before.get("inodes_supported") and after.get("inodes_supported"):
+                    row["net_freed_inodes"] = after["free_inodes"] - before["free_inodes"]
+            except (OSError, ValueError) as exc:
+                reason = "; ".join(filter(None, (row.get("reason"), f"Final filesystem observation failed: {exc}")))
+                row.update(status="failed", reason=reason[-2500:])
     return result
 
 

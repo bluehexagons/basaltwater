@@ -38,6 +38,11 @@ Wheel installations also provide `basaltw-storage` with the same arguments.
 Output is JSON: per-account candidates include exact paths, UID ownership,
 allocated bytes, category, rebuild cost, status and free bytes/inodes before and
 after. Native failures are reported per candidate and do not abort other accounts.
+System pressure operations include `before`/`after` capacity and signed
+`net_freed_bytes`/`net_freed_inodes` changes (inodes where supported). Setup prints
+these changes too. A successful native command can reclaim nothing; concurrent
+disk use can produce a negative net change. Missing final observations or a
+changed mount are failures, and preview reports no simulated savings.
 The final `filesystems` section reports capacity once per observed mount, including
 remaining byte and inode shortfalls. Pressure mode includes system-only mounts
 such as a separate `/tmp`. Unavailable observations and unmet targets cause a
@@ -86,8 +91,9 @@ Custom cache locations are outside this policy. Missing tools remain failures fo
 root and ordinary host accounts. npm/nvm cleanup also takes the
 existing per-account Node runtime lock. When nvm is absent, npm cleanup uses the
 system npm executable. Each owner worker revalidates its home, cache inode and
-cache inventory before running a native command. Workers inherit the maintenance
-lock so it remains held if the launcher exits unexpectedly. Missing or incomplete
+cache inventory before running a native command. Cache workers and native system
+cleaners inherit the maintenance lock so it remains held while they run if the
+launcher exits unexpectedly. Missing or incomplete
 post-cleanup measurements are failures, rather than successful reclamation.
 
 Managed build accounts use additional disposable paths when their filesystem is
@@ -95,8 +101,10 @@ below the free-space or inode target: `.npm/_logs`, `.npm/_npx`, `go/pkg/mod`, `
 and `.cache/pip`. This discards npm diagnostics, downloaded tools and modules,
 including Go toolchains. Subsequent builds download them again and may take
 longer. For exact managed build homes only, a failed native cache command falls
-back to deleting its validated cache directory as the owning account. Read-only
-Go cache directories are made writable first. Sources, configuration and other
+back to deleting its validated cache directory as the owning account. This also
+handles npm failing to allocate its temporary configuration directory or files
+when bytes or inodes are exhausted. Read-only Go cache directories are made
+writable first. Sources, configuration and other
 home content remain outside this policy. Missing homes are reported as absent.
 Each additional cache is selected using its own filesystem's capacity, including
 when its home has space available on another mount.
