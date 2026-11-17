@@ -93,7 +93,7 @@ class NativeControlTests(PrivateHomeTestCase):
     def test_stale_generation_revision_capture_and_out_of_bounds_reject_input(self):
         cases = [
             {"generation":"old"}, {"control_revision":"old"}, {"geometry":[1280,720]},
-            {"x":-1}, {"x":2560}, {"button":8},
+            {"x":-1}, {"x":2560}, {"button":10},
         ]
         for fields in cases:
             with self.subTest(fields=fields), self.assertRaises((ValueError,RuntimeError)):

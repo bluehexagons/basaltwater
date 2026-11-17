@@ -271,8 +271,8 @@ def validate_hold(payload: dict[str, Any]) -> int:
     if hold is None:
         return 0
     if (payload.get("action") != "input" or payload.get("kind") not in ("key", "keycode", "click")
-            or (payload.get("kind") == "click" and payload.get("button", 1) not in (1, 2, 3))):
-        raise ValueError("Hold duration applies only to key chords and pointer buttons 1–3")
+            or (payload.get("kind") == "click" and payload.get("button", 1) not in (1, 2, 3, 8, 9))):
+        raise ValueError("Hold duration applies only to key chords and pointer buttons 1–3 or 8–9")
     if type(hold) is not int or not 0 <= hold <= 5000:
         raise ValueError("Hold duration must be an integer from 0 to 5000 milliseconds")
     return hold
@@ -348,6 +348,11 @@ def send_action(payload: dict[str, Any], *, deadline: float | None = None, backe
     validate_hold(payload)
     validate_drag(payload)
     validate_observation_option(payload)
+    from desktop.pointer_gestures import CAPABILITIES, validate as validate_gestures
+    validate_gestures(payload)
+    if backend is runtime and (payload.get("kind") in CAPABILITIES or
+            (payload.get("kind") == "click" and payload.get("button", 1) in (8, 9))):
+        raise ValueError("Touch, relative motion, multi-step scroll and extra buttons require the native portal backend; XRDP touch is unavailable")
     if payload.get("action") == "screenshot":
         validate_capture_max_age(payload.get("max_age_seconds", 60))
     crop = validate_capture_crop(payload, backend=backend)
@@ -361,6 +366,11 @@ def send_action(payload: dict[str, Any], *, deadline: float | None = None, backe
     request = {name: value for name, value in payload.items() if name != "delay_ms"}
     deadline = bounded_deadline(payload, deadline=deadline, seconds=20 if delay is not None else 14)
     request["deadline"] = deadline
+    capability = CAPABILITIES.get(payload.get("kind"))
+    if payload.get("kind") == "click" and payload.get("button", 1) in (8, 9):
+        capability = "extra-pointer-buttons"
+    if capability and capability not in backend.status(deadline=deadline).get("input_capabilities", []):
+        raise ValueError(f"Native helper lacks {capability}; refresh/start with the required consent at a safe checkpoint")
     if delay is None:
         remaining_seconds(deadline)
         try:
@@ -463,6 +473,11 @@ def run_sequence(path: str, generation: str, *, backend=runtime) -> dict[str, An
         validate_hold(step)
         validate_drag(step)
         validate_observation_option(step)
+        from desktop.pointer_gestures import CAPABILITIES, validate as validate_gestures
+        validate_gestures(step)
+        if backend is runtime and (step.get("kind") in CAPABILITIES or
+                (step.get("kind") == "click" and step.get("button", 1) in (8, 9))):
+            raise ValueError("Extended pointer and touch gestures require the native portal backend")
         if step.get("action") == "screenshot":
             validate_capture_max_age(step.get("max_age_seconds", 60))
             delay = step.get("after_ms", 0)
@@ -502,6 +517,12 @@ def run_sequence(path: str, generation: str, *, backend=runtime) -> dict[str, An
     revision = current["control_revision"]
     if any(step.get("observation_id") is not None for step in steps) and "observation-input" not in current.get("input_capabilities", []):
         raise ValueError("Helper does not support observation-bound input; update and restart it at a safe checkpoint")
+    required = {CAPABILITIES[step["kind"]] for step in steps if step.get("kind") in CAPABILITIES}
+    if any(step.get("kind") == "click" and step.get("button", 1) in (8, 9) for step in steps):
+        required.add("extra-pointer-buttons")
+    missing = required - set(current.get("input_capabilities", []))
+    if missing:
+        raise ValueError("Native helper lacks " + ", ".join(sorted(missing)) + "; refresh/start at a safe checkpoint")
     results = []
     timings = []
 

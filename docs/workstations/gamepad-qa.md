@@ -81,6 +81,9 @@ left/right-shoulder, select, start, guide and left/right-stick. Axes are
 left/right-x/y (-32768..32767), left/right-trigger (0..255), and dpad-x/y (-1..1).
 Negative d-pad Y is up, positive is down; neutral is zero throughout.
 Force feedback is unavailable. Keyboard remapping is a separate test condition.
+For relative mouse, side buttons and true multitouch testing through the native
+portal, use [pointer and touch QA](pointer-touch-qa.md). Those events have a
+different transport, permission and qualification boundary from this controller.
 
 Inspect a fresh screenshot from the selected backend and save its JSON receipt.
 Each action consumes that observation within this bridge. Capture and inspect

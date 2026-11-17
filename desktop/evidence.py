@@ -123,9 +123,15 @@ class Recorder:
                 row["attempted_output"] = payload.get("output")
                 row["related_input_id"] = payload.get("related_input_id")
             # Never record text, key values, argv, element content or portal tokens.
-            for key in ("kind", "x", "y", "to_x", "to_y", "duration_ms", "button", "hold_ms", "operation", "observation_id", "input_id"):
+            for key in ("kind", "x", "y", "to_x", "to_y", "dx", "dy", "duration_ms", "button", "hold_ms", "operation", "observation_id", "input_id"):
                 if key in payload:
                     row[key] = payload[key]
+            if action == "input" and payload.get("kind") == "touch":
+                from desktop.pointer_gestures import plan_summary
+                try:
+                    row["touch_plan"] = plan_summary(payload)
+                except ValueError:
+                    row["touch_plan"] = {"validation": "invalid"}
             if result is not None:
                 row["result"] = compact_capture(result) if action == "screenshot" else {
                     key: result[key] for key in ("pid", "launch", "returncode", "state", "generation",
@@ -133,6 +139,7 @@ class Recorder:
                         "input_completed_at", "input_completed_monotonic_ns", "observation_id",
                         "input_received_at", "input_received_monotonic_ns", "input_dispatch_at", "input_dispatch_monotonic_ns",
                         "submitted_characters", "completion_unknown",
+                        "touch_frames_completed", "touch_contacts_released", "touch_frame_completed_monotonic_ns",
                         "capture_freshness",
                         "input_id", "reason", "dispatch_stage", "input_delivery") if key in result}
                 if "error" in result:
