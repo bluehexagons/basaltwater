@@ -240,13 +240,10 @@ test('certificate shortcuts open details, select browser scripts and focus outpu
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
 });
 
-test('panel forged CSRF rejection and CA download', async ({ page, diagnostics }, info) => {
+test('panel retired updater rejection and CA download', async ({ page, diagnostics }, info) => {
   await page.goto(urls.panel);
-  const before = await (await page.request.get(urls.panel + '/__fixture__/state')).json();
   diagnostics.allowed.add(urls.panel + '/actions/t3-update');
-  expect((await postForm(page, '/actions/t3-update', { csrf: 'forged' })).status).toBe(403);
-  const after = await (await page.request.get(urls.panel + '/__fixture__/state')).json();
-  expect(after.updates).toBe(before.updates);
+  expect((await postForm(page, '/actions/t3-update', { csrf: 'forged' })).status).toBe(404);
   await page.goto(urls.panel);
   await page.locator('.trust-disclosure > summary').click();
   const downloadEvent = page.waitForEvent('download');
@@ -420,15 +417,13 @@ test('panel development forms, scenarios, reload, reset and cleanup', async ({ p
     }).toBe(1);
     await sample.getByRole('link', { name: 'View latest result', exact: true }).click();
     await expect(page.locator('.agent-run[open]')).toContainText('Synthetic execution; no provider was contacted');
-    // The full development fixture exposes Agents and its real update form;
-    // the TLS fixture above intentionally has no installed agent features.
-    await page.goto(settings.url + '/agents?view=diagnostics');
-    const updated = page.waitForResponse(response => response.url() === settings.url + '/actions/t3-update'
-      && response.request().method() === 'POST');
-    await page.getByRole('button', { name: 'Update T3 Code', exact: true }).click();
-    expect((await updated).status()).toBe(303);
-    await expect(page).toHaveURL(settings.url + '/agents?view=diagnostics');
-    await expect(page.getByRole('region', { name: 'T3 Code maintenance', exact: true })).toContainText('Synthetic update completed');
+    await page.goto(settings.url + '/agents?view=t3');
+    const workspace = page.getByRole('link', { name: 'Open T3 Code ↗', exact: true });
+    await expect(workspace).toHaveAttribute('href', 'https://coding.example.test:8445/');
+    await expect(workspace).toHaveAttribute('rel', 'noopener noreferrer');
+    await expect(workspace).toHaveAttribute('target', '_blank');
+    await expect(page.getByText('Manage T3 updates in its environment settings.', { exact: false })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Update T3 Code', exact: true })).toHaveCount(0);
     for (const route of ['/agents', '/agents?view=tasks', '/agent-tools', '/agent-inbox', '/maintenance-agent', '/admin', '/publishing',
                          '/services?load=1', '/jobs?load=1', '/logs?load=1', '/credentials']) {
       const response = await page.goto(settings.url + route);
@@ -623,7 +618,8 @@ test.describe('agent task workflow', () => {
     await page.setViewportSize({ width: 320, height: 900 });
     const tabs = page.getByRole('navigation', { name: 'Agents', exact: true });
     for (const [label, route, heading] of [
-      ['Tasks', '/agents?view=tasks', 'Prompt tasks'],
+      ['T3 Code', '/agents?view=t3', 'T3 Code'],
+      ['Independent tasks', '/agents?view=tasks', 'Prompt tasks'],
       ['Run history', '/agents?view=history', 'Run history'],
       ['Agent tools', '/agent-tools', 'Agent tools'],
       ['Inbox', '/agent-inbox', 'Agent inbox'],
@@ -776,7 +772,7 @@ test.describe('agent task workflow', () => {
     test.setTimeout(90000);
     await page.goto(dev.url + '/agents');
     await expect(page.getByRole('heading', { name: 'Agents dashboard', exact: true })).toBeVisible();
-    await page.getByRole('navigation', { name: 'Agents', exact: true }).getByRole('link', { name: 'Tasks', exact: true }).click();
+    await page.getByRole('navigation', { name: 'Agents', exact: true }).getByRole('link', { name: 'Independent tasks', exact: true }).click();
     await expect(page).toHaveURL(dev.url + '/agents?view=tasks');
     const sample = page.getByRole('article', { name: 'Example inspection', exact: true });
     await expect(sample.getByRole('button', { name: 'Run once', exact: true })).toBeVisible();
@@ -856,11 +852,12 @@ test.describe('agent task workflow', () => {
     await expect(page).toHaveURL(selectedRun);
     await expect(page.locator('.agent-run[open]')).toContainText('Synthetic execution; no provider was contacted');
     await page.locator('header').getByRole('link', { name: 'Templates', exact: true }).click();
-    await page.getByText(/^Repository work · \d+ templates$/).click();
-    await page.getByRole('link', { name: /^Repair failing checks/ }).click();
-    await expect(page.getByLabel('Working directory', { exact: true })).toHaveValue('');
+    await expect(page.getByText(/^Repository work/)).toHaveCount(0);
+    await expect(page.getByRole('link', { name: /^Repair failing checks/ })).toHaveCount(0);
+    await page.getByRole('link', { name: /^Check backup health/ }).click();
+    await expect(page.getByLabel('Working directory', { exact: true })).toHaveValue(home);
     await expect(page.getByRole('combobox', { name: 'Execution mode', exact: true })).toHaveValue('workspace');
-    await expect(page.getByLabel('Allow temporary file writes', { exact: false })).toBeChecked();
+    await expect(page.getByLabel('Allow temporary file writes', { exact: false })).not.toBeChecked();
 
     for (const colorScheme of ['light', 'dark']) {
       await page.emulateMedia({ colorScheme });

@@ -74,24 +74,6 @@ class AgentTaskTest(unittest.TestCase):
         self.assertEqual(self.manager.snapshot()["tasks"], [])
         self.assertEqual(len(self.manager.snapshot()["runs"]), 1)
 
-    def test_editing_starters_finish_once_and_leave_review_work_untouched(self) -> None:
-        for key in ("ci-repair", "dependencies", "documentation"):
-            with self.subTest(template=key):
-                identifier = self.manager.create({**agents.PROMPT_TEMPLATES[key], "directory": str(self.project)}, run_now=True, now=100)
-                review = self.project / (key + ".txt")
-
-                def finish(*_args, **_kwargs):
-                    review.write_text("Changes awaiting review")
-                    return {"status": "completed", "output": "Prepared", "message": "Done"}
-
-                with patch.object(tasks, "execute_prompt", side_effect=finish) as execute:
-                    self.assertTrue(self.manager.tick(now=101))
-                    self.assertFalse(self.manager.tick(now=1000000))
-                execute.assert_called_once()
-                self.assertEqual(review.read_text(), "Changes awaiting review")
-                saved = next(task for task in self.manager.snapshot()["tasks"] if task["id"] == identifier)
-                self.assertEqual(saved["interval"], "once")
-                self.assertIsNone(saved["next_run"])
 
     def test_custom_cadence_survives_restart_edits_and_pause_resume(self) -> None:
         values = {**self.values, "interval": "custom", "repeat_minutes": "360"}
@@ -492,7 +474,7 @@ class AgentTaskTest(unittest.TestCase):
     def test_entire_template_catalog_validates_and_builds_bounded_commands(self) -> None:
         for key, template in agents.PROMPT_TEMPLATES.items():
             with self.subTest(template=key):
-                directory = self.project if template["scope"] == "repository" else self.home
+                directory = self.home
                 task = tasks.validate_task({**template, "directory": str(directory)}, self.home)
                 command = tasks.codex_command(task, "/test/codex")
                 sandbox = command[command.index("--sandbox") + 1]
@@ -686,6 +668,7 @@ class AgentScreenTest(unittest.TestCase):
         self.project.mkdir()
         self.state = panel.WebPanelState({"host": "example.test", "username": "agent", "system_type": "agent_vm",
                                          "features": {}, "services": [], "access": []}, agent_home=self.home)
+        self.enterContext(patch.object(panel, "discover_basaltwater_web_services", return_value=[]))
         self.enterContext(patch.object(self.state, "features", return_value=PanelFeatures(tools=frozenset({"codex", "git"}))))
         self.state.agent_diagnostics = agents.AgentDiagnostics(self.temporary.name, features=lambda: self.state.features())
         for target, attribute, value in ((tasks.AgentTasks, "available", True), (tasks, "_tool_path", "/test/codex")):
@@ -708,22 +691,22 @@ class AgentScreenTest(unittest.TestCase):
 
     def test_screen_works_without_t3_and_rendering_never_launches_checks_or_prompts(self) -> None:
         with patch.object(self.state.agent_diagnostics, "trigger") as checks, patch.object(tasks, "execute_prompt") as execute:
-            page = agents.render_agents(self.state, panel._PAGE_STYLE, {"template": "dependencies"})
+            page = agents.render_agents(self.state, panel._PAGE_STYLE, {"template": "maintenance"})
         checks.assert_not_called()
         execute.assert_not_called()
         self.assertIn('href="/agents?view=tasks" aria-current="page"', page)
-        self.assertIn("Update repository dependencies", page)
+        self.assertIn(agents.PROMPT_TEMPLATES["maintenance"]["title"], page)
         self.assertIn("Create schedule", page)
         self.assertNotIn("Update T3 Code</button>", page)
         self.assertIn("read-only sandbox", page)
 
-    def test_host_templates_prefill_home_and_repository_templates_require_a_checkout(self) -> None:
+    def test_host_templates_prefill_home_without_starting_work(self) -> None:
         with patch.object(tasks, "execute_prompt") as execute, patch.object(self.state.agent_diagnostics, "trigger") as checks:
             for key in agents._available_templates(self.state.manifest, self.temporary.name, self.state.features()):
                 with self.subTest(template=key):
                     query = agents.parse_agent_query("template=" + key)
                     page = agents.render_agents(self.state, panel._PAGE_STYLE, query)
-                    directory = self.temporary.name if agents.PROMPT_TEMPLATES[key]["scope"] == "host" else ""
+                    directory = self.temporary.name
                     self.assertIn(f'name="directory" value="{directory}"', page)
                     self.assertIn(f'href="/agents?template={key}" aria-current="true"', page)
         execute.assert_not_called()
@@ -733,12 +716,12 @@ class AgentScreenTest(unittest.TestCase):
     def test_optional_templates_are_hidden_without_features_or_commands(self) -> None:
         self.state.manifest.update({"services": [None, "Gogs", {"label": []}],
                                     "access": [{"label": None}],
-                                    "features": {"t3_update": False, "notification_ingest": "true"}})
+                                    "features": {"t3code": False, "notification_ingest": "true"}})
         with patch.object(agents, "inspect_agent_tools") as inspect_tools, patch.object(agents, "inspect_t3code") as inspect_t3:
             page = agents.render_agents(self.state, panel._PAGE_STYLE, {"view": "templates"})
         inspect_tools.assert_not_called()
         inspect_t3.assert_not_called()
-        self.assertIn("Repository work · 6 templates", page)
+        self.assertNotIn("Repository work ·", page)
         self.assertIn("Host checks and maintenance ·", page)
         for key, template in agents.PROMPT_TEMPLATES.items():
             if "requires" in template:
@@ -760,13 +743,13 @@ class AgentScreenTest(unittest.TestCase):
         path.write_text(content)
         before = self.state.agent_tasks.snapshot()
         with patch.object(policy, "REQUIREMENTS_PATH", path), patch.object(tasks, "execute_prompt") as execute:
-            for key in ("maintenance", "security-review"):
+            for key in ("maintenance",):
                 with self.subTest(template=key):
                     page = agents.render_agents(self.state, panel._PAGE_STYLE, {"template": key})
                     self.assertIn("Policy conflict:", page)
                     self.assertIn("Execution policy conflict", page)
                     self.assertIn('value="draft">Save draft</button>', page)
-            page = agents.render_agents(self.state, panel._PAGE_STYLE, {"template": "repository"})
+            page = agents.render_agents(self.state, panel._PAGE_STYLE, {"template": "storage"})
             self.assertNotIn("Execution policy conflict", page)
         execute.assert_not_called()
         self.assertEqual(self.state.agent_tasks.snapshot(), before)
@@ -774,7 +757,7 @@ class AgentScreenTest(unittest.TestCase):
 
     def test_optional_templates_follow_specific_configuration_and_installed_commands(self) -> None:
         cases = (
-            ("t3-readiness", {"features": {"t3_update": True}}, (), "T3 Code configured"),
+            ("t3-readiness", {"features": {"t3code": True}}, (), "T3 Code configured"),
             ("containers", {}, ("docker",), "Container CLI detected"),
             ("containers", {}, ("podman",), "Container CLI detected"),
             ("web-hosting", {"services": [{"label": "Web server"}]}, (), "Web server configured"),
@@ -786,10 +769,6 @@ class AgentScreenTest(unittest.TestCase):
             ("shared-storage", {}, ("sshfs",), "Shared storage command detected"),
             ("remote-desktop", {"access": [{"label": "Remote desktop"}]}, (), "Remote desktop configured"),
             ("remote-desktop", {}, ("xrdp",), "xrdp command detected"),
-            ("github-actions", {}, ("gh",), "GitHub CLI detected"),
-            ("browser-smoke", {}, ("basaltwater-playwright-mcp",), "Managed browser launcher detected"),
-            ("godot-export", {}, ("godot",), "Godot command detected"),
-            ("godot-export", {}, ("godot4",), "Godot command detected"),
             ("homebox-health", {"services": [{"label": "HomeBox"}]}, (), "HomeBox configured"),
             ("gogs-health", {"services": [{"label": "Gogs"}]}, (), "Gogs configured"),
             ("gogs-health", {}, ("gogs",), "Gogs command detected"),
@@ -812,7 +791,7 @@ class AgentScreenTest(unittest.TestCase):
                 page = agents.render_agents(self.state, panel._PAGE_STYLE, agents.parse_agent_query("template=" + key))
                 self.assertIn(f'href="/agents?template={key}" aria-current="true"', page)
                 self.assertIn(reason, page)
-                directory = self.temporary.name if templates[key]["scope"] == "host" else ""
+                directory = self.temporary.name
                 self.assertIn(f'name="directory" value="{directory}"', page)
                 self.assertEqual(self.state.agent_tasks.snapshot()["tasks"], [])
                 spawn.assert_not_called()
@@ -875,17 +854,12 @@ class AgentScreenTest(unittest.TestCase):
             tools=frozenset({"codex", "git", "gh"}), t3=True,
         )))
         (Path(self.temporary.name) / ".t3/runtime").mkdir(parents=True)
-        self.state.manifest.update({"features": {"t3_update": True, "notification_ingest": True},
+        self.state.manifest.update({"features": {"t3code": True, "notification_ingest": True},
                                     "services": [{"label": label} for label in ("HomeBox", "Gogs", "Antistatic DB", "Privilege approvals")]})
         installed = patch.object(agents, "_tool_path", return_value="/test/tool")
         installed.start()
         self.addCleanup(installed.stop)
         cases = (
-            ("ci-repair", "workspace", "once", 60, True, True, "disabled"),
-            ("dependencies", "workspace", "once", 30, True, True, "disabled"),
-            ("documentation", "workspace", "once", 30, False, True, "disabled"),
-            ("security-review", "inspect", "once", 30, False, False, "live"),
-            ("release-review", "inspect", "once", 20, False, False, "disabled"),
             ("daily-maintenance", "workspace", "daily", 30, True, False, "disabled"),
             ("backups", "workspace", "once", 15, True, False, "disabled"),
             ("updates", "workspace", "once", 15, True, False, "disabled"),
@@ -898,9 +872,6 @@ class AgentScreenTest(unittest.TestCase):
             ("web-hosting", "workspace", "once", 15, True, False, "disabled"),
             ("shared-storage", "workspace", "once", 15, True, False, "disabled"),
             ("remote-desktop", "workspace", "once", 10, True, False, "disabled"),
-            ("github-actions", "workspace", "once", 20, True, False, "disabled"),
-            ("browser-smoke", "workspace", "once", 30, True, True, "disabled"),
-            ("godot-export", "workspace", "once", 60, False, True, "disabled"),
             ("homebox-health", "workspace", "once", 15, True, False, "disabled"),
             ("gogs-health", "workspace", "once", 15, True, False, "disabled"),
             ("antistatic-health", "workspace", "once", 15, True, False, "disabled"),
@@ -917,7 +888,7 @@ class AgentScreenTest(unittest.TestCase):
                 self.assertIn(f'<option value="{web_search}" selected>', page)
                 self.assertIn('<details class="agent-template-group" open>', page)
                 values = {"csrf": self.state.csrf_token, "title": template["title"], "prompt": template["prompt"],
-                          "directory": str(self.project if template["scope"] == "repository" else self.home),
+                          "directory": self.home,
                           "mode": template["mode"], "interval": template["interval"],
                           "workspace": template.get("workspace", "existing"),
                           "timeout_minutes": str(template.get("timeout_minutes", tasks.DEFAULT_TIMEOUT_MINUTES)), "web_search": template.get("web_search", "disabled"),
@@ -935,10 +906,9 @@ class AgentScreenTest(unittest.TestCase):
                                  (mode, interval, runtime, network, temporary_files, web_search))
                 self.assertEqual(saved["queued"], interval == "once")
                 self.assertEqual(saved["workspace"], template.get("workspace", "existing"))
-        self.assertIn("Repository work · 9 templates", page)
+        self.assertNotIn("Repository work ·", page)
         self.assertIn("Host checks and maintenance ·", page)
         self.assertIn("20 min cap · command network", page)
-        self.assertIn("30 min cap · command network · temporary writes", page)
 
     def test_form_creates_schedule_after_csrf_and_validation_then_redirects(self) -> None:
         values = {"csrf": self.state.csrf_token, "title": "Review", "prompt": "Inspect this host",
@@ -1626,22 +1596,6 @@ class AgentScreenTest(unittest.TestCase):
         inspect_t3.assert_called_once_with(home=self.temporary.name, fix=False)
         self.assertIsNone(state.agent_diagnostics.snapshot()["t3"])
 
-    def test_t3_readiness_and_update_controls_use_the_agents_screen(self) -> None:
-        self.state.agent_diagnostics._snapshot = {
-            "status": "loaded", "checked_at": 100, "tools": [],
-            "t3": {"status": "unhealthy", "version": None, "checks": {"runtime": False}},
-            "maintenance": {"status": "inactive", "active": False}, "record": None, "record_error": "",
-        }
-        with patch.object(self.state, "t3_update_available", return_value=True):
-            page = agents.render_agents(self.state, panel._PAGE_STYLE, {"view": "diagnostics"})
-            handler = self.handler("/actions/t3-update", {"csrf": self.state.csrf_token, "return": "agents"})
-            with patch.object(self.state, "trigger_t3_update", return_value=True) as update:
-                handler.do_POST()
-        self.assertIn("Readiness details", page)
-        self.assertIn("Needs attention", page)
-        self.assertIn("Update T3 Code</button>", page)
-        update.assert_called_once()
-        handler.send_header.assert_any_call("Location", "/agents?view=diagnostics")
 
     def test_history_redacts_common_credentials_and_shows_original_prompt(self) -> None:
         self.state.agent_tasks.create({"title": "Check <host>", "prompt": "Inspect <host>", "directory": self.temporary.name,

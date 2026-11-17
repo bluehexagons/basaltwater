@@ -149,13 +149,14 @@ class Scenario:
              "description": "Simulated service; no host query"},
         ])
         self.replace(state, "diagnostic_sources", return_value={"nginx.service": "Synthetic web service"})
-        self.replace(panel, "discover_basaltwater_web_services", return_value=[])
+        self.replace(panel, "discover_basaltwater_web_services", return_value=[{
+            "label": "HTTPS service: t3code", "url": "https://coding.example.test:8445/",
+            "description": "Synthetic coding workspace", "application": "t3code",
+        }] if self.features.t3 else [])
         self.replace(panel, "discover_certificate_trust", return_value=None)
         if self.name == "proxmox":
             state.manifest.update(system_type="server_proxmox", title="Proxmox development cluster")
             self.replace(panel, "load_proxmox_snapshot", return_value=proxmox_snapshot())
-        self.replace(state, "t3_update_available", return_value=self.features.t3)
-        self.replace(state, "trigger_t3_update", side_effect=self.update)
         self.replace(jobs, "collect_jobs", return_value=jobs.JobSnapshot(
             [] if self.name == "empty" else job_rows(),
             ["Synthetic timer collection incomplete"] if self.name == "degraded" else [], absent=9,
@@ -425,10 +426,6 @@ class Scenario:
             "issues": [], "routines": [], "review": {"status": "skipped", "reason": "Synthetic development check"},
         }] if self.data["checked"] else []}
 
-    def update(self) -> bool:
-        self.state.action_status = "failed" if self.name == "degraded" else "complete"
-        self.state.action_message = "Synthetic update failed" if self.name == "degraded" else "Synthetic update completed"
-        return True
 
     def execute(self, task, home, cancel) -> dict:
         failed = self.name == "degraded"

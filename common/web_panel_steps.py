@@ -255,9 +255,7 @@ def build_web_panel_manifest(
             "publishing_tools": sorted(publishing_tools),
             "git": bool(config.has_agent_features() or config.git_credentials
                         or config.git_ca_pems or config.clear_git_credentials),
-            "t3_update": "t3code" in (config.web_interfaces or []),
-            "t3_github_readiness": config.github_auth_payload,
-            "t3_git_identity_readiness": config.git_identity_payload,
+            "t3code": "t3code" in (config.web_interfaces or []),
             "notification_ingest": config.web_panel_notification_ingest is True,
             "guacamole": config.guacamole is True,
         },

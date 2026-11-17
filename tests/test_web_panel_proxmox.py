@@ -272,7 +272,7 @@ class ProxmoxPanelTrustTest(unittest.TestCase):
                    web_interfaces=["t3code"], agent_tools=["codex"]),
             ["pve.example.test"],
         )
-        self.assertTrue(manifest["features"]["t3_update"])
+        self.assertTrue(manifest["features"]["t3code"])
         with tempfile.TemporaryDirectory() as temporary:
             os.makedirs(os.path.join(temporary, ".t3", "runtime"))
             state = panel.WebPanelState(manifest, agent_home=temporary)
@@ -281,8 +281,6 @@ class ProxmoxPanelTrustTest(unittest.TestCase):
                 patch.object(panel.threading, "Thread") as worker,
             ):
                 self.assertFalse(state.features().t3)
-                self.assertFalse(state.t3_update_available())
-                self.assertFalse(state.trigger_t3_update())
                 handler = object.__new__(panel.WebPanelHandler)
                 handler.state, handler.path = state, "/actions/t3-update"
                 body = urllib.parse.urlencode({"csrf": state.csrf_token}).encode()

@@ -361,8 +361,8 @@ This is scoped to the service unit rather than the setup user's login groups;
 processes launched by the panel also inherit it. Rerun setup to apply the unit
 change to an existing installation.
 
-T3 Code's **Update to latest** action uses the supported user-service updater
-and readiness checks. **Admin controls** provides separately approved Debian
+T3 updates use its native environment settings. The retired panel
+`POST /actions/t3-update` endpoint returns 404. **Admin controls** provides separately approved Debian
 package upgrades and a full Basaltwater refresh.
 
 ## Git and credentials
@@ -489,6 +489,13 @@ workspace and are reported in run output.
 maintenance, inbox feedback and runtime readiness. It does not launch
 diagnostics or prompts. `?view=tasks`, `?view=history`, and
 `?view=diagnostics` select task, standalone run history, and readiness views.
+`?view=t3` opens the coding workspace handoff without reading task storage.
+It reuses bounded, cached gateway discovery and accepts only an unambiguous
+HTTPS root identified by the exact `t3code` forward name, preserving the allocated
+public port. Arbitrary service labels cannot enable the link. No token is minted
+or copied; T3 owns authentication and the destination opens with `noopener
+noreferrer`. Missing routes show recovery guidance. Saved `t3_update` selection
+flags remain readable; new manifests emit `t3code`, which takes precedence.
 Agent tools, inbox, and maintenance are tabs in the same Agents workspace.
 State changes use
 Basic Auth and the panel's CSRF token. The fixed form routes are
@@ -520,8 +527,8 @@ access. Conditional template links are validated against the fixed catalog;
 unavailable selections show an explanatory notice without prefilling the task.
 Saved tasks remain independent of catalog availability. See the [template
 table](web-panel.md#agent-prompt-tasks) for conditions and suggested settings.
-Repository templates require an installed Git executable. Without Codex, the
-Agents page exposes only installed runtime diagnostics; the CLI can still save
+Repository starters have been removed in favor of T3. Without Codex, the
+Agents page exposes installed runtime diagnostics and the selected T3 handoff; the CLI can still save
 inactive task drafts before installation.
 
 The runner invokes the installed Codex executable directly with `codex exec`
@@ -543,11 +550,8 @@ agent to keep inspection read-only across tools, report blocked checks without
 escalation or interactive login, and keep waits within the remaining runtime.
 Skill examples and tool presence do not grant authority beyond the task prompt.
 These instructions guide agent behavior; they do not add an OS sandbox around
-external integrations. Repository editing templates require a clean existing
-checkout, while a managed task worktree may continue its own changes against
-the checkpoint. They stop for review when changes are unrelated. This
-is prompt guidance, not a Git lock or a runner-enforced preflight. Existing saved
-prompts retain their text; select the refreshed template to adopt its guidance.
+external integrations. Existing saved prompts retain their text and settings
+when a starter is removed; no catalog change deletes or transfers tasks.
 
 Model choices read only selector metadata from the bounded local
 `~/.codex/models_cache.json`; identity and credential fields are never exposed.

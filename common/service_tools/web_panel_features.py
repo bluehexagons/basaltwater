@@ -79,6 +79,12 @@ def unit_installed(unit: str, home: str, *, user: bool = False) -> bool:
     return False
 
 
+def t3_selected(configured: dict[str, object]) -> bool:
+    """Read the T3 selection, including manifests saved before updater removal."""
+
+    return configured.get("t3code", configured.get("t3_update")) is True
+
+
 def t3_installed(home: str) -> bool:
     return os.path.isdir(os.path.join(home, ".t3/runtime")) or unit_installed("t3code.service", home, user=True)
 
@@ -110,7 +116,7 @@ def discover_features(
 
     tools = frozenset(name for name in ("codex", "claude", "opencode", "git", "gh", "butler", "steamcmd")
                       if name in allowed and _tool_path(name, home))
-    t3 = configured.get("t3_update") is True and t3_installed(home)
+    t3 = t3_selected(configured) and t3_installed(home)
     agents = t3 or bool(tools & {"codex", "claude", "opencode"})
     return PanelFeatures(
         tools=tools,

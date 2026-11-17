@@ -199,16 +199,19 @@ agent session** to reload one thread without restarting the whole server.
 Use T3 as the owner of coding-session behavior and Basaltwater as the owner of
 machine preparation, host operations and recovery. Existing independent tasks,
 worktrees and history remain supported; this review does not migrate or delete
-them. Prioritize these reductions when evolving the integration:
+them. The web panel now links to T3’s discovered HTTPS workspace, removes its duplicate
+updater, and limits its starter catalog to host operations. Existing saved tasks
+remain supported. Follow the [panel handoff and schedule migration](../services/web-panel.md#t3-code-workspace).
+Consider the remaining reductions below when evolving the integration:
 
 | Area | Preferred owner and next step | Retain in Basaltwater |
 | --- | --- | --- |
 | Interactive goals and continuation | T3's native Codex/Claude/OpenCode goals and Resume; avoid a second continuation loop around a T3 thread | Independent Codex tasks with lifetime limits, checkpoints and receipts |
-| Ordinary prompts, schedules and PR monitoring | T3 schedules/webhooks and native PR watches; reduce duplicate generic task forms on T3-focused installations | Host jobs that must operate independently of T3 and fixed storage operations |
+| Ordinary prompts, schedules and PR monitoring | T3 schedules/webhooks and native PR watches; the panel repository starters have been removed | Host jobs that must operate independently of T3 and fixed storage operations |
 | Worktrees, scratch, captures and logs | T3's opt-in retention for its own data; assess replacing overlapping numbered-log retention after matching its limits and custom data roots | Basaltwater-owned worktrees, runtime rollback protection, credential redaction, host pressure inventory and recovery |
 | Pairing and remote access | T3 Connect device approval and OAuth for T3 access; consider making the extra pairing portal optional for Connect-only setups | Direct/private-LAN enrollment, gateway TLS and source restrictions, other hosted services |
 | Browser and power management | T3 preview and native keep-awake behavior for T3 work | Explicit terminal-agent Playwright, application test suites, desktop access and host readiness |
-| Updates and client documentation | T3's updater and tagged manuals; keep local guidance focused on integration differences | Initial installation, package ownership, setup reconciliation, security policy and failed-start recovery |
+| Updates and client documentation | T3's updater and tagged manuals; the panel updater has been removed | Initial installation, package ownership, setup reconciliation, security policy and failed-start recovery |
 
 Before retiring a duplicate, inventory its users and saved state, establish the
 replacement's required controls, and supply migration/rollback instructions.
@@ -488,8 +491,8 @@ Doctor results establish service readiness only; they do not establish
 connected-client presentation, provider sign-in, or remote browser reachability.
 Use `--wait-for-t3-startup` after an update to allow the same 30-minute startup
 window; it checks for stable readiness without restarting an already active
-migration. The web panel uses this mode after updating T3 and budgets time for
-both the updater and startup. Ordinary doctor checks remain quick. A failed or
+migration. Ordinary doctor checks remain quick. The web panel hands updates
+to T3’s native environment settings. A failed or
 timed-out stop skips native repair and leaves readiness unhealthy with the stop
 diagnostic.
 After updates and reboots, record readiness as the target account with
@@ -751,8 +754,7 @@ provider requests. Missing Git author identity, GitHub authentication, or a
 Git credential helper is reported separately as an integration warning; an
 installed but unselected `gh` does not make T3 unhealthy. JSON retains these
 observations in `checks` and identifies the mandatory service checks in
-`required_checks`. The web panel still requires Git checks explicitly selected
-by its setup manifest. Use `agent doctor --tool gh` to check GitHub credentials
+`required_checks`. Use `agent doctor --tool gh` to check GitHub credentials
 directly. The doctor does not send a model prompt or establish that a previous
 provider timeout was resolved by running diagnostics.
 

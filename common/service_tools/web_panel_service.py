@@ -32,7 +32,6 @@ SOURCE_ROOT = os.path.dirname(
 if SOURCE_ROOT not in sys.path:
     sys.path.insert(0, SOURCE_ROOT)
 
-from common.t3code_steps import _temporary_t3_loginctl_shim
 from common.service_tools.web_panel_diagnostics import (
     SYSTEM_UNITS,
     _bounded_command,
@@ -107,73 +106,10 @@ from common.web_panel_events import (
 _MAX_CONFIG_BYTES = 256 * 1024
 _MAX_REQUEST_BYTES = 16 * 1024
 _MAX_INGEST_REQUEST_BYTES = 64 * 1024
-_MAX_OUTPUT_BYTES = 24 * 1024
 _MAX_SERVICE_PROBE_BYTES = 8 * 1024
 _SERVICE_PROBE_TIMEOUT_SECONDS = 1
 _SYSTEM_OVERVIEW_CACHE_SECONDS = 30
 _INTERNAL_WEB_URL_FILE = "/etc/basaltwater/internal-web/base-url"
-_T3_UPDATE_TIMEOUT_SECONDS = 30 * 60
-_T3_STARTUP_TIMEOUT_SECONDS = 30 * 60
-# Doctor also inventories the runtime, tools and service configuration.
-_T3_READINESS_TIMEOUT_SECONDS = _T3_STARTUP_TIMEOUT_SECONDS + 300
-_T3_ACTION_TIMEOUT_SECONDS = _T3_UPDATE_TIMEOUT_SECONDS + _T3_READINESS_TIMEOUT_SECONDS + 60
-_T3_CORE_READINESS_CHECKS = (
-    "service_active",
-    "service_enabled",
-    "runtime",
-    "native_runtime",
-    "wrapper",
-    "pairing_helper",
-    "endpoint",
-    "startup_ready",
-    "t3_agent_skill",
-)
-_T3_GITHUB_READINESS_CHECKS = (
-    "git_identity",
-    "gh_authenticated",
-    "git_credential_helper",
-)
-_T3_READINESS_LABELS = {
-    "service_active": "service active",
-    "service_enabled": "service enabled at boot",
-    "runtime": "T3 runtime installed",
-    "native_runtime": "native runtime ready",
-    "wrapper": "pairing provider installed",
-    "pairing_helper": "pairing helper installed",
-    "endpoint": "web endpoint responding",
-    "startup_ready": "service startup stable",
-    "t3_agent_skill": "managed T3 skills installed",
-    "git_identity": "Git author identity configured",
-    "gh_authenticated": "GitHub CLI authenticated",
-    "git_credential_helper": "Git credential helper configured",
-}
-_T3_UPDATE_SCRIPT = r'''
-set -eu
-export NVM_DIR="$HOME/.nvm"
-if [ -s "$NVM_DIR/nvm.sh" ]; then . "$NVM_DIR/nvm.sh"; fi
-export PATH="$BASALTWATER_T3_LOGINCTL_SHIM:$HOME/.local/share/basaltwater/t3-npm/bin:$PATH"
-unset BASALTWATER_T3_LOGINCTL_SHIM
-unset npm_config_dangerously_allow_all_scripts
-unset NPM_CONFIG_DANGEROUSLY_ALLOW_ALL_SCRIPTS
-unset npm_config_allow_scripts
-unset NPM_CONFIG_ALLOW_SCRIPTS
-export CC=gcc
-export CXX=g++
-export npm_config_strict_allow_scripts=false
-export npm_config_foreground_scripts=true
-npx --yes --package=t3@latest -c \
-  'env -u npm_config_allow_scripts \
-    -u NPM_CONFIG_ALLOW_SCRIPTS \
-    -u npm_config_dangerously_allow_all_scripts \
-    -u NPM_CONFIG_DANGEROUSLY_ALLOW_ALL_SCRIPTS \
-    t3 service install'
-'''.strip()
-
-
-def _subprocess_text(value: str | bytes | None) -> str:
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="replace")
-    return value or ""
 
 
 def _reject_json_constant(value: str) -> None:
@@ -198,11 +134,10 @@ def _load_manifest(path: str) -> dict[str, Any]:
     if not isinstance(value.get("features"), dict):
         raise RuntimeError("Web panel manifest has no valid features")
     for name in (
-        "t3_github_readiness",
-        "t3_git_identity_readiness",
         "notification_ingest",
         "git",
-        "t3_update",
+        "t3code",
+        "t3_update",  # Saved manifests before the native-updater handoff.
     ):
         if not isinstance(value["features"].get(name, False), bool):
             raise RuntimeError("Web panel manifest has invalid feature settings")
@@ -326,13 +261,10 @@ def discover_basaltwater_web_services() -> list[dict[str, str]]:
                     description = "not responding"
                 else:
                     description = "Readiness not reported"
-                services.append(
-                    {
-                        "label": f"{label_prefix}: {name}",
-                        "url": url,
-                        "description": description,
-                    }
-                )
+                service = {"label": f"{label_prefix}: {name}", "url": url, "description": description}
+                if collection == "forwards" and name == "t3code":
+                    service["application"] = "t3code"
+                services.append(service)
     return services
 
 
@@ -736,7 +668,11 @@ def _deduplicate_services(
             continue
         url = _safe_url(record.get("url"))
         label = record.get("label")
-        if not url or not isinstance(label, str) or not label or url in seen:
+        if not url or not isinstance(label, str) or not label:
+            continue
+        if url in seen:
+            if record.get("application") == "t3code":
+                next(service for service in services if service["url"] == url)["application"] = "t3code"
             continue
         description = record.get("description")
         service: dict[str, Any] = {
@@ -744,61 +680,13 @@ def _deduplicate_services(
             "url": url,
             "description": description if isinstance(description, str) else "",
         }
+        if record.get("application") == "t3code":
+            service["application"] = "t3code"
         if (probe_port := _homebox_probe_port(record)) is not None:
             service["probe"] = {"kind": "homebox", "port": probe_port}
         services.append(service)
         seen.add(url)
     return services
-
-
-def _evaluate_t3_readiness(
-    manifest: dict[str, Any], output: str
-) -> tuple[bool, str] | None:
-    """Evaluate doctor JSON against the capabilities selected during setup."""
-
-    try:
-        records = json.loads(output)
-    except (TypeError, ValueError):
-        return None
-    if not isinstance(records, list):
-        return None
-    result = next(
-        (
-            record
-            for record in records
-            if isinstance(record, dict) and record.get("capability") == "t3code"
-        ),
-        None,
-    )
-    if not isinstance(result, dict) or not isinstance(result.get("checks"), dict):
-        return None
-
-    checks = result["checks"]
-    required = list(_T3_CORE_READINESS_CHECKS)
-    if manifest["features"].get("t3_git_identity_readiness") is True:
-        required.append("git_identity")
-    if manifest["features"].get("t3_github_readiness") is True:
-        required.extend(("gh_authenticated", "git_credential_helper"))
-    failed = [name for name in required if checks.get(name) is not True]
-    optional_failed = [
-        name
-        for name in _T3_GITHUB_READINESS_CHECKS
-        if name not in required and checks.get(name) is False
-    ]
-
-    lines = ["Readiness checks:"]
-    for name in required:
-        marker = "✓" if checks.get(name) is True else "✗"
-        lines.append(f"  {marker} {_T3_READINESS_LABELS[name]}")
-    if optional_failed:
-        labels = ", ".join(_T3_READINESS_LABELS[name] for name in optional_failed)
-        lines.append(f"  • Not required by this setup: {labels}")
-    fixes = result.get("fixes")
-    if isinstance(fixes, list):
-        for fix in fixes:
-            if isinstance(fix, str) and fix:
-                lines.append(f"  ✓ Repair applied: {fix}")
-    return not failed, "\n".join(lines) + "\n"
 
 
 class WebPanelState:
@@ -823,10 +711,6 @@ class WebPanelState:
             if self.notification_ingest_enabled()
             else None
         )
-        self.action_status = "idle"
-        self.action_message = ""
-        self.action_output = ""
-        self.action_started_at: float | None = None
         self.status_cache = status_model.StatusCache()
         self.status = status_model.PanelStatus(self)
         self.publishing = Publishing(agent_home)
@@ -969,178 +853,6 @@ class WebPanelState:
             return (discover_certificate_trust(self.manifest) if self.manifest.get("system_type") == "server_proxmox"
                     else discover_certificate_trust())
         return self.status_cache.read("trust", 60, collect).value
-
-    def t3_update_available(self) -> bool:
-        """Return whether T3 Code is both configured and present for this user."""
-
-        return bool(
-            self.features().t3
-            and self.manifest["features"].get("t3_update") is True
-            and os.path.isdir(os.path.expanduser("~/.t3/runtime"))
-        )
-
-    def trigger_t3_update(self) -> bool:
-        if not self.t3_update_available():
-            return False
-        with self._lock:
-            if self.action_status == "running":
-                return False
-            self.action_status = "running"
-            self.action_message = "Updating T3 Code…"
-            self.action_output = ""
-            self.action_started_at = time.monotonic()
-        threading.Thread(target=self._run_t3_update_guarded, daemon=True).start()
-        return True
-
-    def _run_t3_update_guarded(self) -> None:
-        try:
-            self._run_t3_update()
-        except Exception as exc:
-            self._finish_action(
-                "failed",
-                "T3 Code update stopped unexpectedly.",
-                f"{type(exc).__name__}: {exc}",
-            )
-
-    def _run_t3_update(self) -> None:
-        deadline = time.monotonic() + _T3_ACTION_TIMEOUT_SECONDS
-        home = os.path.expanduser("~")
-        environment = os.environ.copy()
-        environment.pop("BASALTWATER_T3_LOGINCTL_SHIM", None)
-        environment["HOME"] = home
-        environment["PATH"] = os.pathsep.join(
-            (
-                os.path.join(home, ".local", "bin"),
-                os.path.join(home, ".local", "share", "basaltwater", "t3-npm", "bin"),
-                environment.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
-            )
-        )
-        environment.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
-        environment.setdefault(
-            "DBUS_SESSION_BUS_ADDRESS",
-            f"unix:path=/run/user/{os.getuid()}/bus",
-        )
-        try:
-            with _temporary_t3_loginctl_shim(
-                home, self.manifest["username"]
-            ) as shim_path:
-                update_environment = environment.copy()
-                update_environment["BASALTWATER_T3_LOGINCTL_SHIM"] = shim_path
-                update_environment["PATH"] = os.pathsep.join(
-                    (shim_path, environment["PATH"])
-                )
-                result = subprocess.run(
-                    ["/bin/bash", "-lc", _T3_UPDATE_SCRIPT],
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                    timeout=_T3_UPDATE_TIMEOUT_SECONDS,
-                    cwd=home,
-                    env=update_environment,
-                )
-        except subprocess.TimeoutExpired as exc:
-            output = _subprocess_text(exc.stdout) + _subprocess_text(exc.stderr)
-            self._finish_action("failed", "T3 Code update timed out.", output)
-            return
-        except OSError as exc:
-            self._finish_action("failed", "T3 Code updater could not start.", str(exc))
-            return
-
-        output = (result.stdout or "") + (result.stderr or "")
-        if result.returncode != 0:
-            self._finish_action(
-                "failed",
-                f"T3 Code update failed with exit code {result.returncode}.",
-                output,
-            )
-            return
-
-        doctor = shutil.which("basaltw", path=environment["PATH"])
-        if not doctor:
-            self._finish_action(
-                "failed",
-                "T3 Code updated, but the managed readiness command is unavailable.",
-                output,
-            )
-            return
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            self._finish_action("failed", "T3 Code update exceeded its action deadline.", output)
-            return
-        with self._lock:
-            self.action_message = "Waiting for T3 Code startup (up to 30 minutes)…"
-        try:
-            check = subprocess.run(
-                [
-                    doctor,
-                    "agent",
-                    "doctor",
-                    "--capability",
-                    "t3code",
-                    "--wait-for-t3-startup",
-                    "--json",
-                ],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=min(_T3_READINESS_TIMEOUT_SECONDS, remaining),
-                cwd=home,
-                env=environment,
-            )
-        except subprocess.TimeoutExpired as exc:
-            output += _subprocess_text(exc.stdout) + _subprocess_text(exc.stderr)
-            self._finish_action(
-                "failed",
-                "T3 Code updated, but its readiness check timed out.",
-                output,
-            )
-            return
-        except OSError as exc:
-            self._finish_action(
-                "failed",
-                "T3 Code updated, but its readiness check could not start.",
-                output + str(exc),
-            )
-            return
-        if time.monotonic() >= deadline:
-            self._finish_action(
-                "failed", "T3 Code update exceeded its action deadline.",
-                output + (check.stderr or ""),
-            )
-            return
-        readiness = _evaluate_t3_readiness(self.manifest, check.stdout or "")
-        if readiness is None:
-            output += (check.stdout or "") + (check.stderr or "")
-            self._finish_action(
-                "failed",
-                "T3 Code updated, but its readiness result was invalid.",
-                output,
-            )
-            return
-        ready, readiness_output = readiness
-        output += (check.stderr or "") + readiness_output
-        if not ready:
-            self._finish_action(
-                "failed",
-                "T3 Code updated, but its readiness check failed.",
-                output,
-            )
-            return
-        self._finish_action("complete", "T3 Code update completed.", output)
-
-    def _finish_action(self, status: str, message: str, output: str) -> None:
-        encoded = output.encode("utf-8", errors="replace")
-        if len(encoded) > _MAX_OUTPUT_BYTES:
-            encoded = encoded[-_MAX_OUTPUT_BYTES:]
-            output = "… earlier output omitted …\n" + encoded.decode(
-                "utf-8", errors="replace"
-            )
-        with self._lock:
-            self.action_status = status
-            self.action_message = message
-            self.action_output = output.strip()
-            self.action_started_at = None
-
 
 _PAGE_STYLE = """
 * { box-sizing: border-box; }
@@ -2139,8 +1851,6 @@ class WebPanelHandler(BaseHTTPRequestHandler):
     def _feature_available(self, path: str) -> bool:
         if path in {"/headscale", "/actions/headscale"}:
             return self.state.features().headscale
-        if path == "/actions/t3-update":
-            return self.state.t3_update_available()
         pages = {
             "/github-runner": "github-runner",
             RUNNER_REGISTRATION_ENDPOINT: "github-runner",
@@ -2422,7 +2132,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         credential_paths = {"/actions/credentials/identity", "/actions/credentials/github", "/actions/credentials/github-remove"}
         publishing_paths = {"/actions/publishing/" + action for action in PUBLISHING_FIELDS}
         maintenance_paths = {"/actions/maintenance-agent", "/actions/agent-inbox"}
-        if path not in {"/actions/t3-update", "/actions/storage-scan"} and path not in agent_paths | admin_paths | data_paths | samba_paths | share_paths | routine_paths | credential_paths | publishing_paths | maintenance_paths:
+        if path not in {"/actions/storage-scan"} and path not in agent_paths | admin_paths | data_paths | samba_paths | share_paths | routine_paths | credential_paths | publishing_paths | maintenance_paths:
             self._send(HTTPStatus.NOT_FOUND, "Not found\n", "text/plain")
             return
         if parsed.query:
@@ -2526,16 +2236,6 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         if path in publishing_paths:
             self._handle_publishing_action(path, values)
             return
-        if set(values) - {"csrf", "return"} or any(len(entries) != 1 for entries in values.values()) or values.get("return", ["agents"])[0] != "agents":
-            self._send(HTTPStatus.BAD_REQUEST, "Invalid update action\n", "text/plain")
-            return
-        if not self.state.trigger_t3_update():
-            self._send(HTTPStatus.CONFLICT, "Action is unavailable\n", "text/plain")
-            return
-        self.send_response(HTTPStatus.SEE_OTHER)
-        self.send_header("Location", "/agents?view=diagnostics")
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
 
     def _handle_runner_registration(self, query: str) -> None:
         if not self._feature_available(RUNNER_REGISTRATION_ENDPOINT):

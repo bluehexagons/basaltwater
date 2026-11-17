@@ -178,8 +178,10 @@ class AgentPanelToolsTest(unittest.TestCase):
                 self.assertFalse(task["temporary_files"])
                 self.assertEqual((self.source / "inventory.csv").read_text(), "id,name\n001,Example\n")
 
-    def test_github_review_runs_in_scratch_with_source_context(self) -> None:
-        task = {**agents.PROMPT_TEMPLATES["github-actions"], "directory": self.home, "interval": "once"}
+    def test_saved_repository_review_runs_in_scratch_with_source_context(self) -> None:
+        task = {"title": "Saved repository review", "prompt": "Inspect the source repository",
+                "mode": "workspace", "workspace": "run-directory", "network": True,
+                "temporary_files": False, "directory": self.home, "interval": "once"}
         self.state.agent_tasks.create(task, run_now=True)
         with patch.object(agent_tasks, "execute_prompt", return_value={
             "status": "completed", "output": "Reviewed", "message": "Done",

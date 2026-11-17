@@ -27,7 +27,7 @@ class AdminScreenTests(unittest.TestCase):
     def setUp(self):
         self.manager = PanelAdmin(manifest())
         self.state = SimpleNamespace(manifest=manifest(), admin=self.manager, csrf_token="csrf",
-                                     agent_tasks=Mock(), t3_update_available=Mock(return_value=False))
+                                     agent_tasks=Mock())
         self.state.agent_tasks.snapshot.return_value = {"tasks": [], "runs": []}
         self.state.features = Mock(return_value=PanelFeatures(tools=frozenset({"codex"}), admin=True))
         self.state.navigation = lambda current: panel_navigation(current=current, available=self.state.features().pages)
@@ -86,13 +86,11 @@ class AdminScreenTests(unittest.TestCase):
                 self.assertIsNone(_review_url(url))
 
     def test_admin_does_not_render_or_query_agent_controls(self):
-        self.state.t3_update_available.return_value = True
         document = self.render()
         for marker in ("Panel prompt work", "Agent maintenance tools", 'href="/agent-tools?',
                        'action="/actions/t3-update"', "T3 Code maintenance"):
             self.assertNotIn(marker, document)
         self.state.agent_tasks.snapshot.assert_not_called()
-        self.state.t3_update_available.assert_not_called()
 
     def test_safe_job_diagnostics_and_correlated_setup_context_are_visible(self):
         latest = {"action": "refresh", "status": "failed", "stage": "command", "command_index": 1,
