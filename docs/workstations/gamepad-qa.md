@@ -1,86 +1,142 @@
-# Experimental Linux QA gamepad
+# Linux virtual controller for testing
 
-The optional source command `python3 -m desktop.gamepad_qa` creates one owned
-uinput gamepad. It requires an existing enabled native desktop helper, permission
-to use `/dev/uinput`, and the system Python `evdev` package. It installs nothing
-and changes no global mappings, Steam settings or persistent control choice.
-This is an experimental Linux test route, not physical-controller qualification
-or a new portal input capability.
+`basaltw desktop [--native] gamepad` creates one owned uinput controller. Use
+`--native` for CachyOS KDE Wayland; plain `desktop gamepad` uses the configured
+Debian desktop supervisor. Both routes require running desktop observation and
+enabled shared agent control. Events travel through Linux uinput, separately
+from portal keyboard/pointer delivery. No Steam or global mapping is changed.
 
-A native KDE Wayland check on 2026-11-16 used Godot 4.7.2's joypad inspector.
-It recognized the Xbox mapping and observed face/shoulder/menu/stick buttons,
-d-pad diagonal, both sticks and both triggers. That initial simultaneous-button
-check did not distinguish X from Y; a later game run exposed swapped north/west
-positions in the adapter. The mapping now follows the Xbox driver's historical
-BTN_X/BTN_Y aliases (west=307, north=308), rather than the misleading
-BTN_NORTH/BTN_WEST names. See the [Linux xpad driver](https://github.com/torvalds/linux/blob/master/drivers/input/joystick/xpad.c).
-Qualify each face button independently against the consumer's semantic button
-index before claiming binding coverage. Controls returned to neutral
-(Godot's signed-stick center can be approximately 0.000015). Client disconnect
-released held input and removed the device. SIGKILL during a held button/stick
-removed the device and cleared the inspector's state; that action has no final
-release receipt. A 60-second lifetime removed the idle device at expiry (task
-exit 1 reports expiry). Raw captures, event logs and task receipts remain private.
-Live human takeover, helper loss, rumble and physical devices remain unqualified.
+## Prerequisites
 
-A subsequent individual-button inspector retest observed south=A (Godot 0),
-east=B (1), west=X (2), north=Y (3), each with release. An expired one-second
-capture was rejected as `not-sent` with no additional inspector events; the
-same device remained connected and accepted a fresh-capture X press afterward.
-Normal stop removed that device and both supervised tasks exited zero.
+Run the adapter as the existing non-root desktop account. The read-only check
+does not open uinput, create a controller, start a helper or change permission:
 
-Run from the Basaltwater checkout with the intended Python. Create a private
-evidence parent outside Git, then launch the server as a supervised development
-task with a finite lifetime:
-
-```bash
-python3 -m desktop.gamepad_qa serve --output /private/new-pad-run --lifetime 900
-python3 -m desktop.gamepad_qa status
+```sh
+basaltw desktop --native gamepad doctor --json  # CachyOS
+basaltw desktop gamepad doctor --json           # Debian
 ```
 
-One server owns the pad and a same-user private Unix socket. The identity is
-`Basaltwater QA Virtual Gamepad`, USB Xbox 360 mapping (045e:028e). Buttons use
-physical-position names: south/east/north/west, left/right-shoulder, select,
-start, guide and left/right-stick. Axes are left/right-x/y (-32768..32767),
-left/right-trigger (0..255), and dpad-x/y (-1..1); neutral is zero throughout.
-Force feedback is unavailable.
+Install `python-evdev` on CachyOS or `python3-evdev` on Debian for system Python.
+For an isolated Python installation, install `basaltwater[gamepad]` into that
+environment instead; system packages may be invisible to its interpreter.
+The [Debian package](https://packages.debian.org/trixie/python3-evdev) and
+[evdev guide](https://python-evdev.readthedocs.io/en/latest/tutorial.html#injecting-input)
+provide the uinput bindings. The optional extra leaves other platforms unchanged.
 
-First qualify the device in a disposable input inspector. Inspect a fresh
-native screenshot and save its complete JSON receipt. Each action consumes
-that observation in this bridge; capture and inspect again after the action.
-For example:
+The kernel needs uinput and the account needs read/write access to `/dev/uinput`
+and read access to the adapter's resulting event device. An administrator can
+provision a dedicated testing group on either distribution. Replace `tester`
+with the selected desktop account. Do this once at a maintenance checkpoint:
 
-```bash
-python3 -m desktop.gamepad_qa press --observation /private/capture.json --button south --hold-ms 120
-python3 -m desktop.gamepad_qa press --observation /private/next-capture.json --axis dpad-y=1 --hold-ms 120
-python3 -m desktop.gamepad_qa stop
+```sh
+sudo groupadd --force basaltwater-gamepad
+sudo usermod --append --groups basaltwater-gamepad tester
+sudo tee /etc/modules-load.d/basaltwater-gamepad.conf <<'EOF'
+uinput
+EOF
+sudo tee /etc/udev/rules.d/70-basaltwater-gamepad.rules <<'EOF'
+KERNEL=="uinput", SUBSYSTEM=="misc", GROUP="basaltwater-gamepad", MODE="0660"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Basaltwater QA Virtual Gamepad", GROUP="basaltwater-gamepad", MODE="0660"
+SUBSYSTEM=="input", KERNEL=="js*", ATTRS{name}=="Basaltwater QA Virtual Gamepad", GROUP="basaltwater-gamepad", MODE="0660"
+EOF
+sudo modprobe uinput
+sudo udevadm control --reload-rules
+sudo udevadm trigger --action=change --subsystem-match=misc --sysname-match=uinput
+```
+
+Start a new login with the new group membership, including the process launching
+the game and any user service manager that launches it. Preserve active work;
+do not forcibly restart a shared desktop to refresh groups. A dedicated group
+also works for Debian XRDP sessions without an active local seat; `uaccess`
+alone may not grant those sessions access. This grants trusted group members
+kernel virtual-device creation, not permission to read arbitrary physical input
+devices. Basaltwater does not add the account to the broad `input` group or make
+devices world-writable. Existing administrator-managed access can be retained.
+Run doctor again, then qualify actual device recognition in a disposable inspector.
+VMs need their own uinput support; installing a Python package cannot supply it.
+
+## Commands and ownership
+
+Use a private evidence parent outside Git. `serve` runs in the foreground with
+a finite lifetime, so supervise it using the existing development-task route:
+
+```sh
+basaltw desktop --native develop exec --project /absolute/basaltwater -- \
+  basaltw desktop --native gamepad serve --output /private/new-pad-run --lifetime 900
+basaltw desktop --native gamepad status --json
+```
+
+On Debian omit **both** occurrences of `--native`. The installed CLI must include
+the adapter; use an explicit executable path when testing another installation.
+Retain the returned development task handle and verify its completion at closeout.
+An unacknowledged launch needs status/task inspection before another start.
+The source entry point `python3 -m desktop.gamepad_qa` uses native by default;
+its top-level `--debian` flag selects Debian. Prefer the public CLI for run briefs.
+
+One same-user private Unix socket and lock own the controller across both
+backends. Clients must select the server's original backend. The identity is
+`Basaltwater QA Virtual Gamepad`, USB Xbox 360 mapping (045e:028e). Button names
+describe physical positions: south=A, east=B, west=X, north=Y; plus
+left/right-shoulder, select, start, guide and left/right-stick. Axes are
+left/right-x/y (-32768..32767), left/right-trigger (0..255), and dpad-x/y (-1..1).
+Negative d-pad Y is up, positive is down; neutral is zero throughout.
+Force feedback is unavailable. Keyboard remapping is a separate test condition.
+
+Inspect a fresh screenshot from the selected backend and save its JSON receipt.
+Each action consumes that observation within this bridge. Capture and inspect
+again after each action, a restart or a switch to keyboard/pointer input:
+
+```sh
+basaltw desktop --native screenshot --compact --json > /private/capture.json
+# Open the PNG named by the receipt and inspect focus, scene and intended action.
+basaltw desktop --native gamepad press --observation /private/capture.json --button south --hold-ms 120
+# Take and inspect another capture before the next action.
+basaltw desktop --native gamepad press --observation /private/next-capture.json --axis dpad-y=1 --hold-ms 120
+basaltw desktop --native gamepad stop --json
 ```
 
 Actions accept simultaneous buttons/axes and a 0–5000 ms hold. All owned buttons
-and axes return to neutral afterward. Freshness, helper generation, geometry
-and control revision must match the native helper. This bridge checks the shared
-human control state during holds and while idle; disabled/override, changed
-session, lost helper, client disconnect, lifetime expiry, SIGINT or SIGTERM end
-the bridge and destroy its device. SIGKILL relies on kernel uinput descriptor
-closure and cannot write a final release receipt. Checks are polling, with
-20 ms hold checks, 200 ms helper checks and a 250 ms helper request deadline;
-they are not emergency compositor isolation. A stopped or changed helper must
-be reconciled before starting a new bridge.
+and axes return to neutral afterward. Freshness, supervisor generation, geometry
+and control revision must match. Disabled/override, browser-reserved control,
+changed session, lost supervisor, client disconnect, lifetime expiry, SIGINT or
+SIGTERM end the bridge and destroy its device. SIGKILL relies on kernel descriptor
+closure and cannot write a final release receipt. Guards poll during holds
+(20 ms), while idle, and against the supervisor (200 ms, request deadline 250 ms);
+they do not provide emergency compositor isolation. Reconcile changed/lost
+supervisors before starting again. See the [kernel uinput lifecycle](https://docs.kernel.org/input/uinput.html).
 
-Each dispatched action retains requested events, dispatch/release timestamps,
-observation provenance and delivery/neutralization status in private JSON.
-The native screenshot recorder does **not** record these pad events; retain both
-inventories and link them in the playtest handoff. A completed receipt proves
-injection and release, not visible game response. An uncertain/error result must
-be inspected and reconciled, never automatically retried. Invalid or stale
-observations detected before dispatch return `delivery: not-sent` and a retained
-rejection receipt. They keep the neutral controller connected; take and inspect
-a fresh capture before another action. Session/control changes and uncertain
-device failures still end the bridge. Cleanup/status accept no screenshot
-because stopping must remain possible after control is blocked.
+Private JSON receipts retain backend, requested events, dispatch/release times,
+observation provenance and delivery/neutralization. The desktop screenshot
+recorder does **not** record these pad events: link both inventories in the
+handoff. `completed` proves injection/release, not a game's response. An uncertain
+result requires inspection and reconciliation; never replay it automatically.
+Pre-dispatch invalid/stale captures return `delivery: not-sent`, `rejected: true`
+and a retained rejection receipt, leaving the neutral device connected for a
+fresh-capture recovery. Device/persistence failures end the bridge. Stop/status
+need no screenshot; the watchdog also closes the device after blocked control.
 
-Before gameplay, verify button release, d-pad, both sticks, triggers, neutral,
-disconnect, expiry and owned-device removal. Offline mocked tests cover blocked
-control and control changes; report any live takeover, hardware, Steam Input,
-rumble or platform gaps explicitly. Keep a single desktop/input owner. Use the
-[game-testing workflow](game-testing.md) for fresh-player learning and evidence.
+## Qualification scope
+
+CachyOS KDE Wayland on 2026-11-16, Godot 4.7.2: the source adapter recognized
+face/shoulder/menu/stick buttons, d-pad diagonals, both sticks and triggers.
+Neutral, client disconnect, lifetime expiry, SIGKILL device removal and normal
+stop were observed. The first simultaneous face-button test missed an X/Y swap.
+The corrected mapping uses west=307, north=308, following the
+[xpad driver's historical aliases](https://github.com/torvalds/linux/blob/master/drivers/input/joystick/xpad.c).
+Individual retests observed south=Godot 0, east=1, west=2, north=3, each with
+release. Stale capture rejection produced no inspector event, and a fresh
+capture recovered on the same device. Original evidence and corrections remain
+private. Signed-stick center may be approximately 0.000015 in Godot.
+
+The public CLI and Debian supervisor routing have offline contract coverage.
+Debian live device/game recognition needs its own host qualification. Live human
+takeover, supervisor loss, physical controllers, Steam Input, browser consumers
+and other platforms remain separate checks. Windows has no adapter here: it
+requires a separately selected virtual-controller driver and lifecycle testing.
+Do not install a driver or claim Windows parity from Linux results.
+
+Before gameplay, qualify each face button **individually** against the consumer's
+semantic index; simultaneous face presses cannot distinguish X from Y. Check
+release, d-pad, sticks, triggers, neutral, interruption and owned-device removal.
+Then verify target-game menu navigation and visible 3D actions under the
+[game-testing procedure](game-testing.md). Preserve platform and failure-path gaps.

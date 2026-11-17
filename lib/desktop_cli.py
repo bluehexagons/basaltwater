@@ -46,6 +46,8 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     instructions.add_argument("--json", action="store_true")
     from desktop.development import add_development_parser
     add_development_parser(commands)
+    from desktop.gamepad_qa import add_gamepad_parser
+    add_gamepad_parser(commands)
     evidence = commands.add_parser("evidence", help="Record manual launches, inputs and captures with project/task provenance")
     evidence_commands = evidence.add_subparsers(dest="evidence_command", required=True)
     from desktop.qa_cli import add_qa_parser
@@ -220,7 +222,10 @@ def run_desktop_command(args: argparse.Namespace) -> int:
     try:
         command = args.desktop_command
         control_command = "basaltw desktop --native" if backend is not runtime else "basaltw desktop"
-        if command == "preflight":
+        if command == "gamepad":
+            from desktop.gamepad_qa import run_command
+            result = run_command(args, native=backend is not runtime)
+        elif command == "preflight":
             from desktop.preflight import preflight
             result = preflight(args.repository, backend=backend, native=backend is not runtime,
                                managed_source=args.managed_source, instructions=args.instruction, output=args.output)
@@ -469,7 +474,7 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                                       existing_window_ids=([item["id"] for item in observed["windows"] if item["id"] in previous]
                                                            if previous is not None else None),
                                       window_association="title substring; inspect PID/class before acting")
-        exit_code = int("error" in result or result.get("healthy") is False or result.get("state") == "failed"
+        exit_code = int("error" in result or result.get("ok") is False or result.get("healthy") is False or result.get("state") == "failed"
                         or (result.get("state") == "stopped" and bool(result.get("last_failure"))))
         if getattr(args, "save_output", False):
             from desktop.observations import save_observation

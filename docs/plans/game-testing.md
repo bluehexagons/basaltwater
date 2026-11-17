@@ -21,7 +21,7 @@ gameplay automation, and a documented coach procedure is not a qualified live te
 | Long sessions | Journals are bounded at 500 events and 50 tasks. Use linked recording segments at safe checkpoints; any larger or streaming journal needs bounded storage, recovery and truncation acceptance before changing this contract. |
 | Specialist assistance | Immutable-packet and deadline procedures are documented. A concurrent controller/observer trial must demonstrate shared artifact access, stale-advice rejection, exclusive live control and measured overhead before claiming a reliable team condition. |
 | Model/resource comparisons | Actual model/effort, assistance, comparable settings, clocks and outcomes remain project-owned. Unknown usage/latency stays unknown; no automated model ranking is provided. |
-| Virtual gamepad | No native gamepad action or qualified adapter exists. Implement and qualify the bounded route below before gameplay use. |
+| Virtual gamepad | `desktop [--native] gamepad` implements the bounded Linux route. CachyOS source-device checks passed; public-CLI and Debian routing have offline coverage. Qualify each target host/game and remaining failure paths with the [adapter guide](../workstations/gamepad-qa.md). |
 
 ## Desktop observation follow-up
 
@@ -176,7 +176,7 @@ Remaining implementation tasks, independently assignable after qualification:
 
 ## Bounded Linux virtual-pad adapter
 
-Keep a prospective adapter in Basaltwater's desktop boundary, under the same
+The [implemented Linux adapter](../workstations/gamepad-qa.md) stays in Basaltwater's desktop boundary, under the same
 persistent human control policy and sole-controller discipline as native input.
 Do not introduce a free-running input script, global remapping or additional
 privileged daemon as a shortcut. Discover prerequisites read-only; any required
@@ -207,4 +207,5 @@ Qualification proceeds in bounded stages:
 Promote support only for the platform/device/mapping/game combinations exercised.
 Linux inspector success does not qualify another OS, browser gamepad behavior,
 or an arbitrary game. This plan starts no device, installs no driver and schedules
-no run; the adapter remains unimplemented.
+no run. Debian live device recognition, live takeover/supervisor loss and other
+platforms remain qualification work; implementation alone does not close them.

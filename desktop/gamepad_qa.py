@@ -1,13 +1,15 @@
-"""Experimental Linux QA pad: optional evdev, private socket, bounded input.
+"""Linux virtual controller: optional evdev, private socket, bounded input.
 
-Run with ``python -m desktop.gamepad_qa --help``. This is deliberately separate
-from the portal helper: its receipts do not claim portal-delivered input.
+Use ``basaltw desktop [--native] gamepad --help``. Device events are delivered
+through uinput; the selected desktop supervisor supplies observation and control
+guards. Receipts do not claim portal-delivered input or physical hardware tests.
 """
 
 from __future__ import annotations
 
 import argparse
 import fcntl
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -19,7 +21,7 @@ import struct
 import time
 import uuid
 
-from desktop import control_state, native_session
+from desktop import control_state, native_session, session_runtime
 from desktop.qa_artifacts import new_bundle, stamp
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.validation import validate_filesystem_path
@@ -45,16 +47,53 @@ class InputRejected(ValueError):
     """Invalid input/capture detected before any device event was dispatched."""
 
 
-def helper_status() -> dict:
-    return native_session.request({"action": "status", "deadline": time.monotonic() + .25})
+def backend_name(native: bool) -> str:
+    return "cachyos-native" if native else "debian-desktop"
 
 
-def enabled(current: dict) -> None:
-    if current.get("state") != "running" or current.get("helper_running") is not True:
-        raise RuntimeError("A running native helper is required")
+def helper_status(native: bool = True) -> dict:
+    backend = native_session if native else session_runtime
+    return backend.request({"action": "status", "deadline": time.monotonic() + .25})
+
+
+def account_guard() -> None:
+    if os.getuid() == 0 or os.geteuid() != os.getuid():
+        raise RuntimeError("Run the gamepad as the existing desktop account, without sudo")
+
+
+def enabled(current: dict, native: bool = True) -> None:
+    account_guard()
+    if current.get("state") != "running" or (native and current.get("helper_running") is not True):
+        raise RuntimeError(f"A running {backend_name(native)} supervisor is required")
     if current.get("agent_control") != "enabled":
         raise RuntimeError("Agent control is blocked")
+    if current.get("browser_pause"):
+        raise RuntimeError("Desktop input is reserved by a browser controller")
     control_state.require_enabled(current)
+
+
+def doctor(native: bool) -> dict:
+    """Observe prerequisites without opening uinput or changing the machine."""
+    dependency = importlib.util.find_spec("evdev") is not None
+    path = Path("/dev/uinput")
+    try:
+        character_device = stat.S_ISCHR(path.stat().st_mode)
+    except OSError:
+        character_device = False
+    access = character_device and os.access(path, os.R_OK | os.W_OK)
+    try:
+        current = helper_status(native)
+        enabled(current, native)
+        session = {"ready": True, "generation": current.get("generation"),
+                   "control_revision": current.get("control_revision")}
+    except (OSError, ValueError, RuntimeError) as exc:
+        session = {"ready": False, "error": str(exc)}
+    return {"ok": dependency and access and session["ready"], "backend": backend_name(native),
+            "prerequisites_only": True, "evdev_available": dependency,
+            "uinput": {"path": str(path), "character_device": character_device, "read_write": access},
+            "session": session, "device_creation": "unverified", "application_mapping": "unverified",
+            "setup_guide": "docs/workstations/gamepad-qa.md",
+            "dependency_package": "python-evdev" if native else "python3-evdev"}
 
 
 def validate_action(payload: dict) -> list[tuple[int, int, int]]:
@@ -78,8 +117,8 @@ def validate_action(payload: dict) -> list[tuple[int, int, int]]:
     return events
 
 
-def validate_observation(observation: dict, current: dict, used: set[str]) -> str:
-    enabled(current)
+def validate_observation(observation: dict, current: dict, used: set[str], native: bool = True) -> str:
+    enabled(current, native)
     for key in ("generation", "control_revision", "observation_id", "geometry"):
         if not current.get(key) or observation.get(key) != current[key]:
             raise InputRejected(f"Observation has stale or missing {key}")
@@ -93,7 +132,10 @@ class Pad:
     def __init__(self) -> None:
         # Optional system package; importing this module and offline tests do not
         # need evdev, uinput access or a graphical session.
-        from evdev import AbsInfo, UInput
+        try:
+            from evdev import AbsInfo, UInput
+        except ImportError as exc:
+            raise RuntimeError("evdev is missing in this Python interpreter; run gamepad doctor and follow its setup guide") from exc
 
         capabilities = {1: list(BUTTONS.values()), 3: [
             (code, AbsInfo(0, low, high, 0, 4096 if low == -32768 else 0, 0))
@@ -101,6 +143,9 @@ class Pad:
         ]}
         self.device = UInput(capabilities, name="Basaltwater QA Virtual Gamepad",
                              vendor=0x045e, product=0x028e, version=0x0114, bustype=3)
+        if self.device.device is None:
+            self.device.close()
+            raise RuntimeError("Created gamepad event device is unreadable; check the named-device udev rule and account groups")
 
     def write(self, events: list[tuple[int, int, int]]) -> None:
         for kind, code, value in events:
@@ -119,24 +164,28 @@ class Pad:
 
 
 class Bridge:
-    def __init__(self, pad: Pad, folder: Path, lifetime: int, initial: dict) -> None:
+    def __init__(self, pad: Pad, folder: Path, lifetime: int, initial: dict, native: bool = True) -> None:
         self.pad, self.folder = pad, folder
         self.until = time.monotonic() + lifetime
         self.initial = initial
+        self.native = native
         self.used: set[str] = set()
         self.stopping = False
         self.checked = 0.0
+
+    def validate_session(self, current: dict) -> None:
+        enabled(current, self.native)
+        if any(current.get(key) != self.initial.get(key)
+               for key in ("generation", "control_revision", "geometry")):
+            raise RuntimeError("Desktop session changed; start a new bridge")
 
     def guard(self) -> None:
         if self.stopping or time.monotonic() >= self.until:
             raise RuntimeError("Gamepad bridge stopped or expired")
         control_state.require_enabled(self.initial)
         if time.monotonic() - self.checked >= .2:
-            current = helper_status()
-            enabled(current)
-            if any(current.get(key) != self.initial.get(key)
-                   for key in ("generation", "control_revision", "geometry")):
-                raise RuntimeError("Native session changed; start a new bridge")
+            current = helper_status(self.native)
+            self.validate_session(current)
             self.checked = time.monotonic()
 
     def press(self, payload: dict, connection: socket.socket) -> dict:
@@ -145,9 +194,12 @@ class Bridge:
         if not isinstance(observation, dict):
             raise InputRejected("An inspected screenshot receipt is required")
         self.guard()
-        identity = validate_observation(observation, helper_status(), self.used)
+        current = helper_status(self.native)
+        self.validate_session(current)
+        identity = validate_observation(observation, current, self.used, self.native)
         self.used.add(identity)  # Never replay an uncertain action on this capture.
         receipt = {"schema_version": 1, "kind": "linux-uinput-qa", "id": uuid.uuid4().hex,
+                   "backend": backend_name(self.native),
                    "requested": stamp(), "observation": observation, "events": events,
                    "hold_ms": payload["hold_ms"], "delivery": "not-sent", "neutralized": False}
         path = self.folder / f"{receipt['id']}.json"
@@ -197,14 +249,16 @@ def receive(connection: socket.socket) -> dict:
 
 
 def socket_path() -> Path:
-    return native_session.runtime_directory() / "gamepad-qa.sock"
+    # One owner across both desktop backends: switching a CLI flag must never
+    # create a second controller or bypass a capture's single-use check.
+    return session_runtime.runtime_directory() / "gamepad-qa.sock"
 
 
-def serve(output: str, lifetime: int) -> dict:
-    if not 60 <= lifetime <= 1800:
+def serve(output: str, lifetime: int, native: bool = True) -> dict:
+    if type(lifetime) is not int or not 60 <= lifetime <= 1800:
         raise ValueError("Lifetime must be 60–1800 seconds")
-    current = helper_status()
-    enabled(current)
+    current = helper_status(native)
+    enabled(current, native)
     folder = new_bundle(output)
     path = socket_path()
     descriptor = os.open(path.with_suffix(".lock"), os.O_CREAT | os.O_NOFOLLOW | os.O_RDWR, 0o600)
@@ -218,7 +272,7 @@ def serve(output: str, lifetime: int) -> dict:
             path.unlink()
         pad = Pad()
         pad.neutral()
-        bridge = Bridge(pad, folder, lifetime, current)
+        bridge = Bridge(pad, folder, lifetime, current, native)
         previous = {}
         def stop(_signum, _frame):
             bridge.stopping = True
@@ -232,7 +286,7 @@ def serve(output: str, lifetime: int) -> dict:
                 server.settimeout(.05)
                 write_json_atomic(str(folder / "device.json"), {
                     "created": stamp(), "pid": os.getpid(), "device": str(pad.device.device),
-                    "name": pad.device.name, "mapping": "Linux Xbox 360 USB", "experimental": True,
+                    "name": pad.device.name, "mapping": "Linux Xbox 360 USB", "backend": backend_name(native),
                     "lifetime_seconds": lifetime, "generation": current["generation"],
                 }, mode=0o600)
                 while not bridge.stopping:
@@ -250,11 +304,14 @@ def serve(output: str, lifetime: int) -> dict:
                         try:
                             payload = receive(connection)
                             action = payload.get("action")
+                            if payload.get("backend", "cachyos-native") != backend_name(native):
+                                raise InputRejected("Gamepad belongs to the other desktop backend; inspect status with its original flag")
                             if action == "stop":
                                 bridge.stopping = True
                                 result = {"stopping": True}
                             elif action == "status":
                                 result = {"running": True, "pid": os.getpid(), "output": str(folder),
+                                          "backend": backend_name(native),
                                           "remaining_seconds": max(0, bridge.until - time.monotonic())}
                             elif action == "press":
                                 result = bridge.press(payload, connection)
@@ -314,35 +371,61 @@ def call(payload: dict) -> dict:
         return receive(connection)
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    commands = parser.add_subparsers(dest="command", required=True)
+def add_actions(parser: argparse.ArgumentParser) -> None:
+    commands = parser.add_subparsers(dest="gamepad_command", required=True)
     server = commands.add_parser("serve")
-    server.add_argument("--output", required=True)
-    server.add_argument("--lifetime", type=int, default=900)
-    commands.add_parser("status")
-    commands.add_parser("stop")
+    server.add_argument("--output", required=True, help="New private receipt directory outside Git")
+    server.add_argument("--lifetime", type=int, default=900, help="Foreground lifetime, 60–1800 seconds; supervise with desktop develop exec")
+    for name in ("status", "stop", "doctor"):
+        commands.add_parser(name)
     press = commands.add_parser("press")
-    press.add_argument("--observation", required=True, help="Private native screenshot JSON receipt")
+    press.add_argument("--observation", required=True, help="Inspected screenshot JSON receipt from the selected desktop backend")
     press.add_argument("--button", action="append", choices=BUTTONS, default=[])
     press.add_argument("--axis", action="append", default=[], metavar="NAME=INTEGER")
     press.add_argument("--hold-ms", type=int, default=120)
+    for action in commands.choices.values():
+        action.add_argument("--json", action="store_true")
+
+
+def add_gamepad_parser(commands: argparse._SubParsersAction) -> None:
+    add_actions(commands.add_parser("gamepad", help="Bounded Linux virtual controller for the selected desktop"))
+
+
+def run_command(args: argparse.Namespace, *, native: bool) -> dict:
+    action = args.gamepad_command
+    if action == "doctor":
+        return doctor(native)
+    if action == "serve":
+        return serve(args.output, args.lifetime, native)
+    payload = {"action": action, "backend": backend_name(native)}
+    if action == "press":
+        validate_filesystem_path(args.observation, must_exist=True)
+        axes = {}
+        for item in args.axis:
+            name, separator, value = item.partition("=")
+            if not separator or name in axes:
+                raise ValueError("Axes require unique NAME=INTEGER arguments")
+            axes[name] = int(value)
+        observation = read_json_file(args.observation, max_bytes=MAX_MESSAGE)
+        if not isinstance(observation, dict):
+            raise ValueError("Expected a screenshot JSON object")
+        payload.update(hold_ms=args.hold_ms, buttons=args.button, axes=axes, observation=observation)
+        validate_action(payload)
+    result = call(payload)
+    if result.get("delivery") == "unknown" or result.get("release_error") is not None:
+        result.setdefault("error", "Gamepad delivery or release is uncertain; inspect before further input, never replay")
+    return result
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--debian", action="store_true", help="Source entry point only: use the Debian desktop supervisor")
+    add_actions(parser)
     args = parser.parse_args()
     try:
-        if args.command == "serve":
-            result = serve(args.output, args.lifetime)
-        elif args.command == "press":
-            validate_filesystem_path(args.observation, must_exist=True)
-            axes = dict(item.split("=", 1) for item in args.axis)
-            payload = {"action": "press", "hold_ms": args.hold_ms, "buttons": args.button,
-                       "axes": {name: int(value) for name, value in axes.items()},
-                       "observation": read_json_file(args.observation, max_bytes=MAX_MESSAGE)}
-            validate_action(payload)
-            result = call(payload)
-        else:
-            result = call({"action": args.command})
+        result = run_command(args, native=not args.debian)
         print(json.dumps(result, indent=2))
-        return int("error" in result or result.get("delivery") == "unknown" or result.get("release_error") is not None)
+        return int("error" in result or result.get("ok") is False)
     except (OSError, ValueError, RuntimeError) as exc:
         print(json.dumps({"error": str(exc)}))
         return 1

@@ -59,6 +59,7 @@ REQUIRED_WHEEL_PATHS = (
     "desktop/client.py",
     "desktop/coordinates.py",
     "desktop/evidence.py",
+    "desktop/gamepad_qa.py",
     "desktop/observations.py",
     "desktop/preflight.py",
     "desktop/qa_cli.py",
@@ -182,6 +183,16 @@ def _smoke_desktop_cli(launcher: Path, work_dir: Path, environment: dict[str, st
         if not isinstance(data, dict):
             raise RuntimeError("Installed desktop CLI did not return a JSON object")
         return data
+
+    observation = folder / "unused-capture.json"
+    observation.write_text("{}")
+    # The base wheel has no evdev dependency. Invalid inputs must still parse
+    # and fail locally, without creating a device or contacting either helper.
+    for selection in ((), ("--native",)):
+        refused = request("desktop", *selection, "gamepad", "press", "--observation", str(observation),
+                          "--button", "west", "--hold-ms", "5001", expected=1)
+        if "hold_ms" not in refused.get("error", ""):
+            raise RuntimeError("Installed gamepad CLI lost its local bounded-input admission")
 
     plan = folder / "conditional.json"
     plan.write_bytes((ROOT / "docs/examples/learning-records/conditional.json").read_bytes())
