@@ -122,5 +122,9 @@ its environment. Coordinate service shutdown and file retirement separately.
 
 Automated tests cover scope and revocation, unsafe files, privacy, ordinary and
 prebuilt deployment, retained reconstruction and failed-release recovery using
-temporary files and mocked service/system commands. Real systemd delivery,
-rotation/reboot and power-loss qualification remain separate live checks.
+temporary files and mocked service/system commands. Selected native Debian
+checks also cover real systemd delivery, manual rotation and failed-rotation
+rollback on both deployment paths, retained artifact refresh and guest reboot.
+See the [dated qualification and limits](../testing/runtime-bindings.md).
+Full controller/SSH delivery with bindings, interrupted activation and power loss
+remain separate qualification.

@@ -21,8 +21,11 @@ root-only environment file; Basaltwater does not read or copy its values.
 
 **Automated acceptance:** scope and revocation, unsafe file/ancestor refusal,
 ordinary/prebuilt installation, retained reconstruction, build-time revocation,
-privacy and failed-release preservation are covered. Real systemd secret delivery,
-manual rotation with rollback, reboot and power loss remain live qualification.
+privacy and failed-release preservation are covered. Selected native Debian
+component checks qualify real systemd delivery, manual rotation with rollback,
+retained reconciliation and guest reboot; see the
+[dated scope](../testing/runtime-bindings.md). Full controller/SSH delivery with
+bindings, interrupted activation and power loss remain separate qualification.
 Deployment leaves administrator files unchanged; old values remain recoverable
 only while their old files are retained. No automatic value rotation is claimed.
 

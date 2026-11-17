@@ -267,6 +267,27 @@ class RuntimeBindingTests(unittest.TestCase):
         activation.assert_not_called()
         self.assertEqual(admissions.status(record["operation_id"], owner="alice")["state"], "reserved")
 
+    def test_revoked_binding_refuses_staging_without_consuming_payload(self):
+        plan, policy = self.plan()
+        admissions = DeploymentAdmissionStore(self.root / "admissions.json")
+        stage = Mock()
+        service = BuildTargetService(admissions=admissions, load_policy=lambda: policy,
+                                   stage_artifact=stage, activate_release=Mock())
+        record = service._dispatch("reserve", dict(application="site", idempotency_key="e" * 32,
+            request=plan.request, deployment=plan.deployment, ttl_seconds=600),
+            owner="alice", input_stream=io.BytesIO())
+        self.document["bindings"].clear()
+        self.save()
+        source = io.BytesIO(b"untrusted artifact payload")
+        with self.assertRaises(PermissionError):
+            service._dispatch("stage", dict(operation_id=record["operation_id"],
+                generation=record["generation"], request=plan.request, deployment=plan.deployment,
+                artifact_sha256="f" * 64, artifact_size=len(source.getvalue())),
+                owner="alice", input_stream=source)
+        stage.assert_not_called()
+        self.assertEqual(source.tell(), 0)
+        self.assertEqual(admissions.status(record["operation_id"], owner="alice")["state"], "reserved")
+
     def test_unit_receives_only_private_path_and_runtime_file_is_unchanged(self):
         component = deployment._service_component(binary="api", runtime_binding="shop-api")
         destination = Path(self.destination)
