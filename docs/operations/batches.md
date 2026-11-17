@@ -23,7 +23,11 @@ Commands outside Basaltwater must use `batch run -- COMMAND [ARG ...]` to be
 recorded. This runs argv directly with inherited input/output and no time limit;
 it returns the command's exit code (128 plus signal number for signal exits).
 It does not interpret shell operators. Use an explicit `sh -c '...'` if needed.
-Nested Basaltwater commands inside a wrapper can create additional records.
+Basaltwater commands inside a wrapper are counted as part of that one wrapper
+result. The child environment carries `BASALTWATER_BATCH_WRAPPED=1` to suppress
+automatic nested records; do not export this internal flag in your own scripts.
+Refresh is supervised in a child process while a batch is active, allowing its
+replacement of the CLI with upgraded setup code to finish the original record.
 Shell builtins, unrelated processes, parser errors, help/version requests,
 the retired migration command, and individual REPL commands are not tracked.
 

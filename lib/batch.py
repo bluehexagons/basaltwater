@@ -11,13 +11,14 @@ import sys
 import time
 import uuid
 
-from lib.atomic_io import read_json_file, write_json_atomic
+from lib.atomic_io import ensure_directory_durable, read_json_file, write_json_atomic
 from lib.concurrency import resource_lock, ResourceBusyError, ResourceLockSafetyError
 from lib.validation import validate_filesystem_path, validate_no_control_characters
 from lib.workspace import get_workspace_dir
 
 
 MAX_ENTRIES = 1000
+_WRAPPED_ENV = "BASALTWATER_BATCH_WRAPPED"
 
 
 def _text(value: str) -> str:
@@ -30,9 +31,29 @@ def _text(value: str) -> str:
 def _path() -> Path:
     name = _text(os.environ.get("BASALTWATER_BATCH", "default"))
     digest = hashlib.sha256(name.encode()).hexdigest()
-    path = Path(get_workspace_dir()) / "batches" / f"{digest}.json"
+    # Workspace aliases must use the same lock as their canonical location.
+    directory = Path(os.path.realpath(Path(get_workspace_dir()) / "batches"))
+    path = directory / f"{digest}.json"
     validate_filesystem_path(str(path))
     return path
+
+
+def _identifier(value: object) -> bool:
+    return (isinstance(value, str) and len(value) == 32
+            and all(c in "0123456789abcdef" for c in value))
+
+
+def _seconds(value: object) -> bool:
+    # Comparisons also reject huge integers without overflowing float conversion.
+    return type(value) in (int, float) and 0 <= value <= 10**12
+
+
+def _private_directory(path: Path) -> None:
+    if not path.exists():
+        # Persist each new ancestor's directory entry before writing state.
+        # Restrict the new batch directory before placing any reports in it.
+        ensure_directory_durable(str(path))
+        path.chmod(0o700)
 
 
 def _read(path: Path) -> dict | None:
@@ -44,25 +65,29 @@ def _read(path: Path) -> dict | None:
         return None
     except (ValueError, OSError) as exc:
         raise ValueError(f"Cannot read batch state {path}: {exc}") from exc
-    if (not isinstance(data, dict) or data.get("schema_version") != 1
-            or not isinstance(data.get("id"), str)
+    if (not isinstance(data, dict)
+            or set(data) != {"schema_version", "id", "title", "entries", "started", "ended"}
+            or type(data["schema_version"]) is not int or data["schema_version"] != 1
+            or not _identifier(data["id"])
             or not isinstance(data.get("title"), str)
             or not isinstance(data.get("entries"), list)
-            or "ended" not in data
             or len(data["entries"]) > MAX_ENTRIES
-            or type(data.get("started")) not in (int, float)
-            or (data.get("ended") is not None and type(data["ended"]) not in (int, float))):
+            or not _seconds(data["started"])
+            or (data["ended"] is not None and not _seconds(data["ended"]))):
         raise ValueError(f"Invalid or unsupported batch state: {path}; preserve it for inspection")
+    identifiers = set()
     for entry in data["entries"]:
         if (not isinstance(entry, dict) or not isinstance(entry.get("label"), str)
-                or not {"code", "seconds"}.issubset(entry)
-                or not isinstance(entry.get("id"), str)
-                or type(entry.get("started")) not in (int, float)
-                or entry.get("kind") not in {"command", "note"}
+                or set(entry) != {"id", "label", "kind", "started", "code", "seconds"}
+                or not _identifier(entry["id"]) or entry["id"] in identifiers
+                or not _seconds(entry["started"])
+                or not isinstance(entry["kind"], str) or entry["kind"] not in {"command", "note"}
                 or (entry.get("code") is not None and type(entry["code"]) is not int)
-                or (entry.get("seconds") is not None and type(entry["seconds"]) not in (int, float))
-                or (entry.get("code") is not None and entry.get("seconds") is None)):
+                or (entry["seconds"] is not None and not _seconds(entry["seconds"]))
+                or ((entry["code"] is None) != (entry["seconds"] is None))
+                or (entry["kind"] == "note" and entry["code"] is not None)):
             raise ValueError(f"Invalid batch entry: {path}; preserve it for inspection")
+        identifiers.add(entry["id"])
         _text(entry["label"])
     _text(data["title"])
     return data
@@ -96,7 +121,10 @@ def _summary(data: dict) -> int:
     return int(bool(failed or pending))
 
 
-def _tracked(path: Path, label: str, action: Callable[[], int], *, required: bool) -> int:
+def _tracked(
+    path: Path, label: str, action: Callable[[], int], *, required: bool,
+    batched_action: Callable[[], int] | None = None,
+) -> int:
     # Record admission before any command mutation, and release the short lock
     # during execution so concurrent commands can join the same batch.
     try:
@@ -118,7 +146,7 @@ def _tracked(path: Path, label: str, action: Callable[[], int], *, required: boo
     started = time.monotonic()
     code = 1
     try:
-        code = action()
+        code = (batched_action or action)()
         return code
     except KeyboardInterrupt:
         code = 130
@@ -145,6 +173,8 @@ def _tracked(path: Path, label: str, action: Callable[[], int], *, required: boo
 
 def track_command(args: argparse.Namespace, action: Callable[[], int]) -> int:
     """Record only recognized command metadata, never argv or output."""
+    if os.environ.get(_WRAPPED_ENV) == "1":
+        return action()
     try:
         label = f"basaltw {args.command}"
         if args.command in {"setup", "patch", "shares"}:
@@ -158,7 +188,30 @@ def track_command(args: argparse.Namespace, action: Callable[[], int]) -> int:
     # Avoid creating locks/directories for ordinary non-batch invocations.
     if not os.path.lexists(path):
         return action()
-    return _tracked(path, label, action, required=False)
+    batched_action = None
+    if args.command == "refresh":
+        # Refresh execs the upgraded CLI. Keep the batch owner alive across that
+        # handoff and let the child own its normal refresh/setup lifecycle.
+        batched_action = lambda: _run_external([
+            sys.executable, str(Path(__file__).resolve().parents[1] / "basaltwater.py"),
+            *sys.argv[1:],
+        ])
+    return _tracked(path, label, action, required=False, batched_action=batched_action)
+
+
+def _run_external(argv: list[str]) -> int:
+    from lib.remote_utils import run
+
+    # The wrapper owns the result for the whole child tree, including exec.
+    # Nested basaltw invocations must not leave duplicate/incomplete records.
+    env = {**os.environ, _WRAPPED_ENV: "1"}
+    try:
+        result = run(argv, interactive=True, check=False, timeout=None,
+                     env=env, display_cmd="batch command")
+        return result.returncode if result.returncode >= 0 else 128 - result.returncode
+    except OSError:
+        print("Error: unable to launch external command", file=sys.stderr)
+        return 127
 
 
 def add_batch_subparser(subparsers: argparse._SubParsersAction) -> None:
@@ -180,21 +233,11 @@ def run_batch_command(args: argparse.Namespace) -> int:
     try:
         path = _path()
         if args.batch_command == "run":
-            from lib.remote_utils import run
-
             argv = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
             if not argv:
                 raise ValueError("batch run requires -- COMMAND [ARG ...]")
 
-            def execute() -> int:
-                try:
-                    result = run(argv, interactive=True, check=False, timeout=None)
-                    return result.returncode if result.returncode >= 0 else 128 - result.returncode
-                except OSError:
-                    print("Error: unable to launch external command", file=sys.stderr)
-                    return 127
-
-            return _tracked(path, _text(args.label), execute, required=True)
+            return _tracked(path, _text(args.label), lambda: _run_external(argv), required=True)
         with resource_lock("batch", str(path), wait=True):
             data = _read(path)
             if args.batch_command == "start":
@@ -203,14 +246,11 @@ def run_batch_command(args: argparse.Namespace) -> int:
                     raise ValueError("A batch is already active; inspect status and end it first")
                 if data is not None:
                     archive = path.parent / "history" / f"{data['id']}.json"
-                    # The ID is used as a filename only after validating it.
-                    if len(data["id"]) != 32 or any(c not in "0123456789abcdef" for c in data["id"]):
-                        raise ValueError(f"Invalid batch ID in {path}")
-                    archive.parent.mkdir(mode=0o700, exist_ok=True)
+                    _private_directory(archive.parent)
                     write_json_atomic(str(archive), data)
                 data = {"schema_version": 1, "id": uuid.uuid4().hex, "title": title,
                         "started": time.time(), "ended": None, "entries": []}
-                path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                _private_directory(path.parent)
                 write_json_atomic(str(path), data)
                 print(f"Started batch: {title}")
                 return 0
