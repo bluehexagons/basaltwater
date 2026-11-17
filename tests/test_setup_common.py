@@ -835,9 +835,13 @@ class TestCloneRepository(unittest.TestCase):
                 MagicMock(returncode=0, stdout="origin/main\n"),
                 MagicMock(returncode=0),
                 MagicMock(returncode=0),
+                MagicMock(returncode=0),
+                MagicMock(returncode=0),
             ]
 
             with patch("subprocess.run", side_effect=run_results) as mock_run, \
+                 patch.object(setup_common, "resource_lock"), \
+                 patch.object(setup_common.shutil, "copytree") as copytree, \
                  patch("lib.deploy_utils.get_git_commit_hash", return_value="abc123"):
                 result = setup_common.clone_repository(
                     git_url,
@@ -853,6 +857,12 @@ class TestCloneRepository(unittest.TestCase):
             commands.index(["git", "-C", cache_repo, "reset", "--hard", "origin/main"]),
             commands.index(["git", "-C", cache_repo, "clean", "-fdx"]),
         )
+        foreground = ["-c", "maintenance.autoDetach=false", "-c", "gc.autoDetach=false"]
+        self.assertEqual(commands[0], ["git", *foreground, "-C", cache_repo, "fetch", "--all"])
+        clone_path = result[0]
+        self.assertEqual(commands[-2], ["git", *foreground, "clone", "--no-local", "--", cache_repo, clone_path])
+        self.assertEqual(commands[-1], ["git", "-C", clone_path, "remote", "set-url", "origin", git_url])
+        copytree.assert_not_called()
 
     def test_cache_path_distinguishes_same_named_repositories(self):
         from lib.setup_common import _repository_cache_path

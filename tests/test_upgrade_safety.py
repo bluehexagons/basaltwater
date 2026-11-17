@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import redirect_stdout
 import io
 import os
 import tempfile
@@ -10,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 from common.common_steps import copy_ssh_keys_to_user
 from lib.config import SetupConfig
-from lib.setup_common import prepare_deployments
+from lib.setup_common import prepare_deployments, run_remote_setup
 
 
 def _config(**overrides: object) -> SetupConfig:
@@ -49,6 +50,26 @@ class TestDeploymentPreflight(unittest.TestCase):
         with tempfile.TemporaryDirectory() as target_dir:
             with self.assertRaisesRegex(RuntimeError, "no target changes were started"):
                 prepare_deployments(config, target_dir)
+
+    def test_staging_errors_return_failure_and_clean_up_before_transport(self) -> None:
+        config = _config(
+            host="localhost", dry_run=True,
+            deploy_specs=[["example.com", "https://example.com/app.git"]],
+        )
+        for error in (RuntimeError("fetch failed"), ValueError("invalid manifest"), OSError("disk full")):
+            with self.subTest(error=error), tempfile.TemporaryDirectory() as directory:
+                build_dir = os.path.join(directory, "build")
+                os.mkdir(build_dir)
+                output = io.StringIO()
+                with patch("lib.setup_common.copy_project_files"), \
+                     patch("lib.setup_common.tempfile.mkdtemp", return_value=build_dir), \
+                     patch("lib.setup_common.prepare_deployments", side_effect=error), \
+                     patch("lib.setup_common.run_streamed") as transport, \
+                     redirect_stdout(output):
+                    self.assertEqual(run_remote_setup(config), 1)
+                transport.assert_not_called()
+                self.assertIn(f"Error preparing deployments: {error}", output.getvalue())
+                self.assertFalse(os.path.exists(build_dir))
 
     @patch("lib.setup_common.clone_repository")
     def test_ruby_repository_aborts_before_remote_setup(

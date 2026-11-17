@@ -39,6 +39,14 @@ basaltw setup server_web web.example.com deploy \
 Each source selector receives its own cache and upload path. Setup fetches the
 selected ref on every run and stops if it is missing, including during dry runs.
 Without a selector, deployments continue to follow the repository's default branch.
+
+For ordinary target builds, cache refresh and staging share a repository lock.
+Automatic Git maintenance finishes in the foreground, and staging uses Git's
+transfer protocol to create an independent clone with the original remote URL.
+This avoids copying object files that maintenance may move or remove. A staging
+failure stops setup with a nonzero exit status before the setup payload is sent;
+batch summaries record it as a failed command.
+
 For ordinary target builds, use the controller's Git credential helper or SSH
 key for private repositories. Selected-builder deployments use HTTPS and the
 controller's configured global Git credential helper, as described below.

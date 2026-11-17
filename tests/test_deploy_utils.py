@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -60,6 +61,7 @@ class TestRepositorySelection(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             self.assertTrue(_checkout_repository_ref(directory, "refs/heads/release/stable"))
         commands = [call.args[0] for call in run.call_args_list]
+        self.assertEqual(commands[0][1:5], ["-c", "maintenance.autoDetach=false", "-c", "gc.autoDetach=false"])
         self.assertEqual(commands[0][-1], "+refs/heads/release/stable:refs/basaltwater/deploy")
         self.assertEqual(commands[1][-3:], ["reset", "--hard", "refs/basaltwater/deploy"])
         self.assertEqual(commands[2][-2:], ["clean", "-fdx"])
@@ -97,6 +99,20 @@ class TestRepositorySelection(unittest.TestCase):
         self.assertEqual(commands[0][-2], self.url)
         self.assertIn("--depth", commands[1])
         self.assertEqual(commands[1][-1], "+refs/heads/release/stable:refs/basaltwater/deploy")
+
+    def test_cached_staging_failures_do_not_return_a_checkout(self):
+        for results in (
+            [MagicMock(returncode=128, stderr="transfer failed")],
+            [MagicMock(returncode=0), MagicMock(returncode=128, stderr="origin failed")],
+            [subprocess.TimeoutExpired("git", 300)],
+        ):
+            with self.subTest(results=results), tempfile.TemporaryDirectory() as directory, \
+                 patch("lib.setup_common.resource_lock"), \
+                 patch("lib.setup_common._refresh_repository_cache", return_value=True), \
+                 patch("lib.setup_common.subprocess.run", side_effect=results), \
+                 patch("lib.deploy_utils.get_git_commit_hash") as commit:
+                self.assertIsNone(clone_repository(self.url, directory, cache_dir=os.path.join(directory, "cache")))
+                commit.assert_not_called()
 
 
 class TestParseDeploySpec(unittest.TestCase):

@@ -94,6 +94,12 @@ SERVICE_TOOLS_DIR = os.path.join(SCRIPT_DIR, "..", "service_tools")
 REMOTE_INSTALL_DIR = "/opt/basaltwater"
 PERSISTENT_STATE_DIR = "/var/lib/basaltwater"
 GIT_CACHE_DIR = os.path.expanduser("~/.cache/basaltwater/git_repos")
+
+# Keep automatic maintenance inside the cache lock. The GC setting also covers
+# Git versions that predate maintenance.autoDetach.
+_GIT_FOREGROUND_OPTIONS = (
+    "-c", "maintenance.autoDetach=false", "-c", "gc.autoDetach=false",
+)
 REMOTE_ARGS_FILENAME = ".remote_setup_args.json"
 AGENT_PAYLOAD_DIRNAME = "agent_payload"
 DEVICE_PAIRING_PAYLOAD_DIRNAME = "device_pairing_payload"
@@ -148,7 +154,7 @@ def _checkout_repository_ref(repo_path: str, ref: str, *, shallow: bool = False)
     """Fetch the exact requested namespace; never reuse a missing or stale ref."""
     depth = ["--depth", "1"] if shallow else []
     for command in (
-        ["git", "-C", repo_path, "fetch", *depth, "--no-tags", "origin", f"+{ref}:refs/basaltwater/deploy"],
+        ["git", *_GIT_FOREGROUND_OPTIONS, "-C", repo_path, "fetch", *depth, "--no-tags", "origin", f"+{ref}:refs/basaltwater/deploy"],
         ["git", "-C", repo_path, "reset", "--hard", "refs/basaltwater/deploy"],
         ["git", "-C", repo_path, "clean", "-fdx"],
     ):
@@ -183,7 +189,7 @@ def _refresh_repository_cache(git_url: str, cache_path: str, repo_name: str) -> 
     if ref:
         return _checkout_repository_ref(cache_path, ref)
     result = subprocess.run(
-        ["git", "-C", cache_path, "fetch", "--all"],
+        ["git", *_GIT_FOREGROUND_OPTIONS, "-C", cache_path, "fetch", "--all"],
         capture_output=True,
         text=True,
         timeout=300,
@@ -278,8 +284,21 @@ def clone_repository(git_url: str, temp_dir: str, cache_dir: Optional[str] = Non
                     return None
                 if os.path.exists(clone_path):
                     shutil.rmtree(clone_path)
-                shutil.copytree(cache_path, clone_path, symlinks=True)
-            print(f"  ✓ Copied to {clone_path}")
+                # Use Git's transfer protocol instead of walking .git/objects:
+                # existing maintenance can repack/delete files during a copy.
+                # --no-local also avoids hardlinks or an alternate object store,
+                # so the staged repository survives later cache maintenance.
+                for command, label in (
+                    (["git", *_GIT_FOREGROUND_OPTIONS, "clone", "--no-local", "--", cache_path, clone_path],
+                     "cloning cached repository"),
+                    (["git", "-C", clone_path, "remote", "set-url", "origin", repository_url],
+                     "restoring repository origin"),
+                ):
+                    result = subprocess.run(command, capture_output=True, text=True, timeout=300)
+                    if result.returncode != 0:
+                        print(f"  Error {label}: {result.stderr}")
+                        return None
+            print(f"  ✓ Staged to {clone_path}")
             from lib.deploy_utils import get_git_commit_hash
             return (clone_path, get_git_commit_hash(clone_path))
         except Exception as exc:
@@ -1464,7 +1483,11 @@ def _run_remote_setup_locked(config: SetupConfig, *, expected_releases: object =
         if config.deploy_specs and not config.artifact_deployments:
             deploy_dir = os.path.join(build_dir, "deployments")
             os.makedirs(deploy_dir, exist_ok=True)
-            prepare_deployments(config, deploy_dir)
+            try:
+                prepare_deployments(config, deploy_dir)
+            except (RuntimeError, ValueError, OSError) as exc:
+                print(f"Error preparing deployments: {exc}")
+                return 1
 
         if config.copy_agent_config or config.copy_agent_keys or config.has_agent_features():
             agent_payload_dir = os.path.join(build_dir, AGENT_PAYLOAD_DIRNAME)
