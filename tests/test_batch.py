@@ -68,7 +68,7 @@ class BatchTests(unittest.TestCase):
                                       "--", "tool", "a b", "--token=secret"), 23)
         run.assert_called_once_with(["tool", "a b", "--token=secret"],
                                     interactive=True, check=False, timeout=None,
-                                    env={**os.environ, batch._WRAPPED_ENV: str(batch._path())},
+                                    env={**os.environ, batch._WRAPPED_ENV: f"{batch._path()}:{self.state()['id']}"},
                                     display_cmd="batch command")
         self.assertEqual(self.state()["entries"][0]["code"], 23)
         self.assertNotIn("secret", batch._path().read_text())
@@ -187,7 +187,7 @@ class BatchTests(unittest.TestCase):
             self.assertEqual(self.cli("refresh", "--dry-run"), 17)
             self.assertEqual(self.state()["entries"][0]["code"], 17)
             self.assertEqual(run.call_args.args[0][-2:], ["refresh", "--dry-run"])
-            self.assertEqual(run.call_args.kwargs["env"][batch._WRAPPED_ENV], str(batch._path()))
+            self.assertEqual(run.call_args.kwargs["env"][batch._WRAPPED_ENV], f"{batch._path()}:{self.state()['id']}")
             self.assertEqual(self.cli("batch", "end"), 1)
             self.assertEqual(self.cli("refresh", "--dry-run"), 0)
             self.assertEqual(refresh.call_count, 2)
@@ -243,6 +243,26 @@ class BatchTests(unittest.TestCase):
         with patch.object(batch, "_summary", side_effect=summary):
             self.assertEqual(self.cli("batch", "status"), 0)
             self.assertEqual(self.cli("batch", "end"), 0)
+
+    def test_wrapped_script_tracks_a_replacement_batch_in_the_same_slot(self) -> None:
+        self.cli("batch", "start")
+        original_id = self.state()["id"]
+
+        def child(argv, **kwargs):
+            with patch.dict(os.environ, kwargs["env"]):
+                self.assertEqual(self.cli("batch", "end", "--force"), 1)
+                self.assertEqual(self.cli("batch", "start", "Replacement"), 0)
+                self.assertNotEqual(self.state()["id"], original_id)
+                self.assertEqual(self.cli("patch", "web.example.com"), 7)
+            return Mock(returncode=0)
+
+        with patch("lib.remote_utils.run", side_effect=child), patch.object(
+            basaltwater, "run_patch_command", return_value=7,
+        ):
+            self.assertEqual(self.cli("batch", "run", "--", "script"), 0)
+        self.assertEqual([e["code"] for e in self.state()["entries"]], [7])
+        self.assertEqual(self.cli("batch", "end"), 1)
+        self.assertIn("closed or replaced", self.errors.getvalue())
 
     def test_parallel_commands_retain_every_result(self) -> None:
         self.cli("batch", "start")

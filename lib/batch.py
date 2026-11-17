@@ -138,8 +138,8 @@ def _summary(data: dict) -> int:
 
 
 def _tracked(
-    path: Path, label: str, action: Callable[[], int], *, required: bool,
-    batched_action: Callable[[], int] | None = None,
+    path: Path, label: str, action: Callable[[], int] | None, *, required: bool,
+    batched_action: Callable[[str], int] | None = None,
 ) -> int:
     # Record admission before any command mutation, and release the short lock
     # during execution so concurrent commands can join the same batch.
@@ -152,17 +152,28 @@ def _tracked(
                 batch_id = entry_id = None
             else:
                 batch_id = data["id"]
-                entry_id = _append(data, label, "command")
-                write_json_atomic(str(path), data)
+                if not required and os.environ.get(_WRAPPED_ENV) == f"{path}:{batch_id}":
+                    # A wrapper owns only the batch it joined. A replacement in
+                    # the same slot must track commands under its new identity.
+                    entry_id = None
+                else:
+                    entry_id = _append(data, label, "command")
+                    write_json_atomic(str(path), data)
     except (OSError, ValueError, ResourceBusyError, ResourceLockSafetyError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
     if entry_id is None:
+        assert action is not None
         return action()
     started = time.monotonic()
     code = 1
     try:
-        code = (batched_action or action)()
+        if batched_action is not None:
+            assert batch_id is not None
+            code = batched_action(batch_id)
+        else:
+            assert action is not None
+            code = action()
         return code
     except KeyboardInterrupt:
         code = 130
@@ -199,8 +210,6 @@ def track_command(args: argparse.Namespace, action: Callable[[], int]) -> int:
     except (OSError, ValueError, ResourceBusyError, ResourceLockSafetyError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
-    if os.environ.get(_WRAPPED_ENV) == str(path):
-        return action()
     # Avoid creating locks/directories for ordinary non-batch invocations.
     if not os.path.lexists(path):
         return action()
@@ -208,19 +217,19 @@ def track_command(args: argparse.Namespace, action: Callable[[], int]) -> int:
     if (args.command in {"refresh", "ssh"}
             or (args.command == "logs" and getattr(args, "follow", False))):
         # Keep the batch owner alive across commands that replace the CLI.
-        batched_action = lambda: _run_external([
+        batched_action = lambda batch_id: _run_external([
             sys.executable, str(Path(__file__).resolve().parents[1] / "basaltwater.py"),
             *sys.argv[1:],
-        ], batch_path=path)
+        ], batch_path=path, batch_id=batch_id)
     return _tracked(path, label, action, required=False, batched_action=batched_action)
 
 
-def _run_external(argv: list[str], *, batch_path: Path) -> int:
+def _run_external(argv: list[str], *, batch_path: Path, batch_id: str) -> int:
     from lib.remote_utils import run
 
     # The wrapper owns the result for the whole child tree, including exec.
     # Nested basaltw invocations must not leave duplicate/incomplete records.
-    env = {**os.environ, _WRAPPED_ENV: str(batch_path)}
+    env = {**os.environ, _WRAPPED_ENV: f"{batch_path}:{batch_id}"}
     try:
         result = run(argv, interactive=True, check=False, timeout=None,
                      env=env, display_cmd="batch command")
@@ -253,7 +262,8 @@ def run_batch_command(args: argparse.Namespace) -> int:
             if not argv:
                 raise ValueError("batch run requires -- COMMAND [ARG ...]")
 
-            return _tracked(path, _text(args.label), lambda: _run_external(argv, batch_path=path), required=True)
+            return _tracked(path, _text(args.label), None, required=True,
+                            batched_action=lambda batch_id: _run_external(argv, batch_path=path, batch_id=batch_id))
         unfinished = False
         with resource_lock("batch", str(path), wait=True):
             data = _read(path)

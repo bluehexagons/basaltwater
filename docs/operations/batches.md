@@ -25,7 +25,9 @@ it returns the command's exit code (128 plus signal number for signal exits).
 It does not interpret shell operators. Use an explicit `sh -c '...'` if needed.
 Ordinary Basaltwater commands inside a wrapper count toward that wrapper's
 result. The child environment carries an internal `BASALTWATER_BATCH_WRAPPED`
-value scoped to that batch's state path; do not export it in your own scripts.
+value scoped to that batch's state path and unique ID; do not export it in your
+own scripts. A replacement batch in the same slot tracks its own commands even
+if the script inherited a wrapper flag for the previous batch.
 If a wrapped script selects another workspace or batch name, that independent
 batch still tracks its own commands. Refresh, SSH sessions, and following logs
 are supervised in a child process while a batch is active, allowing commands
