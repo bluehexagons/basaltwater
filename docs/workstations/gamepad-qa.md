@@ -128,8 +128,16 @@ release. Stale capture rejection produced no inspector event, and a fresh
 capture recovered on the same device. Original evidence and corrections remain
 private. Signed-stick center may be approximately 0.000015 in Godot.
 
-The public CLI and Debian supervisor routing have offline contract coverage.
-Debian live device/game recognition needs its own host qualification. Live human
+The public CLI at `e8a184a4` passed a CachyOS consuming-inspector check on
+2026-11-17: doctor, supervised serve/status, individual A/B/X/Y, distinct stick/
+trigger values and d-pad diagonal, neutral, stale rejection without inspector
+events, fresh-capture recovery and owned-device removal on stop. Both tasks
+exited zero; the finalized recorder verified eight of eight retained captures.
+Event logs and receipts are private. This does not measure held-axis latency,
+repeat behavior or physical-controller performance.
+
+Debian supervisor routing has offline contract coverage; live device/game
+recognition needs its own host qualification. Live human
 takeover, supervisor loss, physical controllers, Steam Input, browser consumers
 and other platforms remain separate checks. Windows has no adapter here: it
 requires a separately selected virtual-controller driver and lifecycle testing.
