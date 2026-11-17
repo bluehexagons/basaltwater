@@ -65,6 +65,8 @@ Selected Debian Node/static/Go flows have native coverage, including saved
 revision updates, SQLite backups, UDP and retained refresh. Consult the
 [coverage map](../plans/testing-coverage.md) for the tested boundaries; a dry run
 does not establish that a particular deployment will succeed.
+The [real project qualification](../testing/build-projects.md) additionally
+covers a React/Vite manifest with separate deployment and CI commands.
 
 Enroll the builder with `--build-server`, which automatically installs Go, Node
 and Python and grants wildcard projects. Optionally restrict enrollment with
