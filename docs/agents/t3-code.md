@@ -164,14 +164,15 @@ guidance.
 
 ### Agent workflow integration
 
-The [0.1.10 integration](../../common/agent_skills/basaltwater-t3code/references/release-0.1.10.md)
+The [0.1.10 integration](t3-releases/0.1.10.md)
 records the protocol-4 review and disposable fresh/0.1.9-upgrade checks. HTTP
 startup, embedded native PTY, administrative pairing/revocation, idle detection,
 signal forwarding and SQLite integrity passed; migrations advanced from 81 to
 96. Live service lifecycle and native-client workflows remain unqualified.
-Earlier component evidence remains in the [0.1.9](../../common/agent_skills/basaltwater-t3code/references/release-0.1.9.md)
-and [0.1.8](../../common/agent_skills/basaltwater-t3code/references/release-0.1.8.md)
-integration records. These checks do not establish end-to-end qualification.
+Earlier component evidence remains in the [0.1.9](t3-releases/0.1.9.md)
+and [0.1.8](t3-releases/0.1.8.md) integration records. These operator records
+live outside the installed skill bundles. Component evidence does not
+establish end-to-end qualification.
 
 Use the relevant shared reference instead of copying upstream UI/tool details:
 
@@ -718,9 +719,8 @@ remains user project data even though it is still under `scratch`. T3 hides
 projectless threads when its data directory is inside a Git checkout. See the
 [projectless thread guide](https://github.com/pingdotgg/t3code/blob/v0.1.5/docs/user/thread-sidebar.md#start-without-a-project).
 
-The managed T3 skill also uses native `link_pull_request` and
-`list_thread_pull_requests` tools when available, so PRs created through `gh`
-appear in T3's linked-PR panel, including all layers of a stack.
+Follow the active T3 session's PR-linking and watch instructions, including for
+PRs created through `gh` and each layer of a stack.
 
 ### Native mobile device workflows
 

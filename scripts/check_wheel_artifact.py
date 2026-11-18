@@ -32,6 +32,7 @@ REQUIRED_WHEEL_PATHS = (
     "common/service_tools/web_panel_admin.py",
     "common/service_tools/web_panel_agent_tools.py",
     "common/agent_skills/basaltwater-project-development/SKILL.md",
+    "common/agent_skills/basaltwater-project-development/references/collaborative-preview.md",
     "common/agent_skills/basaltwater-project-development/references/t3-workflows.md",
     "common/agent_skills/basaltwater-project-adoption/SKILL.md",
     "common/agent_skills/basaltwater-frontend-design/SKILL.md",

@@ -1,6 +1,6 @@
 ---
 name: basaltwater-subagents
-description: Plan bounded subagent tasks, choose cost-aware models, and coordinate T3 Code workflows on Debian, CachyOS, native Windows, or Ubuntu WSL.
+description: Brief authorized subagents, choose models, and integrate their work.
 metadata:
   managed-by: basaltwater
 ---
@@ -23,29 +23,10 @@ comparison, not subscription charges. Read
 [current model choices](references/model-selection.md#current-workload-choices)
 when choosing across providers or considering Terra or specialist escalation.
 
-Start with Luna for provisional, bounded work such as classification, documentation,
-small fixes, focused tests, and app-script or export validation. Use medium by
-default for these tasks. Explicit deterministic, trivial tasks may use low when
-their inputs and checks are narrow. Use high or xhigh for Luna only when the
-task has concrete complexity that warrants it. Use GPT-6.2 Sol high for broad
-coding, integration, ambiguous cross-file work, and reviews. Claude Opus is a
-strong option for demanding Claude work. Trial GPT-6.2 Astra or Claude Fable
-for a specific unmet need and compare accepted results, allowance and rework
-before promoting it. Retain proven project settings and record actual
-outcomes. Choose standard service.
-Never autonomously select or inherit fast service (including Codex `priority`),
-`max`, or `ultra`; honor explicit confirmed user selections. Apply settings
-through the tool and check the returned provider, model, and options. Active
-session instructions govern inherited settings and tool choice; this guidance
-does not authorize delegation or changing a user-selected model.
-
-For a Luna assignment, name one bounded deliverable, its owned files or checks,
-and observable acceptance criteria. Suitable active work includes a small,
-well-scoped fix with its focused tests; running and interpreting a named test
-selection; or validating a named app script/export and reporting status plus
-bounded failure excerpts. Do not assign simultaneous control of the same
-desktop or app session to multiple workers. Never blindly time out and relaunch
-a desktop mutation; first establish whether it completed and inspect its state.
+Retain proven project settings and prefer standard service. Fast service
+(including Codex `priority`), `max`, and `ultra` require an explicit user
+selection. Follow the active session's settings rules and verify the selection
+the tool reports. Assign one worker at a time to control a shared desktop.
 
 Give a self-contained brief: objective, findings, absolute project/skill paths,
 allowed files, constraints, acceptance checks, and required handoff. Children
@@ -64,20 +45,16 @@ owns combined validation, model records, and cleanup.
 
 ## Choose the relevant route
 
-- **T3 Code:** follow its injected orchestration instructions and live schemas.
-  Use `delegate_task` when native tools cannot apply the selected model/options,
-  and `isolation: "worktree"` for T3-owned editors. Retain `taskId`; async
-  completion wakes the parent. Each review round is a new delegated task.
-  Top-level threads require an explicit request for separate conversations.
-  Read [T3 orchestration](references/t3-orchestration.md) for missing session
-  guidance, provider/context transitions, workspace lifecycle, or queue recovery.
+- **T3 Code:** follow its session instructions and live schemas. Consult
+  [T3 integration boundaries](references/t3-orchestration.md) for linked
+  machines, ownership of worktrees, or session and queue recovery.
 - **Basaltwater-owned worktrees:** read [lifecycle](references/lifecycle.md)
   before creation, adoption, integration, or removal. Prefer normal merges
   that preserve ancestry. T3 owns its own worktree lifecycle.
 - **Changed account/provider or unattended worker:** read
   [session context](references/session-context.md) for discovery, tool access,
   and runtime limits. Honor disabled skills; paths do not bypass selection.
-- **One-time or recurring T3 work:** read [scheduling](references/t3-scheduling.md).
+- **T3 schedule migration or recovery:** read [scheduling](references/t3-scheduling.md).
 - **Project model policy, new models, or outcome tracking:** read
   [model selection and learning](references/model-selection.md). Review existing
   project policy before choosing workers. The local `agent models` commands

@@ -1,9 +1,9 @@
 # Agent environment manifest
 
-Start a new thread with `basaltw agent context` for a small host feature index
-in T3 Code or another coding agent. It works outside Git and reports observed
-PATH tools, installed Basaltwater guidance names, and task-oriented CLI help
-routes. The asset list reuses the manifest's desktop application catalog,
+Use `basaltw agent context` when you need a general Basaltwater host inventory
+or help finding a capability. It works outside Git and reports observed PATH
+tools, installed Basaltwater guidance names, and task-oriented CLI help routes.
+The asset list reuses the manifest's desktop application catalog,
 including versioned MuseScore executable aliases, without launching GUI tools.
 Text output marks differing or personal guidance, including mixed statuses
 across provider catalogs; `--json` adds individual skill paths and statuses.
@@ -18,15 +18,12 @@ CachyOS routes use native desktop tools and its own doctor; Debian routes use
 the managed desktop and agent doctor. Other distributions and WSL retain the
 general feature routes without assuming Debian service management.
 
-For optional new-thread instructions, use: “Run `basaltw agent context` once
-in the execution environment, then consult relevant help or skills as needed.”
-This can go in an existing project or provider instruction file, or the output
-can be attached to a new thread. Setup does not edit personal instruction files
-or T3's database to inject it automatically. Refresh installed skills through
-the normal platform setup to deliver this discovery hint. The report is live;
-rerun it after changing hosts or PATH. Keep saved output private. It does not
-inspect credentials, project declarations, browser tabs, or desktop contents,
-and it does not verify service readiness or session-loaded skills.
+For a known capability, start with the scoped manifest or doctor in the
+execution environment. For ordinary repository work, start with the project's
+instructions and tools. The context report is live and can be rerun when a
+host or PATH change affects the task. Keep saved output private. The report
+does not inspect credentials, project declarations, browser tabs, or desktop
+contents, and does not verify service readiness or session-loaded skills.
 
 Run `basaltw agent manifest` in a project checkout for a concise discovery
 summary, or `basaltw agent manifest /path/to/repo --json` for structured output.

@@ -1,6 +1,6 @@
 ---
 name: basaltwater-agent-tasks
-description: Schedule authorized follow-ups, recurring checks, or bounded goals and hand off durable task context.
+description: Schedule independent Basaltwater jobs and bounded goals with durable receipts.
 metadata:
   managed-by: basaltwater
 ---
@@ -11,18 +11,11 @@ Use scheduling only when the request needs deferred, recurring, or continuing
 work. A stored task is not additional authority. Choose finite attempts or a
 deadline for follow-ups; indefinite recurrence needs authorization for it.
 
-In a T3 thread, first read the installed `basaltwater-subagents` skill's
-`references/t3-scheduling.md` when work should return to that conversation or
-use another T3 provider. Use Basaltwater tasks for independent Codex execution
-or goals needing its lifetime limits and receipts. Stable T3 0.1.7 can run a
-one-time follow-up in the conversation with `schedule: {type: "once", runAt: ...}`;
-use the scheduling reference for timezone and dispatch semantics. Choose
-one scheduler per job; do not duplicate it.
-
-For explicitly requested interactive goals, T3 0.1.10 supports native Codex,
-Claude and OpenCode goals and stopped-thread Resume. Prefer those controls for
-T3-owned work; do not add a second continuation scheduler. They do not establish
-Basaltwater's independent lifetime limits or retained execution receipts.
+For work that belongs to a T3 thread, use its native scheduling, PR watches,
+goals or Resume as appropriate under the active session policy. Use Basaltwater
+tasks for independent Codex jobs or jobs that require its lifetime limits and
+receipts. Give each job one owner. Consult the [T3 scheduling reference](../basaltwater-subagents/references/t3-scheduling.md)
+for migration or recovery of existing jobs.
 
 For access discovery, use available task MCP tools or:
 
@@ -39,10 +32,9 @@ Keep portable findings in bounded checkpoints, with evidence paths and the next
 step. Read selected context instead of dumping prompts and all run history.
 Credentials stay out of prompts, checkpoints, and event payloads.
 
-A saved schedule does not prove worker readiness. Inspect availability; do not
-start an unconfigured detached worker or switch tools to bypass a denied action.
-T3 tools and browser state are thread-specific and are not inherited by an
-independent task. Cancellation does not undo edits or cancel external requests.
+Verify worker readiness independently of a saved schedule. Independent tasks
+start with their own context and permissions, without T3 thread tools or browser
+state. Cancellation does not undo edits or cancel external requests.
 
 For Basaltwater environment difficulties, use the configured
 `basaltwater_operator_feedback` MCP tool or

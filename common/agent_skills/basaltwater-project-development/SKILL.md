@@ -29,14 +29,16 @@ when adopting these conventions.
 
 ## Keep evidence focused
 
-On an unfamiliar Basaltwater host, run `basaltw agent context` once for installed
-tools, guidance and feature help routes. It works outside a project checkout.
-Use features relevant to the task; the report does not verify session access.
+Start ordinary code work with the project's own instructions and tools. When
+the task needs a Basaltwater capability, select it in
+`basaltw agent manifest . --capability NAME` for discovery or
+`basaltw agent doctor --capability NAME` for host readiness. See each
+command's `--help` for supported selectors. Use `basaltw agent context` when
+you need a general host inventory or help finding a capability.
 
-Select the needed capability in `basaltw agent manifest` or `doctor`; use
-`--help` for selectors. Read a skill entrypoint once, then only references
-relevant to the current operation. Search for paths or symbols before opening
-large files. Satisfy the project's complete-file reading rules before edits.
+Read a skill entrypoint once, then only references relevant to the current
+operation. Search for paths or symbols before opening large files. Satisfy the
+project's complete-file reading rules before edits.
 
 Keep verbose results in private artifacts; return status, exit code, counts,
 actionable failures and evidence paths. Select fields from tool results instead
@@ -66,7 +68,8 @@ Read only the relevant platform reference:
 | --- | --- |
 | Disposable rootless Podman fixtures | [Container lifecycle](references/containers.md) |
 | Electron testing on Debian, CachyOS, Windows or WSL | [Platform testing](references/electron-testing.md) |
-| T3 connection/account mismatches, project actions or interactive results | [T3 workflows](references/t3-workflows.md) |
+| T3 connection, account, or stale skill troubleshooting | [Execution environment](references/t3-workflows.md#establish-the-execution-environment) |
+| T3 project commands or requested interactive results | [Project actions](references/t3-workflows.md#project-commands-and-worktree-setup), [visual replies](references/t3-workflows.md#visual-replies) |
 
 Use live session tools; installation alone does not expose them to a worker.
 

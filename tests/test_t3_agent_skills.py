@@ -34,32 +34,36 @@ class ManagedT3AgentSkillTests(unittest.TestCase):
         )
 
     def test_t3_with_playwright_installs_only_the_combined_browser_skill(self) -> None:
-        with tempfile.TemporaryDirectory() as home:
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as legacy:
             account = SimpleNamespace(
                 pw_dir=home,
                 pw_uid=os.getuid(),
                 pw_gid=os.getgid(),
             )
+            skills_root = Path(home, ".agents", "skills")
+            combined = skills_root / "basaltwater-browser-testing"
+            old_bundle = Path(legacy)
+            (old_bundle / "SKILL.md").write_text("managed-by: basaltwater\n")
+            old_reference = Path("references/collaborative-preview.md")
+            (old_bundle / old_reference).parent.mkdir()
+            (old_bundle / old_reference).write_text("Old installed preview procedures.\n")
+            skills_root.mkdir(parents=True)
             with (
                 patch("common.agent_steps.pwd.getpwnam", return_value=account),
                 patch("common.agent_steps.os.chown"),
             ):
+                install_skill_bundle(old_bundle, combined, os.getuid(), os.getgid())
                 self.assertTrue(
                     _ensure_t3_agent_skill(
                         self._config("codex", browser_automation="playwright")
                     )
                 )
 
-            skills_root = os.path.join(home, ".agents", "skills")
-            self.assertTrue(
-                os.path.isfile(
-                    os.path.join(
-                        skills_root,
-                        "basaltwater-browser-testing",
-                        "SKILL.md",
-                    )
-                )
-            )
+            shared = "basaltwater-project-development/references/collaborative-preview.md"
+            self.assertIn(f"](../{shared})", (combined / "SKILL.md").read_text())
+            self.assertTrue((skills_root / shared).is_file())
+            self.assertFalse((combined / old_reference).exists())
+            self.assertTrue(_t3_agent_skills_ready(home))
             for absent in (
                 "basaltwater-playwright-testing",
                 "basaltwater-t3-preview-testing",
@@ -94,9 +98,11 @@ class ManagedT3AgentSkillTests(unittest.TestCase):
             install_skill_bundle(source / "basaltwater-t3-preview-testing", Path(browser_directory),
                                  os.getuid(), os.getgid())
             self.assertTrue(_t3_agent_skills_ready(home))
-            reference = Path(browser_directory, "references/collaborative-preview.md")
+            shared = "basaltwater-project-development/references/collaborative-preview.md"
+            self.assertIn(f"](../{shared})", Path(browser_directory, "SKILL.md").read_text())
+            reference = Path(home, ".agents", "skills", shared)
             content = reference.read_bytes()
-            inventory = Path(browser_directory, ".basaltwater-files.json")
+            inventory = reference.parent.parent / ".basaltwater-files.json"
             inventory.unlink()  # Legacy installs must still include known references.
             reference.unlink()
             self.assertFalse(_t3_agent_skills_ready(home))

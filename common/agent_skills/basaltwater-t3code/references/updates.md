@@ -130,19 +130,18 @@ Stable 0.1.10 advances the launcher to protocol 4, retaining protocol 3 launcher
 compatibility and the durable state/layout contracts. Basaltwater recognizes
 protocol 4 for retained failed-update inspection and runtime retention; future
 unknown protocols remain blocked for maintenance. Migrations advance to 96.
-See the [release integration](release-0.1.10.md) for evidence and ownership.
+See the [0.1.10 operator record](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/t3-releases/0.1.10.md)
+for qualification evidence.
 
 Stable 0.1.9 retains protocol 3, the standalone archive layout and the
 administrative pairing contract. Its database adds migration 81; retain
 upstream downgrade/preflight checks. Failed downloads now identify the step,
 HTTP status and download host. Diagnose that failure before retrying instead
-of treating it as a native-module failure. See the
-[release integration](release-0.1.9.md) for evidence and changed workflows.
+of treating it as a native-module failure.
 
 Stable 0.1.8 retains the same protocol/layout and administrative pairing
-contract. See the [release integration](release-0.1.8.md) for component evidence
-and remaining live qualification. Provider discovery updates do not authorize
-changing the owner's provider/model or release track.
+contract. Provider discovery updates do not authorize changing the owner's
+provider, model, or release track.
 
 Stable 0.1.7 retains service-state protocol 3 and the standalone archive layout.
 An installed version can differ from the running service: upstream records
@@ -247,6 +246,12 @@ not successful refresh. The command prints its private log under
 unit whose identity appears in that log; inspect its result too, then run
 `basaltw agent doctor --capability t3code`. Dry runs and OCI refresh without
 service management stay in the foreground; OCI does not host managed T3.
+
+The final T3 completion worker reports a private per-request JSON receipt.
+Check `status` and `issue` as well as the unit result. A `ready` receipt
+confirms the worker's readiness checks. Verify an authenticated provider turn
+separately. If the worker has exited and the receipt is still nonterminal,
+inspect its unit and logs before starting a replacement refresh.
 
 CachyOS retains interactive package/sudo prompts and defers disruptive T3
 activation until all steps, saved state and notifications finish. Its queued

@@ -212,7 +212,7 @@ Do not wrap a T3-owned goal in a second Basaltwater continuation schedule.
 Independent tasks with lifetime limits and receipts remain a separate route.
 
 For Connect device approval, Windows services, cleanup and compatibility,
-read the [integration reference](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-t3code/references/release-0.1.10.md).
+read the [operator qualification record](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/t3-releases/0.1.10.md).
 T3 owns keep-awake behavior during work and client theme/language preferences;
 setup preserves these choices. Use upstream manuals for ordinary UI controls
 instead of reproducing their release history in project instructions.

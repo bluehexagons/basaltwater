@@ -41,34 +41,12 @@ managed desktop autostart; failed activation preserves it.
 
 ## Agent and browser workflows
 
-For a fresh thread, use `basaltw agent context` in its actual execution
-environment to discover tools and Basaltwater help routes. Use
-`basaltw local cachyos-doctor` for CachyOS health; Debian's
-`agent doctor --capability t3code` checks a different service layout.
-For current shared T3 client behavior, see the
-[release integration](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-t3code/references/release-0.1.10.md).
+Use `basaltw local cachyos-doctor` when diagnosing this host. For provider or
+skill discovery problems, use the
+[execution environment checks](../basaltwater-project-development/references/t3-workflows.md#establish-the-execution-environment).
 
-For connection/account, loaded-skill or cross-platform command mismatches, use
-the shared [execution-environment checks](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/t3-workflows.md#establish-the-execution-environment).
-
-Stable 0.1.6 adds side chats (`/side` or `/btw`), project pin/archive,
-local commit review in the Diff pane, and optional 1Password secret providers.
-Use the shared [workflow reference](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-t3code/references/operations.md#016-conversation-project-and-credential-workflows).
-Side chats share the main thread's folder; archiving preserves project data.
-Setup preserves these choices and does not enroll a secret provider.
-The Secrets UI depends on the upstream build-time `T3CODE_FEATURE_SECRETS`
-flag; setting a desktop/service environment variable does not enable it.
-The [0.1.7 workflows](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-017-client-workflows)
-add child approvals, thread links, usage filters and model history. For KDE's
-separate capture helper and shortcut, read [SnapShots](references/desktop.md#kde-snapshots).
-
-Follow live session orchestration instructions. Use `basaltwater-subagents` for
-provider/model selection, child tasks, worktree binding and native schedules.
-A shell directory change does not rebind T3. This profile does not provision
-the independent Basaltwater task worker; keep one owner per schedule/worktree.
-
-Use `basaltwater-t3-preview-testing` for browser checks and the active session's
-preview policy. This profile installs neither managed Playwright nor the VM
-gateway/device-pairing helpers. Use `basaltwater-cachyos-desktop` for task-scoped
-portal consent and native control; T3 setup does not start desktop control.
-Use the CachyOS references above for service management.
+Follow T3's active session instructions for thread work. This profile uses
+T3's own scheduler. For browser tasks, use the installed
+`basaltwater-t3-preview-testing` skill. Native desktop control follows
+`basaltwater-cachyos-desktop` and its portal consent workflow. See
+[KDE SnapShots](references/desktop.md#kde-snapshots) for the separate capture helper.

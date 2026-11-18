@@ -31,10 +31,13 @@ operation, then load more detail when a specific step requires it. Do not
 preload every reference or run an operations checklist for ordinary code edits.
 
 Operations, tasks, workspaces, triage, browser, desktop, and gateway skills use
-this layout. Browser selection and automatic fallback stay in the entrypoint;
-canvas timing, recordings, credential rotation, and other specialized procedures
-are loaded on demand. Development-site refresh responsibility also stays visible
-without loading all publication and service commands.
+this layout. Discover a Basaltwater capability with a scoped manifest or doctor
+when the task needs it. Use the general `basaltw agent context` report when
+you need a host inventory or help finding a capability.
+
+In a T3 session, follow its injected instructions and live schemas for native
+thread, PR, schedule, and preview work. Basaltwater skills describe host
+operations and the boundaries between T3 work and independent jobs.
 
 The workspace skill also routes long-running/shared projects to
 [local project memory](agent-memory.md). Read a bounded index and selected
@@ -58,7 +61,7 @@ context and thread-scoped tools are separate. See the
 [official OpenAI documentation](https://learn.chatgpt.com/docs/build-skills) and
 [subagent configuration](https://learn.chatgpt.com/docs/agent-configuration/subagents).
 
-Run `basaltw agent manifest /absolute/project --json` as the provider account to
+Run `basaltw agent manifest /absolute/project --capability skills --json` as the provider account to
 list known Basaltwater entrypoints in both user catalogs. `skills` reports
 `current`, `different`, `incomplete`, `unsafe`, or `personal` against the running
 Basaltwater installation's source. The comparison includes file contents and
@@ -101,6 +104,14 @@ catalogs do not make the overall sum incomplete. Copies installed in both catalo
 are counted separately. These are on-disk instruction sizes, not token counts,
 metadata discovery costs, or evidence of context loaded by an actual session.
 There is no tokenizer dependency; `session_access` remains `unverified`.
+
+To compare prompt impact across skill revisions, use fresh sessions with the
+same provider, account, model, options, project instructions, and task prompts.
+Record the advertised Basaltwater skill names, entrypoints and references read,
+and first-turn input tokens when the provider exposes them. Exercise an ordinary
+edit, T3 preview with an allowed fallback, a native PR watch, and terminal-only
+host work. Check that each keeps its intended execution path before comparing
+the counts. Use the manifest to verify the on-disk revision separately.
 
 Choose platform guidance first, then session-specific references. Keep a single
 capability-selected catalog per account rather than replacing it whenever an
@@ -187,25 +198,12 @@ in the base catalog:
 | `basaltwater-t3-preview-testing` | T3 Code collaborative preview only |
 | `basaltwater-browser-testing` | Both managed Playwright and T3 Code preview |
 
-In T3 sessions with collaborative preview tools, browser skills follow T3's
-preview-first policy: status, then open when no capable tab is attached.
-Fallback requires absent tools, an explicit request for another browser, or an
-explicit unsupported/unavailable host response from open. A disconnected
-viewing client does not make T3's server browser unavailable. Once policy
-permits fallback, agents automatically select a ready configured alternative
-without waiting for the user to reopen T3.
-Outside a preview-first policy, choose the option that covers the task. Both T3
-variants use native `environment-port` targets for server-loopback automation;
-`basaltwater-web preview resolve` supplies client-reachable gateway URLs when
-that separate access is needed. They check a listed tab's runtime before reusing
-its ID, cover T3 Chrome host preparation, verify uncertain input acknowledgments,
-scope diagnostics by navigation and component, and inspect service-worker
-freshness when updates appear missing.
-Browser guidance also covers existing project Playwright tests and configured
-desktop browsers. It checks their readiness before declaring browser coverage
-blocked, preserves profiles and human pause, and reports browser/network origin
-and the checks actually performed. Browser coverage gaps do not block unrelated
-non-browser work. See [Browser automation](browser-automation.md#automatic-continuation-after-client-disconnection).
+Both T3-capable variants link to the same local
+[preview reference](../../common/agent_skills/basaltwater-project-development/references/collaborative-preview.md)
+in the co-installed project-development bundle. It covers runtime and network
+origin, gateway URLs, Chrome preparation, certificate trust, and evidence
+after fallback. The active session decides when to use T3 preview and when
+fallback is permitted. See [Browser automation](browser-automation.md#automatic-continuation-after-client-disconnection).
 
 Deployment, Godot, and gateway skills defer browser selection to this same
 session policy. Unattended panel prompts cannot borrow a connected T3 thread's
@@ -331,6 +329,10 @@ complete. Platform-neutral skills such as `basaltwater-subagents` also belong
 there; keep platform-specific skills in their own catalog. Add shared skills
 intended for Ubuntu WSL to `WSL_SKILL_NAMES` in `common/wsl_steps.py`, wired by
 `plugins/wsl.py`.
+
+Use relative cross-bundle links only when the target bundle is installed
+alongside the entrypoint in every supported catalog. Keep T3 release
+qualification in the [operator records](t3-code.md#agent-workflow-integration).
 
 Keep essential discovery and operational boundaries in the entrypoint and link
 detailed procedures to shipped relative references. For example,
