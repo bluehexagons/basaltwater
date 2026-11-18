@@ -934,6 +934,9 @@ fi
 if ! source_git clone --no-local --no-checkout -- "$REPOSITORY_URL" "$STAGED_DIR"; then
     fail "could not clone the selected repository"
 fi
+if ! source_git -C "$STAGED_DIR" fetch --prune --tags origin; then
+    fail "could not fetch repository refs"
+fi
 resolve_channel_ref
 
 # Validate the tree before checkout and before merging installation data.
