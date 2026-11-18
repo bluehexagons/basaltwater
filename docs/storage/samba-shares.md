@@ -22,10 +22,15 @@ Roots must not be equal or nested, including normalized aliases such as
 before changing accounts or filesystem permissions, because each share owns
 its root's recursive group permissions.
 
-The server creates a Unix user and Samba password for every declared user, then
-uses a per-share Unix group. The share's group membership and configuration are
-reconciled to the declared state. A later update can therefore remove users as
-well as add them.
+For each share login, setup uses an eligible existing Unix account or creates
+a locked account with no home and a `nologin` shell. It sets a separate Samba
+password and reconciles membership in a per-share Unix group. Use dedicated
+file-sharing identities. Setup and the panel reject system UIDs and accounts
+in privileged groups such as `root`, `sudo`, `wheel`, `disk`, `docker`, and
+`lxd`. If an earlier setup attached a privileged account, replace that account
+in every managed share and review its existing Samba login with the server
+administrator. Use a dedicated share account even on systems where privileges
+are granted by a custom sudoers rule or service policy.
 
 ## Initial setup
 
@@ -50,7 +55,10 @@ Setup checks every declared share mount before changing any share permissions.
 Share roots must use normalized absolute paths without `..`, `.` components,
 repeated separators or a trailing slash. Reconciliation rejects other spellings
 before storage checks or share mutations, so aliases cannot bypass a declared
-data mount. Share roots with symbolic-link traversal are rejected. The managed
+data mount. Share roots with symbolic-link traversal are rejected. Recursive
+group and mode updates skip nested mount points and their contents, including
+same-filesystem bind mounts. Their ownership and permissions stay with their
+storage administrator. The managed
 `smbd.service.d/basaltwater-storage.conf` drop-in requires the configured share
 and custom metadata-cache mounts at service startup, including mounts marked
 `nofail` in fstab. Keep their persistent mount definitions in place.
@@ -60,10 +68,12 @@ Share reconciliation and global hardening validate a private candidate with
 and ownership. Validation errors, exceptions and interruptions leave the live
 file untouched. If publishing the validated file, installing the mount drop-in,
 reloading systemd or activating Samba fails, the previous `smb.conf` is restored
-and the error propagates. Global hardening restarts `smbd` when settings change
-and stops and disables `nmbd` on every run; share-only updates reload `smbd`.
-Retry the same operation to repeat activation; unchanged successful
-configurations skip the Samba restart or reload. Account, password, permission,
+and the error propagates. Global hardening stops and disables `nmbd` on every
+run. Full setup and share-only updates verify the effective password policy
+and restart `smbd` to apply it to all sessions, including after an interrupted
+publication. Schedule these operations for a time when clients can reconnect.
+Share reconciliation reloads `smbd` when the share configuration changes.
+Account, password, permission,
 cache-directory and mount drop-in changes are outside this file rollback. This
 is bounded exception recovery, without a durable Samba transaction marker:
 after a hard kill, failed restoration or an uncertain reload, inspect the live
@@ -252,6 +262,8 @@ The generated global Samba configuration:
 - requires signing and encryption;
 - disables NetBIOS and exposes TCP 445 only;
 - disables guest access and anonymous enumeration;
+- disables Unix and PAM password changes, so changing the SMB password
+  preserves the Unix password and lock state;
 - removes the deprecated `null passwords` setting from the managed global
   section; and
 - validates candidate `smb.conf` content with `testparm` before activation.
@@ -357,6 +369,12 @@ profiles additionally install `gvfs-backends` for file-manager integration.
 Mounts use `vers=3` to negotiate SMB 3.0 or newer, including SMB 3.1.1, with
 mandatory encryption (`seal`) and no SMB2 fallback. Pinning `vers=3.0` prevents
 connecting to servers whose minimum dialect is SMB 3.1.1.
+The setup user's UID and primary GID own the mounted view. Client-side
+permission checks enforce `0600` files and `0700` directories. The managed
+mount disables Unix extensions so server-provided POSIX modes cannot widen
+local access. For intentional access by multiple local accounts, configure
+a separate operator-owned mount with an explicit local group and group-only
+modes such as `0660` and `0770`, and keep `perm` enabled.
 
 The mount `CREDENTIALS` field follows the same rule as share users: use a bare
 username backed by the workspace credential store, or an inline
@@ -374,11 +392,16 @@ network is available. Setup replaces both units together, disabling the old
 boot-enabled mount during migration. It checks path components without following
 symlinks or triggering the automount, then stops the automount and mount under
 one unit transaction before opening or changing ownership of the local
-mountpoint and replacing credentials. This lets reruns repair an unavailable
+mountpoint and staging new credentials. This lets reruns repair an unavailable
 mount without accessing its remote root. Preparation, publication or activation
-failures restore the previous unit files and activation state; incomplete
-rollback retains the shared systemd recovery marker. Credential and local
-directory changes made during preparation are not rolled back.
+failures restore the previous unit files and activation state. Each endpoint
+or credential change stages a private file with a new name, and the old unit
+still references its original file during rollback. Legacy credential files
+are retained, including files that older units could share. After a successful
+migration or rotation, retire unused files under `/root/.smb` only after
+checking all mount units and overrides, including any retained unit recovery
+snapshots. Incomplete rollback retains the shared systemd recovery marker.
+Local directory ownership changes made during preparation remain in place.
 
 Sync and backup workers retain a private mount view for the entire rsync run,
 so a host-side idle unmount cannot redirect an active mirror onto the underlying

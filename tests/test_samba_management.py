@@ -104,6 +104,7 @@ class ShareManagementTests(unittest.TestCase):
             return write_json_atomic(path, value, **kwargs)
         self.enterContext(patch.object(management, "write_json_atomic", side_effect=write))
         self.reconcile = self.enterContext(patch.object(management, "reconcile_samba_shares"))
+        self.enterContext(patch.object(management, "harden_samba_password_policy"))
         self.preflight = self.enterContext(patch.object(management, "preflight_samba_shares"))
 
     def config(self, *, credentials=True):

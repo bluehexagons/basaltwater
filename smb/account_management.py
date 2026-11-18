@@ -25,6 +25,7 @@ from lib.privilege_execution import ENVIRONMENT
 from lib.privilege_policy import protected_path
 from lib.samba_accounts import LIFECYCLE_ACTIONS, MAX_ACCOUNTS, validate_account_action, validate_account_snapshot
 from lib.validators import validate_username
+from smb.unix_accounts import is_share_identity
 
 SMB_CONF = "/etc/samba/smb.conf"
 MAX_OUTPUT = 2 * 1024 * 1024
@@ -118,11 +119,12 @@ def _accounts() -> list[dict]:
     rows = []
     for name in sorted(users):
         try:
-            uid = pwd.getpwnam(name).pw_uid
+            identity = pwd.getpwnam(name)
         except KeyError:
-            uid = None
+            identity = None
+        uid = identity.pw_uid if identity is not None else None
         control = flags[name]
-        manageable = (uid == users[name] and uid is not None and 1000 <= uid < 65534
+        manageable = (uid == users[name] and identity is not None and is_share_identity(identity)
                       and "U" in control and not set(control) & set("NWSTIM"))
         public = {"username": name, "uid": uid, "disabled": "D" in control,
                   "locked": "L" in control, "manageable": manageable}

@@ -35,8 +35,7 @@ class TestConfigureSmbMountUnit(unittest.TestCase):
             self.enterContext(patch.object(smb_mount_steps, target, replacement))
         self.enterContext(patch.object(smb_mount_steps, "validate_smb_mount_specs"))
         self.chown = self.enterContext(patch.object(smb_mount_steps.os, "fchown"))
-        self.enterContext(patch.object(smb_mount_steps.pwd, "getpwnam", return_value=MagicMock(pw_uid=123)))
-        self.enterContext(patch.object(smb_mount_steps.grp, "getgrnam", return_value=MagicMock(gr_gid=456)))
+        self.enterContext(patch.object(smb_mount_steps.pwd, "getpwnam", return_value=MagicMock(pw_uid=123, pw_gid=456)))
         self.enterContext(patch.object(smb_mount_steps, "run", side_effect=lambda *args, **kwargs: MagicMock(
             returncode=0, stdout=self.escaped + "\n",
         )))
@@ -85,6 +84,11 @@ class TestConfigureSmbMountUnit(unittest.TestCase):
              overrides.get("subdir", "/sub")],
         )
 
+    def credential_path(self, unit: str = "mnt-share.mount") -> Path:
+        mount = (self.unit_dir / unit).read_text()
+        options = next(line.removeprefix("Options=") for line in mount.splitlines() if line.startswith("Options="))
+        return Path(options.split(",", 1)[0].removeprefix("credentials=").replace("%%", "%"))
+
     def seed_old_units(self, *, automount: bool) -> dict[str, str]:
         original = {"mnt-share.mount": "old mount\n[Install]\nWantedBy=multi-user.target\n"}
         self.states["mnt-share.mount"] = ["active", "enabled"]
@@ -106,7 +110,8 @@ class TestConfigureSmbMountUnit(unittest.TestCase):
         self.assertEqual([option for option in options if option.startswith("vers=")], ["vers=3"])
         self.assertIn("seal", options)
         self.assertIn("nofail", options)
-        self.assertIn("file_mode=0644,dir_mode=0755", mount)
+        self.assertTrue({"uid=123", "gid=456", "forceuid", "forcegid", "file_mode=0600",
+                         "dir_mode=0700", "nounix", "perm"} <= set(options))
         self.assertNotIn("x-systemd.", mount)
         self.assertNotIn("[Install]", mount)
         self.assertIn("After=network-online.target\nWants=network-online.target\n", mount)
@@ -116,7 +121,7 @@ class TestConfigureSmbMountUnit(unittest.TestCase):
         self.assertIn(["systemctl", "enable", "mnt-share.automount"], self.commands)
         self.assertNotIn(["systemctl", "enable", "mnt-share.mount"], self.commands)
         self.assertNotIn(["systemctl", "restart", "mnt-share.mount"], self.commands)
-        self.assertEqual((self.creds / "credentials-mnt-share").read_text(), "username=svc\npassword=hunter2\n")
+        self.assertEqual(self.credential_path().read_text(), "username=svc\npassword=hunter2\n")
 
     def test_migration_disables_old_mount_before_enabling_automount(self) -> None:
         self.seed_old_units(automount=False)
@@ -185,7 +190,7 @@ class TestConfigureSmbMountUnit(unittest.TestCase):
                 self.assertEqual(events, ["preflight", "local-open", "local-chown"])
                 self.assertEqual(self.states["mnt-share.automount"], ["active", "enabled"])
                 self.assertEqual(self.states["mnt-share.mount"][0], "inactive")
-                self.assertEqual((self.creds / "credentials-mnt-share").read_text(),
+                self.assertEqual(self.credential_path().read_text(),
                                  "username=changed\npassword=new-secret\n")
                 self.assertFalse(any(command[:2] == ["systemctl", "restart"] and command[-1].endswith(".mount")
                                      for command in self.commands))
@@ -306,9 +311,8 @@ class TestConfigureSmbMountUnit(unittest.TestCase):
         self.assertIn("What=//192.168.1.10/docs%%H/reports%%u\n", mount)
         for content in (mount, automount):
             self.assertIn(f"Where={self.mountpoint}%%h\n", content)
-        self.assertIn("/credentials-mnt-share\\x25h,", mount)
         self.assertIn(str(self.creds).replace("%", "%%"), mount)
-        self.assertTrue((self.creds / ("credentials-" + self.escaped)).is_file())
+        self.assertTrue(self.credential_path(self.escaped + ".mount").is_file())
 
     def test_credentials_option_resolves_to_actual_file_for_escaped_mount_names(self) -> None:
         for mount_name, escaped in (("my-share", r"mnt-my\x2dshare"),
@@ -317,23 +321,41 @@ class TestConfigureSmbMountUnit(unittest.TestCase):
             with self.subTest(mount_name=mount_name):
                 self.escaped = escaped
                 self.configure(mountpoint=str(self.root / mount_name))
-                content = (self.unit_dir / (escaped + ".mount")).read_text()
-                options = next(line.removeprefix("Options=") for line in content.splitlines()
-                               if line.startswith("Options="))
-                # Upstream config_parse_unit_string_printf expands %% without
-                # unescaping backslashes; mount.cifs opens this value verbatim.
-                credential_path = options.split(",", 1)[0].removeprefix("credentials=").replace("%%", "%")
-                self.assertEqual(credential_path, str(self.creds / ("credentials-" + escaped)))
-                self.assertEqual(Path(credential_path).read_text(), "username=svc\npassword=hunter2\n")
+                credential_path = self.credential_path(escaped + ".mount")
+                self.assertEqual(credential_path.parent, self.creds)
+                self.assertEqual(credential_path.read_text(), "username=svc\npassword=hunter2\n")
 
     def test_distinct_mountpoints_use_distinct_credential_files(self) -> None:
         self.escaped = "mnt-a_b"
         self.configure(mountpoint=str(self.root / "a_b"), credentials="first:one")
         self.escaped = "mnt-a-b"
         self.configure(mountpoint=str(self.root / "a" / "b"), credentials="second:two")
-        self.assertEqual(sorted(path.name for path in self.creds.iterdir()), ["credentials-mnt-a-b", "credentials-mnt-a_b"])
-        self.assertIn("username=first", (self.creds / "credentials-mnt-a_b").read_text())
-        self.assertIn("username=second", (self.creds / "credentials-mnt-a-b").read_text())
+        first = self.credential_path("mnt-a_b.mount")
+        second = self.credential_path("mnt-a-b.mount")
+        self.assertNotEqual(first, second)
+        self.assertIn("username=first", first.read_text())
+        self.assertIn("username=second", second.read_text())
+
+    def test_rollback_restores_original_endpoint_and_credentials_after_publication(self) -> None:
+        for legacy in (False, True):
+            with self.subTest(legacy=legacy):
+                self.configure(credentials="original:old-secret", share="original")
+                unit = self.unit_dir / "mnt-share.mount"
+                previous = self.credential_path()
+                if legacy:
+                    old_name = previous.with_name("credentials-mnt-share")
+                    previous.rename(old_name)
+                    unit.write_text(unit.read_text().replace(previous.name, old_name.name))
+                    previous = old_name
+                original = unit.read_text()
+                self.failure = ["systemctl", "restart", "mnt-share.automount"]
+                with self.assertRaises(subprocess.CalledProcessError):
+                    self.configure(credentials="changed:new-secret", share="replacement")
+                self.assertEqual(unit.read_text(), original)
+                self.assertEqual(self.credential_path(), previous)
+                self.assertEqual(previous.read_text(), "username=original\npassword=old-secret\n")
+                self.assertTrue(any(path != previous and "password=new-secret" in path.read_text()
+                                    for path in self.creds.iterdir()))
 
 
 class TestSmbMountPreflight(unittest.TestCase):
@@ -398,14 +420,13 @@ class TestSmbMountPreflight(unittest.TestCase):
                     os.symlink(outside, target)
                 else:
                     os.link(outside, target)
-                with patch.object(smb_mount_steps.os, 'fchown'):
+                with patch.object(smb_mount_steps.os, 'fchown'), self.assertRaises(FileExistsError):
                     smb_mount_steps._write_credentials(directory, 'credentials-share', 'secret')
                 with open(outside) as stream:
                     self.assertEqual(stream.read(), 'keep')
                 with open(target) as stream:
-                    self.assertEqual(stream.read(), 'secret')
-                self.assertFalse(os.path.islink(target))
-                self.assertEqual(os.stat(target).st_mode & 0o777, 0o600)
+                    self.assertEqual(stream.read(), 'keep')
+                self.assertEqual(os.path.islink(target), symlink)
                 self.assertEqual(os.stat(directory).st_mode & 0o777, 0o700)
 
 
