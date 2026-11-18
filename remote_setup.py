@@ -619,6 +619,26 @@ def _run_configured_setup_locked(config: SetupConfig, args: argparse.Namespace) 
     
     with machine_type_context(config.machine_type):
         steps = get_steps_for_system_type(config)
+    if config.device_pairing_providers:
+        from common.t3code_steps import (
+            DEVICE_PAIRING_AUTH_FILE,
+            DEVICE_PAIRING_PAYLOAD_FILE,
+            _validate_htpasswd_file,
+            install_t3code_web,
+        )
+
+        if any(step is install_t3code_web for _, step in steps):
+            auth_file = (DEVICE_PAIRING_PAYLOAD_FILE if os.path.lexists(DEVICE_PAIRING_PAYLOAD_FILE)
+                         else DEVICE_PAIRING_AUTH_FILE)
+            if not os.path.lexists(auth_file):
+                print("Error: Device pairing needs --device-pairing-auth-file on first setup "
+                      "or credentials entered through --interactive")
+                return 1
+            try:
+                _validate_htpasswd_file(auth_file)
+            except (OSError, RuntimeError) as exc:
+                print(f"Error: {exc}")
+                return 1
     from plugins.post_setup import build_post_setup_steps
 
     steps.extend(build_post_setup_steps(

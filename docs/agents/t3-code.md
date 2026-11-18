@@ -17,6 +17,7 @@ Use either the focused profile:
 ```bash
 basaltw setup server_dev vm.example agent \
   --t3code-ready --codex \
+  --device-pairing-auth-file /run/secrets/t3-pairing.htpasswd \
   --access-source 192.168.1.0/24
 ```
 
@@ -28,9 +29,14 @@ basaltw setup server_dev vm.example agent \
   --codex \
   --web-interface t3code \
   --device-pairing t3code \
+  --device-pairing-auth-file /run/secrets/t3-pairing.htpasswd \
   --git-access read-write \
   --access-source 192.168.1.0/24
 ```
+
+Prepare the first [pairing portal credential](../services/device-pairing.md#configure-it)
+before setup, or use `--interactive` to enter it privately. Reruns can reuse
+the credential installed on the target.
 
 The usual client is the separately installed T3 Code desktop or mobile app.
 Generate a one-time URL from the control system:

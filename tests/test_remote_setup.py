@@ -518,6 +518,39 @@ class TestRemoteSetupArgsFile(unittest.TestCase):
         create_service.assert_called_once_with(config)
         schedule_update.assert_called_once_with()
 
+    def test_pairing_auth_is_preflighted_before_any_setup_step(self):
+        from common import t3code_steps
+
+        config = SetupConfig(host="localhost", username="agent", system_type="agent_vm",
+                             machine_type="vm", t3code_ready=True, install_codex=True)
+        args = SimpleNamespace(dry_run=False)
+        package_step = MagicMock()
+        self.assertIn("t3code", config.device_pairing_providers)
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(t3code_steps, "DEVICE_PAIRING_AUTH_FILE", os.path.join(directory, "saved")), \
+                patch.object(t3code_steps, "DEVICE_PAIRING_PAYLOAD_FILE", os.path.join(directory, "uploaded")), \
+                patch.object(remote_setup, "detect_os", return_value="Debian"), \
+                patch.object(remote_setup, "get_steps_for_system_type", return_value=[
+                    ("Packages", package_step), ("T3 Code", t3code_steps.install_t3code_web),
+                ]), \
+                patch.object(remote_setup, "_begin_setup_operation") as begin, \
+                redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(remote_setup._run_configured_setup_locked(config, args), 1)
+            self.assertIn("--device-pairing-auth-file on first setup", output.getvalue())
+            with open(t3code_steps.DEVICE_PAIRING_AUTH_FILE, "w", encoding="utf-8") as saved:
+                saved.write("agent:$6$fixture\n")
+            with open(t3code_steps.DEVICE_PAIRING_PAYLOAD_FILE, "w", encoding="utf-8") as uploaded:
+                uploaded.write("invalid\n")
+            self.assertEqual(remote_setup._run_configured_setup_locked(config, args), 1)
+            self.assertIn("invalid record", output.getvalue())
+            os.unlink(t3code_steps.DEVICE_PAIRING_PAYLOAD_FILE)
+            args.dry_run = True
+            self.assertEqual(remote_setup._run_configured_setup_locked(config, args), 0)
+            os.replace(t3code_steps.DEVICE_PAIRING_AUTH_FILE, t3code_steps.DEVICE_PAIRING_PAYLOAD_FILE)
+            self.assertEqual(remote_setup._run_configured_setup_locked(config, args), 0)
+        begin.assert_not_called()
+        package_step.assert_not_called()
+
     def test_post_profile_failure_records_named_step_and_sends_failure(self):
         args = SimpleNamespace(
             deploy_latest=False, dry_run=False, custom_steps=None,
