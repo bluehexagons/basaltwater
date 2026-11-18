@@ -117,6 +117,33 @@ smoke-tested the wheel before GitHub published the prerelease.
   managed account, package state, and working Codex and GitHub CLI launchers
   were checked. Provider authorization was disabled for this fixture. The
   account, tools, and SSH access passed again after reboot.
+- On the Debian 13 `agent_vm`, a SIGKILL during APT index refresh left the
+  original setup marker and blocked an ordinary retry. The operator checked
+  the saved setup, package state, private file, and SSH host identity before
+  resolving the original operation. Setup then succeeded. A separate handled
+  APT failure resumed under the same operation ID and preserved the verified
+  setup, package, and private file state.
+- In a separate account on the VM, RC 3 refused a recent infra-tools workspace
+  and directed the operator to the migration guide. The pinned intermediate
+  version retained its journal when the user migration was killed immediately
+  after the workspace rename. A repeat apply stopped at the journal. Explicit
+  recovery restored the original workspace, and a fresh apply preserved the
+  private file's bytes, ownership, and mode. RC 3 read the migrated workspace.
+- The HTTPS client rejected the standalone approval endpoint until it trusted
+  the VM's CA. The approval service rejected the panel credential, a forged
+  origin, replayed forms, and an expired review. An approved Admin package
+  update failed at an injected APT error. A fresh approval ran a distinct
+  successful job and preserved the private file. No plaintext passwords
+  appeared in the checked HTTP responses, daemon arguments, approval auth
+  file, broker database, or unit logs.
+- When the broker was killed after an approved command wrote its test file,
+  restart marked the request uncertain and expired a pending request. Stale
+  approvals were rejected and the approved command's effect occurred once.
+  A second broker restart restored HTTPS approval without operator action,
+  and a fresh request from the managed `basaltw` launcher completed.
+  A separate timeout test terminated a TERM-ignoring descendant and collected
+  its transient systemd unit in 66.5 seconds. The broker rejected an executor
+  path replaced with a symlink before it ran the approved test command.
 - The installed candidate ran both builder and target roles on the VM, with
   separate authorization for the target. Over verified HTTPS, the builder
   rejected an invalid signature and deduplicated the signed push. A new build
@@ -250,13 +277,13 @@ candidate.
 | REL-01 | Source and wheel | Candidate CI passes; wheel installs outside the source tree; `basaltw --version` and packaged entry points match the candidate metadata. | **Pass** for `v2.0.0-rc.3` |
 | REL-02 | Installer channels | Fresh exact-tag install and upgrade work; `stable` does not select an `-rc.` tag; `dev` still selects `main`. | **Pass** for `v2.0.0-rc.3` on Debian 13 VM |
 | INS-01 | Clean Debian installations | Install controller, server, and agent profiles on disposable Debian hosts; cover the supported bare-metal/VM/LXC paths that each profile supports. Check commands, permissions, and selected services. | **Not run** in full. The controller install and clean Debian 13 `agent_vm` passed on `v2.0.0-rc.3`. |
-| INS-02 | Existing-install upgrades | Upgrade a supported Basaltwater installation and verify user data, setup state, credentials, and owned runtime paths. Exercise the documented intermediate-version migration for any remaining legacy installation; do not assume direct migration from historical `v0.2.0`. | Not run for `v2.0.0-rc.2` |
-| INS-03 | Interruption and recovery | Interrupt migration and setup at documented safe test points. Confirm the operation marker blocks unsafe reruns, recovery guidance identifies retained state, and a successful retry preserves the prior working state. | Not run for `v2.0.0-rc.2` |
+| INS-02 | Existing-install upgrades | Upgrade a supported Basaltwater installation and verify user data, setup state, credentials, and owned runtime paths. Exercise the documented intermediate-version migration for any remaining legacy installation; do not assume direct migration from historical `v0.2.0`. | **Not run** in full. Controller and `server_web` upgrades to `v2.0.0-rc.3` passed. The pinned intermediate user migration passed and system migration remains open. |
+| INS-03 | Interruption and recovery | Interrupt migration and setup at documented safe test points. Confirm the operation marker blocks unsafe reruns, recovery guidance identifies retained state, and a successful retry preserves the prior working state. | **Not run** in full. Hard and handled setup interruptions passed on `v2.0.0-rc.3`. The pinned intermediate user migration recovered from an interrupted rename. System migration interruption remains open. |
 | INS-04 | Services and private data | Compare pre/post checksums and modes for preserved private data; validate application access, managed service/timer health, agent configuration, and absence of retired namespace paths. | Not run for `v2.0.0-rc.2` |
 | USR-01 | Managed target-user rename | On a disposable Debian/systemd target, rename a managed account through a separate SSH administrator. Verify UID/GID, home contents, SSH access, setup state/cache, managed units, service state, interruption handling, and resume. | **Pass** for `v2.0.0-rc.3` on Debian 13 LXC |
 | DSK-01 | Shared XRDP desktop | On a disposable Debian workstation, cover fresh setup, human-first and concurrent starts, supported clients, keyboard/input/clipboard, resize and reconnect, frontend/network interruption, desktop crash/reboot, logout, interrupted setup, legacy-session blocking, and administrator rollback. Confirm the documented persistence and handoff behavior; see [XRDP guidance](workstations/xrdp.md). | Not run for `v2.0.0-rc.2` |
 | DSK-02 | Proxmox local browser kiosk | On a disposable Proxmox VE 9 console VM and target laptop, verify CLI/web boot, Firefox navigation, offline saved destinations and tab opening, local status/doctor/start/stop/restart, native/guest consoles, VT switching with a console focused, input/scaling, service stop/restart and child cleanup, crash recovery, package rerun, removal, and current lid/suspend behavior; see the [kiosk checklist](workstations/proxmox-kiosk.md#proxmox-and-hardware-qualification). | **Deferred** to a later release |
-| PRV-01 | Privileged executor and Admin refresh lifecycle | On a disposable Debian/systemd VM, cover approval origin, TLS, review window and credential privacy; source activation, setup failures, partial activation, explicit recovery identity and evidence retention. Interrupt the worker/broker or lose a dispatch response; confirm uncertain work is never replayed. Exercise pipe-holding or TERM-ignoring descendants and replaced paths; cleanup must remain bounded. Preserve active builds, unpushed work, T3 and desktop state through maintenance/readiness checks. See [privilege approvals](agents/privilege-approvals.md) and the [broker reference](agents/privilege-broker-reference.md). | Not run for `v2.0.0-rc.2` |
+| PRV-01 | Privileged executor and Admin refresh lifecycle | On a disposable Debian/systemd VM, cover approval origin, TLS, review window and credential privacy; source activation, setup failures, partial activation, explicit recovery identity and evidence retention. Interrupt the worker/broker or lose a dispatch response; confirm uncertain work is never replayed. Exercise pipe-holding or TERM-ignoring descendants and replaced paths; cleanup must remain bounded. Preserve active builds, unpushed work, T3 and desktop state through maintenance/readiness checks. See [privilege approvals](agents/privilege-approvals.md) and the [broker reference](agents/privilege-broker-reference.md). | **Not run** in full. Standalone HTTPS approval, Admin package retry, broker interruption and bounded cleanup passed on `v2.0.0-rc.3`. Admin source refresh and active-work preservation remain open. |
 | T3-01 | T3 Code server and client | On a disposable Debian VM, qualify stable T3 0.1.8 with a compatible V2 client and supported provider versions. Confirm complete managed skills after restarting the agent session. Retain fresh-install/V1 migration, 0.1.7 upgrade, pairing, provider/terminal, update/reboot, gateway preview/recording, and direct/Connect evidence. Exercise delegation, opt-in linked environments and access ceilings, workspace binding, queues/recovery, schedules/webhooks including fresh sessions, PR watches, projectless promotion, guarded release-track switching and the changed 0.1.8 workflows using the [stable feature cases](agents/t3-code.md#stable-feature-qualification). | Not run for `v2.0.0-rc.2`; disposable 0.1.8 runtime/pairing/database component checks do not qualify this full case |
 | BRW-01 | Browser qualification | Pass the Guacamole integration boundary in Chromium and Firefox; on disposable Debian, complete the manual Firefox ESR checks and verify internal HTTPS enrollment on a managed deployment. See [browser testing](agents/browser-testing.md#guacamole-boundary) and its [native release procedure](agents/browser-testing.md#native-debian-firefox-esr-release-qualification). | **Pass** for `v2.0.0-rc.3` with the disposable Guacamole protocol fixture, native Debian Firefox ESR and an installed Debian 13 gateway |
 | SEC-01 | Required audit coverage | On a required-audit Debian profile, verify `/usr/sbin/auditctl -s`, managed rules from `auditctl -l`, a fresh healthy panel snapshot, and security-monitor collection. Confirm missing tools, stopped auditd, or missing rules are surfaced as source failures. | **Pass** for `v2.0.0-rc.3` on a Debian 13 `server_web` VM |
