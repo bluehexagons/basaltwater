@@ -85,6 +85,7 @@ from lib.ssh_utils import (
     get_ssh_control_path,
     ssh_batch_mode,
     ssh_process_timeout,
+    workspace_pinned_ssh,
 )
 from lib.workspace import set_workspace_dir
 from lib.runtime_source import ensure_source_directory, require_runtime_source
@@ -1449,12 +1450,13 @@ def run_remote_setup(config: SetupConfig, *, after_setup: Callable[[SetupConfig]
     def execute() -> int:
         from lib.headscale_setup import automated_setup, run_setup
 
-        if automated_setup(config):
-            result = run_setup(config, apply_setup=_run_remote_setup_locked, apply_profile=profile)
-            if result == 0 and not config.dry_run and after_setup is not None:
-                return after_setup(config)
-            return result
-        return profile(config)
+        with workspace_pinned_ssh(config.host if config.hosted_node else None):
+            if automated_setup(config):
+                result = run_setup(config, apply_setup=_run_remote_setup_locked, apply_profile=profile)
+                if result == 0 and not config.dry_run and after_setup is not None:
+                    return after_setup(config)
+                return result
+            return profile(config)
 
     if config.dry_run:
         return execute()

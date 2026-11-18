@@ -195,7 +195,9 @@ def build_ssh_command(
             "-o", "ControlMaster=no", "-o", "ControlPersist=no", "-o", "ControlPath=none",
             "-o", "PermitLocalCommand=no", "-o", "RequestTTY=no", "-o", "ConnectionAttempts=1",
         ]
-    elif _WORKSPACE_PINNED_HOST.get() == host:
+    if _WORKSPACE_PINNED_HOST.get() == host:
+        if policy is not None and (port != 22 or known_hosts_path != get_workspace_known_hosts_path()):
+            raise ValueError("Strict SSH endpoint conflicts with the verified workspace guest pin")
         known_hosts_path, port, control_path = None, 22, None
         allow_host_key_prompt = False
         command.extend([

@@ -99,6 +99,7 @@ class TestRunSharesCommand(unittest.TestCase):
             host="fileserver",
             username="admin",
             system_type="server_lite",
+            hosted_node="node.example",
             samba_shares=[["read", "docs", "/srv/docs", "alice:secret"]],
             deploy_specs=[["example.com", "https://example.com/repo.git"]],
             smb_mounts=[["/mnt/docs", "10.0.0.2", "missing", "docs", "/"]],
@@ -124,6 +125,7 @@ class TestRunSharesCommand(unittest.TestCase):
 
         self.assertEqual(result, 0)
         self.assertEqual(sent[0].custom_steps, "reconcile_samba_shares")
+        self.assertEqual(sent[0].hosted_node, cached.hosted_node)
         self.assertIsNone(sent[0].deploy_specs)
         self.assertIsNone(sent[0].smb_mounts)
         self.assertEqual(sent[0].samba_shares, cached.samba_shares)

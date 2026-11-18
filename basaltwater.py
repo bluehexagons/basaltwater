@@ -431,7 +431,7 @@ def create_basaltwater_parser(*, _command: str | None = None) -> Tuple[argparse.
         help=(
             "Save or update a share credential. Passing PASSWORD may expose it "
             "in shell history and process arguments; use basaltw credentials "
-            "set USERNAME for hidden entry. Repeat as needed"
+            "set USERNAME --service samba --destination HOST for hidden entry. Repeat as needed"
         ),
     )
     shares_parser.add_argument("--dry-run", action="store_true")
@@ -2319,11 +2319,10 @@ def run_setup_command(args: argparse.Namespace) -> int:
         return 0
 
     try:
-        with workspace_pinned_ssh(runtime_config.host if config.hosted_node else None):
-            if automated_setup(config):
-                returncode = run_remote_setup(runtime_config, after_setup=finish_automated_setup)
-            else:
-                returncode = run_remote_setup(runtime_config)
+        if automated_setup(config):
+            returncode = run_remote_setup(runtime_config, after_setup=finish_automated_setup)
+        else:
+            returncode = run_remote_setup(runtime_config)
         if returncode == 0:
             replaced_cache_host = adopt_verified_network_host(
                 config,
@@ -2505,6 +2504,7 @@ def run_shares_command(args: argparse.Namespace) -> int:
             username=cached_config.username,
             system_type=cached_config.system_type,
             machine_type=cached_config.machine_type,
+            hosted_node=cached_config.hosted_node,
             ssh_key=cached_config.ssh_key,
             dry_run=cached_config.dry_run,
             enable_samba=True,
