@@ -82,6 +82,66 @@ class TestPressureCleanup(unittest.TestCase):
                 self.assertEqual(maintenance.cleanup_npm_cache(self.context, dry_run=False), [])
                 self.assertEqual(clean.call_count, 2 if pressure else 1)
 
+    def test_incomplete_open_file_checks_allow_only_pressure_eviction_of_default_npm_content(self):
+        npm_root = self.home / ".npm"
+        cache = npm_root / "_cacache"
+        cache.mkdir(parents=True)
+        (cache / "download").write_text("rebuildable")
+        npx = npm_root / "_npx"
+        npx.mkdir()
+        (npx / "tool").write_text("keep")
+        row = {"allocated_bytes": maintenance.USER_CACHE_PRESSURE_MIN_BYTES, "apparent_bytes": 11,
+               "files": 1, "status": "measured", "issues": [], "other_owner_entries": 0,
+               "is_mountpoint": False}
+
+        def incomplete(_path, *, include_open_files, on_incomplete):
+            self.assertTrue(include_open_files)
+            on_incomplete()
+            return False
+
+        with (
+            patch.object(maintenance, "query_cache_path", return_value=(str(npm_root), "npm", None)),
+            patch.object(maintenance, "process_uses_path", side_effect=incomplete),
+            patch.object(maintenance, "storage_pressure", return_value=False) as pressure,
+            patch.object(maintenance, "run_cleanup_command") as command,
+            patch("lib.agent_task_storage._npm_activity", return_value=False) as active,
+            patch("lib.agent_task_storage._mounts", return_value={}),
+            patch("lib.agent_task_storage.inspect_storage", return_value={"candidates": [row], "issues": []}),
+        ):
+            self.assertEqual(maintenance.cleanup_npm_cache(self.context, dry_run=False), [])
+            self.assertTrue(cache.exists())
+            pressure.return_value = True
+            self.assertEqual(maintenance.cleanup_npm_cache(self.context, dry_run=True), [])
+            self.assertTrue(cache.exists())
+            active.side_effect = [False, True]
+            self.assertEqual(maintenance.cleanup_npm_cache(self.context, dry_run=False), [])
+            self.assertTrue(cache.exists())
+            active.side_effect = None
+            self.assertEqual(maintenance.cleanup_npm_cache(self.context, dry_run=False), [])
+        self.assertFalse(cache.exists())
+        self.assertEqual((npx / "tool").read_text(), "keep")
+        command.assert_not_called()
+
+    def test_npm_keeps_custom_caches_and_known_open_paths_when_inspection_is_incomplete(self):
+        default = str(self.home / ".npm")
+        custom = str(self.home / "custom")
+        for path, active in ((default, True), (custom, False)):
+            def incomplete(_path, *, include_open_files, on_incomplete):
+                self.assertTrue(include_open_files)
+                on_incomplete()
+                return active
+
+            with (
+                self.subTest(path=path),
+                patch.object(maintenance, "query_cache_path", return_value=(path, "npm", None)),
+                patch.object(maintenance, "process_uses_path", side_effect=incomplete),
+                patch.object(maintenance, "run_cleanup_command") as command,
+                patch("lib.agent_task_storage.npm_content_cache") as content,
+            ):
+                self.assertEqual(maintenance.cleanup_npm_cache(self.context, dry_run=False), [])
+                content.assert_not_called()
+                command.assert_not_called()
+
     def test_command_reports_measured_reduction_and_dry_run_is_read_only(self):
         cache = self.home / "cache"
         cache.mkdir()

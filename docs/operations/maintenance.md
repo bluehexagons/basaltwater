@@ -542,9 +542,15 @@ On a 32 GiB desktop, keep only a few small projects locally and check
 Cache eviction is deferred while a matching tool or referencing process is
 running, including processes that reference the cache only through an open file.
 Descriptor inspection is bounded; unavailable coverage, including protected
-account processes, produces an informational deferral rather than authorizing
-eviction or failing maintenance. Symbolic links and paths outside the configured user's home are never followed or
-removed. OpenCode data under `.local/share/opencode` and Codex sessions,
+account processes, defers broader cache maintenance. For npm's default cache,
+the job can still evict just `~/.npm/_cacache` on disk pressure or above its
+size limit. It uses the same owned local inventory, package-manager activity
+checks and identity-checked disposal as the
+[one-time npm cleanup task](../agents/storage-cleanup.md#host-evidence-and-approved-cache-operations).
+This path preserves npx workspaces, npm logs and configuration, and custom
+cache locations. A known cache reference or active package manager defers
+eviction. Symbolic links and paths outside the configured user's home are
+never followed or removed. OpenCode data under `.local/share/opencode` and Codex sessions,
 memories, credentials, plugins, and unrecognized package layouts are persistent
 state and are not cleanup targets. Root-only setups retain system cleanup but
 intentionally skip the user-cache timer.
@@ -584,11 +590,12 @@ Replace `USER` with the setup account. Omit `--dry-run` to run cleanup now.
 Rerun setup to install this helper and daily timer on an existing host;
 updating the controller checkout alone does not change the target's timer.
 Unprivileged setup and direct-user invocations retain
-`user_cache_maintenance.py` as their fallback. They keep the same conservative
-deferral when protected `/proc` metadata cannot be inspected and do not gain
-observer privileges. The host supervisor verifies the exact launcher command
-and binds `--user` to its trusted baseline account before dispatch; only the
-fixed legacy worker commands remain accepted during migration.
+`user_cache_maintenance.py` as their fallback. They apply the same deferral
+and npm download-cache policy when protected `/proc` metadata cannot be
+inspected, without gaining observer privileges. The host supervisor verifies
+the exact launcher command and binds `--user` to its trusted baseline account
+before dispatch; only the fixed legacy worker commands remain accepted during
+migration.
 
 Cleanup never removes installed language runtime versions, Proxmox backups,
 templates, ISOs, guest volumes, container/image stores, crash-report

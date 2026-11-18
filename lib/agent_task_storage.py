@@ -12,8 +12,9 @@ import stat
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 
-from lib.agent_storage_inventory import _inspection_context, _summarize_inventory, inspect_storage
+from lib.agent_storage_inventory import _inspection_context, _mounts, _summarize_inventory, inspect_storage
 from lib.cleanup_paths import remove_checked_path
 from lib.streamed_process import caller_process_group
 from lib.validation import validate_filesystem_path
@@ -57,7 +58,7 @@ def _npm_activity() -> bool:
                 if any(name == tool or name.startswith(tool + b" ") or name.startswith(tool + b"-")
                        for tool in (b"npm", b"npx", b"pnpm", b"yarn")):
                     return True
-                if name in (b"node", b"nodejs"):
+                if name in (b"node", b"nodejs", b"node-MainThread"):
                     with open(entry.path + "/cmdline", "rb") as source:
                         args = source.read(65537)
                     if len(args) > 65536 or not args.endswith(b"\0"):
@@ -70,29 +71,42 @@ def _npm_activity() -> bool:
     return False
 
 
-def npm_content_cache(home: str, *, apply: bool = False) -> dict:
+def npm_content_cache(
+    home: str,
+    *,
+    apply: bool = False,
+    needs_cleanup: Callable[[str, int], bool] | None = None,
+) -> dict:
     """Evict only the default downloaded content; preserve npx tools and config."""
-    path = os.path.join(home, ".npm", "_cacache")
+    npm_root = os.path.join(home, ".npm")
+    path = os.path.join(npm_root, "_cacache")
     result = {"status": "failed", "path": path, "cleanup_executed": False, "cleanup_attempted": False,
               "free_bytes_before": None, "free_bytes_after": None, "issues": [],
               "notes": ["Only default npm downloaded content is selected; custom caches, npx tools and configuration are preserved.",
                         "Package-manager activity is a snapshot; new installs can start afterwards. Future installs may download packages again."]}
     try:
         validate_filesystem_path(path)
-        # Pin every home-relative ancestor and reject links/shared writes.
-        for current in (home, os.path.join(home, ".npm"), path):
+        # A private home protects npm directories created with a group umask.
+        private_home = not os.lstat(home).st_mode & 0o077
+        for current in (home, npm_root, path):
             info = os.lstat(current)
-            if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o022:
+            unsafe_writes = 0o002 if private_home else 0o022
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & unsafe_writes:
                 raise ValueError("Unsafe npm content cache")
-        expected = os.lstat(path)
+        expected = info
+        if npm_root in _mounts():
+            raise ValueError("Npm cache root is a separate mount")
         report = inspect_storage(home=home, paths=[path], max_entries=50000, timeout=10)
         row = report["candidates"][0]
-        if report["issues"] or row["status"] != "measured" or row["issues"] or row["other_owner_entries"]:
+        if (report["issues"] or row["status"] != "measured" or row["issues"]
+                or row["other_owner_entries"] or row["is_mountpoint"]):
             raise ValueError("Npm cache inventory incomplete")
         result["before"] = {key: row[key] for key in ("allocated_bytes", "apparent_bytes", "files")}
         usage = os.statvfs(home)
         result["free_bytes_before"] = usage.f_bavail * usage.f_frsize
-        if _npm_activity():
+        if needs_cleanup is not None and not needs_cleanup(path, row["allocated_bytes"]):
+            result["status"] = "retained"
+        elif _npm_activity():
             result["status"] = "deferred_active"
         elif not apply:
             result["status"] = "preview"

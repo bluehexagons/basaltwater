@@ -16,6 +16,7 @@ import sys
 import time
 from dataclasses import dataclass
 from logging import INFO, WARNING
+from typing import Literal
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 
@@ -442,11 +443,11 @@ def cache_needs_eviction(path: str, usage: CacheUsage, max_bytes: int) -> bool:
     )
 
 
-def defer_active_cache(path: str, process_names: tuple[str, ...]) -> bool:
-    """Preserve referenced caches and defer when open-file coverage is incomplete."""
+def _cache_activity(path: str, process_names: tuple[str, ...]) -> Literal["active", "incomplete", "idle"]:
+    """Distinguish known references from gaps in open-file coverage."""
     if tool_is_active(process_names):
         log_event(logger, "User cache cleanup deferred while in use", path=path)
-        return True
+        return "active"
 
     incomplete = False
 
@@ -455,13 +456,18 @@ def defer_active_cache(path: str, process_names: tuple[str, ...]) -> bool:
         incomplete = True
 
     active = process_uses_path(path, include_open_files=True, on_incomplete=record_incomplete)
-    if incomplete:
-        log_event(logger, "User cache cleanup deferred because open-file inspection is incomplete", path=path)
-        return True
     if active:
         log_event(logger, "User cache cleanup deferred while in use", path=path)
-        return True
-    return False
+        return "active"
+    if incomplete:
+        log_event(logger, "User cache cleanup deferred because open-file inspection is incomplete", path=path)
+        return "incomplete"
+    return "idle"
+
+
+def defer_active_cache(path: str, process_names: tuple[str, ...]) -> bool:
+    """Preserve referenced caches and defer when open-file coverage is incomplete."""
+    return _cache_activity(path, process_names) != "idle"
 
 
 def cleanup_managed_directory(
@@ -626,7 +632,27 @@ def cleanup_npm_cache(context: UserContext, *, dry_run: bool) -> list[str]:
         return [failure]
     if path is None or executable is None:
         return []
-    if defer_active_cache(path, ("npm", "npx", "pnpm", "yarn")):
+    activity = _cache_activity(path, ("npm", "npx", "pnpm", "yarn"))
+    if activity == "incomplete" and path == os.path.join(context.home, ".npm"):
+        from lib.agent_task_storage import npm_content_cache
+
+        result = npm_content_cache(
+            context.home,
+            apply=not dry_run,
+            needs_cleanup=lambda path, size: cache_needs_eviction(
+                path, CacheUsage(size, None), NPM_CACHE_MAX_BYTES,
+            ),
+        )
+        log_event(
+            logger, "Default npm download cache cleanup",
+            status=result["status"], before=result.get("before"),
+            free_bytes_before=result["free_bytes_before"], free_bytes_after=result["free_bytes_after"],
+            recovery_path=result.get("recovery_path"), issues=result["issues"],
+        )
+        if result["status"] in ("failed", "uncertain"):
+            return [f"Default npm download cache cleanup: {result['status']}"]
+        return []
+    if activity != "idle":
         return []
 
     npx_path = os.path.join(path, "_npx")
