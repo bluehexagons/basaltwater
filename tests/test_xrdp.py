@@ -906,151 +906,41 @@ class TestHardenXrdp(unittest.TestCase):
 
 
 class TestConfigureXfceForRdp(unittest.TestCase):
-    """Test XFCE RDP compatibility configuration."""
-
     def setUp(self):
-        self.helpers = {}
-        for name in ("update_channel", "clean_legacy_xfwm", "remove_legacy_pm_stub", "remove_legacy_override"):
-            patcher = patch(f"desktop.desktop_environment_steps.{name}")
-            self.helpers[name] = patcher.start()
+        from desktop import desktop_environment_steps as steps
+
+        for name in ("apply_home_settings", "remove_legacy_pm_stub"):
+            patcher = patch.object(steps, name)
+            setattr(self, name, patcher.start())
             self.addCleanup(patcher.stop)
-        glob_patcher = patch("desktop.desktop_environment_steps.glob.glob", return_value=[])
-        self.glob = glob_patcher.start()
-        self.addCleanup(glob_patcher.stop)
-        home_patcher = patch(
-            "desktop.desktop_environment_steps.get_user_home",
-            return_value="/home/testuser",
-        )
-        self.addCleanup(home_patcher.stop)
-        home_patcher.start()
+        patcher = patch.object(steps.glob, "glob", side_effect=[
+            ["/usr/lib/aarch64-linux-gnu/xfce4/notifyd/xfce4-notifyd"], [],
+        ])
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
-    @patch('desktop.desktop_environment_steps.run')
-    @patch('desktop.desktop_environment_steps.os.makedirs')
-    @patch('desktop.desktop_environment_steps.os.path.exists', return_value=False)
-    @patch('builtins.open', new_callable=unittest.mock.mock_open)
-    def test_notifications_use_session_environment(self, opened, exists, makedirs, run):
-        self.glob.side_effect = [["/usr/lib/aarch64-linux-gnu/xfce4/notifyd/xfce4-notifyd"], []]
+    def test_applies_only_managed_rdp_preferences_as_desktop_owner(self):
         configure_xfce_for_rdp(SetupConfig(host="vm", username="testuser", system_type="agent_workstation"))
-        content = ''.join(call.args[0] for call in opened().write.call_args_list)
-        self.assertIn("Exec=/usr/lib/aarch64-linux-gnu/xfce4/notifyd/xfce4-notifyd", content)
-        self.assertNotIn("systemctl --user", content)
-    
-    @patch('desktop.desktop_environment_steps.run')
-    @patch('desktop.desktop_environment_steps.os.makedirs')
-    @patch('builtins.open', new_callable=unittest.mock.mock_open)
-    def test_skips_for_non_xfce_desktop(self, mock_open, mock_makedirs, mock_run):
-        """Should skip configuration for non-XFCE desktops."""
-        config = SetupConfig(
-            host="test.example.com",
-            username="testuser",
-            system_type="workstation_dev",
-            desktop="i3"  # Not XFCE
-        )
-        
-        configure_xfce_for_rdp(config)
-        
-        # Should not create any files
-        self.assertEqual(mock_open.call_count, 0)
-        
-    @patch('desktop.desktop_environment_steps.run')
-    @patch('desktop.desktop_environment_steps.os.makedirs')
-    @patch('desktop.desktop_environment_steps.os.path.exists')
-    @patch('desktop.desktop_environment_steps.os.remove')
-    @patch('builtins.open', new_callable=unittest.mock.mock_open)
-    def test_disables_light_locker(self, mock_open, mock_remove, mock_exists, mock_makedirs, mock_run):
-        """Should disable light-locker autostart."""
-        mock_exists.return_value = False
-        mock_run.return_value = Mock(returncode=0)
-        
-        config = SetupConfig(
-            host="test.example.com",
-            username="testuser",
-            system_type="workstation_dev",
-            desktop="xfce"
-        )
-        
-        configure_xfce_for_rdp(config)
-        
-        # Check that light-locker.desktop was written
-        write_calls = [c for c in mock_open().write.call_args_list]
-        combined_content = ''.join([str(c[0][0]) for c in write_calls if c[0]])
-        
-        self.assertIn("Light Locker", combined_content)
-        self.assertIn("Hidden=true", combined_content)
-        
-    @patch('desktop.desktop_environment_steps.run')
-    @patch('desktop.desktop_environment_steps.os.makedirs')
-    @patch('desktop.desktop_environment_steps.os.path.exists')
-    @patch('desktop.desktop_environment_steps.os.remove')
-    @patch('builtins.open', new_callable=unittest.mock.mock_open)
-    def test_disables_dpms(self, mock_open, mock_remove, mock_exists, mock_makedirs, mock_run):
-        """Should disable DPMS in power manager config."""
-        mock_exists.return_value = False
-        mock_run.return_value = Mock(returncode=0)
-        
-        config = SetupConfig(
-            host="test.example.com",
-            username="testuser",
-            system_type="workstation_dev",
-            desktop="xfce"
-        )
-        
-        configure_xfce_for_rdp(config)
-        
-        # The merge helper receives only the managed power settings.
-        settings = self.helpers["update_channel"].call_args.args[1]
-        self.assertIn("dpms-enabled", settings)
-        self.assertIn("false", settings)
+        username, edits = self.apply_home_settings.call_args.args
+        self.assertEqual(username, "testuser")
+        settings = {path: (action, content) for action, path, content in edits}
+        notify = settings[".config/autostart/xfce4-notifyd.desktop"][1]
+        self.assertIn("Exec=/usr/lib/aarch64-linux-gnu/xfce4/notifyd/xfce4-notifyd", notify)
+        self.assertNotIn("systemctl --user", notify)
+        self.assertIn("Hidden=true", settings[".config/autostart/light-locker.desktop"][1])
+        channels = ".config/xfce4/xfconf/xfce-perchannel-xml"
+        action, power = settings[f"{channels}/xfce4-power-manager.xml"]
+        self.assertEqual(action, "merge-xfce")
+        self.assertIn('name="dpms-enabled" type="bool" value="false"', power)
+        for path in (".config/autostart/xfsettingsd.desktop", f"{channels}/displays.xml"):
+            self.assertEqual(settings[path][0], "retire")
+        self.remove_legacy_pm_stub.assert_called_once_with()
 
-    @patch('desktop.desktop_environment_steps.run')
-    @patch('desktop.desktop_environment_steps.os.makedirs')
-    @patch('desktop.desktop_environment_steps.os.path.exists')
-    @patch('desktop.desktop_environment_steps.os.remove')
-    @patch('builtins.open', new_callable=unittest.mock.mock_open)
-    def test_removes_stale_display_workarounds(self, mock_open, mock_remove, mock_exists, mock_makedirs, mock_run):
-        """Should remove stale display profile and legacy xfsettingsd override."""
-        mock_exists.return_value = True
-        mock_run.return_value = Mock(returncode=0)
-
-        config = SetupConfig(
-            host="test.example.com",
-            username="testuser",
-            system_type="workstation_dev",
-            desktop="xfce"
-        )
-
-        configure_xfce_for_rdp(config)
-
-        removed_paths = [call.args[0] for call in self.helpers["remove_legacy_override"].call_args_list]
-        self.assertIn("/home/testuser/.config/autostart/xfsettingsd.desktop", removed_paths)
-        self.assertIn("/home/testuser/.config/xfce4/xfconf/xfce-perchannel-xml/displays.xml", removed_paths)
-        mock_remove.assert_not_called()
-        
-    @patch('desktop.desktop_environment_steps.run')
-    @patch('desktop.desktop_environment_steps.os.makedirs')
-    @patch('desktop.desktop_environment_steps.os.path.exists')
-    @patch('desktop.desktop_environment_steps.os.remove')
-    @patch('builtins.open', new_callable=unittest.mock.mock_open)
-    def test_retires_pm_stub(self, mock_open, mock_remove, mock_exists, mock_makedirs, mock_run):
-        """Delegate exact-match migration; never install a global stub."""
-        mock_exists.return_value = False
-        mock_run.return_value = Mock(returncode=0)
-        
-        config = SetupConfig(
-            host="test.example.com",
-            username="testuser",
-            system_type="workstation_dev",
-            desktop="xfce"
-        )
-        
-        configure_xfce_for_rdp(config)
-        
-        # No global stub is written; only known old content may be removed.
-        write_calls = [c for c in mock_open().write.call_args_list]
-        combined_content = ''.join([str(c[0][0]) for c in write_calls if c[0]])
-        
-        self.assertNotIn("pm-is-supported", combined_content)
-        self.helpers["remove_legacy_pm_stub"].assert_called_once_with()
+    def test_skips_non_xfce_desktop(self):
+        configure_xfce_for_rdp(SetupConfig(host="vm", username="testuser",
+                                          system_type="workstation_dev", desktop="i3"))
+        self.apply_home_settings.assert_not_called()
+        self.remove_legacy_pm_stub.assert_not_called()
 
 
 if __name__ == '__main__':

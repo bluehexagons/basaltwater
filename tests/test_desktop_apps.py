@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
@@ -492,71 +491,31 @@ class TestMediaApps(unittest.TestCase):
 
 
 class TestBrowserSteps(unittest.TestCase):
-    def setUp(self):
-        temporary_home = tempfile.TemporaryDirectory(prefix="basaltwater-browser-test-")
-        self.addCleanup(temporary_home.cleanup)
-        self.home = temporary_home.name
-        home_patcher = patch(
-            "desktop.browser_steps.get_user_home",
-            return_value=self.home,
-        )
-        self.addCleanup(home_patcher.stop)
-        home_patcher.start()
-
-    @patch("desktop.browser_steps.run")
-    @patch("desktop.browser_steps.os.makedirs")
-    @patch("builtins.open", new_callable=unittest.mock.mock_open)
-    def test_configures_librewolf_as_default_browser(
-        self,
-        mock_open,
-        mock_makedirs,
-        mock_run,
-    ):
-        """LibreWolf remains available as an explicitly selected browser."""
+    @patch("desktop.browser_steps.apply_home_settings")
+    @patch("desktop.browser_steps.is_flatpak_app_installed")
+    def test_configures_native_and_flatpak_browser_defaults(self, installed, apply):
         from desktop.browser_steps import configure_default_browser
 
-        mock_run.return_value = Mock(returncode=0, stdout="", stderr="")
-        config = SetupConfig(
-            host="test.example.com",
-            username="testuser",
-            system_type="workstation_desktop",
-            browser="librewolf",
-        )
-
-        configure_default_browser(config)
-
-        mock_open.assert_any_call(
-            f"{self.home}/.config/mimeapps.list", "w", encoding="utf-8"
-        )
-        mock_open.assert_any_call(
-            f"{self.home}/.config/xfce4/helpers.rc", "w", encoding="utf-8"
-        )
-        write_calls = [call.args[0] for call in mock_open().write.call_args_list]
-        self.assertIn("librewolf.desktop", "".join(write_calls))
-        run_commands = [call.args[0] for call in mock_run.call_args_list]
-        self.assertTrue(
-            any(
-                "xdg-mime default librewolf.desktop x-scheme-handler/http" in command
-                for command in run_commands
-            )
-        )
-        self.assertTrue(
-            any(
-                "xdg-mime default librewolf.desktop x-scheme-handler/https" in command
-                for command in run_commands
-            )
-        )
-        self.assertTrue(
-            any(
-                "xdg-settings set default-web-browser librewolf.desktop" in command
-                for command in run_commands
-            )
-        )
-        self.assertIn("WebBrowser=librewolf", "".join(write_calls))
-        helper_content = "".join(write_calls)
-        self.assertIn("Type=X-XFCE-Helper", helper_content)
-        self.assertIn("X-XFCE-Binaries=librewolf;", helper_content)
-        self.assertIn("X-XFCE-Category=WebBrowser", helper_content)
+        for browser, flatpak, desktop_id, command in (
+            ("librewolf", False, "librewolf.desktop", "librewolf"),
+            ("librewolf", True, "io.gitlab.librewolf-community.desktop", "flatpak run io.gitlab.librewolf-community"),
+            ("helium", False, "helium.desktop", "helium"),
+        ):
+            with self.subTest(browser=browser, flatpak=flatpak):
+                installed.return_value = flatpak
+                configure_default_browser(SetupConfig(
+                    host="test.example.com", username="testuser", system_type="workstation_desktop",
+                    browser=browser, use_flatpak=flatpak,
+                ))
+                username, edits = apply.call_args.args
+                self.assertEqual(username, "testuser")
+                files = {path: content for action, path, content in edits if action == "write"}
+                self.assertIn(f"x-scheme-handler/http={desktop_id}", files[".config/mimeapps.list"])
+                self.assertIn(f"x-scheme-handler/https={desktop_id}", files[".config/mimeapps.list"])
+                self.assertIn(f"WebBrowser={command}", files[".config/xfce4/helpers.rc"])
+                helper = files[f".local/share/xfce4/helpers/{browser}.desktop"]
+                self.assertIn("Type=X-XFCE-Helper", helper)
+                self.assertIn("X-XFCE-Category=WebBrowser", helper)
 
     @patch("desktop.browser_steps._install_via_extrepo")
     @patch("desktop.browser_steps.is_package_installed")
@@ -575,43 +534,6 @@ class TestBrowserSteps(unittest.TestCase):
         mock_extrepo.assert_called_once_with("LibreWolf", "librewolf", "librewolf")
         mock_profile.assert_called_once_with()
 
-    @patch("desktop.browser_steps.run")
-    @patch("desktop.browser_steps.os.makedirs")
-    @patch("builtins.open", new_callable=unittest.mock.mock_open)
-    def test_configures_helium_as_default_browser(
-        self,
-        mock_open,
-        mock_makedirs,
-        mock_run,
-    ):
-        """Helium should be configurable as the default browser."""
-        from desktop.browser_steps import configure_default_browser
-
-        mock_run.return_value = Mock(returncode=0, stdout="", stderr="")
-        config = SetupConfig(
-            host="test.example.com",
-            username="testuser",
-            system_type="workstation_desktop",
-            browser="helium",
-        )
-
-        configure_default_browser(config)
-
-        write_calls = [call.args[0] for call in mock_open().write.call_args_list]
-        self.assertIn("helium.desktop", "".join(write_calls))
-        run_commands = [call.args[0] for call in mock_run.call_args_list]
-        self.assertTrue(
-            any(
-                "xdg-mime default helium.desktop x-scheme-handler/http" in command
-                for command in run_commands
-            )
-        )
-        self.assertTrue(
-            any(
-                "xdg-mime default helium.desktop x-scheme-handler/https" in command
-                for command in run_commands
-            )
-        )
 
     def test_helium_uses_approved_release_for_debian_architecture(self):
         from desktop.browser_steps import _HELIUM_SHA256, _HELIUM_VERSION, install_single_browser

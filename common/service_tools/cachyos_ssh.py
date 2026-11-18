@@ -13,10 +13,44 @@ import re
 import stat
 import sys
 
-# Isolated Python deliberately omits the checkout from sys.path. This trusted
-# setup helper executes once under sudo; persistent units execute native sshd.
+
+def _admin_import_root(entry: Path) -> Path:
+    """Verify import paths using only the system standard library."""
+    root = Path("/opt/basaltwater-cachyos-ssh")
+    if entry != root / "common/service_tools/cachyos_ssh.py":
+        raise ValueError("Run the verified, administrator-installed CachyOS SSH helper")
+
+    def mode_of(path: Path) -> int:
+        info = path.lstat()
+        if info.st_uid != 0 or info.st_mode & 0o022:
+            raise ValueError(f"Unsafe CachyOS SSH helper path: {path}")
+        return info.st_mode
+
+    def check_tree(directory: Path) -> None:
+        for child in directory.iterdir():
+            mode = mode_of(child)
+            if stat.S_ISDIR(mode):
+                check_tree(child)
+            elif not stat.S_ISREG(mode):
+                raise ValueError(f"Unsafe CachyOS SSH helper path: {child}")
+
+    for path in reversed((root, *root.parents)):
+        if not stat.S_ISDIR(mode_of(path)):
+            raise ValueError(f"Unsafe CachyOS SSH helper path: {path}")
+    check_tree(root)
+    return root
+
+
+# Isolated Python omits the current working directory, site customization
+# and user packages. Apply the same boundary to commands run by the helper.
 if __package__ in {None, ""}:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    if os.geteuid() != 0 or not (sys.flags.isolated and sys.flags.no_site):
+        raise ValueError("The installed SSH helper requires sudo and Python -I -S")
+    sudo_uid = os.environ.get("SUDO_UID", "")
+    os.environ.clear()
+    os.environ.update(PATH="/usr/bin", LC_ALL="C", SUDO_UID=sudo_uid)
+    os.chdir("/")
+    sys.path.append(str(_admin_import_root(Path(__file__))))
 
 from common.cachyos_ssh import BOOTSTRAP_PORT, BOOTSTRAP_SERVICE, SERVICE, SSH_PORT
 from lib.atomic_io import write_text_atomic
@@ -367,11 +401,12 @@ def _authorized_key(username: str) -> bool:
 
 
 def inspect_setup(username: str, mode: str, minutes: int, *, metadata_only: bool = False
-                  ) -> tuple[dict[str, str], bool, dict[str, dict[str, str]]]:
+                  ) -> tuple[dict[str, str], bool, dict[str, dict[str, str]], bool]:
     """Read-only adoption plan. Root repeats it immediately before mutations.
 
     metadata_only skips private managed config reads and tolerates hidden root
     listener PIDs when a recognized daemon is active; it never skips key checks.
+    Return the main state, its ownership, native units, and bootstrap presence.
     """
     if (not validate_username(username) or username == "root"
             or mode not in {"leave", "off", "key", "password"}
@@ -381,9 +416,9 @@ def inspect_setup(username: str, mode: str, minutes: int, *, metadata_only: bool
         raise ValueError("SSH requires an existing non-root account")
     bootstrap = _show(BOOTSTRAP_SERVICE)
     _no_overrides(BOOTSTRAP_SERVICE, bootstrap)
-    _bootstrap_owned(bootstrap, metadata_only=metadata_only)
+    bootstrap_present = _bootstrap_owned(bootstrap, metadata_only=metadata_only)
     if mode == "leave":
-        return {}, False, {}
+        return {}, False, {}, bootstrap_present
     _root_directory(UNIT_DIR)
     _root_directory(CONFIG_DIR)
     state = _show(SERVICE)
@@ -409,7 +444,7 @@ def inspect_setup(username: str, mode: str, minutes: int, *, metadata_only: bool
             raise ValueError(f"Cannot adopt native SSH as key-only: enroll a public key in {username}'s "
                              "~/.ssh/authorized_keys (ssh-copy-id), or explicitly select persistent "
                              "password authentication or a bounded SSH password window")
-    return state, owned, native
+    return state, owned, native, bootstrap_present
 
 
 def _validate_config(path: Path, username: str, mode: str) -> None:
@@ -482,7 +517,7 @@ def reconcile(username: str, mode: str, minutes: int) -> None:
 
 
 def _reconcile(username: str, mode: str, minutes: int) -> None:
-    state, owned, native = inspect_setup(username, mode, minutes)
+    state, owned, native, _ = inspect_setup(username, mode, minutes)
     # Refusals above are read-only. Close an earlier one-shot window even when
     # no new window was requested, and never replay a persisted deadline.
     _close_bootstrap()

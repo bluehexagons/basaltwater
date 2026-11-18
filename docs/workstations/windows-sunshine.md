@@ -24,9 +24,11 @@ The command installs or updates the exact
 starts it and waits up to 30 seconds for the running state. An already pending
 start uses the same bounded wait; stopping or paused services require manual
 resolution before retrying. Package installation can request UAC. If service
-configuration still needs administrator rights, setup requests UAC for that
-step while retaining account setup under the intended user. Cancelling UAC or
-a failed service configuration stops setup for an explicit resume.
+configuration still needs administrator rights, setup uses the Windows
+system-directory service controller to enable or start `SunshineService`.
+Each required operation can prompt for UAC while account setup continues
+under the intended user. Cancelling UAC or a failed service configuration
+stops setup for an explicit resume.
 A missing service or failed start stops setup.
 The vendor installer owns its service files and
 firewall rules. Basaltwater does not replace existing settings, credentials,

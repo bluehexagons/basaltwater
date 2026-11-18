@@ -18,7 +18,10 @@ function Assert-Throws([scriptblock]$action, [string]$pattern) {
 function Get-Receipts {
     $directory = Join-Path $env:LOCALAPPDATA 'Basaltwater\jobs'
     if (Test-Path -LiteralPath $directory) {
-        Get-ChildItem -LiteralPath $directory -Filter receipt.json -Recurse
+        foreach ($job in Get-ChildItem -LiteralPath $directory -Directory) {
+            $receipt = Join-Path $job.FullName 'receipt.json'
+            if (Test-Path -LiteralPath $receipt -PathType Leaf) { Get-Item -LiteralPath $receipt }
+        }
     }
 }
 
@@ -251,6 +254,11 @@ try {
     Set-Content -LiteralPath (Join-Path $checkout 'ci\missing.ps1') -Value 'Write-Output no-artifact'
     Set-Content -LiteralPath (Join-Path $checkout 'ci\slow.ps1') -Value 'Start-Sleep -Seconds 6'
     Set-Content -LiteralPath (Join-Path $checkout 'ci\large-log.ps1') -Value "[Console]::Out.Write('x' * (50MB + 1))"
+    Set-Content -LiteralPath (Join-Path $checkout 'ci\input.txt') -Value 'committed input'
+    Set-Content -LiteralPath (Join-Path $checkout 'ci\snapshot.ps1') -Value @'
+if (Test-Path -LiteralPath 'ci\untracked-input.txt') { throw 'Untracked input reached snapshot' }
+Copy-Item -LiteralPath 'ci\input.txt' -Destination 'snapshot.txt'
+'@
     Set-Content -LiteralPath (Join-Path $checkout 'ci\junction.ps1') -Value @'
 $target = Join-Path (Split-Path -Parent $PSScriptRoot) '..\external artifact'
 New-Item -ItemType Directory -Path $target -Force | Out-Null
@@ -271,6 +279,7 @@ New-Item -ItemType Junction -Path (Join-Path (Split-Path -Parent $PSScriptRoot) 
     $global:BasaltwaterUploadCount = 0
     $global:BasaltwaterBadDigest = $false
     $global:BasaltwaterUploadStatus = 200
+    $global:BasaltwaterUploadedText = ''
     function global:Invoke-WebRequest {
         param([switch]$UseBasicParsing, [string]$Method, [uri]$Uri,
               [string]$InFile, [string]$ContentType, [hashtable]$Headers,
@@ -283,6 +292,7 @@ New-Item -ItemType Junction -Path (Join-Path (Split-Path -Parent $PSScriptRoot) 
         $hash = (Get-FileHash -LiteralPath $InFile -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($Headers['X-Artifact-SHA256'] -ne $hash) { throw 'Upload digest did not match artifact' }
         $global:BasaltwaterUploadCount++
+        $global:BasaltwaterUploadedText = (Get-Content -LiteralPath $InFile -Raw).Trim()
         $acknowledged = if ($global:BasaltwaterBadDigest) { '0' * 64 } else { $hash }
         return [pscustomobject]@{ StatusCode = $global:BasaltwaterUploadStatus;
             Headers = @{ 'X-Artifact-SHA256' = $acknowledged } }
@@ -292,21 +302,35 @@ New-Item -ItemType Junction -Path (Join-Path (Split-Path -Parent $PSScriptRoot) 
         & $runner -SourceDirectory $checkout -Revision $revision `
             -Script 'windows\examples\Smoke-Artifact.ps1' -Artifact 'out\wsl-smoke.txt' `
             -UploadUri $uri -CredentialFile $credential | Out-Null
-        Assert-NewReceipt $before 'uploaded' | Out-Null
+        $record = Assert-NewReceipt $before 'uploaded'
+        Assert-True ($record.Revision -eq $revision -and $record.SourceArchiveSha256 -match '^[0-9a-f]{64}$') 'Missing revision or snapshot identity'
         Assert-True ($global:BasaltwaterUploadCount -eq 1) 'Successful job did not upload'
-        Remove-Item -LiteralPath (Join-Path $checkout 'out\wsl-smoke.txt')
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $checkout 'out\wsl-smoke.txt'))) 'Job wrote an artifact to the live checkout'
+
+        Set-Content -LiteralPath (Join-Path $checkout 'ci\input.txt') -Value 'dirty second input'
+        Set-Content -LiteralPath (Join-Path $checkout 'ci\untracked-input.txt') -Value 'untracked input'
+        Set-Content -LiteralPath (Join-Path $checkout '.git\info\attributes') -Value 'ci/input.txt export-ignore'
+        $before = @(Get-Receipts).Count
+        $snapshotOptions = @{ SourceDirectory = $checkout; Revision = $revision; Script = 'ci\snapshot.ps1';
+            Artifact = 'snapshot.txt'; UploadUri = $uri; CredentialFile = $credential }
+        & $runner @snapshotOptions | Out-Null
+        Assert-NewReceipt $before 'uploaded' | Out-Null
+        Assert-True ($global:BasaltwaterUploadedText -eq 'committed input') 'Artifact incorporated live checkout input'
+        Assert-True ($global:BasaltwaterUploadCount -eq 2) 'Snapshot job did not upload'
 
         $before = @(Get-Receipts).Count
-        $junction = Join-Path $checkout 'redirect'
         try {
             Assert-Throws {
                 & $runner -SourceDirectory $checkout -Revision $revision -Script 'ci\junction.ps1' `
                     -Artifact 'redirect\artifact.txt' -UploadUri $uri -CredentialFile $credential
             } 'contains a reparse point'
             Assert-NewReceipt $before 'failed' | Out-Null
-            Assert-True ($global:BasaltwaterUploadCount -eq 1) 'Job-created artifact junction attempted upload'
+            Assert-True ($global:BasaltwaterUploadCount -eq 2) 'Job-created artifact junction attempted upload'
         } finally {
-            if (Test-Path -LiteralPath $junction) { [IO.Directory]::Delete($junction) }
+            foreach ($receipt in Get-Receipts) {
+                $junction = Join-Path $receipt.DirectoryName 'source\redirect'
+                if (Test-Path -LiteralPath $junction) { [IO.Directory]::Delete($junction) }
+            }
         }
 
         Set-Content -LiteralPath (Join-Path $checkout 'ci\untracked.ps1') -Value 'exit 0'
@@ -333,7 +357,7 @@ New-Item -ItemType Junction -Path (Join-Path (Split-Path -Parent $PSScriptRoot) 
                 -Artifact 'out\failed.txt' -UploadUri $uri -CredentialFile $credential
         } 'exited with code 23'
         Assert-NewReceipt $before 'failed' | Out-Null
-        Assert-True ($global:BasaltwaterUploadCount -eq 1) 'Failed job attempted upload'
+        Assert-True ($global:BasaltwaterUploadCount -eq 2) 'Failed job attempted upload'
 
         $before = @(Get-Receipts).Count
         Assert-Throws {
@@ -341,7 +365,7 @@ New-Item -ItemType Junction -Path (Join-Path (Split-Path -Parent $PSScriptRoot) 
                 -Artifact 'out\missing.txt' -UploadUri $uri -CredentialFile $credential
         } 'produced no artifact'
         Assert-NewReceipt $before 'failed' | Out-Null
-        Assert-True ($global:BasaltwaterUploadCount -eq 1) 'Missing artifact attempted upload'
+        Assert-True ($global:BasaltwaterUploadCount -eq 2) 'Missing artifact attempted upload'
 
         $global:BasaltwaterBadDigest = $true
         $before = @(Get-Receipts).Count
@@ -352,7 +376,6 @@ New-Item -ItemType Junction -Path (Join-Path (Split-Path -Parent $PSScriptRoot) 
         } 'did not confirm the artifact SHA-256'
         Assert-NewReceipt $before 'failed' | Out-Null
         $global:BasaltwaterBadDigest = $false
-        Remove-Item -LiteralPath (Join-Path $checkout 'out\wsl-smoke.txt')
 
         $global:BasaltwaterUploadStatus = 302
         $before = @(Get-Receipts).Count
@@ -363,7 +386,6 @@ New-Item -ItemType Junction -Path (Join-Path (Split-Path -Parent $PSScriptRoot) 
         } 'non-success status'
         Assert-NewReceipt $before 'failed' | Out-Null
         $global:BasaltwaterUploadStatus = 200
-        Remove-Item -LiteralPath (Join-Path $checkout 'out\wsl-smoke.txt')
 
         $before = @(Get-Receipts).Count
         Assert-Throws {
@@ -387,7 +409,7 @@ New-Item -ItemType Junction -Path (Join-Path (Split-Path -Parent $PSScriptRoot) 
                 -TimeoutSeconds 1
         } 'exceeded 1 seconds'
         Assert-NewReceipt $before 'timed-out' | Out-Null
-        Assert-True ($global:BasaltwaterUploadCount -eq 3) 'Timeout attempted upload'
+        Assert-True ($global:BasaltwaterUploadCount -eq 4) 'Timeout attempted upload'
 
         $before = @(Get-Receipts).Count
         Assert-Throws {
@@ -395,10 +417,10 @@ New-Item -ItemType Junction -Path (Join-Path (Split-Path -Parent $PSScriptRoot) 
                 -Artifact 'out\large-log.txt' -UploadUri $uri -CredentialFile $credential
         } 'exceeded 50 MiB of logs'
         Assert-NewReceipt $before 'failed' | Out-Null
-        Assert-True ($global:BasaltwaterUploadCount -eq 3) 'Oversized log attempted upload'
+        Assert-True ($global:BasaltwaterUploadCount -eq 4) 'Oversized log attempted upload'
     } finally {
         Remove-Item Function:\Invoke-WebRequest
-        Remove-Variable BasaltwaterUploadCount, BasaltwaterBadDigest, BasaltwaterUploadStatus -Scope Global -ErrorAction SilentlyContinue
+        Remove-Variable BasaltwaterUploadCount, BasaltwaterBadDigest, BasaltwaterUploadStatus, BasaltwaterUploadedText -Scope Global -ErrorAction SilentlyContinue
     }
 
     $python = Get-Command python.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
