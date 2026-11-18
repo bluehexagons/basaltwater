@@ -430,7 +430,14 @@ def inspect_environment(repository: str, *, project_runtime: bool = False,
     }
     include_skills = report_skill_provenance or ("desktop" in scopes and bool(desktop))
     home = agent_workspace._effective_home() if include_skills or include_workspace else ""
-    skills = inspect_skill_catalogs(home) if include_skills else None
+    desktop_names = (("basaltwater-wsl-workspace",) if wsl else
+                     ("basaltwater-cachyos-desktop", "basaltwater-cachyos-workstation")
+                     if native_desktop else ("basaltwater-desktop",))
+    skills = None
+    if report_skill_provenance:
+        skills = inspect_skill_catalogs(home)
+    elif include_skills:
+        skills = inspect_skill_catalogs(home, names=desktop_names)
     if wsl:
         for application in desktop.values():
             application["instructions"] = [
@@ -439,9 +446,6 @@ def inspect_environment(repository: str, *, project_runtime: bool = False,
                 "Use project scripts for isolated exports/tests and verify saved artifacts. "
                 "Linux GUI results do not qualify native Windows behavior or GPU performance.",
             ]
-    desktop_names = (("basaltwater-wsl-workspace",) if wsl else
-                     ("basaltwater-cachyos-desktop", "basaltwater-cachyos-workstation")
-                     if native_desktop else ("basaltwater-desktop",))
     desktop_skills = [
         entry["path"] for catalog in skills["catalogs"] for name in desktop_names
         for entry in catalog["skills"]

@@ -52,8 +52,8 @@ The full manifest and the `workspace`, `development`, `workstation` and
 `web` scopes read and validate `basaltwater-agent.json` when present.
 Only the full manifest and `workspace` or `web` scopes check the project's
 branch, commit, dirty state and artifact ignore rules.
-Desktop discovery can read the local skill catalog to resolve desktop skill
-paths. For delivered bundle identities and skill comparison details, request
+Desktop discovery checks only the relevant desktop skill bundles when resolving
+their paths. For delivered bundle identities and skill comparison details, request
 `skills`, `installation`, or explicit installation context. Other scopes
 retain source provenance and omit the per-skill summary.
 

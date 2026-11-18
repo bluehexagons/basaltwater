@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 import json
 import os
 from pathlib import Path
@@ -102,11 +103,13 @@ def _bundle_digest(files: dict[str, tuple[bytes, int]]) -> str:
     ], separators=(",", ":")).encode("utf-8"))
 
 
-def inspect_skill_catalogs(home: str) -> dict[str, object]:
-    """Compare known skill bundles with this CLI's source; never inspect auth/config."""
+def inspect_skill_catalogs(home: str, *, names: Collection[str] | None = None) -> dict[str, object]:
+    """Compare known skill bundles, optionally restricted to selected names."""
     validate_filesystem_path(home, must_exist=True)
     uid = Path(home).stat().st_uid
     sources = _source_skills()
+    if names is not None:
+        sources = {name: source for name, source in sources.items() if name in names}
     catalogs = []
     for directory, providers in SKILL_CATALOG_PROVIDERS:
         root = Path(home) / directory / "skills"

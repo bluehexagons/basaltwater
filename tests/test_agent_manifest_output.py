@@ -95,10 +95,12 @@ class ManifestOutputTests(unittest.TestCase):
                                      {"basaltwater-playwright-mcp", "firefox", "firefox-esr", "node"})
                 self.assertEqual(result["provenance"]["source_revisions"]["invoked"], "current")
                 if scope in {"installation", "skills"}:
+                    skills.assert_called_once_with(root)
                     self.assertEqual(result["provenance"]["delivered_skills"][0]["name"], skill["name"])
                 else:
                     self.assertNotIn("delivered_skills", result["provenance"])
                 if scope == "desktop":
+                    skills.assert_called_once_with(root, names=("basaltwater-desktop",))
                     self.assertEqual(result["desktop_skills"], [skill["path"]])
                     self.assertEqual(result["tools"]["musescore"], "/bin/musescore4")
 
