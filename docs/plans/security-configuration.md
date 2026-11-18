@@ -3,6 +3,9 @@
 This plan tracks fixes to Basaltwater's generated configuration and setup
 transitions. The implementation covers the findings below. Release qualification
 also exercises fresh installs, saved reruns, and recovery on affected profiles.
+The [repository security review](../security-review.md) records additional
+open findings, including guest SSH key replacement, privileged workstation
+setup and the boundaries of panel authentication and storage recovery.
 
 ## Design decisions
 

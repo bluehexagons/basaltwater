@@ -416,9 +416,14 @@ Selected-builder deployments use these exports within the narrower
 }
 ```
 
-`output` is relative to the repository and is served by Nginx after the build.
-It must not be absolute, escape the repository, or contain characters that can
-change an Nginx directive. Component URL paths have the same Nginx-safe syntax.
+`output` is a repository-relative path served by Nginx after the build.
+The manifest parser rejects absolute paths, paths that escape the repository
+and unsafe Nginx syntax.
+For ordinary on-target static builds, setup checks that the resulting directory
+exists. A build can introduce symlinks after source validation. Have the build
+verify that the output root and its descendants contain only intended public
+directories and regular files before it reports success. Component URL paths
+use the same Nginx-safe syntax.
 Set the optional `spa` field to the boolean `true` when client-side routes need
 to load directly. It defaults to `false`. When enabled, root sites fall back to
 `/index.html`, and a static component mounted at `/dashboard` falls back to
