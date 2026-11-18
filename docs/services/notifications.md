@@ -123,7 +123,11 @@ covered by the panel certificate in the webhook URL. [VM CA trust](client-ca-tru
 
 Open the panel and check **Notifications** after the sender's setup finishes.
 The setup result uses the newly saved target. Repeated delivery attempts with
-the same event ID appear only once.
+the same event ID appear only once. Active alerts and history show suggested
+actions alongside the report. Expand **Security findings** for the scan window
+and structured evidence. The panel displays timestamps with timezone offsets
+in your browser's local time. Hover over a time to see the sender's original
+value. Older evidence without an offset remains in the sender's local time.
 
 For enablement, disablement, rotation, retention, and API limits, see
 [Web panel notification ingest](web-panel-reference.md#notification-ingest).
@@ -187,15 +191,23 @@ not a second notification based on pre-setup state.
 | Event | Meaning | Suggested response |
 | --- | --- | --- |
 | Protected-file audit finding | Evidence names the affected control, path, actor, operation, and executable when available; it is not proof of compromise | Compare the evidence with approved work |
+| Kernel module activity | Auditd recorded module operations, including failed attempts. The report includes names, results, executables, and audit login identities when recorded | Compare the timing with boot, service startup, and maintenance logs. An unset login identity can occur during automatic loading |
 | SSH failures or account lockout | Failures are grouped by source, user, and method; lockouts are warnings | Check the source and affected account |
 | fail2ban ban | A source address was banned by a named jail | Investigate repeated or unexpected sources |
 | Monitoring source unavailable | auditd, fail2ban, or the SSH journal could not be read | Restore the named source; recovery is sent once |
+| Source retention gap | The cursor predates the oldest retained entry in the named log. The report shows the affected interval and the oldest entry observed | Check archived logs for the uncovered interval and review retention |
 
 Routine sudo audit hits, fail2ban ban expirations, and missing optional security
 components do not notify by themselves. Audit events recorded during a
 Basaltwater setup window are treated as expected maintenance; the setup result
 records that work. The monitor holds its cursor while a required source is
 unavailable so events are not silently skipped.
+
+During catch-up, the monitor reports the coverage gap through the observed
+retention boundary and continues logging each affected scan window locally.
+Windows already covered by a delivered gap report do not send duplicate gap
+notifications. An extended or separate gap can send a new report, and findings
+from retained logs continue to notify.
 
 ## Webhook API
 

@@ -32,7 +32,7 @@ import os
 import re
 import shutil
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from logging import ERROR, WARNING
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))
@@ -62,6 +62,7 @@ _MAX_SOURCE_LINE_BYTES = 64 * 1024
 _SCAN_WINDOW = timedelta(minutes=15)
 _SOURCE_TIMEOUT_SECONDS = 60
 _AUDIT_PATH = '/usr/sbin:/sbin:/usr/bin:/bin'
+_AUDIT_LINE_TYPE = re.compile(r'^(?:node=\S+\s+)?type=(\w+)\s')
 
 
 def _audit_tool(name: str) -> str | None:
@@ -80,6 +81,12 @@ _AUDIT_KEY_LABELS = {
     'modules': 'kernel module activity',
     'privileged': 'privileged command execution',
 }
+_SOURCE_LABELS = {
+    'auditd': 'audit log', 'ssh_journal': 'SSH system journal', 'fail2ban': 'Fail2ban log',
+}
+_AUDIT_EVIDENCE_FIELDS = (
+    'paths', 'operations', 'actors', 'executables', 'module_names', 'outcomes', 'login_context',
+)
 _SECURITY_EVENT_SCHEMA_VERSION = 2
 
 
@@ -123,7 +130,7 @@ def _audit_field_values(record: str, field_name: str) -> list[str]:
     values: list[str] = []
     for match in pattern.finditer(record):
         value = match.group(1) or match.group(2)
-        if value and len(value) <= 512 and value not in values:
+        if value and len(value) <= 512 and value.isprintable() and value not in values:
             values.append(value)
     return values
 
@@ -172,28 +179,41 @@ def _parse_audit_events(
     if not records:
         return []
 
-    paths: list[str] = []
-    operations: list[str] = []
-    actors: list[str] = []
-    executables: list[str] = []
+    evidence: dict[str, list[str]] = {field: [] for field in _AUDIT_EVIDENCE_FIELDS}
     timestamps: list[datetime] = []
     for record in records:
         timestamp = _audit_record_timestamp(record)
         if timestamp is not None:
-            timestamps.append(timestamp)
-        for path in _audit_field_values(record, 'name'):
-            if path not in paths and len(paths) < _SSH_MAX_BREAKDOWN:
-                paths.append(path)
-        for operation in _audit_field_values(record, 'syscall'):
-            if operation not in operations and len(operations) < _SSH_MAX_BREAKDOWN:
-                operations.append(operation)
-        for actor_field in ('acct', 'auid', 'uid'):
-            for actor in _audit_field_values(record, actor_field):
-                if actor not in actors and len(actors) < _SSH_MAX_BREAKDOWN:
-                    actors.append(actor)
-        for executable in _audit_field_values(record, 'exe'):
-            if executable not in executables and len(executables) < _SSH_MAX_BREAKDOWN:
-                executables.append(executable)
+            timestamps.append(timestamp.astimezone(timezone.utc))
+        path_records = record
+        syscall_records = record
+        if key == 'modules':
+            records_by_type: dict[str, list[str]] = {'PATH': [], 'KERN_MODULE': [], 'SYSCALL': []}
+            for line in record.splitlines():
+                match = _AUDIT_LINE_TYPE.match(line)
+                if match and match[1] in records_by_type:
+                    records_by_type[match[1]].append(line)
+            path_records = '\n'.join(records_by_type['PATH'])
+            syscall_records = '\n'.join(records_by_type['SYSCALL'])
+            _extend_audit_evidence(evidence['module_names'], _audit_field_values(
+                '\n'.join(records_by_type['KERN_MODULE']), 'name',
+            ))
+            outcomes = {'yes': 'succeeded', 'no': 'failed'}
+            _extend_audit_evidence(evidence['outcomes'], [
+                outcomes[value] for value in _audit_field_values(syscall_records, 'success')
+                if value in outcomes
+            ])
+            _extend_audit_evidence(evidence['login_context'], [
+                'No audit login identity' if value in {'unset', '4294967295', '-1'} else value
+                for value in _audit_field_values(syscall_records, 'auid')
+            ])
+        for field, source, audit_fields in (
+            ('paths', path_records, ('name',)), ('operations', syscall_records, ('syscall',)),
+            ('actors', syscall_records, ('acct', 'auid', 'uid')),
+            ('executables', syscall_records, ('exe',)),
+        ):
+            for audit_field in audit_fields:
+                _extend_audit_evidence(evidence[field], _audit_field_values(source, audit_field))
 
     event: JSONDict = {
         'type': 'auditd',
@@ -202,18 +222,19 @@ def _parse_audit_events(
         'event_count': len(records),
         'meaning': _AUDIT_KEY_LABELS.get(key, 'security-sensitive system activity'),
     }
-    if paths:
-        event['paths'] = paths
-    if operations:
-        event['operations'] = operations
-    if actors:
-        event['actors'] = actors
-    if executables:
-        event['executables'] = executables
+    event.update({field: values for field, values in evidence.items() if values})
     if timestamps:
         event['first_seen'] = min(timestamps).isoformat(timespec='seconds')
         event['last_seen'] = max(timestamps).isoformat(timespec='seconds')
     return [event]
+
+
+def _extend_audit_evidence(values: list[str], incoming: list[str]) -> None:
+    for value in incoming:
+        if len(values) >= _SSH_MAX_BREAKDOWN:
+            break
+        if value not in values:
+            values.append(value)
 
 
 def _merge_audit_event(current: JSONDict | None, event: JSONDict) -> JSONDict:
@@ -221,16 +242,9 @@ def _merge_audit_event(current: JSONDict | None, event: JSONDict) -> JSONDict:
     if current is None:
         return event
     current['event_count'] = int(current['event_count']) + int(event['event_count'])
-    for field in ('paths', 'operations', 'actors', 'executables'):
-        incoming = event.get(field)
-        if not isinstance(incoming, list) or not incoming:
-            continue
-        values = current.setdefault(field, [])
-        if not isinstance(values, list):
-            continue
-        for value in incoming:
-            if value not in values and len(values) < _SSH_MAX_BREAKDOWN:
-                values.append(value)
+    for field in _AUDIT_EVIDENCE_FIELDS:
+        if incoming := event.get(field):
+            _extend_audit_evidence(current.setdefault(field, []), incoming)
     first_seen = event.get('first_seen')
     prior_first = current.get('first_seen')
     if isinstance(first_seen, str) and (
@@ -641,11 +655,47 @@ def _next_state(
     history = retained_gaps(previous or {}, gaps or [])
     if history:
         next_state['retention_gaps'] = history
+    notified = _notified_retention_gaps(previous or {})
+    if notified:
+        next_state['notified_retention_gaps'] = notified
     if health.status != "not_configured":
         next_state["rdp_certificate_status"] = health.status
         next_state["rdp_certificate_issue"] = health.issue or ""
         next_state["rdp_certificate_fingerprint"] = health.fingerprint or ""
     return next_state
+
+
+def _notified_retention_gaps(state: dict[str, object]) -> list[JSONDict]:
+    return retained_gaps({'retention_gaps': state.get('notified_retention_gaps')}, [])
+
+
+def _new_retention_reports(
+    state: dict[str, object], gaps: list[JSONDict], floors: dict[str, datetime],
+    since: datetime, wall_now: datetime,
+) -> tuple[list[JSONDict], list[JSONDict]]:
+    """Identify coverage gaps extending beyond the last successfully sent report."""
+    # A source boundary can explain many catch-up windows at once. Keep
+    # observed scan history separate from the broader interval in the report.
+    notified = _notified_retention_gaps(state)
+    prior = {gap['source']: gap for gap in notified}
+    end = wall_now.replace(microsecond=0) - timedelta(seconds=1)
+    coverage = {
+        gap['source']: gap for gap in retained_gaps(state, window_gaps(floors, since, end))
+    }
+    reports = []
+    reported_ranges = []
+    for gap in gaps:
+        source = gap['source']
+        interval = coverage[source]
+        previous = prior.get(source)
+        if previous and previous['since'] <= interval['since'] and previous['until'] >= interval['until']:
+            continue
+        reported_ranges.append(interval)
+        reports.append({
+            **gap, 'coverage_since': interval['since'], 'coverage_until': interval['until'],
+            'oldest_retained': floors[str(source)].isoformat(timespec='seconds'),
+        })
+    return reports, retained_gaps({'retention_gaps': notified}, reported_ranges)
 
 
 def _state_collection_errors(state: dict[str, object]) -> list[str]:
@@ -732,11 +782,39 @@ def _format_audit_event(event: JSONDict) -> str:
         parts.append(f"first_seen={event['first_seen']}")
     if 'last_seen' in event and event.get('last_seen') != event.get('first_seen'):
         parts.append(f"last_seen={event['last_seen']}")
-    for field in ('paths', 'operations', 'actors', 'executables'):
+    for field in _AUDIT_EVIDENCE_FIELDS:
         values = event.get(field)
         if isinstance(values, list) and values:
             parts.append(f"{field}={','.join(str(value) for value in values)}")
     return "  - " + " | ".join(parts)
+
+
+def _audit_notification_summary(event: JSONDict) -> str:
+    count = event['event_count']
+    meaning = str(event['meaning']).capitalize()
+    facts = []
+    for label, field in (
+        ('modules', 'module_names'), ('paths', 'paths'), ('operations', 'operations'),
+        ('results', 'outcomes'), ('executables', 'executables'),
+    ):
+        if values := event.get(field):
+            facts.append(f"{label} {', '.join(str(value)[:80] for value in values[:2])}")
+    suffix = f" — {' · '.join(facts)}" if facts else ""
+    return f"{meaning} ({count} audit event{'s' if count != 1 else ''}){suffix}."
+
+
+def _gap_summary(gap: JSONDict) -> str:
+    source = _SOURCE_LABELS[str(gap['source'])]
+    start = gap.get('coverage_since', gap['since'])
+    until = gap.get('coverage_until', gap['until'])
+    return (
+        f"{source[0].upper() + source[1:]} coverage could not be verified "
+        f"from {start} up to {until} (sender local time)."
+    )
+
+
+def _report_timestamp(value: str) -> str:
+    return datetime.fromisoformat(value).astimezone().isoformat(timespec='seconds')
 
 
 def _build_security_data(
@@ -760,8 +838,12 @@ def _build_security_data(
     """Build a stable webhook payload for security-monitor notifications."""
     critical_audit_keys = [key for key in audit_keys if key in _CRITICAL_KEYS]
     events: list[JSONDict] = []
-    events.extend({'type': 'source_retention_gap', 'severity': 'error',
-                   'state': 'coverage_unverified', **gap} for gap in (retention_gaps or []))
+    events.extend({
+        'type': 'source_retention_gap', 'severity': 'error', 'state': 'coverage_unverified',
+        **gap,
+        **{field: _report_timestamp(str(gap[field]))
+           for field in ('coverage_since', 'coverage_until', 'oldest_retained') if field in gap},
+    } for gap in (retention_gaps or []))
     events.extend(dict(event) for event in bans)
     events.extend(dict(event) for event in unbans)
     if audit_events:
@@ -827,7 +909,10 @@ def _build_security_data(
 
     data: JSONDict = {
         "schema_version": _SECURITY_EVENT_SCHEMA_VERSION,
-        "window": {"since": since.isoformat(), "until": now.isoformat()},
+        "window": {
+            "since": since.astimezone().isoformat(timespec='seconds'),
+            "until": now.astimezone().isoformat(timespec='seconds'),
+        },
         "status": status,
         "counts": {
             "fail2ban_bans": ban_count,
@@ -875,8 +960,11 @@ def _format_security_details(
     ]
     if retention_gaps:
         lines.extend(['', 'Source coverage could not be established:'])
-        lines.extend(f"  - {gap['source']}: [{gap['since']}, {gap['until']})" for gap in retention_gaps)
-        lines.append('These intervals precede retained history; they were not checked as clean.')
+        for gap in retention_gaps:
+            lines.append(f"  - {_gap_summary(gap)}")
+            if oldest := gap.get('oldest_retained'):
+                lines.append(f"    Oldest retained entry observed at {oldest} (sender local time).")
+        lines.append('The monitor will continue checking retained logs as the scan catches up.')
     if collection_errors:
         lines.extend([
             "",
@@ -888,26 +976,28 @@ def _format_security_details(
         ])
         return "\n".join(lines)
 
-    lines.extend(["", "Summary:"])
+    summary = []
     if ban_count:
-        lines.append(f"  - Fail2ban bans: {ban_count}")
+        summary.append(f"  - Fail2ban bans: {ban_count}")
     if unban_count:
-        lines.append(f"  - Fail2ban unbans: {unban_count}")
+        summary.append(f"  - Fail2ban unbans: {unban_count}")
     if audit_keys:
         descriptions = [_AUDIT_KEY_LABELS.get(key, key) for key in audit_keys]
-        lines.append(f"  - Protected changes: {', '.join(descriptions)}")
+        summary.append(f"  - Audit activity: {', '.join(descriptions)}")
     if ssh_failures >= _SSH_FAILURE_THRESHOLD:
-        lines.append(
+        summary.append(
             f"  - SSH authentication failures: {ssh_failures} "
             f"(threshold: {_SSH_FAILURE_THRESHOLD})"
         )
     lockouts = ssh_summary.get('lockouts', []) if ssh_summary else []
     if isinstance(lockouts, list) and lockouts:
-        lines.append(f"  - Account lockouts: {len(lockouts)}")
+        summary.append(f"  - Account lockouts: {len(lockouts)}")
     if certificate_event:
-        lines.append(f"  - {certificate_event[1]}")
+        summary.append(f"  - {certificate_event[1]}")
     if collection_recovered:
-        lines.append("  - Security monitor recovered its event sources")
+        summary.append("  - Security monitor recovered its event sources")
+    if summary:
+        lines.extend(["", "Summary:", *summary])
 
     if bans or unbans:
         lines.extend(["", "Fail2ban events:"])
@@ -930,7 +1020,7 @@ def _format_security_details(
         lines.extend([
             "",
             "What this means:",
-            "  - Auditd observed a security-sensitive system change.",
+            "  - Auditd recorded security-sensitive operations, including failed attempts when present.",
             "  - This is evidence to review, not confirmation that the host was compromised.",
         ])
     if ssh_failures >= _SSH_FAILURE_THRESHOLD:
@@ -1017,7 +1107,9 @@ def _security_actions(
     if 'sshd_config' in audit_keys:
         actions.append("Confirm recent SSH server configuration changes were approved.")
     if 'modules' in audit_keys:
-        actions.append("Confirm the reported kernel module activity was expected.")
+        actions.append(
+            "Compare the module names and times with boot, service startup, and maintenance logs on the sender."
+        )
     if certificate_event:
         actions.append("Check XRDP certificate/key health if the change was not planned.")
     if collection_recovered and not actions:
@@ -1085,7 +1177,7 @@ def main() -> int:
             audit_window_start=start.isoformat(),
             audit_window_end=end.isoformat(),
         )
-    audit_results, audit_critical, audit_errors = _check_auditd(
+    audit_results, _, audit_errors = _check_auditd(
         since,
         now,
         excluded_windows=audit_exclusions,
@@ -1145,9 +1237,8 @@ def main() -> int:
                 job='security_monitor',
                 status='error',
                 message=(
-                    'The security monitor could not read one or more event '
-                    'sources. This is a monitoring-health issue, not evidence '
-                    'of an intrusion.'
+                    'The security monitor paused its scan cursor. '
+                    + ' '.join(f'{error.rstrip(".")}.' for error in collection_errors)
                 ),
                 details=details,
                 logger=logger,
@@ -1183,6 +1274,7 @@ def main() -> int:
         return 1
 
     certificate_event = _certificate_health_event(state, certificate_health)
+    report_gaps, notified_gaps = _new_retention_reports(state, gaps, floors, since, wall_now)
     certificate_failed = certificate_health.status == "error"
     critical_audit_keys = [key for key in audit_keys if key in _CRITICAL_KEYS]
     lockouts = ssh_summary.get('lockouts', [])
@@ -1201,7 +1293,7 @@ def main() -> int:
         or has_lockouts
         or certificate_event is not None
         or collection_recovered
-        or gaps
+        or report_gaps
     )
     if not has_noteworthy:
         if certificate_failed:
@@ -1211,17 +1303,16 @@ def main() -> int:
                 level=ERROR,
                 errors=certificate_health.issue or "unknown certificate error",
             )
-            _save_state(_next_state(next_cursor, certificate_health, previous=state))
-            return 1
-        log_event(logger, "No noteworthy security events")
-        _save_state(_next_state(next_cursor, certificate_health, previous=state))
-        return 0
+        elif not gaps:
+            log_event(logger, "No noteworthy security events")
+        _save_state(_next_state(next_cursor, certificate_health, previous=state, gaps=gaps))
+        return 1 if certificate_failed or gaps else 0
 
     # Determine notification severity.
     # Info-only audit keys (e.g. 'privileged') provide context but do not
     # create a notification by themselves because they cover routine sudo.
     certificate_status = certificate_event[0] if certificate_event else "info"
-    if certificate_status == "error" or gaps:
+    if certificate_status == "error" or report_gaps:
         status = 'error'
     elif (
         bans
@@ -1236,8 +1327,9 @@ def main() -> int:
 
     # Build subject summary
     summary_parts: list[str] = []
-    if gaps:
-        summary_parts.append(f'{len(gaps)} source retention gap(s)')
+    if report_gaps:
+        sources = ', '.join(_SOURCE_LABELS[str(gap['source'])] for gap in report_gaps)
+        summary_parts.append(f'coverage gap in {sources}')
     if bans:
         summary_parts.append(
             f"{ban_count} fail2ban ban{'s' if ban_count != 1 else ''}"
@@ -1256,6 +1348,27 @@ def main() -> int:
         summary_parts.append("monitor recovered")
 
     subject = f"Security {status}: {', '.join(summary_parts)}"
+    if len(subject) > 200:
+        subject = subject[:199].rsplit(' ', 1)[0] + '…'
+    message_parts = [_gap_summary(gap) for gap in report_gaps]
+    if bans:
+        first = bans[0]
+        message_parts.append(
+            f"Fail2ban recorded {ban_count} ban{'s' if ban_count != 1 else ''}. "
+            f"First reported source {first.get('source_ip', 'unknown')} in jail {first.get('jail', 'unknown')}."
+        )
+    message_parts.extend(
+        _audit_notification_summary(event)
+        for event in audit_events if event.get('key') in _CRITICAL_KEYS
+    )
+    if ssh_failures >= _SSH_FAILURE_THRESHOLD:
+        message_parts.append(f"SSH logged {ssh_failures} failed authentication attempts in the scan window.")
+    if has_lockouts:
+        message_parts.append(f"SSH logged account lockouts across {len(lockouts)} reported account and source groups.")
+    if certificate_event:
+        message_parts.append(certificate_event[2])
+    if collection_recovered:
+        message_parts.append("Previously unavailable event sources are readable again.")
     since_str = since.strftime('%Y-%m-%d %H:%M:%S')
     details = _format_security_details(
         since=since,
@@ -1271,7 +1384,7 @@ def main() -> int:
         ssh_summary=ssh_summary,
         audit_events=audit_events,
         collection_recovered=collection_recovered,
-        retention_gaps=gaps,
+        retention_gaps=report_gaps,
     )
     data = _build_security_data(
         since=since,
@@ -1287,7 +1400,7 @@ def main() -> int:
         ssh_summary=ssh_summary,
         audit_events=audit_events,
         collection_recovered=collection_recovered,
-        retention_gaps=gaps,
+        retention_gaps=report_gaps,
     )
 
     actionable_events = bool(
@@ -1297,7 +1410,7 @@ def main() -> int:
         or has_lockouts
         or certificate_event
     )
-    if gaps:
+    if report_gaps:
         event_type = 'security.source_health'
         notification_state = 'firing'
         dedup_key = 'security_monitor:retention-gap'
@@ -1321,19 +1434,15 @@ def main() -> int:
         ssh_summary=ssh_summary,
         certificate_event=certificate_event,
         collection_recovered=collection_recovered,
-        retention_gaps=gaps,
+        retention_gaps=report_gaps,
     )
 
-    send_notification_safe(
+    delivered = send_notification_safe(
         notification_configs,
         subject=subject,
         job="security_monitor",
         status=status,
-        message=(
-            f"Security monitor found activity or source coverage to review since {since_str}. "
-            "The findings are evidence, not by themselves confirmation of a compromise. "
-            "Review the summary and suggested actions below."
-        ),
+        message=' '.join(message_parts),
         details=details,
         logger=logger,
         data=data,
@@ -1346,7 +1455,10 @@ def main() -> int:
     log_event(logger, "Security monitor check complete",
               status=status, events=', '.join(summary_parts),
               window=f"{since_str} → {now.strftime('%Y-%m-%d %H:%M:%S')}")
-    _save_state(_next_state(next_cursor, certificate_health, previous=state, gaps=gaps))
+    next_state = _next_state(next_cursor, certificate_health, previous=state, gaps=gaps)
+    if delivered and report_gaps:
+        next_state['notified_retention_gaps'] = notified_gaps
+    _save_state(next_state)
     return 1 if certificate_failed or gaps else 0
 
 

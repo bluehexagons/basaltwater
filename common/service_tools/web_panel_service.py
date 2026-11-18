@@ -55,6 +55,7 @@ from common.service_tools import web_panel_routine_actions as routine_actions
 from common.service_tools import web_panel_headscale
 from common.service_tools import web_panel_status as status_model
 from common.service_tools import web_panel_refresh as refresh_ui
+from common.service_tools.web_panel_notification_details import render_security_findings
 from lib.storage_diagnostics import StorageDiagnostics
 from common.service_tools.web_panel_github_runner import parse_runner_query, render_runner_page
 from common.service_tools.web_panel_features import AGENT_TOOLS, PanelFeatures, discover_features, unit_installed
@@ -1160,6 +1161,20 @@ meter::-moz-meter-bar { background: var(--accent); }
 .event-meta { margin: 3px 0 0; color: var(--muted); font-size: .82rem; }
 .event-detail { margin: 8px 0 0; }
 .event-values { margin: 8px 0 0; color: var(--muted); font-size: .85rem; }
+.event-timing { display: flex; flex-wrap: wrap; gap: 2px 16px; }
+.event-actions { margin: 8px 0 0; padding-left: 20px; }
+.event > details { margin-top: 0; }
+.event > details > pre { margin-top: 0; }
+.event-findings { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.event-findings > li { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
+.event-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 12px;
+  margin: 4px 0 0; font-size: .85rem; }
+.event-facts dt { color: var(--muted); }
+.event-facts dd { margin: 0; }
+@media (max-width: 460px) {
+  .event-facts { grid-template-columns: minmax(0, 1fr); }
+  .event-facts dd { margin-bottom: 4px; }
+}
 .badge {
   display: inline-block;
   padding: 2px 7px;
@@ -1482,7 +1497,7 @@ def _render_audit_section(state: WebPanelState) -> str:
                     html.escape(str(event.get("meaning", "Audit event"))),
                     html.escape(severity, quote=True),
                     html.escape(severity),
-                    html.escape(str(event.get("timestamp", "Unknown time"))),
+                    refresh_ui.render_log_time(str(event.get("timestamp", "Unknown time"))),
                     html.escape(str(event.get("key", "unknown"))),
                     value_html,
                 )
@@ -1507,7 +1522,7 @@ def _render_audit_section(state: WebPanelState) -> str:
     elif status == "degraded":
         status_label = "Collection incomplete"
     else:
-        status_label = f"Snapshot {generated_at}" if generated_at else "Latest 24 hours"
+        status_label = f"Snapshot {refresh_ui.render_log_time(generated_at)}" if generated_at else "Latest 24 hours"
     count = len(events) if isinstance(events, list) else 0
     warning_count = sum(
         event.get("severity") in {"warning", "error"} for event in events
@@ -1515,9 +1530,53 @@ def _render_audit_section(state: WebPanelState) -> str:
     warning_label = f" · {warning_count} warning/error event" + ("s" if warning_count != 1 else "")
     return f'''<section aria-labelledby="audit-heading"><div class="section-heading"><div>
 {render_heading("System audit log", "security", heading_id="audit-heading")}</div>
-<span class="count">{count} event{"" if count == 1 else "s"}{warning_label} · {html.escape(status_label)}</span>
+<span class="count">{count} event{"" if count == 1 else "s"}{warning_label} · {status_label}</span>
 </div>{refresh_ui.state_region(state, "audit", "Audit snapshot", '<p class="panel-summary" data-panel-summary>Audit snapshot summary</p><p class="filesystem-note">Event history and header totals reflect the page-load snapshot. Reload the dashboard to inspect a newer export.</p>')}
 {issue_html}{suppression_html}{content}</section>'''
+
+
+def _render_notification_row(
+    record: dict[str, Any], *, count: int | None = None, first_received: str = "",
+) -> str:
+    notification = record["notification"]
+    event = notification["event"]
+    operator = notification["operator"]
+    severity = html.escape(event["status"])
+    sender = html.escape(operator["system"])
+    source = html.escape(record["source_ip"])
+    received = refresh_ui.render_log_time(record["received_at"])
+    timing = []
+    if occurred_at := event.get("occurred_at"):
+        timing.append(f"<span>Reported occurrence {refresh_ui.render_log_time(occurred_at)}</span>")
+    if count is None:
+        meta = f"{html.escape(operator['job'])} · {html.escape(event['state'])} · reported system {sender} · from {source}"
+        timing.append(f"<span>Received {received}</span>")
+    elif count == 1:
+        meta = f"Reported system {sender} · from {source} · 1 report"
+        timing.append(f"<span>Received {received}</span>")
+    else:
+        meta = f"Reported system {sender} · from {source} · {count} reports"
+        timing.append(f"<span>First received {refresh_ui.render_log_time(first_received)}</span>")
+        timing.append(f"<span>Latest received {received}</span>")
+    action_html = ""
+    if actions := operator.get("suggested_actions"):
+        items = "".join(f"<li>{html.escape(action)}</li>" for action in actions)
+        action_html = f'<ul class="event-actions" aria-label="Suggested actions">{items}</ul>'
+    summary, findings = render_security_findings(notification)
+    detail_html = findings
+    if details := operator.get("details"):
+        label = "Sender's full report" if findings else "Report details"
+        detail_html += f"<details><summary>{label}</summary><pre>{html.escape(details)}</pre></details>"
+    message = operator["what_happened"]
+    if summary and message.startswith("Security monitor found activity or source coverage"):
+        message = summary
+    return (
+        f'<li class="event"><div class="event-head"><strong>{html.escape(operator["subject"])}</strong>'
+        f'<span class="badge {severity}">{severity}</span></div>'
+        f'<p class="event-meta">{meta}</p>'
+        f'<p class="event-meta event-timing">{"".join(timing)}</p>'
+        f'<p class="event-detail">{html.escape(message)}</p>{action_html}{detail_html}</li>'
+    )
 
 
 def _render_notification_section(state: WebPanelState) -> str:
@@ -1525,25 +1584,12 @@ def _render_notification_section(state: WebPanelState) -> str:
         return ""
     events = state.notification_events()
     alerts = unresolved_notification_alerts(events)
-    alert_rows = []
-    for alert in alerts:
-        record = alert["record"]
-        notification = record["notification"]
-        operator = notification["operator"]
-        severity = notification["event"]["status"]
-        alert_rows.append(
-            '<li class="event"><div class="event-head"><strong>{}</strong>'
-            '<span class="badge {}">{}</span></div>'
-            '<p class="event-meta">Reported system {} · from {} · {} {} · '
-            'first received {} · latest received {}</p><p class="event-detail">{}</p></li>'.format(
-                html.escape(operator["subject"]), html.escape(severity, quote=True),
-                html.escape(severity), html.escape(operator["system"]),
-                html.escape(record["source_ip"]), alert["count"],
-                "report" if alert["count"] == 1 else "reports",
-                html.escape(alert["first_received_at"]), html.escape(record["received_at"]),
-                html.escape(operator["what_happened"]),
-            )
+    alert_rows = [
+        _render_notification_row(
+            alert["record"], count=alert["count"], first_received=alert["first_received_at"],
         )
+        for alert in alerts
+    ]
     alert_content = (
         _render_event_history(alert_rows) if alert_rows else
         '<p class="empty">No unresolved warning or error reports in retained history.</p>'
@@ -1551,53 +1597,7 @@ def _render_notification_section(state: WebPanelState) -> str:
     if not events:
         content = '<p class="empty">No remote notifications have been received.</p>'
     else:
-        rows = []
-        for record in events:
-            notification = record["notification"]
-            event = notification["event"]
-            operator = notification["operator"]
-            details = str(operator.get("details", ""))
-            detail_html = (
-                '<details><summary>Details</summary><pre>{}</pre></details>'.format(
-                    html.escape(details)
-                )
-                if details
-                else ""
-            )
-            actions = operator.get("suggested_actions", [])
-            action_html = ""
-            if isinstance(actions, list) and actions:
-                action_html = '<p class="event-values">Suggested: {}</p>'.format(
-                    html.escape(" · ".join(str(action) for action in actions))
-                )
-            status = str(event.get("status", "info"))
-            state_label = str(event.get("state", "unknown"))
-            occurred_at = event.get("occurred_at")
-            timing = (
-                f"reported occurrence {occurred_at} · received "
-                if isinstance(occurred_at, str)
-                else "received "
-            )
-            rows.append(
-                '<li class="event"><div class="event-head"><strong>{}</strong>'
-                '<span class="badge {}">{}</span></div>'
-                '<p class="event-meta">{} · {} · reported system {} · {}{} '
-                'from {}</p>'
-                '<p class="event-detail">{}</p>{}{}</li>'.format(
-                    html.escape(str(operator.get("subject", "Notification"))),
-                    html.escape(status, quote=True),
-                    html.escape(status),
-                    html.escape(str(operator.get("job", "unknown job"))),
-                    html.escape(state_label),
-                    html.escape(str(operator.get("system", "Unknown system"))),
-                    html.escape(timing),
-                    html.escape(str(record.get("received_at", "Unknown time"))),
-                    html.escape(str(record.get("source_ip", "unknown"))),
-                    html.escape(str(operator.get("what_happened", ""))),
-                    action_html,
-                    detail_html,
-                )
-            )
+        rows = [_render_notification_row(record) for record in events]
         content = '<details class="history"><summary>Notification history ({} received)</summary>{}</details>'.format(
             len(events), _render_event_history(rows),
         )

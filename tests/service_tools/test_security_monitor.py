@@ -7,7 +7,7 @@ import json
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -171,6 +171,7 @@ class TestSecurityMonitor(unittest.TestCase):
         self.assertGreater(saved_cursor, datetime.now() - timedelta(minutes=16))
         self.assertEqual(saved_state["collection_errors"], ["SSH journal: denied"])
         self.assertEqual(mock_notify.call_args.kwargs["status"], "error")
+        self.assertIn("SSH journal: denied", mock_notify.call_args.kwargs["message"])
         self.assertIn("SSH journal: denied", mock_notify.call_args.kwargs["details"])
         self.assertEqual(
             mock_notify.call_args.kwargs["data"]["events"][0]["type"],
@@ -409,7 +410,7 @@ type=PATH msg=audit(1766400300.100:2): name=\"/etc/passwd\"
         )
 
         self.assertEqual(events[0]["event_count"], 1)
-        expected = datetime.fromtimestamp(1766400300.1).isoformat(timespec="seconds")
+        expected = datetime.fromtimestamp(1766400300.1, timezone.utc).isoformat(timespec="seconds")
         self.assertEqual(events[0]["first_seen"], expected)
 
     def test_interpreted_ausearch_timestamp_is_excluded(self):
@@ -1019,7 +1020,9 @@ class TestSecurityRetentionLifecycle(unittest.TestCase):
         gap = next(event for event in events if event['type'] == 'source_retention_gap')
         self.assertEqual((gap['since'], gap['until']), (self.start.isoformat(), floor.isoformat()))
         self.assertEqual(notification['data']['counts']['fail2ban_bans'], 1)
-        self.assertIn('not checked as clean', notification['details'])
+        self.assertIn('coverage gap in audit log', notification['subject'])
+        self.assertIn('coverage could not be verified', notification['message'])
+        self.assertIn('Oldest retained entry', notification['details'])
         history = self.state['retention_gaps']
         self.notify.reset_mock()
         self.fail2ban.return_value = security_monitor.Fail2banScan()
@@ -1033,6 +1036,58 @@ class TestSecurityRetentionLifecycle(unittest.TestCase):
         self.assertEqual(self.state['last_run'], (self.end + timedelta(seconds=1)).isoformat())
         self.assertEqual(self.state['retention_gaps'][0]['until'], self.state['last_run'])
         self.assertNotIn('collection_errors', self.state)
+
+    def test_already_reported_gap_windows_keep_advancing_and_new_evidence_notifies(self):
+        floor = self.start + timedelta(minutes=40)
+        self.floors['ssh_journal'] = floor
+        self.notify.return_value = True
+        self.assertEqual(security_monitor.main(), 1)
+        notification = self.notify.call_args.kwargs
+        self.assertIn('coverage gap in SSH system journal', notification['subject'])
+        self.assertIn(floor.isoformat(), notification['message'])
+        self.assertNotIn('Summary:', notification['details'])
+        self.notify.reset_mock()
+
+        self.assertEqual(security_monitor.main(), 1)
+        self.notify.assert_not_called()
+        self.assertEqual(self.state['last_run'], (self.start + timedelta(minutes=30)).isoformat())
+
+        self.audit.return_value = (security_monitor._parse_audit_events('modules', (
+            'type=KERN_MODULE msg=audit(1766400000.100:1): name="tun"\n'
+            'type=SYSCALL msg=audit(1766400000.100:1): syscall=finit_module '
+            'success=yes auid=unset uid=root exe="/usr/bin/kmod"\n'
+            '----\n'
+            'type=SYSCALL msg=audit(1766400010.100:2): syscall=delete_module '
+            'success=no auid=operator uid=root exe="/usr/bin/kmod"\n'
+        )), True, [])
+        self.assertEqual(security_monitor.main(), 1)
+        notification = self.notify.call_args.kwargs
+        self.assertEqual(notification['status'], 'warning')
+        self.assertIn('2 audit events', notification['message'])
+        self.assertIn('modules tun', notification['message'])
+        self.assertIn('finit_module, delete_module', notification['message'])
+        self.assertIn('/usr/bin/kmod', notification['message'])
+        module_event = notification['data']['events'][0]
+        self.assertEqual(module_event['module_names'], ['tun'])
+        self.assertEqual(module_event['outcomes'], ['succeeded', 'failed'])
+        self.assertEqual(module_event['login_context'], ['No audit login identity', 'operator'])
+        self.assertIn('boot, service startup, and maintenance logs', notification['actions'][0])
+
+    def test_gap_updates_when_retention_advances_after_delivery_retry(self):
+        self.floors['auditd'] = self.start + timedelta(minutes=35)
+        self.assertEqual(security_monitor.main(), 1)
+        self.assertNotIn('notified_retention_gaps', self.state)
+
+        self.notify.return_value = True
+        self.assertEqual(security_monitor.main(), 1)
+        self.assertIn(self.start.isoformat(), self.notify.call_args.kwargs['message'])
+        self.notify.reset_mock()
+
+        new_floor = self.start + timedelta(minutes=43)
+        self.floors['auditd'] = new_floor
+        self.assertEqual(security_monitor.main(), 1)
+        self.assertIn(new_floor.isoformat(), self.notify.call_args.kwargs['message'])
+        self.assertEqual(self.state['notified_retention_gaps'][0]['until'], new_floor.isoformat())
 
     def test_unknown_retention_freezes_cursor_and_suppresses_identical_error(self):
         self.retention.side_effect = lambda: ({}, ['SSH journal: retention evidence unavailable; interval coverage is unknown'])

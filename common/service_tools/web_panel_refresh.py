@@ -1,4 +1,4 @@
-"""Small CSP-pinned progressive enhancement for named passive status regions."""
+"""CSP-pinned progressive enhancement for panel timestamps and status regions."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import base64
 import hashlib
 import html
 import json
+from datetime import datetime, timezone
 from typing import Any
 
 SCRIPT = r'''(() => {
@@ -222,6 +223,17 @@ SCRIPT = r'''(() => {
       else schedule(region, Math.random() * 1000);
     }
   }
+  const logTimes = document.querySelectorAll('time[data-local-time]');
+  if (logTimes.length) {
+    const formatTime = new Intl.DateTimeFormat(undefined, {
+      year: 'numeric', month: 'short', day: 'numeric',
+      hour: 'numeric', minute: '2-digit', second: '2-digit', timeZoneName: 'short',
+    });
+    for (const time of logTimes) {
+      const stamp = Date.parse(time.dateTime);
+      if (Number.isFinite(stamp)) time.textContent = formatTime.format(stamp);
+    }
+  }
   for (const root of document.querySelectorAll('[data-panel-resource]')) {
     const name = root.dataset.panelResource;
     if (!Object.hasOwn(registry, name)) continue;
@@ -258,6 +270,20 @@ SCRIPT = r'''(() => {
 SCRIPT_HASH = "sha256-" + base64.b64encode(hashlib.sha256(SCRIPT.encode()).digest()).decode()
 SCRIPT_CSP = "'" + SCRIPT_HASH + "'"
 SCRIPT_TAG = f'<script src="/assets/panel-refresh.js" integrity="{SCRIPT_HASH}" defer></script>'
+
+
+def render_log_time(original: str) -> str:
+    """Keep the source timestamp and mark only absolute times for localization."""
+    escaped = html.escape(original)
+    try:
+        stamp = datetime.fromisoformat(original)
+        if stamp.utcoffset() is not None:
+            utc = stamp.astimezone(timezone.utc).isoformat()
+            return f'<time data-local-time datetime="{utc}" title="{escaped}">{escaped}</time>'
+    except (ValueError, OverflowError):
+        pass
+    return escaped
+
 
 STYLE = """
 .panel-status {display:flex;align-items:center;flex-wrap:wrap;gap:6px 12px;margin:10px 0 14px;
