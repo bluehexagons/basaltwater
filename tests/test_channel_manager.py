@@ -135,6 +135,33 @@ class TestChannelManager(unittest.TestCase):
         self.assertNotEqual(result["commit"], previous)
         self.assertEqual(result["commit"], _git(self.repo, "rev-parse", "origin/main"))
 
+    def test_system_channel_refuses_an_alternate_origin(self) -> None:
+        previous = _git(self.repo, "rev-parse", "HEAD")
+        with patch.object(channel_manager, "_system_source", return_value=True), \
+                patch.object(channel_manager, "_require_system_source"):
+            with self.assertRaisesRegex(ChannelError, "System channel updates require"):
+                switch_channel(self.repo, "dev")
+        self.assertEqual(_git(self.repo, "rev-parse", "HEAD"), previous)
+        self.assertFalse(os.path.exists(channel_manager.channel_state_path(self.repo)))
+
+    def test_system_channel_rejects_source_that_tracks_runtime_state(self) -> None:
+        previous = _git(self.repo, "rev-parse", "HEAD")
+        state = os.path.join(self.seed, "state")
+        os.mkdir(state)
+        with open(os.path.join(state, "example.json"), "w", encoding="utf-8") as handle:
+            handle.write("{}")
+        _git(self.seed, "add", "state")
+        _git(self.seed, "commit", "-m", "source conflicts with runtime data")
+        _git(self.seed, "push", "origin", "main")
+        _git(self.repo, "fetch", "origin")
+        with patch.object(channel_manager, "_system_source", return_value=True), \
+                patch.object(channel_manager, "_require_system_source"), \
+                patch.object(channel_manager, "_fetch_origin"):
+            with self.assertRaisesRegex(ChannelError, "Unsafe or reserved source entry"):
+                switch_channel(self.repo, "dev")
+        self.assertEqual(_git(self.repo, "rev-parse", "HEAD"), previous)
+        self.assertFalse(os.path.exists(os.path.join(self.repo, "state")))
+
     def test_commit_channel_and_dirty_worktree_are_handled(self) -> None:
         result = switch_channel(self.repo, f"commit-{self.feature_commit}")
         self.assertEqual(result["commit"], self.feature_commit)

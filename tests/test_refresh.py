@@ -82,8 +82,8 @@ class DebianRefreshTests(unittest.TestCase):
         temporary_paths = []
         def execute(command, **kwargs):
             events.append("setup")
-            self.assertEqual(command[:3], [refresh.sys.executable, str(self.root / "remote_setup.py"), "--args-file"])
-            path = Path(command[3])
+            self.assertEqual(command[:5], [refresh.sys.executable, "-I", "-B", str(self.root / "remote_setup.py"), "--args-file"])
+            path = Path(command[5])
             temporary_paths.append(path)
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
             arguments = json.loads(path.read_text())
@@ -552,7 +552,7 @@ def clone(command, **kwargs):
     return SimpleNamespace(returncode=0)
 
 refresh.run = clone
-refresh.switch_channel = lambda staged, channel: {"commit": "new", "channel": channel}
+refresh.switch_channel = lambda staged, channel, **options: {"commit": "new", "channel": channel}
 real_rename = os.rename
 
 def rename_then_kill(source, destination):

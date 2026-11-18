@@ -186,7 +186,7 @@ def main() -> int:
         runtime = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         with link_payloads(payload, runtime):
             return run([
-                sys.executable, "-u", os.path.join(runtime, "remote_setup.py"),
+                sys.executable, "-I", "-B", "-u", os.path.join(runtime, "remote_setup.py"),
                 "--args-file", os.path.join(payload, ".remote_setup_args.json"),
             ], check=False, timeout=args.timeout, interactive=relay).returncode
 
