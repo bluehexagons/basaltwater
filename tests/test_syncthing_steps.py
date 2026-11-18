@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+from xml.etree import ElementTree
 
 from lib.atomic_io import write_bytes_atomic, write_text_atomic
 from lib.config import SetupConfig
@@ -18,6 +19,7 @@ from sync.syncthing_steps import (
     SYNCTHING_HOME,
     _configure_syncthing_https,
     _disable_before_removal,
+    _load_current_config,
     _preflight_existing_folders,
     _prepare_share_root,
     _prepare_state_home,
@@ -435,6 +437,21 @@ class SyncthingCompositionTest(unittest.TestCase):
         self.assertEqual(request.full_url, "http://127.0.0.1:8384/rest/config")
         self.assertEqual(open_client.call_args.kwargs, {"timeout": 20})
 
+    def test_load_config_reads_private_api_key_for_the_literal_loopback_client(self) -> None:
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(_current_config()).encode()
+        xml = b"<configuration><gui><apikey>test-api-key</apikey></gui></configuration>"
+        with (
+            patch("sync.syncthing_steps._read_config_file", return_value=(xml, None)),
+            patch("sync.syncthing_steps.open_loopback", return_value=response) as open_client,
+        ):
+            self.assertEqual(_load_current_config(), _current_config())
+
+        request = open_client.call_args.args[0]
+        self.assertEqual(request.full_url, "http://127.0.0.1:8384/rest/config")
+        self.assertEqual(request.get_header("X-api-key"), "test-api-key")
+        self.assertEqual(request.get_method(), "GET")
+
     def test_share_root_rejects_symbolic_link_parent(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             target = os.path.join(temporary_dir, "target")
@@ -487,9 +504,9 @@ class SyncthingCompositionTest(unittest.TestCase):
             ),
         ):
             with self.assertRaisesRegex(RuntimeError, "outside the configured"):
-                _preflight_existing_folders("agent", "/mnt/team-files")
+                _preflight_existing_folders("/mnt/team-files")
 
-        wait_for_api.assert_called_once_with("agent")
+        wait_for_api.assert_called_once_with()
 
     def test_server_and_workstation_compositions_include_syncthing(self) -> None:
         for system_type in ("server_lite", "workstation_desktop"):
@@ -660,6 +677,10 @@ class SyncthingReconciliationTest(unittest.TestCase):
     """Real private file transactions; all service/CLI/HTTP effects are mocked."""
 
     old_config = b"<configuration>old login and GUI shares</configuration>\r\n"
+    generated_config = b"""<configuration>
+        <gui><user>syncthing-admin</user></gui>
+        <options><natEnabled>true</natEnabled><relaysEnabled>true</relaysEnabled></options>
+    </configuration>"""
     old_unit = "[Service]\nDescription=prior managed endpoint\n"
 
     def setUp(self) -> None:
@@ -742,6 +763,12 @@ class SyncthingReconciliationTest(unittest.TestCase):
         elif args[:2] == ["systemctl", "enable"]:
             self.enabled = "enabled-runtime" if "--runtime" in args else "enabled"
             if "--now" in args:
+                xml = ElementTree.parse(self.xml)
+                self.assertEqual(xml.findtext("options/natEnabled"), "false")
+                self.assertEqual(xml.findtext("options/crashReportingEnabled"), "false")
+                self.assertEqual(xml.findtext("options/urAccepted"), "-1")
+                self.assertEqual(xml.findtext("options/relaysEnabled"), "true")
+                self.assertEqual(xml.findtext("gui/user"), "syncthing-admin")
                 self.active = True
                 if self.failure == "unverified-enable":
                     self.enabled = "disabled"
@@ -773,7 +800,7 @@ class SyncthingReconciliationTest(unittest.TestCase):
                 path = os.path.join(self.home, name)
                 if not os.path.exists(path):
                     write_bytes_atomic(path, b"first-install " + name.encode())
-            write_bytes_atomic(self.xml, b"rotated login", mode=0o600)
+            write_bytes_atomic(self.xml, self.generated_config, mode=0o600)
             self.fail("generation")  # Models a partial credential mutation.
         else:
             self.fail("device-id")
@@ -791,7 +818,7 @@ class SyncthingReconciliationTest(unittest.TestCase):
             raise OSError("config restore failed")
         write_bytes_atomic(path, content, **kwargs)
 
-    def wait_for_api(self, _username: str) -> None:
+    def wait_for_api(self) -> None:
         self.waits += 1
         if self.failed and self.recovery_failure == "health":
             raise RuntimeError("restored API unavailable")
@@ -968,7 +995,7 @@ class SyncthingReconciliationTest(unittest.TestCase):
         self.assertFalse(self.active)
         self.assertEqual(self.enabled, "disabled")
         self.assertEqual(self.read(self.unit).decode(), self.old_unit)
-        self.assertEqual(self.read(self.xml), b"rotated login")
+        self.assertEqual(self.read(self.xml), self.generated_config)
         self.assert_identity_retained()
         self.assert_no_recovery()
 

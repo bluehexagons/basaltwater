@@ -27,7 +27,7 @@ class TestSyncthingGuard(unittest.TestCase):
                     "user": "admin", "password": "test-hash", "apiKey": "test-key"},
             "folders": [{"id": "docs", "path": str(self.root / "docs")}],
             "devices": [],
-            "options": {},
+            "options": {"natEnabled": False},
             "defaults": {"folder": {"path": str(self.root)}, "device": {}},
         }
 
@@ -110,6 +110,7 @@ class TestSyncthingGuard(unittest.TestCase):
         config = self.state / "config.xml"
         config.write_text(
             f'<configuration><folder path="{self.state}"/>'
+            '<options><natEnabled>false</natEnabled></options>'
             '<gui><user>admin</user><password>test-hash</password></gui></configuration>',
             encoding="utf-8",
         )
@@ -119,6 +120,23 @@ class TestSyncthingGuard(unittest.TestCase):
             process.assert_not_called()
         config.write_text(config.read_text().replace(str(self.state), str(self.root)), encoding="utf-8")
         guard._validate_offline_config(str(self.state), str(self.root))
+
+    def test_router_mapping_is_refused_before_startup_and_on_config_writes(self):
+        (self.state / "config.xml").write_text(
+            '<configuration><options><natEnabled>true</natEnabled></options></configuration>',
+            encoding="utf-8",
+        )
+        with patch.object(guard.subprocess, "Popen") as process:
+            with self.assertRaisesRegex(ValueError, "automatic router mapping"):
+                guard.main(str(self.root), str(self.state))
+            process.assert_not_called()
+        for options in ({}, {"natEnabled": True}):
+            self.config["options"] = options
+            handler = self.handler("PUT", "/rest/config")
+            with patch.object(guard, "_UnixConnection") as connection:
+                handler.proxy()
+                connection.assert_not_called()
+            self.assertEqual(handler.send_error.call_args.args[0], 400)
 
     def test_mount_aliases_and_nested_mounts_are_refused(self):
         prefix = "1 0 0:1 / / rw - ext4 fixture rw\n"

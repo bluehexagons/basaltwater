@@ -18,6 +18,7 @@ import time
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request
+from xml.etree import ElementTree
 
 from common.storage_steps import STORAGE_MARKER, assert_declared_storage_mount
 from lib.atomic_io import remove_file_durable, write_bytes_atomic, write_json_atomic, write_text_atomic
@@ -32,7 +33,8 @@ from lib.unit_transaction import inspect_unit_state, snapshot_unit_file
 from lib.validation import _validate_syncthing_root, validate_filesystem_path
 from lib.vm_storage import storage_mounts
 from sync.service_tools.syncthing_guard import (
-    GUI_ADDRESS, _check_folder_paths, _check_storage_mounts, _validate_offline_config,
+    GUI_ADDRESS, MAX_CONFIG, _check_folder_paths, _check_storage_mounts,
+    _parse_config_xml, _read_config_file, _validate_offline_config,
 )
 
 
@@ -129,35 +131,32 @@ def _run_as_user(
     )
 
 
-def _cli(
-    username: str,
-    arguments: list[str],
-    *,
-    capture_output: bool = False,
-    check: bool = True,
-) -> Any:
-    return _run_as_user(
-        username,
-        ["cli", f"--home={SYNCTHING_HOME}", f"--gui-address=http://{SYNCTHING_GUI_ADDRESS}", *arguments],
-        capture_output=capture_output,
-        check=check,
-    )
-
-
-def _wait_for_api(username: str, attempts: int = 30) -> None:
+def _wait_for_api(attempts: int = 30) -> None:
+    last_error = None
     for _attempt in range(attempts):
-        result = _cli(username, ["show", "system"], capture_output=True, check=False)
-        if result.returncode == 0:
+        try:
+            _load_current_config()
+        except OSError as exc:
+            last_error = exc
+            time.sleep(0.5)
+        else:
             return
-        time.sleep(0.5)
-    raise RuntimeError("Syncthing API did not become ready on 127.0.0.1:8384")
+    raise RuntimeError(f"Syncthing API did not become ready on {SYNCTHING_GUI_ADDRESS}") from last_error
 
 
-def _load_current_config(username: str) -> dict[str, Any]:
-    result = _cli(username, ["config", "dump-json"], capture_output=True)
+def _load_current_config() -> dict[str, Any]:
+    raw, _ = _read_config_file(SYNCTHING_HOME)
+    api_key = _parse_config_xml(raw).findtext("gui/apikey")
+    if not api_key:
+        raise RuntimeError("Syncthing configuration does not contain an API key")
+    request = Request(SYNCTHING_API_URL, headers={"X-API-Key": api_key})
+    with open_loopback(request, timeout=2) as response:
+        content = response.read(MAX_CONFIG + 1)
+    if len(content) > MAX_CONFIG:
+        raise RuntimeError("Syncthing API configuration exceeds 16 MiB")
     try:
-        loaded = json.loads(result.stdout)
-    except (TypeError, json.JSONDecodeError) as exc:
+        loaded = json.loads(content)
+    except (UnicodeError, json.JSONDecodeError) as exc:
         raise RuntimeError("Syncthing returned an invalid configuration") from exc
     if not isinstance(loaded, dict):
         raise RuntimeError("Syncthing returned a non-object configuration")
@@ -439,7 +438,7 @@ def _disable_before_removal(unit_exists: bool) -> None:
     )
 
 
-def _preflight_existing_folders(username: str, share_root: str) -> None:
+def _preflight_existing_folders(share_root: str) -> None:
     """Validate a running endpoint before changing its writable root."""
 
     active = run(
@@ -448,8 +447,8 @@ def _preflight_existing_folders(username: str, share_root: str) -> None:
     )
     if active.returncode != 0:
         return
-    _wait_for_api(username)
-    _validate_folder_paths(_load_current_config(username), share_root)
+    _wait_for_api()
+    _validate_folder_paths(_load_current_config(), share_root)
 
 
 def _validate_state_paths() -> None:
@@ -508,20 +507,30 @@ def _prepare_state_home(username: str, uid: int, gid: int) -> None:
 
 def _snapshot_config(backup_dir: str) -> dict[str, int] | None:
     """Save only offline configuration, privately, with restoration metadata."""
-    path = os.path.join(SYNCTHING_HOME, "config.xml")
     try:
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        content, info = _read_config_file(SYNCTHING_HOME)
     except FileNotFoundError:
         return None
-    with os.fdopen(descriptor, "rb") as stream:
-        info = os.fstat(stream.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-            raise RuntimeError(f"Refusing unsafe Syncthing configuration: {path}")
-        content = stream.read(16 * 1024 * 1024 + 1)
-    if len(content) > 16 * 1024 * 1024:
-        raise RuntimeError("Syncthing configuration exceeds 16 MiB")
     write_bytes_atomic(os.path.join(backup_dir, "config.xml"), content, mode=0o600)
     return {"mode": stat.S_IMODE(info.st_mode), "uid": info.st_uid, "gid": info.st_gid}
+
+
+def _prepare_offline_options() -> None:
+    """Apply startup-sensitive settings before launching the native daemon."""
+    raw, info = _read_config_file(SYNCTHING_HOME)
+    config = _parse_config_xml(raw)
+    options = config.findall("options")
+    if len(options) != 1:
+        raise ValueError("Syncthing requires exactly one options element")
+    for name, value in (("natEnabled", "false"), ("urAccepted", "-1"), ("crashReportingEnabled", "false")):
+        for previous in options[0].findall(name):
+            options[0].remove(previous)
+        ElementTree.SubElement(options[0], name).text = value
+    write_bytes_atomic(
+        os.path.join(SYNCTHING_HOME, "config.xml"),
+        ElementTree.tostring(config, encoding="utf-8"),
+        mode=stat.S_IMODE(info.st_mode), uid=info.st_uid, gid=info.st_gid,
+    )
 
 
 def _assert_no_syncthing_recovery() -> None:
@@ -536,7 +545,7 @@ def _assert_no_syncthing_recovery() -> None:
 
 
 def _restore_syncthing(
-    username: str, backup_dir: str, previous_unit: dict | None,
+    backup_dir: str, previous_unit: dict | None,
     previous_state: dict[str, str], previous_config: dict[str, int] | None,
     first_install: bool,
 ) -> None:
@@ -572,7 +581,7 @@ def _restore_syncthing(
             run(["systemctl", "enable", *flags, unit])
         if previous_state["ActiveState"] == "active":
             run(["systemctl", "start", unit])
-            _wait_for_api(username)
+            _wait_for_api()
     actual = inspect_unit_state(unit)
     if first_install:
         if actual["ActiveState"] in {"active", "activating"} or actual["UnitFileState"] in {"enabled", "enabled-runtime"}:
@@ -585,7 +594,7 @@ def _restore_syncthing(
 
 
 @contextmanager
-def _syncthing_transaction(username: str) -> Iterator[None]:
+def _syncthing_transaction() -> Iterator[None]:
     """Extend unit rollback across offline credentials and API policy changes.
 
     Unit replacement alone cannot restore application side effects. Keep one
@@ -632,7 +641,7 @@ def _syncthing_transaction(username: str) -> Iterator[None]:
                     store.transition(record.operation_id, "rolling-back")
                 except Exception as exc:
                     marker_error = exc
-                _restore_syncthing(username, backup_dir, previous_unit, previous_state, previous_config, first_install)
+                _restore_syncthing(backup_dir, previous_unit, previous_state, previous_config, first_install)
                 if marker_error is not None:
                     raise marker_error
             store.complete(record.operation_id, outcome="rolled_back" if modified else "failed")
@@ -722,10 +731,10 @@ def setup_syncthing(config: SetupConfig, **_kwargs: Any) -> None:
     share_root = _share_root(config)
     uid, gid, group_name = _account(config.username)
     _prepare_state_home(config.username, uid, gid)
-    _preflight_existing_folders(config.username, share_root)
+    _preflight_existing_folders(share_root)
     _prepare_share_root(config, group_name)
 
-    with _syncthing_transaction(config.username):
+    with _syncthing_transaction():
         _run_as_user(
             config.username,
             [
@@ -738,6 +747,7 @@ def setup_syncthing(config: SetupConfig, **_kwargs: Any) -> None:
             ],
             input_data=admin_password + "\n",
         )
+        _prepare_offline_options()
         _validate_offline_config(SYNCTHING_HOME, share_root)
 
         write_text_atomic(
@@ -748,7 +758,7 @@ def setup_syncthing(config: SetupConfig, **_kwargs: Any) -> None:
         run(["systemd-analyze", "verify", SYNCTHING_SERVICE_FILE])
         run(["systemctl", "daemon-reload"])
         run(["systemctl", "enable", "--now", f"{SYNCTHING_SERVICE_NAME}.service"])
-        _wait_for_api(config.username)
+        _wait_for_api()
         device_id_result = _run_as_user(
             config.username,
             ["serve", "--device-id", f"--home={SYNCTHING_HOME}"],
@@ -757,12 +767,10 @@ def setup_syncthing(config: SetupConfig, **_kwargs: Any) -> None:
         local_device_id = str(device_id_result.stdout or "").strip()
         if not _DEVICE_ID_PATTERN.fullmatch(local_device_id):
             raise RuntimeError("Syncthing returned an invalid local device ID")
-        desired = build_syncthing_policy_config(
-            _load_current_config(config.username), share_root
-        )
+        desired = build_syncthing_policy_config(_load_current_config(), share_root)
         _put_config(desired)
         run(["systemctl", "restart", f"{SYNCTHING_SERVICE_NAME}.service"])
-        _wait_for_api(config.username)
+        _wait_for_api()
         active = inspect_unit_state(f"{SYNCTHING_SERVICE_NAME}.service")
         if active["ActiveState"] != "active" or active["UnitFileState"] != "enabled":
             raise RuntimeError("Managed Syncthing service is not active and enabled")

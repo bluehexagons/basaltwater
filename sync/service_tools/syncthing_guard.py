@@ -91,15 +91,20 @@ def _check_folder(kind: object, marker: object, version: object, version_path: o
         raise ValueError("Syncthing requires basic folders, the default marker and built-in version storage")
 
 
-def _validate_offline_config(state: str, root: str) -> None:
-    _check_storage_mounts(root, state)
+def _read_config_file(state: str) -> tuple[bytes, os.stat_result]:
     descriptor = os.open(os.path.join(state, "config.xml"), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(descriptor, "rb") as stream:
         info = os.fstat(stream.fileno())
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
             raise ValueError("Syncthing requires a private, regular config.xml")
         raw = stream.read(MAX_CONFIG + 1)
-    if len(raw) > MAX_CONFIG or b"<!DOCTYPE" in raw.upper():
+    if len(raw) > MAX_CONFIG:
+        raise ValueError("Syncthing configuration exceeds 16 MiB")
+    return raw, info
+
+
+def _parse_config_xml(raw: bytes) -> ElementTree.Element:
+    if b"<!DOCTYPE" in raw.upper():
         raise ValueError("Unsupported Syncthing XML configuration")
     try:
         config = ElementTree.fromstring(raw.decode("utf-8"))
@@ -107,6 +112,17 @@ def _validate_offline_config(state: str, root: str) -> None:
         raise ValueError("Invalid Syncthing XML configuration") from exc
     if config.tag != "configuration":
         raise ValueError("Invalid Syncthing XML configuration")
+    return config
+
+
+def _validate_offline_config(state: str, root: str) -> None:
+    _check_storage_mounts(root, state)
+    raw, _ = _read_config_file(state)
+    config = _parse_config_xml(raw)
+    options = config.findall("options")
+    nat = config.findall("options/natEnabled")
+    if len(options) != 1 or len(nat) != 1 or nat[0].text != "false":
+        raise ValueError("Syncthing automatic router mapping must be disabled")
     folders = config.findall("folder")
     _check_folder_paths([folder.get("path") for folder in folders], root)
     for folder in folders + config.findall("defaults/folder"):
@@ -162,7 +178,10 @@ def _validate_config_write(raw: bytes, root: str, state: str) -> bytes:
     default_folder = _fields(defaults.get("folder"))
     _check_folder_paths([_fields(folder).get("path") for folder in folders], root)
     _storage_path(default_folder.get("path"), root)
-    _storage_path(_fields(settings.get("options")).get("defaultfolderpath", root), root)
+    options = _fields(settings.get("options"))
+    _storage_path(options.get("defaultfolderpath", root), root)
+    if options.get("natenabled") is not False:
+        raise ValueError("Syncthing automatic router mapping must be disabled")
     for folder in [*map(_fields, folders), default_folder]:
         version = _fields(folder.get("versioning", {}))
         _check_folder(folder.get("filesystemtype", "basic"), folder.get("markername", ".stfolder"),

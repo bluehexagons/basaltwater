@@ -296,8 +296,10 @@ the data is no longer needed.
   writable general temporary directory: any temporary-file requirement must
   use the approved storage root or private service state, rather than widening
   the sandbox.
-- Automatic router mapping is disabled. Existing routing can permit direct
-  device connections; otherwise outbound relay fallback remains enabled.
+- Setup disables automatic router mapping in the stored configuration before
+  starting Syncthing. The managed GUI and API keep this setting disabled.
+  Existing routing can permit direct device connections, and outbound relay
+  fallback remains enabled.
 - Device IDs grant folder-level Syncthing trust, not Unix or general network
   access. A compromised authorized device can still replace or delete shared
   data.
