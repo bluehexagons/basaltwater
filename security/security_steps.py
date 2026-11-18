@@ -57,7 +57,6 @@ _AUDIT_RULES_FILE = "/etc/audit/rules.d/99-basaltwater.rules"
 _FAILLOCK_CONF = "/etc/security/faillock.conf"
 _PAM_FAILLOCK_PROFILE = "/usr/share/pam-configs/faillock-basaltwater"
 _PAM_COMMON_AUTH = "/etc/pam.d/common-auth"
-_PAM_COMMON_ACCOUNT = "/etc/pam.d/common-account"
 _ISSUE_BANNER = "Authorized access only. All activity is monitored and logged.\n"
 _SECURITY_MONITOR_SCRIPT = "/opt/basaltwater/security/service_tools/security_monitor.py"
 _SSH_RULE_COMMENT_PREFIX = "basaltwater SSH"
@@ -69,10 +68,7 @@ _UFW_NUMBERED_RULE_RE = re.compile(r"^\[\s*(\d+)\]")
 _UFW_BROAD_INBOUND_RE = re.compile(
     r"^(?:\[\s*\d+\]\s+)?(.+?)\s+(?:ALLOW|LIMIT)\s+IN\s+Anywhere\b"
 )
-_PAM_ACTIVE_LINES = (
-    re.compile(r"^\s*auth\s+\[default=die\]\s+pam_faillock\.so\s+authfail\b"),
-    re.compile(r"^\s*account\s+required\s+pam_faillock\.so\b"),
-)
+_PAM_AUTH_LINE = re.compile(r"^-?auth\s+(\[[^\]]+\]|\S+)\s+(\S+)(?:\s+(.*))?$")
 _APPARMOR_USERNS_PROFILE = "/etc/apparmor.d/unprivileged_userns"
 _APPARMOR_USERNS_RESTRICTION = (
     "/proc/sys/kernel/apparmor_restrict_unprivileged_userns"
@@ -1178,6 +1174,24 @@ def configure_apparmor(config: SetupConfig) -> None:
     )
 
 
+def _audit_rule_fields(line: str) -> frozenset[tuple[str, str]]:
+    """Normalize managed rules as printed by auditctl -l."""
+    parts = line.split()
+    fields = set()
+    for option, value in zip(parts[::2], parts[1::2]):
+        if option == "-S":
+            fields.update((option, syscall) for syscall in value.split(",") if syscall != "all")
+            continue
+        if option == "-k":
+            option, value = "-F", f"key={value}"
+        if option == "-F" and value.startswith("perm="):
+            value = "perm=" + "".join(sorted(value.removeprefix("perm=")))
+        elif option == "-F" and value.startswith("dir="):
+            value = value.rstrip("/") if value != "dir=/" else value
+        fields.add((option, value))
+    return frozenset(fields)
+
+
 def configure_auditd(config: SetupConfig) -> None:
     if is_dry_run():
         print("  [DRY-RUN] Would configure auditd rules")
@@ -1231,9 +1245,6 @@ def configure_auditd(config: SetupConfig) -> None:
 -a always,exit -F arch=b32 -F path=/var/log/wtmp -F perm=wa -k session
 -a always,exit -F arch=b64 -F path=/var/log/btmp -F perm=wa -k session
 -a always,exit -F arch=b32 -F path=/var/log/btmp -F perm=wa -k session
-
-# Enable audit (not immutable - allows future rule updates)
--e 1
 """
 
     os.makedirs("/etc/audit/rules.d", exist_ok=True)
@@ -1255,14 +1266,30 @@ def configure_auditd(config: SetupConfig) -> None:
     # reconciles an inactive service; augenrules performs the supported live
     # rule reload below whether or not the on-disk rules changed.
     service_result = run("systemctl start auditd", check=False)
-    load_result = run("augenrules --load", check=False)
-
     if service_result.returncode != 0:
         raise RuntimeError("auditd is required on this host but its service did not start")
+    load_result = run("augenrules --load", check=False)
     if load_result.returncode != 0:
         raise RuntimeError("auditd is required on this host but its rules did not load")
+    status = run("auditctl -s", capture_output=True, check=False)
+    enabled = re.search(r"^enabled\s+([012])\s*$", status.stdout or "", re.MULTILINE)
+    if status.returncode != 0 or enabled is None:
+        raise RuntimeError("Could not verify the kernel audit enable mode")
+    if enabled.group(1) == "0":
+        print("  ⚠ Kernel auditing is disabled by host policy. Managed rules are staged for auditd.")
+        return
+    listed = run("auditctl -l", capture_output=True, check=False)
+    if listed.returncode != 0:
+        raise RuntimeError("Could not verify the kernel audit rules")
+    managed = {_audit_rule_fields(line) for line in audit_rules.splitlines() if line.startswith("-a ")}
+    active = {_audit_rule_fields(line) for line in (listed.stdout or "").splitlines() if line.startswith("-a ")}
+    if not managed.issubset(active):
+        if enabled.group(1) == "2":
+            print("  ⚠ Kernel audit policy is immutable. Reboot required to load staged Basaltwater rules.")
+            return
+        raise RuntimeError("Managed audit rules are missing from the active kernel ruleset")
     if rules_changed:
-        print("  ✓ auditd configured (monitoring identity, sudoers, SSH config, modules)")
+        print("  ✓ auditd configured and live rules verified (identity, sudoers, SSH config, modules)")
     else:
         print("  ✓ auditd already configured; service and rules reconciled")
 
@@ -1276,22 +1303,43 @@ def _managed_text_matches(path: str, expected: str) -> bool:
 
 
 def _pam_lockout_active() -> bool:
-    """Confirm the generated PAM auth and account stacks use faillock."""
+    """Confirm Debian's generated authentication paths enforce and clear lockout."""
 
-    for path, pattern in zip(
-        (_PAM_COMMON_AUTH, _PAM_COMMON_ACCOUNT), _PAM_ACTIVE_LINES
-    ):
-        try:
-            with open(path, encoding="utf-8") as file_obj:
-                if not any(
-                    pattern.search(line)
-                    for line in file_obj
-                    if not line.lstrip().startswith("#")
-                ):
-                    return False
-        except OSError:
+    try:
+        with open(_PAM_COMMON_AUTH, encoding="utf-8") as file_obj:
+            lines = [line.strip() for line in file_obj if line.strip() and not line.lstrip().startswith("#")]
+    except OSError:
+        return False
+    stack = []
+    for line in lines:
+        entry = _PAM_AUTH_LINE.fullmatch(line)
+        if not entry:
             return False
-    return True
+        control, module, options = entry.groups()
+        stack.append((control, os.path.basename(module), options or ""))
+    try:
+        deny = stack.index(("requisite", "pam_deny.so", ""))
+    except ValueError:
+        return False
+    if (
+        deny < 3
+        or stack[0] != ("required", "pam_faillock.so", "preauth")
+        or stack[deny - 1] != ("[default=die]", "pam_faillock.so", "authfail")
+        or stack[deny + 1:deny + 2] != [("required", "pam_permit.so", "")]
+        or stack[-1] != ("required", "pam_faillock.so", "authsucc")
+    ):
+        return False
+    # Credential providers must jump over authfail and the deny fallback to
+    # pam_permit on success, and fall through to the next provider on failure.
+    for index, (control, _module, _options) in enumerate(stack[1:deny - 1], start=1):
+        if control.split() != [f"[success={deny - index}", "default=ignore]"]:
+            return False
+    # An additional module may end the stack before authsucc. Accept only
+    # straight-line controls and reject an extra or duplicated faillock hook.
+    return all(
+        control in {"required", "optional", "requisite"} and module != "pam_faillock.so"
+        for control, module, _options in stack[deny + 2:-1]
+    )
 
 
 def configure_pam_lockout(config: SetupConfig) -> None:
@@ -1307,39 +1355,57 @@ def configure_pam_lockout(config: SetupConfig) -> None:
 deny = 5
 fail_interval = 900
 unlock_time = 600
+silent
 """
 
-    pam_profile = """Name: basaltwater account lockout (pam_faillock)
+    profiles = {
+        _PAM_FAILLOCK_PROFILE + "-preauth": """Name: basaltwater account lockout check
 Default: yes
-Priority: 0
+Priority: 1000000
+Auth-Type: Primary
+Auth:
+\trequired pam_faillock.so preauth
+""",
+        _PAM_FAILLOCK_PROFILE: """Name: basaltwater account lockout failure accounting
+Default: yes
+Priority: -1000000
 Auth-Type: Primary
 Auth:
 \t[default=die] pam_faillock.so authfail
-Auth-Initial:
-\trequired pam_faillock.so preauth
-Account-Type: Primary
-Account:
-\trequired pam_faillock.so
-"""
+""",
+        _PAM_FAILLOCK_PROFILE + "-authsucc": """Name: basaltwater account lockout success accounting
+Default: yes
+Priority: -1000000
+Auth-Type: Additional
+Auth:
+\trequired pam_faillock.so authsucc
+""",
+    }
 
-    profile_matches = _managed_text_matches(_PAM_FAILLOCK_PROFILE, pam_profile)
+    changed_profiles = {
+        path: content for path, content in profiles.items()
+        if not _managed_text_matches(path, content)
+    }
     settings_match = _managed_text_matches(_FAILLOCK_CONF, faillock_conf)
-    if profile_matches and settings_match and _pam_lockout_active():
+    if not changed_profiles and settings_match and _pam_lockout_active():
         print("  ✓ PAM lockout already configured")
         return
 
     os.makedirs(os.path.dirname(_PAM_FAILLOCK_PROFILE), exist_ok=True)
-    if not profile_matches:
-        write_text_atomic(_PAM_FAILLOCK_PROFILE, pam_profile, mode=0o644)
+    for path, content in changed_profiles.items():
+        write_text_atomic(path, content, mode=0o644)
     if not settings_match:
         write_text_atomic(_FAILLOCK_CONF, faillock_conf, mode=0o644)
 
     os.environ["DEBIAN_FRONTEND"] = "noninteractive"
-    result = run("pam-auth-update --enable faillock-basaltwater", check=False)
+    result = run(
+        "pam-auth-update --enable faillock-basaltwater-preauth faillock-basaltwater faillock-basaltwater-authsucc",
+        check=False,
+    )
     if result.returncode != 0:
         raise RuntimeError("PAM lockout profile could not be enabled")
     if not _pam_lockout_active():
-        raise RuntimeError("PAM lockout is absent from the active auth or account stack")
+        raise RuntimeError("PAM lockout is absent from the active auth stack or its controls are out of order")
 
     print("  ✓ PAM account lockout configured (5 failures in 15 min → 10 min lockout)")
 

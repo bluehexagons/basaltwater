@@ -608,10 +608,23 @@ class TestConfigureAuditd(unittest.TestCase):
     def test_rules_are_loaded_without_restarting_the_debian_service(
         self, mock_run, _makedirs, _vm, _hardware
     ):
-        mock_run.return_value = SimpleNamespace(returncode=0)
         config = SetupConfig(username="u", host="h", system_type="server_lite")
         with tempfile.TemporaryDirectory() as temporary:
             rules_file = os.path.join(temporary, "audit.rules")
+
+            def kernel_response(command, **_kwargs):
+                stdout = ""
+                if command == "auditctl -s":
+                    stdout = "enabled 1\npid 123\n"
+                elif command == "auditctl -l":
+                    stdout = "\n".join(
+                        line.replace("-k ", "-F key=").replace(" -F path=", " -S all -F path=")
+                        for line in Path(rules_file).read_text().splitlines()
+                        if line.startswith("-a ")
+                    )
+                return SimpleNamespace(returncode=0, stdout=stdout)
+
+            mock_run.side_effect = kernel_response
             with patch(
                 "security.security_steps._AUDIT_RULES_FILE", rules_file
             ):
@@ -622,6 +635,7 @@ class TestConfigureAuditd(unittest.TestCase):
                 with open(rules_file, encoding="utf-8") as rules:
                     contents = rules.read()
                 self.assertNotIn("-w ", contents)
+                self.assertNotIn("-e ", contents)
                 self.assertIn(
                     "-a always,exit -F arch=b64 -F path=/etc/passwd -F perm=wa -k identity",
                     contents,
@@ -644,7 +658,33 @@ class TestConfigureAuditd(unittest.TestCase):
             self.assertIn("systemctl enable auditd", commands)
             self.assertIn("systemctl start auditd", commands)
             self.assertIn("augenrules --load", commands)
+            self.assertIn("auditctl -l", commands)
             self.assertNotIn("systemctl restart auditd", commands)
+
+    @patch("security.security_steps.is_hardware", return_value=False)
+    @patch("security.security_steps.is_vm", return_value=True)
+    @patch("security.security_steps.os.makedirs")
+    @patch("security.security_steps.run")
+    def test_immutable_rules_are_staged_and_operator_enable_mode_is_preserved(
+        self, mock_run, _makedirs, _vm, _hardware
+    ):
+        config = SetupConfig(username="u", host="h", system_type="server_lite")
+        with tempfile.TemporaryDirectory() as temporary:
+            rules = Path(temporary) / "99-basaltwater.rules"
+            rules.write_text("# Old managed policy\n-e 1\n")
+            operator = Path(temporary) / "98-operator.rules"
+            operator.write_text("-e 2\n")
+            with patch("security.security_steps._AUDIT_RULES_FILE", str(rules)):
+                def kernel_response(command, **_kwargs):
+                    stdout = "enabled 2\n" if command == "auditctl -s" else "No rules\n"
+                    return SimpleNamespace(returncode=0, stdout=stdout)
+
+                mock_run.side_effect = kernel_response
+                with patch("builtins.print") as output:
+                    configure_auditd(config)
+                self.assertIn("Reboot required", output.call_args.args[0])
+            self.assertNotIn("-e ", rules.read_text())
+            self.assertEqual(operator.read_text(), "-e 2\n")
 
 
 class TestSecurityPackageInstallFailures(unittest.TestCase):
@@ -691,13 +731,18 @@ class TestConfigurePamLockout(unittest.TestCase):
             profile = os.path.join(temporary, "pam-configs", "faillock-basaltwater")
             settings = os.path.join(temporary, "faillock.conf")
             auth = os.path.join(temporary, "common-auth")
-            account = os.path.join(temporary, "common-account")
+            rendered = (
+                "auth required pam_faillock.so preauth\n"
+                "auth [success=2 default=ignore] pam_unix.so nullok try_first_pass\n"
+                "auth [default=die] pam_faillock.so authfail\n"
+                "auth requisite pam_deny.so\n"
+                "auth required pam_permit.so\n"
+                "auth required pam_faillock.so authsucc\n"
+            )
 
             def activate(_command, **_kwargs):
                 with open(auth, "w", encoding="utf-8") as file_obj:
-                    file_obj.write("auth [default=die] pam_faillock.so authfail\n")
-                with open(account, "w", encoding="utf-8") as file_obj:
-                    file_obj.write("account required pam_faillock.so\n")
+                    file_obj.write(rendered)
                 return SimpleNamespace(returncode=0)
 
             mock_run.side_effect = activate
@@ -706,11 +751,14 @@ class TestConfigurePamLockout(unittest.TestCase):
                 _PAM_FAILLOCK_PROFILE=profile,
                 _FAILLOCK_CONF=settings,
                 _PAM_COMMON_AUTH=auth,
-                _PAM_COMMON_ACCOUNT=account,
             ):
                 configure_pam_lockout(config)
                 with open(profile, encoding="utf-8") as file_obj:
-                    self.assertIn("pam_faillock.so", file_obj.read())
+                    self.assertIn("[default=die] pam_faillock.so authfail", file_obj.read())
+                with open(profile + "-preauth", encoding="utf-8") as file_obj:
+                    self.assertIn("required pam_faillock.so preauth", file_obj.read())
+                with open(profile + "-authsucc", encoding="utf-8") as file_obj:
+                    self.assertIn("required pam_faillock.so authsucc", file_obj.read())
                 with open(settings, encoding="utf-8") as file_obj:
                     self.assertIn("deny = 5", file_obj.read())
                 mock_run.reset_mock()
@@ -725,12 +773,21 @@ class TestConfigurePamLockout(unittest.TestCase):
                 mock_run.assert_called_once()
                 mock_run.reset_mock()
 
-                with open(auth, "w", encoding="utf-8") as file_obj:
-                    file_obj.write("# auth required pam_faillock.so\n")
-                configure_pam_lockout(config)
-                mock_run.assert_called_once_with(
-                    "pam-auth-update --enable faillock-basaltwater", check=False
-                )
+                for before, after in (
+                    ("auth required pam_faillock.so preauth\n", ""),
+                    ("success=2", "success=1"),
+                    ("success=2", "success=4"),
+                    ("auth required pam_faillock.so authsucc\n", ""),
+                ):
+                    with self.subTest(before=before, after=after):
+                        with open(auth, "w", encoding="utf-8") as file_obj:
+                            file_obj.write(rendered.replace(before, after))
+                        configure_pam_lockout(config)
+                        mock_run.assert_called_once_with(
+                            "pam-auth-update --enable faillock-basaltwater-preauth faillock-basaltwater faillock-basaltwater-authsucc",
+                            check=False,
+                        )
+                        mock_run.reset_mock()
 
     @patch("security.security_steps.is_hardware", return_value=False)
     @patch("security.security_steps.is_vm", return_value=True)
@@ -745,7 +802,6 @@ class TestConfigurePamLockout(unittest.TestCase):
                 _PAM_FAILLOCK_PROFILE=os.path.join(temporary, "pam-configs", "faillock"),
                 _FAILLOCK_CONF=os.path.join(temporary, "faillock.conf"),
                 _PAM_COMMON_AUTH=os.path.join(temporary, "common-auth"),
-                _PAM_COMMON_ACCOUNT=os.path.join(temporary, "common-account"),
             ):
                 mock_run.return_value = SimpleNamespace(returncode=1)
                 with self.assertRaisesRegex(RuntimeError, "could not be enabled"):
