@@ -53,8 +53,9 @@ basaltw setup server_lite fileserver admin \
 ```
 
 Basaltwater creates a missing root below an existing parent, or prepares an
-empty root for the setup user with mode `0770`, and confines the systemd
-service to that root. Setup verifies any Basaltwater-declared VM data mount
+empty root for the setup user with mode `0770`. Choose a dedicated filesystem
+or directory without nested mounts or aliases of the private service state.
+Setup verifies any Basaltwater-declared VM data mount
 before writing to it, and the generated service also uses `RequiresMountsFor=`
 for declared or separately managed mounts. This prevents a missing disk from
 redirecting setup or synchronization writes into the root filesystem.
@@ -132,12 +133,12 @@ The same additive workflow supports ordinary mounted data disks unrelated to
 Syncthing. It does not replace a missing old disk, adopt a manually attached
 volume, or resize or detach storage.
 
-Changing `--syncthing-root` does not move files or rewrite GUI folder paths.
-Before changing it on an existing endpoint, migrate the data and update or
-recreate the GUI folders so every folder path is below the new root. Setup
-checks a running endpoint before stopping it and rejects a configuration that
-would leave a GUI-managed folder outside the service sandbox. Storage roots
-and configured folder roots may not escape through symbolic links.
+To change `--syncthing-root` while preserving folder IDs, stop the managed
+service, keep a private backup of `config.xml`, move the data, and update the
+folder paths in the offline configuration. Then rerun setup with the new root.
+The running GUI accepts paths only within the currently active root. Setup
+checks an existing endpoint against the requested root before activation.
+Choose paths whose components are real directories.
 
 ## Add people and folders
 
@@ -145,8 +146,10 @@ and configured folder roots may not escape through symbolic links.
 2. Have each coworker install Syncthing and send you their device ID.
 3. In the server GUI, select **Add Remote Device**, enter the ID and a helpful
    name, and save it. Do not mark a coworker as an introducer.
-4. Select **Add Folder**, use a path below the configured Syncthing root, and
-   select only the devices that should receive it.
+4. Select **Add Folder**, choose a distinct path below the configured
+   Syncthing root, and select only the devices that should receive it. Folder
+   roots cannot overlap because a peer with access to a parent folder would
+   also control the nested folder's path.
 5. On each coworker's client, add the **Syncthing device ID** from the final
    access summary and accept the offered folder at an appropriate local path.
 
@@ -158,7 +161,9 @@ inside one folder.
 
 New folders default to the configured storage root and staggered versioning for
 up to one year. Both are visible and adjustable in the GUI. Existing folder
-settings are never reset by a Basaltwater rerun. Versioning is useful recovery
+settings are retained on a successful Basaltwater rerun. Use built-in
+versioning with storage inside each folder and the default `.stfolder`
+marker. Keep automatic folder acceptance disabled. Versioning is useful recovery
 but is not an independent backup; retain server snapshots or another backup
 for disk loss, administrator mistakes, or compromise.
 
@@ -232,6 +237,12 @@ reconciliation. Inspect the recorded unit state and snapshots using the
 the restored login, device identity, unit and activation state before resolving
 the marker. Do not delete recovery evidence merely to retry setup.
 
+When upgrading an existing endpoint, use the legacy GUI or a stopped-service
+configuration edit to correct out-of-root or overlapping folder paths, turn
+off automatic folder acceptance, and move any custom version archive into the
+normal per-folder layout before rerunning. Setup refuses unsupported folder
+settings and preserves the previous configuration and activation on failure.
+
 On a combined Samba/Gogs/Syncthing server, use separate sibling roots, such as
 `/srv/shares`, `/srv/gogs`, and `/srv/syncthing`. Do not synchronize or export
 live Gogs state. Sharing the same writable files through Samba and Syncthing
@@ -264,14 +275,21 @@ the data is no longer needed.
 
 ## Security boundaries
 
-- The GUI remains bound to `127.0.0.1:8384`; only the managed HTTPS gateway is
-  externally reachable, and its firewall scope follows Basaltwater access
-  sources.
-- The service's ordinary filesystem write allowlist consists of its private
-  state directory and configured storage root. Setup rejects existing GUI
-  folder paths outside the storage root; changing a path in the GUI does not
-  expand the systemd allowlist. Keep synchronized folders in the storage root,
-  separate from the writable application state.
+- The managed GUI and API remain available over loopback HTTP at
+  `127.0.0.1:8384` and through the existing HTTPS gateway. The native Syncthing
+  listener lives on a private Unix socket. The managed endpoint validates
+  every configuration write before forwarding it, and the service validates
+  its stored configuration before starting Syncthing. API clients change
+  sharing using a complete configuration via `PUT /rest/config`.
+- Folder roots and their version storage must stay within the configured
+  storage root. The service checks for symlink traversal, nested mount points,
+  and bind aliases of the application state. Its private mount view keeps
+  later host mount changes out of the service. Stop the service before
+  changing mounts under its storage root.
+- The service runs as the setup user. That Unix identity and administrators
+  with root access can access the application state and private socket. Treat
+  accounts with write access to folder path ancestors as trusted storage
+  administrators.
 - `PrivateTmp=true` and `PrivateDevices=true` retain private namespaces.
   `/tmp`, `/var/tmp`, and `/dev/shm` are explicitly read-only, closing temporary
   filesystem exceptions to `ProtectSystem=strict`. The unit provides no

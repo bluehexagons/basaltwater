@@ -177,7 +177,9 @@ class SyncthingDesiredConfigTest(unittest.TestCase):
             [f'ReadWritePaths="{SYNCTHING_HOME}"', f'ReadWritePaths="{DEFAULT_SYNCTHING_ROOT}"'],
         )
         self.assertIn("CapabilityBoundingSet=", service)
-        self.assertIn("--gui-address=http://127.0.0.1:8384", service)
+        self.assertIn("syncthing_guard.py", service)
+        self.assertIn("RuntimeDirectoryMode=0700", service)
+        self.assertIn("MountFlags=private", service)
         self.assertIn(f'ReadWritePaths="{SYNCTHING_HOME}"', service)
         self.assertIn(f'ReadWritePaths="{DEFAULT_SYNCTHING_ROOT}"', service)
         self.assertIn(
@@ -688,6 +690,8 @@ class SyncthingReconciliationTest(unittest.TestCase):
             self.enterContext(patch(f"sync.syncthing_steps.{name}", value))
         for name in ("_prepare_state_home", "_preflight_existing_folders", "_prepare_share_root"):
             self.enterContext(patch(f"sync.syncthing_steps.{name}"))
+        self.enterContext(patch("sync.syncthing_steps._validate_offline_config",
+                                side_effect=lambda *_: self.fail("offline-policy")))
         self.enterContext(patch("sync.syncthing_steps.can_manage_system_services", return_value=True))
         self.enterContext(patch("sync.syncthing_steps.is_dry_run", return_value=False))
         self.enterContext(patch("sync.syncthing_steps.is_package_installed", return_value=True))
@@ -826,7 +830,8 @@ class SyncthingReconciliationTest(unittest.TestCase):
         self.assert_no_recovery()
 
     def test_failures_restore_prior_login_unit_metadata_activation_and_identity(self) -> None:
-        for stage in ("stop", "generation", "unit", "verify", "reload", "activation", "initial-health", "device-id", "policy", "restart", "final-health"):
+        for stage in ("stop", "generation", "offline-policy", "unit", "verify", "reload", "activation",
+                      "initial-health", "device-id", "policy", "restart", "final-health"):
             with self.subTest(stage=stage):
                 self.failure, self.failed, self.waits = stage, False, 0
                 with self.assertRaisesRegex(RuntimeError, f"{stage} failed"):
