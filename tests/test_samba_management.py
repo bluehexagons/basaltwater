@@ -26,6 +26,7 @@ class SambaRefreshTests(unittest.TestCase):
                              machine_type="vm", enable_samba=True,
                              samba_shares=[["read", "docs", "/srv/docs", "alice"]])
         with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory) / "source"
             state = Path(directory) / "setup.json"
             state.write_text("{}")
             state.chmod(0o600)
@@ -35,7 +36,8 @@ class SambaRefreshTests(unittest.TestCase):
                     patch.object(refresh, "is_cachyos", return_value=False), \
                     patch.object(refresh, "read_os_release", return_value={"ID": "debian"}), \
                     patch.object(refresh.os, "geteuid", return_value=0), \
-                    patch.object(refresh, "managed_repository_path", return_value=directory), \
+                    patch.object(refresh, "managed_repository_path", return_value=str(repository)), \
+                    patch("lib.privilege_policy.protected_path"), \
                     patch.object(refresh, "get_channel_info", return_value={"channel": "dev"}), \
                     patch.object(refresh, "_apply_refresh") as apply, \
                     patch("lib.refresh_job.queue_refresh") as queue, \
