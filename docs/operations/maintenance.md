@@ -166,7 +166,12 @@ Node.js and uv use a conservative default policy:
 - Node.js selection, explicit installation, setup and maintenance require
   `^24.22.1 || ^26.12.1`. Setup and maintenance select the newest allowed LTS
   release from the bounded official Node release index and pin NVM's default
-  to that exact installed version. Discovery failure stops before runtime,
+  to that exact installed version. Maintenance also installs the newest
+  eligible release on each older supported LTS major already present in NVM.
+  The NVM default still follows the newest allowed LTS and project pins remain
+  installed. An installed release below the policy floor can trigger a newer
+  install on its major. Global tools migrate only from policy-eligible sources.
+  Discovery failure stops before runtime,
   alias, package or cleanup changes; an upstream odd or future major does not
   hide updates on the allowed lines. Explicit aliases and partial pins resolve
   to an exact allowed release intersecting project engines before installation.
