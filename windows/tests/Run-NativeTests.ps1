@@ -247,8 +247,13 @@ try {
         Remove-Item Function:\Get-PSDrive
     }
 
-    & git.exe clone --quiet --no-local $repo $checkout
-    Assert-True ($LASTEXITCODE -eq 0) 'Could not create the temporary Git checkout'
+    # Each job exports this entire fixture. Include the shipping smoke script
+    # and the project inputs used by the native tests.
+    & git.exe init --quiet $checkout
+    Assert-True ($LASTEXITCODE -eq 0) 'Could not initialize the temporary Git checkout'
+    $examples = Join-Path $checkout 'windows\examples'
+    New-Item -ItemType Directory -Path $examples -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $repo 'windows\examples\Smoke-Artifact.ps1') -Destination $examples
     New-Item -ItemType Directory -Path (Join-Path $checkout 'ci') -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $checkout 'ci\fail.ps1') -Value 'exit 23'
     Set-Content -LiteralPath (Join-Path $checkout 'ci\missing.ps1') -Value 'Write-Output no-artifact'
@@ -265,7 +270,7 @@ New-Item -ItemType Directory -Path $target -Force | Out-Null
 Set-Content -LiteralPath (Join-Path $target 'artifact.txt') -Value 'outside checkout'
 New-Item -ItemType Junction -Path (Join-Path (Split-Path -Parent $PSScriptRoot) 'redirect') -Target $target | Out-Null
 '@
-    & git.exe -C $checkout add -- ci
+    & git.exe -C $checkout add -- ci windows/examples/Smoke-Artifact.ps1
     Assert-True ($LASTEXITCODE -eq 0) 'Could not stage native job fixtures'
     & git.exe -C $checkout -c user.name=BasaltwaterCI -c user.email=ci@example.invalid `
         commit --quiet -m 'Add native job fixtures'

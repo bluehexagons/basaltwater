@@ -291,14 +291,17 @@ class AgentOutputReaderTests(unittest.TestCase):
             self.assertFalse(item["changed_during_read"])
 
     def test_literal_filters_use_only_the_bounded_window_and_preserve_long_line_hits(self):
-        self.stdout.write_text("FAILED old evidence\n" + "noise\n" * 2000 + "FAILED current\ntrace end\n", encoding="utf-8")
-        code, value = self.inspect("--stream", "stdout", "--match", "FAILED", "--match", "trace", "--scan-bytes", "128")
-        self.assertEqual(code, 0)
-        stream = value["streams"]["stdout"]
-        self.assertEqual(stream["text"], "FAILED current\ntrace end\n")
-        self.assertEqual(stream["matched_lines"], 2)
-        self.assertTrue(stream["scan_truncated"])
-        self.assertFalse(stream["excerpt_truncated"])
+        for newline in (b"\n", b"\r\n"):
+            with self.subTest(newline=newline):
+                current = b"FAILED current" + newline + b"trace end" + newline
+                self.stdout.write_bytes(b"FAILED old evidence" + newline + (b"noise" + newline) * 2000 + current)
+                code, value = self.inspect("--stream", "stdout", "--match", "FAILED", "--match", "trace", "--scan-bytes", "128")
+                self.assertEqual(code, 0)
+                stream = value["streams"]["stdout"]
+                self.assertEqual(stream["text"], current.decode("ascii"))
+                self.assertEqual(stream["matched_lines"], 2)
+                self.assertTrue(stream["scan_truncated"])
+                self.assertFalse(stream["excerpt_truncated"])
         self.stdout.write_text("x" * 100 + "FAILED " + "z" * 500, encoding="utf-8")
         code, value = self.inspect("--stream", "stdout", "--match", "FAILED", "--max-bytes", "32")
         self.assertEqual(code, 0)
