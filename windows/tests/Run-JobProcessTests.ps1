@@ -56,7 +56,10 @@ exit 0
             } catch { $caught = $_ }
             $expected = switch ($mode) { fail { 'exited with code 23' }; complete { 'produced no artifact' }; timeout { 'exceeded 5 seconds' }; cleanup-uncertain { 'cleanup could not be confirmed' } }
             if (-not $caught -or $caught.Exception.Message -notmatch $expected) { throw "Expected $expected; received $caught" }
-            $pidPath = Join-Path $checkout 'child.pid'
+            $jobs = Join-Path $env:LOCALAPPDATA 'Basaltwater\jobs'
+            $job = Get-ChildItem -LiteralPath $jobs -Directory |
+                Sort-Object CreationTimeUtc -Descending | Select-Object -First 1
+            $pidPath = Join-Path $job.FullName 'source\child.pid'
             $childId = [int][IO.File]::ReadAllText($pidPath)
             $worker = Get-Process -Id $childId -ErrorAction SilentlyContinue
             if ($worker) {

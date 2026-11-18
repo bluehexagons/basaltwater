@@ -144,9 +144,20 @@ and [upstream policy guide](https://github.com/pingdotgg/t3code/blob/v0.1.7/docs
 ## Run a native PowerShell job
 
 Native jobs are submitted locally by the logged-in Windows owner. Prepare a
-Git checkout on an NTFS volume, with the job script and its output path inside
-that checkout. Commit the job script before running it: the runner checks its
-exact 40-character commit revision and rejects untracked or modified scripts.
+Git checkout on an NTFS volume and commit the job script and its project
+inputs. The runner checks that HEAD matches the requested 40-character
+revision, fetches the commit into a private Git repository, and runs the script
+from an export of the committed tree. Commit local edits and supply the new
+revision to include them. The export supports regular tracked files, honors
+committed `export-ignore` attributes, and rejects revisions containing symlinks
+or submodules. Git LFS files are exported as their committed pointers.
+
+Use paths relative to the snapshot for project inputs and outputs. The
+artifact path must be absent from the export. The script runs as the Windows
+owner and can use host tools and other external inputs. Trusted jobs that use
+external dependencies should pin them and record their identities in the
+artifact or build logs.
+
 It uploads one artifact only after a successful job. The upload destination must
 use HTTPS, accept bearer authentication in an HTTP PUT, and echo the received
 SHA-256 digest in `X-Artifact-SHA256`. The receiver should verify that digest
@@ -178,17 +189,18 @@ if ($LASTEXITCODE -ne 0) { throw 'Native artifact job failed' }
 These commands bypass script policy only in the child process. The runner
 checks the artifact's path again after the job exits, rejecting junctions or
 symlinks created in its parent directories during execution.
-It writes a result receipt and separate logs under
-`%LOCALAPPDATA%\Basaltwater\jobs`. Jobs have a one-hour timeout by default,
-50 MiB combined log limit, and 1 GiB artifact limit. A Windows Job Object owns
+It retains the snapshot and generated files alongside the result receipt and
+logs under `%LOCALAPPDATA%\Basaltwater\jobs`. The receipt records the commit
+and the SHA-256 of the source archive before script execution. Jobs have a
+one-hour timeout by default, a 50 MiB combined log limit, and a 1 GiB artifact limit.
+A Windows Job Object owns
 the process tree before the script can run. On normal exit, failure or timeout,
 the runner terminates remaining descendants and verifies cleanup within five
 seconds before checking artifacts or recording completion. If cleanup cannot
 be confirmed, its receipt says `cleanup-uncertain` with no `CompletedUtc`;
 inspect owned processes and logs before retrying. On script failure or checksum
 mismatch it reports failure and does not report an uploaded artifact.
-A job can be retried explicitly with a
-fresh output path or clean checkout. Run Ubuntu builds in the selected distro
+An explicit retry gets a new snapshot. Run Ubuntu builds in the selected distro
 as the configured non-root Linux user; keep Linux workspaces under its native
 filesystem rather than `/mnt/c`.
 
@@ -237,7 +249,7 @@ gh workflow run windows-manual.yml --ref main -f suite=wsl
 ```
 
 `native` uses a GitHub-hosted x64 Windows Server runner to parse the PowerShell
-files and test installer planning and native job success, script changes,
+files and test installer planning and native job success, snapshot isolation,
 timeout, log limits, and digest rejection. Upload is replaced by a local test
 function; no artifact token or external receiver is needed. A hosted Server
 runner cannot qualify the Windows 11 bootstrap or T3 desktop.
