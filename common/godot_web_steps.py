@@ -18,7 +18,11 @@ from common.agent_steps import BASE_AGENT_SKILL_NAMES, install_managed_agent_ski
 from lib.atomic_io import write_text_atomic
 from lib.config import GODOT_WEB_HTTPS_PORT
 from lib.remote_utils import install_package, is_package_installed, is_service_active, run
-from lib.validation import validate_filesystem_path, validate_network_ip_or_cidr
+from lib.validation import (
+    validate_filesystem_path,
+    validate_network_ip_or_cidr,
+    validate_network_port,
+)
 from lib.validators import validate_host, validate_username
 
 
@@ -767,11 +771,19 @@ def _configure_web_policy(
     access_sources: Sequence[str],
     *,
     route_access_sources: Mapping[str, Sequence[str]] | None = None,
+    upstream_access_sources: Mapping[int, Sequence[str]] | None = None,
 ) -> bool:
     sources = [
         validate_network_ip_or_cidr(source, "internal HTTPS access source")
         for source in access_sources
     ]
+    upstream_sources = {
+        str(validate_network_port(port, "Protected upstream port", minimum=1024)): [
+            validate_network_ip_or_cidr(source, "HTTPS upstream access source")
+            for source in allowed
+        ]
+        for port, allowed in (upstream_access_sources or {}).items()
+    }
     content = json.dumps(
         {
             "access_sources": list(dict.fromkeys(sources)),
@@ -779,6 +791,7 @@ def _configure_web_policy(
                 name: [validate_network_ip_or_cidr(source, "HTTPS route access source") for source in allowed]
                 for name, allowed in route_access_sources.items()
             }} if route_access_sources is not None else {}),
+            **({"upstream_access_sources": upstream_sources} if upstream_sources else {}),
             "base_url": base_url,
             "ca_certificate": GODOT_WEB_CA_DOWNLOAD if local_ca else None,
             "certificate": cert_path,
@@ -962,6 +975,7 @@ def configure_internal_web_host(
     configure_static_site: bool = False,
     install_utility: bool = False,
     route_access_sources: Mapping[str, Sequence[str]] | None = None,
+    upstream_access_sources: Mapping[int, Sequence[str]] | None = None,
 ) -> tuple[str, bool, str, str, bool]:
     """Ensure the shared internal HTTPS origin and forwarding policy exist."""
 
@@ -1009,6 +1023,7 @@ def configure_internal_web_host(
         normalized_users,
         normalized_sources,
         route_access_sources=route_access_sources,
+        upstream_access_sources=upstream_access_sources,
     )
     if install_utility:
         _configure_web_control_service()

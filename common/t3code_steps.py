@@ -1961,22 +1961,21 @@ def _configure_t3_https(
 
     from common.godot_web_steps import configure_internal_web_host, identities_for_config
 
+    routes = [("t3code", port, "50m")]
+    if pairing_port is not None:
+        routes.append(("t3code-pairing", pairing_port, None))
+    sources = config.effective_web_interface_sources()
     configure_internal_web_host(
         identities_for_config(config.host, config.system_hostname),
         [config.username],
         config.effective_access_sources(),
         configure_static_site=True,
         install_utility=True,
-        route_access_sources={
-            name: config.effective_web_interface_sources()
-            for name in ("t3code", "t3code-pairing")
-        },
+        route_access_sources=dict.fromkeys(("t3code", "t3code-pairing"), sources),
+        upstream_access_sources={target_port: sources for _, target_port, _ in routes},
     )
     utility = "/usr/local/bin/basaltwater-web"
     endpoints: dict[str, tuple[str, int]] = {}
-    routes = [("t3code", port, "50m")]
-    if pairing_port is not None:
-        routes.append(("t3code-pairing", pairing_port, None))
     for name, target_port, max_body_size in routes:
         candidates = _t3_loopback_candidates(config.web_interface_host or "127.0.0.1")
         target_host = candidates[0]
