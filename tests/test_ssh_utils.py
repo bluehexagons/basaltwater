@@ -264,8 +264,12 @@ class TestSshUtils(unittest.TestCase):
             "GlobalKnownHostsFile=/dev/null", "KnownHostsCommand=none",
             "VerifyHostKeyDNS=no", "HostKeyAlgorithms=ssh-ed25519", "UpdateHostKeys=no",
             "ControlPath=none", f"HostKeyAlias={host}",
+            "ForwardAgent=no", "ForwardX11=no", "ClearAllForwardings=yes", "Tunnel=no",
+            "PermitLocalCommand=no", "RequestTTY=no",
         ):
             self.assertIn(option, command)
+        self.assertNotIn("ForwardAgent=no", ordinary)
+        self.assertNotIn("ClearAllForwardings=yes", ordinary)
 
     @patch("lib.ssh_utils.sys.stdin.isatty", return_value=True)
     def test_setup_resolves_terminal_policy_before_host_key_confirmation(self, _isatty):

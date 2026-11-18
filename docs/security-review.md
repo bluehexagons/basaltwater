@@ -45,6 +45,22 @@ ownership checks. The hosted Windows Server suite passed, including artifact
 jobs, desktop state, worker cleanup and mocked Sunshine service operations.
 [Windows qualification](https://github.com/bluehexagons/basaltwater/actions/runs/44356517868) · [Native desktop guide](workstations/windows-desktop.md#observe-a-native-application)
 
+### Follow-up review
+
+- Git HTTPS credential setup and removal apply all home-directory changes
+  as the selected account. The setup process passes credentials to that
+  account over stdin and refuses mounts at or below the managed directory
+  before changing Git settings. An isolated Linux check used the installed
+  Git to configure and remove a synthetic credential under a separate UID.
+  Removal refused a same-device bind mount and preserved the mounted data
+  and Git settings. Rerun saved setup to use the updated path.
+  [Git access guide](agents/git-access.md#self-hosted-https-and-git-lfs)
+- The workspace-pinned SSH path for managed Proxmox guests disables agent
+  forwarding, X11, port forwarding, tunneling and local commands inherited
+  from client configuration. The controller can still use a local SSH agent
+  to authenticate. OpenSSH's effective configuration confirmed these
+  overrides with a test client configuration. [Guest SSH guide](operations/ssh.md#proxmox-guest-host-keys)
+
 ## High-priority findings
 
 ### Proxmox can replace a verified guest SSH key on a rerun

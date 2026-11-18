@@ -205,6 +205,8 @@ def build_ssh_command(
             "-o", "GlobalKnownHostsFile=/dev/null", "-o", "KnownHostsCommand=none",
             "-o", "HostKeyAlgorithms=ssh-ed25519", "-o", "VerifyHostKeyDNS=no",
             "-o", "UpdateHostKeys=no", "-o", "ControlPath=none", "-o", "ControlMaster=no",
+            "-o", "ForwardAgent=no", "-o", "ForwardX11=no", "-o", "ClearAllForwardings=yes", "-o", "Tunnel=no",
+            "-o", "PermitLocalCommand=no", "-o", "RequestTTY=no",
         ])
     if ssh_key:
         command.extend(["-i", ssh_key])

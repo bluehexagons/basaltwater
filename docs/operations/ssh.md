@@ -198,8 +198,10 @@ upload. Entries for other key algorithms require operator review as well.
 Hosted setup requires the workspace Ed25519 pin on TCP 22 for those SSH
 connections and opens fresh connections to verify it. Saved `patch`, `deploy`
 and `shares` uploads to managed guests also require the existing workspace
-pin. Use hosted `setup` to verify the guest key through its node. An existing
-guest without matching saved metadata requires explicit workspace enrollment.
+pin. These connections disable agent forwarding, X11, port forwarding and
+SSH tunnels. A local SSH agent can still authenticate the connection. Use
+hosted `setup` to verify the guest key through its node. An existing guest
+without matching saved metadata requires explicit workspace enrollment.
 
 ### Deliberate rotation or address reuse
 

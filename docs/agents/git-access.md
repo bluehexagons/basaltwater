@@ -162,6 +162,11 @@ The store contains plaintext passwords or tokens; the hardened Codex policy
 denies reads of `~/.config/basaltwater/git/credentials`. Helper filenames are
 shell-quoted before Git config escaping, including for homes containing spaces.
 
+Setup writes and removes this configuration as the selected target account,
+using system Git and the account's standard global configuration. It refuses
+mounts at or below the managed Git directory before changing files or the
+Git include.
+
 Updating the workspace password and rerunning setup rotates the managed
 origin. Remove every Basaltwater-managed Git credential and private CA setting
 with:
