@@ -330,9 +330,9 @@ class TestInstallScript(unittest.TestCase):
                 f"#!{sys.executable}\n"
                 "from __future__ import annotations\n"
                 "import os\nimport sys\n"
-                "if sys.argv[1:2] == ['-c']:\n"
+                "if sys.argv[1:3] == ['-I', '-c']:\n"
                 "    sys.version_info = (3, 10, 0)\n"
-                "    exec(sys.argv[2])\n"
+                "    exec(sys.argv[3])\n"
                 "else:\n"
                 "    os.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n",
                 encoding="utf-8",
@@ -533,13 +533,14 @@ class TestInstallScript(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             fake_home, _log_path, environment = self._create_fixture(directory)
             pin = self._system_checkout(environment)
-            install_dir = os.path.join(directory, "installed")
+            install_dir = os.path.join(directory, "new-parent", "installed")
             result = subprocess.run(
-                ["sh", INSTALL_SCRIPT, "--install-dir", install_dir, *pin],
+                ["sh", INSTALL_SCRIPT, "--install-dir", install_dir, "--channel", "stable", *pin],
                 check=False,
                 capture_output=True,
                 text=True,
                 env=environment,
+                umask=0o002,
             )
 
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -549,7 +550,10 @@ class TestInstallScript(unittest.TestCase):
             ))
             self.assertEqual(Path(install_dir).stat().st_uid, os.geteuid())
             self.assertEqual(Path(install_dir).stat().st_mode & 0o022, 0)
+            self.assertEqual(Path(install_dir).parent.stat().st_mode & 0o777, 0o755)
             self.assertTrue(Path(install_dir, ".basaltwater/system-install").is_file())
+            channel = json.loads(Path(install_dir, ".basaltwater/channel.json").read_text())
+            self.assertEqual((channel["channel"], channel["commit"]), ("stable", pin[-1]))
 
     def test_system_source_rejects_unapproved_origin_and_mismatched_commit(self):
         with tempfile.TemporaryDirectory() as directory:

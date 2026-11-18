@@ -14,6 +14,7 @@ import subprocess
 from lib.state_read import read_state_object
 from lib.build_target_maintenance import target_lease
 from lib.operation_state import OperationStateStore
+from lib.runtime_source import ensure_source_directory
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
 
@@ -147,6 +148,9 @@ def prepare_target_runtime(source: str, username: str, *, bootstrap_build_target
     # retains its existing runner checks; bootstrap must not replace that plan.
     marker = root / "var/lib/basaltwater/setup-operation.json"
     _safe(marker)
+    # The operation store can create its parent using the caller's umask.
+    # Establish the protected state directory before opening the lock.
+    ensure_source_directory(marker.parent, mode=0o700)
     with OperationStateStore(str(marker)).ownership() as setup:
         record = setup.load()
         if record is not None and (bootstrap_build_target or record.status == "in_progress"):

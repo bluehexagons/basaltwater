@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import stat
 
+from lib.atomic_io import _fsync_directory
 from lib.validation import validate_filesystem_path
 
 
@@ -40,10 +41,11 @@ def require_source_parent(path: Path, *, owner_uid: int | None = None) -> None:
 
 
 def ensure_source_directory(path: Path, mode: int) -> None:
-    """Create missing directories only below an already protected ancestor."""
+    """Durably create missing directories only below a protected ancestor."""
     if not os.path.lexists(path):
         ensure_source_directory(path.parent, 0o755)
         path.mkdir(mode=mode, exist_ok=True)
+        _fsync_directory(str(path.parent))
     require_source_parent(path)
 
 

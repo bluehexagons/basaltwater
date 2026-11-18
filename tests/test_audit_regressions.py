@@ -307,11 +307,12 @@ class SetupSafetyTests(unittest.TestCase):
             runtime = os.path.join(directory, "basaltwater")
             source = os.path.join(directory, "source")
             state = os.path.join(directory, "state")
-            os.mkdir(runtime)
+            os.mkdir(runtime, 0o755)
             os.mkdir(source)
             marker = os.path.join(runtime, "previous")
             with open(marker, "w", encoding="utf-8") as handle:
                 handle.write("live")
+            os.chmod(marker, 0o644)
             with patch.object(setup_common, "REMOTE_INSTALL_DIR", runtime), \
                  patch.object(setup_common, "PERSISTENT_STATE_DIR", state), \
                  patch.object(setup_common.shutil, "copytree", side_effect=OSError("disk full")):
@@ -324,13 +325,16 @@ class SetupSafetyTests(unittest.TestCase):
             runtime = os.path.join(directory, "basaltwater")
             source = os.path.join(directory, "source")
             state = os.path.join(directory, "state")
-            os.mkdir(runtime)
+            os.mkdir(runtime, 0o755)
             os.mkdir(source)
             marker = os.path.join(runtime, "previous")
             with open(marker, "w", encoding="utf-8") as handle:
                 handle.write("live")
-            with open(os.path.join(source, "new"), "w", encoding="utf-8") as handle:
+            os.chmod(marker, 0o644)
+            candidate = os.path.join(source, "new")
+            with open(candidate, "w", encoding="utf-8") as handle:
                 handle.write("candidate")
+            os.chmod(candidate, 0o644)
             real_rename = os.rename
 
             def rename(old, new):
@@ -351,7 +355,8 @@ class SetupSafetyTests(unittest.TestCase):
             runtime = os.path.join(directory, "basaltwater")
             source = os.path.join(directory, "source")
             state = os.path.join(directory, "state")
-            os.makedirs(os.path.join(runtime, ".git"))
+            os.mkdir(runtime, 0o755)
+            os.mkdir(os.path.join(runtime, ".git"), 0o755)
             os.makedirs(os.path.join(runtime, "deployments"))
             os.makedirs(os.path.join(source, "deployments"))
             old_source = os.path.join(runtime, "deployments", "old-repo")
@@ -380,7 +385,8 @@ class SetupSafetyTests(unittest.TestCase):
             runtime = os.path.join(directory, "basaltwater")
             source = os.path.join(directory, "source")
             state = os.path.join(directory, "state")
-            os.makedirs(os.path.join(runtime, ".git"))
+            os.mkdir(runtime, 0o755)
+            os.mkdir(os.path.join(runtime, ".git"), 0o755)
             os.makedirs(os.path.join(runtime, "deployments"))
             os.makedirs(os.path.join(source, "deployments"))
             old_source = os.path.join(runtime, "deployments", "old-repo")
@@ -443,10 +449,11 @@ class RuntimeActivationRecoveryTests(unittest.TestCase):
                         ), tempfile.TemporaryDirectory() as directory:
                             runtime = os.path.join(directory, "basaltwater")
                             source = os.path.join(directory, "source")
-                            os.makedirs(os.path.join(runtime, "deployments"))
+                            os.mkdir(runtime, 0o755)
+                            os.mkdir(os.path.join(runtime, "deployments"))
                             os.makedirs(os.path.join(source, "deployments"))
                             if managed:
-                                os.mkdir(os.path.join(runtime, ".git"))
+                                os.mkdir(os.path.join(runtime, ".git"), 0o755)
                             marker = os.path.join(runtime, "deployments", "previous")
                             with open(marker, "w", encoding="utf-8") as handle:
                                 handle.write("live")
@@ -489,7 +496,8 @@ class RuntimeActivationRecoveryTests(unittest.TestCase):
                 source = os.path.join(directory, "source")
                 os.makedirs(os.path.join(source, "deployments"))
                 if managed:
-                    os.makedirs(os.path.join(runtime, ".git"))
+                    os.mkdir(runtime, 0o755)
+                    os.mkdir(os.path.join(runtime, ".git"), 0o755)
                 destination = os.path.join(runtime, "deployments") if managed else runtime
                 stage_prefix = ".basaltwater-managed-stage-" if managed else ".basaltwater-stage-"
                 real_rename = os.rename
@@ -518,10 +526,11 @@ class RuntimeActivationRecoveryTests(unittest.TestCase):
                      tempfile.TemporaryDirectory() as directory:
                     runtime = os.path.join(directory, "basaltwater")
                     source = os.path.join(directory, "source")
-                    os.makedirs(os.path.join(runtime, "deployments"))
+                    os.mkdir(runtime, 0o755)
+                    os.mkdir(os.path.join(runtime, "deployments"))
                     os.makedirs(os.path.join(source, "deployments"))
                     if managed:
-                        os.mkdir(os.path.join(runtime, ".git"))
+                        os.mkdir(os.path.join(runtime, ".git"), 0o755)
                     with open(os.path.join(runtime, "deployments", "previous"), "w") as handle:
                         handle.write("live")
                     destination = os.path.join(runtime, "deployments") if managed else runtime

@@ -72,7 +72,7 @@ fail() {
 }
 
 require_supported_python() {
-    if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'; then
+    if ! python3 -I -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'; then
         fail "Python 3.11 or newer is required; use a distribution with a supported system Python. The installer does not upgrade the OS release."
     fi
 }
@@ -813,6 +813,9 @@ print('managed')
 EOF
 }
 
+if [ "$SYSTEM_INSTALL" -eq 1 ]; then
+    umask 022
+fi
 INSTALL_PARENT=$(dirname "$INSTALL_DIR")
 INSTALL_KIND=$(validate_install_directory)
 mkdir -p "$INSTALL_PARENT"
@@ -854,7 +857,7 @@ if [ "$SYSTEM_INSTALL" -eq 1 ] && [ "$INSTALL_KIND" != managed ] && [ -z "$SOURC
 fi
 
 if [ "$CHANNEL_SET" -eq 0 ] && [ -f "$INSTALL_DIR/.basaltwater/channel.json" ]; then
-    existing_channel=$(python3 -c \
+    existing_channel=$(python3 -I -c \
         'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("channel", ""))' \
         "$INSTALL_DIR/.basaltwater/channel.json" 2>/dev/null || true)
     if [ -n "$existing_channel" ]; then
@@ -928,9 +931,6 @@ trap 'exit 1' HUP INT TERM
 [ ! -e "$STAGED_DIR" ] && [ ! -L "$STAGED_DIR" ] || fail "staging path already exists: $STAGED_DIR"
 
 printf 'Cloning Basaltwater repository (%s)...\n' "$CHANNEL"
-if [ "$SYSTEM_INSTALL" -eq 1 ]; then
-    umask 022
-fi
 if ! source_git clone --no-local --no-checkout -- "$REPOSITORY_URL" "$STAGED_DIR"; then
     fail "could not clone the selected repository"
 fi

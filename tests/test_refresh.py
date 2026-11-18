@@ -355,13 +355,27 @@ class SnapshotActivationTests(unittest.TestCase):
         (self.source / "deployments/app").write_text("application data")
         self.enterContext(patch("lib.privilege_policy.protected_path"))
         self.run = self.enterContext(patch.object(refresh, "run", side_effect=self.clone))
-        self.enterContext(patch.object(refresh, "switch_channel", return_value={"commit": "new", "channel": "dev"}))
+        self.enterContext(patch.object(refresh, "switch_channel", side_effect=self.switch_channel))
 
     def clone(self, command, **kwargs):
         staged = Path(command[-1])
-        (staged / ".git/info").mkdir(parents=True)
+        staged.mkdir(mode=0o755)
+        # Reproduce the Git template and permissions from the trusted clone.
+        for relative in (".git", ".git/info"):
+            directory = staged / relative
+            directory.mkdir()
+            directory.chmod(0o755)
+        exclude = staged / ".git/info/exclude"
+        exclude.touch(mode=0o644)
+        exclude.chmod(0o644)
         (staged / "basaltwater.py").write_text("new source")
         return subprocess.CompletedProcess(command, 0)
+
+    def switch_channel(self, staged, channel, *, fresh_clone):
+        self.assertTrue(fresh_clone)
+        self.assertTrue((Path(staged) / refresh.SYSTEM_INSTALL_MARKER).is_file())
+        refresh.write_text_atomic(os.path.join(staged, ".basaltwater/channel.json"), "{}", mode=0o644)
+        return {"commit": "new", "channel": channel}
 
     def test_activation_preserves_state_link_deployments_and_previous_source(self):
         state_inode = os.lstat(self.source / "state").st_ino
@@ -378,7 +392,13 @@ class SnapshotActivationTests(unittest.TestCase):
         backup, = self.root.glob(".basaltwater-before-refresh-*")
         self.assertEqual((backup / "basaltwater.py").read_text(), "old source")
         self.assertEqual(stat.S_IMODE(backup.stat().st_mode), 0o700)
-        self.assertIn("/deployments/", (self.source / ".git/info/exclude").read_text())
+        exclusions = (self.source / ".git/info/exclude").read_text().splitlines()
+        self.assertIn("/deployments", exclusions)
+        self.assertIn("/github_runner_payload", exclusions)
+        command = self.run.call_args.args[0]
+        self.assertEqual(command[-5:-1], ["clone", "--no-checkout", "--", refresh.OFFICIAL_SOURCE_URL])
+        self.assertEqual(command[:2], ["env", "-i"])
+        self.assertIn("http.followRedirects=false", command)
         self.assertFalse((self.root / refresh.SOURCE_ACTIVATION_MARKER_FILENAME).exists())
         result = json.loads((self.root / (refresh.SOURCE_ACTIVATION_MARKER_FILENAME + ".last.json")).read_text())
         self.assertEqual(result["outcome"], "succeeded")
@@ -388,7 +408,7 @@ class SnapshotActivationTests(unittest.TestCase):
         environment.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
         def git(root, *arguments):
             return subprocess.run(["git", "-C", str(root), *arguments], check=True,
-                                  capture_output=True, text=True, env=environment)
+                                  capture_output=True, text=True, env=environment, umask=0o022)
         def clone(command, **kwargs):
             staged = Path(command[-1])
             staged.mkdir()
@@ -421,8 +441,6 @@ class SnapshotActivationTests(unittest.TestCase):
             (staged / "lib").mkdir()
             (staged / "lib/helper.py").write_text("source")
             (staged / "basaltwater.py").chmod(0o700)
-            (staged / ".basaltwater").mkdir()
-            (staged / ".basaltwater/channel.json").write_text("{}")
             return result
         self.run.side_effect = private_clone
         previous_umask = os.umask(0o077)
@@ -431,8 +449,9 @@ class SnapshotActivationTests(unittest.TestCase):
         finally:
             os.umask(previous_umask)
         for relative, mode in (("lib", 0o755), ("lib/helper.py", 0o644),
-                               ("basaltwater.py", 0o755), (".git", 0o700),
-                               (".basaltwater", 0o700), (".basaltwater/channel.json", 0o600)):
+                               ("basaltwater.py", 0o755), (".git", 0o755),
+                               (".basaltwater", 0o755), (".basaltwater/channel.json", 0o644),
+                               (refresh.SYSTEM_INSTALL_MARKER, 0o600)):
             self.assertEqual(stat.S_IMODE((self.source / relative).stat().st_mode), mode, relative)
         self.assertEqual(stat.S_IMODE(self.state.stat().st_mode), 0o700)
         self.assertEqual(stat.S_IMODE((self.state / "setup.json").stat().st_mode), 0o600)
@@ -455,21 +474,30 @@ class SnapshotActivationTests(unittest.TestCase):
         deployments_inode = os.stat(self.source / "deployments").st_ino
         deployment_inode = os.stat(self.source / "deployments/app").st_ino
         rename = os.rename
-        def fail_activation(source, destination):
-            if str(source).endswith("/source") and destination == str(self.source):
-                raise OSError("activation failed")
-            rename(source, destination)
-        with patch.object(refresh.os, "rename", side_effect=fail_activation):
-            with self.assertRaisesRegex(OSError, "activation failed"):
-                refresh._upgrade_snapshot(str(self.source), "dev")
-        self.assertEqual((self.source / "basaltwater.py").read_text(), "old source")
-        self.assertEqual((self.source / "state/setup.json").read_text(), "saved options")
-        self.assertEqual((self.source / "deployments/app").read_text(), "application data")
-        self.assertEqual(os.lstat(self.source / "state").st_ino, state_inode)
-        self.assertEqual(os.stat(self.source / "deployments").st_ino, deployments_inode)
-        self.assertEqual(os.stat(self.source / "deployments/app").st_ino, deployment_inode)
-        result = json.loads((self.root / (refresh.SOURCE_ACTIVATION_MARKER_FILENAME + ".last.json")).read_text())
-        self.assertEqual(result["outcome"], "rolled_back")
+        for phase, after_rename in (("publish", False), ("displace", True), ("move_data", True), ("publish", True)):
+            with self.subTest(phase=phase, after_rename=after_rename):
+                def fail_activation(source, destination):
+                    selected = {
+                        "displace": source == str(self.source),
+                        "move_data": str(destination).endswith("/source/deployments"),
+                        "publish": str(source).endswith("/source") and destination == str(self.source),
+                    }[phase]
+                    if not selected or after_rename:
+                        rename(source, destination)
+                    if selected:
+                        raise OSError("activation failed")
+
+                with patch.object(refresh.os, "rename", side_effect=fail_activation):
+                    with self.assertRaisesRegex(OSError, "activation failed"):
+                        refresh._upgrade_snapshot(str(self.source), "dev")
+                self.assertEqual((self.source / "basaltwater.py").read_text(), "old source")
+                self.assertEqual((self.source / "state/setup.json").read_text(), "saved options")
+                self.assertEqual((self.source / "deployments/app").read_text(), "application data")
+                self.assertEqual(os.lstat(self.source / "state").st_ino, state_inode)
+                self.assertEqual(os.stat(self.source / "deployments").st_ino, deployments_inode)
+                self.assertEqual(os.stat(self.source / "deployments/app").st_ino, deployment_inode)
+                result = json.loads((self.root / (refresh.SOURCE_ACTIVATION_MARKER_FILENAME + ".last.json")).read_text())
+                self.assertEqual(result["outcome"], "rolled_back")
 
     def test_failed_recovery_retains_every_copy_for_operator_repair(self):
         rename = os.rename
@@ -547,7 +575,10 @@ lib.privilege_policy.protected_path = lambda *args, **kwargs: None
 
 def clone(command, **kwargs):
     staged = Path(command[-1])
-    (staged / ".git/info").mkdir(parents=True)
+    staged.mkdir(mode=0o755)
+    (staged / ".git").mkdir(mode=0o755)
+    (staged / ".git/info").mkdir(mode=0o755)
+    (staged / ".git/info/exclude").touch(mode=0o644)
     (staged / "basaltwater.py").write_text("new source")
     return SimpleNamespace(returncode=0)
 

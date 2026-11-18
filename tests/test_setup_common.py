@@ -518,9 +518,12 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             managed_dir = os.path.join(temp_dir, "basaltwater")
             state_dir = os.path.join(temp_dir, "state")
-            os.makedirs(os.path.join(managed_dir, ".git"))
-            with open(os.path.join(managed_dir, "keep-me"), "w", encoding="utf-8") as file_obj:
+            os.mkdir(managed_dir, 0o755)
+            os.mkdir(os.path.join(managed_dir, ".git"), 0o755)
+            keep = os.path.join(managed_dir, "keep-me")
+            with open(keep, "w", encoding="utf-8") as file_obj:
                 file_obj.write("managed")
+            os.chmod(keep, 0o644)
 
             build_dir = os.path.join(temp_dir, "build")
             os.makedirs(os.path.join(build_dir, "deployments"))
@@ -548,7 +551,8 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
             old_state = os.path.join(install_dir, "state")
             state_dir = os.path.join(temp_dir, "persistent-state")
             build_dir = os.path.join(temp_dir, "build")
-            os.makedirs(old_state)
+            os.mkdir(install_dir, 0o755)
+            os.mkdir(old_state, 0o700)
             os.makedirs(build_dir)
             marker = os.path.join(old_state, "setup-operation.json")
             with open(marker, "w", encoding="utf-8") as stream:
@@ -574,6 +578,8 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
                 directory.mkdir(mode=0o755, parents=True)
             (runtime / "lib").chmod(0o775)
             (runtime / "lib/module.py").write_text("# previous source", encoding="utf-8")
+            (runtime / "deployments").mkdir()
+            (runtime / "deployments/app").write_text("legacy data")
             (build / "basaltwater.py").write_text("# new source", encoding="utf-8")
             (build / "basaltwater.py").chmod(0o644)
             (state / "setup.json").write_text("saved", encoding="utf-8")
@@ -593,6 +599,7 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
             quarantine, = base.glob(".basaltwater-quarantine-*")
             self.assertEqual(quarantine.stat().st_mode & 0o777, 0o700)
             self.assertTrue((quarantine / "source/lib/module.py").is_file())
+            self.assertEqual((quarantine / "source/deployments/app").read_text(), "legacy data")
             self.assertFalse(runtime.exists())
             self.assertEqual((state / "setup.json").read_text(), "saved")
 
@@ -601,12 +608,14 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             install_dir = os.path.join(temp_dir, "basaltwater")
-            os.makedirs(install_dir)
+            build_dir = os.path.join(temp_dir, "build")
+            os.mkdir(install_dir, 0o755)
+            os.mkdir(build_dir)
             os.symlink(os.path.join(temp_dir, "other-state"), os.path.join(install_dir, "state"))
             with patch.object(setup_common, "REMOTE_INSTALL_DIR", install_dir), \
                  patch.object(setup_common, "PERSISTENT_STATE_DIR", os.path.join(temp_dir, "state")):
                 with self.assertRaisesRegex(RuntimeError, "intermediate version"):
-                    setup_common._activate_local_runtime(temp_dir)
+                    setup_common._activate_local_runtime(build_dir)
             self.assertEqual(os.readlink(os.path.join(install_dir, "state")),
                              os.path.join(temp_dir, "other-state"))
 
@@ -617,8 +626,8 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
             install_dir = os.path.join(temp_dir, "basaltwater")
             persistent_state_dir = os.path.join(temp_dir, "persistent-state")
             build_dir = os.path.join(temp_dir, "build")
-            os.makedirs(install_dir)
-            os.makedirs(persistent_state_dir)
+            os.mkdir(install_dir, 0o755)
+            os.mkdir(persistent_state_dir, 0o700)
             os.makedirs(build_dir)
             os.symlink(
                 persistent_state_dir,

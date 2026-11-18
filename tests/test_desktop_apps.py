@@ -575,15 +575,6 @@ class TestBrowserSteps(unittest.TestCase):
         mock_extrepo.assert_called_once_with("LibreWolf", "librewolf", "librewolf")
         mock_profile.assert_called_once_with()
 
-    @patch("desktop.browser_steps._install_helium_browser")
-    def test_installs_helium_browser(self, mock_install_helium):
-        """Helium should be accepted by the browser installer."""
-        from desktop.browser_steps import install_single_browser
-
-        install_single_browser("helium", use_flatpak=False)
-
-        mock_install_helium.assert_called_once_with()
-
     @patch("desktop.browser_steps.run")
     @patch("desktop.browser_steps.os.makedirs")
     @patch("builtins.open", new_callable=unittest.mock.mock_open)
@@ -622,37 +613,21 @@ class TestBrowserSteps(unittest.TestCase):
             )
         )
 
-    @patch("desktop.browser_steps.os.path.exists")
-    @patch("desktop.browser_steps.is_package_installed")
-    @patch("desktop.browser_steps.run")
-    def test_helium_installer_uses_latest_release_deb(self, mock_run, mock_package, mock_exists):
-        """Helium installer should resolve and install the latest Debian package."""
-        from desktop.browser_steps import _install_helium_browser
+    def test_helium_uses_approved_release_for_debian_architecture(self):
+        from desktop.browser_steps import _HELIUM_SHA256, _HELIUM_VERSION, install_single_browser
 
-        mock_package.side_effect = [False, True]
-        mock_exists.return_value = False
-        mock_run.side_effect = [
-            Mock(returncode=0, stdout="https://example.test/helium-bin_1.0-1_amd64.deb\n", stderr=""),
-            Mock(returncode=0, stdout="", stderr=""),
-            Mock(returncode=0, stdout="", stderr=""),
-            Mock(returncode=0, stdout="", stderr=""),
-        ]
-
-        _install_helium_browser()
-
-        commands = [call.args[0] for call in mock_run.call_args_list]
-        download_command = next(
-            command for command in commands if command.startswith("wget --https-only -qO ")
-        )
-        self.assertIn("/basaltwater-helium-", download_command)
-        self.assertNotIn("-qO /tmp/helium.deb", download_command)
-        self.assertTrue(
-            any(
-                command.startswith("apt-get install -y -qq ")
-                and "/basaltwater-helium-" in command
-                for command in commands
+        for arch in ("amd64", "arm64"):
+            with self.subTest(arch=arch), \
+                 patch("desktop.browser_steps.run", return_value=Mock(returncode=0, stdout=f"{arch}\n")) as run, \
+                 patch("desktop.browser_steps._install_pinned_browser") as install:
+                install_single_browser("helium", use_flatpak=False)
+            self.assertEqual([call.args[0] for call in run.call_args_list], ["dpkg --print-architecture"])
+            version = f"{_HELIUM_VERSION}-1"
+            url = (
+                f"https://github.com/imputnet/helium-linux/releases/download/{_HELIUM_VERSION}"
+                f"/helium-bin_{version}_{arch}.deb"
             )
-        )
+            install.assert_called_once_with("Helium", "helium-bin", version, arch, url, _HELIUM_SHA256[arch])
 
 
 if __name__ == "__main__":

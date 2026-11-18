@@ -441,7 +441,10 @@ def _ensure_local_runtime_state(*, inspect_runtime: bool) -> None:
         )
     state = Path(PERSISTENT_STATE_DIR)
     ensure_source_directory(state, mode=0o700)
-    os.chmod(PERSISTENT_STATE_DIR, 0o700)
+    # An execute-only ACL mask lets Syncthing traverse this otherwise private
+    # directory. Leave it in place even if source activation later fails.
+    if stat.S_IMODE(state.stat().st_mode) not in {0o700, 0o710}:
+        state.chmod(0o700)
 
 
 def _install_local_runtime_state_link() -> None:
@@ -522,8 +525,14 @@ def _activate_local_runtime(build_dir: str) -> None:
                 except OSError as exc:
                     print(f"  ⚠ Previous runtime cleanup failed at {backup_dir}: {exc}")
         finally:
-            if quarantine_dir and backup_dir and os.path.lexists(backup_dir):
-                print(f"  ⚠ Writable legacy runtime quarantined at {backup_dir}")
+            if quarantine_dir:
+                if backup_dir and os.path.lexists(backup_dir):
+                    print(f"  ⚠ Writable legacy runtime quarantined at {backup_dir}")
+                else:
+                    try:
+                        os.rmdir(quarantine_dir)
+                    except OSError as exc:
+                        print(f"  ⚠ Empty quarantine cleanup failed at {quarantine_dir}: {exc}")
             if stage_dir and os.path.exists(stage_dir):
                 shutil.rmtree(stage_dir)
         return

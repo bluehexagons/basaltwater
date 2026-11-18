@@ -31,7 +31,9 @@ from lib.machine_state import (
 from lib.maintenance_lock import maintenance_lock
 from lib.operation_state import OperationRecord, OperationStateStore
 from lib.remote_utils import read_os_release, run
-from lib.runtime_source import OFFICIAL_SOURCE_URL, SYSTEM_INSTALL_MARKER, require_runtime_source, trusted_git_command
+from lib.runtime_source import (
+    OFFICIAL_SOURCE_URL, RUNTIME_DATA_NAMES, SYSTEM_INSTALL_MARKER, require_runtime_source, trusted_git_command,
+)
 from lib.validation import validate_channel, validate_filesystem_path
 
 
@@ -173,12 +175,16 @@ def _upgrade_snapshot(repository: str, channel: str) -> dict[str, object]:
         )
         if result.returncode:
             raise RuntimeError("Could not download Basaltwater source; installed snapshot is unchanged")
-        os.makedirs(os.path.join(staged, ".basaltwater"), mode=0o755, exist_ok=True)
+        channel_state = Path(staged, ".basaltwater")
+        channel_state.mkdir(mode=0o755)
+        # The new channel must remain readable through the system launcher
+        # even when the refresh worker inherits a private umask.
+        channel_state.chmod(0o755)
         write_text_atomic(os.path.join(staged, SYSTEM_INSTALL_MARKER), "basaltwater-system-v1\n")
         info = switch_channel(staged, channel, fresh_clone=True)
-        write_text_atomic(os.path.join(staged, ".basaltwater", "managed-install"), "basaltwater-v1\n")
+        write_text_atomic(str(channel_state / "managed-install"), "basaltwater-v1\n")
         with open(os.path.join(staged, ".git", "info", "exclude"), "a", encoding="utf-8") as exclusions:
-            exclusions.write("\n/deployments/\n/worktrees/\n/agent_payload/\n/device_pairing_payload/\n/web_panel_payload/\n/.remote_setup_args.json\n")
+            exclusions.write("\n" + "".join(f"/{name}\n" for name in sorted(RUNTIME_DATA_NAMES)))
         # Administrative jobs inherit a private umask. Normalize only the new
         # source, before retained state or deployment data enters the tree.
         _normalize_downloaded_source(staged)
@@ -205,30 +211,30 @@ def _upgrade_snapshot(repository: str, channel: str) -> dict[str, object]:
                 "runtime_data_names": data_names,
             },
         )
-        moved = []
-        renamed = False
         try:
             # The operation marker is durable before the installed source is
             # displaced. A hard kill at any later boundary leaves all planned
             # copy paths available for an administrator to inspect.
             os.rename(repository, backup)
-            renamed = True
             operation_record = operation_store.transition(operation_record.operation_id, "source_displaced")
             for name in data_names:
                 os.rename(os.path.join(backup, name), os.path.join(staged, name))
-                moved.append(name)
             operation_record = operation_store.transition(operation_record.operation_id, "runtime_data_moved")
             os.chmod(staged, 0o755)
             operation_record = operation_store.transition(operation_record.operation_id, "activating_staged_source")
             os.rename(staged, repository)
         except Exception as error:
-            # Asynchronous interruption can arrive after a rename took effect
-            # but before the bookkeeping above ran. Leave its durable marker
-            # and every copy intact instead of guessing which moves completed.
+            # Check the recorded paths because an error may be reported after
+            # a rename takes effect. Process loss still leaves the marker and
+            # every copy for explicit recovery.
             try:
-                for name in reversed(moved):
-                    os.rename(os.path.join(staged, name), os.path.join(backup, name))
-                if renamed:
+                if os.path.lexists(backup):
+                    if not os.path.lexists(staged):
+                        os.rename(repository, staged)
+                    for name in reversed(data_names):
+                        candidate = os.path.join(staged, name)
+                        if os.path.lexists(candidate):
+                            os.rename(candidate, os.path.join(backup, name))
                     os.rename(backup, repository)
             except OSError as recovery_error:
                 operation_store.transition(
