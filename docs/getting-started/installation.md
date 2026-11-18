@@ -530,9 +530,9 @@ features such as Samba/SMB; they do not configure GitHub, Codex, Claude Code,
 or OpenCode:
 
 ```bash
-basaltw credentials set admin
+basaltw credentials set admin --service gogs --destination server.example
 basaltw credentials list
-basaltw credentials remove admin
+basaltw credentials remove admin --service gogs --destination server.example
 ```
 
 Passwords are excluded from saved setup state and reconstructed commands.

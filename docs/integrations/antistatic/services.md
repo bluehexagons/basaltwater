@@ -84,7 +84,7 @@ reachable on UDP 3478.
 Store the admin password interactively, then reference the username:
 
 ```bash
-basaltw credentials set antistatic-admin
+basaltw credentials set antistatic-admin --service antistatic --destination 192.168.1.10
 basaltw setup server_lite 192.168.1.10 \
   --antistatic-server lobby.example.com \
   --antistatic-admin antistatic-admin \

@@ -17,7 +17,7 @@ Save the web administrator password in the workspace credential store, then
 enable Syncthing:
 
 ```bash
-basaltw credentials set syncthing-admin
+basaltw credentials set syncthing-admin --service syncthing --destination fileserver
 basaltw setup server_lite fileserver admin --syncthing
 ```
 
@@ -28,7 +28,7 @@ username is `syncthing-admin`; choose a different workspace credential name
 with `--syncthing-admin USERNAME`:
 
 ```bash
-basaltw credentials set file-admin
+basaltw credentials set file-admin --service syncthing --destination fileserver
 basaltw setup server_lite fileserver admin \
   --syncthing --syncthing-admin file-admin
 ```
@@ -91,7 +91,7 @@ When provisioning a Proxmox VM, declare the root disk, a named data disk, its
 guest mount, and the matching Syncthing root together:
 
 ```bash
-basaltw credentials set syncthing-admin
+basaltw credentials set syncthing-admin --service syncthing --destination 192.168.0.60
 
 basaltw setup server_lite 192.168.0.60 admin \
   --provision-on pve1 --name fileserver \
@@ -117,7 +117,7 @@ may be left in that reconstructed command unchanged, or the shorter storage
 portion may contain only the addition:
 
 ```bash
-basaltw credentials set syncthing-admin
+basaltw credentials set syncthing-admin --service syncthing --destination 192.168.0.60
 
 basaltw setup server_lite 192.168.0.60 admin \
   --provision-on pve1 \
@@ -186,7 +186,7 @@ not merge their text. See its
 Replace the stored credential and reconcile the saved setup:
 
 ```bash
-basaltw credentials set syncthing-admin
+basaltw credentials set syncthing-admin --service syncthing --destination fileserver
 basaltw patch fileserver --syncthing
 ```
 

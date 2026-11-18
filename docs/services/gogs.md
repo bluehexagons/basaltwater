@@ -102,10 +102,10 @@ the setup username. To choose its password without exposing it in shell
 history, save a matching workspace credential before setup:
 
 ```bash
-basaltw credentials set gitadmin
+basaltw credentials set deploy --service gogs --destination git.example.com
 ```
 
-The setup command may instead include `--credential gitadmin PASSWORD`, but
+The setup command may instead include `--credential deploy PASSWORD`, but
 that exposes the value to shell history and potentially the process list. If
 there is no matching credential, setup generates a 24-character random
 password. Setup uses Gogs' installer over a private Unix socket before starting
@@ -302,7 +302,7 @@ Agent VMs that need LFS can install and initialize the client once before all
 normal repository clones:
 
 ```bash
-basaltw credentials set agent-git
+basaltw credentials set agent-git --service git --destination https://git.example.com:3000
 
 basaltw setup server_dev 192.168.1.41 agent \
   --git-access read-write \
@@ -416,10 +416,10 @@ disks for your workload. Save the placeholder Samba credentials without putting
 passwords in the setup command or shell history:
 
 ```bash
-basaltw credentials set gitadmin
-basaltw credentials set cluster
-basaltw credentials set alice
-basaltw credentials set bob
+basaltw credentials set gitadmin --service gogs --destination 10.23.0.40
+basaltw credentials set cluster --service samba --destination 10.23.0.40
+basaltw credentials set alice --service samba --destination 10.23.0.40
+basaltw credentials set bob --service samba --destination 10.23.0.40
 
 basaltw setup server_web 10.23.0.40 gitadmin \
   --provision-on pve1 --name git-1 --image-storage local \

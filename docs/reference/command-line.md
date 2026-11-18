@@ -65,9 +65,10 @@ basaltw cmd [pattern]
 basaltw rm <pattern>
 basaltw cleanup [host] [options]
 basaltw deploy <pattern> [--yes]
-basaltw credentials set <username> [password]
+basaltw credentials set <username> [password] --service SERVICE --destination DESTINATION
 basaltw credentials list
-basaltw credentials remove <username>
+basaltw credentials remove <username> --service SERVICE --destination DESTINATION
+basaltw credentials migrate <username> --service SERVICE --destination DESTINATION
 basaltw completions [options]
 basaltw python-tools [options]
 basaltw bootstrap [options]
@@ -1125,7 +1126,7 @@ enables the standard SSH-rate-limited UFW policy for `server_lite`.
 GitHub credential input requires `--git-access read` or `--git-access
 read-write`; `none` is the public/unauthenticated repository mode.
 Choose one GitHub source. For a separate fine-grained token per VM, enter it
-with `basaltw credentials set vm-1-github`, then pass
+with `basaltw credentials set vm-1-github --service github --destination vm-1.example`, then pass
 `--git-auth-credential vm-1-github`. The name is a local reference, not a GitHub
 username. Explicit token and credential sources override active-auth profile
 defaults. Prefer a saved credential or protected token file over a token in

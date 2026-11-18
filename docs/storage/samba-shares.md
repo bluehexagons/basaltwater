@@ -128,8 +128,8 @@ The safest workflow stores passwords in the mode-0600 workspace credential
 store, without putting them in shell history or process arguments:
 
 ```bash
-basaltw credentials set alice
-basaltw credentials set bob
+basaltw credentials set alice --service samba --destination fileserver
+basaltw credentials set bob --service samba --destination fileserver
 
 basaltw setup server_lite fileserver admin \
   --samba \
@@ -141,7 +141,7 @@ the workspace credential store; every bare username must have a saved
 credential. Inline `username:password` values are supported for controlled
 automation, but `username:password` values and `--credential USERNAME
 PASSWORD` expose passwords in shell history or process arguments. Prefer
-`basaltw credentials set USERNAME` to enter each secret interactively; never
+`basaltw credentials set USERNAME --service samba --destination HOST` to enter each secret interactively; never
 use a sample or placeholder password as a real credential.
 
 Passwords are omitted from saved setup state and reconstructed commands. Samba
@@ -223,7 +223,7 @@ Update a user's workspace password, then apply it to the share. Use the same
 workspace as the saved host:
 
 ```bash
-basaltw credentials set carol
+basaltw credentials set carol --service samba --destination fileserver
 basaltw shares fileserver \
   --share write documents /srv/documents alice,carol
 ```
@@ -325,13 +325,14 @@ store first; the examples intentionally contain no password:
 
 ```bash
 # Prompts for the restricted share account without putting its password in the command
-basaltw credentials set backup-admin
+basaltw credentials set backup-admin --service samba --destination fileserver
 
 # Restricted server-side archive area
 basaltw setup server_lite fileserver admin \
   --samba --share read gogs-backups /srv/gogs-backups backup-admin
 
 # Optional asset share mounted on an agent VM
+basaltw credentials set agent-assets --service smb --destination //fileserver/assets_write
 basaltw setup workstation_dev agent-vm agent \
   --smbclient --mount-smb /mnt/assets fileserver agent-assets assets_write /
 ```
@@ -358,7 +359,7 @@ For persistent client mounts managed by Basaltwater, use `--mount-smb` on the
 client setup. It creates a root-only credential file and a systemd automount:
 
 ```bash
-basaltw credentials set alice
+basaltw credentials set alice --service smb --destination //fileserver/projects_write
 basaltw setup workstation_desktop client admin \
   --mount-smb /mnt/projects fileserver alice projects_write /
 ```
@@ -431,6 +432,6 @@ with `--samba`. If a username-only share fails validation, create or update its
 workspace credential first:
 
 ```bash
-basaltw credentials set alice
+basaltw credentials set alice --service samba --destination fileserver
 basaltw shares fileserver --share read documents /srv/documents alice
 ```

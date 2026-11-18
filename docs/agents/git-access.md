@@ -58,7 +58,7 @@ To give each VM its own classic or fine-grained access token, save it with a
 hidden prompt and select the named credential:
 
 ```bash
-basaltw credentials set agent-1-github
+basaltw credentials set agent-1-github --service github --destination 10.23.0.50
 
 basaltw setup agent_vm 10.23.0.50 agent --codex \
   --git-access read --git-auth-credential agent-1-github \
@@ -128,7 +128,7 @@ Save the password in the workspace store, then bind its username to one exact
 HTTPS origin:
 
 ```bash
-basaltw credentials set agent-git
+basaltw credentials set agent-git --service git --destination https://10.23.0.40:3000
 
 basaltw setup agent_vm 10.23.0.50 agent --codex \
   --git-access read-write \

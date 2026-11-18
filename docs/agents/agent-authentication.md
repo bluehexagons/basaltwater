@@ -210,7 +210,7 @@ must not be group- or world-writable, and must be no larger than 4 MiB. The
 controller does not need the corresponding agent executable.
 
 Named workspace credentials support a separate classic or fine-grained token
-per VM: use `basaltw credentials set vm-1-github` for a hidden prompt, then
+per VM. Use `basaltw credentials set vm-1-github --service github --destination vm-1.example` for a hidden prompt, then
 `--git-auth-credential vm-1-github`. Only the name persists on the controller;
 each rerun resolves its token from the selected workspace. `--git-auth-token
 TOKEN` is transient command-line input. Both override GitHub's active-auth
