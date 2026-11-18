@@ -1929,8 +1929,9 @@ def deploy_configurations(pattern: str, force: bool, deploy_latest: bool = False
     print(f"Found {len(configs)} configuration(s) to deploy:")
     for config in configs:
         host = config.get("host")
-        deploy_specs = cast(JSONList, cast(JSONDict, config.get("args", {})).get("deploy_specs", []))
-        print(f"  - {host} ({len(deploy_specs)} deployments)")
+        deploy_specs = cast(JSONDict, config.get("args", {})).get("deploy_specs")
+        deployment_count = len(deploy_specs) if isinstance(deploy_specs, list) else 0
+        print(f"  - {host} ({deployment_count} deployments)")
 
     if not force:
         response = input("\nAre you sure you want to deploy to these hosts? [y/N] ")

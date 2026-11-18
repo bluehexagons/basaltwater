@@ -22,9 +22,9 @@ operations for hosts that are already configured.
 
 This checkout is preparing the `v2.0.0` release-candidate series. Its current
 package version is `2.0.0rc1`; preview tags use `v2.0.0-rc.N` and publish as
-GitHub prereleases. Until a preview tag is published, the installer’s `dev`
-channel tracks `main`. Preview tags are opt-in; `stable` continues to select the
-latest final release until `v2.0.0` passes qualification and is published.
+GitHub prereleases. Select a preview by its exact tag. The installer’s `dev`
+channel tracks `main`, and `stable` selects the latest final release. See the
+[release qualification record](docs/release-qualification.md) for candidate status.
 
 Selected-builder deployment is available for the bounded Debian static/Go
 flow. Signed webhook builds share the managed worker; optional GitHub Actions

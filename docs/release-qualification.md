@@ -1,9 +1,8 @@
 # Basaltwater v2.0 preview and release qualification
 
-Status: `pyproject.toml` declares `2.0.0rc1`; the matching GitHub tag
-`v2.0.0-rc.1` has not been created or published. The latest final release
-remains `v0.2.0`. This document is the qualification record and release gate
-for the eventual stable `v2.0.0` release.
+The first preview candidate is `v2.0.0-rc.1` (Python package `2.0.0rc1`).
+The latest final release remains `v0.2.0`. This document is the qualification
+record and release gate for the eventual stable `v2.0.0` release.
 
 The [coverage map](plans/testing-coverage.md) summarizes selected workflow
 checks. Those results do not pass the exact-candidate matrix below. The
@@ -28,8 +27,7 @@ not claim that the stable release matrix has passed.
 Publishing a preview requires the tag’s Python package version to match the
 candidate number and the release CI checks to pass. The package metadata check
 compares the version against the exact tag on release builds, including the
-final stable tag. This documentation and metadata change does not create a tag
-or publish a release. After a failed candidate, fix the issue, increment the
+final stable tag. After a failed candidate, fix the issue, increment the
 candidate number, and record which previously passed cases need to be repeated.
 
 Basaltwater replaces the repository and runtime namespace. The distribution is
@@ -116,7 +114,7 @@ was checked; otherwise use **Fail**, **Blocked**, or **Not run**.
 | STO-02 | NAS, Samba, Gogs, and Syncthing | Qualify setup/reruns, boot ordering, missing mounts, identity preservation, and service-user access on disposable storage. | Not run for `v2.0.0-rc.1` |
 | STO-03 | Storage failure and restoration | Cause sync and scrub failures with disposable data; verify the failure is reported and exercise the documented restore path. A successful mirror alone is not recovery evidence. | Not run for `v2.0.0-rc.1` |
 | APP-01 | HomeBox lifecycle | On a disposable amd64 Debian VM, test reboot and mounted-data recovery; certificate issuance/renewal and firewall reachability; browser login, items, attachments, and WebSockets; setup rerun, upgrade rollback, and full restore. | Not run for `v2.0.0-rc.1`; selected native loopback/API setup, rerun, full restore, upgrade, reboot and disable/re-enable checks do not qualify the complete lifecycle |
-| CICD-01 | CI/CD delivery and rollback | Deliver a signed webhook deployment to an explicitly enrolled target; verify successful health checks, then force an unhealthy activation and confirm the previous working release is restored and the failure is reported. | Not run for `v2.0.0-rc.1` |
+| CICD-01 | Signed webhook builds, delivery and rollback | Submit an authenticated webhook and verify the resulting artifact. Separately authorize delivery of that artifact to an explicitly enrolled target and check its health. Force an unhealthy activation and confirm the previous working release is restored and the failure is reported. Automatic webhook-to-target delivery is deferred. | Not run for `v2.0.0-rc.1` |
 | REL-03 | Prepublication identifiers and assets | Confirm namespace/name clearance, the matching wheel and release notes, planned source/download URLs, and documented upgrade instructions before tagging. | Not run for `v2.0.0-rc.1` |
 
 The experimental CachyOS desktop profile is not expanded in this release pass

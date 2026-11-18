@@ -194,6 +194,33 @@ class TestWorkspaceCli(unittest.TestCase):
         self.assertEqual(args.workspace, "/tmp/workspace")
         self.assertEqual(args.pattern, "prod")
 
+    def test_deploy_saved_setups_with_and_without_deployment_specs(self):
+        without_specs = SetupConfig("default.example.com", "testuser", "server_lite")
+        with_specs = SetupConfig(
+            "web.example.com", "testuser", "server_web",
+            deploy_specs=[["site.example.com", "https://github.com/example/site.git"]],
+        )
+        records = [
+            {"host": config.host, "system_type": config.system_type, "args": config.to_dict()}
+            for config in (without_specs, with_specs)
+        ]
+        self.assertIsNone(records[0]["args"]["deploy_specs"])
+        args = self.parser.parse_args(["deploy", "*.example.com", "--yes"])
+        output = io.StringIO()
+        with (
+            patch("basaltwater._available_configs", return_value=records),
+            patch("basaltwater._execute_patch_config", return_value=0) as execute,
+            redirect_stdout(output),
+        ):
+            self.assertEqual(basaltwater.run_deploy_command(args), 0)
+
+        self.assertIn("default.example.com (0 deployments)", output.getvalue())
+        self.assertIn("web.example.com (1 deployments)", output.getvalue())
+        self.assertEqual(
+            [call.args[0].deploy_specs for call in execute.call_args_list],
+            [None, with_specs.deploy_specs],
+        )
+
     def test_setup_parser_accepts_deploy_latest_pairs(self):
         args = self.parser.parse_args([
             "setup",

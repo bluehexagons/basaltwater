@@ -65,6 +65,7 @@ MANAGED_UNIT_NAMES = {
     "basaltwater-t3code",
     "basaltwater-t3code-connect",
     "basaltwater-device-pairing",
+    "basaltwater-storage",
     "basaltwater-syncthing",
 }
 

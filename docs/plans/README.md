@@ -5,9 +5,9 @@ behavior; plans describe remaining work and acceptance. The
 [coverage map](testing-coverage.md) records selected checks and gaps, while the
 [release matrix](../release-qualification.md) gates an exact release candidate.
 
-The package is `2.0.0rc1`; no preview tag is published. Stable v2.0.0 remains
-qualification-gated. Completed namespace migration is documented in the
-[migration guide](../migration-guide.md).
+The first preview candidate is `v2.0.0-rc.1` (Python package `2.0.0rc1`).
+Stable v2.0.0 requires the release matrix above. See the
+[migration guide](../migration-guide.md) for the completed namespace migration.
 
 ## Active priorities
 
