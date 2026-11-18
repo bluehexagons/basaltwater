@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 import json
 import os
 import platform
@@ -363,37 +363,57 @@ def _manifest_scopes(capabilities: Sequence[str]) -> set[str]:
     return scopes
 
 
+def _scoped_tool_names(scopes: set[str], desktop_applications: Iterable[str],
+                       project_tools: Iterable[str]) -> set[str]:
+    names = set()
+    if "workspace" in scopes:
+        names.update(("git", "gh"))
+    if "browser" in scopes:
+        names.update(("basaltwater-playwright-mcp", "firefox", "firefox-esr", "node"))
+    if "desktop" in scopes:
+        names.update(desktop_applications)
+    if "development" in scopes:
+        names.update(("node", "npm", "yarn", "pnpm", "corepack", "python3", "uv", "go", "gcc", "g++",
+                      "make", "cmake", "godot", "godot-mono", "dotnet", *NATIVE_COMMANDS, "clang", "llvm-symbolizer"))
+        names.update(project_tools)
+    if "publishing" in scopes:
+        names.update(("butler", "steamcmd"))
+    if scopes & {"publishing", "web"}:
+        names.add("basaltwater-web")
+    return names
+
+
 def inspect_environment(repository: str, *, project_runtime: bool = False,
                         installation_context: bool = False, managed_source: str | None = None,
                         capabilities: Sequence[str] = ()) -> dict[str, object]:
     scopes = _manifest_scopes(capabilities)
+    include_workspace = not scopes or "workspace" in scopes
+    include_development = not scopes or "development" in scopes
+    include_desktop = not scopes or "desktop" in scopes
     compare_installations = installation_context or managed_source is not None
     report_skill_provenance = not scopes or bool(scopes & {"installation", "skills"}) or compare_installations
     root = agent_workspace._repository_root(repository)
-    home = agent_workspace._effective_home()
-    project = load_project_environment(root)
-    artifacts = [
-        {"path": path, "ignored": agent_workspace._git(
-            root, ["check-ignore", "-q", "--", path + "/"], check=False,
-        ).returncode == 0}
-        for path in project["artifact_directories"]
-    ]
+    project = load_project_environment(root) if include_workspace or include_development or "workstation" in scopes else {}
+    project_tools = project["required_tools"] if include_development else []
+    project_recipes = project["recipes"] if include_development else {}
+    recipe_tools = [name for recipe in project_recipes.values() for name in recipe["requires"]]
     # Resolve the active session PATH. Do not run package-manager shims, which
     # can download tools even for --version, or inspect authentication files.
-    declared_tools = dict.fromkeys([
-        *TOOLS, *project["required_tools"],
-        *(name for recipe in project["recipes"].values() for name in recipe["requires"]),
-    ])
-    tools = {name: shutil.which(name) for name in declared_tools}
+    tool_names = dict.fromkeys([*TOOLS, *project_tools, *recipe_tools])
+    selected_tools = _scoped_tool_names(scopes, DESKTOP_APPLICATIONS, [*project_tools, *recipe_tools])
+    if "musescore" in selected_tools:
+        selected_tools.update(MUSESCORE_EXECUTABLES)
+    tools = {name: shutil.which(name) for name in tool_names if not scopes or name in selected_tools}
     # Canonical project requirements resolve distro aliases without launching Qt.
-    tools["musescore"] = next((tools[name] for name in MUSESCORE_EXECUTABLES if tools[name]), None)
+    if "musescore" in tools:
+        tools["musescore"] = next((tools[name] for name in MUSESCORE_EXECUTABLES if tools[name]), None)
     requirements = {
         name: {"executable": tools[name], "status": "available" if tools[name] else "missing"}
-        for name in project["required_tools"]
+        for name in project_tools
     }
     recipes = {
         name: {**recipe, "missing_tools": [tool for tool in recipe["requires"] if not tools[tool]]}
-        for name, recipe in project["recipes"].items()
+        for name, recipe in project_recipes.items()
     }
     wsl = any(marker in platform.release().lower() for marker in ("microsoft", "wsl"))
     native_desktop = is_cachyos() and not wsl
@@ -406,9 +426,11 @@ def inspect_environment(repository: str, *, project_runtime: bool = False,
                "desktop_backend": "wslg-unverified" if wsl else "native-session" if native_desktop else "shared-xrdp",
                "automation_command": None if wsl else "basaltw desktop --native" if native_desktop else "basaltw desktop",
                "executable": tools[name], "readiness": "unverified", "guide": DESKTOP_GUIDE}
-        for name, guidance in DESKTOP_APPLICATIONS.items() if tools[name]
+        for name, guidance in DESKTOP_APPLICATIONS.items() if include_desktop and tools[name]
     }
-    skills = inspect_skill_catalogs(home) if report_skill_provenance or ("desktop" in scopes and desktop) else None
+    include_skills = report_skill_provenance or ("desktop" in scopes and bool(desktop))
+    home = agent_workspace._effective_home() if include_skills or include_workspace else ""
+    skills = inspect_skill_catalogs(home) if include_skills else None
     if wsl:
         for application in desktop.values():
             application["instructions"] = [
@@ -425,8 +447,26 @@ def inspect_environment(repository: str, *, project_runtime: bool = False,
         for entry in catalog["skills"]
         if entry["name"] == name and entry["status"] not in {"unsafe", "incomplete"}
     ] if desktop and skills is not None else []
-    state = agent_workspace._worktree_record(root)
-    mappings = project["deployments"]
+    workspace = None
+    mappings = {}
+    if include_workspace:
+        state = agent_workspace._worktree_record(root)
+        mappings = project["deployments"]
+        workspace = {
+            "repository": root, "branch": state["branch"], "commit": state["head"],
+            "dirty": state["dirty"], "repository_root": os.path.join(home, "repos"),
+            "worktree_root": os.path.join(home, agent_workspace._DEFAULT_WORKTREE_RELATIVE),
+            "task_branch_pattern": "agent/TASK",
+            "feature_branch_option": "--branch feature/NAME",
+            "ownership": "explicit-private-record; adopt existing worktrees before cleanup",
+            "legacy_browser_artifacts": os.path.join(home, ".local/state/basaltwater/playwright-mcp"),
+            "artifact_directories": [
+                {"path": path, "ignored": agent_workspace._git(
+                    root, ["check-ignore", "-q", "--", path + "/"], check=False,
+                ).returncode == 0}
+                for path in project["artifact_directories"]
+            ],
+        }
     source_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     context = None
     if compare_installations:
@@ -454,7 +494,7 @@ def inspect_environment(repository: str, *, project_runtime: bool = False,
         from lib.node_toolchain import inspect_project_node_context
 
         runtime = inspect_project_node_context(root)
-    return {
+    result = {
         "schema_version": 1,
         "basaltwater": installation,
         "installation_context": context,
@@ -481,61 +521,52 @@ def inspect_environment(repository: str, *, project_runtime: bool = False,
             "instructions": ["WSL tool presence does not provision a publishing host. "
                              "Use the designated build/publishing environment and project release procedure."]
                             if wsl else _publishing_instructions(native_desktop),
-        },
+        } if not scopes or "publishing" in scopes else None,
         "desktop_applications": desktop,
         "desktop_skills": desktop_skills,
         "development": _desktop_development(root, native=native_desktop)
-        if not wsl and (not scopes or "development" in scopes) else None,
+        if not wsl and include_development else None,
         "project_runtime": runtime,
-        "workspace": {
-            "repository": root, "branch": state["branch"], "commit": state["head"],
-            "dirty": state["dirty"], "repository_root": os.path.join(home, "repos"),
-            "worktree_root": os.path.join(home, agent_workspace._DEFAULT_WORKTREE_RELATIVE),
-            "task_branch_pattern": "agent/TASK",
-            "feature_branch_option": "--branch feature/NAME",
-            "ownership": "explicit-private-record; adopt existing worktrees before cleanup",
-            "legacy_browser_artifacts": os.path.join(home, ".local/state/basaltwater/playwright-mcp"),
-            "artifact_directories": artifacts,
-        },
-        "project_source": project["source"],
+        "workspace": workspace,
+        "project_source": project.get("source"),
         "required_tools": requirements,
         "recipes": recipes,
         "deployments": mappings,
-        "current_deployment": mappings.get(state["branch"]),
+        "current_deployment": mappings.get(workspace["branch"]) if workspace else None,
         "undeclared_branches": [branch for branch in ("dev", "staging") if branch not in mappings],
         "health_command": None if wsl else "basaltw local cachyos-doctor --json" if native_desktop else "basaltw agent doctor --all-capabilities --json",
     }
+    if "workstation" in scopes:
+        from lib.workstation_report import inspect_workstation
+
+        workstation = inspect_workstation(root, project)
+        workstation["container_engines"] = _container_engine_inventory(root, project)
+        result["workstation"] = workstation
+    return result
 
 
 def scoped_environment(result: dict[str, object], capabilities: list[str]) -> dict[str, object]:
     """Keep runtime provenance in every scope and omit unrelated workflow prose."""
     scopes = _manifest_scopes(capabilities)
     fields = {"schema_version", "host_profile", "basaltwater", "health_command", "project_runtime", "installation_context", "provenance"}
-    tools = set()
+    project_tools = []
     if "workspace" in scopes:
         fields.update(("workspace", "project_source", "deployments", "current_deployment", "undeclared_branches"))
-        tools.update(("git", "gh"))
     if "skills" in scopes:
         fields.add("skills")
     if "workstation" in scopes:
         fields.add("workstation")
     if "browser" in scopes:
         fields.add("browser")
-        tools.update(("basaltwater-playwright-mcp", "firefox", "firefox-esr", "node"))
     if "desktop" in scopes:
         fields.update(("desktop_applications", "desktop_skills"))
-        tools.update(result["desktop_applications"])
     if "development" in scopes:
         fields.update(("development", "required_tools", "recipes", "project_source"))
-        tools.update(("node", "npm", "yarn", "pnpm", "corepack", "python3", "uv", "go", "gcc", "g++", "make", "cmake", "godot", "godot-mono", "dotnet"))
-        tools.update((*NATIVE_COMMANDS, "clang", "llvm-symbolizer"))
-        tools.update(result["required_tools"])
-        tools.update(tool for recipe in result["recipes"].values() for tool in recipe["requires"])
+        project_tools.extend(result["required_tools"])
+        project_tools.extend(tool for recipe in result["recipes"].values() for tool in recipe["requires"])
     if "publishing" in scopes:
         fields.add("publishing")
-        tools.update(("butler", "steamcmd", "basaltwater-web"))
-    if "web" in scopes:
-        tools.add("basaltwater-web")
+    tools = _scoped_tool_names(scopes, result.get("desktop_applications", {}), project_tools)
     selected = {key: value for key, value in result.items() if key in fields}
     if scopes and scopes.isdisjoint({"installation", "skills"}) and result.get("installation_context") is None:
         if provenance := selected.get("provenance"):
@@ -556,13 +587,6 @@ def run_manifest_command(args: argparse.Namespace) -> int:
                                      installation_context=getattr(args, "installation_context", False),
                                      managed_source=getattr(args, "managed_source", None),
                                      capabilities=capabilities)
-        if "workstation" in capabilities:
-            from lib.workstation_report import inspect_workstation
-
-            repository = result["workspace"]["repository"]
-            project = load_project_environment(repository)
-            result["workstation"] = inspect_workstation(repository, project)
-            result["workstation"]["container_engines"] = _container_engine_inventory(repository, project)
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
         if args.json:
             print(json.dumps({"ok": False, "error": str(exc)}))

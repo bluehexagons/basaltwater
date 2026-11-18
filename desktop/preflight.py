@@ -53,8 +53,10 @@ def preflight(repository: str, *, backend, native: bool, managed_source: str | N
         raise ValueError("Select at most 16 relevant instruction files")
     checks, raw = {}, {"created": stamp()}
     try:
-        manifest = inspect_environment(repository, installation_context=True, managed_source=managed_source)
-        raw["manifest"] = scoped_environment(manifest, ["installation", "desktop", "skills"])
+        capabilities = ["installation", "desktop", "skills"]
+        manifest = inspect_environment(repository, installation_context=True, managed_source=managed_source,
+                                       capabilities=capabilities)
+        raw["manifest"] = scoped_environment(manifest, capabilities)
         checks["manifest"] = {"state": "observed"}
     except (OSError, ValueError, RuntimeError) as exc:
         manifest = {}

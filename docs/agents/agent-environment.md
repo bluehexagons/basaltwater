@@ -46,7 +46,12 @@ application/tool inventory to those names. Combine it with
 `--capability development` when project recipes are also needed. An application
 missing from PATH is omitted; an empty inventory does not establish readiness.
 Unrelated application and publishing prose is omitted. Scoped reports skip
-browser and desktop-development probes unless their capability is selected.
+browser and desktop-development probes unless their capability is selected and
+limit PATH lookups to tools associated with the requested capabilities.
+The full manifest and the `workspace`, `development`, `workstation` and
+`web` scopes read and validate `basaltwater-agent.json` when present.
+Only the full manifest and `workspace` or `web` scopes check the project's
+branch, commit, dirty state and artifact ignore rules.
 Desktop discovery can read the local skill catalog to resolve desktop skill
 paths. For delivered bundle identities and skill comparison details, request
 `skills`, `installation`, or explicit installation context. Other scopes

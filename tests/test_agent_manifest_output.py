@@ -6,9 +6,10 @@ import argparse
 import io
 import json
 from pathlib import Path
+from subprocess import CompletedProcess
 import tempfile
 import unittest
-from unittest.mock import call, patch
+from unittest.mock import patch
 
 from lib.agent_environment import add_manifest_parser, run_manifest_command, load_project_environment, _container_engine_inventory
 from lib.agent_probe import ProbeResult
@@ -46,30 +47,52 @@ class ManifestOutputTests(unittest.TestCase):
         inventory = {"catalogs": [{"providers": ["codex"], "skills": [skill]}]}
         installation = {"commit": "current"}
         for scope, expected in (
-            ("workspace", (False, False, False)),
-            ("browser", (True, False, False)),
-            ("web", (True, True, False)),
-            ("desktop", (False, False, True)),
-            ("skills", (False, False, True)),
-            ("installation", (False, False, True)),
+            ("workspace", (False, False, False, True, True)),
+            ("browser", (True, False, False, False, False)),
+            ("web", (True, True, False, True, True)),
+            ("development", (False, True, False, True, False)),
+            ("desktop", (False, False, True, False, False)),
+            ("skills", (False, False, True, False, False)),
+            ("installation", (False, False, True, False, False)),
+            ("publishing", (False, False, False, False, False)),
         ):
             with (self.subTest(scope=scope), tempfile.TemporaryDirectory() as root,
                   patch("lib.agent_workspace._repository_root", return_value=root),
                   patch("lib.agent_workspace._effective_home", return_value=root),
+                  patch("lib.agent_workspace._git", return_value=CompletedProcess([], 0)) as git,
                   patch("lib.agent_workspace._worktree_record",
-                        return_value={"branch": "main", "head": "a" * 40, "dirty": False}),
+                        return_value={"branch": "main", "head": "a" * 40, "dirty": False}) as worktree,
+                  patch("lib.agent_environment.load_project_environment", wraps=load_project_environment) as load_project,
                   patch("lib.agent_environment.is_cachyos", return_value=False),
                   patch("lib.agent_environment.platform.release", return_value="6.12-debian"),
                   patch("lib.agent_environment.inspect_installation_provenance", return_value=installation),
-                  patch("lib.agent_environment.shutil.which", side_effect={"blender": "/bin/blender"}.get),
+                  patch("lib.agent_environment.shutil.which", side_effect={
+                      "blender": "/bin/blender", "musescore4": "/bin/musescore4",
+                  }.get) as which,
                   patch("lib.agent_environment.browser_context_inventory", return_value=[]) as browser,
                   patch("lib.agent_environment._desktop_development", return_value={}) as development,
                   patch("lib.agent_environment.inspect_skill_catalogs", return_value=inventory) as skills,
                   patch("sys.stdout", new_callable=io.StringIO) as output):
+                (Path(root) / "basaltwater-agent.json").write_text(
+                    json.dumps({"version": 1, "artifact_directories": [".artifacts"]}),
+                    encoding="utf-8",
+                )
                 args = parser.parse_args(["manifest", "--capability", scope, "--json"])
                 self.assertEqual(run_manifest_command(args), 0)
                 result = json.loads(output.getvalue())
-                self.assertEqual((browser.called, development.called, skills.called), expected)
+                self.assertEqual((browser.called, development.called, skills.called,
+                                  load_project.called, worktree.called), expected)
+                if worktree.called:
+                    git.assert_called_once_with(root, ["check-ignore", "-q", "--", ".artifacts/"], check=False)
+                    self.assertEqual(result["workspace"]["artifact_directories"],
+                                     [{"path": ".artifacts", "ignored": True}])
+                else:
+                    git.assert_not_called()
+                if scope in {"installation", "skills"}:
+                    which.assert_not_called()
+                if scope == "browser":
+                    self.assertEqual({entry.args[0] for entry in which.call_args_list},
+                                     {"basaltwater-playwright-mcp", "firefox", "firefox-esr", "node"})
                 self.assertEqual(result["provenance"]["source_revisions"]["invoked"], "current")
                 if scope in {"installation", "skills"}:
                     self.assertEqual(result["provenance"]["delivered_skills"][0]["name"], skill["name"])
@@ -77,6 +100,7 @@ class ManifestOutputTests(unittest.TestCase):
                     self.assertNotIn("delivered_skills", result["provenance"])
                 if scope == "desktop":
                     self.assertEqual(result["desktop_skills"], [skill["path"]])
+                    self.assertEqual(result["tools"]["musescore"], "/bin/musescore4")
 
     def test_named_application_implies_desktop_scope_and_keeps_provenance(self) -> None:
         result = self.run_cli("--application", "blender")
@@ -101,49 +125,46 @@ class ManifestOutputTests(unittest.TestCase):
         self.assertEqual(result["desktop_applications"], {})
         self.assertNotIn("tools", result)
 
-    def test_workstation_scope_is_opt_in_and_keeps_provenance(self) -> None:
+    def test_workstation_scope_shares_project_declaration_and_reports_engines(self) -> None:
         parser = argparse.ArgumentParser()
         add_manifest_parser(parser.add_subparsers())
-        manifest = {**self.manifest(), "workspace": {"repository": "/project"}}
-        with (patch("lib.agent_environment.inspect_environment", return_value=manifest),
-              patch("lib.agent_environment.load_project_environment", return_value={}),
+        with (tempfile.TemporaryDirectory() as root,
+              patch("lib.agent_workspace._repository_root", return_value=root),
+              patch("lib.agent_workspace._worktree_record") as worktree,
+              patch("lib.agent_environment.load_project_environment", wraps=load_project_environment) as load_project,
+              patch("lib.agent_environment._desktop_development", return_value={}),
+              patch("lib.agent_environment.inspect_installation_provenance", return_value={"commit": "current"}),
               patch("lib.workstation_report.inspect_workstation", return_value={"status": "observed"}) as report,
               patch("lib.agent_environment.shutil.which", side_effect={
-                  "podman": "/usr/bin/podman", "docker": None,
+                  "podman": "/usr/bin/podman", "example-tool": "/bin/example-tool",
               }.get),
               patch("sys.stdout", new_callable=io.StringIO) as output):
-            code = run_manifest_command(parser.parse_args(["manifest", "--capability", "workstation", "--json"]))
+            source = Path(root) / "basaltwater-agent.json"
+            source.write_text(json.dumps({"version": 1, "required_tools": ["example-tool"]}), encoding="utf-8")
+            code = run_manifest_command(parser.parse_args([
+                "manifest", "--capability", "workstation", "--capability", "development", "--json",
+            ]))
         self.assertEqual(code, 0)
+        load_project.assert_called_once_with(root)
+        worktree.assert_not_called()
+        self.assertEqual(report.call_count, 1)
+        repository, declaration = report.call_args.args
+        self.assertEqual(repository, root)
+        self.assertEqual(declaration["required_tools"], ["example-tool"])
         result = json.loads(output.getvalue())
+        self.assertEqual(result["project_source"], str(source))
+        self.assertEqual(result["required_tools"], {
+            "example-tool": {"executable": "/bin/example-tool", "status": "available"},
+        })
         self.assertEqual(result["workstation"]["status"], "observed")
-        self.assertIn("container_engines", result["workstation"])
         self.assertEqual(result["basaltwater"], {"commit": "current"})
         self.assertNotIn("desktop_applications", result)
         self.assertNotIn("skills", result)
-        report.assert_called_once_with("/project", {})
-
-    def test_workstation_manifest_exposes_engine_argv_and_unavailable_state(self) -> None:
-        parser = argparse.ArgumentParser()
-        add_manifest_parser(parser.add_subparsers())
-        manifest = {**self.manifest(), "workspace": {"repository": "/project"}}
-        with (patch("lib.agent_environment.inspect_environment", return_value=manifest),
-              patch("lib.agent_environment.load_project_environment", return_value={}),
-              patch("lib.workstation_report.inspect_workstation", return_value={"status": "observed"}),
-              patch("lib.agent_environment.shutil.which", side_effect={
-                  "podman": "/usr/bin/podman", "docker": None,
-              }.get) as which,
-              patch("sys.stdout", new_callable=io.StringIO) as output):
-            code = run_manifest_command(parser.parse_args([
-                "manifest", "--capability", "workstation", "--json",
-            ]))
-        self.assertEqual(code, 0)
-        engines = json.loads(output.getvalue())["workstation"]["container_engines"]
-        self.assertEqual(engines, {
+        self.assertEqual(result["workstation"]["container_engines"], {
             "podman": {"status": "available", "executable": "/usr/bin/podman",
                        "argv": ["/usr/bin/podman"]},
             "docker": {"status": "unavailable", "executable": None, "argv": None},
         })
-        self.assertEqual(which.call_args_list, [call("podman"), call("docker")])
 
     def test_declared_wrapper_is_discovered_without_executing_project_code(self):
         with tempfile.TemporaryDirectory() as temporary:
