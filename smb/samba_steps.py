@@ -19,6 +19,7 @@ from lib.machine_state import can_manage_firewall
 from lib.mount_utils import is_path_under_mnt, get_mount_ancestor
 from lib.remote_utils import run, is_package_installed
 from lib.setup_directories import directory_fd
+from lib.ufw_ingress import verify_live_ufw_ingress
 from lib.validation import validate_samba_share_specs
 from lib.validators import validate_username
 from smb.unix_accounts import is_share_identity
@@ -126,6 +127,7 @@ def _verify_samba_firewall(sources: list[str]) -> None:
             continue
         if not any(allowed.version == desired.version and allowed.subnet_of(desired) for desired in networks):
             raise RuntimeError(f"Samba firewall still permits an unrequested source: {line.strip()}")
+    verify_live_ufw_ingress({("tcp", 445): sources}, run)
 
 
 def configure_samba_firewall(config: SetupConfig) -> None:

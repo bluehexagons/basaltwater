@@ -181,18 +181,40 @@ class TestSSHMatchAndSocketPolicy(unittest.TestCase):
 
     def test_checks_socket_and_running_daemon_ports(self):
         def socket(port):
-            return _result(f"LoadState=loaded\nActiveState=active\nListen=[::]:{port} (Stream)\n")
+            return _result(f"LoadState=loaded\nActiveState=active\nListen=[::]:{port} (Stream)\nTriggers=ssh.service\nAccept=no\n")
 
         missing = _result("LoadState=not-found\n", returncode=1)
-        with patch.object(ssh, "run", side_effect=[socket(22), missing, _result()]):
+        service = _result("LoadState=loaded\nExecStart={ path=/usr/sbin/sshd ; argv[]=/usr/sbin/sshd -D ; status=0/0 }\n")
+        with patch.object(ssh, "run", side_effect=[socket(22), missing, service, missing, _result()]):
             ssh._verify_ssh_service_listeners()
         with patch.object(ssh, "run", return_value=socket(2222)):
             with self.assertRaisesRegex(RuntimeError, "ssh.socket on TCP 22"):
                 ssh._verify_ssh_service_listeners()
         listening = _result('LISTEN 0 128 0.0.0.0:2222 0.0.0.0:* users:(("sshd",pid=10,fd=3))\n')
-        with patch.object(ssh, "run", side_effect=[socket(22), missing, listening]):
+        with patch.object(ssh, "run", side_effect=[socket(22), missing, service, missing, listening]):
             with self.assertRaisesRegex(RuntimeError, "running sshd listener on TCP 22"):
                 ssh._verify_ssh_service_listeners()
+
+    def test_loaded_service_cannot_bypass_verified_configuration_with_daemon_options(self):
+        missing = _result("LoadState=not-found\n", returncode=1)
+        with tempfile.TemporaryDirectory() as directory:
+            defaults = Path(directory) / "ssh"
+            for arguments, options, accepted in (
+                ("-D $SSHD_OPTS", '"-4 -e"', True),
+                ("-D $SSHD_OPTS", '"-p 2222"', False),
+                ("-D -f /alternate/sshd_config", "", False),
+            ):
+                with self.subTest(arguments=arguments, options=options):
+                    defaults.write_text(f"# Fixture\nSSHD_OPTS={options}\n")
+                    service = _result(
+                        "LoadState=loaded\n"
+                        f"ExecStart={{ path=/usr/sbin/sshd ; argv[]=/usr/sbin/sshd {arguments} ; status=0/0 }}\n"
+                        f"EnvironmentFiles={defaults} (ignore_errors=yes)\n"
+                    )
+                    expectation = nullcontext() if accepted else self.assertRaisesRegex(RuntimeError, "can override")
+                    with patch.object(ssh, "_SSHD_ENVIRONMENT_FILE", defaults), expectation, \
+                         patch.object(ssh, "run", side_effect=[missing, missing, service, missing, _result()]):
+                        ssh._verify_ssh_service_listeners()
 
 
 class TestEffectiveSSHPolicy(unittest.TestCase):

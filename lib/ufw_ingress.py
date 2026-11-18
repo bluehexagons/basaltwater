@@ -202,7 +202,10 @@ def verify_live_ufw_ingress(
         return
     for family in families:
         executable = "iptables-save" if family == 4 else "ip6tables-save"
-        result = command_runner([executable, "-t", "filter"], check=False, capture_output=True)
+        try:
+            result = command_runner([executable, "-t", "filter"], check=False, capture_output=True)
+        except OSError as exc:
+            raise RuntimeError(f"Could not run {executable} to inspect live UFW chains") from exc
         if result.returncode != 0 or not isinstance(result.stdout, str):
             raise RuntimeError(f"Could not inspect live UFW IPv{family} filter chains")
         for (protocol, port), sources in policies.items():

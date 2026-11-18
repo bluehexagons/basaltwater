@@ -28,11 +28,14 @@ class FirewallModel:
         self.commands = []
         self.active = active
         self.incoming_default = incoming_default
+        self.before_rules = ""
 
     def run(self, command, **_kwargs):
         if isinstance(command, str):
             command = shlex.split(command)
         self.commands.append(command)
+        if command[0] in {'iptables-save', 'ip6tables-save'}:
+            return SimpleNamespace(returncode=0, stdout=":INPUT DROP [0:0]\n" + self.before_rules)
         if command[:3] == ['ufw', '--force', 'enable']:
             self.active = True
         elif command[:3] == ['ufw', 'status', 'verbose']:
@@ -112,6 +115,12 @@ class TestCloudflareWebPolicy(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'outside the requested'):
             reconcile_tunnel_firewall(allow_direct=False, sources=[], command_runner=firewall.run)
         self.assertIn(('80/tcp', 'Anywhere', 'operator web rule'), firewall.rules)
+
+    def test_earlier_kernel_origin_allow_is_reported_even_when_status_omits_it(self):
+        firewall = FirewallModel()
+        firewall.before_rules = "-A INPUT -p tcp -m multiport --dports 80,443 -j ACCEPT\n"
+        with self.assertRaisesRegex(RuntimeError, "UFW IPv4 TCP 80.*outside the requested policy"):
+            reconcile_tunnel_firewall(allow_direct=False, sources=[], command_runner=firewall.run)
 
     def test_unmanaged_web_rules_outside_lan_policy_are_reported(self):
         for port, source in (

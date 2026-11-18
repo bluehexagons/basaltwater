@@ -1059,6 +1059,8 @@ class DevicePairingRemoteSetupTest(unittest.TestCase):
         comments: list[str] = []
 
         def run_command(command: str, **_kwargs: object) -> SimpleNamespace:
+            if isinstance(command, list):
+                return SimpleNamespace(returncode=0, stdout=":INPUT DROP [0:0]\n")
             if command == "ufw status numbered":
                 lines = [
                     f"[ {index}] {3772 + index}/tcp ALLOW IN 192.168.0.0/24 # {comment}"

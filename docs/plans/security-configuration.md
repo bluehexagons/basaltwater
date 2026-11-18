@@ -1,9 +1,8 @@
 # Security configuration plan
 
 This plan tracks fixes to Basaltwater's generated configuration and setup
-transitions. For each change, qualify fresh installs and saved reruns on affected
-profiles. When a change can interrupt access or modify operator-owned state,
-exercise the failure and recovery path before release.
+transitions. The implementation covers the findings below. Release qualification
+also exercises fresh installs, saved reruns, and recovery on affected profiles.
 
 ## Design decisions
 
@@ -11,12 +10,12 @@ exercise the failure and recovery path before release.
   test environments. Setup and dry-run summaries warn that login credentials
   and integrated approvals travel without encryption. Use HTTPS over shared
   or untrusted networks. HTTP's effective reachability depends on the listener
-  and firewall. Apply the same warning policy to direct HTTP T3 Code, pairing,
-  and Gogs when updating their ingress handling. [Web panel operator guide](../services/web-panel.md#install-and-sign-in)
+  and firewall. Setup also warns for direct HTTP T3 Code, pairing, and Gogs.
+  [Web panel operator guide](../services/web-panel.md#install-and-sign-in)
 - **Task workers.** Broad access to the assigned account and selected host
   diagnostics is intentional, including the worker's journal access. Treat
   provider execution and the worker's service identity as part of the host's
-  agent trust boundary. Document that scope when qualifying `--harden-user`.
+  agent trust boundary. The operator guide describes that scope with `--harden-user`.
   [Worker unit](../../common/agent_task_steps.py) · [Task worker operator guide](../agents/agent-tasks.md)
 - **Shared service identities.** GitHub runners that share a service identity
   belong to the same trust domain because that identity can read each
@@ -24,6 +23,15 @@ exercise the failure and recovery path before release.
   devices can reach one another, subject to host firewalls. Use separate runner
   identities or hosts, and a restricted tailnet policy, when deployments cross
   those boundaries. [Runner trust model](../services/github-runner.md) · [Headscale plan](headscale.md)
+
+## Verification and release qualification
+
+| Area | Evidence | Remaining deployment checks |
+| --- | --- | --- |
+| Authentication and privilege | Debian's PAM generator produced a stack that rejected authentication during lockout and cleared eligible failure tallies after success. Fixtures cover SSH `Match` and daemon launch options, SSH key publication, Proxmox activation scope, and auditd live versus boot policy. | Exercise SSH recovery and the audit boot policy on affected hosts. Exercise first-time firewall activation on a single-node Proxmox host and verify existing policy on a multi-node cluster. |
+| Network ingress | Isolated Debian UFW verified IPv4 and IPv6 rule chains for scoped SSH, rate-limited RDP, and loopback-only HTTPS. The packaged xRDP daemon used the generated loopback and wildcard bindings and dropped privileges. Debian Nginx accepted the rendered T3 and pairing routes. Fixtures cover saved source replacement and removal, operator rules, gateway recovery, and Cloudflare activation failures. | Check fresh and saved deployments from both address families, including Guacamole desktop login, RDP deselection, private T3 pairing, and a public Cloudflare tunnel. |
+| Storage | Isolated Samba permission walks left both a same-device bind mount and a separate filesystem untouched. Debian Syncthing accepted an in-root folder and rejected readable paths outside it, including service state. CIFS fixtures verify recovery of the prior endpoint and credential generation. | Verify Samba rotation preserves the Unix password and lock state. Check CIFS with servers that offer POSIX metadata and servers that do not. Exercise Syncthing under systemd through the HTTPS gateway. |
+| Updates and source provenance | APT verified a signed Debian security fixture and simulated its update. TLS checks covered a trusted private CA and rejection of untrusted or wrong-host certificates. Artifact checks verified the published Helium and Browsh packages. Installer fixtures cover unexpected commits, protected paths, migration, and interrupted publication. | Exercise fresh privileged installation and migration on a disposable Debian host, browser runtime reuse and upgrade, a newer xRDP package with a working desktop, and scheduled updates and webhook delivery. |
 
 ## First fixes
 

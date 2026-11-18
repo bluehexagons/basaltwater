@@ -195,6 +195,7 @@ TEST_SUITE_PATTERNS: dict[str, tuple[str, ...]] = {
         "tests/test_shell_safety.py",
         "tests/test_smb_mount_hardening.py",
         "tests/test_ssh_*.py",
+        "tests/test_ufw_ingress.py",
     ),
     "services": (
         "tests/service_tools/test_*.py",

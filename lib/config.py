@@ -1132,12 +1132,12 @@ class SetupConfig:
                     "--codex, --claude, or --opencode"
                 )
         if self.web_interfaces:
+            web_sources = self.effective_web_interface_sources()
             if self.web_interface_host is None:
-                self.web_interface_host = (
-                    "0.0.0.0"
-                    if self.effective_web_interface_sources()
-                    else "127.0.0.1"
-                )
+                self.web_interface_host = "0.0.0.0" if web_sources else "127.0.0.1"
+            elif (not web_sources and self.web_interface_host in {"0.0.0.0", "::"}
+                  and (self.clear_web_interface_sources or self.clear_access_sources or self.clear_lan_access)):
+                self.web_interface_host = "::1" if self.web_interface_host == "::" else "127.0.0.1"
             if not 1 <= self.web_interface_port <= 65535:
                 raise ValueError("web_interface_port must be between 1 and 65535")
             # T3 Code's headless server requires the Node runtime even when

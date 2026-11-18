@@ -53,6 +53,7 @@ _SSHD_CONFIG = "/etc/ssh/sshd_config"
 _SSHD_DROPIN_FILE = f"{_SSHD_DROPIN_DIR}/00-basaltwater-hardening.conf"
 _LEGACY_SSHD_DROPIN_FILE = f"{_SSHD_DROPIN_DIR}/99-basaltwater-hardening.conf"
 _SSHD_RUNTIME_DIR = "/run/sshd"
+_SSHD_ENVIRONMENT_FILE = Path("/etc/default/ssh")
 _SSH_MATCH_REQUIRED = {
     "passwordauthentication": {"no"},
     "kbdinteractiveauthentication": {"no"},
@@ -92,6 +93,7 @@ _PAM_COMMON_AUTH = "/etc/pam.d/common-auth"
 _ISSUE_BANNER = "Authorized access only. All activity is monitored and logged.\n"
 _SECURITY_MONITOR_SCRIPT = "/opt/basaltwater/security/service_tools/security_monitor.py"
 _SSH_RULE_COMMENT_PREFIX = "basaltwater SSH"
+_LEGACY_CLOUDFLARE_SSH_COMMENT_PREFIX = "basaltwater cloudflare ssh"
 _RDP_RULE_COMMENT_PREFIX = "basaltwater RDP"
 _WEB_RULE_COMMENT_PREFIX = "basaltwater web TCP"
 _MDNS_RULE_COMMENT_PREFIX = "basaltwater mDNS UDP"
@@ -202,7 +204,7 @@ def _rdp_firewall_rules(config: SetupConfig) -> list[tuple[str, str]]:
 
 
 def _remove_stale_managed_rules(
-    comment_prefix: str,
+    comment_prefix: str | tuple[str, ...],
     desired_comments: set[str],
 ) -> None:
     """Remove obsolete comment-tagged rules in descending UFW order."""
@@ -211,12 +213,13 @@ def _remove_stale_managed_rules(
     if result.returncode != 0 or not isinstance(stdout, str):
         raise _ufw_failure("Could not inspect obsolete managed firewall rules", result)
 
+    prefixes = (comment_prefix,) if isinstance(comment_prefix, str) else comment_prefix
     stale_rule_numbers: list[int] = []
     for line in stdout.splitlines():
         if "#" not in line:
             continue
         comment = line.split("#", 1)[1].strip()
-        if comment != comment_prefix and not comment.startswith(f"{comment_prefix} "):
+        if not any(comment == prefix or comment.startswith(f"{prefix} ") for prefix in prefixes):
             continue
         if comment in desired_comments:
             continue
@@ -346,10 +349,9 @@ def _configure_ssh_firewall(config: SetupConfig) -> None:
                 "Failed to install the requested SSH firewall rule",
                 result,
             )
-        _remove_stale_managed_rules(_SSH_RULE_COMMENT_PREFIX, set())
+        _prune_managed_ssh_rules([])
         return
 
-    desired_comments: set[str] = set()
     for source in sources:
         comment = f"{_SSH_RULE_COMMENT_PREFIX} trusted source {source}"
         result = _run_ufw(
@@ -362,11 +364,19 @@ def _configure_ssh_firewall(config: SetupConfig) -> None:
                 "Failed to install the requested SSH firewall rule",
                 result,
             )
-        desired_comments.add(comment)
-
     for broad_rule in ("allow ssh", "limit ssh", "allow 22/tcp", "limit 22/tcp"):
         _run_ufw(f"ufw delete {broad_rule}")
-    _remove_stale_managed_rules(_SSH_RULE_COMMENT_PREFIX, desired_comments)
+    _prune_managed_ssh_rules(sources)
+
+
+def _prune_managed_ssh_rules(sources: list[str]) -> None:
+    desired = {f"{_SSH_RULE_COMMENT_PREFIX} trusted source {source}" for source in sources}
+    # An equivalent legacy rule may retain its comment when UFW skips duplicates.
+    desired.update(
+        f"{_LEGACY_CLOUDFLARE_SSH_COMMENT_PREFIX} {ipaddress.ip_network(source, strict=False)}"
+        for source in sources
+    )
+    _remove_stale_managed_rules((_SSH_RULE_COMMENT_PREFIX, _LEGACY_CLOUDFLARE_SSH_COMMENT_PREFIX), desired)
 
 
 def _prune_managed_web_ports(config: SetupConfig, desired_comments: set[str]) -> None:
@@ -538,12 +548,8 @@ def _prune_enabled_firewall_rules(
 ) -> None:
     """Prune saved rules that UFW could not enumerate while it was inactive."""
     sources = config.effective_access_sources()
-    desired = {
-        _SSH_RULE_COMMENT_PREFIX: {
-            f"{_SSH_RULE_COMMENT_PREFIX} trusted source {source}"
-            for source in config.effective_ssh_sources()
-        },
-    }
+    _prune_managed_ssh_rules(config.effective_ssh_sources())
+    desired: dict[str, set[str]] = {}
     if web_ports is not None:
         desired[_WEB_RULE_COMMENT_PREFIX] = {
             f"{_WEB_RULE_COMMENT_PREFIX} {port}" + (f" source {source}" if source else "")
@@ -766,10 +772,10 @@ def _verify_ssh_matches(path: Path, *, conditional: bool = False, depth: int = 0
             raise RuntimeError(f"SSH Match policy at {path}:{number} conflicts with managed hardening ({keyword})")
 
 
-def _verify_ssh_service_listeners() -> None:
+def _verify_ssh_service_listeners(sshd_path: str = "/usr/sbin/sshd") -> None:
     """Refuse socket activation or an already running daemon on another port."""
     for unit in ("ssh.socket", "sshd.socket"):
-        result = run(["systemctl", "show", unit, "--property=LoadState,ActiveState,UnitFileState,Listen"],
+        result = run(["systemctl", "show", unit, "--property=LoadState,ActiveState,UnitFileState,Listen,Triggers,Accept"],
                      check=False, capture_output=True, timeout=30)
         properties = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
         if properties.get("LoadState") == "not-found":
@@ -780,12 +786,64 @@ def _verify_ssh_service_listeners() -> None:
             endpoints = re.findall(r"(\S+) \(Stream\)", properties.get("Listen", ""))
             if not endpoints or any(endpoint.rsplit(":", 1)[-1] != "22" for endpoint in endpoints):
                 raise RuntimeError(f"Managed SSH firewall and ban rules require {unit} on TCP 22")
+            if properties.get("Triggers") not in {"ssh.service", "sshd.service"} or properties.get("Accept") != "no":
+                raise RuntimeError(f"Could not verify the SSH service activated by {unit}")
+
+    for unit in ("ssh.service", "sshd.service"):
+        result = run([
+            "systemctl", "show", unit,
+            "--property=LoadState,ExecStart,Environment,EnvironmentFiles,PassEnvironment",
+        ], check=False, capture_output=True, timeout=30)
+        properties = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+        if properties.get("LoadState") == "not-found":
+            continue
+        command = re.fullmatch(
+            r"\{ path=(/\S*/sshd) ; argv\[\]=(.*?) ; .* \}", properties.get("ExecStart", ""),
+        )
+        if result.returncode != 0 or command is None:
+            raise RuntimeError(f"Could not verify the daemon command for {unit}")
+        arguments = shlex.split(command[2])
+        if not arguments or arguments[0] != command[1] or os.path.realpath(command[1]) != os.path.realpath(sshd_path):
+            raise RuntimeError(f"Could not verify the daemon executable for {unit}")
+        options = arguments[1:]
+        if "$SSHD_OPTS" in options:
+            options.remove("$SSHD_OPTS")
+            options.extend(_ssh_service_environment_options(unit, properties))
+        if any(option not in {"-D", "-e", "-4", "-6"} for option in options):
+            raise RuntimeError(f"SSH daemon options in {unit} can override the verified SSH configuration")
 
     result = run(["ss", "-Hltnp"], capture_output=True, timeout=30)
     for line in result.stdout.splitlines():
         fields = line.split()
         if len(fields) >= 5 and '"sshd",' in line and fields[3].rsplit(":", 1)[-1] != "22":
             raise RuntimeError("Managed SSH firewall and ban rules require the running sshd listener on TCP 22")
+
+
+def _ssh_service_environment_options(unit: str, properties: dict[str, str]) -> list[str]:
+    """Read the packaged SSHD_OPTS assignment without evaluating shell code."""
+    if ("SSHD_OPTS" in properties.get("PassEnvironment", "").split()
+            or re.search(r"\bSSHD_OPTS=", properties.get("Environment", ""))):
+        raise RuntimeError(f"Could not verify overridden SSHD_OPTS for {unit}")
+    files = properties.get("EnvironmentFiles", "")
+    if not files:
+        return []
+    if files not in {f"{_SSHD_ENVIRONMENT_FILE} (ignore_errors=yes)", f"{_SSHD_ENVIRONMENT_FILE} (ignore_errors=no)"}:
+        raise RuntimeError(f"Could not verify the SSH environment files for {unit}")
+    try:
+        content = _SSHD_ENVIRONMENT_FILE.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        if files.endswith("ignore_errors=yes)"):
+            return []
+        raise
+    options: list[str] = []
+    for line in content.splitlines():
+        if not line.strip() or line.lstrip().startswith(("#", ";")):
+            continue
+        key, separator, value = line.partition("=")
+        if not separator or key.strip() != "SSHD_OPTS" or "\\" in value:
+            raise RuntimeError(f"Could not verify SSHD_OPTS in {_SSHD_ENVIRONMENT_FILE}")
+        options = shlex.split(" ".join(shlex.split(value)))
+    return options
 
 
 def _verify_ssh_policy(sshd_path: str, config: SetupConfig | None,
@@ -859,7 +917,7 @@ def _verify_ssh_policy(sshd_path: str, config: SetupConfig | None,
             raise RuntimeError(f"SSH identity {username} is not a member of {expected}")
     _verify_ssh_matches(Path(_SSHD_CONFIG))
     if can_manage_system_services(config.machine_type if config is not None else None):
-        _verify_ssh_service_listeners()
+        _verify_ssh_service_listeners(sshd_path)
 
 
 def refresh_transport_ssh_admission(role: str, usernames: list[str]) -> None:

@@ -241,6 +241,8 @@ class TestConfigureSambaFirewall(unittest.TestCase):
     def run_ufw(self, command: str, **_kwargs: object) -> MagicMock:
         import shlex
 
+        if isinstance(command, list):
+            return MagicMock(returncode=0, stdout=":INPUT DROP [0:0]\n", stderr="")
         self.commands.append(command)
         stdout = ""
         if command == "ufw status numbered":

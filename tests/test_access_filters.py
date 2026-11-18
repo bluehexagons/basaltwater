@@ -384,6 +384,21 @@ class TestAccessSourceConfig(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Invalid access source"):
             validate_web_interface_settings(config)
 
+    def test_clearing_final_web_sources_rebinds_saved_wildcard_to_loopback(self) -> None:
+        for wildcard, loopback in (("0.0.0.0", "127.0.0.1"), ("::", "::1")):
+            with self.subTest(wildcard=wildcard):
+                old = SetupConfig(
+                    host="host.example.test", username="admin", system_type="agent_vm",
+                    web_interfaces=["t3code"], install_codex=True, web_interface_host=wildcard,
+                    web_interface_sources=["192.168.1.0/24"],
+                )
+                model = old.to_dict()
+                model["clear_web_interface_sources"] = True
+                cleared = SetupConfig.from_dict(old.host, old.system_type, model)
+                validate_web_interface_settings(cleared)
+                self.assertEqual(cleared.effective_web_interface_sources(), [])
+                self.assertEqual(cleared.web_interface_host, loopback)
+
     def test_no_lan_access_round_trips_as_explicit_reconciliation(self) -> None:
         parser = create_setup_argument_parser("test")
         args = parser.parse_args(["host.example.test", "--no-lan-access"])
@@ -399,6 +414,7 @@ class TestGenericUfwFiltering(unittest.TestCase):
     def setUp(self) -> None:
         self.enterContext(patch("lib.machine_state.detect_machine_type", return_value="vm"))
         self.enterContext(patch("security.security_steps.verify_live_ufw_ingress"))
+        self.enterContext(patch("smb.samba_steps.verify_live_ufw_ingress"))
         # Individual peer-policy tests supply their own connection context.
         self.enterContext(patch.dict(os.environ, {"SSH_CONNECTION": ""}))
 

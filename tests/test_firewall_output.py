@@ -61,6 +61,7 @@ class TestRestrictedFirewallVerification(unittest.TestCase):
         self.enterContext(patch.dict(os.environ, {"SSH_CONNECTION": ""}))
         self.command = self.enterContext(patch("security.security_steps.run", side_effect=self.run_command))
         self.status = _FILTERING_STATUS
+        self.input_rules = {4: "", 6: ""}
         self.numbered_status = "Status: active\n"
         self.query_failed = False
         self.delete_failed = False
@@ -70,7 +71,10 @@ class TestRestrictedFirewallVerification(unittest.TestCase):
             access_sources=["192.168.0.0/24"], web_ports=[443], default_web_ports=False,
         )
 
-    def run_command(self, command: str, **_kwargs: object) -> SimpleNamespace:
+    def run_command(self, command: str | list[str], **_kwargs: object) -> SimpleNamespace:
+        if isinstance(command, list):
+            family = 6 if command[0] == "ip6tables-save" else 4
+            return SimpleNamespace(returncode=0, stdout=":INPUT DROP [0:0]\n" + self.input_rules[family], stderr="")
         if command == "ufw status verbose":
             return SimpleNamespace(returncode=0, stdout=self.status, stderr="")
         if command == "ufw status numbered":
@@ -126,35 +130,44 @@ class TestRestrictedFirewallVerification(unittest.TestCase):
             ("ufw limit from 10.20.0.0/24 to any port 3389 proto tcp", "ufw delete allow 3389/tcp"),
             ("ufw allow from 192.168.0.0/24 to any port 443 proto tcp", "ufw delete allow 443/tcp"),
         ):
-            replacement = next(command for command in commands if command.startswith(prefix))
+            replacement = next(command for command in commands if isinstance(command, str) and command.startswith(prefix))
             self.assertLess(commands.index(replacement), commands.index(removal))
 
     def test_broad_rules_covering_restricted_ports_are_rejected(self) -> None:
-        for destination in (
-            "Anywhere", "Anywhere/tcp", "Anywhere (v6)", "22,443/tcp",
-            "20:30/tcp", "20:21,22,80:90/tcp", "22/tcp on eth0",
-            "192.168.0.44 22/tcp", "192.168.0.44/tcp", "192.168.0.0/24",
-            "22/tcp (OpenSSH)", "22/tcp (OpenSSH (v6))", "80,443/tcp (Nginx Full)",
+        for family, selector in (
+            (4, ""), (4, "-p tcp"), (6, ""),
+            (4, "-p tcp -m multiport --dports 22,443"),
+            (4, "-s 198.51.100.0/24 -p tcp --dport 20:30"),
+            (4, "-p tcp -m multiport --dports 20:21,22,80:90"),
+            (4, "-i eth0 -p tcp --dport 22"),
+            (4, "-d 192.168.0.44/32 -p tcp --dport 22"),
+            (4, "-d 192.168.0.44/32 -p tcp"),
+            (4, "-d 192.168.0.0/24"),
+            (4, '-p tcp --dport 22 -m comment --comment "OpenSSH"'),
+            (6, '-p tcp --dport 22 -m comment --comment "OpenSSH"'),
+            (4, '-p tcp -m multiport --dports 80,443 -m comment --comment "Nginx Full"'),
         ):
-            with self.subTest(destination=destination):
-                self.status = _FILTERING_STATUS + f"{destination} ALLOW IN Anywhere\n"
-                with self.assertRaisesRegex(RuntimeError, "still has a broad UFW rule"):
+            with self.subTest(family=family, selector=selector):
+                self.input_rules = {4: "", 6: "", family: f"-A INPUT {selector} -j ACCEPT\n"}
+                with self.assertRaisesRegex(RuntimeError, "outside the requested policy"):
                     configure_firewall(self.config)
 
     def test_unrelated_or_local_rules_are_preserved(self) -> None:
-        self.status += "\n".join((
-            "53/udp ALLOW IN Anywhere", "20:21/tcp ALLOW IN Anywhere",
-            "23:80/tcp ALLOW IN Anywhere", "Anywhere on lo ALLOW IN Anywhere",
-            "127.0.0.1/tcp ALLOW IN Anywhere", "::1 ALLOW IN Anywhere (v6)",
-            "127.0.0.1 22/tcp ALLOW IN Anywhere", "::1 22/tcp ALLOW IN Anywhere (v6)",
-            "22/tcp ALLOW IN 192.168.0.0/24", "22/tcp DENY IN Anywhere",
-            "22/tcp ALLOW OUT Anywhere", "Anywhere/udp ALLOW IN Anywhere/udp",
-        ))
+        self.input_rules[4] = """-A INPUT -p udp --dport 53 -j ACCEPT
+-A INPUT -p tcp --dport 20:21 -j ACCEPT
+-A INPUT -p tcp --dport 23:80 -j ACCEPT
+-A INPUT -i lo -j ACCEPT
+-A INPUT -d 127.0.0.1/32 -p tcp -j ACCEPT
+-A INPUT -s 192.168.0.0/24 -p tcp --dport 22 -j ACCEPT
+-A INPUT -p tcp --dport 22 -j DROP
+-A OUTPUT -p tcp --dport 22 -j ACCEPT
+"""
+        self.input_rules[6] = "-A INPUT -d ::1/128 -p tcp --dport 22 -j ACCEPT\n"
         configure_firewall(self.config)
 
-    def test_unknown_verbose_destination_does_not_pass_silently(self) -> None:
-        self.status += "Unrecognized-profile ALLOW IN Anywhere\n"
-        with self.assertRaisesRegex(RuntimeError, "Could not verify UFW destination"):
+    def test_unknown_input_target_does_not_pass_silently(self) -> None:
+        self.input_rules[4] = "-A INPUT -p tcp --dport 22 -j UNKNOWN\n"
+        with self.assertRaisesRegex(RuntimeError, "Could not verify UFW IPv4 input target"):
             configure_firewall(self.config)
 
     def test_failed_inventory_stops_obsolete_rule_reconciliation(self) -> None:
@@ -176,6 +189,16 @@ class TestRestrictedFirewallVerification(unittest.TestCase):
         self.assertTrue(queries)
         self.assertTrue(all(call.kwargs["env"]["LC_ALL"] == "C" for call in queries))
 
+    def test_main_firewall_prunes_revoked_legacy_cloudflare_ssh_sources(self) -> None:
+        self.numbered_status += (
+            "[ 1] 22/tcp ALLOW IN 10.0.0.0/8 # basaltwater cloudflare ssh 10.0.0.0/8\n"
+            "[ 2] 22/tcp ALLOW IN 192.168.0.0/24 # basaltwater cloudflare ssh 192.168.0.0/24\n"
+        )
+        configure_firewall_ssh_only(self.config)
+        commands = [call.args[0] for call in self.command.call_args_list]
+        self.assertIn("ufw --force delete 1", commands)
+        self.assertNotIn("ufw --force delete 2", commands)
+
     def test_enabling_ufw_prunes_previously_hidden_rules_and_preserves_operator_rules(self) -> None:
         for configure in (configure_firewall, configure_firewall_web, configure_firewall_ssh_only):
             with self.subTest(configure=configure.__name__):
@@ -188,6 +211,9 @@ class TestRestrictedFirewallVerification(unittest.TestCase):
 
                 def run_command(command: str, **kwargs: object) -> SimpleNamespace:
                     nonlocal active
+                    if isinstance(command, list):
+                        self.input_rules[4] = "-A INPUT -s 198.51.100.10/32 -p tcp --dport 22 -j ACCEPT\n"
+                        return self.run_command(command, **kwargs)
                     if command.startswith("ufw status 2>"):
                         return SimpleNamespace(returncode=0 if active else 1, stdout="", stderr="")
                     if command == "ufw status numbered":
@@ -202,7 +228,8 @@ class TestRestrictedFirewallVerification(unittest.TestCase):
                     return self.run_command(command, **kwargs)
 
                 self.command.side_effect = run_command
-                configure(self.config)
+                with self.assertRaisesRegex(RuntimeError, "outside the requested policy"):
+                    configure(self.config)
                 self.assertTrue(active)
                 self.assertEqual(rules[-1], "22/tcp ALLOW IN 198.51.100.10 # operator rule")
                 if configure is configure_firewall_ssh_only:

@@ -7,6 +7,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from lib.ufw_ingress import verify_live_ufw_ingress
 from lib.validation import validate_network_ip_or_cidr
 
 
@@ -189,6 +190,8 @@ def reconcile_tunnel_firewall(
     if stale_numbers:
         stdout = _active_rules(command_runner)
     _verify_access_policy(stdout, allow_direct=allow_direct, sources=sources, command_runner=command_runner)
+    if not allow_direct:
+        verify_live_ufw_ingress({("tcp", port): sources for port in ORIGIN_PORTS}, command_runner)
 
     if allow_direct:
         print("  ✓ Cloudflare tunnel and unrestricted direct HTTP/HTTPS access enabled")

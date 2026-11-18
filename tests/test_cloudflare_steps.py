@@ -36,6 +36,7 @@ class TestConfigureCloudflareFirewall(unittest.TestCase):
         capability = patch("web.cloudflare_steps.can_manage_firewall", return_value=True)
         capability.start()
         self.addCleanup(capability.stop)
+        self.enterContext(patch("web.cloudflare_firewall.verify_live_ufw_ingress"))
 
     @patch("web.cloudflare_steps.run")
     def test_domain_antistatic_keeps_stun_direct_access(self, mock_run):
