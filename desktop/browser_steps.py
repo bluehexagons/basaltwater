@@ -11,10 +11,10 @@ import subprocess
 import tempfile
 from typing import Optional
 
+from desktop.home_setup import apply_home_settings
 from lib.config import SetupConfig
 from lib.machine_state import is_container
 from lib.remote_utils import (
-    get_user_home,
     is_dry_run,
     is_package_installed,
     run,
@@ -66,6 +66,12 @@ _FLATPAK_BROWSER_IDS = {
     "brave": "com.brave.Browser",
     "firefox": "org.mozilla.firefox",
     "librewolf": "io.gitlab.librewolf-community",
+}
+_NATIVE_BROWSER_COMMANDS = {
+    "brave": "brave-browser",
+    "firefox": "firefox",
+    "helium": "helium",
+    "librewolf": "librewolf",
 }
 
 
@@ -389,6 +395,21 @@ def install_browser(config: SetupConfig) -> None:
         install_single_browser(config.browser, use_flatpak)
 
 
+def _xfce_browser_helper(browser: str, command: str, *, flatpak: bool) -> str:
+    binaries = "flatpak" if flatpak else command
+    executable = command if flatpak else "%B"
+    return f"""[Desktop Entry]
+Version=1.0
+Type=X-XFCE-Helper
+Name={browser.capitalize()}
+StartupNotify=true
+X-XFCE-Binaries={binaries};
+X-XFCE-Category=WebBrowser
+X-XFCE-Commands={executable};
+X-XFCE-CommandsWithParameter={executable} "%s";
+"""
+
+
 def configure_default_browser(config: SetupConfig) -> None:
     if not config.browser:
         return
@@ -397,10 +418,6 @@ def configure_default_browser(config: SetupConfig) -> None:
         print(f"  [DRY-RUN] Would set {config.browser} as the default browser")
         return
 
-    safe_username = shlex.quote(config.username)
-    home_dir = get_user_home(config.username)
-    mimeapps_path = os.path.join(home_dir, ".config", "mimeapps.list")
-    
     browser_desktops: dict[str, Optional[str]] = {
         "brave": "brave-browser.desktop",
         "firefox": "firefox.desktop",
@@ -424,85 +441,33 @@ def configure_default_browser(config: SetupConfig) -> None:
     if using_flatpak_browser:
         desktop_file = f"{flatpak_app_id}.desktop"
     
-    local_dir = os.path.join(home_dir, ".local")
-    config_dir = os.path.join(home_dir, ".config")
-    os.makedirs(config_dir, exist_ok=True)
-
     mimeapps_content = f"""[Default Applications]
 x-scheme-handler/http={desktop_file}
 x-scheme-handler/https={desktop_file}
+x-scheme-handler/about={desktop_file}
+x-scheme-handler/unknown={desktop_file}
 text/html={desktop_file}
 application/xhtml+xml={desktop_file}
 """
-    # This file is managed by basaltwater. Recreate it instead of preserving
-    # stale defaults from an older workstation setup.
-    with open(mimeapps_path, "w", encoding="utf-8") as f:
-        f.write(mimeapps_content)
-    
-    browser_command = {
-        "brave": "brave-browser",
-        "firefox": "firefox",
-        "helium": "helium",
-        "librewolf": "librewolf",
-    }[config.browser]
+    browser_command = _NATIVE_BROWSER_COMMANDS[config.browser]
     if using_flatpak_browser:
         browser_command = f"flatpak run {flatpak_app_id}"
 
-    helper_dir = os.path.join(home_dir, _XFCE_HELPER_SUBDIR)
-    os.makedirs(helper_dir, exist_ok=True)
-    helper_path = os.path.join(helper_dir, f"{config.browser}.desktop")
-    for managed_browser in ("brave", "firefox", "helium", "librewolf"):
-        stale_helper = os.path.join(helper_dir, f"{managed_browser}.desktop")
-        if stale_helper == helper_path:
+    edits = [
+        ("write", ".config/mimeapps.list", mimeapps_content),
+        ("write", f"{_XFCE_HELPER_SUBDIR}/{config.browser}.desktop",
+         _xfce_browser_helper(config.browser, browser_command, flatpak=using_flatpak_browser)),
+        ("write", ".config/xfce4/helpers.rc", f"WebBrowser={browser_command}\n"),
+    ]
+    for browser, command in _NATIVE_BROWSER_COMMANDS.items():
+        if browser == config.browser:
             continue
-        try:
-            os.remove(stale_helper)
-        except OSError:
-            pass
-    if using_flatpak_browser:
-        helper_binaries = "flatpak;"
-        helper_commands = browser_command
-        helper_commands_with_parameter = f'{browser_command} "%s"'
-    else:
-        helper_binaries = f"{browser_command};"
-        helper_commands = "%B"
-        helper_commands_with_parameter = '%B "%s"'
-    helper_content = f"""[Desktop Entry]
-Version=1.0
-Type=X-XFCE-Helper
-Name={config.browser.capitalize()}
-StartupNotify=true
-X-XFCE-Binaries={helper_binaries}
-X-XFCE-Category=WebBrowser
-X-XFCE-Commands={helper_commands};
-X-XFCE-CommandsWithParameter={helper_commands_with_parameter};
-"""
-    with open(helper_path, "w", encoding="utf-8") as f:
-        f.write(helper_content)
-
-    xfce_config_dir = os.path.join(config_dir, "xfce4")
-    os.makedirs(xfce_config_dir, exist_ok=True)
-    xfce_helpers_path = os.path.join(xfce_config_dir, "helpers.rc")
-    with open(xfce_helpers_path, "w", encoding="utf-8") as f:
-        f.write(f"WebBrowser={browser_command}\n")
-
-    user_env = (
-        f"runuser -u {safe_username} -- env"
-        f" HOME={shlex.quote(home_dir)}"
-        f" XDG_CONFIG_HOME={shlex.quote(config_dir)}"
-    )
-    for mime_type in (
-        "x-scheme-handler/http",
-        "x-scheme-handler/https",
-        "text/html",
-        "application/xhtml+xml",
-    ):
-        run(
-            f"{user_env} xdg-mime default {desktop_file} {mime_type}",
-            check=False,
-        )
-    run(f"{user_env} xdg-settings set default-web-browser {desktop_file}", check=False)
-    run(f"chown -R {safe_username}:{safe_username} {shlex.quote(config_dir)}")
-    run(f"chown -R {safe_username}:{safe_username} {shlex.quote(local_dir)}")
+        path = f"{_XFCE_HELPER_SUBDIR}/{browser}.desktop"
+        edits.append(("retire", path, _xfce_browser_helper(browser, command, flatpak=False)))
+        if browser in _FLATPAK_BROWSER_IDS:
+            edits.append(("retire", path, _xfce_browser_helper(
+                browser, f"flatpak run {_FLATPAK_BROWSER_IDS[browser]}", flatpak=True,
+            )))
+    apply_home_settings(config.username, edits)
     
     print(f"  ✓ Default browser set to {config.browser.capitalize()}")

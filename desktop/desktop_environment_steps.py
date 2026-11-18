@@ -5,20 +5,19 @@ import glob
 import os
 import shlex
 
-from desktop.xfce_config import (
-    LEGACY_DISPLAYS, LEGACY_XFSETTINGSD, clean_legacy_xfwm,
-    remove_legacy_override, remove_legacy_pm_stub, update_channel,
-)
+from desktop.home_setup import apply_home_settings
+from desktop.xfce_config import LEGACY_DISPLAYS, LEGACY_XFSETTINGSD, remove_legacy_pm_stub
 
 from lib.config import SetupConfig
 from lib.validation import validate_filesystem_path
 from lib.remote_utils import (
-    get_user_home,
     install_package,
     is_dry_run,
     is_package_installed,
     run,
 )
+
+_XFCE_CHANNELS = ".config/xfce4/xfconf/xfce-perchannel-xml"
 
 
 def install_desktop(config: SetupConfig) -> None:
@@ -71,14 +70,7 @@ def configure_xfce_for_rdp(config: SetupConfig) -> None:
         print("  [DRY-RUN] Would configure XFCE for RDP compatibility")
         return
     
-    safe_username = shlex.quote(config.username)
-    home_dir = get_user_home(config.username)
-    autostart_dir = f"{home_dir}/.config/autostart"
-    xfce_config_dir = f"{home_dir}/.config/xfce4/xfconf/xfce-perchannel-xml"
-    
-    # Create autostart directory
-    os.makedirs(autostart_dir, exist_ok=True)
-
+    edits = []
     # The shared desktop has a private bus/display; the global user manager
     # deliberately has neither. Start notifications directly in this session.
     notify_paths = sorted(glob.glob("/usr/lib/*/xfce4/notifyd/xfce4-notifyd")
@@ -86,33 +78,27 @@ def configure_xfce_for_rdp(config: SetupConfig) -> None:
     if notify_paths:
         notifyd = notify_paths[0]
         validate_filesystem_path(notifyd)
-        with open(f"{autostart_dir}/xfce4-notifyd.desktop", "w") as f:
-            f.write("[Desktop Entry]\nType=Application\nName=XFCE Notifications\n"
-                    f"Exec={notifyd}\nOnlyShowIn=XFCE;\nTerminal=false\n")
+        edits.append(("write", ".config/autostart/xfce4-notifyd.desktop",
+                      "[Desktop Entry]\nType=Application\nName=XFCE Notifications\n"
+                      f"Exec={notifyd}\nOnlyShowIn=XFCE;\nTerminal=false\n"))
     
     # 1. Disable light-locker (crashes in RDP sessions without display manager)
-    light_locker_desktop = f"{autostart_dir}/light-locker.desktop"
-    with open(light_locker_desktop, "w") as f:
-        f.write("""[Desktop Entry]
+    edits.append(("write", ".config/autostart/light-locker.desktop", """[Desktop Entry]
 Type=Application
 Name=Light Locker
 Comment=Screen Locker (disabled for RDP)
 Hidden=true
-""")
+"""))
     
     # 2. Remove older basaltwater workaround that disabled xfsettingsd entirely.
     # xfsettingsd is needed for normal XFCE settings; stale display profiles are
     # the part that conflicts with xorgxrdp's RANDR-driven resize events.
-    xfsettingsd_desktop = f"{autostart_dir}/xfsettingsd.desktop"
-    remove_legacy_override(xfsettingsd_desktop, LEGACY_XFSETTINGSD)
+    edits.append(("retire", ".config/autostart/xfsettingsd.desktop", LEGACY_XFSETTINGSD))
     
     # Retire the global warning-suppression shim without touching user tools.
     remove_legacy_pm_stub()
     
     # 5. Configure xfce4-power-manager to not manage displays
-    os.makedirs(xfce_config_dir, exist_ok=True)
-    power_manager_config = f"{xfce_config_dir}/xfce4-power-manager.xml"
-    
     power_manager_xml = """<?xml version="1.0" encoding="UTF-8"?>
 <channel name="xfce4-power-manager" version="1.0">
   <property name="xfce4-power-manager" type="empty">
@@ -127,19 +113,12 @@ Hidden=true
   </property>
 </channel>
 """
-    update_channel(power_manager_config, power_manager_xml)
-    
-    # 6. Remove stale fixed display profile from previous basaltwater runs.
-    # A saved resolution/output profile can override xorgxrdp RANDR resize events.
-    displays_config = f"{xfce_config_dir}/displays.xml"
-    remove_legacy_override(displays_config, LEGACY_DISPLAYS)
-    
-    # Remove unsupported settings without resetting the window manager.
-    clean_legacy_xfwm(f"{xfce_config_dir}/xfwm4.xml")
-    
-    # 8. Set ownership
-    run(f"chown -R {safe_username}:{safe_username} {shlex.quote(autostart_dir)}")
-    run(f"chown -R {safe_username}:{safe_username} {shlex.quote(xfce_config_dir)}")
+    edits.extend([
+        ("merge-xfce", f"{_XFCE_CHANNELS}/xfce4-power-manager.xml", power_manager_xml),
+        ("retire", f"{_XFCE_CHANNELS}/displays.xml", LEGACY_DISPLAYS),
+        ("clean-xfwm", f"{_XFCE_CHANNELS}/xfwm4.xml", ""),
+    ])
+    apply_home_settings(config.username, edits)
     
     print("  ✓ XFCE configured for RDP compatibility")
     print("    - light-locker disabled (prevents crashes)")
@@ -191,15 +170,7 @@ def configure_dark_theme(config: SetupConfig) -> None:
         print(f"  [DRY-RUN] Would configure {config.desktop.upper()} dark theme")
         return
     
-    safe_username = shlex.quote(config.username)
-    home_dir = get_user_home(config.username)
-    
     if config.desktop == "xfce":
-        xfce_config_dir = f"{home_dir}/.config/xfce4/xfconf/xfce-perchannel-xml"
-        os.makedirs(xfce_config_dir, exist_ok=True)
-        
-        # Configure XFCE appearance settings
-        xsettings_config = f"{xfce_config_dir}/xsettings.xml"
         xsettings_xml = """<?xml version="1.0" encoding="UTF-8"?>
 <channel name="xsettings" version="1.0">
   <property name="Net" type="empty">
@@ -208,19 +179,13 @@ def configure_dark_theme(config: SetupConfig) -> None:
   </property>
 </channel>
 """
-        update_channel(xsettings_config, xsettings_xml)
-        clean_legacy_xfwm(f"{xfce_config_dir}/xfwm4.xml")
-        # Leave WM theme and HiDPI selection to XFCE/user settings.
-
-        run(f"chown -R {safe_username}:{safe_username} {shlex.quote(xfce_config_dir)}")
+        apply_home_settings(config.username, [
+            ("merge-xfce", f"{_XFCE_CHANNELS}/xsettings.xml", xsettings_xml),
+            ("clean-xfwm", f"{_XFCE_CHANNELS}/xfwm4.xml", ""),
+        ])
         print("  ✓ XFCE configured with dark theme (Adwaita-dark)")
         
     elif config.desktop == "lxqt":
-        lxqt_config_dir = f"{home_dir}/.config/lxqt"
-        os.makedirs(lxqt_config_dir, exist_ok=True)
-        
-        # Configure LXQt to use dark theme
-        lxqt_config_file = f"{lxqt_config_dir}/lxqt.conf"
         lxqt_config = """[General]
 theme=kvantum-dark
 icon_theme=breeze-dark
@@ -228,14 +193,12 @@ icon_theme=breeze-dark
 [Qt]
 style=kvantum-dark
 """
-        with open(lxqt_config_file, "w") as f:
-            f.write(lxqt_config)
-        
-        run(f"chown -R {safe_username}:{safe_username} {shlex.quote(lxqt_config_dir)}")
+        apply_home_settings(config.username, [("write", ".config/lxqt/lxqt.conf", lxqt_config)])
         print("  ✓ LXQt configured with dark theme")
         print("    Note: Install kvantum theme packages for best results")
         
     elif config.desktop == "cinnamon":
+        safe_username = shlex.quote(config.username)
         # Configure Cinnamon dark theme using gsettings in a single dbus session
         gsettings_script = f"""
 sudo -u {safe_username} sh -c 'eval $(dbus-launch --sh-syntax) && \\

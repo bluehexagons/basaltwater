@@ -104,3 +104,10 @@ logout and block further input during maintenance without changing permission.
 Rerun setup to install the new runtime, UI, and skill guidance. Existing XRDP
 supervisors require normal logout; existing native helpers require stop/start
 to load new code. Save work first. Setup retains the durable control record.
+
+Debian setup applies browser defaults, XFCE compatibility and theme settings,
+and LXQt theme settings as the desktop owner. Managed settings require real
+directories and regular files at their destinations. If an older setup left
+an unwritable directory, inspect the path and have an administrator correct
+ownership of the affected directory before rerunning. Keep unrelated home
+files and their ownership intact.
