@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import os
 from pathlib import Path
 import sys
@@ -314,11 +315,34 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
         remote_command = mock_build_ssh.call_args.kwargs["remote_command"]
         self.assertIn("-m lib.setup_payloads --timeout", remote_command)
         self.assertIn("exec 8</run/lock/basaltwater-setup-bootstrap.lock", remote_command)
-        self.assertIn("flock --exclusive --nonblock 8", remote_command)
+        self.assertIn("flock --exclusive --nonblock --conflict-exit-code 75", remote_command)
+        self.assertIn('acquire_setup_lock 8 "setup bootstrap"', remote_command)
+        self.assertIn("acquire_setup_lock 9 setup", remote_command)
+        self.assertIn("lock is busy. Wait for setup or maintenance to finish", remote_command)
         self.assertLess(remote_command.index("Unsafe setup lock"), remote_command.index("tar xzf"))
         self.assertNotIn("--verbose /run/lock/basaltwater-setup.lock", remote_command)
         self.assertNotIn("supersecret", remote_command)
         self.assertTrue(remote_command.startswith("timeout --signal=TERM --kill-after=10s 14400 "))
+
+    def test_remote_setup_reports_silent_failure_and_relays_target_diagnostics(self):
+        from lib import setup_common
+
+        config = _make_config(host="example.com")
+        for target_output, status in (("\n", 1), ("Error: target setup lock is busy.\n", 75)):
+            def run(_command, *, on_output, **_kwargs):
+                on_output(target_output)
+                return status
+
+            with self.subTest(status=status), \
+                 patch.object(setup_common, "copy_project_files"), \
+                 patch.object(setup_common, "build_ssh_command", return_value=["ssh"]), \
+                 patch.object(setup_common, "run_streamed", side_effect=run), \
+                 patch("sys.stdout", new_callable=io.StringIO) as output:
+                self.assertEqual(setup_common.run_remote_setup(config), status)
+                if status == 1:
+                    self.assertIn("exited with status 1 without target output", output.getvalue())
+                else:
+                    self.assertEqual(output.getvalue(), target_output)
 
     def test_artifact_transport_omits_source_staging_and_deployment_archive(self):
         import io

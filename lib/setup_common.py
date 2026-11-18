@@ -1660,9 +1660,15 @@ def _run_remote_setup_locked(config: SetupConfig, *, expected_releases: object =
             remote_shell_cmd = (
                 'set -eu; '
                 'umask 022; '
+                'acquire_setup_lock() { '
+                'flock --exclusive --nonblock --conflict-exit-code 75 "$1" || { '
+                'status=$?; '
+                'if [ "$status" -eq 75 ]; then '
+                'printf "Error: target %s lock is busy. Wait for setup or maintenance to finish, then retry.\\n" "$2" >&2; '
+                'fi; exit "$status"; }; }; '
                 f'{preflight}; '
-                f'exec 8<{_TARGET_SETUP_LOCK_PATHS[0]}; flock --exclusive --nonblock 8; '
-                f'exec 9<{_TARGET_SETUP_LOCK_PATHS[1]}; flock --exclusive --nonblock 9; '
+                f'exec 8<{shlex.quote(_TARGET_SETUP_LOCK_PATHS[0])}; acquire_setup_lock 8 "setup bootstrap"; '
+                f'exec 9<{shlex.quote(_TARGET_SETUP_LOCK_PATHS[1])}; acquire_setup_lock 9 setup; '
                 f'basaltwater_stage=$(mktemp -d {shlex.quote(stage_parent)}/.basaltwater-stage.XXXXXX); '
                 "trap 'rm -rf \"$basaltwater_stage\"' EXIT; "
                 f'head -c {len(runtime_data)} | tar xzf - -C "$basaltwater_stage" --no-same-owner --no-same-permissions; '
@@ -1691,16 +1697,28 @@ def _run_remote_setup_locked(config: SetupConfig, *, expected_releases: object =
             
             ssh_env = os.environ.copy()
             ssh_env["LC_ALL"] = "C"
-            
+
+            received_output = False
+
+            def relay_remote_output(line: str) -> None:
+                nonlocal received_output
+                received_output = received_output or bool(line.strip())
+                _relay_setup_output(line)
+
             try:
                 returncode = run_streamed(
                     ssh_cmd,
                     timeout=ssh_process_timeout(setup_timeout, batch_mode=batch_mode),
-                    on_output=_relay_setup_output,
+                    on_output=relay_remote_output,
                     input_data=tar_data, env=ssh_env,
                     interactive=not batch_mode,
                     **({"on_input_request": answer_setup_prompt} if relay_prompts else {}),
                 )
+                if returncode != 0 and not received_output:
+                    print(
+                        f"Error: SSH setup command exited with status {returncode} without target output. "
+                        "Check the target's SSH logs and setup lock holders before retrying."
+                    )
                 return finish_network_transition(config, returncode)
             except Exception as e:
                 print(f"Error running remote setup: {e}")
