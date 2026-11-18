@@ -203,6 +203,14 @@ The explicit enrollment command does not modify OpenSSH's default
 unless setup has reconciled a matching managed Proxmox guest or the user's SSH
 configuration selects the Basaltwater workspace file.
 
+Automatic guest enrollment depends on control of the guest bridge and address
+assignment. The scan identifies the endpoint answering at that IP. It can
+replace an existing pin before strict SSH checks begin. If other tenants can
+claim the address, provision on an isolated management network or verify the
+guest fingerprint through its VM or container console and use direct setup
+with that verified pin. The automatic managed-guest refresh can replace a
+manually verified pin on a later hosted setup.
+
 Hosted guest setup uses retained, key-only root SSH for both live route
 preparation and the streamed setup upload. The coding account is never asked
 for an interactive sudo password, and setup does not depend on that account's

@@ -64,6 +64,19 @@ Common consumers are:
 - origin-scoped Git HTTPS credentials for non-GitHub servers; and
 - GitHub tokens explicitly selected with `--git-auth-credential NAME`.
 
+Within a workspace, the lookup key is the credential name alone. Two Git
+origins configured with the same username resolve the same stored password.
+The same name can also select a password for an SMB mount or the initial Gogs
+administrator. Use a distinct name for a provider token. When independent
+servers require the same username with different secrets, use a separate
+controller workspace for each trust domain and enroll its SSH host keys there.
+
+For initial Gogs administration, use a unique bootstrap password and rotate it
+in Gogs after setup. The target's account-creation command receives the
+password as a process argument even when setup generates it or reads it from
+the workspace. A process observer or an execution audit rule on the target
+may record it. [Gogs account creation](../../web/gogs_steps.py)
+
 Saved setup commands and ordinary summaries omit workspace passwords. Consult
 the service-specific guide to learn whether rerunning setup rotates or
 preserves its target value.
