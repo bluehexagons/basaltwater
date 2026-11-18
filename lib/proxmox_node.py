@@ -16,6 +16,7 @@ from typing import Optional, cast
 
 from lib.config import SetupConfig
 from lib.proxmox_guest import (
+    GuestAlreadyExists,
     ProvisionError,
     _build_guest_hostname,
     _create_with_vmid_retry,
@@ -41,7 +42,7 @@ from lib.validation import parse_memory_mib, validate_filesystem_path
 from lib.validators import validate_host, validate_ip_address, validate_username
 
 
-class ContainerAlreadyExists(Exception):
+class ContainerAlreadyExists(GuestAlreadyExists):
     """Raised when the target container already exists on the Proxmox node."""
 
 def _build_container_hostname(target_ip: str, friendly_name: Optional[str]) -> str:
@@ -200,8 +201,8 @@ def _ensure_container_running_locked(
     return vmid
 
 
-def ensure_container_running(config: SetupConfig) -> None:
-    """Start a saved LXC if needed and wait for SSH before refreshing trust."""
+def ensure_container_running(config: SetupConfig) -> int | None:
+    """Start a saved LXC if needed and return its verified CTID."""
     node_ip = config.hosted_node
     if not node_ip or not validate_host(node_ip):
         raise ProvisionError("Invalid Proxmox host")
@@ -227,7 +228,7 @@ def ensure_container_running(config: SetupConfig) -> None:
             [f"address|{target_ip}", f"hostname|{hostname.lower()}"],
             wait=False, description=f"guest {hostname} ({target_ip})",
         ):
-            _ensure_container_running_locked(config, target_ip, hostname)
+            return _ensure_container_running_locked(config, target_ip, hostname)
 
 def _resolve_template_storage(
     root_pool: str,
@@ -681,7 +682,7 @@ def _provision_container_locked(config: SetupConfig) -> None:
             user=user, ssh_opts=ssh_opts, ssh_run=_ssh_run,
         )
         raise ContainerAlreadyExists(
-            f"Container with IP {target_ip} already exists on {node_ip}"
+            f"Container with IP {target_ip} already exists on {node_ip}", vmid=vmid,
         )
 
     root_spec = _get_storage_spec(storage_specs, "root")
@@ -785,17 +786,10 @@ def _provision_container_locked(config: SetupConfig) -> None:
             )
 
         # Wait for sshd in the container to come up before handing off to remote_setup.
-        if remote_pubkey_path:
-            _wait_for_container_ssh(
-                target_ip, node_ip, user, ssh_opts, dry_run=dry_run
-            )
-            enroll_provisioned_guest_host_keys(
-                target_ip,
-                node_ip,
-                user,
-                ssh_opts,
-                dry_run=dry_run,
-            )
+        _wait_for_container_ssh(target_ip, node_ip, user, ssh_opts, dry_run=dry_run)
+        enroll_provisioned_guest_host_keys(
+            target_ip, node_ip, user, ssh_opts, tool="pct", vmid=vmid, dry_run=dry_run,
+        )
     finally:
         if remote_pubkey_path and not dry_run:
             _ssh_run(

@@ -112,11 +112,10 @@ invoking user with mode `0700`; symlinks, other owners, and unsafe permissions
 stop connection reuse without changing the unexpected path.
 
 The same terminal-aware behavior is used by SCP, rsync-over-SSH, SSHFS, and
-other SSH uploads. A hosted setup may still prompt once for the Proxmox
-identity and once for a different guest identity; loading both keys into the
-agent avoids both prompts. SSHFS mounts may detach or reconnect after the
-original terminal is gone, so an agent is the reliable choice for a long-lived
-mount.
+other SSH uploads. Hosted setup can prompt separately for Proxmox and each
+guest connection. Loading both keys into the agent avoids those prompts.
+SSHFS mounts may detach or reconnect after the original terminal is gone, so
+an agent is the reliable choice for a long-lived mount.
 
 The managed UFW policy rate-limits SSH only when no effective SSH sources are
 declared. When `--lan-access`, `--access-source`, or `--ssh-access-source`
@@ -183,33 +182,40 @@ These checks cover UFW's reported policy;
 custom before/after rules, other firewall managers and upstream network policy
 still require deployment-specific review and an external connection test.
 
-Proxmox guests are a special host-key enrollment case. After provisioning,
-Basaltwater scans the guest's ED25519 key from the authenticated Proxmox node,
-replaces any stale plain or hashed entry for that address in both the workspace
-`known_hosts` and the invoking user's default `~/.ssh/known_hosts`, and then
-uses strict checking for the direct guest connection. It also refreshes both
-files before every setup rerun for a cached managed guest whose saved
-Basaltwater metadata matches the address, machine type, and Proxmox node. This
-cleans up stale trust left by older or recreated managed guests before either
-Basaltwater or plain `ssh HOST` performs a strict check. Existing guests
-without that matching saved identity are not enrolled automatically; enroll
-those explicitly with `basaltw ssh-key enroll` after verifying the
-displayed fingerprint. Proxmox node and guest connections both use strict
-checking against the workspace `known_hosts` file.
-Explicit enrollment scans only the ED25519 key, avoiding a burst of parallel
-probe connections against hosts that enforce SSH connection-rate limits.
-The explicit enrollment command does not modify OpenSSH's default
-`~/.ssh/known_hosts`; plain `ssh HOST` continues to use that separate file
-unless setup has reconciled a matching managed Proxmox guest or the user's SSH
-configuration selects the Basaltwater workspace file.
+### Proxmox guest host keys
 
-Automatic guest enrollment depends on control of the guest bridge and address
-assignment. The scan identifies the endpoint answering at that IP. It can
-replace an existing pin before strict SSH checks begin. If other tenants can
-claim the address, provision on an isolated management network or verify the
-guest fingerprint through its VM or container console and use direct setup
-with that verified pin. The automatic managed-guest refresh can replace a
-manually verified pin on a later hosted setup.
+For new and saved managed guests, Basaltwater reads the guest's Ed25519 public
+host key through the authenticated Proxmox node. It uses the selected VMID
+through the QEMU guest agent or the selected CTID through `pct exec`. The
+guest must have a working management channel and the public key at
+`/etc/ssh/ssh_host_ed25519_key.pub`.
+
+Basaltwater compares plain and hashed entries in the workspace `known_hosts`
+and the invoking user's `~/.ssh/known_hosts`. It adds the verified key where
+the address has no entry and preserves matching entries. A conflict in either
+file or an unavailable guest key stops setup before route repair and payload
+upload. Entries for other key algorithms require operator review as well.
+Hosted setup requires the workspace Ed25519 pin on TCP 22 for those SSH
+connections and opens fresh connections to verify it. An existing guest
+without matching saved metadata requires explicit workspace enrollment.
+
+### Deliberate rotation or address reuse
+
+Identify the intended guest by its node and VMID or CTID. For a host-key
+rotation, verify the new fingerprint through the guest console with
+`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`. Inspect the address entries
+in both trust files using `ssh-keygen -F GUEST_IP -f KNOWN_HOSTS_PATH`.
+Update the affected pins to the verified key, preserving unrelated entries
+and aliases. The workspace command `basaltw ssh-key enroll GUEST_IP
+--fingerprint SHA256:VERIFIED_FINGERPRINT` can update the workspace pin when
+the running guest already presents that key. Review shared entries before
+replacing them. Plain `ssh` uses its own trust file, which you update
+separately. Then rerun the hosted setup with the same workspace.
+
+When reusing an address for a guest that has yet to be created, confirm the
+previous guest is retired and deliberately remove that address's obsolete
+pins from both files before provisioning. For a VM that could not supply its
+key, restore the QEMU guest agent or its Proxmox connection before retrying.
 
 Hosted guest setup uses retained, key-only root SSH for both live route
 preparation and the streamed setup upload. The coding account is never asked

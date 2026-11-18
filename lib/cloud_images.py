@@ -9,17 +9,19 @@ Only Debian is supported. Each ``base`` key maps to a snapshot dict containing:
 
 - ``codename``: Debian release codename (``bookworm``, ``trixie``, ...).
 - ``version``: Debian major version as a string.
-- ``snapshot``: Upstream snapshot directory, e.g. ``20250115-2001``. ``latest``
-  is allowed but discouraged because it floats.
+- ``snapshot``: Concrete upstream snapshot directory, e.g. ``20250115-2001``.
 - ``filename``: The qcow2 filename inside that snapshot directory.
 - ``url``: Fully-qualified download URL to the qcow2.
-- ``sha512``: Expected SHA-512 of the qcow2 (lowercase hex). Empty string
-  disables the integrity check (only acceptable for ``snapshot == "latest"``).
+- ``sha512``: Required SHA-512 digest of the qcow2 (lowercase hex).
 """
 
 from __future__ import annotations
 
-from typing import Optional, TypedDict
+import re
+from typing import Mapping, Optional, TypeGuard, TypedDict
+from urllib.parse import urlsplit
+
+from lib.validation import validate_no_control_characters
 
 
 class CloudImage(TypedDict):
@@ -32,6 +34,8 @@ class CloudImage(TypedDict):
 
 
 DEFAULT_DEBIAN_BASE = "debian"
+DEBIAN_CLOUD_BASE = "https://cloud.debian.org/images/cloud"
+SNAPSHOT_PATTERN = re.compile(r"[0-9]{8}-[0-9]{3,4}")
 
 # NOTE: Refresh with `python3 scripts/update_cloud_images.py`. The script
 # overwrites the dictionary literal below; preserve the ``# BEGIN/END
@@ -69,12 +73,46 @@ CLOUD_IMAGES: dict[str, CloudImage] = {
 # END CLOUD_IMAGES
 
 
+def is_sha512_digest(value: object) -> TypeGuard[str]:
+    return isinstance(value, str) and re.fullmatch(r"[0-9A-Fa-f]{128}", value) is not None
+
+
+def debian_image_location(codename: str, version: str, snapshot: str) -> tuple[str, str]:
+    """Construct the image name and URL from validated Debian snapshot coordinates."""
+    if (not re.fullmatch(r"[a-z]+", codename)
+            or not re.fullmatch(r"[1-9][0-9]*", version)
+            or not SNAPSHOT_PATTERN.fullmatch(snapshot)):
+        raise ValueError("Debian cloud images require a release and concrete snapshot")
+    filename = f"debian-{version}-genericcloud-amd64-{snapshot}.qcow2"
+    return filename, f"{DEBIAN_CLOUD_BASE}/{codename}/{snapshot}/{filename}"
+
+
+def validate_cloud_catalog(entries: Mapping[str, Mapping[str, str]]) -> None:
+    """Verify every alias points to a digest-pinned Debian snapshot."""
+    if DEFAULT_DEBIAN_BASE not in entries:
+        raise ValueError("Cloud image catalog is missing the default Debian alias")
+    for key, image in entries.items():
+        try:
+            filename, url = debian_image_location(image["codename"], image["version"], image["snapshot"])
+            if image.get("filename") != filename or image.get("url") != url:
+                raise ValueError("filename and URL must identify the pinned snapshot")
+            if not is_sha512_digest(image.get("sha512")):
+                raise ValueError("expected a 128-character SHA-512 digest")
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid cloud image catalog entry {key!r}: {exc}") from exc
+    for key, image in entries.items():
+        numbered = f"debian-{image['version']}"
+        if entries.get(numbered) != image or (re.fullmatch(r"debian-[0-9]+", key) and key != numbered):
+            raise ValueError(f"Invalid cloud image catalog entry {key!r}: alias must match {numbered}")
+
+
 def resolve_cloud_image(base: str) -> CloudImage:
     """Return the catalog entry for ``base`` (case-insensitive)."""
     key = (base or "").strip().lower()
     if not key:
         key = DEFAULT_DEBIAN_BASE
     if key in CLOUD_IMAGES:
+        validate_cloud_catalog(CLOUD_IMAGES)
         return CLOUD_IMAGES[key]
     raise ValueError(
         f"No cloud image registered for base {base!r}. "
@@ -84,6 +122,7 @@ def resolve_cloud_image(base: str) -> CloudImage:
 
 def list_cloud_images() -> list[tuple[str, CloudImage]]:
     """Return all catalog entries, sorted by key."""
+    validate_cloud_catalog(CLOUD_IMAGES)
     return sorted(CLOUD_IMAGES.items())
 
 
@@ -119,6 +158,7 @@ def parse_image_argument(value: Optional[str]) -> tuple[Optional[str], Optional[
         return None, None
     stripped = value.strip()
     if stripped.startswith("https://"):
+        cloud_image_url_filename(stripped)
         return stripped, None
     if is_local_image_ref(stripped):
         _, _, volume = stripped.partition(":")
@@ -136,3 +176,15 @@ def parse_image_argument(value: Optional[str]) -> tuple[Optional[str], Optional[
         "Expected an https:// URL or a Proxmox storage reference like "
         "'local:import/foo.qcow2'."
     )
+
+
+def cloud_image_url_filename(url: str) -> str:
+    """Return a safe storage basename from an HTTPS image URL."""
+    validate_no_control_characters(url, "VM image URL")
+    parsed = urlsplit(url)
+    filename = parsed.path.rsplit("/", 1)[-1]
+    if (parsed.scheme != "https" or not parsed.hostname
+            or parsed.username is not None or parsed.password is not None
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", filename)):
+        raise ValueError("Expected an HTTPS VM image URL with a valid storage filename")
+    return filename

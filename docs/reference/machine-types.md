@@ -168,14 +168,18 @@ By default, the curated Debian cloud-image catalog
 ... --image-storage local
 ```
 
-To refresh the catalog, run
-`python3 scripts/update_cloud_images.py --pin-snapshot --dry-run`.
-Review the selected Debian snapshot, then repeat with `--pin-snapshot` alone
-and check the filename and SHA-512 for every entry before committing. Omitting
-`--pin-snapshot` replaces the pins with moving `latest` URLs and clears their
-digests. Provisioning verifies new and cached image bytes only when the catalog
-supplies a digest. A pre-uploaded storage reference relies on the operator to
-verify the image before import.
+Preview a catalog refresh with `python3 scripts/update_cloud_images.py --dry-run`.
+Run it without `--dry-run` to update the catalog. The updater selects concrete
+Debian snapshots and reads their `SHA512SUMS` over HTTPS. Review the snapshot,
+filename, URL, and digest changes for every alias before committing. The
+unversioned `debian` alias must match its versioned release entry. A missing or
+ambiguous checksum or a changed digest for the same snapshot stops the refresh.
+
+Provisioning verifies new downloads before publishing them to image storage
+and checks cached bytes again before import. For a deliberate custom image
+update, obtain the expected digest from a trusted source and use a distinct
+filename or move the old cached image aside after confirming the change. A
+pre-uploaded storage reference relies on operator verification before import.
 
 ## State Persistence
 

@@ -251,7 +251,7 @@ class TestLifecycleProvisioning(unittest.TestCase):
         ))
         self.enterContext(patch(
             "lib.proxmox_node.enroll_provisioned_guest_host_keys",
-            side_effect=lambda *a, **kw: events.append("enroll"),
+            side_effect=lambda *a, **kw: events.append(f"enroll {kw['tool']} {kw['vmid']}"),
         ))
         self.enterContext(patch(
             "lib.proxmox_node.reconcile_guest_lifecycle",
@@ -264,7 +264,7 @@ class TestLifecycleProvisioning(unittest.TestCase):
             ))
         self.assertIs(create.call_args.kwargs["autostart"], False)
         self.assertEqual(create.call_args.kwargs["startup"], "up=0")
-        self.assertEqual(events, ["enroll", "policy"])
+        self.assertEqual(events, ["enroll pct 101", "policy"])
 
     def test_creating_vm_still_starts_it_when_future_autostart_is_disabled(self) -> None:
         with patch("lib.proxmox_vm._ssh_run", return_value=_result()) as run:
