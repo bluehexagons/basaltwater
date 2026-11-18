@@ -331,6 +331,22 @@ def _components_for_managed_sources(entries: tuple[AptSourceEntry, ...]) -> tupl
     return tuple(components)
 
 
+def debian_security_source() -> str | None:
+    """Render the signed security suite for an isolated Debian APT transaction."""
+    if read_os_release("/etc/os-release").get("ID", "").lower() != "debian":
+        return None
+    codename = get_debian_codename()
+    keyring = _find_debian_archive_keyring()
+    if keyring is None:
+        raise RuntimeError("Debian archive keyring is unavailable")
+    components = " ".join(_components_for_managed_sources(parse_apt_sources()))
+    return (
+        f"Types: deb\nURIs: {OFFICIAL_DEBIAN_SECURITY_MIRROR}\n"
+        f"Suites: {codename}-security\nComponents: {components}\n"
+        f"Signed-By: {keyring}\nCheck-Valid-Until: yes\nCheck-Date: yes\n"
+    )
+
+
 def _disable_stale_official_sources(apt_dir: str, codename: str) -> list[str]:
     """Comment active official Debian entries for older or alias suites."""
 

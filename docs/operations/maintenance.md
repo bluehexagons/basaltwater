@@ -121,16 +121,21 @@ pre-update archives without touching manual backups. Keep a complete backup
 off-host for recovery from host loss or a failed rollback.
 
 APT uses the Basaltwater updater instead of competing distro unattended-upgrade
-timers. It runs `apt-get update` and a non-removing distribution upgrade; it
-does not run `autoremove` or automatically remove packages. Before each
-scheduled update, Basaltwater repairs CD-ROM-only entries and stale official
-Debian suites using the installed release codename. The distro timers
+timers. On Debian outside Proxmox, it first refreshes the installed release's
+official security suite in a temporary APT index directory using the Debian
+archive keyring. It installs security updates and any required dependencies
+available in that suite without removing packages. Updates requiring packages
+from another suite can wait for the regular upgrade. An auxiliary repository
+outage or a proposed removal in the regular upgrade cannot block this security
+pass.
+
+The regular pass repairs CD-ROM-only entries and stale official Debian suites
+before refreshing all configured sources and running `dist-upgrade --no-remove`.
+Each pass requires a successful index refresh before upgrading and preserves
+existing local dpkg configuration files. The job reports a failure in either
+pass even if the other succeeds. It does not run `autoremove`. Debian's timers
 are disabled only after the replacement timer is enabled, started, and verified.
-Setup and scheduled APT refreshes treat any repository-index error, including
-transient failures, as a failure and do not proceed to the upgrade with stale
-indexes. The scheduled job reports the failure through its notification targets.
-An APT executable launch failure also follows that reporting path. On Proxmox
-hosts the job validates supported stable repositories without rewriting them,
+On Proxmox hosts the job validates supported stable repositories without rewriting them,
 and checks local node health before and after upgrading. Proxmox VE 9.x on
 Debian trixie accepts stable point updates, including new kernel dependencies;
 the installed version and refreshed `pve-manager` candidate must remain within

@@ -10,7 +10,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from lib.apt_sources import (
+    AptSourceEntry,
     MANAGED_SOURCE_FILENAME,
+    debian_security_source,
     ensure_debian_package_sources,
     inspect_apt_sources,
     parse_apt_sources,
@@ -21,6 +23,23 @@ from lib.apt_sources import (
 
 
 class TestAptSources(unittest.TestCase):
+    def test_security_source_only_uses_current_signed_debian_security_suite(self):
+        entries = (
+            AptSourceEntry("/fixture/base", "https://deb.debian.org/debian",
+                           "trixie", ("main", "non-free-firmware")),
+            AptSourceEntry("/fixture/aux", "https://packages.example/repo",
+                           "stable", ("auxiliary",)),
+        )
+        with patch("lib.apt_sources.read_os_release", return_value={"ID": "debian", "VERSION_CODENAME": "trixie"}), \
+                patch("lib.apt_sources._find_debian_archive_keyring", return_value="/fixture/archive.pgp"), \
+                patch("lib.apt_sources.parse_apt_sources", return_value=entries):
+            self.assertEqual(
+                debian_security_source(),
+                "Types: deb\nURIs: https://security.debian.org/debian-security\n"
+                "Suites: trixie-security\nComponents: main non-free-firmware\n"
+                "Signed-By: /fixture/archive.pgp\nCheck-Valid-Until: yes\nCheck-Date: yes\n",
+            )
+
     def test_component_case_does_not_cover_main_or_poison_managed_repair(self):
         for filename, content in (
             (
