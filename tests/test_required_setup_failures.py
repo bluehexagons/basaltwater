@@ -118,7 +118,12 @@ class TestRequiredSambaMutations(unittest.TestCase):
                 self.assertTrue(kwargs.get("check", True))
                 raise RuntimeError("account enablement failed")
             return SimpleNamespace(returncode=0)
-        with patch.object(samba_steps, "run", side_effect=run):
+        with (
+            patch.object(samba_steps, "run", side_effect=run),
+            patch.object(samba_steps, "_share_identity", return_value=SimpleNamespace(
+                pw_name="admin", pw_uid=1000, pw_gid=1000,
+            )),
+        ):
             with self.assertRaisesRegex(RuntimeError, "account enablement failed"):
                 samba_steps.create_samba_user("admin", "test-only-password")
 
