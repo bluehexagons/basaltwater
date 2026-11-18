@@ -13,7 +13,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 from urllib.parse import urlsplit
 
-from lib.atomic_io import read_json_file, write_json_atomic
+from lib.atomic_io import read_json_file, rename_path_durable, write_json_atomic
 from lib.remote_utils import run
 from lib.state_read import StateReadError
 from lib.update_policy import order_preferred_github_releases
@@ -260,15 +260,14 @@ def install_binary_release(
         )
         if download_result.returncode != 0:
             raise RuntimeError(f"Failed to download {binary_name} {tag_name}")
-        _verify_binary(tmp_path, sha256)
-        os.chmod(tmp_path, 0o755)
-        os.replace(tmp_path, binary_path)
+        _verify_binary(tmp_path, sha256, prepare_install=True)
+        rename_path_durable(tmp_path, binary_path)
     write_json_state(state_path, receipt)
     print(f"  ✓ Installed {binary_path} ({tag_name})")
     return tag_name
 
 
-def _verify_binary(path: str, sha256: str) -> None:
+def _verify_binary(path: str, sha256: str, *, prepare_install: bool = False) -> None:
     fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
@@ -276,5 +275,8 @@ def _verify_binary(path: str, sha256: str) -> None:
         with os.fdopen(fd, "rb", closefd=False) as stream:
             if hashlib.file_digest(stream, "sha256").hexdigest() != sha256:
                 raise RuntimeError(f"SHA-256 mismatch for {os.path.basename(path)}")
+        if prepare_install:
+            os.fchmod(fd, 0o755)
+            os.fsync(fd)
     finally:
         os.close(fd)
