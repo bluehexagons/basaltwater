@@ -716,6 +716,7 @@ class SetupConfig:
     notify_specs: Optional[NestedStrList] = None
     notification_level: MaybeStr = None
     notification_strict_https: Optional[bool] = None
+    notification_ca_file: MaybeStr = None
     antistatic_server: MaybeStr = None  # "DOMAIN[:port]" spec
     antistatic_admin: MaybeStr = None  # Username; password stays in the credential store
     antistatic_db: MaybeStr = None  # "DOMAIN[:port]" spec
@@ -977,10 +978,12 @@ class SetupConfig:
         validate_godot_bundle_settings(self)
         validate_guest_lifecycle_settings(self, require_provisioning=False)
         validate_notification_level(self.notification_level)
-        if self.notification_strict_https is not None and not isinstance(
-            self.notification_strict_https, bool
-        ):
-            raise ValueError("notification_strict_https must be boolean")
+        from lib.notifications import normalize_notification_ca_file, normalize_notification_strict_https
+
+        normalize_notification_ca_file(
+            self.notification_ca_file,
+            normalize_notification_strict_https(self.notification_strict_https),
+        )
         validate_syncthing_settings(self, loading_saved_config=_loading_saved_config)
         selected_godot_bundles = list(dict.fromkeys(self.godot_bundles or []))
         from lib.publishing_config import validate_publishing_tools
@@ -1862,6 +1865,10 @@ class SetupConfig:
             )
         if self.notification_strict_https is True:
             args.append("--notification-strict-https")
+        elif self.notification_strict_https is False:
+            args.append("--notification-allow-unverified-https")
+        if self.notification_ca_file is not None:
+            args.append(f"--notification-ca-file {shlex.quote(self.notification_ca_file)}")
         
         if self.antistatic_server:
             args.append(f"--antistatic-server {shlex.quote(self.antistatic_server)}")
@@ -2522,6 +2529,10 @@ class SetupConfig:
             )
         if self.notification_strict_https is True:
             cmd_parts.append("--notification-strict-https")
+        elif self.notification_strict_https is False:
+            cmd_parts.append("--notification-allow-unverified-https")
+        if self.notification_ca_file is not None:
+            cmd_parts.append(f"--notification-ca-file {shlex.quote(self.notification_ca_file)}")
         
         # Antistatic lobby server
         if self.antistatic_server:
@@ -2699,7 +2710,8 @@ class SetupConfig:
             self.web_panel_notification_ingest
         )
         data['guacamole'] = bool(self.guacamole)
-        data['notification_strict_https'] = bool(self.notification_strict_https)
+        data['notification_strict_https'] = self.notification_strict_https is not False
+        data['notification_allow_unverified_https'] = self.notification_strict_https is False
         data['cloudflare_allow_direct'] = bool(self.cloudflare_allow_direct)
         if self.enable_syncthing and not self.syncthing_root:
             data['syncthing_root'] = DEFAULT_SYNCTHING_ROOT
@@ -2718,6 +2730,10 @@ class SetupConfig:
         """Decode saved settings, deferring only the reserved Syncthing tree policy."""
         validate_current_setup_fields(data)
         data = dict(data)
+        from lib.notifications import notification_strict_https_from_state
+
+        data["notification_strict_https"] = notification_strict_https_from_state(data)
+        data.pop("notification_allow_unverified_https", None)
         for retired in ("enable_cicd", "is_app_server", "deploy_targets"):
             if data.get(retired):
                 raise RetiredSetupConfigError(
@@ -3454,6 +3470,7 @@ class SetupConfig:
             notification_strict_https=_optional_bool_arg(
                 args, 'notification_strict_https'
             ),
+            notification_ca_file=_optional_str_arg(args, 'notification_ca_file'),
             antistatic_server=getattr(args, 'antistatic_server', None),
             antistatic_admin=getattr(args, 'antistatic_admin', None),
             antistatic_db=getattr(args, 'antistatic_db', None),

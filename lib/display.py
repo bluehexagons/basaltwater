@@ -587,13 +587,14 @@ def print_setup_summary(config: SetupConfig, description: Optional[str] = None) 
         config.notify_specs,
         notification_level=notification_level,
         strict_https=config.notification_strict_https,
+        ca_file=config.notification_ca_file,
     )
     if notification_configs:
-        tls_mode = (
-            "strict HTTPS"
-            if config.notification_strict_https is True
-            else "self-signed HTTPS accepted"
-        )
+        tls_mode = "strict HTTPS"
+        if config.notification_strict_https is False:
+            tls_mode = "unverified HTTPS allowed"
+        elif config.notification_ca_file:
+            tls_mode = "strict HTTPS with additional CA trust"
         print(
             f"Notifications: {len(notification_configs)} target(s) "
             f"(level: {notification_level}; {tls_mode})"

@@ -26,15 +26,23 @@ commands replace webhook URLs with `https://REPLACE_WITH_WEBHOOK_URL`; insert
 the real target before replaying a command. The saved target remains available
 to scheduled notification jobs.
 
-HTTPS webhook delivery accepts self-signed certificates by default so a sender
-can notify a Basaltwater panel that uses its VM-local CA. This keeps the
-connection encrypted but does not authenticate the receiver's certificate or
-hostname. Add `--notification-strict-https` to require the sender's normal CA
-bundle and hostname checks; use `--no-notification-strict-https` on a patch to
-return to the default compatibility mode. The setting applies to setup,
-scheduled jobs, and other outbound notifications saved on that system.
-Use strict mode when the network is not already trusted or the receiver's
-identity must be authenticated.
+HTTPS webhook delivery verifies the receiver's certificate and hostname by
+default, including for saved configurations from earlier versions. For a private
+CA, install its verified public certificate in the sender's normal trust store,
+or pass `--notification-ca-file /etc/basaltwater/receiver-ca.pem` to setup or
+patch. The absolute path points to a readable PEM bundle on the sending machine.
+Keep the file and its directory under the control of the account that manages
+sender trust. The bundle adds trust for notification webhooks alongside the
+system CAs. Use `--notification-ca-file ''` to clear the saved bundle path.
+
+For receivers that still require compatibility, explicitly pass
+`--notification-allow-unverified-https` (also accepted as
+`--no-notification-strict-https`). This disables certificate and hostname checks
+for all HTTPS notification targets on that sender, including bearer-token
+targets. Use `--notification-strict-https` to restore verification. The
+compatibility option and a private CA bundle cannot be combined. The policy
+applies to setup and scheduled notifications. Tokenless HTTP targets remain
+available for receivers on trusted networks.
 
 ## CachyOS workstation webhooks
 
@@ -107,9 +115,9 @@ Basaltwater removes the fragment from the URL and sends it in the
 `Authorization: Bearer ...` header. The token does not enter the HTTP request
 path or Nginx access log.
 
-The sender accepts the panel's self-signed certificate by default. To require
-the panel certificate to chain to a trusted public or locally installed CA,
-append `--notification-strict-https` to that setup or patch command.
+For a panel using a VM-local CA, install that CA on the sender or pass its
+absolute PEM path using `--notification-ca-file`. Use the hostname or IP
+covered by the panel certificate in the webhook URL. [VM CA trust](client-ca-trust.md)
 
 ### 3. Verify delivery
 

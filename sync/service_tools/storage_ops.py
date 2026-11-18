@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../
 from lib.logging_utils import get_service_logger, log_event
 from lib.atomic_io import write_json_atomic
 from lib.notifications import (
+    notification_configs_from_state,
     notification_level_from_state,
     parse_notification_args,
     send_notification_safe,
@@ -538,6 +539,7 @@ def execute_storage_operations(*, selection: dict | None = None) -> dict:
             logger,
         ),
         strict_https=config.notification_strict_https,
+        ca_file=config.notification_ca_file,
     )
     
     log_event(
@@ -922,14 +924,7 @@ def main():
     notification_configs = []
     friendly_name = None
     if config_dict:
-        notification_configs = parse_notification_args(
-            config_dict.get('notify_specs', []),
-            notification_level=notification_level_from_state(
-                config_dict.get('notification_level'),
-                logger,
-            ),
-            strict_https=config_dict.get('notification_strict_https') is True,
-        )
+        notification_configs = notification_configs_from_state(config_dict, logger)
         friendly_name = config_dict.get('friendly_name')
     
     # Acquire lock (non-blocking) - if another instance is running, exit cleanly

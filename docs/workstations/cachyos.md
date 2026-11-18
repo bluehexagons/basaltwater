@@ -138,7 +138,7 @@ providers explicitly with `--codex`, `--claude`, or `--opencode`.
 | Setup plan only | `--dry-run` (use installer `--plan` before `--local-setup` for a full preview) |
 | Restrict inbound workstation access | `--lan-access` and/or `--access-source PRIVATE_IP_OR_CIDR`; `--no-lan-access --no-access-source` closes managed access |
 | Remote shell access | SSH follows detected service state on local setup; explicitly use `--ssh` or `--no-ssh` to override; remote setup defaults to SSH; see [SSH access](#ssh-access) |
-| Setup-result webhooks | `--notify webhook URL` (repeatable), `--notification-level LEVEL`, `--notification-strict-https` |
+| Setup-result webhooks | `--notify webhook URL` (repeatable), `--notification-level LEVEL`, `--notification-ca-file PATH` |
 
 Examples:
 
@@ -319,9 +319,9 @@ event. Validated setup preflight or step failures send the failing phase and
 exception type; inspect local output for details. Delivery failure prints a
 warning and preserves the setup outcome.
 
-HTTPS accepts self-signed certificates by default, matching other Basaltwater
-senders. `--notification-strict-https` verifies the receiver certificate and
-hostname using the normal CA trust store. Notifications need outbound access
+HTTPS verifies receiver certificates and hostnames by default. For a private
+CA, add trust on the workstation or supply a sender-local PEM path with
+`--notification-ca-file`. Notifications need outbound access
 only; no listener, mail transport, or notification timer is installed. The
 CachyOS integration sends setup results, including those from refresh; it does
 not install the Debian maintenance/security notification jobs or monitor Sunshine.

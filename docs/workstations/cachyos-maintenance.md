@@ -633,7 +633,9 @@ Repeatable `--notify` adds targets without exact duplicates. Omitted options
 preserve saved targets, level, and HTTPS policy. Use
 `basaltw refresh --notification-level off` to pause delivery; restore `normal`
 to receive completion/failure results again. `warning` or `error` keeps only
-failures. `--no-notification-strict-https` restores self-signed compatibility.
+failures. HTTPS verifies the receiver by default. Supply
+`--notification-ca-file PATH` for a private CA, or use
+`--notification-allow-unverified-https` for explicit compatibility.
 To replace or remove targets, run a full explicit `setup` with the desired
 software/access selection and new targets, or omit `--notify` to remove them.
 

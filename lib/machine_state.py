@@ -348,9 +348,11 @@ def save_setup_config(config_dict: dict[str, Any]) -> None:
         "version": 1,
         "notify_specs": sanitized_config.get("notify_specs") or [],
         "notification_level": sanitized_config.get("notification_level"),
-        "notification_strict_https": (
-            sanitized_config.get("notification_strict_https") is True
+        "notification_strict_https": sanitized_config.get("notification_strict_https") is not False,
+        "notification_allow_unverified_https": (
+            sanitized_config.get("notification_allow_unverified_https") is True
         ),
+        "notification_ca_file": sanitized_config.get("notification_ca_file"),
     }
     with directory_fd(notification_directory, create=True) as descriptor:
         metadata = os.fstat(descriptor)

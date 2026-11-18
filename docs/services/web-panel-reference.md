@@ -263,9 +263,9 @@ remove the token file as root, rerun setup with ingest enabled, then update each
 sender. Removing the panel deletes its Basic Auth data, notification history,
 and audit snapshots.
 
-Webhook senders accept the managed self-signed VM certificate by default. Add
-`--notification-strict-https` when a sender must verify the normal CA chain and
-hostname, especially across an untrusted network.
+Webhook senders verify certificate chains and hostnames by default. For a panel
+using a managed VM CA, add the CA to the sender's normal trust store or select a
+sender-local PEM bundle with `--notification-ca-file`. [Notification delivery](notifications.md)
 
 ## Audit activity
 
