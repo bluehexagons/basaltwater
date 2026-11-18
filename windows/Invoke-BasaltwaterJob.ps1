@@ -40,7 +40,7 @@ function Resolve-JobPath([string]$root, [string]$relative) {
 }
 
 function New-JobSnapshot([string]$source, [string]$jobDirectory, [string]$revision, [string]$entry) {
-    $git = (Get-Command git.exe -CommandType Application -ErrorAction Stop).Source
+    $git = (Get-Command git.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
     $savedGitEnvironment = @(Get-ChildItem Env: | Where-Object Name -like 'GIT_*')
     $repository = Join-Path $jobDirectory 'git'
     $archive = Join-Path $jobDirectory 'source.zip'

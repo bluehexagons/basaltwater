@@ -1373,7 +1373,7 @@ class TestGogsRequiredSetupSteps(unittest.TestCase):
                     process.__enter__.return_value = installer
                     temp_factory = tempfile.TemporaryDirectory
                     config = SetupConfig(host="host", username="gitadmin", system_type="server_web",
-                                         share_credentials=[["gitadmin", source]] if source else None)
+                                         resolved_credentials=[["gogs", "", "gitadmin", source]] if source else None)
 
                     def perform(command, **kwargs):
                         self.assertIn("--unix-socket", command)
