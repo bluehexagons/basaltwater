@@ -18,6 +18,7 @@ from lib.config import SetupConfig
 from lib.maintenance_defaults import JOURNAL_MAX_USE
 from lib.remote_utils import CommandExecutionError
 from lib.system_types import get_steps_for_system_type
+from security import security_steps
 from security.security_steps import (
     _ensure_browser_automation_userns_profile,
     configure_auto_restart,
@@ -515,13 +516,26 @@ class TestHardenKernel(unittest.TestCase):
 
 
 class TestConfigureFail2Ban(unittest.TestCase):
+    def test_only_owned_xrdp_jails_are_removed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            jail = Path(directory) / "xrdp.local"
+            with patch.object(security_steps, "_FAIL2BAN_XRDP_JAIL", str(jail)):
+                jail.write_text("[xrdp]\nenabled = true\n# operator jail\n")
+                security_steps._remove_managed_xrdp_jail()
+                self.assertTrue(jail.exists())
+                jail.write_text(security_steps._FAIL2BAN_LEGACY_XRDP_JAIL)
+                security_steps._remove_managed_xrdp_jail()
+                self.assertFalse(jail.exists())
+
     @patch("security.security_steps.is_container", return_value=False)
     @patch("security.security_steps.run")
     @patch("security.security_steps.os.makedirs")
     @patch("security.security_steps.open", new_callable=mock_open)
     def test_writes_sshd_jail_when_rdp_disabled(self, mock_file, _md, mock_run, _ic):
         mock_run.return_value = SimpleNamespace(returncode=0)
-        configure_fail2ban(SetupConfig(username="u", host="h", system_type="server_lite"))
+        with patch("security.security_steps._remove_managed_xrdp_jail") as retire:
+            configure_fail2ban(SetupConfig(username="u", host="h", system_type="server_lite"))
+        retire.assert_called_once_with()
         mock_run.assert_any_call(
             "apt-get -o DPkg::Lock::Timeout=300 install -y -qq fail2ban"
         )
@@ -905,6 +919,24 @@ class TestSSHFirewallPeerSafety(unittest.TestCase):
 
 
 class TestConfigureFirewall(unittest.TestCase):
+    def test_inactive_ufw_removes_saved_managed_rdp_rules_only(self):
+        config = SetupConfig(host="vm", username="admin", system_type="server_lite")
+        with patch.object(security_steps, "can_manage_firewall", return_value=True), \
+             patch.object(security_steps, "shutil") as shutil, \
+             patch.object(security_steps, "_run_ufw") as ufw:
+            shutil.which.return_value = "/usr/sbin/ufw"
+            ufw.side_effect = [
+                SimpleNamespace(returncode=0, stdout="Status: inactive\n"),
+                SimpleNamespace(returncode=0, stdout=(
+                    "Added user rules\nufw limit 3389/tcp comment 'basaltwater RDP global'\n"
+                    "ufw limit from 192.0.2.0/24 to any port 3389 proto tcp comment 'operator'\n"
+                )),
+                SimpleNamespace(returncode=0, stdout="Rule deleted"),
+            ]
+            security_steps.clear_disabled_rdp_firewall(config)
+            self.assertEqual(ufw.call_count, 3)
+            ufw.assert_called_with("ufw --force delete limit 3389/tcp comment 'basaltwater RDP global'")
+
     def setUp(self):
         self.enterContext(patch("lib.machine_state.detect_machine_type", return_value="vm"))
         self.enterContext(patch.dict(os.environ, {"SSH_CONNECTION": ""}))

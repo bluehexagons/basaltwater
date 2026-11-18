@@ -53,6 +53,18 @@ _SYSCTL_HARDENING_FILE = "/etc/sysctl.d/99-security-hardening.conf"
 _FAIL2BAN_SSHD_JAIL = "/etc/fail2ban/jail.d/sshd.local"
 _FAIL2BAN_XRDP_JAIL = "/etc/fail2ban/jail.d/xrdp.local"
 _FAIL2BAN_XRDP_FILTER = "/etc/fail2ban/filter.d/xrdp.conf"
+_FAIL2BAN_MANAGED_MARKER = "# Managed by Basaltwater\n"
+_FAIL2BAN_LEGACY_XRDP_JAIL = """[xrdp]
+enabled = true
+port = 3389
+protocol = tcp
+filter = xrdp
+logpath = /var/log/xrdp-sesman.log
+           /var/log/xrdp.log
+maxretry = 3
+bantime = 3600
+findtime = 600
+"""
 _AUDIT_RULES_FILE = "/etc/audit/rules.d/99-basaltwater.rules"
 _FAILLOCK_CONF = "/etc/security/faillock.conf"
 _PAM_FAILLOCK_PROFILE = "/usr/share/pam-configs/faillock-basaltwater"
@@ -235,6 +247,36 @@ def _configure_rdp_firewall(config: SetupConfig) -> None:
         _RDP_RULE_COMMENT_PREFIX,
         {comment for comment, _command in rules},
     )
+
+
+def clear_disabled_rdp_firewall(config: SetupConfig) -> None:
+    """Remove owned direct RDP ingress even while UFW is inactive."""
+    if config.enable_rdp or not can_manage_firewall(config.machine_type):
+        return
+    if is_dry_run():
+        print("  [DRY-RUN] Would remove managed direct RDP firewall rules")
+        return
+    if not shutil.which("ufw"):
+        return
+    status = _run_ufw("ufw status")
+    if status.returncode != 0:
+        raise _ufw_failure("Could not verify UFW before removing direct RDP rules", status)
+    if "Status: active" in status.stdout:
+        _remove_stale_managed_rules(_RDP_RULE_COMMENT_PREFIX, set())
+        return
+
+    saved = _run_ufw("ufw show added")
+    if saved.returncode != 0:
+        raise _ufw_failure("Could not inspect saved UFW rules", saved)
+    for line in saved.stdout.splitlines():
+        if not line.startswith("ufw limit ") or f" comment '{_RDP_RULE_COMMENT_PREFIX} " not in line:
+            continue
+        rule = shlex.split(line)
+        if rule[-2] != "comment" or not rule[-1].startswith(f"{_RDP_RULE_COMMENT_PREFIX} "):
+            continue
+        deleted = _run_ufw(shlex.join(["ufw", "--force", "delete", *rule[1:]]))
+        if deleted.returncode != 0:
+            raise _ufw_failure("Could not remove a saved direct RDP rule", deleted)
 
 
 def _verify_ssh_firewall_peer(config: SetupConfig) -> None:
@@ -552,6 +594,18 @@ def configure_firewall(config: SetupConfig) -> None:
         print(f"  ✓ Firewall configured ({ssh_policy})")
 
 
+def _remove_managed_xrdp_jail() -> None:
+    if not os.path.isfile(_FAIL2BAN_XRDP_JAIL) or os.path.islink(_FAIL2BAN_XRDP_JAIL):
+        return
+    try:
+        with open(_FAIL2BAN_XRDP_JAIL, encoding="utf-8") as jail:
+            content = jail.read()
+        if content.startswith(_FAIL2BAN_MANAGED_MARKER) or content == _FAIL2BAN_LEGACY_XRDP_JAIL:
+            os.unlink(_FAIL2BAN_XRDP_JAIL)
+    except FileNotFoundError:
+        pass
+
+
 def configure_fail2ban(config: SetupConfig) -> None:
     if is_dry_run():
         print("  [DRY-RUN] Would configure fail2ban jails")
@@ -600,23 +654,13 @@ failregex = ^.*AUTHFAIL: user=\\S+ ip=<HOST>(?::\\d+)?\\s.*$
 ignoreregex =
 """
 
-        fail2ban_xrdp_jail = """[xrdp]
-enabled = true
-port = 3389
-protocol = tcp
-filter = xrdp
-logpath = /var/log/xrdp-sesman.log
-           /var/log/xrdp.log
-maxretry = 3
-bantime = 3600
-findtime = 600
-"""
-
         with open(_FAIL2BAN_XRDP_FILTER, "w") as f:
             f.write(fail2ban_xrdp_filter)
 
         with open(_FAIL2BAN_XRDP_JAIL, "w") as f:
-            f.write(fail2ban_xrdp_jail)
+            f.write(_FAIL2BAN_MANAGED_MARKER + _FAIL2BAN_LEGACY_XRDP_JAIL)
+    else:
+        _remove_managed_xrdp_jail()
 
     # systemd can report a successful restart before Fail2ban's asynchronous
     # configuration fails. Reject missing log sources and invalid jails first.

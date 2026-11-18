@@ -47,6 +47,15 @@ def extend_desktop_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]])
         install_xrdp,
     )
 
+    if not config.enable_rdp:
+        from security.security_steps import clear_disabled_rdp_firewall
+
+        if not config.include_desktop:
+            from desktop.xrdp_steps import stop_unneeded_xrdp
+
+            steps.append(("Disabling previously managed xRDP on a headless host", stop_unneeded_xrdp))
+        steps.append(("Removing obsolete direct RDP access rules", clear_disabled_rdp_firewall))
+
     if not config.include_desktop:
         return
 

@@ -1,3 +1,4 @@
+; Managed by Basaltwater
 [Globals]
 ; xrdp.ini file version number
 ini_version=1
@@ -51,9 +52,10 @@ allow_multimon=true
 ; Fork a separate process per session for stability
 fork=true
 
-; Address to listen on (managed by --rdp-bind-address)
-address={RDP_BIND_ADDRESS}
-port=3389
+; Listener managed by --rdp-bind-address
+port={RDP_LISTENER}
+runtime_user=xrdp
+runtime_group=xrdp
 
 [Logging]
 LogFile=xrdp.log

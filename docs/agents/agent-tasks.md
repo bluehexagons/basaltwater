@@ -525,6 +525,12 @@ Maintenance holds remain separate and are never created automatically.
 Non-root Debian setup with Codex selected installs
 `basaltwater-agent-tasks-UID.service`. It runs as the task account, uses its
 own credentials, starts at boot, and is independent of the panel and T3.
+The service grants `systemd-journal` to the worker and its provider processes
+for host diagnostics. This service credential still applies with `--harden-user`,
+which removes the group from interactive logins. Treat the task account,
+provider execution, and any readable system or user journals as part of the
+same host trust boundary. Provider sandbox and task permissions still govern
+the filesystem paths and operations available during each run.
 Selecting only `--web-panel` does not install the task worker. A panel starts
 its legacy fallback scheduler only when Codex is installed for its account.
 Shutdown stops new claims and cancels active work. A shutdown during claim
