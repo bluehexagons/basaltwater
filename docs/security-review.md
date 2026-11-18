@@ -1,12 +1,19 @@
 # Security review
 
-**Reviewed 18 November 2026 at `2c78b19b`.** Start by binding
-Proxmox SSH enrollment to the intended guest, keeping reusable
-panel credentials at the authentication proxy, and removing user-writable
-inputs from privileged workstation setup. Each matters during an ordinary
-operator action. The six high-priority findings can affect administrator
-actions, expose reusable credentials or reach data outside a service's
-intended directory. Runtime remediation remains open.
+The audit examined revision `2c78b19b` on 18 November 2026. Six of its
+fourteen findings were high priority. The descriptions under **High-priority
+findings**, **Access policy and credential handling**, and **Build, update and
+release integrity** describe that revision. Use the remediation record for
+current behavior and rollout requirements.
+
+## Remediation record
+
+| Finding | Change on main and operator action | Verification |
+| --- | --- | --- |
+| Panel and pairing proxy credentials | Update the target runtime and rerun the saved panel or pairing setup to regenerate Nginx configuration. Review password rotation if an application backend or its logs could have exposed an earlier login. | A temporary Nginx instance using both generated configurations challenged unauthenticated requests, stripped Basic credentials on both routes, passed the signed-in panel username and forwarded the notification bearer token. [Panel](../common/web_panel_steps.py) · [Pairing](../common/t3code_steps.py) |
+| Scrub recovery from the panel | Update the broker and panel together. Verification starts on confirmation. Actions that change files or parity require a decision for the exact request. Open the pending request under **Activity & approvals**. | Broker tests cover requester-only and stale decisions, replay, batch review and invalidation of work automatically approved under the old policy. [Operator guide](services/shares-data.md) · [Broker tests](../tests/test_web_panel_data_actions.py) |
+| Antistatic server and database binaries | The next setup verifies the GitHub asset digest for the architecture, records it with the tag, and checks the installed bytes on reuse. Investigate a digest conflict before attempting recovery. | Fixture tests cover both services, missing metadata, failed downloads, altered bytes and same-tag drift. The public metadata check found SHA-256 values for both server architectures. The configured database release endpoint returned HTTP 404 to an anonymous request, so its current assets could not be verified. [Service guide](integrations/antistatic/services.md) · [Release tests](../tests/test_release_management.py) |
+| Release workflow permissions | Future release tags build and smoke-test a wheel with read-only access. The publishing job receives the artifact ID and SHA-256, checks the wheel and has the repository write permission used to create the release. | Local workflow checks accepted one matching wheel and rejected changed or duplicate artifacts. The tag-triggered publishing job awaits an actual release. [Workflow](../.github/workflows/release.yml) |
 
 ## High-priority findings
 
@@ -18,8 +25,8 @@ for its Ed25519 key. A successful scan replaces the address entry in both
 the workspace and the invoking user's SSH trust file. If the address answers
 for a different guest, subsequent strict SSH can send the setup payload and
 its credentials to that endpoint. An isolated provisioning bridge reduces this
-risk. [Guest enrollment](../lib/proxmox_guest.py#L1178) ·
-[Trust-store replacement](../lib/ssh_enrollment.py#L132) · [Operator guidance](operations/ssh.md)
+risk. [Guest enrollment](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/lib/proxmox_guest.py#L1178) ·
+[Trust-store replacement](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/lib/ssh_enrollment.py#L132) · [Operator guidance](operations/ssh.md)
 
 **Fix and verify.** Read the public key through the node's authenticated
 VMID or CTID management channel. Require independently verified authorization
@@ -37,8 +44,8 @@ especially consequential when the main panel login also authorizes integrated
 approval decisions. Dedicated approval and desktop routes already clear the
 header. Use distinct portal passwords and treat the application backends as
 trusted with their respective logins until the proxy is corrected.
-[Panel proxy](../common/web_panel_steps.py#L477) ·
-[Pairing proxy](../common/t3code_steps.py#L1794) ·
+[Panel proxy](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/common/web_panel_steps.py#L477) ·
+[Pairing proxy](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/common/t3code_steps.py#L1794) ·
 [Approval trust model](agents/privilege-approvals.md) ·
 [Nginx request-header defaults](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_set_header)
 
@@ -56,8 +63,8 @@ process's privileges, and browser setup also changes ownership recursively
 under `.config` and `.local`. On a rerun, the account controls those directories.
 An unexpected link can direct a privileged write outside the intended tree,
 and unrelated files can acquire new ownership. Until fixed, treat the home
-contents as trusted input to these setup steps. [Profile selection](../plugins/desktop.py#L80) ·
-[Browser defaults](../desktop/browser_steps.py#L439) · [XFCE setup](../desktop/desktop_environment_steps.py#L73)
+contents as trusted input to these setup steps. [Profile selection](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/plugins/desktop.py#L80) ·
+[Browser defaults](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/desktop/browser_steps.py#L439) · [XFCE setup](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/desktop/desktop_environment_steps.py#L73)
 
 **Fix and verify.** Create, replace and retire per-user files as the desktop
 identity. Limit ownership changes to files managed by that step. Cover a fresh
@@ -74,9 +81,9 @@ can change the code an administrator subsequently authorizes. Both paths
 require an elevation decision or existing authority. Until the helpers are
 isolated, use the operating system's service manager directly when the
 desktop installation is writable by less-trusted processes.
-[Windows service repair](../windows/Sunshine.Common.ps1#L41) ·
-[CachyOS invocation](../common/cachyos_ssh.py#L60) ·
-[Privileged imports](../common/service_tools/cachyos_ssh.py#L15)
+[Windows service repair](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/windows/Sunshine.Common.ps1#L41) ·
+[CachyOS invocation](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/common/cachyos_ssh.py#L60) ·
+[Privileged imports](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/common/service_tools/cachyos_ssh.py#L15)
 
 **Fix and verify.** Move the privileged operation and all its imports to an
 administrator-controlled installation, or use a fixed native service
@@ -92,15 +99,15 @@ recursively, including during recovery from a failed update. An independent
 mount below that root can enter a backup, and files on a writable child mount
 can be deleted before restore reports failure. Gogs setup applies recursive
 ownership changes below its root. Keep independent filesystems and bind mounts
-outside these data trees. [HomeBox backup](../web/homebox_steps.py#L627) ·
-[Restore](../web/homebox_steps.py#L703) · [Gogs setup](../web/gogs_steps.py#L401)
+outside these data trees. [HomeBox backup](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/web/homebox_steps.py#L627) ·
+[Restore](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/web/homebox_steps.py#L703) · [Gogs setup](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/web/gogs_steps.py#L401)
 
 **Fix and verify.** Detect nested mounts before backup or mutation and check
 mount identity during traversal. Exercise a separate filesystem and a
 same-device bind mount. In both cases verify that backups exclude independent
 data and that setup, restore and failed-update recovery preserve its bytes
 and ownership. The Samba walker already checks mount IDs on open descriptors.
-[Samba traversal](../smb/samba_steps.py#L294)
+[Samba traversal](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/smb/samba_steps.py#L294)
 
 ### Ordinary static deployments trust the build output tree
 
@@ -109,8 +116,8 @@ Source staging rejects symlinks before the build account runs. For an on-target
 exists. Its ordinary generated Nginx location permits link traversal under
 default settings. A link left by a build can therefore publish a file outside
 the selected output that the Nginx worker can read. Godot exports and
-selected-builder bundles have separate validation paths. [Post-build check](../lib/deployment.py#L1451) ·
-[Nginx location](../lib/nginx_config.py#L405) · [Deployment guide](services/deployments.md#static-site)
+selected-builder bundles have separate validation paths. [Post-build check](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/lib/deployment.py#L1451) ·
+[Nginx location](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/lib/nginx_config.py#L405) · [Deployment guide](services/deployments.md#static-site)
 
 **Fix and verify.** Validate and freeze the final public tree before replacing
 the active release. Check the output root, its ancestors and its members.
@@ -122,19 +129,19 @@ previous release.
 
 | Finding and exposure | Action and acceptance |
 | --- | --- |
-| **Gateway restrictions follow the route name.** An authorized publisher or existing forward can map a second listener to the same local T3 or pairing backend with a broader source policy. Application authentication still applies. [Gateway policy](../common/service_tools/basaltwater_web.py#L424) · [T3 registration](../common/t3code_steps.py#L1963) | Review all mappings to administrative services. Bind their minimum source restriction to the protected upstream. Verify two mappings cannot widen access after creation, narrowing or reconciliation, for IPv4 and IPv6. |
-| **Scrub confirmation depends on trusting the requester account.** Shares & Data confirms the action in the panel. The broker automatically authorizes `data.run`, including deletion and acceptance of changed content. The worker still checks eligible findings and file identities. Any process with the configured requester identity and socket access shares that bounded authority. [Broker policy](../lib/privilege_policy.py#L155) · [Worker checks](../common/service_tools/data_job.py#L210) · [Documented trust model](agents/privilege-approvals.md) | Where an independent human decision is required, withhold this authority from unattended accounts. Require decision-side approval bound to the exact destructive action and finding. Verify requester-only, stale and repeated decisions cannot authorize it. |
-| **Workspace credential names span services and hosts.** A Git credential is installed for a chosen origin, but the controller looks up its value by username alone. A matching name can also resolve an SMB mount password or initial Gogs admin password. A collision can deliver a valid secret to an unintended target. [Resolution](../lib/credentials.py#L236) · [Operator guidance](agents/credentials.md#workspace-credential-store) | Use distinct credential names or separate workspaces today. Scope stored identities to the intended service and destination. Verify independent secrets for identical usernames and require a decision for ambiguous legacy entries. |
-| **Initial Gogs passwords enter target process arguments.** The displayed command is redacted and the saved credentials file is private. Account creation still supplies the password in child arguments, where local process inspection or execution auditing can capture it. Both generated and workspace passwords take this path. [Account creation](../web/gogs_steps.py#L1072) | Use a unique bootstrap password and rotate it after setup. Adopt an input channel supported by the deployed Gogs version that keeps the value out of process arguments. Verify both password sources through account creation, including failure diagnostics. |
+| **Gateway restrictions follow the route name.** An authorized publisher or existing forward can map a second listener to the same local T3 or pairing backend with a broader source policy. Application authentication still applies. [Gateway policy](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/common/service_tools/basaltwater_web.py#L424) · [T3 registration](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/common/t3code_steps.py#L1963) | Review all mappings to administrative services. Bind their minimum source restriction to the protected upstream. Verify two mappings cannot widen access after creation, narrowing or reconciliation, for IPv4 and IPv6. |
+| **Scrub confirmation depends on trusting the requester account.** Shares & Data confirms the action in the panel. The broker automatically authorizes `data.run`, including deletion and acceptance of changed content. The worker still checks eligible findings and file identities. Any process with the configured requester identity and socket access shares that bounded authority. [Broker policy](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/lib/privilege_policy.py#L155) · [Worker checks](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/common/service_tools/data_job.py#L210) · [Documented trust model](agents/privilege-approvals.md) | Where an independent human decision is required, withhold this authority from unattended accounts. Require decision-side approval bound to the exact destructive action and finding. Verify requester-only, stale and repeated decisions cannot authorize it. |
+| **Workspace credential names span services and hosts.** A Git credential is installed for a chosen origin, but the controller looks up its value by username alone. A matching name can also resolve an SMB mount password or initial Gogs admin password. A collision can deliver a valid secret to an unintended target. [Resolution](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/lib/credentials.py#L236) · [Operator guidance](agents/credentials.md#workspace-credential-store) | Use distinct credential names or separate workspaces today. Scope stored identities to the intended service and destination. Verify independent secrets for identical usernames and require a decision for ambiguous legacy entries. |
+| **Initial Gogs passwords enter target process arguments.** The displayed command is redacted and the saved credentials file is private. Account creation still supplies the password in child arguments, where local process inspection or execution auditing can capture it. Both generated and workspace passwords take this path. [Account creation](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/web/gogs_steps.py#L1072) | Use a unique bootstrap password and rotate it after setup. Adopt an input channel supported by the deployed Gogs version that keeps the value out of process arguments. Verify both password sources through account creation, including failure diagnostics. |
 
 ## Build, update and release integrity
 
 | Finding and exposure | Action and acceptance |
 | --- | --- |
-| **A routine cloud-image catalog refresh removes verification.** The reviewed catalog pins each Debian snapshot and SHA-512. The updater's default changes entries to `latest` and clears their digests. Provisioning then accepts new or cached catalog images with a warning. The existing default-alias test detects a bad catalog if run before publication. [Updater](../scripts/update_cloud_images.py#L143) · [Provisioning](../lib/proxmox_vm.py#L1690) · [Catalog test](../tests/test_cloud_images.py#L19) | Follow the [pinned refresh procedure](reference/machine-types.md#provisioning-a-proxmox-vm). Make an ordinary refresh retain verified pins, validate every alias, and reject missing digests before downloading or reusing an image. |
-| **Antistatic installs identify binary releases by tag.** Server and database setup select a stable GitHub asset and download over HTTPS. Installation and later reuse trust the tag and presence of the local executable, without an expected content digest. Unexpected bytes can become the service executable. Both services run as dedicated users. [Release selection](../game/antistatic_steps.py#L201) · [Installer](../lib/release_management.py#L304) | Bind each architecture and tag to an expected digest from trusted metadata and verify staged bytes before publication. Detect same-tag drift on reuse. Test mismatch and missing metadata with the previous binary and release state intact. |
-| **Release builds have repository write permission.** Tag tests run read-only. A later job builds and smoke-tests the wheel with `contents: write` and the checkout action's default persisted credential. A compromised build dependency in that job would share authority intended for publishing. [Release workflow](../.github/workflows/release.yml#L46) · [Checkout credential behavior](https://github.com/actions/checkout#usage) | Build and test the wheel in a read-only job with credential persistence disabled. Give write permission only to a publishing job that takes the identified, verified artifact. Verify the published digest matches the tested wheel and review both jobs' effective permissions. |
-| **Windows artifact receipts identify only part of the input.** The native job verifies HEAD and the entry script, then runs from the live checkout. Changes to another build input can reach an artifact whose receipt still names the clean commit. The upload digest confirms the bytes received. [Native job](../windows/Invoke-BasaltwaterJob.ps1#L56) | Use a fresh private checkout for trusted jobs today. Execute from a snapshot of the declared revision and record any additional inputs. Verify that modifying a second source file cannot change a revision-attributed artifact. |
+| **A routine cloud-image catalog refresh removes verification.** The reviewed catalog pins each Debian snapshot and SHA-512. The updater's default changes entries to `latest` and clears their digests. Provisioning then accepts new or cached catalog images with a warning. The existing default-alias test detects a bad catalog if run before publication. [Updater](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/scripts/update_cloud_images.py#L143) · [Provisioning](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/lib/proxmox_vm.py#L1690) · [Catalog test](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/tests/test_cloud_images.py#L19) | Follow the [pinned refresh procedure](reference/machine-types.md#provisioning-a-proxmox-vm). Make an ordinary refresh retain verified pins, validate every alias, and reject missing digests before downloading or reusing an image. |
+| **Antistatic installs identify binary releases by tag.** Server and database setup select a stable GitHub asset and download over HTTPS. Installation and later reuse trust the tag and presence of the local executable, without an expected content digest. Unexpected bytes can become the service executable. Both services run as dedicated users. [Release selection](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/game/antistatic_steps.py#L201) · [Installer](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/lib/release_management.py#L304) | Bind each architecture and tag to an expected digest from trusted metadata and verify staged bytes before publication. Detect same-tag drift on reuse. Test mismatch and missing metadata with the previous binary and release state intact. |
+| **Release builds have repository write permission.** Tag tests run read-only. A later job builds and smoke-tests the wheel with `contents: write` and the checkout action's default persisted credential. A compromised build dependency in that job would share authority intended for publishing. [Release workflow](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/.github/workflows/release.yml#L46) · [Checkout credential behavior](https://github.com/actions/checkout#usage) | Build and test the wheel in a read-only job with credential persistence disabled. Give write permission only to a publishing job that takes the identified, verified artifact. Verify the published digest matches the tested wheel and review both jobs' effective permissions. |
+| **Windows artifact receipts identify only part of the input.** The native job verifies HEAD and the entry script, then runs from the live checkout. Changes to another build input can reach an artifact whose receipt still names the clean commit. The upload digest confirms the bytes received. [Native job](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/windows/Invoke-BasaltwaterJob.ps1#L56) | Use a fresh private checkout for trusted jobs today. Execute from a snapshot of the declared revision and record any additional inputs. Verify that modifying a second source file cannot change a revision-attributed artifact. |
 
 ## Review scope and verification
 
@@ -148,8 +155,8 @@ These existing controls narrow the findings and should survive remediation.
   Builder grants constrain projects and resources, target grants independently
   authorize applications, and build commands drop privileges and capabilities.
   Network access and the shared worker identity still matter when choosing
-  which projects may share a builder. [Transport](../lib/build_client.py#L855) ·
-  [Build execution](../lib/build_execution.py#L75) · [Target authorization](../lib/build_target_policy.py#L426)
+  which projects may share a builder. [Transport](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/lib/build_client.py#L855) ·
+  [Build execution](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/lib/build_execution.py#L75) · [Target authorization](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/lib/build_target_policy.py#L426)
 - Standard managed Codex setup can grant account-level task scheduling through
   MCP, including when an inspection task has a read-only shell profile.
   Check both the provider profile and effective tool grants when allowing
@@ -159,7 +166,7 @@ These existing controls narrow the findings and should survive remediation.
   configured folders, and notification webhooks verify HTTPS peers by default
   and reject redirects. These checks apply to their respective code paths.
   [CIFS setup](../smb/smb_mount_steps.py) · [Syncthing guard](../sync/service_tools/syncthing_guard.py) ·
-  [Webhook sender](../lib/notifications.py#L887)
+  [Webhook sender](https://github.com/bluehexagons/basaltwater/blob/2c78b19b/lib/notifications.py#L887)
 
 The focused checks passed 20 image catalog and staging tests, then 833 tests
 covering the security suite and related modules, including guest enrollment,
