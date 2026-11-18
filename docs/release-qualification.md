@@ -112,6 +112,11 @@ smoke-tested the wheel before GitHub published the prerelease.
   VM upgraded its system installation with the pinned installer, preserving the
   saved setup and deployed service binary. The exact installer versions and
   both deployed applications were verified again after reboot.
+- A new Debian 13 `agent_vm` was provisioned on single-node Proxmox using the
+  exact candidate. The installed source, completed setup, SSH host identity,
+  managed account, package state, and working Codex and GitHub CLI launchers
+  were checked. Provider authorization was disabled for this fixture. The
+  account, tools, and SSH access passed again after reboot.
 - The installed candidate ran both builder and target roles on the VM, with
   separate authorization for the target. Over verified HTTPS, the builder
   rejected an invalid signature and deduplicated the signed push. A new build
@@ -150,6 +155,24 @@ smoke-tested the wheel before GitHub published the prerelease.
   the login and home cutover. Numeric IDs, private file bytes and metadata, SSH
   login, saved setup, controller cache, and the storage timer were verified.
   The recovered account and timer persisted through an LXC restart.
+- The exact tag passed the Guacamole protocol integration in Playwright
+  Chromium 156 and Firefox 157. The full suite passed 97 of 100 checks. Two
+  failures came from the Shares & Data fixture and its outdated recovery
+  expectations. A third came from Firefox cancelling overlapping navigation
+  in the development desktop. The fixture now follows the installed broker's
+  approval policy, and the development reload and test navigation were corrected
+  on `main`. All 50 Firefox checks and the six affected Chromium cases passed
+  after the corrections.
+- Native Firefox ESR 153.7.0 on Debian 13.7 amd64 passed panel keyboard,
+  disclosure, meter, theme, narrow-layout and 100%/200% zoom checks. The CA
+  download matched its verified SHA-256. Current-browser pairing, one-time
+  links, approval, forged decisions, expiry and replay checks passed against
+  disposable fixtures. A fresh trusted profile received login challenges on
+  each surface. The Firefox Settings UI imported the fixture CA with website
+  trust in an isolated graphical session. The fixture panel loaded, and the
+  wrong-hostname certificate was still rejected. A separate test of the
+  installed `server_web` gateway succeeded after the CA was transferred over
+  verified SSH and enrolled in a disposable Firefox profile.
 
 #### `v2.0.0-rc.2`
 
@@ -209,14 +232,16 @@ completed with 10,441 tests, 25 skips and 82% branch-aware coverage.
 
 Private transcripts and state comparisons are retained by the qualification
 operator. The remaining stable work includes supported profile and recovery
-matrices, Firefox ESR and desktop/T3 checks, multi-node Proxmox, storage and
-application recovery, and the physical kiosk seat.
+matrices, shared desktop and T3 checks, and storage and application
+recovery. Multi-node Proxmox and kiosk qualification are deferred to a later
+release.
 
 ### Stable qualification matrix
 
-All rows below are required before publishing `v2.0.0`. Record **Pass** only
-when the exact candidate commit completed the listed operation and the result
-was checked. Use **Fail**, **Blocked**, or **Not run** for other outcomes.
+Complete all rows except those marked **Deferred** before publishing `v2.0.0`.
+Record **Pass** only when the exact candidate commit completed the listed
+operation and the result was checked. Use **Fail**, **Blocked**, or **Not run**
+for other outcomes.
 Results recorded for earlier tags still need qualification on the current
 candidate.
 
@@ -224,21 +249,21 @@ candidate.
 | --- | --- | --- | --- |
 | REL-01 | Source and wheel | Candidate CI passes; wheel installs outside the source tree; `basaltw --version` and packaged entry points match the candidate metadata. | **Pass** for `v2.0.0-rc.3` |
 | REL-02 | Installer channels | Fresh exact-tag install and upgrade work; `stable` does not select an `-rc.` tag; `dev` still selects `main`. | **Pass** for `v2.0.0-rc.3` on Debian 13 VM |
-| INS-01 | Clean Debian installations | Install controller, server, and agent profiles on disposable Debian hosts; cover the supported bare-metal/VM/LXC paths that each profile supports. Check commands, permissions, and selected services. | Not run for `v2.0.0-rc.2` |
+| INS-01 | Clean Debian installations | Install controller, server, and agent profiles on disposable Debian hosts; cover the supported bare-metal/VM/LXC paths that each profile supports. Check commands, permissions, and selected services. | **Not run** in full. The controller install and clean Debian 13 `agent_vm` passed on `v2.0.0-rc.3`. |
 | INS-02 | Existing-install upgrades | Upgrade a supported Basaltwater installation and verify user data, setup state, credentials, and owned runtime paths. Exercise the documented intermediate-version migration for any remaining legacy installation; do not assume direct migration from historical `v0.2.0`. | Not run for `v2.0.0-rc.2` |
 | INS-03 | Interruption and recovery | Interrupt migration and setup at documented safe test points. Confirm the operation marker blocks unsafe reruns, recovery guidance identifies retained state, and a successful retry preserves the prior working state. | Not run for `v2.0.0-rc.2` |
 | INS-04 | Services and private data | Compare pre/post checksums and modes for preserved private data; validate application access, managed service/timer health, agent configuration, and absence of retired namespace paths. | Not run for `v2.0.0-rc.2` |
 | USR-01 | Managed target-user rename | On a disposable Debian/systemd target, rename a managed account through a separate SSH administrator. Verify UID/GID, home contents, SSH access, setup state/cache, managed units, service state, interruption handling, and resume. | **Pass** for `v2.0.0-rc.3` on Debian 13 LXC |
 | DSK-01 | Shared XRDP desktop | On a disposable Debian workstation, cover fresh setup, human-first and concurrent starts, supported clients, keyboard/input/clipboard, resize and reconnect, frontend/network interruption, desktop crash/reboot, logout, interrupted setup, legacy-session blocking, and administrator rollback. Confirm the documented persistence and handoff behavior; see [XRDP guidance](workstations/xrdp.md). | Not run for `v2.0.0-rc.2` |
-| DSK-02 | Proxmox local browser kiosk | On a disposable Proxmox VE 9 console VM and target laptop, verify CLI/web boot, Firefox navigation, offline saved destinations and tab opening, local status/doctor/start/stop/restart, native/guest consoles, VT switching with a console focused, input/scaling, service stop/restart and child cleanup, crash recovery, package rerun, removal, and current lid/suspend behavior; see the [kiosk checklist](workstations/proxmox-kiosk.md#proxmox-and-hardware-qualification). | Not run for `v2.0.0-rc.2`; selected Debian VM component checks do not qualify the full Proxmox profile or physical seat |
+| DSK-02 | Proxmox local browser kiosk | On a disposable Proxmox VE 9 console VM and target laptop, verify CLI/web boot, Firefox navigation, offline saved destinations and tab opening, local status/doctor/start/stop/restart, native/guest consoles, VT switching with a console focused, input/scaling, service stop/restart and child cleanup, crash recovery, package rerun, removal, and current lid/suspend behavior; see the [kiosk checklist](workstations/proxmox-kiosk.md#proxmox-and-hardware-qualification). | **Deferred** to a later release |
 | PRV-01 | Privileged executor and Admin refresh lifecycle | On a disposable Debian/systemd VM, cover approval origin, TLS, review window and credential privacy; source activation, setup failures, partial activation, explicit recovery identity and evidence retention. Interrupt the worker/broker or lose a dispatch response; confirm uncertain work is never replayed. Exercise pipe-holding or TERM-ignoring descendants and replaced paths; cleanup must remain bounded. Preserve active builds, unpushed work, T3 and desktop state through maintenance/readiness checks. See [privilege approvals](agents/privilege-approvals.md) and the [broker reference](agents/privilege-broker-reference.md). | Not run for `v2.0.0-rc.2` |
 | T3-01 | T3 Code server and client | On a disposable Debian VM, qualify stable T3 0.1.8 with a compatible V2 client and supported provider versions. Confirm complete managed skills after restarting the agent session. Retain fresh-install/V1 migration, 0.1.7 upgrade, pairing, provider/terminal, update/reboot, gateway preview/recording, and direct/Connect evidence. Exercise delegation, opt-in linked environments and access ceilings, workspace binding, queues/recovery, schedules/webhooks including fresh sessions, PR watches, projectless promotion, guarded release-track switching and the changed 0.1.8 workflows using the [stable feature cases](agents/t3-code.md#stable-feature-qualification). | Not run for `v2.0.0-rc.2`; disposable 0.1.8 runtime/pairing/database component checks do not qualify this full case |
-| BRW-01 | Browser qualification | Pass the Guacamole integration boundary in Chromium and Firefox; on disposable Debian, complete the manual Firefox ESR checks and verify internal HTTPS enrollment on a managed deployment. See [browser testing](agents/browser-testing.md#guacamole-boundary) and its [native release procedure](agents/browser-testing.md#native-debian-firefox-esr-release-qualification). | Not run for `v2.0.0-rc.2` |
+| BRW-01 | Browser qualification | Pass the Guacamole integration boundary in Chromium and Firefox; on disposable Debian, complete the manual Firefox ESR checks and verify internal HTTPS enrollment on a managed deployment. See [browser testing](agents/browser-testing.md#guacamole-boundary) and its [native release procedure](agents/browser-testing.md#native-debian-firefox-esr-release-qualification). | **Pass** for `v2.0.0-rc.3` with the disposable Guacamole protocol fixture, native Debian Firefox ESR and an installed Debian 13 gateway |
 | SEC-01 | Required audit coverage | On a required-audit Debian profile, verify `/usr/sbin/auditctl -s`, managed rules from `auditctl -l`, a fresh healthy panel snapshot, and security-monitor collection. Confirm missing tools, stopped auditd, or missing rules are surfaced as source failures. | **Pass** for `v2.0.0-rc.3` on a Debian 13 `server_web` VM |
 | TLS-01 | Certificate trust reporting | Exercise a self-signed endpoint with its configured CA, a publicly trusted endpoint, missing CA material, and failed TLS verification. Confirm `basaltwater-web ca --json` and the panel never claim public trust without verification. | **Pass** for `v2.0.0-rc.3` on a Debian 13 `server_web` VM |
 | SEC-02 | Security-log retention gaps | Move audit/journal cursors beyond retained source data and verify the missing interval is reported rather than silently treated as clean. If gap detection remains open, record the release risk decision, mitigation, and owner; do not imply that unobserved intervals were checked. | **Pass** for `v2.0.0-rc.3` for gaps before the oldest retained entries on a Debian 13 `server_web` VM |
 | STO-01 | Disk and LVM identity | Exercise mixed retained/new layouts, provider and guest reruns, reboot, missing disks, and interrupted setup. Confirm existing persistent identities are preserved and new identities use Basaltwater names. | Not run for `v2.0.0-rc.2` |
-| PVE-01 | Multi-node Proxmox | Install and rerun on multiple nodes of a disposable cluster, including separate `/run/lock` and `/var/lib` filesystems. Confirm lock exclusion and guest operations across nodes. This does not qualify standalone maintenance, storage-specific health, interrupted updates, guest evacuation, unavailable backup targets, or isolated restore; see [Proxmox operations](operations/proxmox.md). | Not run for `v2.0.0-rc.2` |
+| PVE-01 | Multi-node Proxmox | Install and rerun on multiple nodes of a disposable cluster, including separate `/run/lock` and `/var/lib` filesystems. Confirm lock exclusion and guest operations across nodes. This does not qualify standalone maintenance, storage-specific health, interrupted updates, guest evacuation, unavailable backup targets, or isolated restore; see [Proxmox operations](operations/proxmox.md). | **Deferred** to a later release |
 | STO-02 | NAS, Samba, Gogs, and Syncthing | Qualify setup/reruns, boot ordering, missing mounts, identity preservation, and service-user access on disposable storage. | Not run for `v2.0.0-rc.2` |
 | STO-03 | Storage failure and restoration | Cause sync and scrub failures with disposable data; verify the failure is reported and exercise the documented restore path. A successful mirror alone is not recovery evidence. | Not run for `v2.0.0-rc.2` |
 | APP-01 | HomeBox lifecycle | On a disposable amd64 Debian VM, test reboot and mounted-data recovery; certificate issuance/renewal and firewall reachability; browser login, items, attachments, and WebSockets; setup rerun, upgrade rollback, and full restore. | Not run for `v2.0.0-rc.2`; selected native loopback/API setup, rerun, full restore, upgrade, reboot and disable/re-enable checks do not qualify the complete lifecycle |
