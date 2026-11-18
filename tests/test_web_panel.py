@@ -1153,6 +1153,10 @@ class WebPanelRenderingTest(unittest.TestCase):
         )
 
         self.assertIn(f"location = {WEB_PANEL_NOTIFICATION_ENDPOINT}", rendered)
+        ingest = rendered.split(f"location = {WEB_PANEL_NOTIFICATION_ENDPOINT} {{", 1)[1].split("}", 1)[0]
+        self.assertNotIn('proxy_set_header Authorization "";', ingest)
+        panel = rendered.rsplit("location / {", 1)[1].split("}", 1)[0]
+        self.assertIn('proxy_set_header Authorization "";', panel)
         self.assertIn("auth_basic off", rendered)
         self.assertIn("rate=30r/m", rendered)
         self.assertIn("client_max_body_size 64k", rendered)

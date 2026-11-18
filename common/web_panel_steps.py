@@ -483,6 +483,7 @@ server {{
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Basaltwater-User $remote_user;
+        proxy_set_header Authorization "";
         proxy_connect_timeout 5s;
         proxy_read_timeout 35s;
         proxy_send_timeout 35s;

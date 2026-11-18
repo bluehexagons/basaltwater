@@ -932,6 +932,8 @@ class DevicePairingRemoteSetupTest(unittest.TestCase):
             with open(nginx_available, encoding="utf-8") as file_obj:
                 nginx = file_obj.read()
             self.assertIn('auth_basic "Device pairing"', nginx)
+            proxy = nginx.split("location / {", 1)[1].split("}", 1)[0]
+            self.assertIn('proxy_set_header Authorization "";', proxy)
             self.assertIn("rate=5r/m", nginx)
             self.assertIn(
                 "limit_req zone=basaltwater_device_pairing_auth burst=5 nodelay",

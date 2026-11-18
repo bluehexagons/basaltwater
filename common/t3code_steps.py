@@ -1804,6 +1804,7 @@ server {{
         proxy_set_header X-Forwarded-Host $basaltwater_device_pairing_public_host;
         proxy_set_header X-Forwarded-Proto $basaltwater_device_pairing_public_proto;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header Authorization "";
         proxy_connect_timeout 5s;
         proxy_read_timeout 35s;
         proxy_send_timeout 35s;
