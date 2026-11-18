@@ -120,7 +120,7 @@ class WebhookSetupTests(unittest.TestCase):
                     self.assertTrue(webhook.is_file())
                     self.assertTrue((enabled / webhook.name).is_symlink())
                     self.assertIn("proxy_pass http://127.0.0.1:8765;", webhook.read_text())
-                    self.assertEqual({site["hostname"] for site in tunnel.discover_nginx_sites()},
+                    self.assertEqual(tunnel.enabled_nginx_hostnames(),
                                      {"app.example.com", "builds.example.com"})
                     create_nginx_sites_for_groups({}, managed_domains={SETTINGS["domain"]}, site_owner="webhook")
                     self.assertFalse(webhook.exists())

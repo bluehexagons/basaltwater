@@ -1237,7 +1237,6 @@ class TestGogsNginx(unittest.TestCase):
             patch.object(gogs_steps, "obtain_letsencrypt_certificate", side_effect=AssertionError("No origin ACME behind Cloudflare")) as acme,
             patch.object(gogs_steps, "setup_certificate_renewal") as renewal,
             patch.object(gogs_steps, "configure_nginx_auth_failure_ban"),
-            patch.object(gogs_steps, "run_cloudflare_tunnel_setup", return_value=True) as tunnel,
             patch.object(gogs_steps, "open", create=True) as files,
         ):
             gogs_steps._write_gogs_nginx_config(config, "git.example.test", 443, 13000)
@@ -1245,7 +1244,6 @@ class TestGogsNginx(unittest.TestCase):
         acme.assert_not_called()
         renewal.assert_not_called()
         local_tls.assert_called_once_with("git.example.test", [])
-        tunnel.assert_called_once_with(config)
         content = files.return_value.__enter__.return_value.write.call_args.args[0]
         self.assertIn("listen 80;", content)
         self.assertIn("listen 443 ssl;", content)

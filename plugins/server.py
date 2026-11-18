@@ -158,6 +158,7 @@ def build_server_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
             steps.extend(get_web_firewall_steps())
     elif config.system_type == "server_lite" and (
         config.effective_web_ports()
+        or config.enable_cloudflare
         or config.homebox == []
         or config.disable_web_panel
         or config.effective_access_sources()

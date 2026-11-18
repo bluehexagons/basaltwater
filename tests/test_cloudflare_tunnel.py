@@ -73,6 +73,7 @@ class TestCloudflareTunnelState(unittest.TestCase):
         self.assertIn('tunnel: "tunnel-id"', content)
         self.assertIn('credentials-file: "/etc/cloudflared/tunnel.json"', content)
         self.assertIn('hostname: "example.com"', content)
+        self.assertIn('httpHostHeader: "example.com"', content)
 
         with self.assertRaisesRegex(ValueError, "Invalid tunnel hostname"):
             tunnel_setup.generate_config_yml(
@@ -135,14 +136,11 @@ class TestCloudflareTunnelState(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with open(os.path.join(tmp, "site.conf"), "w", encoding="utf-8") as config:
                 config.write(
-                    "server_name example.com example.com invalid_host _;\n"
+                    "server { server_name example.com Example.com. invalid_host _; }\n"
                 )
             with patch.object(tunnel_setup, "NGINX_SITES_DIR", tmp):
-                sites = tunnel_setup.discover_nginx_sites()
-        self.assertEqual(
-            sites,
-            [{"hostname": "example.com", "service": "http://localhost:80"}],
-        )
+                names = tunnel_setup.enabled_nginx_hostnames()
+        self.assertEqual(names, {"example.com"})
 
     def test_discovery_reads_quoted_names_without_publishing_comments_or_log_strings(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -154,16 +152,19 @@ class TestCloudflareTunnelState(unittest.TestCase):
                     "  'api.example.com'; }\n"
                 )
             with patch.object(tunnel_setup, "NGINX_SITES_DIR", tmp):
-                sites = tunnel_setup.discover_nginx_sites()
-        self.assertEqual([site["hostname"] for site in sites], ["app.example.com", "api.example.com"])
+                names = tunnel_setup.enabled_nginx_hostnames()
+        self.assertEqual(names, {"app.example.com", "api.example.com"})
 
     def test_discovery_does_not_create_public_ingress_for_local_ip_server_names(self):
         with tempfile.TemporaryDirectory() as tmp:
             with open(os.path.join(tmp, "site.conf"), "w", encoding="utf-8") as config:
-                config.write("server_name localhost 127.0.0.1 192.168.0.52 ::1 app.example.com;\n")
+                config.write(
+                    "server { server_name localhost 127.0.0.1 192.168.0.52 ::1 app.example.com; }\n"
+                    "server { listen 443 ssl; server_name admin.example.com; }\n"
+                )
             with patch.object(tunnel_setup, "NGINX_SITES_DIR", tmp):
-                sites = tunnel_setup.discover_nginx_sites()
-        self.assertEqual([site["hostname"] for site in sites], ["app.example.com"])
+                names = tunnel_setup.enabled_nginx_hostnames()
+        self.assertEqual(names, {"app.example.com"})
 
     def test_generate_config_rejects_unsupported_origin(self):
         with self.assertRaisesRegex(ValueError, "Unsupported tunnel origin"):
@@ -185,20 +186,19 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
             with open(credentials, 'w', encoding='utf-8') as handle:
                 handle.write('{}')
             tunnel = {'name': 'example', 'id': 'id', 'credentials_file': credentials}
-            sites = [{'hostname': 'example.com', 'service': 'http://localhost:80'}]
             with patch.object(tunnel_setup, 'CONFIG_DIR', tmp), \
                     patch.object(tunnel_setup, 'STATE_FILE', os.path.join(tmp, 'state.json')), \
                     patch.object(tunnel_setup, 'check_root'), \
                     patch.object(tunnel_setup, 'install_cloudflared'), \
                     patch.object(tunnel_setup, 'authenticate_cloudflare'), \
                     patch.object(tunnel_setup, 'create_tunnel', return_value=tunnel) as create, \
-                    patch.object(tunnel_setup, 'discover_nginx_sites', return_value=sites), \
+                    patch.object(tunnel_setup, 'enabled_nginx_hostnames', return_value={'example.com'}), \
                     patch.object(tunnel_setup, '_write_config_file'), \
                     patch.object(tunnel_setup, 'setup_input', side_effect=['', 'y']), \
                     patch.object(tunnel_setup, 'install_and_start_service', side_effect=[False, True]), \
                     patch.object(tunnel_setup, '_configure_firewall') as firewall:
                 with self.assertRaisesRegex(RuntimeError, 'did not become active'):
-                    tunnel_setup.main(tunnel_name='example', allow_direct=True)
+                    tunnel_setup.main(tunnel_name='example', allow_direct=True, hostnames=['example.com'])
                 saved = tunnel_setup.load_state()
                 self.assertTrue(saved['allow_direct'])
                 self.assertTrue(saved['pending_activation'])
@@ -220,12 +220,15 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
                     patch.object(tunnel_setup, 'STATE_FILE', os.path.join(tmp, 'state.json')), \
                     patch.object(tunnel_setup, 'check_root'), \
                     patch.object(tunnel_setup, 'install_cloudflared'), \
-                    patch.object(tunnel_setup, 'discover_nginx_sites', return_value=sites), \
-                    patch.object(tunnel_setup, '_config_is_valid', return_value=True), \
+                    patch.object(tunnel_setup, 'enabled_nginx_hostnames', return_value={'example.com'}), \
+                    patch.object(tunnel_setup, '_config_is_current', return_value=True), \
                     patch.object(tunnel_setup, '_write_config_file') as write_config, \
                     patch.object(tunnel_setup, 'install_and_start_service', return_value=True) as service, \
                     patch.object(tunnel_setup, '_configure_firewall') as firewall:
-                tunnel_setup.save_state(tunnel, sites, allow_direct=True, access_sources=['192.168.0.52/24'])
+                tunnel_setup.save_state(
+                    tunnel, sites, allow_direct=True, access_sources=['192.168.0.52/24'],
+                    managed_hostnames=['example.com'],
+                )
                 self.assertTrue(tunnel_setup.main(interactive=False))
                 firewall.assert_called_with(allow_direct=True, access_sources=['192.168.0.0/24'])
                 self.assertTrue(tunnel_setup.main(interactive=False, allow_direct=False, access_sources=[]))
@@ -235,9 +238,8 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
                 write_config.assert_not_called()
                 self.assertEqual(service.call_args_list, [call(restart=False), call(restart=False)])
 
-    def test_initial_creation_uses_suggested_name_and_only_closes_ports_after_activation(self):
+    def test_initial_creation_uses_suggested_name_and_applies_policy_after_activation(self):
         tunnel = {"name": "example_droplet", "id": "id", "credentials_file": "/etc/cloudflared/id.json"}
-        sites = [{"hostname": "example.com", "service": "http://localhost:80"}]
         with patch.object(tunnel_setup, "check_root"), patch.object(
             tunnel_setup, "load_state", return_value=None
         ), patch.object(tunnel_setup, "install_cloudflared"), patch.object(
@@ -245,17 +247,17 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
         ), patch.object(tunnel_setup, "setup_input", side_effect=["", "y"]), patch.object(
             tunnel_setup, "create_tunnel", return_value=tunnel
         ) as create, patch.object(tunnel_setup, "save_state"), patch.object(
-            tunnel_setup, "discover_nginx_sites", return_value=sites
+            tunnel_setup, "enabled_nginx_hostnames", return_value={"example.com"}
         ), patch.object(tunnel_setup, "_write_config_file"), patch.object(
             tunnel_setup, "install_and_start_service", side_effect=[False, True]
         ), patch.object(
             tunnel_setup, "_configure_firewall"
         ) as close:
             with self.assertRaisesRegex(RuntimeError, "did not become active"):
-                tunnel_setup.main(tunnel_name="example_droplet")
+                tunnel_setup.main(tunnel_name="example_droplet", managed_hostnames=["example.com"])
             close.assert_not_called()
             with patch.object(tunnel_setup, "setup_input", side_effect=["", "y"]):
-                self.assertTrue(tunnel_setup.main(tunnel_name="example_droplet"))
+                self.assertTrue(tunnel_setup.main(tunnel_name="example_droplet", managed_hostnames=["example.com"]))
             create.assert_called_with("example_droplet")
             close.assert_called_once()
 
@@ -304,11 +306,14 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             config_path = os.path.join(tmp, "config.yml")
             with patch.object(tunnel_setup, "run_command") as run_command:
-                self.assertFalse(tunnel_setup._config_is_valid(config_path))
+                self.assertFalse(tunnel_setup._config_is_current(config_path, "config\n"))
                 run_command.assert_not_called()
 
             with open(config_path, "w", encoding="utf-8") as config_file:
                 config_file.write("config\n")
+            with patch.object(tunnel_setup, "run_command") as run_command:
+                self.assertFalse(tunnel_setup._config_is_current(config_path, "different\n"))
+                run_command.assert_not_called()
             for returncode, expected in ((1, False), (0, True)):
                 with self.subTest(returncode=returncode):
                     with patch.object(
@@ -320,7 +325,7 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
                             stderr="invalid" if returncode else "",
                         ),
                     ) as run_command:
-                        self.assertEqual(tunnel_setup._config_is_valid(config_path), expected)
+                        self.assertEqual(tunnel_setup._config_is_current(config_path, "config\n"), expected)
                     run_command.assert_called_once()
                     self.assertEqual(
                         run_command.call_args.args[0],
@@ -376,20 +381,13 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
                 self.assertEqual(run_command.call_count, len(results))
                 self.assertEqual(diagnostics.call_count, 0 if expected else 1)
 
-    def test_firewall_policy_installs_ufw_when_missing(self):
-        with patch.object(tunnel_setup.shutil, "which", return_value=None), patch.object(
-            tunnel_setup, "run_command", return_value=SimpleNamespace(returncode=0, stdout="Status: active\n")
-        ) as run_command, patch.object(tunnel_setup, "can_manage_firewall", return_value=True):
-            tunnel_setup._configure_firewall(allow_direct=False, access_sources=[])
-
-        self.assertEqual(
-            run_command.call_args_list[:2],
-            [call(["apt-get", "update"]), call(["apt-get", "install", "-y", "ufw"])],
-        )
-        self.assertIn(
-            call(["ufw", "--force", "enable"]),
-            run_command.call_args_list,
-        )
+    def test_standalone_helper_leaves_an_inactive_firewall_and_ssh_policy_untouched(self):
+        with patch.object(tunnel_setup, "run_command", return_value=SimpleNamespace(
+            returncode=0, stdout="Status: inactive\n",
+        )) as run_command, patch.object(tunnel_setup, "can_manage_firewall", return_value=True):
+            with self.assertRaisesRegex(RuntimeError, "configure the firewall"):
+                tunnel_setup._configure_firewall(allow_direct=False, access_sources=[])
+        run_command.assert_called_once_with(["ufw", "status", "verbose"], check=False, capture_output=True)
 
     def test_restart_failure_is_not_reported_as_a_successful_refresh(self):
         with patch.object(tunnel_setup, "run_command", return_value=SimpleNamespace(
@@ -531,15 +529,14 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
             self.assertNotIn(secret, output.getvalue())
         self.assertTrue(all(item.kwargs["timeout"] == 10 for item in run_command.call_args_list))
 
-    def test_non_interactive_refresh_returns_false_when_no_sites_are_discovered(self):
+    def test_unattended_legacy_refresh_requires_explicit_selection(self):
         with patch.object(tunnel_setup, "check_root"), patch.object(
             tunnel_setup, "load_state", return_value={"tunnel": {}, "sites": []}
-        ), patch.object(tunnel_setup, "install_cloudflared") as install_cloudflared, patch.object(
-            tunnel_setup, "discover_nginx_sites", return_value=[]
-        ):
-            self.assertFalse(tunnel_setup.main(interactive=False))
+        ), patch.object(tunnel_setup, "install_cloudflared") as install_cloudflared:
+            with self.assertRaisesRegex(ValueError, "Review the legacy tunnel routes"):
+                tunnel_setup.main(interactive=False)
 
-        install_cloudflared.assert_called_once()
+        install_cloudflared.assert_not_called()
 
     def test_non_interactive_refresh_skips_config_write_when_nothing_changed(self):
         state = {
@@ -549,14 +546,18 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
                 "credentials_file": "/etc/cloudflared/tunnel.json",
             },
             "sites": [{"hostname": "example.com", "service": "http://localhost:80"}],
+            "managed_hostnames": ["example.com"],
+            "hostnames": [],
+            "allow_direct": False,
+            "access_sources": [],
         }
         with patch.object(tunnel_setup, "check_root"), patch.object(
             tunnel_setup, "load_state", return_value=state
         ), patch.object(tunnel_setup, "install_cloudflared"), patch.object(
             tunnel_setup,
-            "discover_nginx_sites",
-            return_value=[{"hostname": "example.com", "service": "http://localhost:80"}],
-        ), patch.object(tunnel_setup, "_config_is_valid", return_value=True), patch.object(
+            "enabled_nginx_hostnames",
+            return_value={"example.com", "new-unrelated.example.com"},
+        ), patch.object(tunnel_setup, "_config_is_current", return_value=True), patch.object(
             tunnel_setup.os.path, "isfile", return_value=True
         ), patch.object(tunnel_setup, "_write_config_file") as write_config, patch.object(
             tunnel_setup, "save_state"
@@ -568,30 +569,34 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
         write_config.assert_not_called()
         save_state.assert_not_called()
 
-    def test_non_interactive_update_converts_setup_errors_to_false(self):
-        with patch.object(tunnel_setup, "main", side_effect=RuntimeError("broken setup")):
-            self.assertFalse(tunnel_setup.run_non_interactive_update())
-
-    def test_failed_refresh_retains_applied_routes_and_retries_restart(self):
-        state = {
-            "tunnel": {"name": "basaltwater", "id": "tunnel-id", "credentials_file": "/managed/tunnel.json"},
-            "sites": [{"hostname": "old.example.com", "service": "http://localhost:80"}],
-        }
-        sites = [{"hostname": "new.example.com", "service": "http://localhost:80"}]
-        with patch.object(tunnel_setup, "check_root"), \
-                patch.object(tunnel_setup, "load_state", return_value=state), \
-                patch.object(tunnel_setup, "install_cloudflared"), \
-                patch.object(tunnel_setup, "discover_nginx_sites", return_value=sites), \
-                patch.object(tunnel_setup.os.path, "isfile", return_value=True), \
-                patch.object(tunnel_setup, "_write_config_file"), \
-                patch.object(tunnel_setup, "install_and_start_service", side_effect=[False, True]) as ensure_service, \
-                patch.object(tunnel_setup, "_configure_firewall"), \
-                patch.object(tunnel_setup, "save_state") as save_state:
-            self.assertFalse(tunnel_setup.main(interactive=False))
-            save_state.assert_called_once_with(state["tunnel"], state["sites"], pending_activation=True, allow_direct=False, access_sources=[])
-            self.assertTrue(tunnel_setup.main(interactive=False))
-            self.assertEqual(ensure_service.call_args_list, [call(restart=True), call(restart=True)])
-            self.assertEqual(save_state.call_args_list[-1], call(state["tunnel"], sites, allow_direct=False, access_sources=[]))
+    def test_failed_refresh_keeps_applied_policy_and_retries_selected_routes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            credentials = os.path.join(tmp, "tunnel.json")
+            with open(credentials, "w", encoding="utf-8") as handle:
+                handle.write("{}")
+            tunnel = {"name": "example", "id": "id", "credentials_file": credentials}
+            old_sites = [{"hostname": "old.example.com", "service": "http://localhost:80"}]
+            with patch.object(tunnel_setup, "STATE_FILE", os.path.join(tmp, "state.json")), \
+                    patch.object(tunnel_setup, "CONFIG_DIR", tmp), \
+                    patch.object(tunnel_setup, "check_root"), \
+                    patch.object(tunnel_setup, "install_cloudflared"), \
+                    patch.object(tunnel_setup, "enabled_nginx_hostnames", return_value={"new.example.com"}), \
+                    patch.object(tunnel_setup, "_write_config_file"), \
+                    patch.object(tunnel_setup, "install_and_start_service", side_effect=[False, True]) as service, \
+                    patch.object(tunnel_setup, "_configure_firewall") as firewall:
+                tunnel_setup.save_state(tunnel, old_sites, hostnames=["old.example.com"])
+                self.assertFalse(tunnel_setup.main(
+                    interactive=False, hostnames=["new.example.com"], allow_direct=True,
+                ))
+                saved = tunnel_setup.load_state()
+                self.assertEqual(saved["sites"], old_sites)
+                self.assertTrue(saved["pending_activation"])
+                self.assertFalse(saved["allow_direct"])
+                firewall.assert_not_called()
+                self.assertTrue(tunnel_setup.main(interactive=False))
+                self.assertEqual(service.call_args_list, [call(restart=True), call(restart=True)])
+                firewall.assert_called_once_with(allow_direct=False, access_sources=[])
+                self.assertEqual(tunnel_setup.load_state()["sites"][0]["hostname"], "new.example.com")
 
     def test_failed_config_repair_retries_activation_even_with_unchanged_routes(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -605,12 +610,12 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
                     patch.object(tunnel_setup, "CONFIG_DIR", tmp), \
                     patch.object(tunnel_setup, "check_root"), \
                     patch.object(tunnel_setup, "install_cloudflared"), \
-                    patch.object(tunnel_setup, "discover_nginx_sites", return_value=sites), \
-                    patch.object(tunnel_setup, "_config_is_valid", side_effect=[False, True]), \
+                    patch.object(tunnel_setup, "enabled_nginx_hostnames", return_value={"example.com"}), \
+                    patch.object(tunnel_setup, "_config_is_current", return_value=False), \
                     patch.object(tunnel_setup, "_write_config_file"), \
                     patch.object(tunnel_setup, "_configure_firewall"), \
                     patch.object(tunnel_setup, "install_and_start_service", side_effect=[False, True]) as ensure_service:
-                tunnel_setup.save_state(tunnel, sites)
+                tunnel_setup.save_state(tunnel, sites, hostnames=["example.com"])
                 self.assertFalse(tunnel_setup.main(interactive=False))
                 self.assertTrue(tunnel_setup.load_state()["pending_activation"])
                 self.assertTrue(tunnel_setup.main(interactive=False))
@@ -621,11 +626,12 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
         state = {
             "tunnel": {"credentials_file": "/missing/tunnel.json"},
             "sites": [],
+            "managed_hostnames": [],
+            "hostnames": [],
         }
         with patch.object(tunnel_setup, "check_root"), \
                 patch.object(tunnel_setup, "load_state", return_value=state), \
                 patch.object(tunnel_setup, "install_cloudflared"), \
-                patch.object(tunnel_setup, "discover_nginx_sites", return_value=[{"hostname": "example.com", "service": "http://localhost:80"}]), \
                 patch.object(tunnel_setup.os.path, "isfile", return_value=False), \
                 patch.object(tunnel_setup, "_write_config_file") as write_config, \
                 patch.object(tunnel_setup, "install_and_start_service") as ensure_service:
@@ -640,7 +646,10 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
             nginx_dir = os.path.join(tmp, "sites-enabled")
             os.makedirs(nginx_dir)
             with open(os.path.join(nginx_dir, "site.conf"), "w", encoding="utf-8") as config:
-                config.write("server_name example.com;\n")
+                config.write(
+                    "server { listen 80; server_name example.com; }\n"
+                    "server { listen 80; server_name panel.example.com; }\n"
+                )
             credentials = os.path.join(config_dir, "tunnel.json")
             os.makedirs(config_dir)
             with open(credentials, "w", encoding="utf-8") as credential_file:
@@ -654,7 +663,7 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
                             "id": "tunnel-id",
                             "credentials_file": credentials,
                         },
-                        "sites": [],
+                        "sites": [{"hostname": "panel.example.com", "service": "http://localhost:80"}],
                     },
                     state_file,
                 )
@@ -675,14 +684,16 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
                     patch.object(tunnel_setup, "install_cloudflared"), \
                     patch.object(tunnel_setup, "_configure_firewall"), \
                     patch.object(tunnel_setup, "run_command", side_effect=command_results) as run_command:
-                self.assertTrue(tunnel_setup.main(interactive=False))
+                self.assertTrue(tunnel_setup.main(interactive=False, hostnames=["EXAMPLE.com."]))
 
             commands = [item.args[0] for item in run_command.call_args_list]
             self.assertIn(["cloudflared", "--config", os.path.join(config_dir, "config.yml"), "service", "install"], commands)
             self.assertNotIn(["systemctl", "restart", "cloudflared"], commands)
 
             with open(os.path.join(config_dir, "config.yml"), encoding="utf-8") as config:
-                self.assertIn("example.com", config.read())
+                content = config.read()
+                self.assertIn('hostname: "example.com"', content)
+                self.assertNotIn("panel.example.com", content)
             with open(state_path, encoding="utf-8") as state_file:
                 self.assertEqual(json.load(state_file)["sites"][0]["hostname"], "example.com")
 

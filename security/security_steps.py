@@ -369,10 +369,37 @@ def _configure_ssh_firewall(config: SetupConfig) -> None:
     _remove_stale_managed_rules(_SSH_RULE_COMMENT_PREFIX, desired_comments)
 
 
+def _prune_managed_web_ports(config: SetupConfig, desired_comments: set[str]) -> None:
+    """Defer changes to any applied Cloudflare origin rules until activation."""
+    if config.enable_cloudflare:
+        from web.cloudflare_firewall import setup_origin_rule
+
+        status = _run_ufw("ufw status numbered")
+        if status.returncode != 0 or not isinstance(status.stdout, str):
+            raise _ufw_failure("Could not inspect managed web firewall rules", status)
+        for line in status.stdout.splitlines():
+            _rule, separator, comment = line.partition("#")
+            if separator and setup_origin_rule(line, comment.strip()):
+                desired_comments.add(comment.strip())
+    _remove_stale_managed_rules(_WEB_RULE_COMMENT_PREFIX, desired_comments)
+
+
 def _configure_managed_web_ports(config: SetupConfig) -> list[int]:
     """Reconcile basaltwater-managed TCP web ports."""
 
     ports = config.effective_web_ports()
+    if config.enable_cloudflare:
+        from web.cloudflare_firewall import ORIGIN_PORTS
+
+        status = run("ufw status verbose", check=False, capture_output=True, env={**os.environ, "LC_ALL": "C"})
+        stdout = status.stdout or ""
+        if status.returncode != 0 or not re.search(r"^Status: (?:active|inactive)\s*$", stdout, re.MULTILINE):
+            raise _ufw_failure("Could not verify the Cloudflare origin firewall before web setup", status)
+        if "Status: active" in stdout and not re.search(
+            r"^Default:\s+(?:deny|reject)\s+\(incoming\)", stdout, re.MULTILINE,
+        ):
+            raise RuntimeError("Cloudflare origin setup requires a deny or reject incoming UFW default")
+        ports = [port for port in ports if port not in ORIGIN_PORTS]
     sources = [
         validate_network_ip_or_cidr(source, "web port source")
         for source in config.effective_access_sources()
@@ -407,7 +434,7 @@ def _configure_managed_web_ports(config: SetupConfig) -> list[int]:
                 )
             desired_comments.add(comment)
 
-    _remove_stale_managed_rules(_WEB_RULE_COMMENT_PREFIX, desired_comments)
+    _prune_managed_web_ports(config, desired_comments)
     return ports
 
 
@@ -527,7 +554,10 @@ def _prune_enabled_firewall_rules(
     if config.clear_mdns or (config.enable_mdns and can_manage_mdns()):
         desired[_MDNS_RULE_COMMENT_PREFIX] = {_MDNS_RULE_COMMENT_PREFIX} if config.enable_mdns else set()
     for prefix, comments in desired.items():
-        _remove_stale_managed_rules(prefix, comments)
+        if prefix == _WEB_RULE_COMMENT_PREFIX:
+            _prune_managed_web_ports(config, comments)
+        else:
+            _remove_stale_managed_rules(prefix, comments)
 
 
 def _verify_source_restricted_firewall(

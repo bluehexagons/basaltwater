@@ -39,7 +39,7 @@ class TestConfigureCloudflareFirewall(unittest.TestCase):
 
     @patch("web.cloudflare_steps.run")
     def test_domain_antistatic_keeps_stun_direct_access(self, mock_run):
-        mock_run.return_value = SimpleNamespace(returncode=0, stdout="Status: active\n")
+        mock_run.return_value = SimpleNamespace(returncode=0, stdout="Status: active\nDefault: deny (incoming)\n")
 
         configure_cloudflare_firewall(_make_config("lobby.example.com"))
 
@@ -50,19 +50,9 @@ class TestConfigureCloudflareFirewall(unittest.TestCase):
                     check=False,
                     capture_output=True,
                 ),
-                call("ufw status 2>/dev/null | grep -q 'Status: active'", check=False),
-                call("ufw default deny incoming"),
-                call("ufw default allow outgoing"),
-                call("ufw allow 3478/udp comment 'antistatic STUN'"),
-                call(["ufw", "limit", "ssh"]),
-                call(["ufw", "delete", "allow", "ssh"], check=False),
-                call(["ufw", "delete", "allow", "22/tcp"], check=False),
-                call(["ufw", "delete", "allow", "80/tcp"], check=False),
-                call(["ufw", "delete", "allow", "443/tcp"], check=False),
-                call(["ufw", "delete", "allow", "80"], check=False),
-                call(["ufw", "delete", "allow", "443"], check=False),
-                call(["ufw", "--force", "enable"]),
+                call(["ufw", "status", "verbose"], check=False, capture_output=True),
                 call(["ufw", "status", "numbered"], check=False, capture_output=True),
+                call("ufw allow 3478/udp comment 'antistatic STUN'"),
             ]
         )
         commands = [call_args.args[0] for call_args in mock_run.call_args_list]
@@ -70,7 +60,7 @@ class TestConfigureCloudflareFirewall(unittest.TestCase):
 
     @patch("web.cloudflare_steps.run")
     def test_hostless_antistatic_keeps_direct_tcp_and_stun_access(self, mock_run):
-        mock_run.return_value = SimpleNamespace(returncode=0, stdout="Status: active\n")
+        mock_run.return_value = SimpleNamespace(returncode=0, stdout="Status: active\nDefault: deny (incoming)\n")
 
         configure_cloudflare_firewall(_make_config(":8080"))
 
@@ -81,20 +71,10 @@ class TestConfigureCloudflareFirewall(unittest.TestCase):
                     check=False,
                     capture_output=True,
                 ),
-                call("ufw status 2>/dev/null | grep -q 'Status: active'", check=False),
-                call("ufw default deny incoming"),
-                call("ufw default allow outgoing"),
+                call(["ufw", "status", "verbose"], check=False, capture_output=True),
+                call(["ufw", "status", "numbered"], check=False, capture_output=True),
                 call("ufw allow 8080/tcp comment 'antistatic direct port'"),
                 call("ufw allow 3478/udp comment 'antistatic STUN'"),
-                call(["ufw", "limit", "ssh"]),
-                call(["ufw", "delete", "allow", "ssh"], check=False),
-                call(["ufw", "delete", "allow", "22/tcp"], check=False),
-                call(["ufw", "delete", "allow", "80/tcp"], check=False),
-                call(["ufw", "delete", "allow", "443/tcp"], check=False),
-                call(["ufw", "delete", "allow", "80"], check=False),
-                call(["ufw", "delete", "allow", "443"], check=False),
-                call(["ufw", "--force", "enable"]),
-                call(["ufw", "status", "numbered"], check=False, capture_output=True),
             ]
         )
 
@@ -110,6 +90,18 @@ class TestConfigureCloudflareFirewall(unittest.TestCase):
             check=False,
             capture_output=True,
         )
+
+    def test_hostless_antistatic_cannot_publish_a_cloudflare_origin_port(self):
+        from game.antistatic_steps import setup_antistatic_db, setup_antistatic_server
+
+        config = _make_config(":443")
+        config.antistatic_db = ":80"
+        with patch("web.web_steps.install_nginx") as install:
+            for setup in (setup_antistatic_server, setup_antistatic_db):
+                with self.subTest(setup=setup.__name__):
+                    with self.assertRaisesRegex(ValueError, "reserved by Cloudflare"):
+                        setup(config)
+            install.assert_not_called()
 
 
 class TestConfigureNginxForCloudflare(unittest.TestCase):
@@ -160,7 +152,10 @@ class TestRunCloudflareTunnelSetup(unittest.TestCase):
         config.friendly_name = "example_droplet"
         self.assertTrue(run_cloudflare_tunnel_setup(config, allow_create=True))
         command = run.call_args.args[0]
-        self.assertEqual(command[-4:], ["--tunnel-name", "example_droplet", "--no-allow-direct", "--clear-access-sources"])
+        self.assertEqual(command[-5:], [
+            "--tunnel-name", "example_droplet", "--no-allow-direct", "--clear-access-sources",
+            "--clear-managed-hostnames",
+        ])
         self.assertEqual(run.call_args.kwargs, {"check": False, "interactive": True, "timeout": None})
 
     @patch.dict(os.environ, {"BASALTWATER_SETUP_PROMPT_RELAY": "0"})
@@ -210,7 +205,7 @@ class TestRunCloudflareTunnelSetup(unittest.TestCase):
 
     @patch("web.cloudflare_steps.os.path.exists")
     @patch("web.cloudflare_steps.run")
-    def test_missing_tunnel_state_retains_direct_ports(self, mock_run, mock_exists):
+    def test_refresh_with_missing_state_does_not_create_a_tunnel(self, mock_run, mock_exists):
         mock_exists.side_effect = lambda path: not path.endswith("tunnel-state.json")
 
         self.assertFalse(run_cloudflare_tunnel_setup(_make_config()))
@@ -228,6 +223,24 @@ class TestRunCloudflareTunnelSetup(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "service inactive"):
             run_cloudflare_tunnel_setup(_make_config())
+
+    @patch("web.cloudflare_steps.os.path.exists", return_value=True)
+    @patch("web.cloudflare_steps.run")
+    def test_setup_passes_only_the_selected_service_and_deployment_hostnames(self, run, _exists):
+        run.return_value = SimpleNamespace(returncode=0)
+        config = _make_config("lobby.example.com:8080")
+        config.antistatic_db = ":8081"
+        config.gogs = ["git.example.com:3000"]
+        config.enable_webhook_builds = True
+        config.webhook_domain = "intake.example.com"
+        self.assertTrue(run_cloudflare_tunnel_setup(
+            config, allow_create=True, deployed_hostnames=["site.example.com", "api.example.com"],
+        ))
+        argv = run.call_args.args[0]
+        self.assertEqual(
+            [argv[index + 1] for index, argument in enumerate(argv) if argument == "--managed-hostname"],
+            ["api.example.com", "git.example.com", "intake.example.com", "lobby.example.com", "site.example.com"],
+        )
 
 
 if __name__ == "__main__":
