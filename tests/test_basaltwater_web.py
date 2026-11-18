@@ -151,11 +151,64 @@ class TestInfraWebForwarding(unittest.TestCase):
         self.assertEqual(loaded["access_sources"], ["192.0.2.0/24"])
         self.assertEqual(loaded["forward_port_min"], 8444)
 
+    def test_policy_rejects_invalid_protected_upstreams(self) -> None:
+        for invalid in (
+            [], {"03773": []}, {"80": []}, {"65536": []}, {True: []},
+            {"3773": None}, {"3773": ["invalid"]},
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(RuntimeError):
+                basaltwater_web._validate_policy({**_policy(), "upstream_access_sources": invalid})
+
     def test_firewall_port_match_does_not_match_larger_port(self) -> None:
         line = "[ 1] 18444/tcp ALLOW IN Anywhere"
 
         self.assertFalse(basaltwater_web._ufw_rule_matches_port(line, 8444))
         self.assertTrue(basaltwater_web._ufw_rule_matches_port(line, 18444))
+
+    def test_firewall_removes_stale_global_rule_for_protected_alias(self) -> None:
+        route = {
+            "listen": 8444, "name": "alias", "owner": "agent", "profile": "general",
+            "target_host": "::1", "target_port": 3773,
+        }
+        policy = {**_policy(), "upstream_access_sources": {"3773": []}}
+        stale = [(3, "basaltwater HTTPS forward alias 8444/tcp global", "[ 3] 8444/tcp ALLOW IN Anywhere")]
+        with (
+            patch.object(basaltwater_web.shutil, "which", return_value="/usr/sbin/ufw"),
+            patch.object(basaltwater_web, "_ufw_rules", return_value=stale),
+            patch.object(basaltwater_web, "_run_checked", return_value=SimpleNamespace(stdout="Status: active")) as run,
+            patch.object(
+                basaltwater_web, "run_command",
+                return_value=SimpleNamespace(returncode=0, stdout="*filter\n:INPUT DROP [0:0]\nCOMMIT\n"),
+            ) as filter_table,
+        ):
+            basaltwater_web._reconcile_firewall([route], policy)
+        self.assertEqual([call.args[0] for call in run.call_args_list], [
+            ["ufw", "status"], ["ufw", "--force", "delete", "3"],
+        ])
+        self.assertEqual([call.args[0] for call in filter_table.call_args_list], [
+            ["iptables-save", "-t", "filter"], ["ip6tables-save", "-t", "filter"],
+        ])
+
+    def test_chain_retains_downstream_gateway_default_and_handles_cycles(self) -> None:
+        alias = {
+            "listen": 8444, "name": "alias", "owner": "agent", "profile": "general",
+            "target_host": "127.0.0.1", "target_port": 3773,
+        }
+        chain = {**alias, "listen": 8445, "name": "chain", "target_port": 8444}
+        policy = {
+            **_policy(),
+            "route_access_sources": {"chain": ["0.0.0.0/0", "::/0"]},
+            "upstream_access_sources": {"3773": ["192.0.2.128/25", "2001:db8::/32"]},
+        }
+        self.assertEqual(set(basaltwater_web._desired_firewall_rules([alias, chain], policy)), {
+            "basaltwater HTTPS forward alias 8444/tcp source 192.0.2.128/25",
+            "basaltwater HTTPS forward chain 8445/tcp source 192.0.2.128/25",
+        })
+
+        cycle = {**alias, "target_port": 8445}
+        loopback_only = {**policy, "route_access_sources": {"alias": []}}
+        self.assertEqual(basaltwater_web._desired_firewall_rules([chain, cycle], loopback_only), {})
+        self.assertEqual(basaltwater_web.render_forward_nginx([chain, cycle], loopback_only).count("deny all;"), 2)
 
     def test_forward_waits_for_http_readiness_before_apply(self) -> None:
         with (
@@ -1047,6 +1100,87 @@ class TestInfraWebPolicyReconciliation(unittest.TestCase):
             json.dump(self.desired, file_obj)
         self.assertEqual(self.reconcile()[0], 0)
         self.assertEqual(basaltwater_web._load_policy(), policy)
+
+    def test_existing_aliases_and_managed_chain_follow_upstream_policy_changes(self) -> None:
+        routes = [
+            self.route,
+            {**self.route, "listen": 8445, "name": "ipv4-alias", "target_host": "127.0.0.2", "target_port": 3773},
+            {**self.route, "listen": 8446, "name": "ipv6-alias", "target_host": "::1", "target_port": 3773},
+            {**self.route, "listen": 8447, "name": "pairing-alias", "target_host": "::1", "target_port": 3774},
+            {**self.route, "listen": 8448, "name": "inner", "target_port": 8447},
+            {**self.route, "listen": 8449, "name": "outer", "target_host": "::1", "target_port": 8448},
+        ]
+        self.write_routes(routes)
+        wide = ["192.0.2.0/24", "2001:db8::/32"]
+        narrow = ["192.0.2.128/25", "2001:db8:1::/48"]
+        outer = ["192.0.2.192/26", "2001:db8::/32"]
+        unrelated = ["198.51.100.0/24"]
+        for t3_sources, pairing_sources, outer_sources in (
+            (wide, wide, outer), (narrow, [], []), (wide, narrow, [outer[0], narrow[1]]),
+        ):
+            with self.subTest(t3=t3_sources, pairing=pairing_sources):
+                with open(self.staged, "w", encoding="utf-8") as file_obj:
+                    json.dump({
+                        **self.desired,
+                        "access_sources": [],
+                        "route_access_sources": {"outer": outer, "demo": unrelated},
+                        "upstream_access_sources": {"3773": t3_sources, "3774": pairing_sources},
+                    }, file_obj)
+                self.assertEqual(self.reconcile()[0], 0)
+                policy = basaltwater_web._load_policy()
+                with open(basaltwater_web.FORWARD_NGINX_SITE, encoding="utf-8") as file_obj:
+                    blocks = file_obj.read().split("\nserver {")[1:]
+                expected = (unrelated, t3_sources, t3_sources, pairing_sources, pairing_sources, outer_sources)
+                for route, block, allowed in zip(routes, blocks, expected, strict=True):
+                    listen = route["listen"]
+                    self.assertIn(f"listen {listen} ssl;", block)
+                    self.assertIn(f"listen [::]:{listen} ssl;", block)
+                    self.assertIn("set_real_ip_from unix:;", block)
+                    self.assertIn("deny all;", block)
+                    self.assertEqual(
+                        [line.strip() for line in block.splitlines() if line.strip().startswith("allow ")],
+                        ["allow 127.0.0.0/8;", "allow ::1;", *[f"allow {source};" for source in allowed]],
+                    )
+                self.assertEqual(set(basaltwater_web._desired_firewall_rules(routes, policy)), {
+                    f"basaltwater HTTPS forward {route['name']} {route['listen']}/tcp source {source}"
+                    for route, allowed in zip(routes, expected, strict=True) for source in allowed
+                })
+
+        # An unrelated setup stages no port restrictions. Existing ones are retained.
+        with open(self.staged, "w", encoding="utf-8") as file_obj:
+            json.dump({**self.desired, "access_sources": []}, file_obj)
+        self.assertEqual(self.reconcile()[0], 0)
+        self.assertEqual(basaltwater_web._load_policy(), policy)
+        with redirect_stdout(StringIO()):
+            self.assertEqual(basaltwater_web.main(["forward", "reconcile", "--json"]), 0)
+        self.assertEqual(self.firewall.call_args.args, (routes, policy))
+
+    def test_new_alias_is_restricted_without_the_canonical_route(self) -> None:
+        with open(self.staged, "w", encoding="utf-8") as file_obj:
+            json.dump({
+                **self.desired,
+                "access_sources": [],
+                "upstream_access_sources": {"3773": []},
+            }, file_obj)
+        self.assertEqual(self.reconcile()[0], 0)
+        output = StringIO()
+        with (
+            patch.object(basaltwater_web, "_port_available", return_value=True),
+            patch.object(basaltwater_web, "_requesting_username", return_value="agent"),
+            redirect_stdout(output),
+        ):
+            self.assertEqual(basaltwater_web.main([
+                "forward", "add", "alias", "--to", "[::1]:3773", "--json",
+            ]), 0)
+        self.assertEqual(json.loads(output.getvalue())["url"], "https://localhost:8445/")
+        routes, policy = self.firewall.call_args.args
+        self.assertEqual(set(basaltwater_web._desired_firewall_rules(routes, policy)), {
+            "basaltwater HTTPS forward demo 8444/tcp global",
+        })
+        with open(basaltwater_web.FORWARD_NGINX_SITE, encoding="utf-8") as file_obj:
+            content = file_obj.read()
+        self.assertEqual(content.count("deny all;"), 1)
+        self.assertIn("proxy_pass http://[::1]:3773;", content)
 
     def test_wait_reads_routes_only_after_competing_mutation_finishes(self) -> None:
         other_route = {**self.route, "listen": 8445, "name": "other", "target_port": 3001}

@@ -251,12 +251,14 @@ class TestGodotWebHost(unittest.TestCase):
                     True,
                     ["agent"],
                     ["192.0.2.0/24"],
+                    upstream_access_sources={3773: ["2001:db8:1::7/48"], 3774: []},
                 )
 
             self.assertTrue(changed)
             with open(policy_file, encoding="utf-8") as file_obj:
                 policy = json.load(file_obj)
             self.assertEqual(policy["ca_certificate"], ca_download)
+            self.assertEqual(policy["upstream_access_sources"], {"3773": ["2001:db8:1::/48"], "3774": []})
 
     def test_control_service_is_installed_for_owner_scoped_gateway_commands(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -353,11 +355,16 @@ class TestGodotWebHost(unittest.TestCase):
         from common import t3code_steps
         from lib.config import SetupConfig
 
-        config = SetupConfig(system_type="agent_code_vm", host="192.0.2.10", username="agent")
+        config = SetupConfig(
+            system_type="agent_code_vm", host="192.0.2.10", username="agent",
+            lan_access=False, access_sources=["192.0.2.0/24"],
+            web_interface_sources=["2001:db8::/32"],
+        )
+        sources = ["192.0.2.0/24", "2001:db8::/32"]
         with (
             patch.object(t3code_steps.os, "geteuid", return_value=0),
             patch.object(t3code_steps.os.path, "isfile", return_value=True),
-            patch.object(godot_web_steps, "configure_internal_web_host"),
+            patch.object(godot_web_steps, "configure_internal_web_host") as configure,
             patch.object(t3code_steps, "run", side_effect=[
                 SimpleNamespace(returncode=0, stdout='{"url":"https://192.0.2.10:8444/","listen":8444}'),
                 SimpleNamespace(returncode=0, stdout='{"url":"https://192.0.2.10:8445/","listen":8445}'),
@@ -365,6 +372,11 @@ class TestGodotWebHost(unittest.TestCase):
         ):
             endpoints = t3code_steps._configure_t3_https(config, 3773, 3774)
         self.assertEqual(set(endpoints), {"t3code", "t3code-pairing"})
+        self.assertEqual(configure.call_args.kwargs["upstream_access_sources"], {3773: sources, 3774: sources})
+        self.assertEqual(configure.call_args.kwargs["route_access_sources"], {
+            "t3code": sources, "t3code-pairing": sources,
+        })
+        self.assertEqual(configure.call_args.args[2], ["192.0.2.0/24"])
         for call in run.call_args_list:
             argv = godot_web_steps.shlex.split(call.args[0])
             self.assertEqual(argv[argv.index("--lock-timeout") + 1], "300")
