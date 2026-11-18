@@ -75,20 +75,53 @@ private hostnames, personal data, or raw logs that contain them.
 
 ### Preview publication gate
 
-- [ ] `pyproject.toml` declares the matching PEP 440 version, such as
+- [x] `pyproject.toml` declares the matching PEP 440 version, such as
   `2.0.0rc2` for `v2.0.0-rc.2`.
-- [ ] Release CI passes on Python 3.11 and 3.15, builds the wheel, and
+- [x] Release CI passes on Python 3.11 and 3.15, builds the wheel, and
   installs and smoke-tests the packaged launchers on Python 3.13.
-- [ ] The GitHub release is marked **pre-release** and contains the wheel built
+- [x] The GitHub release is marked **pre-release** and contains the wheel built
   from the tagged commit.
-- [ ] An isolated disposable controller installs the exact candidate tag and
+- [x] An isolated disposable controller installs the exact candidate tag and
   reports its candidate version through `basaltw --version` and
   `basaltw channel`.
-- [ ] `stable` still selects the latest unqualified stable tag; preview tags
+- [x] `stable` still selects the latest unqualified stable tag; preview tags
   remain opt-in.
 
 Passing this gate permits a preview for feedback. It does not pass the live
 qualification matrix or authorize the final stable release.
+
+### Candidate results
+
+On 2026-11-18 UTC, release qualification used `v2.0.0-rc.2` at
+`4e24c2928fd0294b696fed8778ad9e52d4f5cb35` (package `2.0.0rc2`). Release CI
+passed the full Debian suite on Python 3.11 and 3.15. Local `make check-ci`
+completed with 10,441 tests, 25 skips and 82% branch-aware coverage.
+[Release workflow](https://github.com/bluehexagons/basaltwater/actions/runs/44383019598)
+
+- The published wheel matched the Python 3.13 CI artifact byte for byte and
+  passed another isolated installation and launcher smoke test. Its SHA-256 is
+  `0f2c12765eb61583b800328c91977791680ea52e35bb4aa343bfb124b16b45e1`.
+  The public source archive matched the tagged installer, package metadata,
+  and changed runtime modules.
+  [GitHub prerelease](https://github.com/bluehexagons/basaltwater/releases/tag/v2.0.0-rc.2)
+- A disposable Debian 13 controller VM installed the exact tag from the
+  pinned installer, upgraded from a compatible pre-preview commit, preserved
+  private state and mode, and reported the tag, commit and version. The installed
+  launcher reported the same version after reboot. `dev` followed `main`.
+  `stable` resolved to historical `v0.2.0`
+  and refused to activate it. An attempted switch preserved the working preview.
+- A disposable Debian 13 LXC ran `basaltw deploy` with a saved setup containing
+  zero deployment specs. An independent SSH administrator renamed the managed
+  user and resumed a subsequent rename after a worker SIGKILL immediately
+  after login and home cutover. Numeric IDs, private file bytes and metadata,
+  login, setup state, controller cache, and the storage timer were verified.
+  The reconciled state and SSH access survived a container restart.
+
+Private transcripts and state comparisons are retained by the qualification
+operator. The remaining stable work includes signed artifact delivery and
+rollback, supported profile and recovery matrices, Firefox ESR and desktop/T3
+checks, multi-node Proxmox, storage and application recovery, and the physical
+kiosk seat.
 
 ### Stable qualification matrix
 
@@ -98,13 +131,13 @@ was checked; otherwise use **Fail**, **Blocked**, or **Not run**.
 
 | ID | Qualification case | Required evidence | Status |
 | --- | --- | --- | --- |
-| REL-01 | Source and wheel | Candidate CI passes; wheel installs outside the source tree; `basaltw --version` and packaged entry points match the candidate metadata. | Not run for `v2.0.0-rc.2` |
-| REL-02 | Installer channels | Fresh exact-tag install and upgrade work; `stable` does not select an `-rc.` tag; `dev` still selects `main`. | Not run for `v2.0.0-rc.2` |
+| REL-01 | Source and wheel | Candidate CI passes; wheel installs outside the source tree; `basaltw --version` and packaged entry points match the candidate metadata. | **Pass** for `v2.0.0-rc.2` |
+| REL-02 | Installer channels | Fresh exact-tag install and upgrade work; `stable` does not select an `-rc.` tag; `dev` still selects `main`. | **Pass** for `v2.0.0-rc.2` on Debian 13 VM |
 | INS-01 | Clean Debian installations | Install controller, server, and agent profiles on disposable Debian hosts; cover the supported bare-metal/VM/LXC paths that each profile supports. Check commands, permissions, and selected services. | Not run for `v2.0.0-rc.2` |
 | INS-02 | Existing-install upgrades | Upgrade a supported Basaltwater installation and verify user data, setup state, credentials, and owned runtime paths. Exercise the documented intermediate-version migration for any remaining legacy installation; do not assume direct migration from historical `v0.2.0`. | Not run for `v2.0.0-rc.2` |
 | INS-03 | Interruption and recovery | Interrupt migration and setup at documented safe test points. Confirm the operation marker blocks unsafe reruns, recovery guidance identifies retained state, and a successful retry preserves the prior working state. | Not run for `v2.0.0-rc.2` |
 | INS-04 | Services and private data | Compare pre/post checksums and modes for preserved private data; validate application access, managed service/timer health, agent configuration, and absence of retired namespace paths. | Not run for `v2.0.0-rc.2` |
-| USR-01 | Managed target-user rename | On a disposable Debian/systemd target, rename a managed account through a separate SSH administrator. Verify UID/GID, home contents, SSH access, setup state/cache, managed units, service state, interruption handling, and resume. | Not run for `v2.0.0-rc.2` |
+| USR-01 | Managed target-user rename | On a disposable Debian/systemd target, rename a managed account through a separate SSH administrator. Verify UID/GID, home contents, SSH access, setup state/cache, managed units, service state, interruption handling, and resume. | **Pass** for `v2.0.0-rc.2` on Debian 13 LXC |
 | DSK-01 | Shared XRDP desktop | On a disposable Debian workstation, cover fresh setup, human-first and concurrent starts, supported clients, keyboard/input/clipboard, resize and reconnect, frontend/network interruption, desktop crash/reboot, logout, interrupted setup, legacy-session blocking, and administrator rollback. Confirm the documented persistence and handoff behavior; see [XRDP guidance](workstations/xrdp.md). | Not run for `v2.0.0-rc.2` |
 | DSK-02 | Proxmox local browser kiosk | On a disposable Proxmox VE 9 console VM and target laptop, verify CLI/web boot, Firefox navigation, offline saved destinations and tab opening, local status/doctor/start/stop/restart, native/guest consoles, VT switching with a console focused, input/scaling, service stop/restart and child cleanup, crash recovery, package rerun, removal, and current lid/suspend behavior; see the [kiosk checklist](workstations/proxmox-kiosk.md#proxmox-and-hardware-qualification). | Not run for `v2.0.0-rc.2`; selected Debian VM component checks do not qualify the full Proxmox profile or physical seat |
 | PRV-01 | Privileged executor and Admin refresh lifecycle | On a disposable Debian/systemd VM, cover approval origin, TLS, review window and credential privacy; source activation, setup failures, partial activation, explicit recovery identity and evidence retention. Interrupt the worker/broker or lose a dispatch response; confirm uncertain work is never replayed. Exercise pipe-holding or TERM-ignoring descendants and replaced paths; cleanup must remain bounded. Preserve active builds, unpushed work, T3 and desktop state through maintenance/readiness checks. See [privilege approvals](agents/privilege-approvals.md) and the [broker reference](agents/privilege-broker-reference.md). | Not run for `v2.0.0-rc.2` |
@@ -118,7 +151,7 @@ was checked; otherwise use **Fail**, **Blocked**, or **Not run**.
 | STO-02 | NAS, Samba, Gogs, and Syncthing | Qualify setup/reruns, boot ordering, missing mounts, identity preservation, and service-user access on disposable storage. | Not run for `v2.0.0-rc.2` |
 | STO-03 | Storage failure and restoration | Cause sync and scrub failures with disposable data; verify the failure is reported and exercise the documented restore path. A successful mirror alone is not recovery evidence. | Not run for `v2.0.0-rc.2` |
 | APP-01 | HomeBox lifecycle | On a disposable amd64 Debian VM, test reboot and mounted-data recovery; certificate issuance/renewal and firewall reachability; browser login, items, attachments, and WebSockets; setup rerun, upgrade rollback, and full restore. | Not run for `v2.0.0-rc.2`; selected native loopback/API setup, rerun, full restore, upgrade, reboot and disable/re-enable checks do not qualify the complete lifecycle |
-| CICD-01 | Signed webhook builds, delivery and rollback | Submit an authenticated webhook and verify the resulting artifact. Separately authorize delivery of that artifact to an explicitly enrolled target and check its health. Force an unhealthy activation and confirm the previous working release is restored and the failure is reported. Automatic webhook-to-target delivery is deferred. | Not run for `v2.0.0-rc.2` |
+| CICD-01 | Signed webhook builds, delivery and rollback | Submit a signed webhook and verify the resulting artifact. Separately authorize delivery of that artifact to an explicitly enrolled target and check its health. Force an unhealthy activation and confirm the previous working release is restored and the failure is reported. Automatic webhook-to-target delivery is deferred. | Not run for `v2.0.0-rc.2` |
 | REL-03 | Prepublication identifiers and assets | Confirm namespace/name clearance, the matching wheel and release notes, planned source/download URLs, and documented upgrade instructions before tagging. | Not run for `v2.0.0-rc.2` |
 
 The experimental CachyOS desktop profile is not expanded in this release pass

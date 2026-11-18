@@ -361,9 +361,11 @@ Update the local installation to the newest commit on its selected channel:
 basaltw upgrade
 ```
 
-The default installer channel is `dev`, which tracks `main`. Use `stable` when
-you want the latest versioned release. `upgrade` refuses to overwrite local
-worktree changes; commit or stash changes before reinstalling or upgrading.
+The default installer channel is `dev`, which tracks `main`. Until final
+`v2.0.0` is published, `stable` resolves to historical `v0.2.0`. The current
+installer refuses that historical source. Use `dev` or an exact preview tag
+for a current Basaltwater install. `upgrade` refuses to overwrite local
+worktree changes. Commit or stash changes before reinstalling or upgrading.
 
 System installs use the official Basaltwater GitHub repository over verified
 HTTPS. The administrator authorizes that repository to publish updates to the
