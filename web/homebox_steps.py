@@ -42,6 +42,7 @@ from lib.machine_state import can_manage_firewall, can_manage_system_services
 from lib.release_management import detect_release_arch, validate_release_sha256_digest
 from lib.remote_utils import install_package, is_dry_run, run
 from lib.validation import validate_filesystem_path, validate_network_ip_or_cidr, validate_ssl_email
+from web.service_storage import StorageBoundaryError, StorageTree, reject_nested_mounts, storage_tree
 
 ROOT = Path("/opt/homebox")
 CONFIG = Path("/etc/homebox")
@@ -324,6 +325,7 @@ def _storage(path: Path) -> dict:
 
 def _check_storage(value: dict) -> None:
     path = Path(value["data_path"])
+    reject_nested_mounts(path)
     if _storage(path) != value["mount"]:
         raise RuntimeError("HomeBox backing mount changed or is missing; restore the expected mount")
     while not path.exists():
@@ -624,6 +626,28 @@ def _needs_bootstrap(value: dict) -> bool:
     return value["status"] == "prepared" or value.get("bootstrap_pending", False)
 
 
+def _data_tree(value: dict, *, create: bool = False) -> contextlib.AbstractContextManager[StorageTree]:
+    return storage_tree(Path(value["data_path"]), backing=Path(value["mount"]["target"]),
+                        create=create, mode=0o700)
+
+
+def _tree_size(tree: StorageTree) -> int:
+    size = 0
+    for _, _, _, info in tree.walk():
+        if stat.S_ISREG(info.st_mode):
+            size += info.st_size
+        elif not stat.S_ISDIR(info.st_mode):
+            raise RuntimeError("HomeBox data contains unsupported links or special files")
+    return size
+
+
+def _archive_tree(bundle: tarfile.TarFile, tree: StorageTree, name: str) -> None:
+    for relative, fd, _, info in tree.walk():
+        if not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
+            raise RuntimeError("HomeBox data contains unsupported links or special files")
+        bundle.add(f"/proc/self/fd/{fd}", arcname=str(Path(name) / relative), recursive=False)
+
+
 def create_backup(value: dict, destination: Path) -> None:
     """Archive stopped state; callers hold the lock and stop the service."""
     _safe_path(destination)
@@ -632,16 +656,17 @@ def create_backup(value: dict, destination: Path) -> None:
     if not destination.is_absolute() or paths_overlap(str(destination), value["data_path"]):
         raise ValueError("HomeBox backup must be an absolute path outside live data")
     validate_state(value)
+    with _data_tree(value) as tree:
+        _write_backup(value, destination, tree)
+
+
+def _write_backup(value: dict, destination: Path, tree: StorageTree) -> None:
+    size = _tree_size(tree) + release_path(value).stat().st_size
     secret = _secrets()
     if _digest(release_path(value)) != value["binary_sha256"]:
         raise RuntimeError("Cannot back up a damaged HomeBox executable")
     if not _needs_bootstrap(value) and _database(value)["users"] < 1:
         raise RuntimeError("Cannot back up HomeBox without an initialized user database")
-    data = Path(value["data_path"])
-    paths = [data, *data.rglob("*")]
-    if any(p.is_symlink() or not (p.is_file() or p.is_dir()) for p in paths):
-        raise RuntimeError("HomeBox data contains unsupported links or special files")
-    size = sum(p.stat().st_size for p in paths if p.is_file()) + release_path(value).stat().st_size
     if shutil.disk_usage(destination.parent).free < 2 * size + 256 * 1024 * 1024:
         raise RuntimeError("Insufficient free space for a complete HomeBox recovery archive")
     if destination.exists():
@@ -653,10 +678,10 @@ def create_backup(value: dict, destination: Path) -> None:
                 _archive_add(bundle, "state.json", value)
                 _archive_add(bundle, "secrets.json", secret)
                 bundle.add(release_path(value), arcname="homebox", recursive=False)
-                for path in paths:
-                    bundle.add(path, arcname=str(Path("data") / path.relative_to(data)), recursive=False)
+                _archive_tree(bundle, tree, "data")
             stream.flush()
             os.fsync(stream.fileno())
+        reject_nested_mounts(Path(value["data_path"]))
         os.link(staging, destination)
         directory = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY)
         try:
@@ -700,33 +725,49 @@ def unpack_backup(archive: Path, destination: Path) -> dict:
     return value
 
 
-def _restore_unpacked(directory: Path, value: dict) -> None:
-    data = Path(value["data_path"])
-    _check_storage(value)
-    account = _ensure_account()
-    _safe_path(data)
-    data.mkdir(mode=0o700, parents=True, exist_ok=True)
-    required = sum(p.stat().st_size for p in (directory / "data").rglob("*") if p.is_file())
-    if shutil.disk_usage(data).free < required + 256 * 1024 * 1024:
-        raise RuntimeError("Insufficient space to restore HomeBox data")
-    # Repair a damaged executable from the verified archive before touching data.
-    binary = release_path(value)
-    _safe_path(binary)
-    binary.parent.mkdir(parents=True, exist_ok=True)
-    staged = binary.parent / ".restore-binary"
-    _safe_path(staged)
-    shutil.copyfile(directory / "homebox", staged)
-    staged.chmod(0o755)
-    os.replace(staged, binary)
-    for path in data.iterdir():
-        if path.is_dir() and not path.is_symlink():
-            shutil.rmtree(path)
+def _replace_data(tree: StorageTree, source: Path, uid: int, gid: int) -> None:
+    for relative, _, parent, info in tree.walk(bottom_up=True):
+        if relative == Path("."):
+            continue
+        if stat.S_ISDIR(info.st_mode):
+            os.rmdir(relative.name, dir_fd=parent)
         else:
-            path.unlink()
-    shutil.copytree(directory / "data", data, dirs_exist_ok=True)
-    for path in [data, *data.rglob("*")]:
-        os.chown(path, account.pw_uid, account.pw_gid)
-        path.chmod(0o700 if path.is_dir() else 0o600)
+            os.unlink(relative.name, dir_fd=parent)
+
+    def copy_data(incoming: Path, fd: int) -> None:
+        for path in incoming.iterdir():
+            if path.is_dir():
+                os.mkdir(path.name, mode=0o700, dir_fd=fd)
+                with tree.child(fd, path.name) as (child, info):
+                    if not stat.S_ISDIR(info.st_mode):
+                        raise RuntimeError("HomeBox restore directory changed during creation")
+                    copy_data(path, child)
+            else:
+                new_file = os.open(path.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC,
+                                   0o600, dir_fd=fd)
+                with os.fdopen(new_file, "wb") as output, path.open("rb") as stream:
+                    tree.metadata(new_file)
+                    shutil.copyfileobj(stream, output)
+                    os.fchown(new_file, uid, gid)
+                    os.fchmod(new_file, 0o600)
+        pinned = f"/proc/self/fd/{fd}"
+        os.chown(pinned, uid, gid)
+        os.chmod(pinned, 0o700)
+
+    copy_data(source, tree.fd)
+
+
+def _restore_unpacked(directory: Path, value: dict) -> None:
+    _check_storage(value)
+    required = sum(p.stat().st_size for p in (directory / "data").rglob("*") if p.is_file())
+    with _data_tree(value, create=True) as tree:
+        # Inspect every live entry before repairing the binary or removing data.
+        for _ in tree.walk():
+            pass
+        if shutil.disk_usage(f"/proc/self/fd/{tree.fd}").free < required + 256 * 1024 * 1024:
+            raise RuntimeError("Insufficient space to restore HomeBox data")
+        account = _ensure_account()
+        _restore_files(directory, value, tree, account)
     secret = json.loads((directory / "secrets.json").read_text())
     write_json_atomic(str(CONFIG / "secrets.json"), secret)
     _activate_files(value)
@@ -741,6 +782,19 @@ def _restore_unpacked(directory: Path, value: dict) -> None:
         _write_site(None)
 
 
+def _restore_files(directory: Path, value: dict, tree: StorageTree, account: pwd.struct_passwd) -> None:
+    # Repair a damaged executable from the verified archive before touching data.
+    binary = release_path(value)
+    _safe_path(binary)
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    staged = binary.parent / ".restore-binary"
+    _safe_path(staged)
+    shutil.copyfile(directory / "homebox", staged)
+    staged.chmod(0o755)
+    os.replace(staged, binary)
+    _replace_data(tree, directory / "data", account.pw_uid, account.pw_gid)
+
+
 def _recover(archive: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="restore-", dir=BACKUPS) as temporary:
         value = unpack_backup(archive, Path(temporary))
@@ -750,21 +804,23 @@ def _recover(archive: Path) -> None:
 
 def _preserve_damaged(value: dict, destination: Path) -> None:
     """Keep raw evidence before an explicit repair, including damaged secrets."""
-    paths = [(Path(value["data_path"]), "data"), (CONFIG, "config"), (STATE, "state.json"),
-             (release_path(value), "homebox")]
+    data = Path(value["data_path"])
+    paths = [(data, "data"), (CONFIG, "config"), (STATE, "state.json"), (release_path(value), "homebox")]
     for path, _ in paths:
         _safe_path(path)
-        if path.is_dir():
-            for child in path.rglob("*"):
-                if child.is_symlink() or not (child.is_dir() or child.is_file()):
-                    raise RuntimeError("Cannot preserve damaged HomeBox with links or special files")
+    reject_nested_mounts(data)
+    reject_nested_mounts(CONFIG)
     descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     try:
         with os.fdopen(descriptor, "wb") as stream:
-            with tarfile.open(fileobj=stream, mode="w:gz") as bundle:
+            with tarfile.open(fileobj=stream, mode="w:gz", dereference=True) as bundle:
                 for path, name in paths:
-                    if path.exists():
-                        bundle.add(path, arcname=name)
+                    if path.is_dir() and path in (data, CONFIG):
+                        opening = _data_tree(value) if path == data else storage_tree(path)
+                        with opening as tree:
+                            _archive_tree(bundle, tree, name)
+                    elif path.is_file():
+                        bundle.add(path, arcname=name, recursive=False)
             stream.flush()
             os.fsync(stream.fileno())
     except BaseException:
@@ -846,6 +902,7 @@ def _transition_to_ready(
     after_recovery: Callable[[], None] | None = None,
 ) -> Path:
     """Activate one verified release with the same recovery path for all updates."""
+    reject_nested_mounts(Path(previous["data_path"]))
     _reserve_backend_port(previous, desired)
     archive = BACKUPS / f"{time.time_ns()}-before-setup.tar.gz"
     was_active = _active()
@@ -865,6 +922,7 @@ def _transition_to_ready(
     try:
         if before_activate is not None:
             before_activate()
+        reject_nested_mounts(Path(desired["data_path"]))
         _activate_files(desired)
         if bootstrap:
             _bootstrap(desired)
@@ -1059,12 +1117,15 @@ def setup_homebox(config) -> None:
         from common.storage_steps import assert_declared_storage_mount
         assert_declared_storage_mount(config, desired["data_path"])
         data = Path(desired["data_path"])
-        mount = _storage(data)
         if previous:
             _check_storage(previous)
+            mount = previous["mount"]
             _secrets()
-        elif (data.exists() and any(data.iterdir())) or UNIT.exists() or STATE.exists() or (ROOT / "current").exists():
-            raise RuntimeError("Refusing to adopt an unmanaged HomeBox installation")
+        else:
+            reject_nested_mounts(data)
+            mount = _storage(data)
+            if (data.exists() and any(data.iterdir())) or UNIT.exists() or STATE.exists() or (ROOT / "current").exists():
+                raise RuntimeError("Refusing to adopt an unmanaged HomeBox installation")
         for package in ("ca-certificates", "curl"):
             if not install_package(package, package, f"apt-get install -y -qq {package}"):
                 raise RuntimeError(f"Failed to install HomeBox dependency {package}")
@@ -1084,10 +1145,9 @@ def setup_homebox(config) -> None:
         else:
             release = stage_release(version)
         desired = {**desired, **release, "schema": 1, "mount": mount, "status": "ready"}
-        _safe_path(data)
-        data.mkdir(mode=0o700, parents=True, exist_ok=True)
-        os.chown(data, account.pw_uid, account.pw_gid)
-        data.chmod(0o700)
+        with _data_tree(desired, create=True) as tree:
+            os.fchown(tree.fd, account.pw_uid, account.pw_gid)
+            os.fchmod(tree.fd, 0o700)
         _check_storage(desired)
         _secrets(create=previous is None)
         # Seed recoverable management state before any application startup.
@@ -1221,6 +1281,7 @@ def operate_homebox(action: str, path: str, *, yes: bool = False, dry_run: bool 
                 if paths_overlap(str(destination), restored["data_path"]):
                     raise ValueError("Restore archive must be outside HomeBox live data")
                 if value is None:
+                    reject_nested_mounts(Path(restored["data_path"]))
                     value = {**restored, "mount": _storage(Path(restored["data_path"]))}
                     _check_storage(value)
                 if restored["data_path"] != value["data_path"]:
@@ -1235,6 +1296,8 @@ def operate_homebox(action: str, path: str, *, yes: bool = False, dry_run: bool 
                     if _digest(release_path(value)) != value["binary_sha256"]:
                         raise RuntimeError("Damaged binary")
                     create_backup(value, safeguard)
+                except StorageBoundaryError:
+                    raise
                 except (OSError, ValueError, RuntimeError, sqlite3.Error, subprocess.SubprocessError):
                     safeguard = BACKUPS / f"{time.time_ns()}-damaged-before-restore.tar.gz"
                     _preserve_damaged(value, safeguard)

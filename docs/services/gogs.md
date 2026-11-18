@@ -90,6 +90,10 @@ trees, and Basaltwater or Gogs runtime directories are rejected before ownership
 changes, including when invoking target-side Gogs setup directly.
 Paths are validated as literal values; whitespace is not trimmed, and control
 characters are refused before target-side work.
+The data directory can be on its own backing mount. Keep independent
+filesystems and bind mounts outside its descendants, including repository and
+LFS subdirectories. Setup refuses nested mounts before applying ownership
+changes and checks mount identity again as it walks the tree.
 
 ## First login and Git access
 
@@ -104,15 +108,20 @@ basaltw credentials set gitadmin
 The setup command may instead include `--credential gitadmin PASSWORD`, but
 that exposes the value to shell history and potentially the process list. If
 there is no matching credential, setup generates a 24-character random
-password. In either case, setup records the initial value in the root-only file
-`/opt/basaltwater/state/gogs_admin_credentials.json`. A rerun preserves an
-existing administrator account and does not rotate its password. Use a unique,
-high-entropy value and enable MFA for administrator accounts.
+password. Setup uses Gogs' installer over a private Unix socket before starting
+the normal service. It sends the password in the form body and saves the intended
+login in the root-only file `/opt/basaltwater/state/gogs_admin_credentials.json`
+before submitting it. If setup is interrupted, the file can still contain the
+initial password for an account that was committed. Rerun setup to verify the
+account. If Gogs already has users, provision a different administrator through
+Gogs before changing the setup username. A rerun preserves the existing
+administrator's password. Use a unique, high-entropy value and enable MFA for
+administrator accounts.
 
 Setup also checks an existing `git` account's home before changing it. System or
 shared roots and symlinks in the home, `.ssh`, or `authorized_keys` path are
-refused. Ownership changes cover the home directory itself and the managed SSH
-subtree; other contents of an existing home retain their ownership.
+refused, as are mounts at or below `.ssh`. Setup sets ownership on the home,
+`.ssh`, and `authorized_keys`.
 The account uses `/bin/sh` to execute Gogs' forced authorized-key command;
 `git-shell` rejects that dispatcher. When the managed `remoteusers` group
 exists, setup adds `git` to it so the shared SSH group restriction permits
@@ -180,9 +189,9 @@ retrying. This interruption recovery covers release-link publication only.
 Setup and patch require an existing regular `data/gogs.db`, open it read-only
 for a SQLite quick check, and require the core `user` and `repository` tables.
 An absent, empty, or schema-less database fails health; the probe never creates
-one. On first install this check runs after Gogs startup and administrator
-initialization. These checks establish basic integrity and schema presence,
-not repository/LFS completeness or migration compatibility.
+one. On first install this check runs after private administrator initialization
+and normal service startup. These checks establish basic integrity and schema
+presence, not repository/LFS completeness or migration compatibility.
 Setup and patch also verify that the `git` user can read and write each managed
 directory, reject CIFS/SMB live storage, and print the backing filesystem, free
 bytes, free inodes, and repository/LFS/attachment/log usage. Useful checks are:
