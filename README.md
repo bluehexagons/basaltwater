@@ -20,8 +20,8 @@ and Proxmox guests. Basaltwater applies repeatable, machine-aware configuration
 over SSH, stores redacted setup state in a workspace, and provides targeted
 operations for hosts that are already configured.
 
-This checkout is preparing the `v2.0.0` release-candidate series. Its current
-package version is `2.0.0rc1`; preview tags use `v2.0.0-rc.N` and publish as
+This repository hosts the `v2.0.0` release-candidate series. Its current
+package version is `2.0.0rc2`; preview tags use `v2.0.0-rc.N` and publish as
 GitHub prereleases. Select a preview by its exact tag. The installer’s `dev`
 channel tracks `main`, and `stable` selects the latest final release. See the
 [release qualification record](docs/release-qualification.md) for candidate status.

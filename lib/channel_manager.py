@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from lib.atomic_io import write_json_atomic
-from lib.installation_info import read_installation_metadata
+from lib.installation_info import installation_version, read_installation_metadata
 from lib.remote_utils import CommandTimeoutError, run
 from lib.runtime_source import (
     OFFICIAL_SOURCE_URL, SOURCE_RESERVED_NAMES, SYSTEM_INSTALL_MARKER,
@@ -96,6 +96,7 @@ def get_channel_info(repo_path: str) -> JSONDict:
 
     state["commit"] = commit
     state["branch"] = _current_branch(repo_path)
+    state["version"] = installation_version(repo_path)
     state["managed"] = True
     return state
 

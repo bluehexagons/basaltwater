@@ -121,6 +121,20 @@ class TestChannelManager(unittest.TestCase):
             switch_channel(self.repo, "v0.2.0")
         self.assertEqual(_git(self.repo, "rev-parse", "HEAD"), previous)
 
+    def test_managed_preview_reports_project_version(self) -> None:
+        tag = "v1.2.0-rc.1"
+        with open(os.path.join(self.seed, "pyproject.toml"), "w", encoding="utf-8") as metadata:
+            metadata.write('[project]\nversion = "1.2.0rc1"\n')
+        _git(self.seed, "add", "pyproject.toml")
+        _git(self.seed, "commit", "-m", "preview version metadata")
+        _git(self.seed, "tag", tag)
+        _git(self.seed, "push", "origin", "--tags")
+
+        switch_channel(self.repo, tag)
+        info = get_channel_info(self.repo)
+        self.assertEqual(info["channel"], tag)
+        self.assertEqual(info["version"], "1.2.0rc1")
+
     def test_dev_upgrade_follows_main(self) -> None:
         switch_channel(self.repo, "dev")
         previous = _git(self.repo, "rev-parse", "HEAD")

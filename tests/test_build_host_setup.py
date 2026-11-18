@@ -776,27 +776,31 @@ class BuildHostLifecycleTests(unittest.TestCase):
 
             fixture["reads"].start()
             try:
-                with patch("lib.machine_state.can_manage_system_services", return_value=True), \
-                     patch.object(setup, "is_dry_run", return_value=False), \
-                     patch("common.service_tools.build_host.require_platform"), \
-                     patch.object(setup, "_trusted_source_tree"), \
-                     patch.object(setup, "_preflight_managed_state"), \
-                     patch.object(setup, "_verify_unit_source"), \
-                     patch.object(setup, "_trusted_path"), \
-                     patch.object(Path, "lstat", autospec=True, side_effect=fake_lstat), \
-                     patch.object(setup, "_ensure_runtime_directories"), \
-                     patch.object(setup, "_install_packages"), \
-                     patch.object(setup, "_ensure_worker_account", return_value=fixture["marker"]["worker"]), \
-                     patch.object(setup, "_ensure_transport_account") as ensure_account, \
-                     patch.object(setup, "_ensure_directory"), \
-                     patch.object(setup, "_reconcile_sudoers") as reconcile_sudo, \
-                     patch.object(setup, "_reconcile_authorized_key") as reconcile_key, \
-                     patch.object(setup, "_write_file"), \
-                     patch.object(setup, "_write_marker",
-                                  side_effect=lambda value: marker_writes.append(copy.deepcopy(value))), \
-                     patch("lib.build_jobs.BuildJobStore", return_value=store), \
-                     patch("lib.unit_transaction.replace_units",
-                           side_effect=lambda _units, activate, deactivate, prepare: prepare()) as replace_units:
+                with ExitStack() as stack:
+                    stack.enter_context(patch("lib.machine_state.can_manage_system_services", return_value=True))
+                    stack.enter_context(patch("common.service_tools.build_host.require_platform"))
+                    stack.enter_context(patch.object(Path, "lstat", autospec=True, side_effect=fake_lstat))
+                    stack.enter_context(patch.object(setup, "is_dry_run", return_value=False))
+                    stack.enter_context(patch.object(
+                        setup, "_ensure_worker_account", return_value=fixture["marker"]["worker"],
+                    ))
+                    for method in (
+                        "_trusted_source_tree", "_preflight_managed_state", "_verify_unit_source",
+                        "_trusted_path", "_ensure_runtime_directories", "_install_packages",
+                        "_ensure_directory", "_write_file",
+                    ):
+                        stack.enter_context(patch.object(setup, method))
+                    ensure_account = stack.enter_context(patch.object(setup, "_ensure_transport_account"))
+                    reconcile_sudo = stack.enter_context(patch.object(setup, "_reconcile_sudoers"))
+                    reconcile_key = stack.enter_context(patch.object(setup, "_reconcile_authorized_key"))
+                    stack.enter_context(patch.object(
+                        setup, "_write_marker", side_effect=lambda value: marker_writes.append(copy.deepcopy(value)),
+                    ))
+                    stack.enter_context(patch("lib.build_jobs.BuildJobStore", return_value=store))
+                    replace_units = stack.enter_context(patch(
+                        "lib.unit_transaction.replace_units",
+                        side_effect=lambda _units, activate, deactivate, prepare: prepare(),
+                    ))
                     setup.configure_build_host(setup_config())
             finally:
                 fixture["reads"].stop()
@@ -861,27 +865,27 @@ class BuildHostLifecycleTests(unittest.TestCase):
             root = Path(temp)
             store = FakeStore(busy=True)
             config = setup_config()
-            with patch("lib.machine_state.can_manage_system_services", return_value=True), \
-                 patch.object(setup, "is_dry_run", return_value=False), \
-                 patch.object(setup, "ETC_DIR", str(root / "etc")), \
-                 patch.object(setup, "MARKER_PATH", str(root / "etc" / ".managed.json")), \
-                 patch.object(setup, "_LEGACY_SSH_ROOT", str(root / "legacy-ssh")), \
-                 patch("common.service_tools.build_host.require_platform"), \
-                 patch.object(setup, "_trusted_source_tree"), \
-                 patch.object(setup, "_initial_install_conflicts"), \
-                 patch.object(setup, "_preflight_managed_state"), \
-                 patch.object(setup, "_verify_unit_source"), \
-                 patch.object(setup, "_trusted_path"), \
-                 patch.object(setup, "_read_file", return_value=None), \
-                 patch.object(setup, "_ensure_directory"), \
-                 patch.object(setup, "_write_marker"), \
-                 patch.object(setup, "_ensure_runtime_directories"), \
-                 patch.object(setup, "_prepare_enrollment") as prepare, \
-                 patch.object(setup, "_install_packages") as install_packages, \
-                 patch("lib.build_jobs.BuildJobStore", return_value=store), \
-                 patch("lib.unit_transaction.replace_units") as replace_units, \
-                 self.assertRaisesRegex(RuntimeError, "worker is active"):
-                setup.configure_build_host(config)
+            with ExitStack() as stack:
+                stack.enter_context(patch("lib.machine_state.can_manage_system_services", return_value=True))
+                stack.enter_context(patch("common.service_tools.build_host.require_platform"))
+                stack.enter_context(patch.object(setup, "is_dry_run", return_value=False))
+                stack.enter_context(patch.multiple(
+                    setup, ETC_DIR=str(root / "etc"), MARKER_PATH=str(root / "etc" / ".managed.json"),
+                    _LEGACY_SSH_ROOT=str(root / "legacy-ssh"),
+                ))
+                for method in (
+                    "_trusted_source_tree", "_initial_install_conflicts", "_preflight_managed_state",
+                    "_verify_unit_source", "_trusted_path", "_ensure_directory", "_write_marker",
+                    "_ensure_runtime_directories",
+                ):
+                    stack.enter_context(patch.object(setup, method))
+                stack.enter_context(patch.object(setup, "_read_file", return_value=None))
+                prepare = stack.enter_context(patch.object(setup, "_prepare_enrollment"))
+                install_packages = stack.enter_context(patch.object(setup, "_install_packages"))
+                stack.enter_context(patch("lib.build_jobs.BuildJobStore", return_value=store))
+                replace_units = stack.enter_context(patch("lib.unit_transaction.replace_units"))
+                with self.assertRaisesRegex(RuntimeError, "worker is active"):
+                    setup.configure_build_host(config)
 
             self.assertEqual(store.drain_calls, [True, False])
             self.assertFalse(store.state["draining"])

@@ -7,7 +7,7 @@ a recovery path. The [plan index](README.md) maps related work; the
 
 ## Current baseline
 
-- The first preview candidate is `v2.0.0-rc.1` (Python package `2.0.0rc1`).
+- The current preview candidate is `v2.0.0-rc.2` (Python package `2.0.0rc2`).
 - Managed operations have durable guards, state validation, unit/Nginx recovery
   and deployment rollback. They do not reverse arbitrary scripts, packages,
   database migrations or application data.

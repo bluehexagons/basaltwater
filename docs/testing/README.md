@@ -32,7 +32,7 @@ comparisons and display-wake recovery; see the
 | Combined build/CI host | 🟢 **Labbed** — selected real Actions, SSH/webhook builds, nested scheduling, maintenance, rerun/reboot, process-loss recovery and bounded scratch ENOSPC; see [scope and limits](evidence.md#shared-debian-build-and-ci-host) |
 | LXC suspend | 🔴 **Failed** — the recorded live attempt failed |
 | Production use and broad human QA | 🟣 **Deployed** / ✅ **Verified** — no status claimed without the relevant evidence |
-| `2.0.0rc1` stable release | ⚪ **Untested** — required [release qualification](../release-qualification.md) remains open |
+| Stable `v2.0.0` release | ⚪ **Untested** — required [release qualification](../release-qualification.md) remains open |
 
 ## Status legend
 
