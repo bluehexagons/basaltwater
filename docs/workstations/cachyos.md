@@ -203,6 +203,35 @@ listeners are refused for review; Basaltwater does not take them over. Turning
 SSH off stops the managed service and recognizable stock native SSH, while
 foreign custom SSH remains untouched and can make disablement fail safely.
 
+### Install the administrator SSH helper
+
+Before enabling, adopting, repairing, or removing SSH, provision the SSH
+helper separately on the workstation. This also applies when setup detects
+existing SSH or runs from a remote controller. A workstation with SSH already
+off and no managed service to remove can complete setup without the helper.
+
+1. Obtain the exact reviewed Basaltwater commit ID through a trusted release or
+   administrator channel. As administrator, fetch from the official repository
+   into a fresh root-owned staging directory under `/opt`. Verify that the
+   fetched commit matches the approved ID before exporting files.
+2. Export the commit's `common/`, `lib/`, and `plugins/` trees into a new directory
+   in that staging area. Install the directory as `/opt/basaltwater-cachyos-ssh` with its
+   contents owned by root, ordinary files and directories readable by the
+   desktop account, and no group/other write access or symlinks. The entry
+   point is `common/service_tools/cachyos_ssh.py` within that directory. Keep
+   the complete import trees from the same approved commit.
+3. Run the normal setup command as the desktop account. Run it again after
+   provisioning a replacement helper when updating the SSH lifecycle code.
+   Stage and verify the replacement separately before publishing it.
+
+Desktop upgrades and controller uploads leave the administrator installation
+alone. The setup preflight checks ownership and permissions before sudo. The
+installed helper uses isolated system Python, verifies its import trees, and
+uses native system commands with a fixed environment. Keep the administrator
+installation in place through managed SSH removal with `--no-ssh`.
+
+### Configure SSH access
+
 When SSH is enabled without explicit access flags, setup automatically enables
 private IPv4 LAN access for the selected T3, Sunshine, and SSH firewall scopes.
 LAN discovery runs on each setup and refresh, so a roaming workstation follows
