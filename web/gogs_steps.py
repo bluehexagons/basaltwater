@@ -3,15 +3,21 @@
 from __future__ import annotations
 
 import configparser
+import grp
 import hashlib
 import ipaddress
 import json
 import os
+from pathlib import Path
+import pwd
 import re
 import secrets
 import shlex
+import stat
+import subprocess
 import tempfile
 from typing import Any, Mapping
+from urllib.parse import urlencode
 
 from lib.atomic_io import write_json_atomic, write_text_atomic
 from lib.auth_failure_bans import configure_nginx_auth_failure_ban
@@ -28,14 +34,17 @@ from lib.release_management import (
     validate_release_tag,
     write_json_state,
 )
-from lib.remote_utils import generate_password, is_service_active, run, user_exists
+from lib.remote_utils import generate_password, is_dry_run, is_service_active, run, user_exists
+from lib.setup_directories import directory_fd
 from lib.ufw_ingress import verify_live_ufw_ingress
 from lib.unit_transaction import replace_units
 from lib.validation import (
     validate_filesystem_path, validate_gogs_owned_directory, validate_gogs_settings,
     validate_network_port, validate_no_control_characters,
 )
+from lib.validators import validate_username
 from web.cloudflare_firewall import legacy_gogs_origin_rule
+from web.service_storage import reject_nested_mounts, storage_tree
 from web.ssl_steps import install_certbot, obtain_letsencrypt_certificate, setup_certificate_renewal
 from web.web_steps import install_nginx
 
@@ -62,6 +71,11 @@ _GOGS_RULE_COMMENT_PREFIX = "basaltwater Gogs"
 _LEGACY_GOGS_DIRECT_COMMENT = "gogs direct HTTP"
 _LEGACY_GOGS_WEB_COMMENT = "gogs web"
 _UFW_NUMBERED_RULE_RE = re.compile(r"^\[\s*(\d+)\]")
+_GOGS_DATA_DIRS = (
+    "custom", "custom/conf", "data", "data/lfs-objects", "data/tmp/lfs-objects",
+    "data/tmp/uploads", "data/attachments", "data/avatars", "data/repo-avatars",
+    "data/sessions", "repositories", "log",
+)
 
 
 def _gogs_release_dir(tag_name: str, archive_sha256: str) -> str:
@@ -342,13 +356,31 @@ def install_or_update_gogs_release() -> tuple[str, bool, str]:
     return tag_name, True, expected_sha256
 
 
+def _gogs_identity(home: str) -> pwd.struct_passwd:
+    validate_gogs_owned_directory(home, account_home=True)
+    try:
+        account = pwd.getpwnam(GOGS_GIT_USER)
+        group = grp.getgrnam(GOGS_GIT_GROUP)
+    except KeyError as exc:
+        raise RuntimeError("Gogs requires the dedicated git user and group") from exc
+    if (
+        account.pw_name != GOGS_GIT_USER or group.gr_name != GOGS_GIT_GROUP
+        or account.pw_uid <= 0 or group.gr_gid <= 0 or account.pw_gid != group.gr_gid
+        or account.pw_dir != home
+    ):
+        raise RuntimeError("Refusing an incompatible Gogs git user or group")
+    return account
+
+
+def _check_git_home(git_home: str) -> None:
+    validate_gogs_owned_directory(git_home, account_home=True)
+    _reject_symlinked_gogs_path(f"{git_home}/.ssh/authorized_keys")
+    reject_nested_mounts(Path(git_home) / ".ssh", include_root=True)
+
+
 def _ensure_git_user() -> str:
     git_home = _get_git_home()
-    validate_gogs_owned_directory(git_home, account_home=True)
-    _reject_symlinked_gogs_path(git_home)
-    ssh_dir = f"{git_home}/.ssh"
-    _reject_symlinked_gogs_path(ssh_dir)
-    _reject_symlinked_gogs_path(f"{ssh_dir}/authorized_keys")
+    _check_git_home(git_home)
     if not user_exists(GOGS_GIT_USER):
         run(
             f"useradd --create-home --home-dir {shlex.quote(git_home)} "
@@ -356,6 +388,7 @@ def _ensure_git_user() -> str:
         )
         print(f"  ✓ Created system user: {GOGS_GIT_USER}")
     else:
+        _gogs_identity(git_home)
         run(f"usermod -d {shlex.quote(git_home)} {shlex.quote(GOGS_GIT_USER)}")
         run(f"usermod -s /bin/sh {shlex.quote(GOGS_GIT_USER)}")
         print(f"  ✓ Using existing system user: {GOGS_GIT_USER}")
@@ -367,15 +400,38 @@ def _ensure_git_user() -> str:
     if group_result.returncode == 0:
         run(f"usermod -aG remoteusers {shlex.quote(GOGS_GIT_USER)}")
 
-    run(f"mkdir -p {shlex.quote(ssh_dir)}")
-    run(f"touch {shlex.quote(ssh_dir)}/authorized_keys")
-    run(f"chmod 700 {shlex.quote(ssh_dir)}")
-    run(f"chmod 600 {shlex.quote(ssh_dir)}/authorized_keys")
-    owner = f"{shlex.quote(GOGS_GIT_USER)}:{shlex.quote(GOGS_GIT_GROUP)}"
-    run(f"chown {owner} {shlex.quote(git_home)}")
-    run(f"chown -R {owner} {shlex.quote(ssh_dir)}")
+    _ensure_git_ssh_files(git_home, _gogs_identity(git_home))
     run(f"passwd -l {shlex.quote(GOGS_GIT_USER)}")
     return git_home
+
+
+def _ensure_git_ssh_files(home: str, account: pwd.struct_passwd) -> None:
+    ssh = Path(home) / ".ssh"
+    reject_nested_mounts(ssh, include_root=True)
+    with storage_tree(ssh, backing=Path(home), create=True, mode=0o700) as tree:
+        try:
+            keys = os.open("authorized_keys", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC,
+                           0o600, dir_fd=tree.fd)
+        except FileExistsError:
+            with tree.child(tree.fd, "authorized_keys") as (fd, info):
+                _set_git_keys_permissions(fd, info, account)
+        else:
+            try:
+                _set_git_keys_permissions(keys, tree.metadata(keys), account)
+            finally:
+                os.close(keys)
+        os.fchown(tree.fd, account.pw_uid, account.pw_gid)
+        os.fchmod(tree.fd, 0o700)
+    with directory_fd(home) as fd:
+        os.fchown(fd, account.pw_uid, account.pw_gid)
+
+
+def _set_git_keys_permissions(fd: int, info: os.stat_result, account: pwd.struct_passwd) -> None:
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        raise RuntimeError("Gogs authorized_keys must be an unshared regular file")
+    pinned = f"/proc/self/fd/{fd}"
+    os.chown(pinned, account.pw_uid, account.pw_gid)
+    os.chmod(pinned, 0o600)
 
 
 def _ensure_gogs_dependencies() -> None:
@@ -398,27 +454,30 @@ def _reject_symlinked_gogs_path(path: str) -> None:
             raise RuntimeError(f"Refusing symlinked Gogs data path: {current}")
 
 
-def _ensure_gogs_data_dirs(data_path: str) -> str:
-    config_dir = f"{data_path}/custom/conf"
-    for path in (
-        data_path,
-        f"{data_path}/custom",
-        config_dir,
-        f"{data_path}/data",
-        f"{data_path}/data/lfs-objects",
-        f"{data_path}/data/tmp/lfs-objects",
-        f"{data_path}/data/tmp/uploads",
-        f"{data_path}/data/attachments",
-        f"{data_path}/data/avatars",
-        f"{data_path}/data/repo-avatars",
-        f"{data_path}/data/sessions",
-        f"{data_path}/repositories",
-        f"{data_path}/log",
-    ):
-        _reject_symlinked_gogs_path(path)
-        run(f"mkdir -p {shlex.quote(path)}")
-    run(f"chown -R {shlex.quote(GOGS_GIT_USER)}:{shlex.quote(GOGS_GIT_GROUP)} {shlex.quote(data_path)}")
-    return f"{config_dir}/app.ini"
+def _check_gogs_data_paths(data_path: str) -> None:
+    validate_gogs_owned_directory(data_path)
+    reject_nested_mounts(Path(data_path))
+    for relative in (*_GOGS_DATA_DIRS, "custom/conf/app.ini", "data/gogs.db"):
+        _reject_symlinked_gogs_path(f"{data_path}/{relative}")
+
+
+def _ensure_gogs_data_dirs(data_path: str, mount_target: str, git_home: str) -> str:
+    _check_gogs_data_paths(data_path)
+    account = _gogs_identity(git_home)
+    uid, gid = account.pw_uid, account.pw_gid
+    with storage_tree(Path(data_path), backing=Path(mount_target), create=True) as tree:
+        for _, _, _, info in tree.walk():
+            if (stat.S_ISREG(info.st_mode) and info.st_nlink > 1
+                    and (info.st_uid, info.st_gid) != (uid, gid)):
+                raise RuntimeError("Refusing to reassign a multiply linked Gogs data file")
+        for relative in _GOGS_DATA_DIRS:
+            with tree.directory(Path(relative), create=True):
+                pass
+        for _, fd, _, info in tree.walk():
+            if (stat.S_ISDIR(info.st_mode) or (stat.S_ISREG(info.st_mode) and info.st_nlink == 1)):
+                if (info.st_uid, info.st_gid) != (uid, gid):
+                    os.chown(f"/proc/self/fd/{fd}", uid, gid)
+    return f"{data_path}/custom/conf/app.ini"
 
 
 def _load_or_create_gogs_secret_key() -> str:
@@ -1026,38 +1085,34 @@ def build_gogs_admin_command(args: list[str], config_path: str) -> str:
     return f"cd {shlex.quote(GOGS_CURRENT_DIR)} && {shlex.join(command)}"
 
 
-def _redacted_admin_create_user_command(config_path: str, username: str, email: str) -> str:
-    return build_gogs_admin_command(
-        [
-            "admin",
-            "create-user",
-            "--name",
-            username,
-            "--password",
-            "[REDACTED]",
-            "--email",
-            email,
-            "--admin",
-        ],
-        config_path,
-    )
-
-
-def _gogs_admin_user_exists(config_path: str, username: str, data_path: str) -> bool:
+def _gogs_admin_state(username: str, data_path: str, account: pwd.struct_passwd) -> tuple[int, int]:
+    """Return user count and whether the requested identity is an active admin."""
     database_path = f"{data_path}/data/gogs.db"
-    if not os.path.exists(database_path):
-        return False
-    escaped_username = username.replace("'", "''")
+    try:
+        info = os.lstat(database_path)
+    except FileNotFoundError:
+        return 0, 0
+    if not stat.S_ISREG(info.st_mode):
+        raise RuntimeError("Gogs SQLite database must be a regular file")
     query = (
-        "SELECT COUNT(*) FROM user "
-        f"WHERE lower(name) = lower('{escaped_username}');"
+        "SELECT COUNT(*), COALESCE(MAX(CASE WHEN lower_name = "
+        f"'{username}' THEN CASE WHEN type = 0 AND is_admin AND is_active "
+        "AND NOT prohibit_login THEN 1 ELSE -1 END END), 0) FROM user;"
     )
-    result = run(
-        f"sqlite3 {shlex.quote(database_path)} {shlex.quote(query)}",
-        check=False,
-        capture_output=True,
-    )
-    return result.returncode == 0 and result.stdout.strip() == "1"
+    try:
+        result = subprocess.run(
+            ["/usr/bin/sqlite3", "-batch", "-noheader", "-init", "/dev/null", "-readonly",
+             database_path, query],
+            user=account.pw_uid, group=account.pw_gid, extra_groups=[], cwd="/",
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            text=True, check=True, timeout=15,
+        )
+        count, state = map(int, result.stdout.strip().split("|"))
+        if count >= 0 and state in {-1, 0, 1} and (count > 0 or state == 0):
+            return count, state
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    raise RuntimeError("Could not verify Gogs administrator state in SQLite")
 
 
 def _write_admin_credentials(username: str, password: str) -> None:
@@ -1069,38 +1124,126 @@ def _write_admin_credentials(username: str, password: str) -> None:
     )
 
 
-def _ensure_gogs_admin_account(config: SetupConfig, config_path: str, data_path: str) -> None:
+def _install_gogs_admin(
+    username: str, password: str, data_path: str, account: pwd.struct_passwd,
+) -> None:
+    """Submit Gogs' native installer form on a private Unix socket."""
+    with tempfile.TemporaryDirectory(prefix="basaltwater-gogs-", dir="/run") as private:
+        root = Path(private)
+        work = root / "install"
+        work.mkdir(mode=0o700)
+        os.chown(work, account.pw_uid, account.pw_gid)
+        os.chown(root, -1, account.pw_gid)
+        root.chmod(0o710)
+        socket_path = work / "http.sock"
+        ini = work / "app.ini"
+        write_text_atomic(str(ini), f"""RUN_USER = {GOGS_GIT_USER}
+RUN_MODE = prod
+
+[server]
+PROTOCOL = unix
+HTTP_ADDR = {socket_path}
+EXTERNAL_URL = http://localhost/
+LOCAL_ROOT_URL = http://localhost/
+UNIX_SOCKET_PERMISSION = 600
+APP_DATA_PATH = {work}/data
+DISABLE_SSH = true
+DISABLE_ROUTER_LOG = true
+
+[session]
+PROVIDER_CONFIG = {work}/sessions
+
+[log]
+ROOT_PATH = {work}/log
+
+[security]
+INSTALL_LOCK = false
+SECRET_KEY = {secrets.token_hex(32)}
+
+[cron]
+ENABLED = false
+RUN_AT_START = false
+""", mode=0o600, uid=account.pw_uid, gid=account.pw_gid)
+        curl = [
+            "/usr/bin/curl", "--disable", "--silent", "--fail", "--noproxy", "*", "--proto", "=http",
+            "--unix-socket", str(socket_path), "--output", "/dev/null",
+        ]
+        try:
+            with subprocess.Popen(
+                [GOGS_EXECUTABLE, "web", "--config", str(ini)],
+                cwd=GOGS_CURRENT_DIR, user=account.pw_uid, group=account.pw_gid,
+                extra_groups=[], umask=0o077, stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                env={"PATH": "/usr/bin:/bin", "HOME": account.pw_dir, "USER": GOGS_GIT_USER,
+                     "GOGS_WORK_DIR": GOGS_CURRENT_DIR, "GOGS_CUSTOM": str(work)},
+            ) as installer:
+                try:
+                    _submit_gogs_installer(curl, username, password, data_path, work)
+                finally:
+                    # The installer only serves this invocation. Kill before
+                    # cleaning up or allowing the public service to start.
+                    installer.kill()
+        except (OSError, subprocess.SubprocessError):
+            raise RuntimeError("Private Gogs administrator installer failed") from None
+
+
+def _submit_gogs_installer(curl: list[str], username: str, password: str, data_path: str, work: Path) -> None:
+    url = "http://localhost/install"
+    ready = run([*curl, "--max-time", "2", "--retry", "15", "--retry-delay", "1",
+                 "--retry-max-time", "30", "--retry-all-errors", url],
+                check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=35)
+    if ready.returncode:
+        raise RuntimeError("Gogs private installer did not become ready")
+    # Persist the intended login before submitting. A lost reply or interruption
+    # after the database commits must not lose a generated password.
+    _write_admin_credentials(username, password)
+    body = urlencode({
+        "db_type": "SQLite3", "db_path": f"{data_path}/data/gogs.db", "app_name": "Gogs",
+        "repo_root_path": f"{data_path}/repositories", "log_root_path": str(work / "log"),
+        "run_user": GOGS_GIT_USER, "domain": "localhost", "http_port": "3000",
+        "app_url": "http://localhost/", "default_branch": "master", "disable_registration": "on",
+        "admin_name": username, "admin_email": f"{username}@localhost",
+        "admin_passwd": password, "admin_confirm_passwd": password,
+    })
+    try:
+        result = run([*curl, "--max-time", "120", "--header", "Content-Type: application/x-www-form-urlencoded",
+                      "--data-binary", "@-", url],
+                     check=False, input_data=body, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     timeout=125)
+    except (OSError, RuntimeError, subprocess.SubprocessError):
+        raise RuntimeError("Gogs private administrator submission did not complete") from None
+    if result.returncode:
+        raise RuntimeError("Gogs private administrator submission failed")
+
+
+def _ensure_gogs_admin_account(config: SetupConfig, data_path: str, git_home: str) -> None:
     admin_username = config.username
-    if _gogs_admin_user_exists(config_path, admin_username, data_path):
+    if not validate_username(admin_username):
+        raise ValueError("Invalid Gogs administrator username")
+    account = _gogs_identity(git_home)
+    count, admin = _gogs_admin_state(admin_username, data_path, account)
+    if admin == 1:
         print(f"  ✓ Gogs admin user already exists: {admin_username}")
         return
+    if count:
+        raise RuntimeError("Gogs already has users; provision the requested administrator through Gogs")
+    if len(admin_username) > 30:
+        raise ValueError("Gogs initial administrator username must be at most 30 characters")
+    if is_service_active(GOGS_SERVICE):
+        raise RuntimeError("Stop Gogs before bootstrapping its initial administrator")
 
     password = get_runtime_credential(config, admin_username)
     if password is None:
         password = generate_password(24)
-    email = f"{admin_username}@localhost"
-    result = run(
-        build_gogs_admin_command(
-            [
-                "admin",
-                "create-user",
-                "--name",
-                admin_username,
-                "--password",
-                password,
-                "--email",
-                email,
-                "--admin",
-            ],
-            config_path,
-        ),
-        check=False,
-        display_cmd=_redacted_admin_create_user_command(config_path, admin_username, email),
-    )
-    if result.returncode != 0:
-        raise RuntimeError("Failed to create initial Gogs admin account")
-
-    _write_admin_credentials(admin_username, password)
+    try:
+        password_length = len(password.encode("utf-8"))
+    except UnicodeEncodeError:
+        password_length = 0
+    if not 1 <= password_length <= 255 or "\x00" in password:
+        raise ValueError("Gogs initial administrator password must be 1–255 UTF-8 bytes without NUL")
+    _install_gogs_admin(admin_username, password, data_path, account)
+    if _gogs_admin_state(admin_username, data_path, account)[1] != 1:
+        raise RuntimeError("Gogs private installer did not create the requested administrator")
     print(f"  ✓ Created initial Gogs admin user: {admin_username}")
     print(f"  ✓ Admin credentials saved to {GOGS_ADMIN_CREDENTIALS_FILE}")
 
@@ -1195,14 +1338,22 @@ def _gogs_backing_filesystem(data_path: str) -> tuple[str, str, str]:
             break
         probe_path = parent
     mount_result = run(
-        f"findmnt -n -o SOURCE,FSTYPE,TARGET -T {shlex.quote(probe_path)}",
+        f"findmnt --json -o SOURCE,FSTYPE,TARGET -T {shlex.quote(probe_path)}",
         check=False,
         capture_output=True,
     )
-    mount_fields = (mount_result.stdout or "").strip().split()
-    if mount_result.returncode != 0 or len(mount_fields) < 3:
-        raise RuntimeError("Could not identify the filesystem backing Gogs data")
-    source, filesystem, mount_target = mount_fields[:3]
+    try:
+        if mount_result.returncode:
+            raise ValueError("findmnt failed")
+        mount, = json.loads(mount_result.stdout)["filesystems"]
+        source, filesystem, mount_target = (mount[key] for key in ("source", "fstype", "target"))
+        if not all(isinstance(value, str) and value for value in (source, filesystem, mount_target)):
+            raise ValueError("Incomplete filesystem identity")
+        validate_filesystem_path(mount_target)
+        if not os.path.isabs(mount_target):
+            raise ValueError("Invalid mount target")
+    except (ValueError, KeyError, TypeError) as exc:
+        raise RuntimeError("Could not identify the filesystem backing Gogs data") from exc
     if filesystem.lower() in {"cifs", "smb3"}:
         raise RuntimeError(
             "Gogs live repositories, SQLite, and LFS objects cannot use CIFS storage"
@@ -1299,22 +1450,22 @@ def _complete_gogs_setup(
     data_path: str,
     git_home: str,
     config_path: str,
+    mount_target: str,
     tag_name: str,
     archive_sha256: str,
 ) -> None:
-    write_text_atomic(
-        config_path,
-        generate_gogs_app_ini(
-            config,
-            git_home=git_home,
-            data_path=data_path,
-            domain=domain,
-            port=port,
-            backend_port=backend_port,
-        ),
-        mode=0o600,
+    _check_gogs_data_paths(data_path)
+    _ensure_gogs_admin_account(config, data_path, git_home)
+    account = _gogs_identity(git_home)
+    app_ini = generate_gogs_app_ini(
+        config, git_home=git_home, data_path=data_path, domain=domain, port=port,
+        backend_port=backend_port,
     )
-    run(f"chown {shlex.quote(GOGS_GIT_USER)}:{shlex.quote(GOGS_GIT_GROUP)} {shlex.quote(config_path)}")
+    with storage_tree(Path(data_path), backing=Path(mount_target)) as tree:
+        config_file = Path(config_path).relative_to(data_path)
+        with tree.directory(config_file.parent) as directory:
+            write_text_atomic(f"/proc/self/fd/{directory}/{config_file.name}", app_ini,
+                              mode=0o600, uid=account.pw_uid, gid=account.pw_gid)
     write_gogs_state(tag_name, data_path, config_path, archive_sha256)
     _configure_git_ssh_access()
 
@@ -1340,7 +1491,6 @@ def _complete_gogs_setup(
 
     _wait_for_gogs_ready(backend_port)
     _wait_for_gogs_frontend(config, domain, port)
-    _ensure_gogs_admin_account(config, config_path, data_path)
     _run_gogs_post_setup_commands(config_path)
     check_gogs_storage_health(data_path)
     _maybe_configure_firewall(config, domain, port)
@@ -1405,6 +1555,11 @@ def setup_gogs(config: SetupConfig) -> None:
     if not config.gogs:
         return
     validate_gogs_settings(config)
+    if is_dry_run() or config.dry_run:
+        print("  [DRY-RUN] Would configure Gogs storage, administrator, and service")
+        return
+    if not validate_username(config.username):
+        raise ValueError("Invalid Gogs administrator username")
 
     domain, port = parse_gogs_spec(str(config.gogs[0]), strict=True)
     backend_port = _gogs_backend_port(config, port)
@@ -1428,13 +1583,15 @@ def setup_gogs(config: SetupConfig) -> None:
     from common.storage_steps import assert_declared_storage_mount
 
     assert_declared_storage_mount(config, data_path)
-    _gogs_backing_filesystem(data_path)
+    _check_gogs_data_paths(data_path)
+    _check_git_home(_get_git_home())
+    _, _, mount_target = _gogs_backing_filesystem(data_path)
 
     _reconcile_gogs_direct_firewall(config, port)
 
     _ensure_gogs_dependencies()
     git_home = _ensure_git_user()
-    config_path = _ensure_gogs_data_dirs(data_path)
+    config_path = _ensure_gogs_data_dirs(data_path, mount_target, git_home)
     previous_state = _load_gogs_state()
     previous_tag = previous_state.get("tag_name")
     previous_archive_sha256 = previous_state.get("archive_sha256")
@@ -1448,6 +1605,7 @@ def setup_gogs(config: SetupConfig) -> None:
             data_path=data_path,
             git_home=git_home,
             config_path=config_path,
+            mount_target=mount_target,
             tag_name=tag_name,
             archive_sha256=archive_sha256,
         )

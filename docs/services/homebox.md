@@ -81,6 +81,10 @@ file shares or other services are rejected. A declared storage mount must
 contain a HomeBox subdirectory; do not select the mount root itself. Setup and
 operations verify backing-mount identity and capacity, and the unit requires
 its data mount. Data-path changes require a deliberate migration, not a patch.
+Keep separate filesystems and bind mounts outside the live data directory.
+Setup, backup, restore, and update recovery refuse nested mounts, including
+same-filesystem binds and file mounts. Keep the mount layout stable while a
+backup or recovery is running.
 Attachment uploads stage files beside their destinations before an atomic
 rename, so a data disk can be on a different filesystem from `/tmp`. An
 interrupted upload can leave a temporary file in the attachment directory.
@@ -227,9 +231,11 @@ a failed TLS probe keeps that gate in place.
 
 An interrupted mutation leaves `/etc/homebox/maintenance` with the recovery
 archive path. Inspect it and explicitly restore that archive before retrying
-setup. Failed recovery retains the marker and artifacts. Do not delete the
-marker to bypass a failed migration. An interrupted preparation with no
-recorded backup is safely replayed because application mutation has not begun.
+setup. Failed recovery retains the marker and artifacts. If recovery detects
+a nested mount, move or unmount it before restoring the retained archive.
+Do not delete the marker to bypass a failed migration. An interrupted
+preparation with no recorded backup is safely replayed because application
+mutation has not begun.
 
 ## Password recovery and disabling
 
