@@ -54,12 +54,7 @@ function Assert-NativeHeldRecord($Record,[string]$Id,[string]$Directory) {
 }
 function Request-NativeHeldCancellation([string]$Directory,[string]$Name) {
     if($Name -cne ('Local\Basaltwater.Hold.'+(Split-Path -Leaf $Directory))){throw 'Invalid held-input cancellation identity'}
-    $path=Join-Path $Directory 'cancel'; Assert-NativeDesktopPath $path
-    try { New-NativeDesktopPrivateFile $path ([Text.Encoding]::ASCII.GetBytes('cancel')) }
-    catch [IO.IOException] {
-        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw }
-        Assert-NativeDesktopPrivatePath $path
-    }
+    Set-NativeDesktopMarker (Join-Path $Directory 'cancel') 'cancel'
     $signal=$null
     try {$signal=[Threading.EventWaitHandle]::OpenExisting($Name+'.cancel');$null=$signal.Set()}
     catch [Threading.WaitHandleCannotBeOpenedException] { } # Startup also checks the durable marker.

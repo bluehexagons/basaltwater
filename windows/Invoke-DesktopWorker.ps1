@@ -40,7 +40,7 @@ try {
                 $peer=Pin-NativeWarmProcess $record ([int]$request.pid) ([long]$request.created)
                 # Claim durably before dispatch. A terminated server never
                 # replays a claimed mailbox after a restart.
-                [IO.File]::WriteAllText($claim,'claimed')
+                New-NativeDesktopPrivateFile $claim ([Text.Encoding]::ASCII.GetBytes('claimed'))
                 $body=$request.request
                 if($body.command -notin @('ready','windows','inspect','window','element','input','screenshot','hold-plan','hold')){throw 'Unsupported warm worker operation'}
                 Write-NativeHeldJson (Join-Path $Directory 'busy.json') @{id=$request.id;command=$body.command;lease=$(if($body.PSObject.Properties['lease']){$body.lease}else{$null})}

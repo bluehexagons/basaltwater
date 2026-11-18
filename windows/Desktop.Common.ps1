@@ -93,6 +93,14 @@ function New-NativeDesktopPrivateFile([string]$Path, [byte[]]$Bytes) {
     try { $stream.Write($Bytes, 0, $Bytes.Length) } finally { $stream.Dispose() }
 }
 
+function Set-NativeDesktopMarker([string]$Path, [string]$Text) {
+    try { New-NativeDesktopPrivateFile $Path ([Text.Encoding]::ASCII.GetBytes($Text)) }
+    catch [IO.IOException] {
+        if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw }
+        Assert-NativeDesktopPrivatePath $Path
+    }
+}
+
 function Read-NativeDesktopState($Context) {
     $path = Get-NativeDesktopStatePath
     $state = @{ version = 1; owner = $Context.Sid; mode = 'enabled'; until = 0L; revision = [guid]::NewGuid().ToString('N');
