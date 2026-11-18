@@ -335,6 +335,10 @@ server {{
     ingest_zone = (
         "limit_req_zone $binary_remote_addr "
         "zone=basaltwater_web_panel_ingest:10m rate=30r/m;\n"
+        "map $http_authorization $basaltwater_ingest_authorization {\n"
+        '    default "";\n'
+        '    "~^Bearer " $http_authorization;\n'
+        "}\n"
         if notification_ingest
         else ""
     )
@@ -349,6 +353,7 @@ server {{
         client_max_body_size 64k;
         proxy_pass http://unix:{WEB_PANEL_SOCKET}:{WEB_PANEL_NOTIFICATION_ENDPOINT};
         proxy_http_version 1.1;
+        proxy_set_header Authorization $basaltwater_ingest_authorization;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Real-IP $remote_addr;

@@ -1153,8 +1153,10 @@ class WebPanelRenderingTest(unittest.TestCase):
         )
 
         self.assertIn(f"location = {WEB_PANEL_NOTIFICATION_ENDPOINT}", rendered)
-        ingest = rendered.split(f"location = {WEB_PANEL_NOTIFICATION_ENDPOINT} {{", 1)[1].split("}", 1)[0]
-        self.assertNotIn('proxy_set_header Authorization "";', ingest)
+        ingest = rendered.split(f"location = {WEB_PANEL_NOTIFICATION_ENDPOINT} {{", 1)[1].split("\n    }", 1)[0]
+        self.assertIn('proxy_set_header Authorization $basaltwater_ingest_authorization;', ingest)
+        auth_map = rendered.split("map $http_authorization $basaltwater_ingest_authorization {", 1)[1].split("}", 1)[0]
+        self.assertEqual(auth_map.splitlines()[1:], ['    default "";', '    "~^Bearer " $http_authorization;'])
         panel = rendered.rsplit("location / {", 1)[1].split("}", 1)[0]
         self.assertIn('proxy_set_header Authorization "";', panel)
         self.assertIn("auth_basic off", rendered)
