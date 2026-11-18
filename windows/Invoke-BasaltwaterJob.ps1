@@ -79,6 +79,14 @@ function New-JobSnapshot([string]$source, [string]$jobDirectory, [string]$revisi
         & $git -C $repository -c "core.attributesFile=$emptyConfig" archive --format=zip "--output=$archive" "${revision}^{tree}"
         if ($LASTEXITCODE -ne 0) { throw 'Could not export the requested revision' }
         Expand-Archive -LiteralPath $archive -DestinationPath $snapshot -ErrorAction Stop
+        $localScript = Resolve-JobPath $source $entry
+        $exportedScript = Resolve-JobPath $snapshot $entry
+        if (-not (Test-Path -LiteralPath $localScript -PathType Leaf)) { throw 'Job script is missing from the checkout' }
+        if (-not (Test-Path -LiteralPath $exportedScript -PathType Leaf)) { throw 'Job script is missing from the exported revision' }
+        # Compare file contents without the checkout's filters or diff drivers.
+        # Git for Windows can convert the committed line endings on checkout.
+        & $git -C $repository diff --no-index --no-ext-diff --no-textconv --ignore-cr-at-eol --quiet -- $exportedScript $localScript
+        if ($LASTEXITCODE -ne 0) { throw 'Job script differs from the requested revision' }
         return (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
     } finally {
         foreach ($name in @('GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_GLOBAL', 'GIT_ATTR_NOSYSTEM',
@@ -111,7 +119,6 @@ try {
     $sourceHash = New-JobSnapshot $source $jobDirectory $Revision $Script
     $scriptPath = Resolve-JobPath $snapshot $Script
     $artifactPath = Resolve-JobPath $snapshot $Artifact
-    if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) { throw 'Job script is missing from the exported revision' }
     if (Test-Path -LiteralPath $artifactPath) { throw 'Artifact path must not exist in the exported revision' }
 } catch {
     Remove-Item -LiteralPath $jobDirectory -Recurse -Force

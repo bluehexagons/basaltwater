@@ -147,10 +147,12 @@ Native jobs are submitted locally by the logged-in Windows owner. Prepare a
 Git checkout on an NTFS volume and commit the job script and its project
 inputs. The runner checks that HEAD matches the requested 40-character
 revision, fetches the commit into a private Git repository, and runs the script
-from an export of the committed tree. Commit local edits and supply the new
-revision to include them. The export supports regular tracked files, honors
-committed `export-ignore` attributes, and rejects revisions containing symlinks
-or submodules. Git LFS files are exported as their committed pointers.
+from an export of the committed tree. A locally modified entry script stops
+the job before execution. Other checkout edits are excluded from the export.
+Commit edits and supply the new revision to include them. The export supports
+regular tracked files, honors committed `export-ignore` attributes, and rejects
+revisions containing symlinks or submodules. Git LFS files are exported as
+their committed pointers.
 
 Use paths relative to the snapshot for project inputs and outputs. The
 artifact path must be absent from the export. The script runs as the Windows
