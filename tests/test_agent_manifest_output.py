@@ -39,6 +39,45 @@ class ManifestOutputTests(unittest.TestCase):
     def test_default_retains_full_inventory(self) -> None:
         self.assertEqual(self.run_cli(), self.manifest())
 
+    def test_scoped_discovery_only_runs_relevant_probes(self) -> None:
+        parser = argparse.ArgumentParser()
+        add_manifest_parser(parser.add_subparsers())
+        skill = {"name": "basaltwater-desktop", "path": "/skills/desktop/SKILL.md", "status": "current"}
+        inventory = {"catalogs": [{"providers": ["codex"], "skills": [skill]}]}
+        installation = {"commit": "current"}
+        for scope, expected in (
+            ("workspace", (False, False, False)),
+            ("browser", (True, False, False)),
+            ("web", (True, True, False)),
+            ("desktop", (False, False, True)),
+            ("skills", (False, False, True)),
+            ("installation", (False, False, True)),
+        ):
+            with (self.subTest(scope=scope), tempfile.TemporaryDirectory() as root,
+                  patch("lib.agent_workspace._repository_root", return_value=root),
+                  patch("lib.agent_workspace._effective_home", return_value=root),
+                  patch("lib.agent_workspace._worktree_record",
+                        return_value={"branch": "main", "head": "a" * 40, "dirty": False}),
+                  patch("lib.agent_environment.is_cachyos", return_value=False),
+                  patch("lib.agent_environment.platform.release", return_value="6.12-debian"),
+                  patch("lib.agent_environment.inspect_installation_provenance", return_value=installation),
+                  patch("lib.agent_environment.shutil.which", side_effect={"blender": "/bin/blender"}.get),
+                  patch("lib.agent_environment.browser_context_inventory", return_value=[]) as browser,
+                  patch("lib.agent_environment._desktop_development", return_value={}) as development,
+                  patch("lib.agent_environment.inspect_skill_catalogs", return_value=inventory) as skills,
+                  patch("sys.stdout", new_callable=io.StringIO) as output):
+                args = parser.parse_args(["manifest", "--capability", scope, "--json"])
+                self.assertEqual(run_manifest_command(args), 0)
+                result = json.loads(output.getvalue())
+                self.assertEqual((browser.called, development.called, skills.called), expected)
+                self.assertEqual(result["provenance"]["source_revisions"]["invoked"], "current")
+                if scope in {"installation", "skills"}:
+                    self.assertEqual(result["provenance"]["delivered_skills"][0]["name"], skill["name"])
+                else:
+                    self.assertNotIn("delivered_skills", result["provenance"])
+                if scope == "desktop":
+                    self.assertEqual(result["desktop_skills"], [skill["path"]])
+
     def test_named_application_implies_desktop_scope_and_keeps_provenance(self) -> None:
         result = self.run_cli("--application", "blender")
         self.assertEqual(set(result["desktop_applications"]), {"blender"})

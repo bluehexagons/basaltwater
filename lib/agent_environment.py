@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 import json
 import os
 import platform
@@ -355,8 +356,19 @@ def _desktop_development(repository: str, *, native: bool) -> dict[str, object]:
     }
 
 
+def _manifest_scopes(capabilities: Sequence[str]) -> set[str]:
+    scopes = set(capabilities)
+    if "web" in scopes:
+        scopes.update(("workspace", "browser", "development"))
+    return scopes
+
+
 def inspect_environment(repository: str, *, project_runtime: bool = False,
-                        installation_context: bool = False, managed_source: str | None = None) -> dict[str, object]:
+                        installation_context: bool = False, managed_source: str | None = None,
+                        capabilities: Sequence[str] = ()) -> dict[str, object]:
+    scopes = _manifest_scopes(capabilities)
+    compare_installations = installation_context or managed_source is not None
+    report_skill_provenance = not scopes or bool(scopes & {"installation", "skills"}) or compare_installations
     root = agent_workspace._repository_root(repository)
     home = agent_workspace._effective_home()
     project = load_project_environment(root)
@@ -396,7 +408,7 @@ def inspect_environment(repository: str, *, project_runtime: bool = False,
                "executable": tools[name], "readiness": "unverified", "guide": DESKTOP_GUIDE}
         for name, guidance in DESKTOP_APPLICATIONS.items() if tools[name]
     }
-    skills = inspect_skill_catalogs(home)
+    skills = inspect_skill_catalogs(home) if report_skill_provenance or ("desktop" in scopes and desktop) else None
     if wsl:
         for application in desktop.values():
             application["instructions"] = [
@@ -412,12 +424,12 @@ def inspect_environment(repository: str, *, project_runtime: bool = False,
         entry["path"] for catalog in skills["catalogs"] for name in desktop_names
         for entry in catalog["skills"]
         if entry["name"] == name and entry["status"] not in {"unsafe", "incomplete"}
-    ]
+    ] if desktop and skills is not None else []
     state = agent_workspace._worktree_record(root)
     mappings = project["deployments"]
     source_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     context = None
-    if installation_context or managed_source is not None:
+    if compare_installations:
         context = inspect_installation_context(source_root, managed_root=managed_source)
         installation = context["invoked"]
     else:
@@ -426,14 +438,17 @@ def inspect_environment(repository: str, *, project_runtime: bool = False,
         "source_revisions": context.get("source_revisions") if context else {
             "invoked": installation.get("commit"), "managed": None, "native_worker": None},
         "drift": context.get("drift") if context else None,
-        "skill_comparison_source": {key: installation.get(key) for key in ("commit", "dirty", "evidence_source")},
-        "delivered_skills": [
-            {"name": entry["name"], "providers": catalog["providers"], "status": entry["status"],
-             **entry.get("provenance", {})}
-            for catalog in skills["catalogs"] for entry in catalog["skills"]
-        ],
-        "session_loaded_skill_revision": None,
     }
+    if report_skill_provenance and skills is not None:
+        provenance.update({
+            "skill_comparison_source": {key: installation.get(key) for key in ("commit", "dirty", "evidence_source")},
+            "delivered_skills": [
+                {"name": entry["name"], "providers": catalog["providers"], "status": entry["status"],
+                 **entry.get("provenance", {})}
+                for catalog in skills["catalogs"] for entry in catalog["skills"]
+            ],
+            "session_loaded_skill_revision": None,
+        })
     runtime = None
     if project_runtime:
         from lib.node_toolchain import inspect_project_node_context
@@ -457,7 +472,7 @@ def inspect_environment(repository: str, *, project_runtime: bool = False,
                 "readiness": "unverified" if tools["basaltwater-playwright-mcp"] else "not-on-path",
             },
             "contexts": browser_context_inventory(root),
-        },
+        } if not scopes or "browser" in scopes else None,
         "publishing": {
             "tools": {name: tools[name] for name in ("butler", "steamcmd")},
             "readiness": "outside-host-role" if native_desktop or wsl else "unverified",
@@ -468,8 +483,9 @@ def inspect_environment(repository: str, *, project_runtime: bool = False,
                             if wsl else _publishing_instructions(native_desktop),
         },
         "desktop_applications": desktop,
-        "desktop_skills": desktop_skills if desktop else [],
-        "development": None if wsl else _desktop_development(root, native=native_desktop),
+        "desktop_skills": desktop_skills,
+        "development": _desktop_development(root, native=native_desktop)
+        if not wsl and (not scopes or "development" in scopes) else None,
         "project_runtime": runtime,
         "workspace": {
             "repository": root, "branch": state["branch"], "commit": state["head"],
@@ -493,9 +509,7 @@ def inspect_environment(repository: str, *, project_runtime: bool = False,
 
 def scoped_environment(result: dict[str, object], capabilities: list[str]) -> dict[str, object]:
     """Keep runtime provenance in every scope and omit unrelated workflow prose."""
-    scopes = set(capabilities)
-    if "web" in scopes:
-        scopes.update(("workspace", "browser", "development"))
+    scopes = _manifest_scopes(capabilities)
     fields = {"schema_version", "host_profile", "basaltwater", "health_command", "project_runtime", "installation_context", "provenance"}
     tools = set()
     if "workspace" in scopes:
@@ -523,6 +537,10 @@ def scoped_environment(result: dict[str, object], capabilities: list[str]) -> di
     if "web" in scopes:
         tools.add("basaltwater-web")
     selected = {key: value for key, value in result.items() if key in fields}
+    if scopes and scopes.isdisjoint({"installation", "skills"}) and result.get("installation_context") is None:
+        if provenance := selected.get("provenance"):
+            selected["provenance"] = {key: provenance[key] for key in ("source_revisions", "drift")
+                                      if key in provenance}
     if tools:
         selected["tools"] = {name: path for name, path in result["tools"].items() if name in tools}
     return selected
@@ -530,10 +548,14 @@ def scoped_environment(result: dict[str, object], capabilities: list[str]) -> di
 
 def run_manifest_command(args: argparse.Namespace) -> int:
     capabilities = list(getattr(args, "capability", None) or [])
+    applications = getattr(args, "application", None)
+    if applications:
+        capabilities.append("desktop")
     try:
         result = inspect_environment(args.repository, project_runtime=getattr(args, "project_runtime", False),
                                      installation_context=getattr(args, "installation_context", False),
-                                     managed_source=getattr(args, "managed_source", None))
+                                     managed_source=getattr(args, "managed_source", None),
+                                     capabilities=capabilities)
         if "workstation" in capabilities:
             from lib.workstation_report import inspect_workstation
 
@@ -547,11 +569,9 @@ def run_manifest_command(args: argparse.Namespace) -> int:
         else:
             print(f"Error: {exc}")
         return 1
-    applications = getattr(args, "application", None)
     if applications:
         result["desktop_applications"] = {name: app for name, app in result["desktop_applications"].items()
                                           if name in applications}
-        capabilities.append("desktop")
     if capabilities:
         result = scoped_environment(result, capabilities)
         if set(capabilities) == {"workstation"} and not args.json:

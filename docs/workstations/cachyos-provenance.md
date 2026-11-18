@@ -6,9 +6,10 @@ and last successful setup. `--managed-source /absolute/managed/source` selects
 an explicit managed checkout. Inspection does not refresh source, restart a
 worker, install packages, request portal consent or inject input.
 
-The manifest's `provenance` summary retains source revisions and delivered skill
-identities in capability-scoped reports too. Without installation context,
-managed and worker revisions are unknown because those sources were not probed.
+The manifest's `provenance` summary retains source revisions in every scope.
+Delivered skill identities appear in the full report, the `installation` or
+`skills` scopes, and reports that request installation context explicitly.
+Without installation context, managed and worker revisions are unknown.
 The normal text report prints invoked, managed and native worker revisions
 together, followed by delivered skill bundle identities. JSON null means unknown.
 

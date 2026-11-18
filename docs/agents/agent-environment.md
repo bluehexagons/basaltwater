@@ -44,7 +44,12 @@ for additional applications. This implies the desktop scope and limits the
 application/tool inventory to those names. Combine it with
 `--capability development` when project recipes are also needed. An application
 missing from PATH is omitted; an empty inventory does not establish readiness.
-Unrelated application and publishing prose is omitted.
+Unrelated application and publishing prose is omitted. Scoped reports skip
+browser and desktop-development probes unless their capability is selected.
+Desktop discovery can read the local skill catalog to resolve desktop skill
+paths. For delivered bundle identities and skill comparison details, request
+`skills`, `installation`, or explicit installation context. Other scopes
+retain source provenance and omit the per-skill summary.
 
 For a short workstation capability report, use
 `basaltw agent manifest . --capability workstation` (add `--json` for individual
