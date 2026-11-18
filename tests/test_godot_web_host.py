@@ -261,11 +261,14 @@ class TestGodotWebHost(unittest.TestCase):
     def test_control_service_is_installed_for_owner_scoped_gateway_commands(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             helper = os.path.join(directory, "basaltwater_web_control.py")
+            utility = os.path.join(directory, "basaltwater_web.py")
             unit = os.path.join(directory, "basaltwater-web-control.service")
-            with open(helper, "w", encoding="utf-8") as file_obj:
-                file_obj.write("# managed helper\n")
+            for path in (helper, utility):
+                with open(path, "w", encoding="utf-8") as file_obj:
+                    file_obj.write("# original source\n")
             with (
                 patch.object(godot_web_steps, "GODOT_WEB_CONTROL", helper),
+                patch.object(godot_web_steps, "GODOT_WEB_UTILITY", utility),
                 patch.object(godot_web_steps, "GODOT_WEB_CONTROL_UNIT", unit),
                 patch.object(godot_web_steps, "run") as run,
                 patch.object(godot_web_steps, "is_service_active", return_value=True),
@@ -283,10 +286,13 @@ class TestGodotWebHost(unittest.TestCase):
     def test_unchanged_inactive_control_service_is_started(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             helper = os.path.join(directory, "control.py")
-            with open(helper, "w", encoding="utf-8") as file_obj:
-                file_obj.write("# managed helper\n")
+            utility = os.path.join(directory, "web.py")
+            for path in (helper, utility):
+                with open(path, "w", encoding="utf-8") as file_obj:
+                    file_obj.write("# original source\n")
             with (
                 patch.object(godot_web_steps, "GODOT_WEB_CONTROL", helper),
+                patch.object(godot_web_steps, "GODOT_WEB_UTILITY", utility),
                 patch.object(godot_web_steps, "_write_if_changed", return_value=False),
                 patch.object(godot_web_steps, "is_service_active", side_effect=[False, True]),
                 patch.object(godot_web_steps, "run") as run,
@@ -296,24 +302,32 @@ class TestGodotWebHost(unittest.TestCase):
         self.assertIn("systemctl start basaltwater-web-control.service", commands)
         self.assertNotIn("systemctl restart basaltwater-web-control.service", commands)
 
-    def test_control_helper_update_restarts_service_even_with_same_unit_settings(self) -> None:
+    def test_control_source_updates_each_restart_service_with_same_unit_settings(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             helper = os.path.join(directory, "control.py")
+            utility = os.path.join(directory, "web.py")
             unit = os.path.join(directory, "control.service")
-            with open(helper, "w", encoding="utf-8") as file_obj:
-                file_obj.write("# first revision\n")
+            for path in (helper, utility):
+                with open(path, "w", encoding="utf-8") as file_obj:
+                    file_obj.write("# first revision\n")
             with (
                 patch.object(godot_web_steps, "GODOT_WEB_CONTROL", helper),
+                patch.object(godot_web_steps, "GODOT_WEB_UTILITY", utility),
                 patch.object(godot_web_steps, "GODOT_WEB_CONTROL_UNIT", unit),
                 patch.object(godot_web_steps, "is_service_active", return_value=True),
                 patch.object(godot_web_steps, "run") as run,
             ):
                 self.assertTrue(godot_web_steps._configure_web_control_service())
-                with open(helper, "w", encoding="utf-8") as file_obj:
-                    file_obj.write("# second revision\n")
-                self.assertTrue(godot_web_steps._configure_web_control_service())
-            commands = [call.args[0] for call in run.call_args_list]
-            self.assertEqual(commands.count("systemctl restart basaltwater-web-control.service"), 2)
+                for path in (helper, utility):
+                    with self.subTest(source=os.path.basename(path)):
+                        run.reset_mock()
+                        with open(path, "w", encoding="utf-8") as file_obj:
+                            file_obj.write("# second revision\n")
+                        self.assertTrue(godot_web_steps._configure_web_control_service())
+                        self.assertFalse(godot_web_steps._configure_web_control_service())
+                        commands = [call.args[0] for call in run.call_args_list]
+                        self.assertEqual(commands.count("systemctl daemon-reload"), 1)
+                        self.assertEqual(commands.count("systemctl restart basaltwater-web-control.service"), 1)
 
     def test_policy_reconciliation_failure_preserves_live_policy_and_cleans_staging(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

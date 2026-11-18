@@ -396,8 +396,9 @@ Setup passes a private staged policy to `forward reconcile --policy FILE`.
 Policy validation, activation, forward reconciliation, and rollback hold the
 same lock. A reconciliation failure restores the previous policy and uses its
 access sources when restoring firewall rules; a failed rollback is included in
-the error. An unchanged, active control service stays running during setup;
-changes to its helper source or unit trigger a restart. Lock ownership lasts
+the error. An unchanged, active control service stays running during setup.
+Changes to the control helper, the gateway utility it imports for policy
+checks, or the service unit trigger a restart. Lock ownership lasts
 through rollback and state writes and is released on process exit. Do not delete
 the stable lock file to bypass a running command.
 

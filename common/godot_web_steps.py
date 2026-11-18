@@ -716,11 +716,14 @@ def _install_basaltwater_web_link() -> bool:
 def _configure_web_control_service() -> bool:
     """Run a local root helper for policy-checked, owner-scoped mutations."""
 
-    if not os.path.isfile(GODOT_WEB_CONTROL):
-        raise RuntimeError(f"HTTPS gateway control helper is missing: {GODOT_WEB_CONTROL}")
-    with open(GODOT_WEB_CONTROL, "rb") as helper_file:
-        control_revision = hashlib.sha256(helper_file.read()).hexdigest()
-    content = f"""# Gateway control revision {control_revision}
+    # The daemon uses the utility's policy loader in-process for each request.
+    revision = hashlib.sha256()
+    for path in (GODOT_WEB_CONTROL, GODOT_WEB_UTILITY):
+        if not os.path.isfile(path):
+            raise RuntimeError(f"HTTPS gateway control source is missing: {path}")
+        with open(path, "rb") as source:
+            revision.update(hashlib.file_digest(source, "sha256").digest())
+    content = f"""# Gateway control revision {revision.hexdigest()}
 [Unit]
 Description=Basaltwater local HTTPS gateway control
 After=network.target
