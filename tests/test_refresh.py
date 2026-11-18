@@ -222,6 +222,25 @@ class DebianRefreshTests(unittest.TestCase):
         self.run.assert_not_called()
         self.upgrade.assert_not_called()
 
+    def test_unresolved_source_activation_blocks_preview_and_dispatch(self):
+        marker = self.root / refresh.SOURCE_ACTIVATION_MARKER_FILENAME
+        with OperationStateStore(str(marker)).ownership() as store:
+            record = store.begin("source_refresh", str(self.root), "activating_staged_source")
+        before = marker.read_bytes()
+
+        with patch.object(refresh, "_source_activation_marker", return_value=str(marker)), \
+                patch.dict(os.environ, {}, clear=True), patch("lib.refresh_job.queue_refresh") as queue:
+            for dry_run in (True, False):
+                with self.subTest(dry_run=dry_run), patch("sys.stdout", new_callable=io.StringIO) as output:
+                    self.assertEqual(self.invoke(dry_run=dry_run), 1)
+                    self.assertIn(record.operation_id, output.getvalue())
+                    self.assertNotIn("Would upgrade", output.getvalue())
+
+        queue.assert_not_called()
+        self.upgrade.assert_not_called()
+        self.run.assert_not_called()
+        self.assertEqual(marker.read_bytes(), before)
+
     def test_snapshot_is_upgraded_before_replaying_setup(self):
         with patch.object(refresh, "get_channel_info", return_value={
             "installation_type": "setup-snapshot", "branch": "main",

@@ -417,6 +417,7 @@ def run_refresh_command(args: argparse.Namespace) -> int:
         parser = create_setup_argument_parser("Saved Debian setup", for_remote=True, allow_steps=True)
         config = config_from_remote_args(parser.parse_args(arguments), preserve_samba_accounts=True)
         repository = managed_repository_path()
+        _assert_no_source_activation(repository)
         info = get_channel_info(repository)
         channel = _refresh_channel(info)
         if args.dry_run:
