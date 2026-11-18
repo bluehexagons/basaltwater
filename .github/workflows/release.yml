@@ -43,13 +43,16 @@ jobs:
           BASALTWATER_CI_PYTHON: ${{ steps.python.outputs.python-path }}
         run: python3 scripts/run_debian_ci.py --python "$BASALTWATER_CI_PYTHON" --tool-cache "$RUNNER_TOOL_CACHE" --node "$(command -v node)" --check-jobs 2
 
-  release:
+  package:
     needs: test
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    outputs:
+      artifact: ${{ steps.upload.outputs.artifact-id }}
+      sha256: ${{ steps.smoke.outputs.sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -62,7 +65,42 @@ jobs:
           python3 -m build --wheel --outdir dist
 
       - name: Smoke-test installed wheel
-        run: python3 scripts/check_wheel_artifact.py dist/*.whl
+        id: smoke
+        run: |
+          wheels=(dist/*.whl)
+          test "${#wheels[@]}" -eq 1
+          sha256=$(sha256sum < "${wheels[0]}")
+          python3 scripts/check_wheel_artifact.py "${wheels[0]}"
+          echo "sha256=${sha256%% *}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload tested wheel
+        id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-wheel
+          path: dist/*.whl
+          if-no-files-found: error
+
+  release:
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.package.outputs.artifact }}
+          merge-multiple: true
+          path: dist
+
+      - name: Verify tested wheel
+        env:
+          EXPECTED_SHA256: ${{ needs.package.outputs.sha256 }}
+        run: |
+          wheels=(dist/*.whl)
+          test "${#wheels[@]}" -eq 1
+          sha256=$(sha256sum < "${wheels[0]}")
+          test "${sha256%% *}" = "$EXPECTED_SHA256"
 
       - name: Create Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
@@ -71,5 +109,6 @@ jobs:
           draft: false
           prerelease: ${{ contains(github.ref_name, '-rc.') }}
           files: dist/*.whl
+          fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
