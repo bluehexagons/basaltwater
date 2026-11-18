@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CURRENT_PREVIEW_VERSION = "2.0.0rc2"
+CURRENT_PREVIEW_VERSION = "2.0.0rc3"
 RELEASE_TAG_PATTERN = re.compile(
     r"v(?P<stable>\d+\.\d+\.\d+)(?:-rc\.(?P<candidate>[1-9]\d*))?"
 )

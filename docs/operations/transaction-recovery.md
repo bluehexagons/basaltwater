@@ -84,6 +84,7 @@ contract and limitations.
 | Units `staging` or `validating` | Private candidates and snapshots | Live files and running states have not changed. Verify existing units, preserve or remove unused staging artifacts, then resolve the marker. |
 | Units `replacing`, `removing`, `preparing-oneshots`, `preserving-oneshot`, `starting-oneshot`, `rolling-back` or `rollback-failed` | Some files and activated/stopped units may have changed | Inspect current processes and recorded start intents/preserved jobs before restoring `previous.json`: null means previously absent; restore other files with recorded mode/owner, reload systemd and restore enablement/running state. Quiesce jobs started by the operation, but do not stop or replay preserved oneshots. Rearm timers only after restoring their services. |
 | Nginx `staging` | Snapshot preparation | Deployment sites and TLS files have not changed. Inspect any recorded snapshot before resolving the marker. |
+| Nginx `routes-paused` or `restoring-routes` | Typed artifact activation may have changed the service while its routes returned HTTP 503 | Check the target activation, manifest and unit evidence. Verify the intended backend and its health directly before reopening its routes. Use the Nginx snapshot and verify HTTPS as described below. |
 | Nginx `applying`, `verifying`, `rolling-back` or `recovery` | Sites, enabled links, TLS files and loaded workers may differ | Restore each absolute path in `previous.json`: null means previously absent; regular-file contents are base64 with mode/uid/gid; links record target/uid/gid. Restore all files and links before validation. Run `nginx -t`, reload Nginx and verify activity and routing before resolving the marker. |
 | Proxmox migration `prepared`, `shutting_down`, or `stopped` | Guest may have shut down; disk transfer has not been issued | Inspect native tasks and power state, then use the same `proxmox migrate` command with `--resume`. Shutdown is graceful and verified before transfer. |
 | Proxmox migration `migrating` | Native disk transfer may be incomplete or finished despite a lost SSH result | Inspect both nodes and the native task log. `--resume` refuses active tasks and never replays an uncertain transfer that still has the guest on the source. A verified destination can continue without copying again. |
@@ -168,6 +169,14 @@ database. A reload timeout can occur after workers accepted the new
 configuration, so restored files alone are insufficient: validate and reload
 the chosen configuration, then verify requests. Failed file restoration blocks
 automatic reload, and incomplete recovery retains the private snapshot.
+
+When the Nginx phase history includes `routes-paused`, keep the affected routes
+paused until release recovery is verified. Compare the target activation marker
+and release registry with the actual files, units and direct health checks. Then
+restore the corresponding configuration from the snapshot or reconcile it for
+the verified release. Check the affected HTTPS routes and other applications on
+the same domains before completing the Nginx marker and reconciling the remaining
+target activation state.
 
 If setup cannot persist its failure details, the original error is still
 reported and the marker may remain `in_progress`. Inspect it explicitly before

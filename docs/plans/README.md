@@ -5,7 +5,7 @@ behavior; plans describe remaining work and acceptance. The
 [coverage map](testing-coverage.md) records selected checks and gaps, while the
 [release matrix](../release-qualification.md) gates an exact release candidate.
 
-The current preview candidate is `v2.0.0-rc.2` (Python package `2.0.0rc2`).
+The current preview candidate is `v2.0.0-rc.3` (Python package `2.0.0rc3`).
 Stable v2.0.0 requires the release matrix above. See the
 [migration guide](../migration-guide.md) for the completed namespace migration.
 

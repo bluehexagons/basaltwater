@@ -82,6 +82,9 @@ know.
   health check, or required version metadata persistence fails. Previous systemd
   units are restored with their permissions, ownership, enablement, and running
   state; previously stopped services stay stopped.
+  A replacement service starts on its assigned port before the health check
+  runs. In ordinary manifest deployment and retained setup replay, existing
+  proxies to that port can reach the replacement during verification.
   Services waiting for an automatic restart are explicitly stopped before
   backup or release replacement and remain stopped on rollback, matching other
   previously non-running services.
@@ -104,6 +107,16 @@ know.
   domain must be within it. Include a previous target domain in the scope when
   it should be retired. `None` names the default site and maps to the `default`
   config name; it must not be combined with the literal `default` domain.
+- Typed artifact activation pauses an existing application's managed Nginx
+  routes when they include a service proxy. Those routes return HTTP 503 until
+  the replacement passes verification or the previous release is restored.
+  Routes owned by other applications stay available. The target waits for
+  previous Nginx workers to drain before starting the replacement. If the drain
+  times out, it restores the original routes and leaves the backend active.
+  If release recovery cannot be confirmed, the routes stay paused. Verify the
+  backend before reopening traffic, then check the restored routes before
+  resolving the retained recovery records. Direct backend connections and
+  public UDP are outside this pause.
 - Services that declare `sqlite_backup` receive a consistent SQLite API backup
   while the old unit is verified inactive or failed, with no automatic restart
   pending, and before replacement. Backups have an integrity check and
