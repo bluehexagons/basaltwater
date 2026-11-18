@@ -831,6 +831,7 @@ class TestSSHFirewallPeerSafety(unittest.TestCase):
         self.enterContext(patch("lib.machine_state.detect_machine_type", return_value="vm"))
         self.enterContext(patch.dict(os.environ, {"SSH_CONNECTION": ""}))
         self.command = self.enterContext(patch("security.security_steps.run"))
+        self.enterContext(patch.object(security_steps, "verify_live_ufw_ingress"))
         self.command.return_value = SimpleNamespace(
             returncode=0,
             stdout="Status: active\nDefault: deny (incoming), allow (outgoing), disabled (routed)\n",
@@ -940,6 +941,10 @@ class TestConfigureFirewall(unittest.TestCase):
     def setUp(self):
         self.enterContext(patch("lib.machine_state.detect_machine_type", return_value="vm"))
         self.enterContext(patch.dict(os.environ, {"SSH_CONNECTION": ""}))
+        self.verify_live = self.enterContext(patch.object(
+            security_steps, "verify_live_ufw_ingress", wraps=security_steps.verify_live_ufw_ingress,
+        ))
+        self.verify_live.return_value = None
 
     def test_all_entrypoints_install_ufw_with_bounded_lock_wait_before_rules(self):
         config = SetupConfig(username="u", host="h", system_type="server_lite")
@@ -1108,19 +1113,24 @@ class TestConfigureFirewall(unittest.TestCase):
     @patch("security.security_steps.is_container", return_value=False)
     @patch("security.security_steps.run")
     def test_restricted_firewall_rejects_remaining_broad_rules(self, mock_run, _ic):
+        from unittest.mock import DEFAULT
+
+        self.verify_live.return_value = DEFAULT
         config = SetupConfig(
             username="u", host="h", system_type="workstation_dev",
             access_sources=["192.168.1.0/24"], enable_rdp=True,
             rdp_allowed_sources=["192.168.1.0/24"], web_ports=[8080],
             default_web_ports=False,
         )
-        for destination, service in (
-            ("22/tcp", "SSH"),
-            ("3389/tcp (v6)", "RDP"),
-            ("8080/tcp", "web TCP 8080"),
-        ):
-            with self.subTest(destination=destination):
+        for port, family in ((22, 4), (3389, 6), (8080, 4)):
+            with self.subTest(port=port, family=family):
                 def run_side_effect(command, **_kwargs):
+                    if isinstance(command, list):
+                        active_family = 6 if command[0] == "ip6tables-save" else 4
+                        rule = f"-A INPUT -p tcp -m tcp --dport {port} -j ACCEPT\n"
+                        return SimpleNamespace(
+                            returncode=0, stdout=":INPUT DROP [0:0]\n" + (rule if family == active_family else ""),
+                        )
                     if command.startswith("ufw status 2>"):
                         return SimpleNamespace(returncode=0, stdout="")
                     if command == "ufw status numbered":
@@ -1128,13 +1138,24 @@ class TestConfigureFirewall(unittest.TestCase):
                     if command == "ufw status verbose":
                         return SimpleNamespace(
                             returncode=0,
-                            stdout=f"Status: active\nDefault: deny (incoming)\n{destination} ALLOW IN Anywhere\n",
+                            stdout="Status: active\nDefault: deny (incoming)\n",
                         )
                     return SimpleNamespace(returncode=0, stdout="")
 
                 mock_run.side_effect = run_side_effect
-                with self.assertRaisesRegex(RuntimeError, f"Source-restricted {service}"):
+                with self.assertRaisesRegex(RuntimeError, f"IPv{family} TCP {port} rule allows sources outside"):
                     configure_firewall(config)
+
+    def test_new_firewall_rolls_back_activation_when_ssh_peer_is_blocked(self):
+        config = SetupConfig(username="u", host="h", system_type="server_lite", ssh_access_sources=["192.0.2.0/24"])
+        self.verify_live.side_effect = RuntimeError("rule can block the current SSH peer")
+        with patch.dict(os.environ, {"SSH_CONNECTION": "192.0.2.4 61000 192.0.2.12 22"}), \
+             patch.object(security_steps, "_prune_enabled_firewall_rules"), \
+             patch.object(security_steps, "_source_restricted_firewall_status"), \
+             patch.object(security_steps, "_run_ufw", return_value=SimpleNamespace(returncode=0)) as ufw:
+            with self.assertRaisesRegex(RuntimeError, "Restored the previously inactive UFW firewall"):
+                security_steps._verify_new_firewall(config, web_ports=None, include_rdp=False)
+        ufw.assert_called_once_with("ufw --force disable")
 
     @patch("security.security_steps.is_container", return_value=False)
     @patch("security.security_steps.run")

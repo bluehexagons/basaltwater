@@ -42,6 +42,7 @@ from lib.local_http import open_loopback
 from lib.node_toolchain import SUPPORTED_NODE_RANGE, is_supported_node
 from lib.remote_utils import install_package, is_dry_run, run
 from lib.setup_directories import directory_fd
+from lib.ufw_ingress import verify_live_ufw_ingress
 from lib.t3code_runtime import (
     T3_MINIMUM_ACTIVE_SERVICE_PROTOCOL,
     T3_VERSION_EXECUTABLES,
@@ -282,6 +283,7 @@ def _configure_firewall(config: SetupConfig, port: int, host: str) -> None:
             + ", ".join(sorted(missing))
         )
     _remove_managed_rules(updated_rules, desired_comments)
+    verify_live_ufw_ingress({("tcp", exposed_port): sources for exposed_port, _ in exposed_ports}, run)
 
 
 def _t3_runtime_path(home: str) -> str:
@@ -1961,9 +1963,13 @@ def _configure_t3_https(
     configure_internal_web_host(
         identities_for_config(config.host, config.system_hostname),
         [config.username],
-        config.effective_web_interface_sources(),
+        config.effective_access_sources(),
         configure_static_site=True,
         install_utility=True,
+        route_access_sources={
+            name: config.effective_web_interface_sources()
+            for name in ("t3code", "t3code-pairing")
+        },
     )
     utility = "/usr/local/bin/basaltwater-web"
     endpoints: dict[str, tuple[str, int]] = {}

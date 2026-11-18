@@ -1011,13 +1011,14 @@ class TestGogsHostlessFirewall(unittest.TestCase):
         )
         with patch(
             "web.gogs_steps.run",
-            side_effect=[active, initial, active, updated, active, active],
+            side_effect=[active, initial, active, updated, active, active,
+                         SimpleNamespace(returncode=0, stdout=":INPUT DROP [0:0]\n")],
         ) as runner:
             gogs_steps._reconcile_gogs_direct_firewall(config, 3000)
 
         commands = [call.args[0] for call in runner.call_args_list]
         self.assertIn("ufw allow from 192.168.0.0/24", commands[2])
-        self.assertEqual(commands[-2:], ["ufw --force delete 2", "ufw --force delete 1"])
+        self.assertEqual(commands[-3:], ["ufw --force delete 2", "ufw --force delete 1", ["iptables-save", "-t", "filter"]])
 
     def test_hostname_transition_removes_old_direct_and_web_rules(self):
         config = SetupConfig(

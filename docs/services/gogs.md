@@ -69,8 +69,9 @@ Basaltwater-managed rules, and only then writes the listener. It refuses
 public IPv4 sources from either `--gogs-source` or the generic
 `--access-source`/`--lan-access` policy, explicit Gogs IPv6 sources, and
 unmanaged allow rules for the same port. Generic IPv6 sources remain available
-to other managed services but do not expose Gogs. Omit `--ssl` only when
-plaintext HTTP is intentional on a trusted network. Hostname mode requires
+to other managed services but do not expose Gogs. Plain HTTP sends credentials
+and session cookies without encryption. Use it only over localhost or in a
+controlled test environment. Hostname mode requires
 `--ssl` or `--cloudflare`. Use `:PORT` for hostless mode rather than placing a
 literal IP in the Gogs specification. Cloudflare requires a hostname.
 Let's Encrypt hostname mode rejects source restrictions

@@ -398,6 +398,7 @@ class TestAccessSourceConfig(unittest.TestCase):
 class TestGenericUfwFiltering(unittest.TestCase):
     def setUp(self) -> None:
         self.enterContext(patch("lib.machine_state.detect_machine_type", return_value="vm"))
+        self.enterContext(patch("security.security_steps.verify_live_ufw_ingress"))
         # Individual peer-policy tests supply their own connection context.
         self.enterContext(patch.dict(os.environ, {"SSH_CONNECTION": ""}))
 

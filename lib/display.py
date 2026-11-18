@@ -506,6 +506,9 @@ def print_setup_summary(config: SetupConfig, description: Optional[str] = None) 
             )
         else:
             print("Web interface sources: loopback only")
+        if "t3code" in config.web_interfaces:
+            print("Warning: Direct T3 Code and device pairing HTTP can send credentials without encryption.")
+            print("  Use direct HTTP only over localhost or in a controlled test environment. Prefer the HTTPS gateway.")
     if config.device_pairing_providers:
         print(
             "Device pairing: "
@@ -618,6 +621,9 @@ def print_setup_summary(config: SetupConfig, description: Optional[str] = None) 
 
     if config.gogs:
         print(f"Gogs: {' '.join(config.gogs)}")
+        if not (config.enable_ssl or config.enable_cloudflare):
+            print("  ⚠ Gogs HTTP sends login credentials and session cookies without encryption. "
+                  "Use only on localhost or a controlled test network.")
     if config.homebox:
         print(f"HomeBox: {' '.join(config.homebox)}")
         version = config.homebox_version or f"retain installed version; {HOMEBOX_DEFAULT_VERSION} on first setup"

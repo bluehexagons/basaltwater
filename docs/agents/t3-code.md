@@ -592,9 +592,10 @@ The safe default is loopback:
 --web-interface-port 3773
 ```
 
-Basaltwater publishes a managed HTTPS endpoint through its shared gateway. The
-plain HTTP listener remains for local compatibility. For a non-loopback bind,
-declare private source networks:
+Basaltwater publishes a managed HTTPS endpoint through its shared gateway. Use
+direct HTTP only over localhost or in a controlled test environment. Direct
+HTTP can expose T3 credentials and pairing links without encryption. For a
+non-loopback bind, declare private source networks:
 
 ```bash
 --web-interface-host 0.0.0.0
@@ -604,6 +605,12 @@ declare private source networks:
 Setup preserves the existing T3 HTTPS forward and its public port when device
 pairing is disabled. It removes only the pairing forward before reconciling the
 T3 endpoint, so rerunning setup does not tear down and recreate that endpoint.
+Each T3 and pairing HTTPS route uses the current T3 source selection. Changing
+that selection removes previously managed exceptions from both routes. Without
+any sources, those HTTPS routes accept loopback connections only. Use the URL
+printed by setup. If it names a public TLS hostname, resolve that name to
+loopback on the machine accessing the gateway locally so the certificate
+continues to match.
 
 A non-loopback bind is rejected unless UFW is active and a private or
 non-global allowlist is present. Basaltwater reconciles only its own labeled

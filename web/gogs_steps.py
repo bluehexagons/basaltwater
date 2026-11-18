@@ -29,6 +29,7 @@ from lib.release_management import (
     write_json_state,
 )
 from lib.remote_utils import generate_password, is_service_active, run, user_exists
+from lib.ufw_ingress import verify_live_ufw_ingress
 from lib.unit_transaction import replace_units
 from lib.validation import (
     validate_filesystem_path, validate_gogs_owned_directory, validate_gogs_settings,
@@ -955,6 +956,8 @@ def _reconcile_gogs_direct_firewall(config: SetupConfig, port: int) -> None:
             + ", ".join(sorted(missing))
         )
     _remove_managed_gogs_rules(updated_rules, desired_comments)
+    if sources:
+        verify_live_ufw_ingress({("tcp", port): sources}, run, families=(4, 6) if domain else (4,))
 
 
 def _maybe_configure_firewall(config: SetupConfig, domain: str, port: int) -> None:
