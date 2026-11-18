@@ -2,15 +2,16 @@
 
 Use `basaltw agent context` when you need a general Basaltwater host inventory
 or help finding a capability. It works outside Git and reports observed PATH
-tools, installed Basaltwater guidance names, and task-oriented CLI help routes.
+tools, present Basaltwater skill entrypoints, and a few CLI help routes.
 The asset list reuses the manifest's desktop application catalog,
 including versioned MuseScore executable aliases, without launching GUI tools.
-Text output marks differing or personal guidance, including mixed statuses
-across provider catalogs; `--json` adds individual skill paths and statuses.
-Different may mean older or edited: inspect before refreshing and preserve
-personal changes. Unsafe or
-incomplete bundles are omitted and counted. It uses the existing known-skill
-catalog checks; it does not scan personal skills or execute discovered tools.
+Text mode checks entrypoint presence without opening skill files. Use
+`basaltw agent context --json` for bundle comparison, individual paths and
+statuses, and the full set of help routes. In that report, `different` may
+indicate an older bundle or local edits. Inspect before refreshing and preserve
+personal changes. Unsafe or incomplete bundles are omitted and counted.
+Both modes restrict discovery to known skill names and leave installed tools
+unexecuted.
 Like the manifest, it inventories the effective account's home directory rather
 than an overridden `HOME` value. Run it as the intended agent account.
 CLI routes describe available command surfaces, not installed services.

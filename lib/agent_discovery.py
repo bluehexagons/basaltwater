@@ -8,7 +8,7 @@ import platform
 import shutil
 
 from lib import agent_workspace
-from lib.agent_skill_catalog import inspect_skill_catalogs
+from lib.agent_skill_catalog import inspect_skill_catalogs, installed_skill_names
 from lib.agent_environment import DESKTOP_APPLICATIONS, MUSESCORE_EXECUTABLES
 from lib.cachyos import is_cachyos
 
@@ -29,7 +29,7 @@ def add_context_parser(commands: argparse._SubParsersAction) -> None:
     parser.add_argument("--json", action="store_true", help="Output structured discovery observations")
 
 
-def inspect_context() -> dict[str, object]:
+def inspect_context(*, detailed: bool = True) -> dict[str, object]:
     """Observe PATH and known skill bundles without executing installed tools."""
     system = platform.system().lower()
     wsl = system == "linux" and any(part in platform.release().lower() for part in ("microsoft", "wsl"))
@@ -39,15 +39,6 @@ def inspect_context() -> dict[str, object]:
     except OSError:
         distribution = "unknown"
     host = f"{distribution}-wsl" if wsl else "cachyos-workstation" if cachyos else distribution
-    inventory = inspect_skill_catalogs(agent_workspace._effective_home())
-    skills: dict[str, list[dict[str, str]]] = {}
-    issues = 0
-    for catalog in inventory["catalogs"]:
-        for entry in catalog["skills"]:
-            if entry["status"] in {"unsafe", "incomplete"}:
-                issues += 1
-                continue
-            skills.setdefault(entry["name"], []).append({"path": entry["path"], "status": entry["status"]})
     routes = {
         "full feature index": "basaltw --help",
         "agent operations index": "basaltw agent --help",
@@ -69,24 +60,37 @@ def inspect_context() -> dict[str, object]:
     elif distribution == "debian" and not wsl:
         routes["managed desktop"] = "basaltw desktop --help"
         routes["host and managed T3 diagnostics"] = "basaltw agent doctor --help"
-    return {
+    result = {
         "schema_version": 1,
         "host_profile": host,
         "tools_on_path": {group: [name for name in names if shutil.which(name)]
                           for group, names in TOOL_GROUPS.items()},
-        "installed_guidance": dict(sorted(skills.items())),
-        "unusable_guidance_count": issues,
         "help_routes": routes,
         "readiness": "unverified",
         "instructions": "Use relevant features under the active task and session policy. PATH presence and installed guidance do not verify authentication, services, loaded skills, browser tools, or desktop consent. CLI routes describe commands, not provisioned services. In T3, use its live tools for delegation, schedules and browser work as session policy directs.",
         "details_command": "basaltw agent manifest --help",
         "guide": GUIDE,
     }
+    home = agent_workspace._effective_home()
+    if not detailed:
+        result["guidance_entrypoints"] = installed_skill_names(home)
+        return result
+    inventory = inspect_skill_catalogs(home)
+    skills: dict[str, list[dict[str, str]]] = {}
+    issues = 0
+    for catalog in inventory["catalogs"]:
+        for entry in catalog["skills"]:
+            if entry["status"] in {"unsafe", "incomplete"}:
+                issues += 1
+                continue
+            skills.setdefault(entry["name"], []).append({"path": entry["path"], "status": entry["status"]})
+    result.update(installed_guidance=dict(sorted(skills.items())), unusable_guidance_count=issues)
+    return result
 
 
 def run_context_command(args: argparse.Namespace) -> int:
     try:
-        result = inspect_context()
+        result = inspect_context(detailed=args.json)
     except (OSError, RuntimeError, ValueError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}) if args.json else f"Error: {exc}")
         return 1
@@ -96,19 +100,11 @@ def run_context_command(args: argparse.Namespace) -> int:
     print(f"Basaltwater agent context: {result['host_profile']} (readiness unverified)")
     for group, names in result["tools_on_path"].items():
         print(f"PATH {group}: {', '.join(names) or 'none observed'}")
-    guidance = []
-    for name, copies in result["installed_guidance"].items():
-        statuses = sorted({copy["status"] for copy in copies})
-        qualifier = " (" + "/".join(statuses) + ")" if statuses != ["current"] else ""
-        guidance.append(name + qualifier)
-    print("Installed guidance: " + (", ".join(guidance) or "none observed"))
-    if any(copy["status"] != "current" for copies in result["installed_guidance"].values() for copy in copies):
-        print("Guidance differs from source or is personal; inspect paths/status with basaltw agent context --json.")
-    if result["unusable_guidance_count"]:
-        print(f"Unsafe/incomplete guidance omitted: {result['unusable_guidance_count']}")
-    print("CLI routes (check relevant help before use):")
-    for purpose, command in result["help_routes"].items():
-        print(f"  {purpose}: {command}")
-    print(result["instructions"])
-    print(f"Details: {result['details_command']}; {result['guide']}")
+    print("Skill entrypoints: " + (", ".join(result["guidance_entrypoints"]) or "none observed"))
+    routes = result["help_routes"]
+    print(f"Help: {routes['agent operations index']} | {result['details_command']} | {routes['full feature index']}")
+    for purpose in ("host and selected T3 diagnostics", "host and managed T3 diagnostics"):
+        if purpose in routes:
+            print(f"Host diagnostics: {routes[purpose]}")
+    print("Skill paths, bundle status, and all help routes: basaltw agent context --json")
     return 0

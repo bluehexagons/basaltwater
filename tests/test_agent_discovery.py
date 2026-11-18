@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import io
 import json
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -62,16 +64,12 @@ class AgentDiscoveryTests(unittest.TestCase):
 
         parser, _, _ = create_basaltwater_parser()
         context = self.inspect()
-        with (patch("lib.agent_discovery.inspect_context", return_value=context),
+        with (patch("lib.agent_discovery.inspect_context", return_value=context) as inspect,
               patch("lib.agent_workspace._repository_root", side_effect=AssertionError("No Git required")),
               patch("sys.stdout", new_callable=io.StringIO) as output):
             self.assertEqual(run_agent_command(parser.parse_args(["agent", "context", "--json"])), 0)
             self.assertEqual(json.loads(output.getvalue()), context)
-            output.seek(0)
-            output.truncate()
-            self.assertEqual(run_agent_command(parser.parse_args(["agent", "context"])), 0)
-            self.assertLess(len(output.getvalue()), 6000)
-            self.assertNotIn("/skills/", output.getvalue())
+            inspect.assert_called_once_with(detailed=True)
 
     def test_discovery_errors_remain_failures_in_json(self):
         from lib.agent_discovery import run_context_command
@@ -82,26 +80,35 @@ class AgentDiscoveryTests(unittest.TestCase):
             self.assertEqual(run_context_command(Namespace(json=True)), 1)
         self.assertFalse(json.loads(output.getvalue())["ok"])
 
-    def test_text_exposes_differing_and_personal_copies_without_duplicate_names(self):
+    def test_text_lists_safe_known_entrypoints_without_reading_bundles(self):
         from lib.agent_discovery import run_context_command
         from argparse import Namespace
 
-        context = self.inspect()
-        context["installed_guidance"] = {
-            "basaltwater-subagents": [
-                {"path": "/codex/SKILL.md", "status": "current"},
-                {"path": "/claude/SKILL.md", "status": "different"}],
-            "basaltwater-desktop": [{"path": "/personal/SKILL.md", "status": "personal"}],
-        }
-        with (patch("lib.agent_discovery.inspect_context", return_value=context),
-              patch("sys.stdout", new_callable=io.StringIO) as output):
-            self.assertEqual(run_context_command(Namespace(json=False)), 0)
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            names = (".agents/skills/basaltwater-subagents", ".claude/skills/basaltwater-subagents",
+                     ".agents/skills/basaltwater-desktop", ".agents/skills/personal-helper")
+            for name in names:
+                directory = home / name
+                directory.mkdir(parents=True)
+                entrypoint = directory / "SKILL.md"
+                entrypoint.write_text("Local guidance")
+                entrypoint.chmod(0o644)
+            (home / names[2] / "SKILL.md").chmod(0o666)
+            (home / ".agents/skills/basaltwater-t3code").symlink_to(home / names[0])
+            with (patch("lib.agent_workspace._effective_home", return_value=temporary),
+                  patch("lib.agent_discovery.shutil.which", return_value=None),
+                  patch("lib.agent_skill_catalog._read", side_effect=AssertionError("Skill file read")),
+                  patch("lib.agent_skill_catalog._source_bundle", side_effect=AssertionError("Bundle loaded")),
+                  patch("subprocess.Popen", side_effect=AssertionError("Discovery must not execute tools")),
+                  patch("sys.stdout", new_callable=io.StringIO) as output):
+                self.assertEqual(run_context_command(Namespace(json=False)), 0)
         text = output.getvalue()
-        self.assertIn("basaltwater-subagents (current/different)", text)
         self.assertEqual(text.count("basaltwater-subagents"), 1)
-        self.assertIn("basaltwater-desktop (personal)", text)
+        for omitted in ("basaltwater-t3code", "basaltwater-desktop", "personal-helper", "/skills/",
+                        "basaltw agent storage --help"):
+            self.assertNotIn(omitted, text)
         self.assertIn("basaltw agent context --json", text)
-        self.assertNotIn("/personal/", text)
 
 
 if __name__ == "__main__":
