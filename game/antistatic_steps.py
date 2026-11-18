@@ -18,15 +18,11 @@ if TYPE_CHECKING:
 
 from lib.release_management import (
     detect_release_arch,
-    fetch_latest_github_release_asset,
+    fetch_latest_verified_github_release_asset,
     install_binary_release,
-    load_json_state,
-    validate_release_tag,
-    write_json_state,
 )
 from lib.auth_failure_bans import configure_nginx_auth_failure_ban
 from lib.remote_utils import install_package, run, user_exists
-from lib.state_read import StateReadError
 from lib.unit_transaction import replace_units
 from lib.atomic_io import write_bytes_atomic, write_text_atomic
 
@@ -132,10 +128,10 @@ def _ensure_antistatic_db_user() -> None:
     print(f"  ✓ Created system user: {ANTISTATIC_DB_USER}")
 
 
-def _fetch_latest_antistatic_release(arch: str) -> tuple[str, str]:
-    """Return the latest release tag and binary download URL for this architecture."""
+def _fetch_latest_antistatic_release(arch: str) -> tuple[str, str, str]:
+    """Return the latest server tag, architecture-specific URL and SHA-256."""
     binary_name = f"antistatic-server-linux-{arch}"
-    return fetch_latest_github_release_asset(
+    return fetch_latest_verified_github_release_asset(
         GITHUB_REPO,
         asset_matches=lambda _tag_name, asset_name: asset_name == binary_name,
         missing_asset_description=(
@@ -145,10 +141,10 @@ def _fetch_latest_antistatic_release(arch: str) -> tuple[str, str]:
     )
 
 
-def _fetch_latest_antistatic_db_release(arch: str) -> tuple[str, str]:
-    """Return the latest antistatic-db release tag and binary URL."""
+def _fetch_latest_antistatic_db_release(arch: str) -> tuple[str, str, str]:
+    """Return the latest database tag, architecture-specific URL and SHA-256."""
     binary_name = f"antistatic-db-linux-{arch}"
-    return fetch_latest_github_release_asset(
+    return fetch_latest_verified_github_release_asset(
         ANTISTATIC_DB_GITHUB_REPO,
         asset_matches=lambda _tag_name, asset_name: asset_name == binary_name,
         missing_asset_description=(
@@ -158,61 +154,21 @@ def _fetch_latest_antistatic_db_release(arch: str) -> tuple[str, str]:
     )
 
 
-def _read_installed_antistatic_release() -> str | None:
-    """Return the recorded antistatic release tag, if available."""
-    release_state = load_json_state(
-        ANTISTATIC_RELEASE_STATE_FILE,
-        read_error_label="antistatic release metadata",
-        invalid_state_message="Invalid antistatic release metadata",
-    )
-    if not release_state:
-        return None
-    try:
-        return validate_release_tag(release_state.get("tag_name"))
-    except ValueError as exc:
-        raise StateReadError(ANTISTATIC_RELEASE_STATE_FILE, "invalid release tag") from exc
-
-
-def _write_installed_antistatic_release(tag_name: str) -> None:
-    """Persist the installed antistatic release tag for future update checks."""
-    write_json_state(ANTISTATIC_RELEASE_STATE_FILE, {"tag_name": tag_name})
-
-
-def _read_installed_antistatic_db_release() -> str | None:
-    """Return the recorded antistatic-db release tag, if available."""
-    release_state = load_json_state(
-        ANTISTATIC_DB_RELEASE_STATE_FILE,
-        read_error_label="antistatic-db release metadata",
-        invalid_state_message="Invalid antistatic-db release metadata",
-    )
-    if not release_state:
-        return None
-    try:
-        return validate_release_tag(release_state.get("tag_name"))
-    except ValueError as exc:
-        raise StateReadError(ANTISTATIC_DB_RELEASE_STATE_FILE, "invalid release tag") from exc
-
-
-def _write_installed_antistatic_db_release(tag_name: str) -> None:
-    """Persist the installed antistatic-db release tag for future update checks."""
-    write_json_state(ANTISTATIC_DB_RELEASE_STATE_FILE, {"tag_name": tag_name})
-
-
 def _download_antistatic_binary(arch: str) -> str:
     """Install the latest antistatic-server release when needed.
 
     Returns the release tag that should be running after setup completes.
     """
     binary_name = f"antistatic-server-linux-{arch}"
-    latest_tag, download_url = _fetch_latest_antistatic_release(arch)
+    latest_tag, download_url, sha256 = _fetch_latest_antistatic_release(arch)
     _require_compatible_antistatic_release(latest_tag)
     return install_binary_release(
         binary_name=binary_name,
         binary_path=ANTISTATIC_BINARY,
         tag_name=latest_tag,
         download_url=download_url,
-        installed_tag=_read_installed_antistatic_release(),
-        persist_installed_tag=_write_installed_antistatic_release,
+        sha256=sha256,
+        state_path=ANTISTATIC_RELEASE_STATE_FILE,
     )
 
 
@@ -233,14 +189,14 @@ def _require_compatible_antistatic_release(tag_name: str) -> None:
 def _download_antistatic_db_binary(arch: str) -> str:
     """Install the latest antistatic-db release when needed."""
     binary_name = f"antistatic-db-linux-{arch}"
-    latest_tag, download_url = _fetch_latest_antistatic_db_release(arch)
+    latest_tag, download_url, sha256 = _fetch_latest_antistatic_db_release(arch)
     return install_binary_release(
         binary_name=binary_name,
         binary_path=ANTISTATIC_DB_BINARY,
         tag_name=latest_tag,
         download_url=download_url,
-        installed_tag=_read_installed_antistatic_db_release(),
-        persist_installed_tag=_write_installed_antistatic_db_release,
+        sha256=sha256,
+        state_path=ANTISTATIC_DB_RELEASE_STATE_FILE,
     )
 
 
@@ -717,7 +673,7 @@ def preflight_antistatic_releases(config: SetupConfig) -> None:
     _ensure_antistatic_dependencies()
     arch = _detect_arch()
     if config.antistatic_server:
-        tag_name, _download_url = _fetch_latest_antistatic_release(arch)
+        tag_name, _, _ = _fetch_latest_antistatic_release(arch)
         _require_compatible_antistatic_release(tag_name)
     if config.antistatic_db:
         _fetch_latest_antistatic_db_release(arch)

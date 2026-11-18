@@ -17,6 +17,13 @@ The release is downloaded from the official
 storage under `/var/lib/antistatic`. The service has health checks and automatic
 restart behavior.
 
+Setup requires a SHA-256 digest in the GitHub release metadata for the selected
+architecture. It verifies the staged bytes before replacing the executable and
+rechecks the installed bytes when reusing a tag. A matching legacy tag-only
+record gains a digest on the next setup. If a tag's recorded digest or its
+installed bytes differ, setup stops. Compare the release and local binary with
+a trusted copy and investigate the discrepancy before attempting recovery.
+
 Release metadata is retained under `/opt/basaltwater/state/antistatic_release.json`
 and `antistatic_db_release.json`. Missing files allow a fresh installation;
 malformed or empty records, invalid tags, symlinks, special files, or files over
@@ -119,5 +126,6 @@ basaltw setup server_lite 192.168.1.10 \
 
 ## Related policy
 
-Release selection honors the dependency freshness policy by default. See
+Both services select the newest stable release with an asset for the target
+architecture. See
 [Recurring maintenance](../../operations/maintenance.md) and the [Command-line reference](../../reference/command-line.md).
