@@ -43,9 +43,10 @@ package transaction completes.
 
 Generic APT repair preserves this exact managed source only with its matching
 low-priority pin. It restores sources commented out by older basaltwater repair
-runs; desktop setup also reconciles the source when packages are already
-installed. Package upgrades still require `--refresh-packages` for this pinned
-XRDP path; restoring the source alone does not upgrade the running server.
+runs. Desktop setup refreshes signed APT metadata and checks for newer XRDP and
+xorgxrdp packages even when both are installed. Rerun desktop setup to apply
+updates from this pinned channel. `--refresh-packages` also refreshes the
+supporting desktop packages.
 
 For a remote target, provide the Unix account password through a secret source:
 
@@ -78,9 +79,12 @@ Restrict all managed services to several explicit networks with one flag:
 Add `--rdp-source IP_OR_CIDR` when a source should reach RDP without being
 added to the generic policy; RDP uses the union of both lists. Without either
 kind of source, XRDP remains reachable through the globally rate-limited rule.
-Use `--rdp-bind-address IP` to bind the listener to one local address. The
-firewall reconciles only rules tagged `basaltwater RDP` and does not remove
-unrelated UFW rules.
+Use `--rdp-bind-address IP` to bind the listener to one local IPv4 or IPv6
+address. Direct RDP defaults to `0.0.0.0`, the IPv4 wildcard. An IPv6 wildcard
+(`::`) can also accept IPv4 on dual-stack builds. Setup verifies the actual
+listener and its unprivileged `xrdp` identity before enabling it at boot. The
+firewall reconciles rules tagged `basaltwater RDP` and leaves unrelated UFW
+rules in place.
 This reconciliation also runs for `server_lite --rdp`, before starting XRDP.
 
 Client idle-disconnect and channel controls:
@@ -311,8 +315,10 @@ unverified by this check.
 
 All desktop profiles and `local desktop` use this stack. An explicit `--desktop`
 or `--rdp` enables it on server/agent profiles; `agent_vm` remains headless by
-default. `--no-rdp` retains a desktop profile's loopback listener. Omitting
-desktop capability on a later headless setup is not a desktop uninstaller.
+default. `--no-rdp` retains a desktop profile's IPv4 loopback listener, including
+for Guacamole, and removes the managed direct RDP firewall rules and jail. A
+setup rerun that returns to a headless profile also stops and disables the
+previously managed xRDP frontend. Desktop packages and user data stay installed.
 
 Run setup from SSH or a text console when desktop work is saved. Before package
 upgrades, setup automatically requests normal logout of the configured account's

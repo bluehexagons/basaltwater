@@ -97,27 +97,24 @@ merge, validation, and removal in one example.
 The shared subagent skill also ships
 [model selection and learning](../../common/agent_skills/basaltwater-subagents/references/model-selection.md).
 The [current workload choices](../../common/agent_skills/basaltwater-subagents/references/model-selection.md#current-workload-choices)
-were reviewed **2026-11-09**. Prefer available included subscription usage and
-compare allowance consumption, latency, acceptance and parent rework. Sol and
-Opus are the recommended higher-end frontier models, both reasonably affordable
-on subscriptions. Astra and Fable are discouraged for general use because their
-extra cost usually brings too little gain; reserve them for an exceptional unmet
-need with evidence of benefit. Terra is a middle option for writing, vision and
-app work; Sonnet and Haiku offer lighter Claude alternatives. Check exact IDs,
+were reviewed **2026-11-17**. Prefer included subscription usage where available
+and compare allowance consumption, latency, acceptance and parent rework.
+GPT-6.2 Sol is the starting point for everyday coding. Trial GPT-6.2 Astra for
+a specific demanding workload and compare its end-to-end results with Sol or
+Opus. Terra remains suitable for writing, vision and app work. Check exact IDs,
 billing route and the actual delegation interface before selecting any model.
 
 Start with Luna at medium for bounded classification, documentation, small
 fixes, focused tests, and app-script or export validation. Explicit deterministic
 trivial work may use low with straightforward checks. Use Luna high or xhigh
 only when concrete complexity justifies it. Keep broad coding, integration,
-ambiguous cross-file tasks, and reviews on Sol high; use Astra only for an
-exceptional unmet need with evidence of benefit over Sol/Opus. These are
-provisional suggestions, not performance proof; preserve existing project policy
-and record actual outcomes. Give each
-worker clear ownership and acceptance criteria. Do not assign competing control
-of a desktop/app session, and do not blindly time out and relaunch desktop
-mutations. Verify the exact model and effort supported by the current session. Use standard service and
-exclude fast mode, `max`, and `ultra` unless explicitly selected by the user.
+ambiguous cross-file tasks, and reviews on GPT-6.2 Sol high. Preserve proven
+project settings and record actual outcomes before promoting a new model. Give
+each worker clear ownership and acceptance criteria. Assign one operator to a
+shared desktop or app session and check its state before retrying a timed-out
+operation. Verify the exact model and effort supported by the current session.
+Use standard service and exclude fast mode, `max`, and `ultra` unless explicitly
+selected by the user.
 
 These local commands create a per-project policy, recommend a setting from an
 actual session inventory, and retain the parent's reviewed outcomes:
@@ -125,7 +122,7 @@ actual session inventory, and retain the parent's reviewed outcomes:
 ```bash
 basaltw agent models init ~/repos/PROJECT --json
 basaltw agent models recommend ~/repos/PROJECT coding --available SESSION_MODELS.json --json
-basaltw agent models record ~/repos/PROJECT --task coding --model gpt-6.1-sol --effort high --outcome accepted --validation 'Focused checks and parent review passed' --json
+basaltw agent models record ~/repos/PROJECT --task coding --model gpt-6.2-sol --effort high --outcome accepted --validation 'Focused checks and parent review passed' --json
 basaltw agent models report ~/repos/PROJECT --json
 ```
 
@@ -142,8 +139,10 @@ Unobserved parent rework also remains unknown; reports expose a known subtotal
 and observation count rather than present missing observations as no rework.
 
 Recommendations intersect verified project metadata with current runtime
-availability and safe efforts. New IDs can be added without upgrading
-Basaltwater; no version whitelist controls selection. The result identifies
+availability and safe efforts. `--available` accepts a scoped T3
+`orchestrator_capabilities` payload as well as a flat inventory or Codex model
+cache. See the [input formats](../../common/agent_skills/basaltwater-subagents/references/model-selection.md#project-policy-and-outcomes).
+Project policies can add new IDs directly. The result identifies
 uncatalogued or stale models so the agent can verify official metadata, update
 the project policy, and evaluate candidates. Proven choices use recent outcomes
 for the same task, evaluation version, model ID, and effort. Untested candidates
@@ -155,7 +154,7 @@ bounded Luna classes start at medium; broad coding/review starts at Sol high.
 Initialization preserves older project policies and explicit operator choices.
 An empty eligible set returns nonzero and a null selection.
 
-The starter catalog is dated **2026-11-09**, with standard API token rates and
+The starter catalog is dated **2026-11-17**, with standard API token rates and
 reasoning support checked against the
 [OpenAI model catalog](https://developers.openai.com/api/docs/models) and
 [reasoning guide](https://developers.openai.com/api/docs/guides/reasoning).

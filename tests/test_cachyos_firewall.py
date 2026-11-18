@@ -152,6 +152,15 @@ class FirewallTests(unittest.TestCase):
                     ]},
                 ])
                 return CompletedProcess(command, 0, json.dumps(data))
+            if len(command) > 2 and command[2] in {"iptables-save", "ip6tables-save"}:
+                lines = [":INPUT DROP [0:0]"]
+                for protocol, port, source, ipv6, action, _ in rules:
+                    if ipv6 != (command[2] == "ip6tables-save"):
+                        continue
+                    restriction = f" -s {source}" if source != "Anywhere" else ""
+                    verdict = "ACCEPT" if action == "allow" else "DROP"
+                    lines.append(f"-A INPUT{restriction} -p {protocol} --dport {port} -j {verdict}")
+                return CompletedProcess(command, 0, "\n".join(lines))
             if "ufw" not in command:
                 return CompletedProcess(command, 0, "")
             args = command[command.index("ufw") + 1:]

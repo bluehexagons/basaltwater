@@ -18,15 +18,24 @@ not make a reused or common password safe.
 | CI/CD webhook | Public HTTPS or Cloudflare ingress | HMAC verification and Nginx 10 requests/minute per client |
 | Proxmox GUI and SSH | Proxmox management source policy | Not published by a general web allow rule; use `--lan-access`, `--access-source`, or `--proxmox-source` to limit management clients |
 
-On VM and hardware profiles, setup reconciles the managed `pam_faillock`
-profile and checks that the generated common auth and account stacks use it.
-Setup fails if the lockout profile cannot be activated, so a matching settings
-file alone is not reported as active protection.
+On VM and hardware profiles, setup installs `pam_faillock` hooks around the
+Debian common authentication stack. It checks that the lockout check runs
+before credential validation, failures reach the tally hook, and successful
+authentication reaches the reset hook. Password authentication is locked for
+ten minutes after five consecutive failures in fifteen minutes. Key-only SSH
+admission stays independent of the password tally. Setup refuses to report
+active protection if locally customized PAM controls do not satisfy these
+checks. Reconcile custom profiles through `pam-auth-update` before retrying.
 
 Security setup package installs (UFW, Fail2ban, AppArmor, and auditd) use the
 shared 300-second APT/dpkg lock wait, allowing normal overlap with distro APT
 jobs. Lock-wait exhaustion or another install failure still stops that setup
 step before configuration continues; setup does not replay the failed install.
+
+Auditd setup leaves the audit enable mode to the distribution and operator.
+It verifies the kernel rules after requesting a load. An immutable policy
+with missing rules requires a reboot to apply the staged configuration.
+An explicitly disabled kernel audit policy is reported as disabled.
 
 On VMs and hardware, AppArmor setup verifies persistent boot enablement and
 checks the distro loader's start and reload operations before reporting active

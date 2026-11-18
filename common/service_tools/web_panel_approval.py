@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import html
-from common.service_tools.web_panel_features import AGENT_TOOLS, MANIFEST, PanelFeatures, unit_installed
+from common.service_tools.web_panel_features import AGENT_TOOLS, MANIFEST, PanelFeatures, t3_selected, unit_installed
 from common.service_tools.web_panel_templates import panel_navigation, render_document
 from lib.atomic_io import read_json_file
 from lib.guacamole_config import SERVICE, SSH_SERVICE
@@ -55,7 +55,7 @@ def configured_panel_features() -> PanelFeatures:
         if configured.get("git") is True:
             tools |= {"git"}
         features = PanelFeatures(
-            tools=frozenset(tools), t3=configured.get("t3_update") is True,
+            tools=frozenset(tools), t3=t3_selected(configured),
             desktop=unit_installed(SERVICE + ".service", ""),
             console=unit_installed(SSH_SERVICE + ".socket", ""),
             github_runner=unit_installed(RUNNER_SERVICE, ""),

@@ -42,7 +42,7 @@ _OPTIONS = {
     "web_interface_host", "web_interface_port", "t3code_desktop",
     "lan_access", "access_sources", "clear_access_sources",
     "install_ssh", "ssh_password_auth", "ssh_password_window",
-    "notify_specs", "notification_level", "notification_strict_https",
+    "notify_specs", "notification_level", "notification_strict_https", "notification_ca_file",
 }
 _CONTROLLER_OPTIONS = {"restart_if_needed", "wait_for_restart"}
 _CONFIG_OPTIONS = (_OPTIONS - {"no_agent_tools"}) | {

@@ -2,7 +2,7 @@
 
 Use these integrations when the active T3 session exposes the relevant tools.
 Follow its injected instructions and live schemas. This reference follows
-[stable 0.1.9](https://github.com/pingdotgg/t3code/releases/tag/v0.1.9).
+[stable 0.1.10](https://github.com/pingdotgg/t3code/releases/tag/v0.1.10).
 
 ## Establish the execution environment
 
@@ -198,6 +198,24 @@ Contracts: [release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.9),
 [composer implementation](https://github.com/pingdotgg/t3code/blob/v0.1.9/apps/web/src/components/chat/ChatComposer.tsx),
 [goals](https://github.com/pingdotgg/t3code/blob/v0.1.9/docs/user/composer.md#goals),
 and [Claude session approvals](https://github.com/pingdotgg/t3code/pull/33707).
+
+## Shared 0.1.10 client workflows
+
+Use upstream's [messages, goals and recovery manual](https://github.com/pingdotgg/t3code/blob/v0.1.10/docs/user/composer.md)
+for response replies, native goals and Resume. Codex, Claude and OpenCode can
+keep working toward an explicitly requested goal; OpenCode requires 2.2.5+.
+Codex/OpenCode support goal pause/resume; stopping Claude ends the turn while
+leaving its goal set for the next message. Inspect actual goal state rather
+than assuming all providers stop alike. Stopped Claude, Codex, OpenCode and
+Cursor threads can use native continuation without adding a new prompt.
+Do not wrap a T3-owned goal in a second Basaltwater continuation schedule.
+Independent tasks with lifetime limits and receipts remain a separate route.
+
+For Connect device approval, Windows services, cleanup and compatibility,
+read the [integration reference](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-t3code/references/release-0.1.10.md).
+T3 owns keep-awake behavior during work and client theme/language preferences;
+setup preserves these choices. Use upstream manuals for ordinary UI controls
+instead of reproducing their release history in project instructions.
 
 ## Project commands and worktree setup
 

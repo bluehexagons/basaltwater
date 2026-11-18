@@ -231,6 +231,15 @@ survive structured failures. Completion adds its own timestamps only after all
 input calls return. These times describe helper operations, not game effect or
 model inference; compare monotonic clocks only on the same boot.
 
+Linux captures expose `last_input`, a content-free summary of the latest
+worker-received input outcome, including a refusal or interrupted dispatch.
+The journal's `related_input_id` links to that attempt rather than an earlier
+success. Check `input_delivery` and `dispatch_stage`; completion timestamps
+exist only for completed input. A client-side refusal or transport failure
+that never reached the worker cannot update this summary. Older helpers
+reported only the last successful input, so inspect their original journals
+before attributing a post-failure image.
+
 Linux clients also retain these receipts for action sequences and paced typing.
 A sequence reports earlier completed results, a zero-based `failed_action_index`
 and the full `failed_action` receipt; failure stops subsequent steps. For legacy

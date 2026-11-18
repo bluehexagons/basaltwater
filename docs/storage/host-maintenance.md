@@ -1,5 +1,9 @@
 # Host storage maintenance
 
+Debian hosts use the automatic recovery and daily maintenance below. CachyOS
+has [setup-time package recovery](../workstations/cachyos.md#cleanup-during-setup);
+Windows provides [explicit native storage cleanup](../workstations/windows.md#low-space-recovery).
+
 Basaltwater's Debian setup and deployment paths share a storage exclusion lock.
 This feature does not require coding-agent tooling or the web-server profile.
 Ordinary setup installs `basaltwater-storage.timer`, which checks daily with a
@@ -7,6 +11,10 @@ random delay. The job inventories root, managed `build-*` accounts whose passwd
 homes exactly match Basaltwater's build-home convention, and the setup account.
 Application service accounts are separate from build accounts; no service is
 stopped by cache maintenance.
+The target setup completion summary includes a concise disk-usage section:
+used/total capacity, available space and free inodes, once per relevant filesystem.
+It covers root, temporary, build, web and setup-account storage without scanning
+directory contents; unavailable observations do not change the setup result.
 The daily job also dispatches retention for installed managed builder and target
 roles. It does not require those roles on ordinary hosts.
 
@@ -18,7 +26,10 @@ On the target, from the installed source directory:
 cd /opt/basaltwater
 sudo python3 -m lib.managed_storage
 sudo python3 -m lib.managed_storage --apply
+sudo python3 -B -m lib.managed_storage --pressure
+sudo python3 -B -m lib.managed_storage --pressure --apply
 sudo python3 -m lib.managed_storage --account developer --budget-mib 768 --target-mib 2048
+sudo python3 -m lib.managed_storage --min-free-inodes 20000
 sudo python3 -B -m lib.managed_storage --payloads
 sudo python3 -B -m lib.managed_storage --payloads --apply
 ```
@@ -27,19 +38,46 @@ Wheel installations also provide `basaltw-storage` with the same arguments.
 Output is JSON: per-account candidates include exact paths, UID ownership,
 allocated bytes, category, rebuild cost, status and free bytes/inodes before and
 after. Native failures are reported per candidate and do not abort other accounts.
-Partial inventories, symlinks, nested mounts, mixed ownership and hardlinks defer
-cleanup. Allocated usage is an observation, not guaranteed reclaimable space.
+System pressure operations include `before`/`after` capacity and signed
+`net_freed_bytes`/`net_freed_inodes` changes (inodes where supported). Setup prints
+these changes too. A successful native command can reclaim nothing; concurrent
+disk use can produce a negative net change. Missing final observations or a
+changed mount are failures, and preview reports no simulated savings.
+The final `filesystems` section reports capacity once per observed mount, including
+remaining byte and inode shortfalls. Pressure mode includes system-only mounts
+such as a separate `/tmp`. Unavailable observations and unmet targets cause a
+nonzero exit, including when payload cleanup could not resolve them.
+Partial inventories, linked cache roots, nested mounts, mixed ownership and
+hardlinks defer cleanup. Internal symlinks also defer ordinary native caches;
+the disposable build paths described below unlink them without following them.
+Allocated usage is an observation, not guaranteed reclaimable space.
 Shared extents and other concurrent disk users can change the measured savings.
 
 The default combined cache budget is 1024 MiB **per account**; the free-space
-target is 1536 MiB on each candidate's filesystem. A cache is selected when the
+target is 1536 MiB, with 10,000 free inodes (`--min-free-inodes`), on each
+candidate's filesystem. On separate non-root tmpfs/ramfs mounts, maintenance caps
+each target at 10% of the filesystem's total bytes or inodes. Setup still enforces
+its configured workload estimates. A cache is selected when the
 account exceeds its budget or its filesystem falls below the target. `--force`
-selects all eligible candidates. There is no automatic cleanup-and-retry loop
-during setup, avoiding repeated eviction and download cycles. Raise the target
+selects all eligible candidates. Before setup starts, a failed capacity check
+triggers one pressure cleanup pass, under exclusive storage ownership. Setup then
+rechecks capacity under its normal shared lock. It never replays setup steps or
+repeats cleanup on a later build failure. Unsafe or active
+caches remain protected; insufficient space still stops setup. Preflight reports
+all failing temporary and ordinary paths together, so the single cleanup pass can
+address them all. Each disk's cleanup target is at least 1536 MiB, increased to
+that filesystem's configured setup requirement when larger. Separate non-root
+memory filesystems cap that reserve at 10% of capacity while still meeting their
+full setup requirement. Paths sharing a mount retain the strictest requirement.
+Automatic cleanup selects only filesystems reported by the failed preflight and
+also responds to insufficient free inodes. A full separate tmpfs does not trigger
+cache or log deletion on an unrelated disk. Cleanup still cannot enlarge a tmpfs
+or reclaim storage outside its eligible paths.
+Deployment operations do not trigger automatic cleanup. Raise the target
 to accommodate your measured deployment peak plus a reserve. Use a systemd
 override for the service's `ExecStart` to persist different policy arguments.
 
-Only these conventional cache paths are eligible:
+For root and explicitly selected host accounts, these conventional caches are eligible:
 
 | Path below home | Native operation | Preserved |
 | --- | --- | --- |
@@ -49,13 +87,50 @@ Only these conventional cache paths are eligible:
 
 Commands run as the owning account, with explicit cache paths and without login
 profiles. Go configuration, hooks and automatic toolchain downloads are disabled.
-Custom cache locations are outside this initial policy. Missing tools are failures,
-never a reason to substitute recursive deletion. npm/nvm cleanup also takes the
+Custom cache locations are outside this policy. Missing tools remain failures for
+root and ordinary host accounts. npm/nvm cleanup also takes the
 existing per-account Node runtime lock. When nvm is absent, npm cleanup uses the
 system npm executable. Each owner worker revalidates its home, cache inode and
-cache inventory before running a native command. Workers inherit the maintenance
-lock so it remains held if the launcher exits unexpectedly. Missing or incomplete
+cache inventory before running a native command. Cache workers and native system
+cleaners inherit the maintenance lock so it remains held while they run if the
+launcher exits unexpectedly. Missing or incomplete
 post-cleanup measurements are failures, rather than successful reclamation.
+
+Managed build accounts use additional disposable paths when their filesystem is
+below the free-space or inode target: `.npm/_logs`, `.npm/_npx`, `go/pkg/mod`, `.cache/uv`
+and `.cache/pip`. This discards npm diagnostics, downloaded tools and modules,
+including Go toolchains. Subsequent builds download them again and may take
+longer. For exact managed build homes only, a failed native cache command falls
+back to deleting its validated cache directory as the owning account. This also
+handles npm failing to allocate its temporary configuration directory or files
+when bytes or inodes are exhausted. Read-only Go cache directories are made
+writable first. Sources, configuration and other
+home content remain outside this policy. Missing homes are reported as absent.
+Each additional cache is selected using its own filesystem's capacity, including
+when its home has space available on another mount.
+
+`--pressure` also cleans apt package archives and rotates/vacuums systemd journals
+to 64 MiB and seven days on filesystems below the target. Persistent journals in
+`/var/log/journal` and volatile journals in `/run/log/journal` are checked and
+vacuumed separately; apt cleanup explicitly selects `/var/cache/apt/archives`.
+Pressure cleanup also runs `systemd-tmpfiles --clean` separately for `/tmp`,
+`/var/tmp` and `/var/lib/systemd/coredump` when that path's filesystem needs
+reclamation. This applies the installed system administrator's age and exclusion
+rules; it does not shorten retention or use `--remove`, `--purge` or `--boot`.
+Absent directories are skipped. Paths without an age-based cleanup rule may
+reclaim nothing. Preview lists these native operations without executing them.
+It then removes unused
+older Node versions in inactive managed build homes, retaining the newest version
+of each installed major and every exact or partial version selected by an NVM
+alias. Versions referenced by running processes, unsafe inventories and busy
+runtime locks defer deletion. Removed versions include their installed global
+packages. Runtime capacity is checked at `.nvm/versions/node`, including when it
+uses a separate mount from the build home; pressure reports include that mount.
+Current services stay running; application data and deployed releases
+are preserved. Pressure cleanup is automatic before a setup refused for capacity
+and in the daily timer, alongside its ordinary cache and payload policy. Existing
+installations receive the timer change on their next setup. Manual preview
+does not change logs or runtime directories.
 
 ## Managed build payloads
 
@@ -146,8 +221,15 @@ and verify the workload's actual peak before lowering estimates.
 
 A failed preflight reports phase, path, mount, available bytes/inodes, requirements
 and bounded managed-build-home storage measurements. Cleanup reports any remaining
-byte shortfall and exits unsuccessfully when its target cannot be reached; it does
-not remove runtimes, deployed releases, databases or swap to satisfy policy.
+byte or inode shortfall and exits unsuccessfully when its target cannot be reached;
+it does not remove deployed releases, databases or swap to satisfy policy. Pressure
+cleanup can remove the unused older build runtimes described above.
+The total reported for managed build homes includes retained runtimes and other
+protected files; it is not a reclaimable-byte estimate. If setup still refuses,
+preview `sudo python3 -B -m lib.managed_storage --pressure` on the target and inspect
+`sudo journalctl -u basaltwater-storage.service -n 100 --no-pager` for skipped
+caches or native-tool failures. Apply reviewed cleanup with `--apply`. Increase
+capacity if protected content and the workload's peak cannot fit together.
 
 ## npm maintenance
 
@@ -162,7 +244,9 @@ runtimes remain outside automatic global-tool changes; their owners must update
 them deliberately. Other global packages still require the ecosystem upgrade
 opt-in and automatic runtime ownership.
 
-Native command boundaries follow the [npm cache documentation](https://docs.npmjs.com/cli/cache/),
+Native command boundaries follow the [journalctl documentation](https://www.freedesktop.org/software/systemd/man/latest/journalctl.html),
+[systemd-tmpfiles documentation](https://www.freedesktop.org/software/systemd/man/latest/systemd-tmpfiles.html),
+[npm cache documentation](https://docs.npmjs.com/cli/cache/),
 [nvm documentation](https://github.com/nvm-sh/nvm), and
 [Go clean documentation](https://pkg.go.dev/cmd/go#hdr-Remove_object_files_and_cached_files).
 Unit tests mock native commands and verify policy, preservation and exclusion.

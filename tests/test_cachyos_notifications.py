@@ -77,7 +77,7 @@ class CachyOSNotificationTests(unittest.TestCase):
         return self.config("--notify", "webhook", TARGET, *options)
 
     def test_success_sends_shared_payload_after_private_selection_is_saved(self):
-        config = self.webhook_config("--notification-strict-https", "--node")
+        config = self.webhook_config("--notification-ca-file", "/fixture/private-ca.pem", "--node")
         response = self.request.return_value
 
         def open_request(request, **kwargs):
@@ -90,6 +90,7 @@ class CachyOSNotificationTests(unittest.TestCase):
         self.assertEqual(request.full_url, "https://panel.example/api/v1/notifications")
         self.assertEqual(request.get_header("Authorization"), "Bearer " + TOKEN)
         self.assertTrue(self.request.call_args.kwargs["strict_https"])
+        self.assertEqual(self.request.call_args.kwargs["ca_file"], "/fixture/private-ca.pem")
         payload = json.loads(request.data)
         self.assertEqual(payload["schema_version"], 2)
         self.assertEqual(payload["event"]["status"], "good")
@@ -97,7 +98,9 @@ class CachyOSNotificationTests(unittest.TestCase):
         self.assertEqual(payload["operator"]["system"], "workstation")
         self.assertIn("workstation", payload["operator"]["subject"])
         self.assertNotIn(TOKEN, request.data.decode())
-        self.assertEqual(refresh.load_saved_setup()[1].notify_specs, [["webhook", TARGET]])
+        restored = refresh.load_saved_setup()[1]
+        self.assertEqual(restored.notify_specs, [["webhook", TARGET]])
+        self.assertEqual(restored.notification_ca_file, "/fixture/private-ca.pem")
         self.assertEqual(stat.S_IMODE(self.record.stat().st_mode), 0o600)
         self.assertEqual(stat.S_IMODE(self.record.parent.stat().st_mode), 0o700)
         evidence = self.record.with_name("last-notification.json")

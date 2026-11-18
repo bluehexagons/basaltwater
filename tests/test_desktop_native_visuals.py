@@ -119,7 +119,7 @@ class CaptureCoordinateTests(unittest.TestCase):
                         self.assertEqual(json.loads(output.getvalue())["input_delivery"], "not-sent")
                         debian_request.assert_not_called()
             request.assert_not_called()
-            for button in ("left", "0", "8"):
+            for button in ("left", "0", "10"):
                 with redirect_stdout(StringIO()), patch("sys.stderr", StringIO()), self.assertRaises(SystemExit):
                     parser.parse_args(action + ["--button", button])
 

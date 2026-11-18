@@ -419,6 +419,8 @@ New-Item -ItemType Junction -Path (Join-Path (Split-Path -Parent $PSScriptRoot) 
     if (-not $?) { throw 'Native development process-tree tests failed' }
     & (Join-Path $PSScriptRoot 'Run-AgentWorkstationTests.ps1')
     if (-not $?) { throw 'Native agent workstation tests failed' }
+    & (Join-Path $PSScriptRoot 'Run-StorageTests.ps1')
+    if (-not $?) { throw 'Native storage cleanup tests failed' }
     & (Join-Path $PSScriptRoot 'Run-GitHubRunnerTests.ps1')
     if (-not $?) { throw 'GitHub runner offline qualification failed' }
     Write-Host 'Native Windows qualification passed.'

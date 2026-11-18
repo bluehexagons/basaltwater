@@ -84,12 +84,14 @@ verification. CachyOS setup rejects a custom `CODEX_HOME`.
 
 ## Verified pricing boundaries
 
-Documentation checked **2026-11-09**. These are direct-provider Standard API
+Documentation checked **2026-11-17**. These are direct-provider Standard API
 prices in USD per million uncached input/output tokens, not subscription or
 gateway quotes.
 
 | Model | Native context | Short-context input / output | Higher-price trigger and rates |
 | --- | --- | --- | --- |
+| GPT-6.2 Sol | 1,050,000 | $2 / $10 | More than 272,000 input tokens: $4 / $15 |
+| GPT-6.2 Astra | 1,050,000 | $8 / $40 | More than 272,000 input tokens: $16 / $60 |
 | GPT-6.1 Sol | 1,050,000 | $2 / $10 | More than 272,000 input tokens: $4 / $15 |
 | GPT-6.1 Terra | 1,050,000 | $1 / $5 | More than 272,000 input tokens: $2 / $7.50 |
 | GPT-6 Astra | 1,050,000 | $10 / $50 | More than 272,000 input tokens: $20 / $75 |
@@ -98,7 +100,9 @@ gateway quotes.
 | Claude Sonnet 5.5 / Opus 5.5 | 1,000,000 | $2 / $10; $4 / $20 respectively | Full context has the same per-token rates |
 | Claude Fable 5.2 | 1,000,000 | $8 / $40 | Full context has the same per-token rates |
 
-Sources: official OpenAI documentation for
+See the official model documentation for
+[GPT-6.2 Sol](https://developers.openai.com/api/docs/models/gpt-6.2-sol),
+[GPT-6.2 Astra](https://developers.openai.com/api/docs/models/gpt-6.2-astra),
 [GPT-6.1 Sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol),
 [GPT-6.1 Terra](https://developers.openai.com/api/docs/models/gpt-6.1-terra),
 [GPT-6 Astra](https://developers.openai.com/api/docs/models/gpt-6-astra), and
@@ -113,13 +117,16 @@ active window, and its configured compaction target. The API models above allow
 up to 128K output tokens; output and reasoning also need room in the request.
 An API capacity is not a promise that a particular agent can use all of it.
 
-[Sol's model documentation](https://developers.openai.com/api/docs/models/gpt-6.1-sol)
-specifies a **500K default context window in Codex and ChatGPT Work**, compared
-with its 1,050,000-token API capacity. Included subscription usage has **no
-long-context surcharge**. The API's 272K price threshold therefore must not be
-presented as a subscription context limit or an automatic subscription price
-increase. Longer prompts still consume allowance; purchased credits, API keys
-and gateways need their own billing check. See
+Codex documents a **500K default context window for GPT-6.2 Sol** and **272K
+for GPT-6.2 Astra**. Each API model allows up to 922K input and 128K output
+within a 1,050,000-token window. The client's active context and Basaltwater's
+compaction target can both be lower. Use the live client and account settings
+to verify the usable window. See [Codex models](https://learn.chatgpt.com/docs/models).
+
+The 272K price threshold applies to direct API billing. Check the active plan
+for included usage, purchased credits, or gateway pricing. Longer prompts
+consume more of the included allowance. OpenAI explicitly documents no
+long-context surcharge on included GPT-6.1 Sol usage. See
 [Codex subscription pricing](https://learn.chatgpt.com/docs/pricing).
 
 Current Claude Fable 5.2, Opus 5.5, Sonnet 5.5 and Haiku 5.5 have native 1M
@@ -129,14 +136,11 @@ can reduce the effective window. Do not generalize older Opus/Sonnet 4.6
 usage credits on a subscription. Check `/model`, `/context` and `/autocompact`;
 see [Claude client configuration](https://code.claude.com/docs/en/model-config).
 
-The managed targets below remain conservative defaults across billing routes.
-This documentation refresh does not raise installed budgets or advance the
-runtime policy verification date. Terra and Fable are not newly added to the
-runtime's reviewed-model entries: an unreviewed model still gets its documented
-fallback. Verify effective settings before relying on native capacity, including
-for subagents. Use a fresh bounded brief when supported instead of copying a
-large parent history. See [model choices](agent-subagents.md) for workload and
-subscription cost guidance.
+The managed targets below apply across billing routes. The OpenCode hook
+recognizes the reviewed GPT-6.2 Sol and Astra prices. Terra and Fable use their
+provider's managed fallback. Verify effective settings before relying on native
+capacity, including for subagents. Use a fresh bounded brief when supported.
+See [model choices](agent-subagents.md) for workload and subscription guidance.
 
 Input thresholds include cached input. A cache hit does not make a large prompt
 short for pricing purposes. Fast/priority service, batch/flex processing, and
@@ -303,11 +307,11 @@ for a session-only approval unless the saved value is deliberately restored.
 
 ### OpenCode terminal
 
-For an approved larger input budget on GPT-6.1 Sol, use process-local inline
+For an approved larger input budget on GPT-6.2 Sol, use process-local inline
 configuration, retaining auto-compaction:
 
 ```bash
-env OPENCODE_CONFIG_CONTENT='{"provider":{"openai":{"models":{"gpt-6.1-sol":{"limit":{"context":1050000,"input":800000,"output":128000}}}}}}' opencode --session SESSION_ID
+env OPENCODE_CONFIG_CONTENT='{"provider":{"openai":{"models":{"gpt-6.2-sol":{"limit":{"context":1050000,"input":800000,"output":128000}}}}}}' opencode --session SESSION_ID
 ```
 
 Merge any existing inline configuration instead of replacing it. Compact and

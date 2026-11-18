@@ -139,7 +139,16 @@ The list is saved for later deploys. Supplying sources on a patch replaces the
 saved SSH-only list; omitting the option preserves it. Use
 `--no-ssh-access-source` to clear it. Generic sources still apply after clearing;
 without any effective SSH sources, the normal global SSH rate limit returns.
-This option does not alter SSH authentication or fail2ban policy.
+These options require a Debian profile that manages UFW. Proxmox uses its
+native management IP set, and `server_wsl` has no managed ingress policy.
+For a legacy saved Proxmox or WSL configuration containing SSH-only sources,
+rerun its setup command with both SSH-only flags omitted.
+
+Managed SSH filtering and Fail2ban expect the target daemon and any active or
+enabled SSH activation socket to use TCP 22. Setup checks the effective
+OpenSSH configuration and scans `Match` blocks and their includes for settings
+that conflict with managed authentication and forwarding. A conflict identifies
+the directive or service to correct before setup can activate its policy.
 
 Before changing UFW rules or defaults, setup checks the current connection's
 `SSH_CONNECTION` source against the combined generic and SSH-only access
@@ -149,6 +158,12 @@ local setup without an SSH connection has no remote peer to verify.
 `--lan-access` describes the target's adjacent networks. A controller on a
 routed Wi-Fi, VPN or management network needs an additional `--ssh-access-source`
 for its observed address or trusted subnet.
+
+When setup copies the target host's root-authorized keys into a login
+account, it preserves existing entries and publishes the file with mode `0600`
+under a user-owned `.ssh` directory with mode `0700`. Symlinked paths,
+hard-linked key files and writable home directories fail the merge. Correct
+the reported ownership or path before rerunning setup.
 
 On a server with active UFW, source-restricted setup also requires a `deny` or
 `reject` incoming default. Setup checks that policy before changing rules and

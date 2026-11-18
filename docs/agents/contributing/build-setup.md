@@ -82,7 +82,9 @@ declared or safely inferred exports. Runtime selection honors explicit
 checkout. Approved service arguments, environment, managed working directories,
 SQLite backups, UDP and fixed ports reuse ordinary manifest deployment.
 Interpreter services, Godot, environment files, unmanaged runtime paths,
-alternate proxy settings and CI/publishing workflows remain unsupported.
+alternate proxy settings and publishing workflows remain unsupported.
+Manifests may also declare `ci`; delivery runs only component build commands,
+not CI steps. CI-only manifests cannot be deployed.
 The target grant must match the complete component route and runtime map; its
 project selects the builder grant.
 

@@ -195,7 +195,14 @@ helper. This is not global keyboard state: physical modifiers, lock keys and
 other input providers remain unavailable. A zero count cannot establish that
 the human's keyboard or another virtual keyboard has no stuck modifier.
 
-Key chords and pointer buttons 1–3 accept `--hold-ms 0–5000`
+For real touch contacts, explicit `start --touch` consent, relative movement,
+discrete scrolling and side buttons, follow
+[pointer and touch QA](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/pointer-touch-qa.md).
+Check advertised capabilities after refresh; a pointer grant does not grant touch.
+Use full-monitor capture pixels for contacts and preserve the private gesture
+plan with its recorder digest. XRDP and physical devices need separate qualification.
+
+Key chords and pointer buttons 1–3 and 8–9 accept `--hold-ms 0–5000`
 (default 0); use 120 ms for game buttons that actuate during a press animation.
 Human override, disabled state, stop, backend expiry and client disconnection
 interrupt holds and release inputs.

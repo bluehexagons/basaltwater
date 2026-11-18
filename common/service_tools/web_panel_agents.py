@@ -16,6 +16,7 @@ from common.service_tools.web_panel_diagnostics import _redact_log_message
 from common.service_tools.web_panel_features import PanelFeatures
 from common.service_tools.web_panel_templates import render_heading
 from common.service_tools.web_panel_agent_hub import agent_document
+from common.service_tools.web_panel_t3 import render_workspace
 from lib.agent_cli import _tool_path, inspect_agent_tools, inspect_t3code
 from lib.agent_maintenance import inspect_agent_maintenance
 from lib.agent_readiness import load_agent_readiness_record
@@ -36,14 +37,6 @@ from lib.agent_tasks import (
 )
 
 
-_REPOSITORY_EDIT_PREFLIGHT = (
-    "Read this repository's agent instructions. Verify that the selected directory belongs to the intended Git checkout and inspect Git status, including untracked files. "
-    "In an existing or shared checkout, if there are existing changes, stop and report that they need review before another editing run. "
-    "In a Basaltwater-managed persistent task worktree, inspect unfinished changes against the saved task checkpoint and continue only this task's authorized work; report unrelated changes. "
-    "Do not stash, reset, clean, commit, or switch branches to clear existing changes. "
-)
-
-
 PROMPT_TEMPLATES = {
     "maintenance": {
         "scope": "host", "description": "Inspect resources, services, update timers, and agent readiness.",
@@ -61,40 +54,6 @@ PROMPT_TEMPLATES = {
         "description": "Inspect routes, resolver and clock state, and configured endpoint reachability.",
         **HOST_REVIEW_SETTINGS, "interval": "once", "timeout_minutes": 15,
         "prompt": HOST_REVIEW_PROMPT + NETWORK_REVIEW_PROMPT,
-    },
-    "repository": {
-        "scope": "repository", "description": "Inspect repository state and identify maintenance work.",
-        "title": "Repository health check", "mode": "inspect", "interval": "once", "network": False,
-        "prompt": "Read this repository's agent instructions and inspect Git status, dependency manifests, CI configuration, and recent test evidence. Identify failing checks, stale dependencies, and maintenance gaps. Report findings with file references and suggested next steps. Do not modify files or publish changes.",
-    },
-    "ci-repair": {
-        "scope": "repository", "title": "Repair failing checks",
-        "description": "Reproduce a test, lint, or build failure and prepare a focused fix.",
-        "mode": "workspace", "interval": "once", "network": True, "temporary_files": True, "timeout_minutes": 60,
-        "prompt": _REPOSITORY_EDIT_PREFLIGHT + "Identify failing tests, lint checks, or builds from available local evidence. Reproduce the failure using the existing tooling, then make the smallest justified fix and rerun relevant checks. Do not weaken checks or remove tests to make them pass. If a failure cannot be reproduced or tooling is unavailable, report the missing evidence rather than guessing. Summarize the cause, changes, and validation. Do not commit, push, publish, or deploy.",
-    },
-    "dependencies": {
-        "scope": "repository", "description": "Prepare dependency changes and validation for review.",
-        "title": "Update repository dependencies", "mode": "workspace", "interval": "once", "network": True, "temporary_files": True,
-        "prompt": _REPOSITORY_EDIT_PREFLIGHT + "Update dependencies using the repository's existing package manager, lockfiles, and update policy. Prefer compatible updates within its declared constraints; report major upgrades needing separate migration work. Run the relevant checks, explain changes and compatibility concerns, and leave the result ready for review. Do not commit, push, publish, or deploy.",
-    },
-    "documentation": {
-        "scope": "repository", "title": "Update repository documentation",
-        "description": "Reconcile setup instructions, examples, and references with the code.",
-        "mode": "workspace", "interval": "once", "network": False, "temporary_files": True, "timeout_minutes": 30,
-        "prompt": _REPOSITORY_EDIT_PREFLIGHT + "Compare its README, setup instructions, CLI or API examples, and configuration references with the current implementation. Correct concrete discrepancies and broken local references using the established documentation format. Preserve accurate content, avoid marketing copy, and do not invent capabilities or unverified results. Run existing documentation checks when available, and report changes and any examples that could not be verified. Do not change application behavior, commit, push, publish, or deploy.",
-    },
-    "security-review": {
-        "scope": "repository", "title": "Review repository security",
-        "description": "Review sensitive code paths and dependency advisories with evidence.",
-        "mode": "inspect", "interval": "once", "network": False, "web_search": "live", "timeout_minutes": 30,
-        "prompt": "Read this repository's instructions, dependency manifests and lockfiles, and relevant authentication, authorization, input-validation, and secret-handling code. Review plausible security issues and use available web search to check current dependency advisories against the installed versions. Cite advisory sources and distinguish confirmed affected versions from uncertain matches. Report severity, evidence, file references, suggested remediation, and coverage limits. Redact any credentials encountered. Do not modify files, run exploit payloads, commit, push, publish, or deploy.",
-    },
-    "release-review": {
-        "scope": "repository", "title": "Review release readiness",
-        "description": "Check version consistency, change notes, validation, and rollout gaps.",
-        "mode": "inspect", "interval": "once", "network": False, "timeout_minutes": 20,
-        "prompt": "Read this repository's instructions, Git status and diff, version declarations, changelog, release configuration, migration notes, and available CI or test results. Check version consistency, undocumented behavior changes, compatibility concerns, and missing validation or rollout steps. Identify the release target from repository evidence; if unclear, say so. Produce a readiness report with evidence, blockers, and remaining checks. Do not claim unrun checks passed or modify files, create tags, commit, push, publish, or deploy.",
     },
     "backups": {
         "scope": "host", "title": "Check backup health",
@@ -150,24 +109,6 @@ PROMPT_TEMPLATES = {
         "description": "Inspect xrdp, session-manager state, and recent connection failures.",
         **HOST_REVIEW_SETTINGS, "interval": "once", "timeout_minutes": 10,
         "prompt": HOST_REVIEW_PROMPT + "Inspect configured remote desktop access, xrdp and session-manager service state, readable session configuration, and bounded recent connection or startup errors. Report missing desktop components, service failures, and relevant permission or certificate evidence. Local readiness does not prove a remote client can connect; distinguish those checks. Do not open or capture another user's desktop, terminate sessions, restart services, modify accounts or configuration, or expose credentials.",
-    },
-    "github-actions": {
-        "requires": "github", "scope": "repository", "title": "Review GitHub Actions failures",
-        "description": "Read recent CI runs with GitHub CLI and identify recurring failures.",
-        **HOST_REVIEW_SETTINGS, "interval": "once", "timeout_minutes": 20,
-        "prompt": "The execution directory is empty scratch space. Read repository instructions and Git status from the source directory named in the task context, using git -C SOURCE. Identify its GitHub repository from the existing remote without printing embedded credentials or changing it. Use gh --repo OWNER/REPO and read-only subcommands to inspect a bounded number of recent completed Actions runs and relevant failed-job logs. Report running checks as pending; do not watch or repeatedly poll them. Compare failures with local workflow configuration; separate likely code, infrastructure, flaky-test, and permission causes. Redact credentials and report unavailable authentication or repository access explicitly. Produce an evidence-backed triage report. Do not modify files, rerun or cancel workflows, create issues or comments, commit, push, publish, or deploy.",
-    },
-    "browser-smoke": {
-        "requires": "browser", "scope": "repository", "title": "Run browser smoke checks",
-        "description": "Check key application flows with the managed browser tooling.",
-        "mode": "workspace", "interval": "once", "network": True, "temporary_files": True, "timeout_minutes": 30,
-        "prompt": "Read this repository's instructions and Git status; preserve unrelated work. Check the managed browser capability using available Basaltwater diagnostics, then use the repository's documented local preview and configured browser tools to inspect key flows, console errors, and a narrow viewport. A healthy installation does not prove browser tools are exposed in this session; if unavailable, report browser coverage as blocked and continue relevant local checks. Use an isolated test environment and synthetic data; avoid production endpoints and real user transactions. Start a loopback local preview only when repository instructions support it, and stop processes you start. Do not create managed gateway previews or forwards. Keep screenshots in the browser's private evidence directory and report results, URLs, and blocked checks. Do not install tools, change application code, publish, deploy, or send messages.",
-    },
-    "godot-export": {
-        "requires": "godot", "scope": "repository", "title": "Validate Godot web export",
-        "description": "Check export presets and prepare a local web build for review.",
-        "mode": "workspace", "interval": "once", "network": False, "temporary_files": True, "timeout_minutes": 60,
-        "prompt": "Read this repository's instructions and Git status; preserve unrelated work. Confirm a Godot project and suitable web export preset exist in the selected checkout. Check the installed Godot version and existing export templates, then use the documented headless export workflow to produce a local web build in the repository's designated ignored output directory. If the output location is not documented or would overwrite tracked or unrelated files, report the blocker. Report export errors, artifact paths, and runtime or browser checks still needed. Do not download tools or templates, change project sources or presets, commit, push, publish, or deploy.",
     },
     "homebox-health": {
         "requires": "homebox", "scope": "host", "title": "Check HomeBox data protection",
@@ -477,7 +418,7 @@ def parse_agent_query(raw: str) -> dict[str, str]:
 
         parse_maintenance_reference(query["maintenance"][0])
         return {key: values[0] for key, values in query.items()}
-    if set(query) == {"view"} and query["view"][0] in {"new", "templates", "dashboard", "tasks", "history", "diagnostics"}:
+    if set(query) == {"view"} and query["view"][0] in {"new", "templates", "dashboard", "tasks", "history", "diagnostics", "t3"}:
         return {"view": query["view"][0]}
     if set(query) == {"template"} and query["template"][0] in PROMPT_TEMPLATES:
         return {"template": query["template"][0]}
@@ -547,9 +488,6 @@ def _available_templates(manifest: dict[str, Any], home: str, selected: PanelFea
                           "Shared storage command detected" if installed("smbd", "mount.cifs", "sshfs") else "",
         "remote_desktop": "Remote desktop configured" if "Remote desktop" in access else
                           "xrdp command detected" if installed("xrdp") else "",
-        "github": "GitHub CLI detected" if "gh" in selected.tools else "",
-        "browser": "Managed browser launcher detected" if installed("basaltwater-playwright-mcp") else "",
-        "godot": "Godot command detected" if installed("godot", "godot4") else "",
         "homebox": "HomeBox configured" if "HomeBox" in services else "",
         "gogs": "Gogs configured" if "Gogs" in services else
                 "Gogs command detected" if installed("gogs") else "",
@@ -559,8 +497,7 @@ def _available_templates(manifest: dict[str, Any], home: str, selected: PanelFea
     }
     available = {key: {**template, "availability": capabilities.get(template.get("requires", ""), "")}
                  for key, template in PROMPT_TEMPLATES.items()
-                 if ("requires" not in template or capabilities[template["requires"]])
-                 and (template["scope"] != "repository" or "git" in selected.tools)}
+                 if "requires" not in template or capabilities[template["requires"]]}
     for template in available.values():
         issues = task_policy_issues(template)
         if issues:
@@ -571,42 +508,42 @@ def _available_templates(manifest: dict[str, Any], home: str, selected: PanelFea
 
 
 def _render_templates(selected: str, templates: dict[str, dict[str, Any]]) -> str:
-    active_scope = templates.get(selected, {}).get("scope", "host")
-    groups = []
-    for scope, label in (("host", "Host checks and maintenance"), ("repository", "Repository work")):
-        links = []
-        for key, template in templates.items():
-            if template["scope"] != scope:
-                continue
-            mode = "Inspect only" if template["mode"] == "inspect" else "Workspace changes"
-            interval = {"once": "Once", "daily": "Daily", "weekly": "Weekly"}[template["interval"]]
-            runtime = template.get("timeout_minutes", DEFAULT_TIMEOUT_MINUTES)
-            current = ' aria-current="true"' if key == selected else ""
-            permissions = []
-            if template["network"]:
-                permissions.append("command network")
-            if template.get("temporary_files"):
-                permissions.append("temporary writes")
-            if template.get("workspace") == "run-directory":
-                permissions.append("private run directory")
-            if template.get("web_search") == "live":
-                permissions.append("live web search")
-            settings = " · ".join([mode, interval, f"{runtime} min cap", *permissions])
-            availability = f'<small>{_escape(template["availability"])}</small>' if template.get("availability") else ""
-            links.append(f'<a class="agent-template" href="/agents?template={_escape(key)}"{current}><strong>{_escape(template["title"])}</strong><span>{_escape(template["description"])}</span>{availability}<small>{_escape(settings)}</small></a>')
-        if links:
-            groups.append(f'<details class="agent-template-group"{" open" if scope == active_scope else ""}><summary>{label} · {len(links)} templates</summary>{"".join(links)}</details>')
-    return "".join(groups)
+    links = []
+    for key, template in templates.items():
+        mode = "Inspect only" if template["mode"] == "inspect" else "Workspace changes"
+        interval = {"once": "Once", "daily": "Daily", "weekly": "Weekly"}[template["interval"]]
+        runtime = template.get("timeout_minutes", DEFAULT_TIMEOUT_MINUTES)
+        current = ' aria-current="true"' if key == selected else ""
+        permissions = []
+        if template["network"]:
+            permissions.append("command network")
+        if template.get("temporary_files"):
+            permissions.append("temporary writes")
+        if template.get("workspace") == "run-directory":
+            permissions.append("private run directory")
+        if template.get("web_search") == "live":
+            permissions.append("live web search")
+        settings = " · ".join([mode, interval, f"{runtime} min cap", *permissions])
+        availability = f'<small>{_escape(template["availability"])}</small>' if template.get("availability") else ""
+        links.append(f'<a class="agent-template" href="/agents?template={_escape(key)}"{current}><strong>{_escape(template["title"])}</strong><span>{_escape(template["description"])}</span>{availability}<small>{_escape(settings)}</small></a>')
+    if not links:
+        return ""
+    return ('<details class="agent-template-group" open><summary>Host checks and maintenance · '
+            f'{len(links)} templates</summary>{"".join(links)}</details>')
 
 
 def render_agents(state: Any, style: str, query: dict[str, str], *, error: str = "", notice: str = "", submitted: dict[str, Any] | None = None, prepared: bool = False) -> str:
     """Render forms, diagnostics, schedules, and history without running agents."""
 
     features = state.features()
+    if query.get("view") == "t3":
+        return agent_document(state, style + _STYLE, title="T3 Code", current="t3",
+            description="Your coding workspace, managed by T3 Code.",
+            content=render_workspace(state) or '<p class="empty">T3 Code is not configured on this host.</p>')
     if query.get("view") == "diagnostics" or not features.prompts and query:
         return agent_document(state, style + _STYLE, title="Agent readiness", current="diagnostics",
             description="Inspect installed runtimes, sign-in readiness, and maintenance holds.",
-            content=_render_diagnostics(state.agent_diagnostics.snapshot(), state.csrf_token) + _render_t3_update(state))
+            content=render_workspace(state) + _render_diagnostics(state.agent_diagnostics.snapshot(), state.csrf_token))
     manager: AgentTasks = state.agent_tasks
     snapshot = {"tasks": [], "runs": []}
     storage_error = False
@@ -653,8 +590,6 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
             error = error or "This template is unavailable: its required feature or software was not detected. Choose another template or write a custom prompt."
         else:
             defaults.update(template)
-            if template["scope"] == "repository":
-                defaults["directory"] = ""
             if "maintenance" in query:
                 from common.service_tools.web_panel_maintenance import prepare_gateway_finding
 
@@ -779,7 +714,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
 {_render_inspection_access(defaults)}<form class="agent-form" method="post" action="/actions/agent-task/save">
 <input type="hidden" name="csrf" value="{_escape(state.csrf_token)}"><input type="hidden" name="id" value="{_escape(defaults['id'])}">
 {('<input type="hidden" name="source_task_id" value="' + _escape(defaults['source_task_id']) + '"><input type="hidden" name="source_run_id" value="' + _escape(defaults['source_run_id']) + '">') if defaults['source_task_id'] and not editing else ''}
-<div class="agent-fields"><label>Task name<input name="title" value="{_escape(defaults['title'])}" maxlength="120" required placeholder="Weekly dependency update"></label>
+<div class="agent-fields"><label>Task name<input name="title" value="{_escape(defaults['title'])}" maxlength="120" required placeholder="Weekly host review"></label>
 <label>Working directory<input name="directory" value="{_escape(defaults['directory'])}" required placeholder="~/repos/project"></label></div>
 <label>Prompt<textarea name="prompt" maxlength="{MAX_PROMPT_BYTES}" required placeholder="Describe the task and what a successful result should include.">{_escape(defaults['prompt'])}</textarea></label>
 <fieldset><legend>Access and permissions</legend>
@@ -933,6 +868,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
         refresh_href = "/agents?" + urllib.parse.urlencode({key: value for key, value in query.items() if key in {"context", "receipt"}})
     overview = f'<div class="section-heading"><div>{worker_html}</div><a class="refresh-link" href="{_escape(refresh_href)}">Refresh status</a></div>{active_html}'
     catalog = f'<section>{render_heading("Task templates", "agent-tools")}<p class="endpoint">Choose a starting point, then review and submit its prompt. Selecting a template never runs or schedules work. Templates follow configured features and detected commands; detection does not verify health or sign-in.</p>{template_links}</section>'
+    catalog = render_workspace(state) + catalog
     main = catalog if query.get('view') == 'templates' else workbench if composing else overview + task_section
     history_count = "Unavailable" if storage_error else f"Latest {len(runs)} runs · {_duration(sum(_run_seconds(run, now) for run in runs if run['status'] != 'running'))} recorded runtime"
     history_empty = "Run history could not be loaded. Retry after restoring task storage." if storage_error else "No prompt runs have been recorded. Run a task to see its report here."
@@ -1013,7 +949,7 @@ def _render_dashboard(state: Any, style: str, tasks: list[dict[str, Any]], runs:
         actions += '<a class="refresh-link agent-primary" href="/agents?view=new">New task</a>'
     return agent_document(state, style + _STYLE, title="Agents dashboard", current="dashboard", actions=actions,
         description="Current work, findings, maintenance, and feedback in one place.",
-        content=alert + metrics + '<div class="agent-dashboard-grid"><div>' + left + '</div><div>' + right + '</div></div>')
+        content=alert + render_workspace(state) + metrics + '<div class="agent-dashboard-grid"><div>' + left + '</div><div>' + right + '</div></div>')
 
 
 def _render_task_context(manager: AgentTasks, identifier: str) -> str:
@@ -1155,19 +1091,3 @@ def _render_diagnostics(snapshot: dict[str, Any], csrf: str) -> str:
     record_note = f'Last saved readiness {_escape(record.get("recorded_at", "Unknown time"))} · boot {"current" if record.get("current_boot") is True else "previous or unknown"}' if record else _escape(snapshot["record_error"] or "No saved readiness record")
     cards.append(f'<div class="agent-panel"><strong>Maintenance hold</strong><p class="agent-help">{_escape(hold["status"])}{ " · until " + _escape(hold.get("expires_at")) if hold["active"] else ""}</p><p class="agent-help">{record_note}</p><a class="refresh-link" href="/jobs">Inspect scheduled jobs</a></div>')
     return form + f'<p class="count">Checked {_time(snapshot["checked_at"])} · credential checks inspect local metadata, not provider authentication</p><div class="grid">' + "".join(cards) + '</div>'
-
-
-def _render_t3_update(state: Any) -> str:
-    if not state.t3_update_available():
-        return ""
-    running = state.action_status == "running"
-    message = state.action_message or "Update the installed T3 Code service and verify readiness. Active sessions may reconnect."
-    if running:
-        started_at = state.action_started_at
-        if isinstance(started_at, (int, float)):
-            minutes, seconds = divmod(max(0, int(time.monotonic() - started_at)), 60)
-            message += f" Still running · {minutes}m {seconds:02d}s elapsed."
-        message += " Refresh status for progress. The update continues in the background."
-    output = '<details><summary>View command output</summary><pre>' + _escape(state.action_output) + '</pre></details>' if state.action_output else ''
-    role = "alert" if state.action_status == "failed" else "status"
-    return f'''<section aria-label="T3 Code maintenance"><div class="action"><div><strong>T3 Code maintenance</strong><p role="{role}">{_escape(message)}</p></div><form method="post" action="/actions/t3-update"><input type="hidden" name="csrf" value="{_escape(state.csrf_token)}"><input type="hidden" name="return" value="agents"><button{' disabled' if running else ''}>{'Update in progress…' if running else 'Update T3 Code'}</button></form></div>{output}<a class="refresh-link" href="/agents?view=diagnostics">Refresh status</a></section>'''

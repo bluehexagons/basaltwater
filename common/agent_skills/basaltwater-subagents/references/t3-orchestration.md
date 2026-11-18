@@ -2,7 +2,7 @@
 
 Follow T3's injected orchestration instructions and active tool schemas first.
 This reference adds Basaltwater workspace, cost, and context boundaries; use
-only the section needed. The baseline is stable 0.1.9. Terminal agents do not
+only the section needed. The baseline is stable 0.1.10. Terminal agents do not
 gain T3 tools merely because T3 is installed.
 
 ## Discovery and delegation fallback
@@ -122,6 +122,11 @@ relying on built-in defaults. Preserve setup and branch policies. Automatic
 T3 cleanup is opt-in, covers T3-managed paths, and may delete ignored files
 such as `.env` or build output. Preserve needed artifacts before removal.
 
+In 0.1.10 native retention also covers projectless scratch, browser captures
+and rotated logs. Scratch deletion may remove files with no Git recovery.
+Inspect the owner's enabled rules; Basaltwater cache/worktree commands must
+not take ownership. See [native cleanup](https://github.com/pingdotgg/t3code/blob/v0.1.10/docs/user/project-settings.md#storage-cleanup).
+
 ## Context, queues, and recurring work
 
 Switching providers transfers budgeted historical text, which can include
@@ -196,7 +201,7 @@ joined; inspect that run before retrying. Check the completed guide against
 `currentHeadSha` and `stale` before citing it. Guides supplement actual diff,
 checks, and unresolved findings.
 
-Upstream: [0.1.9 release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.9),
+Upstream: [0.1.10 release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.10),
 [session reset](https://github.com/pingdotgg/t3code/blob/v0.1.8/docs/user/composer.md),
 [child approvals](https://github.com/pingdotgg/t3code/blob/v0.1.7/docs/user/permission-modes.md),
 [thread sharing](https://github.com/pingdotgg/t3code/blob/v0.1.7/docs/user/prompt-links.md#share-a-thread),
@@ -206,4 +211,4 @@ Upstream: [0.1.9 release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.
 [launch retry contract](https://github.com/pingdotgg/t3code/blob/v0.1.6/apps/server/src/mcp/toolkits/project/tools.ts),
 [handoff history](https://github.com/pingdotgg/t3code/blob/v0.1.6/packages/provider-core/src/server/handoffBudget.ts),
 [thread controls](https://github.com/pingdotgg/t3code/blob/v0.1.6/apps/server/src/mcp/toolkits/thread/tools.ts),
-and [PR tools](https://github.com/pingdotgg/t3code/blob/v0.1.9/apps/server/src/mcp/toolkits/pullRequests/tools.ts).
+and [PR tools](https://github.com/pingdotgg/t3code/blob/v0.1.10/apps/server/src/mcp/toolkits/pullRequests/tools.ts).

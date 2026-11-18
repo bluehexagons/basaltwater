@@ -221,8 +221,8 @@ basaltw node install
 basaltw node resolve
 # Check the selected Node/npm and the project's npm engine requirement.
 basaltw node doctor --project frontend --json
-# Global tools belong to each Node installation; install exact reviewed versions.
-basaltw node install --version 26.12.1 --package-manager npm@12.2.1
+# Use the latest supported Node 26 release with a reviewed npm version.
+basaltw node install --version 26 --package-manager npm@12.2.1
 ```
 
 Project selection, managed Node installation, the Debian setup baseline, and T3 web setup require
@@ -266,7 +266,7 @@ build identity, including nested frontend pins and `.node-version` precedence.
 Host readiness rejects an observed unsupported active/default runtime even when
 another supported version is installed.
 
-Privileged browser provisioning uses checksum-pinned, root-owned Node 24.22.1
+Privileged browser provisioning uses checksum-pinned, root-owned Node 24 LTS
 under `/opt/basaltwater-node`; it never borrows a user-writable NVM runtime.
 Stable browser testing uses Playwright 1.64.1 independently of MCP 0.0.83's exact
 alpha Playwright dependency. That prerelease remains an explicit exception only

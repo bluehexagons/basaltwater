@@ -31,12 +31,15 @@ def _path() -> Path:
 
 
 def _configuration(config: SetupConfig) -> tuple[int, str]:
-    targets = parse_notification_args(config.notify_specs, config.notification_level,
-                                      config.notification_strict_https)
+    targets = parse_notification_args(
+        config.notify_specs, config.notification_level,
+        strict_https=config.notification_strict_https, ca_file=config.notification_ca_file,
+    )
     # Match future observations to this selection without persisting endpoint
     # paths, query secrets, tokens, or exception output in the receipt.
     canonical = sorted((target.type, target.target, target.level, target.strict_https) for target in targets)
-    return len(targets), hashlib.sha256(json.dumps(canonical).encode()).hexdigest()
+    payload = [canonical, config.notification_ca_file] if config.notification_ca_file else canonical
+    return len(targets), hashlib.sha256(json.dumps(payload).encode()).hexdigest()
 
 
 def record_notification_result(config: SetupConfig, *, success: bool, delivered: bool) -> None:

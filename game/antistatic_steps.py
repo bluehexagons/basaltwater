@@ -558,10 +558,6 @@ def _apply_nginx_proxy(
         else:
             raise RuntimeError(f"Failed to obtain a trusted certificate for {domain}")
 
-    if config.enable_cloudflare:
-        from web.cloudflare_steps import run_cloudflare_tunnel_setup
-
-        run_cloudflare_tunnel_setup(config)
     configure_nginx_auth_failure_ban("antistatic", ANTISTATIC_AUTH_FAILURE_LOG)
 
 
@@ -733,6 +729,10 @@ def setup_antistatic_server(config: SetupConfig) -> None:
         return
 
     domain, port = parse_antistatic_spec(config.antistatic_server)
+    if config.enable_cloudflare and not domain:
+        from web.cloudflare_firewall import validate_direct_service_port
+
+        validate_direct_service_port(port)
     service_host, trust_proxy = _antistatic_service_listen_options(domain)
     listen_label = f"{domain} → 127.0.0.1:{port}" if domain else f":{port}"
     print(f"  Setting up antistatic server: {listen_label}")
@@ -766,6 +766,10 @@ def setup_antistatic_db(config: SetupConfig) -> None:
         return
 
     domain, port = parse_antistatic_db_spec(config.antistatic_db)
+    if config.enable_cloudflare and not domain:
+        from web.cloudflare_firewall import validate_direct_service_port
+
+        validate_direct_service_port(port)
     db_host = "127.0.0.1" if domain else ""
     listen_label = f"{domain} → 127.0.0.1:{port}" if domain else f":{port}"
     print(f"  Setting up antistatic-db: {listen_label}")

@@ -72,9 +72,13 @@ Read only the route needed:
   compatibility blocks. Before a first upgrade from pre-0.1.0, also read
   [thread migration](references/thread-migration.md).
   Startup migration can take 30 minutes; inspect before interrupting/retrying.
-- **Stable 0.1.9 compatibility and changed workflows:** [release integration](references/release-0.1.9.md).
-  Includes Connect agent sign-in, Claude session approvals, OpenCode goals,
-  attachment sending, provider recommendations, and component-check limits.
+- **Stable 0.1.10 compatibility and changed workflows:** [release integration](references/release-0.1.10.md).
+  Includes protocol 4, native goals/resume, Windows services, Connect device
+  approval, cleanup ownership, and component-check limits.
+- **Codex accounts, ACP providers, outside apps, or guest collaboration:**
+  see [additional providers](references/operations.md#additional-providers),
+  [outside agents](references/operations.md#outside-agents), and
+  [guest links](references/operations.md#guest-links).
 - **Delegation/worktrees:** `basaltwater-subagents`. Use T3 workspace binding
   before starting editors; shell `cd` does not rebind a thread.
 - **Linked environments:** [operations](references/operations.md#linked-environments)
@@ -93,7 +97,9 @@ Read only the route needed:
   distinguish server and desktop runtimes before offering optional client CA
   enrollment. Keep TLS intact and use the browser skill's recovery procedure.
 
-**No project** folders under `~/.t3/scratch` are retained user files, not cache.
+**No project** folders under `~/.t3/scratch` are user files, not Basaltwater cache.
+T3's opt-in native retention can remove them, including files without Git
+recovery; inspect its cleanup policy and preserve needed evidence first.
 Stable 0.1.5's **Turn into project** promotes a folder in place after its
 threads finish or stop; it also moves their scheduled tasks. Initialize Git
 before using branch/worktree controls. Do not move T3's data or relax Codex

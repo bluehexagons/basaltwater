@@ -11,7 +11,7 @@ def configure_storage_maintenance(config: SetupConfig) -> None:
         service_name="basaltwater-storage", service_desc="Maintain disposable host caches and completed build payloads",
         timer_desc="Inspect host storage budgets daily", schedule="daily",
         script_path="/opt/basaltwater/common/service_tools/storage_maintenance.py",
-        script_args=("--apply", "--account", config.username, "--payloads"),
+        script_args=("--apply", "--account", config.username, "--payloads", "--pressure"),
         isolated_python=True, check_name="Host storage", network_online=False,
         timeout="30min",
     ):

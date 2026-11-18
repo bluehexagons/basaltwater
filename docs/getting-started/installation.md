@@ -112,18 +112,22 @@ sh -c '
 ' sh
 ```
 
-The installer uses `sudo` for packages when needed. To install the source in
-`/opt/basaltwater` and expose a system launcher instead, use:
+The user installation uses `sudo` for packages when needed. To install into
+`/opt/basaltwater` and expose a system launcher, use a reviewed copy of
+`install.sh`. Obtain the full 40-character commit ID through your release or
+review process on a trusted controller. Review `install.sh` at that commit and
+transfer that copy to the target if necessary. Set `reviewed_commit` to that ID
+and run from the directory containing the reviewed script.
 
 ```sh
-sh -c '
-  installer=$(mktemp) || exit
-  cleanup() { rm -f -- "$installer"; }
-  trap cleanup EXIT
-  curl -fsSL --max-time 120 https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh -o "$installer" &&
-  sudo sh "$installer" "$@"
-' sh --user "$USER"
+sudo sh ./install.sh --user "$USER" \
+  --channel "commit-$reviewed_commit" --source-commit "$reviewed_commit"
 ```
+
+For a system install that should track a channel, use `--channel dev`,
+`--channel stable`, or the intended branch or tag in place of the commit
+channel. Keep `--source-commit` to require the first resolution to match your
+reviewed commit. A branch or tag mismatch stops before activation.
 
 ### Set up a minimal Debian control plane
 
@@ -131,13 +135,9 @@ This installs common administrator and Linux tools and configures the local
 machine to manage other VMs and containers:
 
 ```sh
-sh -c '
-  installer=$(mktemp) || exit
-  cleanup() { rm -f -- "$installer"; }
-  trap cleanup EXIT
-  curl -fsSL --max-time 120 https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh -o "$installer" &&
-  sudo sh "$installer" "$@"
-' sh --user "$USER" --local-setup control_plane
+sudo sh ./install.sh --user "$USER" \
+  --channel "commit-$reviewed_commit" --source-commit "$reviewed_commit" \
+  --local-setup control_plane
 ```
 
 Coding agents are optional; append `--codex`, for example, only
@@ -147,14 +147,9 @@ guest-agent package and starts and enables its systemd service during
 self-setup:
 
 ```sh
-sh -c '
-  installer=$(mktemp) || exit
-  cleanup() { rm -f -- "$installer"; }
-  trap cleanup EXIT
-  curl -fsSL --max-time 120 https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh -o "$installer" &&
-  sudo sh "$installer" "$@"
-' sh --user "$USER" --qemu-guest-agent \
-    --local-setup control_plane
+sudo sh ./install.sh --user "$USER" \
+  --channel "commit-$reviewed_commit" --source-commit "$reviewed_commit" \
+  --qemu-guest-agent --local-setup control_plane
 ```
 
 For an already installed orchestration host, run the equivalent command:
@@ -175,14 +170,10 @@ See [XRDP migration and recovery](../workstations/xrdp.md#migration-and-recovery
 a machine that currently relies on local graphical login.
 
 ```sh
-sh -c '
-  installer=$(mktemp) || exit
-  cleanup() { rm -f -- "$installer"; }
-  trap cleanup EXIT
-  curl -fsSL --max-time 120 https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh -o "$installer" &&
-  sudo sh "$installer" "$@"
-' sh --user "$USER" --local-setup agent_workstation --codex \
-    --control-plane --desktop xfce --rdp --rdp-existing-password
+sudo sh ./install.sh --user "$USER" \
+  --channel "commit-$reviewed_commit" --source-commit "$reviewed_commit" \
+  --local-setup agent_workstation --codex \
+  --control-plane --desktop xfce --rdp --rdp-existing-password
 ```
 
 This expects `$USER` to be an existing non-root account with an unlocked
@@ -375,6 +366,21 @@ The default installer channel is `dev`, which tracks `main`. Use `stable` when
 you want the latest versioned release. `upgrade` refuses to overwrite local
 worktree changes; commit or stash changes before reinstalling or upgrading.
 
+System installs use the official Basaltwater GitHub repository over verified
+HTTPS. The administrator authorizes that repository to publish updates to the
+selected channel after installation. System fetches ignore the invoking account's
+Git configuration, credentials, and URL rewrites. Fresh system installations
+and writable-checkout migrations require a full commit channel or
+`--source-commit` from independent review. User-owned controller checkouts can
+still use an alternate origin for remote administration.
+
+The system checkout and runtime under `/opt/basaltwater` are root-owned.
+`--user` selects the account for user tools and completions. Run system
+channel changes as root using `sudo /usr/local/bin/basaltw channel CHANNEL`
+or `sudo /usr/local/bin/basaltw upgrade`. Run local Debian setup through that
+system launcher. A user-owned controller checkout can preview local setup
+without elevation or drive setup on another host over root SSH.
+
 Channel Git commands have a five-minute deadline and disable terminal credential
 prompts. A timeout terminates the local command group and leaves saved channel
 state unchanged; inspect `git status` and `HEAD` before retrying an interrupted
@@ -395,13 +401,22 @@ under `.basaltwater` still cause a managed-data refusal. If an older installer
 rejects a clean checkout solely because this policy is tracked, download the
 current installer and rerun the same command.
 
-Activation failures and HUP/INT/TERM interruptions restore the previous source
-tree. The installer keeps staged or failed source alongside it for inspection
+Activation failures and HUP/INT/TERM interruptions restore the previous
+protected installation. The installer keeps staged or failed source alongside it for inspection
 and prints recovery paths if restoration fails. SIGKILL or power loss cannot
 run shell traps: inspect the adjacent `.backup.*`, `.new.*`, and `.failed.*`
-directories and restore the previous backup to the install path before retrying.
+directories and restore a verified, root-owned backup to the install path before retrying.
 Source rollback does not undo package or launcher changes already made by
 bootstrap. Run only one installer for a given destination at a time.
+
+To migrate a writable legacy system checkout, run the reviewed installer
+as root with an explicit channel and full commit, or rerun setup from a trusted remote
+controller. Migration quarantines the old checkout under a root-private
+`.basaltwater-quarantine.*` directory beside the install path. Durable
+`/var/lib/basaltwater` state remains in place. Source and other data inside the
+writable checkout stay in quarantine for manual review. If activation is
+interrupted after displacement, rerun with trusted source. Restore any
+reviewed application data separately.
 
 These channel commands manage the controller installation. A remote `setup`
 or `patch` run sends a complete snapshot of the controller's current source to

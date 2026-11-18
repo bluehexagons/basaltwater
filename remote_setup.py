@@ -229,6 +229,7 @@ def _send_setup_notification(
     friendly_name: Optional[str] = None,
     notification_level: object = None,
     strict_https: object = None,
+    ca_file: object = None,
 ) -> bool:
     """Send the setup result and make best-effort delivery failures visible."""
 
@@ -242,6 +243,7 @@ def _send_setup_notification(
             friendly_name=friendly_name,
             notification_level=notification_level,
             strict_https=strict_https,
+            ca_file=ca_file,
         )
     except Exception:
         # Delivery must neither fail a completed setup nor mask its original
@@ -688,6 +690,7 @@ def _run_configured_setup_locked(config: SetupConfig, args: argparse.Namespace) 
                     friendly_name=config.friendly_name,
                     notification_level=config.notification_level,
                     strict_https=config.notification_strict_https,
+                    ca_file=config.notification_ca_file,
                 )
             raise
         elapsed = time.monotonic() - step_started
@@ -701,6 +704,8 @@ def _run_configured_setup_locked(config: SetupConfig, args: argparse.Namespace) 
     print("\n" + "=" * 60)
     print("✓ Remote setup complete!")
     print("=" * 60)
+    if report is not None:
+        report.include_disk_usage(config.username)
     
     if config.notify_specs:
         _send_setup_notification(
@@ -711,6 +716,7 @@ def _run_configured_setup_locked(config: SetupConfig, args: argparse.Namespace) 
             friendly_name=config.friendly_name,
             notification_level=config.notification_level,
             strict_https=config.notification_strict_https,
+            ca_file=config.notification_ca_file,
         )
 
     from common.t3code_completion import queue_completion
@@ -730,6 +736,7 @@ def _send_cachyos_setup_notification(config: SetupConfig, *, success: bool, erro
         host=host, success=success, errors=errors,
         notification_level=config.notification_level,
         strict_https=config.notification_strict_https,
+        ca_file=config.notification_ca_file,
     )
     try:
         from lib.cachyos_notification_state import record_notification_result
@@ -789,6 +796,8 @@ def _run_cachyos_setup_locked(config: SetupConfig) -> int:
     report_reboot_notice(config)
     finalize_setup(config)
     print("\nCachyOS coding setup complete. Authenticate providers locally before starting work.")
+    if report := get_setup_report():
+        report.include_disk_usage(config.username)
     return 0
 
 

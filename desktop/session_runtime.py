@@ -30,7 +30,7 @@ from desktop.observations import (
     CaptureObservation, DEFAULT_CAPTURE_MAX_AGE_SECONDS, capture_freshness,
     validate_capture_max_age, validate_observation_option,
 )
-from desktop.receipts import DesktopRequestError, input_failure
+from desktop.receipts import DesktopRequestError, input_failure, input_snapshot
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
 
@@ -494,11 +494,13 @@ class DesktopSession:
             result = self.dispatch(payload)
         except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as exc:
             receipt = getattr(exc, "receipt", {"error": str(exc)})
+            if payload.get("action") == "input":
+                self.last_input = input_snapshot(receipt)
             self.record_evidence(payload, receipt)
             exc.receipt = receipt
             raise
-        if payload.get("action") == "input" and result.get("input_delivery") == "completed":
-            self.last_input = dict(result)
+        if payload.get("action") == "input":
+            self.last_input = input_snapshot(result)
         self.record_evidence(payload, result)
         return result
 

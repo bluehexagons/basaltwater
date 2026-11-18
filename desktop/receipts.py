@@ -11,6 +11,16 @@ class DesktopRequestError(ValueError, RuntimeError):
         self.receipt = receipt
 
 
+def input_snapshot(receipt: dict) -> dict:
+    """Link captures to the latest input outcome without retaining input text/errors."""
+    return {key: receipt[key] for key in (
+        "input_id", "generation", "observation_id", "geometry", "reason", "dispatch_stage", "input_delivery",
+        "input_received_at", "input_received_monotonic_ns", "input_dispatch_at", "input_dispatch_monotonic_ns",
+        "input_completed_at", "input_completed_monotonic_ns", "submitted_characters", "completion_unknown",
+        "touch_frames_completed", "touch_contacts_released", "touch_frame_completed_monotonic_ns",
+    ) if key in receipt}
+
+
 def input_failure(error: Exception, payload: dict, *, stage: str = "before-input") -> dict:
     receipt = getattr(error, "receipt", {})
     return {"error": str(error), "reason": receipt.get("reason", "request-refused" if stage == "before-input" else "input-failed"),

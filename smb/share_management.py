@@ -21,7 +21,10 @@ from lib.samba_shares import validate_share, validate_share_action
 from lib.shares_data_inventory import configuration_inventory
 from lib.validation import validate_gogs_settings, validate_samba_settings, validate_samba_share_specs
 from smb.account_management import _accounts
-from smb.samba_steps import parse_share_credentials, parse_share_spec, preflight_samba_shares, reconcile_samba_shares
+from smb.samba_steps import (
+    harden_samba_password_policy, parse_share_credentials, parse_share_spec,
+    preflight_samba_shares, reconcile_samba_shares,
+)
 
 
 def _identity(path: str) -> tuple[int, ...]:
@@ -73,6 +76,7 @@ def _apply(store, saved: dict, identity: tuple[int, ...], desired: list, credent
     preflight_samba_shares(target, preserve_accounts=preserve_accounts)
     record = store.begin("samba_shares", "localhost", "reconciling", context={"samba_shares": public})
     try:
+        harden_samba_password_policy()
         reconcile_samba_shares(target, preserve_accounts=preserve_accounts)
         store.transition(record.operation_id, "saving")
         protected_path(SETUP_CONFIG_FILE)

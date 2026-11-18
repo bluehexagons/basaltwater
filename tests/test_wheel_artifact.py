@@ -48,6 +48,7 @@ class WheelArtifactTest(unittest.TestCase):
             "desktop/preflight.py",
             "desktop/coordinates.py",
             "desktop/receipts.py",
+            "desktop/pointer_gestures.py",
             "desktop/run_checkpoint.py",
             "common/agent_skills/basaltwater-subagents/SKILL.md",
             "common/agent_skills/basaltwater-subagents/references/lifecycle.md",

@@ -86,6 +86,7 @@ class SetupReport:
         self._notes: list[SetupNote] = []
         self._seen: set[tuple[str, str, str | None]] = set()
         self.current_step: str | None = None
+        self._disk_usage_username: str | None = None
 
     @property
     def notes(self) -> tuple[SetupNote, ...]:
@@ -93,6 +94,10 @@ class SetupReport:
 
     def set_step(self, step: str | None) -> None:
         self.current_step = step
+
+    def include_disk_usage(self, username: str) -> None:
+        """Include a fresh target storage snapshot when rendering completion."""
+        self._disk_usage_username = username
 
     def add(
         self,
@@ -166,6 +171,8 @@ class SetupReport:
     def render(self) -> None:
         """Print a compact, grouped report after setup output has completed."""
 
+        if self._disk_usage_username is not None:
+            self._render_disk_usage(self._disk_usage_username)
         if not self._notes:
             return
         errors = [note for note in self._notes if note.severity == "error"]
@@ -177,6 +184,50 @@ class SetupReport:
         if warnings:
             print(f"  Warnings ({len(warnings)}):")
             self._render_notes(warnings)
+
+    @staticmethod
+    def _render_disk_usage(username: str) -> None:
+        """Observe relevant filesystems without recursively measuring directories."""
+        import os
+        import pwd
+        from lib.managed_storage import BUILD_HOMES, filesystem
+        from lib.progress_utils import format_bytes
+        from lib.validators import validate_username
+
+        paths = ["/", "/tmp", os.environ.get("TMPDIR", "/tmp"), "/var/tmp", BUILD_HOMES, "/var/www"]
+        unavailable = False
+        try:
+            if not validate_username(username):
+                raise ValueError("Invalid setup username")
+            paths.append(pwd.getpwnam(username).pw_dir)
+        except (KeyError, OSError, ValueError):
+            unavailable = True
+        seen = set()
+        rendered = 0
+        print("\nDisk usage:")
+        for path in dict.fromkeys(paths):
+            try:
+                mount = filesystem(path)["mount"]
+                if mount in seen:
+                    continue
+                seen.add(mount)
+                usage = os.statvfs(mount)
+                block_size = usage.f_frsize or usage.f_bsize
+                total = usage.f_blocks * block_size
+                if total <= 0:
+                    raise ValueError("Filesystem size unavailable")
+                used = (usage.f_blocks - usage.f_bfree) * block_size
+                available = usage.f_bavail * block_size
+                inodes = f"; {usage.f_favail:,} inodes free" if usage.f_files else ""
+                print(f"  {mount}: {format_bytes(used)} / {format_bytes(total)} used "
+                      f"({used / total:.0%}); {format_bytes(available)} available{inodes}")
+                rendered += 1
+            except (OSError, ValueError):
+                unavailable = True
+        if not rendered:
+            print("  Unavailable")
+        elif unavailable:
+            print("  Some filesystem usage unavailable")
 
     @staticmethod
     def _render_notes(notes: list[SetupNote]) -> None:

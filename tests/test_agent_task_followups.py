@@ -1000,7 +1000,7 @@ class TaskFollowUpTests(unittest.TestCase):
         custom = {"title": "Custom check", "mode": "inspect"}
         self.assertEqual(agents._render_inspection_access(custom), "")
         self.assertIn('href="/agents?view=templates"', agents._render_inspection_access(custom, blocked=True))
-        for key in ("repository", "storage", "maintenance"):
+        for key in ("storage", "maintenance"):
             self.assertEqual(agents._render_inspection_access(agents.PROMPT_TEMPLATES[key]), "")
         self.assertEqual(agents._render_inspection_access({**custom, "mode": "workspace"}, blocked=True), "")
         self.assertIn('href="/agent-tools?tool=checkup">Review current guided task',

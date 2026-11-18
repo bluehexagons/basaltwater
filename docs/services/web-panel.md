@@ -3,7 +3,8 @@
 The optional web panel is a browser dashboard for one managed machine. It
 shows host health, services, shares, storage integrity, maintenance and agent
 tasks. Agent tasks use the installed Codex CLI
-under the panel account; no T3 Code installation is required.
+under the panel account. When T3 Code is configured, coding work opens its
+native workspace; independent host tasks do not require T3.
 
 | Need | Open | Result |
 | --- | --- | --- |
@@ -18,7 +19,8 @@ under the panel account; no T3 Code installation is required.
 | Inspect a GitHub runner | GitHub runner | On-demand local service state, repository, labels, read-only allowlist and recent gate outcomes |
 | Enable tailored supervision | Agents → Maintenance | Host checks, security audits, opt-in housekeeping, bounded AI reviews, and retained findings |
 | Exchange messages across sessions | Agent inbox | Account-local mailboxes with durable unread messages and explicit acknowledgement |
-| Run agent work | Agents | Persistent Codex context and workspaces, bounded goals, recurring schedules, run evidence, and optional T3 Code diagnostics |
+| Code and manage coding sessions | Agents → T3 Code | Native conversations, providers, goals, worktrees, schedules, PRs and preview |
+| Run independent host work | Agents → Independent tasks | Bounded Codex tasks, recurring host checks and retained execution evidence |
 | Configure commit identity and GitHub access | Git & credentials | Account Git name/email, private GitHub token replacement/removal, and agent sign-in guidance |
 | Upload games and review release writing | Publishing | VM-local Butler/SteamCMD sessions, completed build uploads, schedules, translations, promotion and tracked editor handoffs |
 | Prepare system and data tasks | Agents → Agent tools | Contextual checkups, log and job reviews, Debian update and network checks, maintenance plans, and local data work |
@@ -65,8 +67,9 @@ Older manifests keep agent/Git controls hidden until refreshed.
 
 Selecting `--web-panel` alone installs no agents or task worker. Codex enables
 prompt scheduling; Butler/SteamCMD enable publishing polling independently.
-Other agent runtimes expose diagnostics without prompt forms. Repository
-templates and Git worktrees require selected, installed Git. Dashboard
+Other agent runtimes expose diagnostics without prompt forms. T3 exposes its
+workspace entry without requiring Codex. Independent task worktrees require
+selected, installed Git. Dashboard
 notifications require ingest; certificate help requires gateway metadata.
 Empty service/access sections are omitted. See [feature discovery](web-panel-reference.md#feature-discovery-and-navigation)
 for the full availability contract.
@@ -254,9 +257,13 @@ it. If the setup username changes, supply a new password. This login also
 authorizes integrated [privilege approvals](../agents/privilege-approvals.md).
 Keep it out of agent-controlled browsers and tools.
 
-With `--ssl`, the panel uses a suitable existing certificate or the managed VM
-CA. Enroll that CA on your client when required; see [Client CA trust](client-ca-trust.md).
-Without TLS, Basic Auth crosses the network as plaintext.
+Use HTTP only over localhost or in a controlled test environment. HTTP sends
+login credentials and any integrated approvals without encryption. The HTTP
+listener can be reachable from the network, so check its effective firewall
+rules before relying on local-only access. Use `--ssl` over shared or untrusted
+networks. With `--ssl`, the panel uses a suitable existing certificate or the
+managed VM CA. Enroll that CA on your client when required. See
+[Client CA trust](client-ca-trust.md).
 
 Setup checks ownership of both the panel Nginx site and its enabled link before
 replacing the site. An unrelated file, directory or symlink at either managed
@@ -367,8 +374,8 @@ their dedicated non-root service account. With approvals disabled, Admin control
 shows setup guidance and inspection links. Decisions run through the isolated
 approval service; the ordinary panel process has no decision-socket access.
 The panel login and browser origin are trusted to approve actions.
-Agent tools, tasks, maintenance policy and
-T3 Code updates live under **Agents**.
+Agent tools, tasks and maintenance policy live under **Agents**.
+Manage T3 Code updates in its own **Settings → Environments → Update server** control.
 
 | Action | Behavior |
 | --- | --- |
@@ -559,20 +566,52 @@ See [Maintenance agents and cross-session mail](../operations/maintenance-agents
 installation and sign-in, flags, escalation rules, storage limits, recovery,
 and the terminal-worker protocol.
 
+## T3 Code workspace
+
+When T3 is selected and installed, open **Agents → T3 Code** or the
+**Coding workspace** card on the Agents dashboard. **Open T3 Code** opens the
+HTTPS route registered as `t3code` by the gateway in a separate tab. The public
+port is allocated by the gateway; the panel does not guess it from its own URL
+or T3's loopback listener. Sign in or pair through T3 as needed. Opening the
+link does not issue credentials, start a task or update the server.
+
+Use T3 for repository prompts, goals, worktrees, schedules, pull requests and
+browser preview. Manage updates in **Settings → Environments → Update server**.
+The panel's separate T3 updater and nine repository starters have been removed:
+repository health, CI repair, dependency updates, documentation updates, security
+review, release review, GitHub Actions review, browser smoke checks and Godot
+export checks. Use the project's canonical checks in a T3 conversation instead.
+This removes the unattended starter forms, not the managed browser, Godot export
+or host setup capabilities.
+
+A missing or ambiguous route shows recovery guidance. Inspect
+`basaltwater-web forward list --json` on the host and reconcile the managed T3
+route through setup, or use an existing T3 Connect connection. The panel does
+not change routing or authentication automatically.
+
+Existing independent tasks, schedules, workspaces and receipts remain here with
+their original settings. To move an ordinary coding schedule, pause it under
+**Independent tasks**, review its prompt and cadence, then create the replacement
+in T3. Verify one run before removing the old task. Use one scheduler per job.
+If you return to the independent runner, stop the T3 schedule before resuming
+the saved task. T3 does not import Basaltwater's context, receipts or lifetime
+limits automatically; retain the independent runner when those controls matter.
+
 ## Agent prompt tasks
 
-Open **Agents** to run Codex prompts against the host or a repository. Install
+Open **Agents → Independent tasks** for host operations or tasks that need
+Basaltwater’s independent execution limits and receipts. Install
 and authenticate Codex as the non-root account running the panel. Other
 terminal agents are inventoried by diagnostics but do not execute prompt tasks
 in this initial version. Root-managed panels use a locked service account
 without a home and show diagnostics with prompt execution unavailable.
 
 1. Select **New task** to write a custom prompt, **Templates** for a starting
-   point under **Repository work** or **Host checks and maintenance**, or
+   point under **Host checks and maintenance**, or
    **Guided tasks** for system and data tools. Each template shows its execution mode, suggested
    repeat interval, runtime cap, and additional permissions before selection.
-2. Enter the working directory. Repository templates require you to choose
-   the specific checkout; host inspection defaults to the account's home.
+2. Enter the working directory. Host inspection defaults to the account’s home;
+   custom workspace tasks require a dedicated directory.
 3. Choose **Inspect only** for Codex's read-only sandbox, or **Workspace
    changes** for a directory inside the account's home. Enable command network
    access for service sockets, endpoint checks or package downloads, and temporary writes when
@@ -616,12 +655,6 @@ editable before submission; selecting a template does not run or schedule it.
 
 | Template | Default repeat | Runtime cap | Scope |
 | --- | --- | --- | --- |
-| Repository health check | Once | 30 minutes | Inspect only |
-| Repair failing checks | Once | 60 minutes | Workspace changes; command network and temporary writes |
-| Update repository dependencies | Once | 30 minutes | Workspace changes; command network and temporary writes |
-| Update repository documentation | Once | 30 minutes | Workspace changes; temporary writes |
-| Review repository security | Once | 30 minutes | Inspect only; live web search for advisories |
-| Review release readiness | Once | 20 minutes | Inspect only |
 | Host maintenance review | Once | 30 minutes | Workspace permissions; command network; private run directory |
 | Check Debian update health | Once | 15 minutes | Workspace permissions; command network; private run directory |
 | Check network and clock readiness | Once | 15 minutes | Workspace permissions; command network; private run directory |
@@ -630,22 +663,10 @@ editable before submission; selecting a template does not run or schedule it.
 | Triage a service incident | Once | 20 minutes | Workspace permissions; command network; private run directory |
 | Check certificate expiry | Once | 10 minutes | Workspace permissions; command network; private run directory |
 
-Repository editing templates ask for a clean existing/shared checkout,
-including untracked files, and leave changes for review. They default to Once
-so another editing run does not immediately block on the previous review backlog.
-A managed persistent
-task worktree may continue its own unfinished changes after inspecting them
-against the checkpoint; unrelated changes still require review. Existing saved
-prompts retain their original instructions. The templates prohibit stashing,
-resetting, cleaning, or committing existing work to clear the checkout.
-Dependency updates follow the project's package manager, lockfiles, and upgrade
-policy, with larger migrations reported for follow-up.
 Host check templates inspect existing evidence and recommend follow-up:
 backup checks do not perform restores, storage reviews do not delete files,
 and certificate checks do not renew certificates or change trust. Missing
-configuration or unavailable evidence is reported explicitly. Security review
-uses web search for current advisories and distinguishes confirmed version
-matches from uncertain findings.
+configuration or unavailable evidence is reported explicitly.
 
 Host service review templates select a private run directory and command network access;
 the writable directory is empty scratch space. Their prompts prohibit host file
@@ -655,9 +676,7 @@ task from the refreshed template to replace a blocked inspection task. Merely
 resuming it does not change its sandbox. Host reviews use explicit doctor
 capabilities; project manifest discovery requires an actual Git checkout.
 
-The catalog opens host checks first and leads repository work with a health
-review. The restricted maintenance duplicate, empty repair-plan starter, and
-speculative regression-test starter were removed. Concrete repair requests can
+The catalog contains host checks and maintenance templates. Concrete repair requests can
 be prepared through follow-up review or the custom form with exact targets,
 actions, verification, and rollback. Existing saved tasks and receipts retain
 their original prompts and permissions. Privileged actions require the
@@ -679,8 +698,7 @@ separate preparation and restart-verification proposals.
 Additional templates appear when the panel's saved setup configuration or
 commands installed for its account indicate a relevant integration. Each shows
 the detection reason. These checks do not run commands or prove service health,
-browser readiness, repository compatibility, or authentication. Repository
-templates still require you to select a suitable checkout.
+browser readiness, repository compatibility, or authentication.
 
 The catalog and task form explain known conflicts with local Codex administrator
 requirements, including forbidden sandbox/search modes and restricted permission
@@ -697,29 +715,17 @@ configuration layers and integrations retain their own permissions.
 | Review web hosting | Web server is configured, or `basaltwater-web` or `nginx` is installed | Once / 15 minutes | Workspace permissions; command network; private run directory |
 | Check shared storage | Samba is configured, or `smbd`, `mount.cifs`, or `sshfs` is installed | Once / 15 minutes | Workspace permissions; command network; private run directory |
 | Check remote desktop readiness | Remote desktop is configured or `xrdp` is installed | Once / 10 minutes | Workspace permissions; command network; private run directory |
-| Review GitHub Actions failures | Git and `gh` are selected and installed | Once / 20 minutes | Command network; private run directory; source checkout read-only |
-| Run browser smoke checks | `basaltwater-playwright-mcp` is installed | Once / 30 minutes | Workspace changes; command network and temporary writes |
-| Validate Godot web export | `godot` or `godot4` is installed | Once / 60 minutes | Workspace changes; temporary writes |
 | Check HomeBox data protection | HomeBox is configured | Once / 15 minutes | Workspace permissions; command network; private run directory |
 | Check Gogs repository hosting | Gogs is configured or `gogs` is installed | Once / 15 minutes | Workspace permissions; command network; private run directory |
 | Check Antistatic services | Antistatic lobby or DB is configured | Once / 15 minutes | Workspace permissions; command network; private run directory |
 | Check notification delivery | Panel notification ingest is enabled | Once / 10 minutes | Workspace permissions; command network; private run directory |
 | Check privilege approval readiness | Privilege approvals are configured | Once / 15 minutes | Workspace permissions; command network; private run directory |
 
-GitHub CI inspection needs command network access; the runner offers that in
-workspace mode with a private run directory. Its prompt uses the recorded source
-path for local inspection, requests no remote actions, and reports unfinished
-checks as pending without watching or repeatedly polling them.
-Browser checks use isolated loopback previews and synthetic data, without
-creating gateway previews or forwards. A healthy managed browser installation
-does not prove that browser tools are exposed to the unattended session; missing
-tools are reported as blocked coverage. Godot exports use a documented ignored
-output directory and report missing presets
-or export templates instead of downloading them. Other integration checks
-inspect existing state and recommend follow-up without repairs or privileged
-actions. Availability filters only the starting catalog: saved tasks retain
-their prompts and settings if an integration is later removed. Opening a stale
-template link explains why it is unavailable and leaves the custom form usable.
+Integration checks inspect existing state and recommend follow-up without
+repairs or privileged actions. Availability filters only the starting catalog: saved tasks retain
+their prompts and settings if an integration is later removed. A defined template
+that is temporarily unavailable shows guidance and leaves the custom form usable.
+Bookmarks for removed starters are no longer accepted; use **T3 Code** instead.
 
 **Model and web search** controls Codex's web search independently of command network
 access: disabled, cached results, or live search. Runs use ephemeral Codex
@@ -802,9 +808,8 @@ Open **Agents → Readiness** for installation and sign-in checks.
 **Check agent readiness** collects versions and local credential metadata for
 selected, installed Codex, Claude Code, OpenCode, and GitHub CLI, plus
 maintenance-hold state and the timestamp of any saved readiness record.
-T3 Code is checked when selected and installed. Its account-level updater lives
-here too, with elapsed time and command output. Updates continue in the background;
-use **Refresh status** to check progress. Active T3 sessions may reconnect.
+T3 Code is checked when selected and installed. Its workspace link leads to
+T3’s native update controls; this panel no longer runs a T3 update worker.
 Leftover unselected agent tools and T3 installations are not probed or offered
 as starting templates. Each readiness request resolves current feature selections.
 Credential file presence is not proof of provider authentication. Checks run

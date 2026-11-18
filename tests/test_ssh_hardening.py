@@ -22,7 +22,11 @@ passwordauthentication no
 kbdinteractiveauthentication no
 pubkeyauthentication yes
 authenticationmethods publickey
+permitemptypasswords no
+x11forwarding no
 allowgroups remoteusers
+port 22
+listenaddress 0.0.0.0:22
 """
 
 
@@ -47,6 +51,7 @@ def transport_ssh_fixture(base: Path, role: str):
                 "\n".join("allowgroups " + name for name in line.split()[1:])
                 if line.startswith("AllowGroups ") else line.lower()
                 for line in path.read_text().splitlines() if not line.startswith("#"))
+            output += "\nport 22\nlistenaddress 0.0.0.0:22\npermitemptypasswords no\nx11forwarding no\n"
         elif command.startswith("id -nG "):
             name = command.split()[-1]
             output = "root remoteusers" if name == "root" else name
@@ -62,6 +67,8 @@ def transport_ssh_fixture(base: Path, role: str):
         stack.enter_context(patch.object(ssh.shutil, "which", return_value="/usr/sbin/sshd"))
         stack.enter_context(patch.object(ssh, "is_dry_run", return_value=False))
         stack.enter_context(patch.object(ssh, "can_manage_system_services", return_value=True))
+        stack.enter_context(patch.object(ssh, "_verify_ssh_matches"))
+        stack.enter_context(patch.object(ssh, "_verify_ssh_service_listeners"))
         run = stack.enter_context(patch.object(ssh, "run", side_effect=command))
         activate = stack.enter_context(patch.object(ssh, "_activate_ssh_service"))
         yield path, run, activate
@@ -154,12 +161,70 @@ class TestManagedSSHGroupSyntax(unittest.TestCase):
             admission_content("build-host", ["bw-target-0123456789ab"])
 
 
+class TestSSHMatchAndSocketPolicy(unittest.TestCase):
+    def test_scans_match_and_conditional_include_even_for_other_peers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            main = Path(directory) / "sshd_config"
+            extra = main.with_name("extra.conf")
+            main.write_text("Match Address 192.0.2.0/24 LocalPort 22\n  Include extra.conf\n")
+            with patch.object(ssh, "_SSHD_CONFIG", str(main)):
+                for content in (
+                    "Match all\nKbdInteractiveAuthentication=yes\n",
+                    "Match LocalAddress 198.51.100.7\nDisableForwarding no\n",
+                    "AllowGroups = remoteusers operator\n",
+                ):
+                    with self.subTest(content=content), self.assertRaisesRegex(RuntimeError, "extra.conf:.*conflicts"):
+                        extra.write_text(content)
+                        ssh._verify_ssh_matches(main)
+                extra.write_text("PasswordAuthentication no\nDisableForwarding = yes\nBanner /etc/issue\n")
+                ssh._verify_ssh_matches(main)
+
+    def test_checks_socket_and_running_daemon_ports(self):
+        def socket(port):
+            return _result(f"LoadState=loaded\nActiveState=active\nListen=[::]:{port} (Stream)\nTriggers=ssh.service\nAccept=no\n")
+
+        missing = _result("LoadState=not-found\n", returncode=1)
+        service = _result("LoadState=loaded\nExecStart={ path=/usr/sbin/sshd ; argv[]=/usr/sbin/sshd -D ; status=0/0 }\n")
+        with patch.object(ssh, "run", side_effect=[socket(22), missing, service, missing, _result()]):
+            ssh._verify_ssh_service_listeners()
+        with patch.object(ssh, "run", return_value=socket(2222)):
+            with self.assertRaisesRegex(RuntimeError, "ssh.socket on TCP 22"):
+                ssh._verify_ssh_service_listeners()
+        listening = _result('LISTEN 0 128 0.0.0.0:2222 0.0.0.0:* users:(("sshd",pid=10,fd=3))\n')
+        with patch.object(ssh, "run", side_effect=[socket(22), missing, service, missing, listening]):
+            with self.assertRaisesRegex(RuntimeError, "running sshd listener on TCP 22"):
+                ssh._verify_ssh_service_listeners()
+
+    def test_loaded_service_cannot_bypass_verified_configuration_with_daemon_options(self):
+        missing = _result("LoadState=not-found\n", returncode=1)
+        with tempfile.TemporaryDirectory() as directory:
+            defaults = Path(directory) / "ssh"
+            for arguments, options, accepted in (
+                ("-D $SSHD_OPTS", '"-4 -e"', True),
+                ("-D $SSHD_OPTS", '"-p 2222"', False),
+                ("-D -f /alternate/sshd_config", "", False),
+            ):
+                with self.subTest(arguments=arguments, options=options):
+                    defaults.write_text(f"# Fixture\nSSHD_OPTS={options}\n")
+                    service = _result(
+                        "LoadState=loaded\n"
+                        f"ExecStart={{ path=/usr/sbin/sshd ; argv[]=/usr/sbin/sshd {arguments} ; status=0/0 }}\n"
+                        f"EnvironmentFiles={defaults} (ignore_errors=yes)\n"
+                    )
+                    expectation = nullcontext() if accepted else self.assertRaisesRegex(RuntimeError, "can override")
+                    with patch.object(ssh, "_SSHD_ENVIRONMENT_FILE", defaults), expectation, \
+                         patch.object(ssh, "run", side_effect=[missing, missing, service, missing, _result()]):
+                        ssh._verify_ssh_service_listeners()
+
+
 class TestEffectiveSSHPolicy(unittest.TestCase):
     def setUp(self):
         self.config = SetupConfig(host="pve1", username="root", system_type="server_proxmox")
         self.enterContext(patch.dict(os.environ, {"SSH_CONNECTION": "198.51.100.10 12345 192.0.2.10 22"}))
         self.enterContext(patch.object(ssh, "can_manage_system_services", return_value=True))
         self.activate = self.enterContext(patch.object(ssh, "_activate_ssh_service"))
+        self.enterContext(patch.object(ssh, "_verify_ssh_matches"))
+        self.enterContext(patch.object(ssh, "_verify_ssh_service_listeners"))
         self.managed_groups = self.enterContext(patch.object(ssh, "managed_transport_groups", return_value=[]))
         self.enterContext(patch.object(ssh, "ssh_admission_lock", side_effect=lambda _: nullcontext()))
 
@@ -184,8 +249,14 @@ class TestEffectiveSSHPolicy(unittest.TestCase):
             )
             ssh._verify_ssh_policy("/usr/sbin/sshd", self.config)
         commands = [call.args[0] for call in run.call_args_list]
-        self.assertIn("/usr/sbin/sshd -T -C user=root,host=198.51.100.10,addr=198.51.100.10", commands)
-        self.assertIn("/usr/sbin/sshd -T -C user=agent,host=198.51.100.10,addr=198.51.100.10", commands)
+        self.assertIn("/usr/sbin/sshd -T -C user=root,host=198.51.100.10,addr=198.51.100.10,laddr=192.0.2.10,lport=22", commands)
+        self.assertIn("/usr/sbin/sshd -T -C user=agent,host=198.51.100.10,addr=198.51.100.10,laddr=192.0.2.10,lport=22", commands)
+
+    def test_custom_effective_ports_are_refused(self):
+        for output in (EFFECTIVE + "port 2222\n", EFFECTIVE + "listenaddress [::]:2222\n"):
+            with patch.object(ssh, "run", return_value=_result(output)):
+                with self.assertRaisesRegex(RuntimeError, "every configured sshd listener on TCP 22"):
+                    ssh._verify_ssh_policy("/usr/sbin/sshd", self.config)
 
     def test_checks_both_roles_without_requiring_transport_remoteusers_membership(self):
         names = ["bw-build-0123456789ab", "bw-target-0123456789ab"]
@@ -366,7 +437,8 @@ class TestEffectiveSSHPolicy(unittest.TestCase):
                 returncode=0, stdout=EFFECTIVE if " -T " in command else "remoteusers"
             )
             ssh.harden_ssh(self.config)
-        capability.assert_called_once_with("oci")
+        self.assertTrue(capability.call_args_list)
+        self.assertTrue(all(call.args == ("oci",) for call in capability.call_args_list))
         self.activate.assert_not_called()
 
 

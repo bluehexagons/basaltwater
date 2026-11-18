@@ -42,6 +42,7 @@ from lib.validation import (
 from lib.local_http import open_loopback
 from lib.remote_utils import CommandTimeoutError, run as run_command
 from lib.node_project import NodePackageManager, select_package_manager
+from lib.ufw_ingress import verify_live_ufw_ingress
 
 
 POLICY_FILE = "/etc/basaltwater/internal-web/policy.json"
@@ -374,18 +375,14 @@ def _validate_policy(value: object) -> dict[str, object]:
     if not isinstance(raw_users, list) or not raw_users:
         raise RuntimeError("Internal-web policy has no users")
     users = list(dict.fromkeys(_validate_username(user) for user in raw_users))
-    raw_sources = value.get("access_sources", [])
-    if not isinstance(raw_sources, list):
-        raise RuntimeError("Invalid access sources in internal-web policy")
-    sources: list[str] = []
-    for source in raw_sources:
-        if not isinstance(source, str):
-            raise RuntimeError("Invalid access source in internal-web policy")
-        try:
-            ipaddress.ip_network(source, strict=False)
-        except ValueError as exc:
-            raise RuntimeError("Invalid access source in internal-web policy") from exc
-        sources.append(source)
+    sources = _validate_forward_sources(value.get("access_sources", []))
+    raw_route_sources = value.get("route_access_sources", {})
+    if not isinstance(raw_route_sources, dict):
+        raise RuntimeError("Invalid route access sources in internal-web policy")
+    route_sources = {
+        _validate_name(name, "forward policy name"): _validate_forward_sources(allowed)
+        for name, allowed in raw_route_sources.items()
+    }
     port_min = value.get("forward_port_min")
     port_max = value.get("forward_port_max")
     if (
@@ -400,16 +397,33 @@ def _validate_policy(value: object) -> dict[str, object]:
     if ca_certificate is not None:
         ca_certificate = _validate_managed_path(ca_certificate, "CA certificate")
     return {
-        "access_sources": list(dict.fromkeys(sources)),
+        "access_sources": sources,
         "base_url": base_url,
         "ca_certificate": ca_certificate,
         "certificate": cert_path,
         "certificate_key": key_path,
         "forward_port_max": port_max,
         "forward_port_min": port_min,
+        **({"route_access_sources": route_sources} if route_sources else {}),
         "users": users,
         "version": 1,
     }
+
+
+def _validate_forward_sources(value: object) -> list[str]:
+    if not isinstance(value, list) or any(not isinstance(source, str) for source in value):
+        raise RuntimeError("Invalid access sources in internal-web policy")
+    try:
+        for source in value:
+            ipaddress.ip_network(source, strict=False)
+    except ValueError as exc:
+        raise RuntimeError("Invalid access source in internal-web policy") from exc
+    return list(dict.fromkeys(value))
+
+
+def _route_access_sources(policy: dict[str, object], route: dict[str, object]) -> list[str] | None:
+    """Return an explicit route policy, where an empty list permits loopback only."""
+    return policy.get("route_access_sources", {}).get(str(route["name"]))
 
 
 def _parse_upstream(value: str) -> tuple[str, int]:
@@ -557,6 +571,13 @@ def _forward_url(base_url: str, port: int) -> str:
     return f"https://{url_host}:{port}/"
 
 
+def _forward_route_url(policy: dict[str, object], route: dict[str, object]) -> str:
+    base_url = str(policy["base_url"])
+    if _route_access_sources(policy, route) == [] and policy.get("ca_certificate"):
+        base_url = "https://localhost"
+    return _forward_url(base_url, int(route["listen"]))
+
+
 def render_forward_nginx(
     routes: list[dict[str, object]],
     policy: dict[str, object],
@@ -568,6 +589,15 @@ def render_forward_nginx(
         target_host = str(route["target_host"])
         upstream_host = f"[{target_host}]" if ":" in target_host else target_host
         max_body_size = route.get("max_body_size")
+        access_sources = _route_access_sources(policy, route)
+        access_policy = ""
+        if access_sources is not None:
+            # A server-specific trust list overrides the global real-IP trust.
+            # These TCP listeners cannot receive requests from a Unix socket.
+            access_policy = "\n    set_real_ip_from unix:;\n    allow 127.0.0.0/8;\n    allow ::1;"
+            for source in access_sources:
+                access_policy += f"\n    allow {ipaddress.ip_network(source, strict=False)};"
+            access_policy += "\n    deny all;\n    satisfy all;"
         body_size_directive = (
             f"\n    client_max_body_size {max_body_size};"
             if max_body_size is not None
@@ -592,7 +622,7 @@ server {{
 
     ssl_certificate {policy['certificate']};
     ssl_certificate_key {policy['certificate_key']};
-    ssl_protocols TLSv1.2 TLSv1.3;{body_size_directive}
+    ssl_protocols TLSv1.2 TLSv1.3;{body_size_directive}{access_policy}
 
     location / {{
         proxy_pass http://{upstream_host}:{route['target_port']};
@@ -660,10 +690,13 @@ def _desired_firewall_rules(
     policy: dict[str, object],
 ) -> dict[str, list[str]]:
     desired: dict[str, list[str]] = {}
-    sources = policy["access_sources"]
     for route in routes:
         port = int(route["listen"])
         name = str(route["name"])
+        route_sources = _route_access_sources(policy, route)
+        if route_sources == []:
+            continue
+        sources = policy["access_sources"] if route_sources is None else route_sources
         if sources:
             for source in sources:
                 comment = f"{_FORWARD_RULE_PREFIX} {name} {port}/tcp source {source}"
@@ -742,6 +775,14 @@ def _reconcile_firewall(
             ["ufw", "--force", "delete", str(number)],
             "Could not remove stale HTTPS forward firewall rule",
         )
+    restricted = {}
+    for route in routes:
+        sources = _route_access_sources(policy, route)
+        if sources is None:
+            sources = policy["access_sources"] or None
+        if sources is not None:
+            restricted["tcp", int(route["listen"])] = sources
+    verify_live_ufw_ingress(restricted, run_command)
 
 
 def _ensure_forward_link() -> bool:
@@ -1134,7 +1175,7 @@ def _doctor(name: str, as_json: bool) -> int:
             raise RuntimeError(f"No published game or HTTPS forward named {name}")
         if route["owner"] != account.pw_name:
             raise RuntimeError(f"HTTPS forward is owned by another user: {name}")
-        url = _forward_url(str(policy["base_url"]), int(route["listen"]))
+        url = _forward_route_url(policy, route)
         profile = str(route["profile"])
 
     status, headers = _https_headers(url)
@@ -1271,7 +1312,7 @@ def _forward_add(args: argparse.Namespace) -> int:
     updated.append(route)
     updated.sort(key=lambda item: (int(item["listen"]), str(item["name"])))
     _apply_forwards(updated, policy)
-    result = {**route, "url": _forward_url(str(policy["base_url"]), listen)}
+    result = {**route, "url": _forward_route_url(policy, route)}
     if args.json:
         print(json.dumps(result, sort_keys=True))
     else:
@@ -1311,7 +1352,7 @@ def _forward_list(as_json: bool) -> int:
         {
             **route,
             "ready": _tcp_ready(str(route["target_host"]), int(route["target_port"])),
-            "url": _forward_url(str(policy["base_url"]), int(route["listen"])),
+            "url": _forward_route_url(policy, route),
         }
         for route in _load_forwards(policy)
         if os.geteuid() == 0 or route["owner"] == username
@@ -1345,7 +1386,7 @@ def _forward_route(name: str) -> tuple[dict[str, object], dict[str, object]]:
 
 def _forward_print_url(name: str) -> int:
     policy, route = _forward_route(name)
-    print(_forward_url(str(policy["base_url"]), int(route["listen"])))
+    print(_forward_route_url(policy, route))
     return 0
 
 
@@ -1394,6 +1435,9 @@ def _forward_reconcile(args: argparse.Namespace) -> int:
             previous_policy = _load_policy()
             with open(POLICY_FILE, encoding="utf-8") as file_obj:
                 previous_content = file_obj.read()
+            route_sources = previous_policy.get("route_access_sources", {}) | policy.get("route_access_sources", {})
+            if route_sources:
+                policy["route_access_sources"] = route_sources
         content = json.dumps(policy, indent=2, sort_keys=True) + "\n"
         changed = content != previous_content
         # Reject a policy that would orphan existing previews before writing it.
@@ -2162,7 +2206,7 @@ def _preview_resolve(args: argparse.Namespace) -> int:
                     remediation="Run the supplied command within the requested preview scope, then retry resolution.",
                 )
             else:
-                url = _forward_url(str(policy["base_url"]), int(route["listen"]))
+                url = _forward_route_url(policy, route)
                 result.update(
                     component="gateway", url=url, name=route["name"],
                     remediation="Check the HTTPS listener, VM routing and saved access-source policy; run basaltwater-web doctor " + str(route["name"]) + ".",

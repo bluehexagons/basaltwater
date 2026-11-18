@@ -67,6 +67,7 @@ TEST_SUITE_PATTERNS: dict[str, tuple[str, ...]] = {
         "tests/test_workspace_cli.py",
     ),
     "core": (
+        "tests/test_batch.py",
         "tests/test_publishing*.py",
         "tests/test_rename_migration.py",
         "tests/test_arg_parser_hosted.py",
@@ -114,6 +115,8 @@ TEST_SUITE_PATTERNS: dict[str, tuple[str, ...]] = {
         "tests/test_desktop_accessibility.py",
         "tests/test_desktop_apps.py",
         "tests/test_desktop_control.py",
+        "tests/test_desktop_gamepad.py",
+        "tests/test_desktop_pointer_gestures.py",
         "tests/test_desktop_output.py",
         "tests/test_desktop_recipes.py",
         "tests/test_desktop_session.py",
@@ -192,6 +195,7 @@ TEST_SUITE_PATTERNS: dict[str, tuple[str, ...]] = {
         "tests/test_shell_safety.py",
         "tests/test_smb_mount_hardening.py",
         "tests/test_ssh_*.py",
+        "tests/test_ufw_ingress.py",
     ),
     "services": (
         "tests/service_tools/test_*.py",

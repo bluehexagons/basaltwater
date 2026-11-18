@@ -6,6 +6,7 @@ Supports webhook and email notifications for important events.
 from __future__ import annotations
 
 import json
+import os
 import re
 import socket
 import ssl
@@ -22,6 +23,7 @@ import urllib.parse
 
 from lib.logging_utils import log_event
 from lib.types import JSONDict
+from lib.validation import validate_filesystem_path
 
 NotificationStatus = Literal["good", "info", "warning", "error"]
 NotificationState = Literal["firing", "resolved", "success"]
@@ -54,7 +56,8 @@ class NotificationConfig:
     type: Literal["webhook", "mailbox"]
     target: str = field(repr=False)
     level: NotificationLevel = DEFAULT_NOTIFICATION_LEVEL
-    strict_https: bool = False
+    strict_https: bool = True
+    ca_file: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if isinstance(self.target, str):
@@ -188,6 +191,7 @@ class NotificationSender:
                         config.target,
                         notification,
                         strict_https=config.strict_https,
+                        ca_file=config.ca_file,
                     )
                 elif config.type == "mailbox":
                     self._send_mailbox(config.target, notification)
@@ -223,7 +227,8 @@ class NotificationSender:
         url: str,
         notification: Notification,
         *,
-        strict_https: bool = False,
+        strict_https: bool = True,
+        ca_file: str | None = None,
     ) -> None:
         """Send webhook notification via HTTP POST."""
         request_url, bearer_token = _webhook_request_target(url)
@@ -248,6 +253,7 @@ class NotificationSender:
                 with _open_webhook_request(
                     request,
                     strict_https=strict_https,
+                    ca_file=ca_file,
                 ) as response:
                     status = int(response.status)
                     if not 200 <= status < 300:
@@ -467,6 +473,7 @@ def parse_notification_args(
     notify_args: Optional[list[list[str]]],
     notification_level: object = None,
     strict_https: object = None,
+    ca_file: object = None,
 ) -> list[NotificationConfig]:
     """Parse notification arguments from command line."""
     if not notify_args:
@@ -474,6 +481,7 @@ def parse_notification_args(
 
     level = normalize_notification_level(notification_level)
     strict_tls = normalize_notification_strict_https(strict_https)
+    ca_file = normalize_notification_ca_file(ca_file, strict_tls)
     
     configs: list[NotificationConfig] = []
     seen: set[tuple[str, str]] = set()
@@ -489,6 +497,7 @@ def parse_notification_args(
             target=target.strip(),
             level=level,
             strict_https=strict_tls,
+            ca_file=ca_file,
         )
         try:
             validate_notification_config(config)
@@ -513,7 +522,9 @@ def validate_notification_config(config: NotificationConfig) -> None:
     ):
         raise ValueError("Invalid notification configuration")
     normalize_notification_level(config.level)
-    normalize_notification_strict_https(config.strict_https)
+    normalize_notification_ca_file(
+        config.ca_file, normalize_notification_strict_https(config.strict_https),
+    )
     target = config.target.strip()
     if not target:
         raise ValueError(f"Notification target for {config.type} must not be empty")
@@ -627,30 +638,30 @@ def normalize_notification_strict_https(value: object) -> bool:
     """Return whether HTTPS notification webhooks must verify certificates."""
 
     if value is None:
-        return False
+        return True
     if not isinstance(value, bool):
         raise ValueError("Strict notification HTTPS setting must be boolean")
     return value
 
 
-def notification_strict_https_from_state(
-    value: object,
-    logger: Optional[Logger] = None,
-) -> bool:
-    """Load the saved strict HTTPS setting without disabling notifications."""
+def normalize_notification_ca_file(value: object, strict_https: bool) -> str | None:
+    """Validate a sender-local PEM path without requiring it on the controller."""
+    if value is None or value == "":
+        return None
+    if not strict_https:
+        raise ValueError("Notification CA files require verified HTTPS")
+    if not isinstance(value, str) or not os.path.isabs(value):
+        raise ValueError("Notification CA file must be an absolute path on the sender")
+    validate_filesystem_path(value)
+    return value
 
-    try:
-        return normalize_notification_strict_https(value)
-    except ValueError as exc:
-        if logger:
-            log_event(
-                logger,
-                "Invalid saved notification HTTPS setting; using default",
-                level=WARNING,
-                error=str(exc),
-                notification_strict_https=False,
-            )
-        return False
+
+def notification_strict_https_from_state(state: JSONDict) -> bool:
+    """Treat legacy false defaults as verified unless a new opt-out was recorded."""
+    return not (
+        state.get("notification_strict_https") is False
+        and state.get("notification_allow_unverified_https") is True
+    )
 
 
 def load_notification_configs_from_state(logger: Optional[Logger] = None) -> list[NotificationConfig]:
@@ -673,7 +684,19 @@ def load_notification_configs_from_state(logger: Optional[Logger] = None) -> lis
     """
     try:
         from lib.machine_state import load_notification_state
-        setup_config = load_notification_state()
+        return notification_configs_from_state(load_notification_state(), logger)
+    except (ImportError, OSError, ValueError) as exc:
+        if logger:
+            log_event(logger, "Failed to load notification configs from machine state",
+                      level=WARNING, error=str(exc))
+        return []
+
+
+def notification_configs_from_state(
+    setup_config: JSONDict | None, logger: Optional[Logger] = None,
+) -> list[NotificationConfig]:
+    """Parse saved sender policy for services and standalone storage jobs."""
+    try:
         if setup_config and 'notify_specs' in setup_config:
             notify_specs = setup_config['notify_specs']
             if not isinstance(notify_specs, list):
@@ -682,10 +705,7 @@ def load_notification_configs_from_state(logger: Optional[Logger] = None) -> lis
                 setup_config.get("notification_level"),
                 logger,
             )
-            strict_https = notification_strict_https_from_state(
-                setup_config.get("notification_strict_https"),
-                logger,
-            )
+            strict_https = notification_strict_https_from_state(setup_config)
             configs: list[NotificationConfig] = []
             seen: set[tuple[str, str]] = set()
             invalid_count = 0
@@ -694,6 +714,7 @@ def load_notification_configs_from_state(logger: Optional[Logger] = None) -> lis
                     [notify_spec],
                     notification_level=notification_level,
                     strict_https=strict_https,
+                    ca_file=setup_config.get("notification_ca_file"),
                 )
                 if not parsed:
                     invalid_count += 1
@@ -733,6 +754,7 @@ def send_setup_notification(
     logger: Optional[Logger] = None,
     notification_level: object = None,
     strict_https: object = None,
+    ca_file: object = None,
 ) -> bool:
     """Send a notification summarizing setup results.
 
@@ -747,6 +769,7 @@ def send_setup_notification(
         notification_level: Delivery threshold for this system
         strict_https: Require certificate and hostname verification for HTTPS
             webhook targets
+        ca_file: Optional additional PEM trust bundle on the sender
 
     Returns:
         True if all notifications were sent successfully, False otherwise
@@ -755,6 +778,7 @@ def send_setup_notification(
         notify_specs,
         notification_level=notification_level,
         strict_https=strict_https,
+        ca_file=ca_file,
     )
     if not configs:
         return True
@@ -878,24 +902,31 @@ class _RejectWebhookRedirects(urllib.request.HTTPRedirectHandler):
 def _open_webhook_request(
     request: urllib.request.Request,
     *,
-    strict_https: bool = False,
+    strict_https: bool = True,
+    ca_file: str | None = None,
 ) -> Any:
     handlers: list[Any] = [_RejectWebhookRedirects()]
     if request.type == "https":
         handlers.append(
             urllib.request.HTTPSHandler(
-                context=_webhook_ssl_context(strict_https),
+                context=_webhook_ssl_context(strict_https, ca_file),
             )
         )
     opener = urllib.request.build_opener(*handlers)
     return opener.open(request, timeout=NETWORK_TIMEOUT_SECONDS)
 
 
-def _webhook_ssl_context(strict_https: bool) -> ssl.SSLContext:
+def _webhook_ssl_context(strict_https: bool = True, ca_file: str | None = None) -> ssl.SSLContext:
     """Return the configured TLS policy for an HTTPS webhook."""
 
     if strict_https:
-        return ssl.create_default_context()
+        context = ssl.create_default_context()
+        if ca_file:
+            try:
+                context.load_verify_locations(cafile=ca_file)
+            except (OSError, ValueError) as exc:
+                raise RuntimeError("Could not load the notification CA file on the sender") from exc
+        return context
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE

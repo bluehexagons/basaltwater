@@ -200,7 +200,9 @@ class TestRemoteSetupArgsFile(unittest.TestCase):
             self.assertEqual(get_machine_type(), "unprivileged")
             return [("Apply", step)]
 
-        with tempfile.TemporaryDirectory() as tmpdir, patch.object(
+        with remote_setup.SetupReport().activate() as report, patch.object(
+            report, "include_disk_usage",
+        ) as disk_usage, tempfile.TemporaryDirectory() as tmpdir, patch.object(
             remote_setup,
             "SETUP_OPERATION_FILE",
             os.path.join(tmpdir, "setup-operation.json"),
@@ -235,6 +237,7 @@ class TestRemoteSetupArgsFile(unittest.TestCase):
 
         save_machine.assert_called_once()
         save_config.assert_called_once()
+        disk_usage.assert_called_once_with(config.username)
 
     def test_main_records_failed_setup_for_next_invocation(self):
         config = SetupConfig(

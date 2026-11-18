@@ -42,6 +42,7 @@ from lib.local_http import open_loopback
 from lib.node_toolchain import SUPPORTED_NODE_RANGE, is_supported_node
 from lib.remote_utils import install_package, is_dry_run, run
 from lib.setup_directories import directory_fd
+from lib.ufw_ingress import verify_live_ufw_ingress
 from lib.t3code_runtime import (
     T3_MINIMUM_ACTIVE_SERVICE_PROTOCOL,
     T3_VERSION_EXECUTABLES,
@@ -282,6 +283,7 @@ def _configure_firewall(config: SetupConfig, port: int, host: str) -> None:
             + ", ".join(sorted(missing))
         )
     _remove_managed_rules(updated_rules, desired_comments)
+    verify_live_ufw_ingress({("tcp", exposed_port): sources for exposed_port, _ in exposed_ports}, run)
 
 
 def _t3_runtime_path(home: str) -> str:
@@ -1617,6 +1619,43 @@ def _existing_pairing_t3_https_port() -> int | None:
     return https_port
 
 
+def _pairing_broker_restart_path() -> str:
+    path = os.path.join(DEVICE_PAIRING_CONFIG_DIR, ".broker-restart-pending")
+    if os.path.lexists(path) and (
+        os.path.islink(path) or not os.path.isfile(path)
+    ):
+        raise RuntimeError(f"Refusing unsafe device-pairing restart marker: {path}")
+    return path
+
+
+def _mark_pairing_broker_restart() -> None:
+    # Record intent before writing configuration so failures remain retryable.
+    write_text_atomic(_pairing_broker_restart_path(), "pending\n", mode=0o600)
+
+
+def _reconcile_pairing_broker() -> None:
+    pending_path = _pairing_broker_restart_path()
+    pending = os.path.isfile(pending_path)
+    if pending:
+        run("systemctl daemon-reload")
+    enabled = run(
+        f"systemctl is-enabled {DEVICE_PAIRING_SERVICE_NAME}.service",
+        check=False,
+    )
+    if enabled.returncode != 0:
+        run(f"systemctl enable {DEVICE_PAIRING_SERVICE_NAME}.service")
+    if pending:
+        run(f"systemctl restart {DEVICE_PAIRING_SERVICE_NAME}.service")
+        remove_file_durable(pending_path)
+    else:
+        active = run(
+            f"systemctl is-active {DEVICE_PAIRING_SERVICE_NAME}.service",
+            check=False,
+        )
+        if active.returncode != 0:
+            run(f"systemctl start {DEVICE_PAIRING_SERVICE_NAME}.service")
+
+
 def _configure_device_pairing(
     config: SetupConfig,
     home: str,
@@ -1665,43 +1704,15 @@ def _configure_device_pairing(
                 "url_field": "pairUrl",
                 "expires_field": "expiresAt",
                 "public_port": t3_port,
-                "connect": {
-                    "link_command": [
-                        t3_cli_wrapper,
-                        "connect",
-                        "link",
-                        "--headless",
-                        "--base-dir",
-                        t3_state_dir,
-                    ],
-                    "status_command": [
-                        t3_cli_wrapper,
-                        "connect",
-                        "status",
-                        "--json",
-                        "--base-dir",
-                        t3_state_dir,
-                    ],
-                    "unlink_command": [
-                        t3_cli_wrapper,
-                        "connect",
-                        "unlink",
-                        "--base-dir",
-                        t3_state_dir,
-                    ],
-                    "restart_request": os.path.join(
-                        t3_state_dir,
-                        "basaltwater-connect-restart",
-                    ),
-                },
             }
         },
     }
     if existing_https_port is not None:
         providers["providers"]["t3code"]["https_public_port"] = existing_https_port
     providers_content = json.dumps(providers, indent=2, sort_keys=True) + "\n"
-    providers_changed = _write_text_if_changed(
-        DEVICE_PAIRING_PROVIDERS_FILE, providers_content, 0o640
+    _write_text_if_changed(
+        DEVICE_PAIRING_PROVIDERS_FILE, providers_content, 0o640,
+        before_change=_mark_pairing_broker_restart,
     )
     os.chown(DEVICE_PAIRING_PROVIDERS_FILE, 0, web_account.pw_gid)
 
@@ -1738,26 +1749,11 @@ StandardError=journal
 [Install]
 WantedBy=multi-user.target
 """
-    service_changed = _write_text_if_changed(
-        DEVICE_PAIRING_SERVICE_FILE, service_content, 0o644
+    _write_text_if_changed(
+        DEVICE_PAIRING_SERVICE_FILE, service_content, 0o644,
+        before_change=_mark_pairing_broker_restart,
     )
-    if service_changed:
-        run("systemctl daemon-reload")
-    enabled = run(
-        f"systemctl is-enabled {DEVICE_PAIRING_SERVICE_NAME}.service",
-        check=False,
-    )
-    if enabled.returncode != 0:
-        run(f"systemctl enable {DEVICE_PAIRING_SERVICE_NAME}.service")
-    if service_changed or providers_changed:
-        run(f"systemctl restart {DEVICE_PAIRING_SERVICE_NAME}.service")
-    else:
-        active = run(
-            f"systemctl is-active {DEVICE_PAIRING_SERVICE_NAME}.service",
-            check=False,
-        )
-        if active.returncode != 0:
-            run(f"systemctl start {DEVICE_PAIRING_SERVICE_NAME}.service")
+    _reconcile_pairing_broker()
 
     nginx_content = f"""# Managed by basaltwater device pairing
 limit_req_zone $binary_remote_addr zone=basaltwater_device_pairing_auth:10m rate=5r/m;
@@ -1836,8 +1832,13 @@ server {{
         os.symlink(DEVICE_PAIRING_NGINX_SITE, DEVICE_PAIRING_NGINX_LINK)
         nginx_changed = True
         link_created = True
-    validation = run("nginx -t", check=False, capture_output=True)
-    if validation.returncode != 0:
+    try:
+        validation = run("nginx -t", check=False, capture_output=True)
+        if validation.returncode != 0:
+            raise RuntimeError("Nginx rejected the device-pairing configuration")
+        if nginx_changed or auth_changed:
+            run("systemctl reload nginx")
+    except Exception:
         if previous_nginx_content is None:
             if os.path.exists(DEVICE_PAIRING_NGINX_SITE):
                 os.remove(DEVICE_PAIRING_NGINX_SITE)
@@ -1851,9 +1852,7 @@ server {{
             os.unlink(DEVICE_PAIRING_NGINX_LINK)
         if auth_changed:
             _restore_pairing_auth_file(previous_auth)
-        raise RuntimeError("Nginx rejected the device-pairing configuration")
-    if nginx_changed or auth_changed:
-        run("systemctl reload nginx")
+        raise
     configure_nginx_auth_failure_ban(
         "device-pairing",
         DEVICE_PAIRING_AUTH_FAILURE_LOG,
@@ -1902,6 +1901,7 @@ def _remove_device_pairing() -> None:
         DEVICE_PAIRING_NGINX_SITE,
         DEVICE_PAIRING_PROVIDERS_FILE,
         DEVICE_PAIRING_AUTH_FILE,
+        _pairing_broker_restart_path(),
     ):
         if os.path.lexists(path):
             os.remove(path)
@@ -1913,66 +1913,8 @@ def _remove_device_pairing() -> None:
     remove_nginx_auth_failure_ban("device-pairing")
 
 
-def _configure_connect_restart_units(
-    state_dir: str,
-    username: str,
-    uid: int,
-) -> None:
-    """Install a root-owned path trigger for safe T3 service reconciliation."""
-
-    if os.geteuid() != 0:
-        return
-    if os.path.lexists(state_dir) and (
-        os.path.islink(state_dir) or not os.path.isdir(state_dir)
-    ):
-        raise RuntimeError(f"Refusing unsafe T3 Connect state directory: {state_dir}")
-    request_path = os.path.join(state_dir, "basaltwater-connect-restart")
-    path_content = f"""[Unit]
-Description=Watch for T3 Connect service reconciliation requests
-
-[Path]
-PathExists={request_path}
-Unit={T3_CONNECT_RESTART_SERVICE_UNIT}
-
-[Install]
-WantedBy=multi-user.target
-"""
-    service_content = f"""[Unit]
-Description=Reconcile the managed T3 Connect service
-After=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/rm -f {request_path}
-ExecStart=/usr/sbin/runuser -u {username} -- /usr/bin/env XDG_RUNTIME_DIR=/run/user/{uid} DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus /usr/bin/systemctl --user restart {T3_SERVICE_NAME}.service
-"""
-    path_changed = _write_text_if_changed(
-        T3_CONNECT_RESTART_PATH_FILE,
-        path_content,
-        0o644,
-    )
-    service_changed = _write_text_if_changed(
-        T3_CONNECT_RESTART_SERVICE_FILE,
-        service_content,
-        0o644,
-    )
-    if path_changed or service_changed:
-        run("systemctl daemon-reload")
-    enabled = run(
-        f"systemctl is-enabled {T3_CONNECT_RESTART_PATH_UNIT}",
-        check=False,
-    )
-    if enabled.returncode != 0:
-        run(f"systemctl enable {T3_CONNECT_RESTART_PATH_UNIT}")
-    active = run(
-        f"systemctl is-active {T3_CONNECT_RESTART_PATH_UNIT}",
-        check=False,
-    )
-    if active.returncode != 0:
-        run(f"systemctl start {T3_CONNECT_RESTART_PATH_UNIT}")
-
-
 def _remove_connect_restart_units(state_dir: str | None = None) -> None:
+    """Retire the legacy portal bridge without changing native Connect state."""
     if os.geteuid() != 0:
         return
     if state_dir is not None and os.path.lexists(state_dir) and (
@@ -2021,9 +1963,13 @@ def _configure_t3_https(
     configure_internal_web_host(
         identities_for_config(config.host, config.system_hostname),
         [config.username],
-        config.effective_web_interface_sources(),
+        config.effective_access_sources(),
         configure_static_site=True,
         install_utility=True,
+        route_access_sources={
+            name: config.effective_web_interface_sources()
+            for name in ("t3code", "t3code-pairing")
+        },
     )
     utility = "/usr/local/bin/basaltwater-web"
     endpoints: dict[str, tuple[str, int]] = {}
@@ -2102,17 +2048,20 @@ def _set_pairing_t3_https_port(https_port: int) -> None:
     if not isinstance(t3_provider, dict):
         raise RuntimeError("T3 Code pairing provider is missing")
     if t3_provider.get("https_public_port") == https_port:
+        if os.path.isfile(_pairing_broker_restart_path()):
+            _reconcile_pairing_broker()
         return
     t3_provider["https_public_port"] = https_port
     _write_text_if_changed(
         DEVICE_PAIRING_PROVIDERS_FILE,
         json.dumps(providers, indent=2, sort_keys=True) + "\n",
         0o640,
+        before_change=_mark_pairing_broker_restart,
     )
     web_account = pwd.getpwnam("www-data")
     os.chown(DEVICE_PAIRING_PROVIDERS_FILE, 0, web_account.pw_gid)
     os.chmod(DEVICE_PAIRING_PROVIDERS_FILE, 0o640)
-    run(f"systemctl restart {DEVICE_PAIRING_SERVICE_NAME}.service")
+    _reconcile_pairing_broker()
 
 
 def _remove_t3_https(config: SetupConfig, *, pairing_only: bool = False) -> None:
@@ -2211,11 +2160,7 @@ def install_t3code_web(config: SetupConfig) -> None:
 
     if config.device_pairing_providers:
         _configure_device_pairing(config, home, t3_cli_wrapper, host, port)
-        _configure_connect_restart_units(
-            os.path.join(home, ".t3"),
-            config.username,
-            account.pw_uid,
-        )
+        _remove_connect_restart_units(os.path.join(home, ".t3"))
         https_endpoints = _configure_t3_https(
             config,
             port,

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
+from pathlib import Path
 import shlex
 import shutil
 import subprocess
@@ -17,7 +19,6 @@ from lib.remote_utils import (
     is_package_installed,
     run,
 )
-from lib.release_management import fetch_latest_github_release_asset
 
 
 FLATPAK_REMOTE = "flathub"
@@ -30,8 +31,18 @@ _APT_UPDATE_COMMAND = (
     "-o Acquire::Retries=0 -o Acquire::http::Timeout=15 "
     "-o Acquire::https::Timeout=15 update -qq"
 )
-HELIUM_RELEASE_API = "https://api.github.com/repos/imputnet/helium-linux/releases/latest"
-BROWSH_GITHUB_REPO = "browsh-org/browsh"
+_HELIUM_VERSION = "0.21.3.1"
+_HELIUM_SHA256 = {
+    "amd64": "98f940589caa46357218ee6c6b95a6b5d6681b4f33c72e4189c62d155a38145b",
+    "arm64": "be6e69a99491d21d88edb6cf61b3ab0f207c7d7ea4c4d2cc0aa75060542435e5",
+}
+_BROWSH_VERSION = "1.8.2"
+_BROWSH_SHA256 = {
+    "amd64": "9333a32ce4adf3d5436e599c1ec7b4375d862e9d72cb93f600f586111775416b",
+    "arm64": "086ecc93cb0238a8f390128443a2d66a3a3be302f4a1b3bb9942f3d2c162273a",
+    "armv7": "46bb529e989eb0ac232eab9d85d8456d582128b4d2b833dbeffc14c20a196c05",
+    "386": "328e151a6bddf9f194b6dd4c2a0d1424c472ff596ba2ababf9a8b7cb0a4d34af",
+}
 _LIBREWOLF_APPARMOR_PROFILE = "/etc/apparmor.d/librewolf"
 _XFCE_HELPER_SUBDIR = os.path.join(".local", "share", "xfce4", "helpers")
 _LIBREWOLF_APPARMOR_PROFILE_CONTENT = """# Managed by basaltwater.
@@ -46,7 +57,6 @@ profile librewolf /usr/share/librewolf/{librewolf,librewolf-bin} flags=(unconfin
 _BROWSH_ARCH_BY_DPKG = {
     "amd64": "amd64",
     "arm64": "arm64",
-    "armel": "armv6",
     "armhf": "armv7",
     "i386": "386",
 }
@@ -95,34 +105,64 @@ def _configure_librewolf_apparmor_profile() -> None:
         print("  ⚠ Could not reload LibreWolf's unconfined AppArmor profile")
 
 
-def _browsh_architecture() -> str:
-    """Return the Browsh release architecture for the target Debian system."""
+def _browser_architecture(name: str) -> str:
     result = run("dpkg --print-architecture", check=False, capture_output=True)
-    dpkg_arch = (result.stdout or "").strip()
-    try:
-        return _BROWSH_ARCH_BY_DPKG[dpkg_arch]
-    except KeyError as exc:
-        raise RuntimeError(f"Unsupported Browsh architecture: {dpkg_arch or 'unknown'}") from exc
+    if result.returncode != 0 or not result.stdout.strip():
+        raise RuntimeError(f"{name} installation failed: could not determine Debian architecture")
+    return result.stdout.strip()
 
 
-def _browsh_asset_matches(tag_name: str, asset_name: str, arch: str) -> bool:
-    """Return whether a release asset is the Debian package for ``arch``."""
-    version = tag_name.removeprefix("v")
-    return asset_name == f"browsh_{version}_linux_{arch}.deb"
-
-
-def _resolve_browsh_deb() -> tuple[str, str]:
-    """Return the newest stable Browsh release with a matching Debian asset."""
-    arch = _browsh_architecture()
-    return fetch_latest_github_release_asset(
-        BROWSH_GITHUB_REPO,
-        asset_matches=lambda tag_name, asset_name: _browsh_asset_matches(
-            tag_name, asset_name, arch
-        ),
-        missing_asset_description=(
-            f"No stable Browsh Debian package found for architecture '{arch}'"
-        ),
+def _installed_browser_version(package: str) -> str:
+    result = run(
+        f"dpkg-query -W -f='${{Version}}' {package}", check=False, capture_output=True,
     )
+    if result.returncode != 0 or not result.stdout.strip():
+        raise RuntimeError(f"Could not determine the installed {package} version")
+    return result.stdout.strip()
+
+
+def _install_pinned_browser(
+    name: str, package: str, version: str, architecture: str, url: str, expected_hash: str,
+) -> None:
+    """Check the complete package before APT can start an install or upgrade."""
+    if is_package_installed(package):
+        installed = _installed_browser_version(package)
+        comparison = run(
+            f"dpkg --compare-versions {shlex.quote(installed)} ge {shlex.quote(version)}",
+            check=False,
+        )
+        if comparison.returncode == 0:
+            print(f"  ✓ {name} {installed} already installed")
+            return
+        if comparison.returncode != 1:
+            raise RuntimeError(f"{name} installation failed: could not compare package versions")
+
+    print(f"  Installing {name} {version}...")
+    with tempfile.TemporaryDirectory(prefix=f"basaltwater-{package}-") as temporary_dir:
+        package_path = Path(temporary_dir, f"{package}.deb")
+        destination = shlex.quote(str(package_path))
+        result = run(
+            f"curl --disable --fail --silent --show-error --location "
+            f"--proto '=https' --proto-redir '=https' --max-time 300 "
+            f"--output {destination} {shlex.quote(url)}",
+            check=False,
+        )
+        if result.returncode != 0 or not package_path.is_file():
+            raise RuntimeError(f"{name} installation failed: package download failed")
+        with package_path.open("rb") as handle:
+            if hashlib.file_digest(handle, "sha256").hexdigest() != expected_hash:
+                raise RuntimeError(f"{name} installation failed: package SHA-256 mismatch")
+        fields = run(
+            f"dpkg-deb --field {destination} Package Version Architecture",
+            check=False, capture_output=True,
+        )
+        expected = [f"Package: {package}", f"Version: {version}", f"Architecture: {architecture}"]
+        if fields.returncode != 0 or (fields.stdout or "").splitlines() != expected:
+            raise RuntimeError(f"{name} installation failed: package metadata does not match the approved release")
+        result = run(f"apt-get install -y -qq {destination}", check=False)
+    if result.returncode != 0 or not is_package_installed(package) or _installed_browser_version(package) != version:
+        raise RuntimeError(f"{name} installation failed: package command failed or expected version is missing")
+    print(f"  ✓ {name} {version} installed")
 
 
 def is_flatpak_app_installed(app_id: str) -> bool:
@@ -221,58 +261,12 @@ def _install_via_extrepo(name: str, extrepo_name: str, package_name: str) -> boo
 
 
 def _install_helium_browser() -> None:
-    """Install Helium from the latest upstream Debian package release."""
-    if is_package_installed("helium-bin") or os.path.exists("/usr/bin/helium"):
-        print("  ✓ Helium browser already installed")
-        return
-
-    print("  Installing Helium browser...")
-    url_script = f"""import json
-import subprocess
-import sys
-import urllib.request
-
-arch = subprocess.check_output(["dpkg", "--print-architecture"], text=True).strip()
-if arch not in {{"amd64", "arm64"}}:
-    sys.exit(f"unsupported architecture: {{arch}}")
-
-with urllib.request.urlopen("{HELIUM_RELEASE_API}", timeout=30) as response:
-    release = json.load(response)
-
-suffix = f"_{{arch}}.deb"
-for asset in release.get("assets", []):
-    name = asset.get("name", "")
-    if name.startswith("helium-bin_") and name.endswith(suffix):
-        print(asset["browser_download_url"])
-        break
-else:
-    sys.exit(f"no Helium Debian package found for {{arch}}")
-"""
-    result = run(
-        f"python3 -c {shlex.quote(url_script)}",
-        check=False,
-        capture_output=True,
-        display_cmd="python3 -c '[resolve latest Helium Debian package URL]'",
-    )
-    helium_url = result.stdout.strip() if result.returncode == 0 else ""
-    if not helium_url:
-        raise RuntimeError("Helium installation failed: could not resolve the latest package URL")
-
-    with tempfile.TemporaryDirectory(prefix="basaltwater-helium-") as temporary_dir:
-        package_path = os.path.join(temporary_dir, "helium.deb")
-        download_result = run(
-            f"wget --https-only -qO {shlex.quote(package_path)} "
-            f"{shlex.quote(helium_url)}",
-            check=False,
-        )
-        if download_result.returncode != 0:
-            raise RuntimeError("Helium installation failed: package download failed")
-        os.environ["DEBIAN_FRONTEND"] = "noninteractive"
-        result = run(f"apt-get install -y -qq {shlex.quote(package_path)}", check=False)
-    if result.returncode == 0 and (is_package_installed("helium-bin") or os.path.exists("/usr/bin/helium")):
-        print("  ✓ Helium browser installed")
-        return
-    raise RuntimeError("Helium installation failed: package command failed or browser is missing")
+    arch = _browser_architecture("Helium")
+    if arch not in _HELIUM_SHA256:
+        raise RuntimeError(f"Helium installation failed: no approved package for {arch}")
+    version = f"{_HELIUM_VERSION}-1"
+    url = f"https://github.com/imputnet/helium-linux/releases/download/{_HELIUM_VERSION}/helium-bin_{version}_{arch}.deb"
+    _install_pinned_browser("Helium", "helium-bin", version, arch, url, _HELIUM_SHA256[arch])
 
 
 def install_single_browser(browser: str, use_flatpak: bool) -> None:
@@ -355,34 +349,12 @@ def install_single_browser(browser: str, use_flatpak: bool) -> None:
             result = run("apt-get install -y -qq firefox-esr", check=False)
             if result.returncode != 0 or not (is_package_installed("firefox") or is_package_installed("firefox-esr")):
                 raise RuntimeError("Browsh installation failed: Firefox dependency is unavailable")
-        if is_package_installed("browsh") or shutil.which("browsh"):
-            print("  ✓ Browsh already installed")
-            return
-
-        print("  Installing Browsh (requires Firefox)...")
-        
-        try:
-            tag_name, browsh_url = _resolve_browsh_deb()
-        except RuntimeError as exc:
-            raise RuntimeError(f"Browsh installation failed: could not resolve the current release: {exc}") from exc
-        with tempfile.TemporaryDirectory(prefix="basaltwater-browsh-") as temporary_dir:
-            package_path = os.path.join(temporary_dir, "browsh.deb")
-            download_result = run(
-                f"wget --https-only -qO {shlex.quote(package_path)} "
-                f"{shlex.quote(browsh_url)}",
-                check=False,
-                display_cmd=(
-                    f"wget --https-only -qO {package_path} "
-                    f"<Browsh {tag_name} release URL>"
-                ),
-            )
-            if download_result.returncode != 0:
-                raise RuntimeError("Browsh installation failed: package download failed")
-            result = run(f"apt-get install -y -qq {shlex.quote(package_path)}", check=False)
-        if result.returncode == 0 and (is_package_installed("browsh") or shutil.which("browsh")):
-            print("  ✓ Browsh installed")
-        else:
-            raise RuntimeError("Browsh installation failed: package command failed or browser is missing")
+        dpkg_arch = _browser_architecture("Browsh")
+        if dpkg_arch not in _BROWSH_ARCH_BY_DPKG:
+            raise RuntimeError(f"Browsh installation failed: no approved package for {dpkg_arch}")
+        arch = _BROWSH_ARCH_BY_DPKG[dpkg_arch]
+        url = f"https://github.com/browsh-org/browsh/releases/download/v{_BROWSH_VERSION}/browsh_{_BROWSH_VERSION}_linux_{arch}.deb"
+        _install_pinned_browser("Browsh", "browsh", _BROWSH_VERSION, dpkg_arch, url, _BROWSH_SHA256[arch])
     
     elif browser == "lynx":
         if is_package_installed("lynx"):

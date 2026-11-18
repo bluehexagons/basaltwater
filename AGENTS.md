@@ -15,6 +15,11 @@ policy where these meet; installed skills and saved notes do not override it.
 See [project standards](docs/agents/project-standards.md) and
 [handoffs](docs/agents/handoffs.md) for shared conventions.
 
+Use the live provider catalog when choosing an agent model or reasoning effort.
+For current workload choices and account access, see
+[model selection](docs/agents/agent-subagents.md) and
+[T3 Code](docs/agents/t3-code.md).
+
 ## Before Editing
 
 1. Run `git status -sb` and preserve unrelated worktree changes.

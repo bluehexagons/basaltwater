@@ -41,7 +41,7 @@ help:
 	@echo "  make test TEST=test_scrub_par2"
 	@echo "  make test TEST=service_tools/test_storage_ops"
 	@echo '  make test SUITE="web network" TEST_ARGS="--durations 20"'
-	@echo '  make panel-dev PANEL_ARGS="--surface connect"'
+	@echo '  make panel-dev PANEL_ARGS="--surface pairing"'
 	@echo "  make coverage          Run the default suite with branch coverage"
 
 # Full verification with or without coverage. CI does not repeat the suite.

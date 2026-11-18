@@ -18,6 +18,7 @@ from lib.config import SetupConfig
 from lib.maintenance_defaults import JOURNAL_MAX_USE
 from lib.remote_utils import CommandExecutionError
 from lib.system_types import get_steps_for_system_type
+from security import security_steps
 from security.security_steps import (
     _ensure_browser_automation_userns_profile,
     configure_auto_restart,
@@ -515,13 +516,26 @@ class TestHardenKernel(unittest.TestCase):
 
 
 class TestConfigureFail2Ban(unittest.TestCase):
+    def test_only_owned_xrdp_jails_are_removed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            jail = Path(directory) / "xrdp.local"
+            with patch.object(security_steps, "_FAIL2BAN_XRDP_JAIL", str(jail)):
+                jail.write_text("[xrdp]\nenabled = true\n# operator jail\n")
+                security_steps._remove_managed_xrdp_jail()
+                self.assertTrue(jail.exists())
+                jail.write_text(security_steps._FAIL2BAN_LEGACY_XRDP_JAIL)
+                security_steps._remove_managed_xrdp_jail()
+                self.assertFalse(jail.exists())
+
     @patch("security.security_steps.is_container", return_value=False)
     @patch("security.security_steps.run")
     @patch("security.security_steps.os.makedirs")
     @patch("security.security_steps.open", new_callable=mock_open)
     def test_writes_sshd_jail_when_rdp_disabled(self, mock_file, _md, mock_run, _ic):
         mock_run.return_value = SimpleNamespace(returncode=0)
-        configure_fail2ban(SetupConfig(username="u", host="h", system_type="server_lite"))
+        with patch("security.security_steps._remove_managed_xrdp_jail") as retire:
+            configure_fail2ban(SetupConfig(username="u", host="h", system_type="server_lite"))
+        retire.assert_called_once_with()
         mock_run.assert_any_call(
             "apt-get -o DPkg::Lock::Timeout=300 install -y -qq fail2ban"
         )
@@ -608,10 +622,23 @@ class TestConfigureAuditd(unittest.TestCase):
     def test_rules_are_loaded_without_restarting_the_debian_service(
         self, mock_run, _makedirs, _vm, _hardware
     ):
-        mock_run.return_value = SimpleNamespace(returncode=0)
         config = SetupConfig(username="u", host="h", system_type="server_lite")
         with tempfile.TemporaryDirectory() as temporary:
             rules_file = os.path.join(temporary, "audit.rules")
+
+            def kernel_response(command, **_kwargs):
+                stdout = ""
+                if command == "auditctl -s":
+                    stdout = "enabled 1\npid 123\n"
+                elif command == "auditctl -l":
+                    stdout = "\n".join(
+                        line.replace("-k ", "-F key=").replace(" -F path=", " -S all -F path=")
+                        for line in Path(rules_file).read_text().splitlines()
+                        if line.startswith("-a ")
+                    )
+                return SimpleNamespace(returncode=0, stdout=stdout)
+
+            mock_run.side_effect = kernel_response
             with patch(
                 "security.security_steps._AUDIT_RULES_FILE", rules_file
             ):
@@ -622,6 +649,7 @@ class TestConfigureAuditd(unittest.TestCase):
                 with open(rules_file, encoding="utf-8") as rules:
                     contents = rules.read()
                 self.assertNotIn("-w ", contents)
+                self.assertNotIn("-e ", contents)
                 self.assertIn(
                     "-a always,exit -F arch=b64 -F path=/etc/passwd -F perm=wa -k identity",
                     contents,
@@ -644,7 +672,33 @@ class TestConfigureAuditd(unittest.TestCase):
             self.assertIn("systemctl enable auditd", commands)
             self.assertIn("systemctl start auditd", commands)
             self.assertIn("augenrules --load", commands)
+            self.assertIn("auditctl -l", commands)
             self.assertNotIn("systemctl restart auditd", commands)
+
+    @patch("security.security_steps.is_hardware", return_value=False)
+    @patch("security.security_steps.is_vm", return_value=True)
+    @patch("security.security_steps.os.makedirs")
+    @patch("security.security_steps.run")
+    def test_immutable_rules_are_staged_and_operator_enable_mode_is_preserved(
+        self, mock_run, _makedirs, _vm, _hardware
+    ):
+        config = SetupConfig(username="u", host="h", system_type="server_lite")
+        with tempfile.TemporaryDirectory() as temporary:
+            rules = Path(temporary) / "99-basaltwater.rules"
+            rules.write_text("# Old managed policy\n-e 1\n")
+            operator = Path(temporary) / "98-operator.rules"
+            operator.write_text("-e 2\n")
+            with patch("security.security_steps._AUDIT_RULES_FILE", str(rules)):
+                def kernel_response(command, **_kwargs):
+                    stdout = "enabled 2\n" if command == "auditctl -s" else "No rules\n"
+                    return SimpleNamespace(returncode=0, stdout=stdout)
+
+                mock_run.side_effect = kernel_response
+                with patch("builtins.print") as output:
+                    configure_auditd(config)
+                self.assertIn("Reboot required", output.call_args.args[0])
+            self.assertNotIn("-e ", rules.read_text())
+            self.assertEqual(operator.read_text(), "-e 2\n")
 
 
 class TestSecurityPackageInstallFailures(unittest.TestCase):
@@ -691,13 +745,18 @@ class TestConfigurePamLockout(unittest.TestCase):
             profile = os.path.join(temporary, "pam-configs", "faillock-basaltwater")
             settings = os.path.join(temporary, "faillock.conf")
             auth = os.path.join(temporary, "common-auth")
-            account = os.path.join(temporary, "common-account")
+            rendered = (
+                "auth required pam_faillock.so preauth\n"
+                "auth [success=2 default=ignore] pam_unix.so nullok try_first_pass\n"
+                "auth [default=die] pam_faillock.so authfail\n"
+                "auth requisite pam_deny.so\n"
+                "auth required pam_permit.so\n"
+                "auth required pam_faillock.so authsucc\n"
+            )
 
             def activate(_command, **_kwargs):
                 with open(auth, "w", encoding="utf-8") as file_obj:
-                    file_obj.write("auth [default=die] pam_faillock.so authfail\n")
-                with open(account, "w", encoding="utf-8") as file_obj:
-                    file_obj.write("account required pam_faillock.so\n")
+                    file_obj.write(rendered)
                 return SimpleNamespace(returncode=0)
 
             mock_run.side_effect = activate
@@ -706,11 +765,14 @@ class TestConfigurePamLockout(unittest.TestCase):
                 _PAM_FAILLOCK_PROFILE=profile,
                 _FAILLOCK_CONF=settings,
                 _PAM_COMMON_AUTH=auth,
-                _PAM_COMMON_ACCOUNT=account,
             ):
                 configure_pam_lockout(config)
                 with open(profile, encoding="utf-8") as file_obj:
-                    self.assertIn("pam_faillock.so", file_obj.read())
+                    self.assertIn("[default=die] pam_faillock.so authfail", file_obj.read())
+                with open(profile + "-preauth", encoding="utf-8") as file_obj:
+                    self.assertIn("required pam_faillock.so preauth", file_obj.read())
+                with open(profile + "-authsucc", encoding="utf-8") as file_obj:
+                    self.assertIn("required pam_faillock.so authsucc", file_obj.read())
                 with open(settings, encoding="utf-8") as file_obj:
                     self.assertIn("deny = 5", file_obj.read())
                 mock_run.reset_mock()
@@ -725,12 +787,21 @@ class TestConfigurePamLockout(unittest.TestCase):
                 mock_run.assert_called_once()
                 mock_run.reset_mock()
 
-                with open(auth, "w", encoding="utf-8") as file_obj:
-                    file_obj.write("# auth required pam_faillock.so\n")
-                configure_pam_lockout(config)
-                mock_run.assert_called_once_with(
-                    "pam-auth-update --enable faillock-basaltwater", check=False
-                )
+                for before, after in (
+                    ("auth required pam_faillock.so preauth\n", ""),
+                    ("success=2", "success=1"),
+                    ("success=2", "success=4"),
+                    ("auth required pam_faillock.so authsucc\n", ""),
+                ):
+                    with self.subTest(before=before, after=after):
+                        with open(auth, "w", encoding="utf-8") as file_obj:
+                            file_obj.write(rendered.replace(before, after))
+                        configure_pam_lockout(config)
+                        mock_run.assert_called_once_with(
+                            "pam-auth-update --enable faillock-basaltwater-preauth faillock-basaltwater faillock-basaltwater-authsucc",
+                            check=False,
+                        )
+                        mock_run.reset_mock()
 
     @patch("security.security_steps.is_hardware", return_value=False)
     @patch("security.security_steps.is_vm", return_value=True)
@@ -745,7 +816,6 @@ class TestConfigurePamLockout(unittest.TestCase):
                 _PAM_FAILLOCK_PROFILE=os.path.join(temporary, "pam-configs", "faillock"),
                 _FAILLOCK_CONF=os.path.join(temporary, "faillock.conf"),
                 _PAM_COMMON_AUTH=os.path.join(temporary, "common-auth"),
-                _PAM_COMMON_ACCOUNT=os.path.join(temporary, "common-account"),
             ):
                 mock_run.return_value = SimpleNamespace(returncode=1)
                 with self.assertRaisesRegex(RuntimeError, "could not be enabled"):
@@ -761,6 +831,7 @@ class TestSSHFirewallPeerSafety(unittest.TestCase):
         self.enterContext(patch("lib.machine_state.detect_machine_type", return_value="vm"))
         self.enterContext(patch.dict(os.environ, {"SSH_CONNECTION": ""}))
         self.command = self.enterContext(patch("security.security_steps.run"))
+        self.enterContext(patch.object(security_steps, "verify_live_ufw_ingress"))
         self.command.return_value = SimpleNamespace(
             returncode=0,
             stdout="Status: active\nDefault: deny (incoming), allow (outgoing), disabled (routed)\n",
@@ -849,9 +920,31 @@ class TestSSHFirewallPeerSafety(unittest.TestCase):
 
 
 class TestConfigureFirewall(unittest.TestCase):
+    def test_inactive_ufw_removes_saved_managed_rdp_rules_only(self):
+        config = SetupConfig(host="vm", username="admin", system_type="server_lite")
+        with patch.object(security_steps, "can_manage_firewall", return_value=True), \
+             patch.object(security_steps, "shutil") as shutil, \
+             patch.object(security_steps, "_run_ufw") as ufw:
+            shutil.which.return_value = "/usr/sbin/ufw"
+            ufw.side_effect = [
+                SimpleNamespace(returncode=0, stdout="Status: inactive\n"),
+                SimpleNamespace(returncode=0, stdout=(
+                    "Added user rules\nufw limit 3389/tcp comment 'basaltwater RDP global'\n"
+                    "ufw limit from 192.0.2.0/24 to any port 3389 proto tcp comment 'operator'\n"
+                )),
+                SimpleNamespace(returncode=0, stdout="Rule deleted"),
+            ]
+            security_steps.clear_disabled_rdp_firewall(config)
+            self.assertEqual(ufw.call_count, 3)
+            ufw.assert_called_with("ufw --force delete limit 3389/tcp comment 'basaltwater RDP global'")
+
     def setUp(self):
         self.enterContext(patch("lib.machine_state.detect_machine_type", return_value="vm"))
         self.enterContext(patch.dict(os.environ, {"SSH_CONNECTION": ""}))
+        self.verify_live = self.enterContext(patch.object(
+            security_steps, "verify_live_ufw_ingress", wraps=security_steps.verify_live_ufw_ingress,
+        ))
+        self.verify_live.return_value = None
 
     def test_all_entrypoints_install_ufw_with_bounded_lock_wait_before_rules(self):
         config = SetupConfig(username="u", host="h", system_type="server_lite")
@@ -1020,19 +1113,24 @@ class TestConfigureFirewall(unittest.TestCase):
     @patch("security.security_steps.is_container", return_value=False)
     @patch("security.security_steps.run")
     def test_restricted_firewall_rejects_remaining_broad_rules(self, mock_run, _ic):
+        from unittest.mock import DEFAULT
+
+        self.verify_live.return_value = DEFAULT
         config = SetupConfig(
             username="u", host="h", system_type="workstation_dev",
             access_sources=["192.168.1.0/24"], enable_rdp=True,
             rdp_allowed_sources=["192.168.1.0/24"], web_ports=[8080],
             default_web_ports=False,
         )
-        for destination, service in (
-            ("22/tcp", "SSH"),
-            ("3389/tcp (v6)", "RDP"),
-            ("8080/tcp", "web TCP 8080"),
-        ):
-            with self.subTest(destination=destination):
+        for port, family in ((22, 4), (3389, 6), (8080, 4)):
+            with self.subTest(port=port, family=family):
                 def run_side_effect(command, **_kwargs):
+                    if isinstance(command, list):
+                        active_family = 6 if command[0] == "ip6tables-save" else 4
+                        rule = f"-A INPUT -p tcp -m tcp --dport {port} -j ACCEPT\n"
+                        return SimpleNamespace(
+                            returncode=0, stdout=":INPUT DROP [0:0]\n" + (rule if family == active_family else ""),
+                        )
                     if command.startswith("ufw status 2>"):
                         return SimpleNamespace(returncode=0, stdout="")
                     if command == "ufw status numbered":
@@ -1040,13 +1138,24 @@ class TestConfigureFirewall(unittest.TestCase):
                     if command == "ufw status verbose":
                         return SimpleNamespace(
                             returncode=0,
-                            stdout=f"Status: active\nDefault: deny (incoming)\n{destination} ALLOW IN Anywhere\n",
+                            stdout="Status: active\nDefault: deny (incoming)\n",
                         )
                     return SimpleNamespace(returncode=0, stdout="")
 
                 mock_run.side_effect = run_side_effect
-                with self.assertRaisesRegex(RuntimeError, f"Source-restricted {service}"):
+                with self.assertRaisesRegex(RuntimeError, f"IPv{family} TCP {port} rule allows sources outside"):
                     configure_firewall(config)
+
+    def test_new_firewall_rolls_back_activation_when_ssh_peer_is_blocked(self):
+        config = SetupConfig(username="u", host="h", system_type="server_lite", ssh_access_sources=["192.0.2.0/24"])
+        self.verify_live.side_effect = RuntimeError("rule can block the current SSH peer")
+        with patch.dict(os.environ, {"SSH_CONNECTION": "192.0.2.4 61000 192.0.2.12 22"}), \
+             patch.object(security_steps, "_prune_enabled_firewall_rules"), \
+             patch.object(security_steps, "_source_restricted_firewall_status"), \
+             patch.object(security_steps, "_run_ufw", return_value=SimpleNamespace(returncode=0)) as ufw:
+            with self.assertRaisesRegex(RuntimeError, "Restored the previously inactive UFW firewall"):
+                security_steps._verify_new_firewall(config, web_ports=None, include_rdp=False)
+        ufw.assert_called_once_with("ufw --force disable")
 
     @patch("security.security_steps.is_container", return_value=False)
     @patch("security.security_steps.run")

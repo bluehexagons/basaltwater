@@ -77,7 +77,7 @@ class TestGodotWebHost(unittest.TestCase):
             with open(ca, "w", encoding="utf-8") as file_obj:
                 file_obj.write("existing public CA\n")
 
-            def reconcile_policy(*_args: object) -> bool:
+            def reconcile_policy(*_args: object, **_kwargs: object) -> bool:
                 # The readable copy must exist before publishing its path.
                 with open(download, encoding="utf-8") as file_obj:
                     self.assertEqual(file_obj.read(), "existing public CA\n")

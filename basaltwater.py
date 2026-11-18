@@ -34,6 +34,7 @@ except ImportError:
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from lib.arg_parser import add_setup_arguments
+from lib.batch import add_batch_subparser, run_batch_command, track_command
 from lib.agent_cli import add_agent_subparser, run_agent_command
 from lib.gogs_cli import add_gogs_subparser, run_gogs_command
 from lib.homebox_cli import add_homebox_subparser, run_homebox_command
@@ -677,6 +678,7 @@ def create_basaltwater_parser(*, _command: str | None = None) -> Tuple[argparse.
     credentials_remove_parser.add_argument("username", help="Credential username to remove")
 
     add_network_subparser(subparsers)
+    add_batch_subparser(subparsers)
     add_local_subparser(subparsers)
     add_desktop_subparser(subparsers)
     add_firmware_subparser(subparsers)
@@ -2559,10 +2561,19 @@ def main() -> int:
             print(f"Error: {e}")
             return 1
         set_workspace_dir(args.workspace)
+
+    if args.command == "batch":
+        return run_batch_command(args)
     
     if not args.command:
         parser.print_help()
         return 0
+
+    return track_command(args, lambda: _dispatch_command(args, parser))
+
+
+def _dispatch_command(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    """Execute a parsed command inside the optional batch boundary."""
     
     if args.command in {"setup", "patch", "shares"} and _is_local_host(args.host):
         from lib.cachyos import is_cachyos

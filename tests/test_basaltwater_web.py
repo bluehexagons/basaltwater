@@ -1021,6 +1021,33 @@ class TestInfraWebPolicyReconciliation(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertFalse(result["policy_changed"])
 
+    def test_admin_sources_replace_and_clear_independently_of_shared_policy(self) -> None:
+        admin = {**self.route, "listen": 8445, "name": "t3code", "target_port": 3773}
+        pairing = {**admin, "listen": 8446, "name": "t3code-pairing", "target_port": 3774}
+        routes = [self.route, admin, pairing]
+        self.write_routes(routes)
+        with open(basaltwater_web.POLICY_FILE, "w", encoding="utf-8") as file_obj:
+            json.dump({**_policy(), "route_access_sources": {"t3code": ["10.0.0.0/8"]}}, file_obj)
+        with open(self.staged, "w", encoding="utf-8") as file_obj:
+            json.dump({**self.desired, "route_access_sources": {
+                "t3code": ["10.0.1.0/24"], "t3code-pairing": [],
+            }}, file_obj)
+        self.assertEqual(self.reconcile()[0], 0)
+        policy = basaltwater_web._load_policy()
+        rules = basaltwater_web._desired_firewall_rules(routes, policy)
+        self.assertEqual(set(rules), {
+            "basaltwater HTTPS forward demo 8444/tcp source 198.51.100.0/24",
+            "basaltwater HTTPS forward t3code 8445/tcp source 10.0.1.0/24",
+        })
+        rendered = basaltwater_web.render_forward_nginx(routes, policy)
+        self.assertIn("allow 10.0.1.0/24;", rendered)
+        self.assertNotIn("allow 10.0.0.0/8;", rendered)
+        self.assertEqual(rendered.count("deny all;"), 2)
+        with open(self.staged, "w", encoding="utf-8") as file_obj:
+            json.dump(self.desired, file_obj)
+        self.assertEqual(self.reconcile()[0], 0)
+        self.assertEqual(basaltwater_web._load_policy(), policy)
+
     def test_wait_reads_routes_only_after_competing_mutation_finishes(self) -> None:
         other_route = {**self.route, "listen": 8445, "name": "other", "target_port": 3001}
         with open(basaltwater_web.MUTATION_LOCK_FILE, "w") as holder:

@@ -33,6 +33,7 @@ from lib.build_target_policy import (
     capabilities_for_principal,
     parse_target_deployment,
 )
+from lib.runtime_bindings import check_target_runtime_bindings
 
 
 MAX_TARGET_PROJECTION_BYTES = MAX_REQUEST_BYTES
@@ -328,6 +329,7 @@ class BuildTargetService:
                 self.load_policy(), principal=owner, application=fields["application"],
                 request=fields["request"], deployment=fields["deployment"],
             )
+            check_target_runtime_bindings(authorized["bindings"])
             record = self.admissions.reserve(
                 fields["application"], fields["request"], owner=owner,
                 idempotency_key=fields["idempotency_key"],
@@ -382,6 +384,7 @@ class BuildTargetService:
                 self._check_admission_identity(
                     record, fields, owner=owner, authorized=current,
                 )
+                check_target_runtime_bindings(current["bindings"])
                 # The callback's private result is deliberately discarded. The
                 # admission ledger and public transport receive no callback data.
                 self.activate_release(
@@ -433,6 +436,7 @@ class BuildTargetService:
             deployment=fields["deployment"],
         )
         self._check_admission_identity(record, fields, owner=owner, authorized=authorization)
+        check_target_runtime_bindings(authorization["bindings"])
         return record, authorization
 
     @staticmethod

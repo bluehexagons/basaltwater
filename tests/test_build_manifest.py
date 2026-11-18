@@ -178,6 +178,28 @@ class BuildManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "differ"):
             validate_manifest_request(manifest, request)
 
+    def test_coexisting_ci_and_deployment_requests_validate_their_own_commands(self):
+        manifest = self.manifest()
+        manifest.ci = parse_manifest({"version": 1, "components": [], "ci": {
+            "test": [{"argv": ["python3", "ci.py"], "env": {"CI_ONLY": "value"}}],
+        }}).ci
+        deployment = self.request(manifest)
+        workflow = request_from_manifest(
+            manifest, request_id="a" * 32, project="example",
+            source=build_request()["source"], platform=DEBIAN_PLATFORM, workflow=True,
+        )
+        self.assertNotIn("CI_ONLY", str(deployment))
+        self.assertEqual(workflow["components"][0]["type"], "task")
+        for request in (deployment, workflow):
+            self.assertEqual(validate_manifest_request(manifest, request), request)
+        manifest.ci["test"][0].argv = ["false"]
+        self.assertEqual(validate_manifest_request(manifest, deployment), deployment)
+        with self.assertRaisesRegex(ValueError, "differ"):
+            validate_manifest_request(manifest, workflow)
+        manifest.components[0].build = ["false"]
+        with self.assertRaisesRegex(ValueError, "differ"):
+            validate_manifest_request(manifest, deployment)
+
 
 if __name__ == "__main__":
     unittest.main()

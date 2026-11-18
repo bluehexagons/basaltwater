@@ -47,6 +47,11 @@ for any remaining infra-tools installation or interrupted historical cutover.
 
 ```text
 basaltw --version
+basaltw batch start [TITLE]
+basaltw batch run [--label LABEL] -- COMMAND [ARG ...]
+basaltw batch note TEXT
+basaltw batch status
+basaltw batch end [--force]
 basaltw migrate [--system] [--installation /path/to/old-source] [--apply | --recover]
 basaltw setup <system_type> <host> [username] [options]
 basaltw patch <host> [username] [options]
@@ -190,6 +195,9 @@ configure the GitHub HTTPS credential helper after a successful login, enable
 the service at boot, and restart it when inactive.
 
 ### Global workspace selection
+
+Use [command batches](../operations/batches.md) to collect command results across
+a script and print one summary with `basaltw batch end`.
 
 Place `--workspace PATH` before the command to select the workspace for saved
 setups, credentials, `known_hosts`, and history. The selection carries through
@@ -2111,7 +2119,9 @@ a new baseline. All paths refer to the target. Commands support `--json`,
 | `--scrub DIR DBPATH REDUNDANCY FREQ` | Configure par2 integrity checking |
 | `--notify TYPE TARGET` | Configure notifications |
 | `--notification-level LEVEL` | Set outbound volume to `verbose`, `normal` (default), `warning`, `error`, or `off`; local logs are unaffected |
-| `--notification-strict-https` | Require CA and hostname verification for HTTPS notification webhooks; omitted by default so self-signed receivers work |
+| `--notification-strict-https` | Verify certificates and hostnames for HTTPS notification webhooks (default) |
+| `--notification-allow-unverified-https` | Explicitly disable webhook HTTPS verification for compatibility |
+| `--notification-ca-file PATH` | Add an absolute sender-local PEM trust bundle for HTTPS webhooks. Pass an empty value to clear it |
 
 Samba shares are authenticated and hardened; `TYPE` is `read` or `write`, and
 `PATH` is one absolute directory. The metadata-cache option moves only Samba's

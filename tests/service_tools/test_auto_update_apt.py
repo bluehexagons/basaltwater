@@ -7,6 +7,7 @@ import subprocess
 import sys
 import unittest
 from contextlib import nullcontext
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -20,6 +21,7 @@ def setUpModule() -> None:
     for target, kwargs in (
         ("maintenance_lock", {"side_effect": lambda: nullcontext(True)}),
         ("is_proxmox_host", {"return_value": False}),
+        ("debian_security_source", {"return_value": None}),
         ("refresh_cloudflared_service", {"return_value": False}),
     ):
         mocker = patch(f"common.service_tools.auto_update_apt.{target}", **kwargs)
@@ -28,6 +30,76 @@ def setUpModule() -> None:
 
 
 class TestAutoUpdateApt(unittest.TestCase):
+    @patch.object(auto_update_apt, "load_notification_configs_from_state", return_value=["cfg"])
+    @patch.object(auto_update_apt, "send_notification_safe")
+    @patch.object(auto_update_apt, "ensure_debian_package_sources")
+    @patch.object(auto_update_apt, "run_apt_command")
+    def test_security_path_is_independent_of_auxiliary_outage_and_removals(
+        self, run, _sources, notify, _configs,
+    ):
+        source = (
+            "Types: deb\nURIs: https://security.debian.org/debian-security\n"
+            "Suites: trixie-security\nComponents: main\nSigned-By: /fixture/archive.pgp\n"
+        )
+        for refresh_fails in (True, False):
+            with self.subTest(refresh_fails=refresh_fails):
+                run.reset_mock()
+                notify.reset_mock()
+                isolated = []
+
+                def apt(args):
+                    if any(arg.startswith("Dir::Etc::sourceparts=") for arg in args):
+                        path = Path(next(arg.split("=", 1)[1] for arg in args
+                                         if arg.startswith("Dir::Etc::sourcelist=")))
+                        self.assertEqual(path.read_text(), source)
+                        self.assertIn(f"Dir::Etc::sourceparts={path.parent / 'sourceparts'}", args)
+                        self.assertFalse(any((path.parent / "sourceparts").iterdir()))
+                        self.assertIn(f"Dir::State::lists={path.parent / 'lists'}", args)
+                        isolated.append(path)
+                        if args[0] == "upgrade":
+                            self.assertIn("--no-remove", args)
+                            self.assertIn("Dpkg::Options::=--force-confold", args)
+                        else:
+                            self.assertIn("APT::Update::Error-Mode=any", args)
+                        return subprocess.CompletedProcess(args, 0, "", "")
+                    if args[0] == "update":
+                        return subprocess.CompletedProcess(args, 100 if refresh_fails else 0, "", "auxiliary outage")
+                    self.assertIn("--no-remove", args)
+                    return subprocess.CompletedProcess(args, 100, "", "packages need removal")
+
+                run.side_effect = apt
+                with patch.object(auto_update_apt, "debian_security_source", return_value=source):
+                    self.assertEqual(auto_update_apt.main(), 1)
+                expected = ["update", "upgrade", "update"]
+                if not refresh_fails:
+                    expected.append("dist-upgrade")
+                self.assertEqual([call.args[0][0] for call in run.call_args_list], expected)
+                self.assertEqual(len(set(isolated)), 1)
+                self.assertFalse(isolated[0].exists())
+                notify.assert_called_once()
+
+    @patch.object(auto_update_apt, "run_apt_command")
+    def test_security_index_failure_prevents_use_of_stale_security_metadata(self, run):
+        run.return_value = subprocess.CompletedProcess([], 100, "", "no security index")
+        with patch.object(auto_update_apt, "debian_security_source", return_value="fixture"):
+            success, detail = auto_update_apt.upgrade_debian_security_packages()
+        self.assertFalse(success)
+        self.assertIn("no security index", detail)
+        self.assertEqual([call.args[0][0] for call in run.call_args_list], ["update"])
+
+    @patch.object(auto_update_apt, "load_notification_configs_from_state", return_value=["cfg"])
+    @patch.object(auto_update_apt, "send_notification_safe")
+    @patch.object(auto_update_apt, "upgrade_packages", return_value=(True, ""))
+    @patch.object(auto_update_apt, "update_package_lists", return_value=True)
+    @patch.object(auto_update_apt, "upgrade_debian_security_packages", return_value=(False, "security offline"))
+    def test_security_failure_is_reported_even_when_full_upgrade_succeeds(
+        self, _security, _lists, upgrade, notify, _configs,
+    ):
+        self.assertEqual(auto_update_apt.main(), 1)
+        upgrade.assert_called_once()
+        notify.assert_called_once()
+        self.assertEqual(notify.call_args.kwargs["details"], "security offline")
+
     @patch("common.service_tools.auto_update_apt.ensure_debian_package_sources")
     @patch("common.service_tools.auto_update_apt.subprocess.run")
     @patch("common.service_tools.auto_update_apt.send_notification_safe")
@@ -130,6 +202,7 @@ class TestProxmoxUpdateGates(unittest.TestCase):
         self.installation = self.enterContext(patch.object(auto_update_apt, "check_proxmox_installation"))
         self.health = self.enterContext(patch.object(auto_update_apt, "check_proxmox_update_safety"))
         self.candidate = self.enterContext(patch.object(auto_update_apt, "check_proxmox_upgrade_candidate"))
+        self.security = self.enterContext(patch.object(auto_update_apt, "upgrade_debian_security_packages"))
         self.refresh = self.enterContext(patch.object(auto_update_apt, "update_package_lists", return_value=True))
         self.upgrade = self.enterContext(patch.object(auto_update_apt, "upgrade_packages", return_value=(True, "")))
 
@@ -140,6 +213,7 @@ class TestProxmoxUpdateGates(unittest.TestCase):
         self.upgrade.side_effect = lambda: (events.append("upgrade") or True, "")
         self.assertEqual(auto_update_apt.main(), 0)
         self.assertEqual(events, ["health", "refresh", "health", "upgrade", "health"])
+        self.security.assert_not_called()
         self.refresh.assert_called_once_with(repair_sources=False)
         self.assertEqual(self.candidate.call_count, 2)
         self.candidate.assert_called_with(require_current=True)

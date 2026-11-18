@@ -395,11 +395,12 @@ same setup command; the node setting does not need to be deleted.
 By default, setup does not change Proxmox firewall state. Supplying
 `--lan-access` or `--access-source` reconciles only basaltwater-commented
 entries in Proxmox's standard cluster-wide `management` IP set, preserves
-operator entries, then enables the cluster firewall after the replacement
-sources exist. That standard set covers the Proxmox web GUI, SSH, VNC, and
-SPICE, while Proxmox automatically includes the local cluster network. Because
-enabling the firewall is cluster-wide, keep a recovery SSH or console session
-open for the first rollout. `--no-access-source` and `--no-lan-access` remove
+operator entries, then enables the firewall on a verified single-node host.
+For a multi-node cluster, review management access on every node, keep recovery
+console access available, and enable the firewall explicitly in Proxmox before
+running setup with these options. That standard set covers the Proxmox web GUI,
+SSH, VNC, and SPICE, while Proxmox includes the local cluster network.
+`--no-access-source` and `--no-lan-access` remove
 the corresponding saved policy and tool-owned set entries but deliberately do
 not disable a firewall that may contain other policy.
 

@@ -36,6 +36,11 @@ UNSAFE_NPM_CONFIGS = (
     b"ignore-scripts=true\nignore-scripts=false\n", b"engine-strict=True\n",
     b"min-release-age=-1\n", b"min-release-age=1.5\n", b"min-release-age=525601\n",
     b"min-release-age=01\n", b"min-release-age=" + b"9" * 500 + b"\n",
+    b"allow-remote=true\n", b"allow-remote=Root\n", b'allow-remote="root"\n',
+    b"allow-remote=root # comment\n", b"allow-remote[]=root\n",
+    b"Allow-Remote=root\n", b"allow-remote=${POLICY}\n",
+    b"allow-remote=root\nallow-remote=all\n",
+    b"allow-remote=root\n_authToken=secret-canary\n",
     b"ignore-scripts=true\x00\n", b"ignore-scripts=true\rengine-strict=true\n",
     b"\xef\xbb\xbfignore-scripts=true\n", b"# non-ascii \xff\n",
     b"#" * 513, b"\n" * 128, b"#" * (MAX_PROJECT_NPM_CONFIG_BYTES + 1),
@@ -444,6 +449,9 @@ class BuildSourceTest(unittest.TestCase):
         accepted = (
             b"", b"\n" * 127, b"#" * 512, (b"#" + b"a" * 510 + b"\n") * 16,
             b"ignore-scripts=false\nengine-strict=true\nmin-release-age=0",
+            b"# Direct project tarballs only\nallow-remote=root\n",
+            b"allow-remote = none\r\nengine-strict=true\r\n",
+            b"allow-remote=all",
         )
         for index, content in enumerate(accepted):
             with self.subTest(case=index):

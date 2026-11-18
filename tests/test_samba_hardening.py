@@ -15,6 +15,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -22,6 +23,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from lib.config import SetupConfig
 from lib.validation import validate_samba_share_specs
 from smb import samba_steps
+from smb import unix_accounts
 
 
 def _make_config(**kwargs) -> SetupConfig:
@@ -82,7 +84,7 @@ class TestConfigureSambaGlobalSettings(unittest.TestCase):
 
             def fake_run(command: str, **_kwargs: object) -> MagicMock:
                 commands.append(command)
-                return MagicMock(returncode=0, stderr="")
+                return MagicMock(returncode=0, stderr="", stdout="No\n")
 
             with patch.object(samba_steps, "SMB_CONF_PATH", smb_conf), \
                  patch.object(samba_steps.os, "fchown"), \
@@ -105,7 +107,7 @@ class TestConfigureSambaGlobalSettings(unittest.TestCase):
             commands.index("systemctl restart smbd"),
         )
 
-    def test_unchanged_global_config_stops_and_disables_nmbd_without_restarting_smbd(self) -> None:
+    def test_unchanged_global_config_restarts_to_finish_interrupted_activation(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             smb_conf = os.path.join(tmpdir, "smb.conf")
             already_configured = samba_steps._render_hardened_global_settings("[global]\n")
@@ -113,12 +115,12 @@ class TestConfigureSambaGlobalSettings(unittest.TestCase):
                 file_obj.write(already_configured)
             with patch.object(samba_steps, "SMB_CONF_PATH", smb_conf), \
                  patch.object(samba_steps.os, "fchown"), \
-                 patch.object(samba_steps, "run", return_value=MagicMock(returncode=0)) as run:
+                 patch.object(samba_steps, "run", return_value=MagicMock(returncode=0, stdout="No\n")) as run:
                 samba_steps.configure_samba_global_settings(_make_config())
 
         commands = [call.args[0] for call in run.call_args_list]
         self.assertIn("systemctl disable --now nmbd", commands)
-        self.assertNotIn("systemctl restart smbd", commands)
+        self.assertIn("systemctl restart smbd", commands)
         self.assertNotIn("systemctl reload smbd", commands)
 
     def test_restores_previous_config_when_testparm_fails(self) -> None:
@@ -158,7 +160,7 @@ class TestConfigureSambaGlobalSettings(unittest.TestCase):
 
             def fake_run(command: str, **_kwargs: object) -> MagicMock:
                 commands.append(command)
-                return MagicMock(returncode=0, stderr="")
+                return MagicMock(returncode=0, stderr="", stdout="No\n")
 
             with patch.object(samba_steps, "SMB_CONF_PATH", smb_conf), \
                  patch.object(samba_steps.os, "fchown"), \
@@ -239,6 +241,8 @@ class TestConfigureSambaFirewall(unittest.TestCase):
     def run_ufw(self, command: str, **_kwargs: object) -> MagicMock:
         import shlex
 
+        if isinstance(command, list):
+            return MagicMock(returncode=0, stdout=":INPUT DROP [0:0]\n", stderr="")
         self.commands.append(command)
         stdout = ""
         if command == "ufw status numbered":
@@ -565,6 +569,11 @@ class TestVetoFilesPattern(unittest.TestCase):
 
 
 class TestReconcileSambaShares(unittest.TestCase):
+    def setUp(self):
+        self.permissions = self.enterContext(patch.object(samba_steps, "_reconcile_share_permissions"))
+        self.enterContext(patch.object(samba_steps.grp, "getgrnam", return_value=SimpleNamespace(gr_gid=1234)))
+        self.enterContext(patch.object(unix_accounts.os, "getgrouplist", return_value=[1000]))
+
     def test_access_only_validation_accepts_users_but_rejects_any_credentials(self) -> None:
         shares = [["read", "docs", "/srv/docs", "alice,bob"]]
         validate_samba_share_specs(shares, require_passwords=False)
@@ -592,7 +601,8 @@ class TestReconcileSambaShares(unittest.TestCase):
 
             with patch.object(samba_steps, "SMB_CONF_PATH", str(conf)), \
                  patch.object(samba_steps, "run", side_effect=run_command), \
-                 patch.object(samba_steps.pwd, "getpwnam", return_value=MagicMock(pw_uid=1000)), \
+                 patch.object(samba_steps.pwd, "getpwnam", side_effect=lambda name: SimpleNamespace(
+                     pw_name=name, pw_uid=1000, pw_gid=1000)), \
                  patch.object(samba_steps.os, "fchown"), \
                  patch.object(samba_steps.os, "makedirs"), \
                  patch.object(samba_steps, "assert_declared_storage_mount"), \
@@ -616,7 +626,7 @@ class TestReconcileSambaShares(unittest.TestCase):
                 def get_user(username):
                     if username == "bob" and missing == "unix":
                         raise KeyError(username)
-                    return MagicMock(pw_uid=1000)
+                    return SimpleNamespace(pw_uid=1000, pw_name=username, pw_gid=1000)
 
                 def run_command(command, **_kwargs):
                     username = shlex.split(command)[-1]
@@ -697,11 +707,19 @@ class TestReconcileSambaShares(unittest.TestCase):
         shares: list[list[str]] | None,
     ) -> tuple[str, list[tuple[str, dict[str, object]]]]:
         calls: list[tuple[str, dict[str, object]]] = []
+        users: set[str] = set()
 
         def fake_run(command: str, **kwargs: object) -> MagicMock:
             calls.append((command, kwargs))
-            missing = command.startswith(("id ", "pdbedit -L ", "getent group "))
+            if command.startswith("useradd "):
+                users.add(shlex.split(command)[-1])
+            missing = command.startswith(("pdbedit -L ", "getent group "))
             return MagicMock(returncode=1 if missing else 0, stderr="")
+
+        def get_user(name):
+            if name not in users:
+                raise KeyError(name)
+            return SimpleNamespace(pw_name=name, pw_uid=1000, pw_gid=1000)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             smb_conf = os.path.join(tmpdir, "smb.conf")
@@ -711,6 +729,7 @@ class TestReconcileSambaShares(unittest.TestCase):
             with patch.object(samba_steps, "SMB_CONF_PATH", smb_conf), \
                  patch.object(samba_steps.os, "fchown"), \
                  patch.object(samba_steps, "run", side_effect=fake_run), \
+                 patch.object(samba_steps.pwd, "getpwnam", side_effect=get_user), \
                  patch.object(samba_steps, "assert_declared_storage_mount") as assert_mount, \
                  patch.object(samba_steps.os, "makedirs"):
                 samba_steps.reconcile_samba_shares(config)
@@ -791,32 +810,78 @@ class TestReconcileSambaShares(unittest.TestCase):
         ]
         self.assertEqual(password_calls[0]["input_data"], "very-secret\nvery-secret\n")
 
-    def test_recursive_permission_changes_preserve_executable_bits(self) -> None:
+    def test_recursive_permissions_are_reconciled_for_write_share(self) -> None:
         _configured, calls = self._run_reconcile(
             "[global]\n",
             [["write", "docs", "/srv/docs", "alice:very-secret"]],
         )
 
         commands = [command for command, _ in calls]
-        self.assertIn("chgrp -R --preserve-root smb_docs_write /srv/docs", commands)
+        self.permissions.assert_called_once_with("/srv/docs", 1234, writable=True)
         self.assertTrue(any('RequiresMountsFor="/srv/docs"' in command for command in commands))
         self.assertIn("systemctl daemon-reload", commands)
-        self.assertIn("chmod -R --preserve-root g+rwX /srv/docs", commands)
-        self.assertIn(
-            "find /srv/docs -xdev -type d -exec chmod g+s -- {} +",
-            commands,
-        )
-        self.assertNotIn("chmod -R --preserve-root 2775 /srv/docs", commands)
 
     def test_read_share_removes_group_write_without_making_files_executable(self) -> None:
-        _configured, calls = self._run_reconcile(
+        self._run_reconcile(
             "[global]\n",
             [["read", "docs", "/srv/docs", "alice:very-secret"]],
         )
 
-        commands = [command for command, _ in calls]
-        self.assertIn("chmod -R --preserve-root g+rX,g-w /srv/docs", commands)
-        self.assertNotIn("chmod -R --preserve-root 2755 /srv/docs", commands)
+        self.permissions.assert_called_once_with("/srv/docs", 1234, writable=False)
+
+    def test_privileged_account_in_later_share_blocks_all_preparation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            conf = Path(directory) / "smb.conf"
+            conf.touch()
+            config = _make_config(samba_shares=[["read", "docs", "/srv/docs", "alice:secret"],
+                                                ["read", "archive", "/srv/archive", "bob:secret"]])
+            with patch.object(samba_steps, "SMB_CONF_PATH", str(conf)), \
+                    patch.object(samba_steps, "assert_declared_storage_mount"), \
+                    patch.object(samba_steps.pwd, "getpwnam", side_effect=lambda name: SimpleNamespace(
+                        pw_name=name, pw_uid=1001, pw_gid=1001)), \
+                    patch.object(unix_accounts.os, "getgrouplist", side_effect=[[1001], [1001, 1234]]), \
+                    patch.object(samba_steps, "run") as run, \
+                    self.assertRaisesRegex(ValueError, "unprivileged Unix identity: bob"):
+                samba_steps.reconcile_samba_shares(config)
+            run.assert_not_called()
+            self.permissions.assert_not_called()
+
+
+class TestSharePermissionMountBoundary(unittest.TestCase):
+    def test_skips_nested_mounts_and_preserves_executable_bits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "share"
+            root.mkdir()
+            regular = root / "regular"
+            executable = root / "executable"
+            for path, mode in ((regular, 0o620), (executable, 0o700)):
+                path.touch()
+                path.chmod(mode)
+            nested = [root / name for name in ("bind", "device")]
+            for path in nested:
+                path.mkdir()
+                (path / "untouched").touch()
+                (path / "untouched").chmod(0o600)
+            (root / "outside").symlink_to(nested[0])
+            real_mount_id, real_fstat = samba_steps._mount_id, os.fstat
+
+            def mount_id(fd):
+                return -1 if os.readlink(f"/proc/self/fd/{fd}") == str(nested[0]) else real_mount_id(fd)
+
+            def fstat(fd):
+                info = real_fstat(fd)
+                if os.readlink(f"/proc/self/fd/{fd}") == str(nested[1]):
+                    return SimpleNamespace(st_dev=-1, st_mode=info.st_mode, st_gid=info.st_gid)
+                return info
+
+            with patch.object(samba_steps, "_mount_id", side_effect=mount_id), patch.object(os, "fstat", side_effect=fstat):
+                samba_steps._reconcile_share_permissions(str(root), root.stat().st_gid, writable=False)
+            self.assertEqual(regular.stat().st_mode & 0o777, 0o640)
+            self.assertEqual(executable.stat().st_mode & 0o777, 0o750)
+            self.assertTrue(root.stat().st_mode & 0o2000)
+            for path in nested:
+                self.assertFalse(path.stat().st_mode & 0o2000)
+                self.assertEqual((path / "untouched").stat().st_mode & 0o777, 0o600)
 
 
 class TestSambaConfigActivation(unittest.TestCase):
@@ -861,7 +926,7 @@ class TestSambaConfigActivation(unittest.TestCase):
             if self.error:
                 raise self.error
             return MagicMock(returncode=1, stderr="bad candidate")
-        return MagicMock(returncode=0, stderr="")
+        return MagicMock(returncode=0, stderr="", stdout="No\n")
 
     def assert_restored(self) -> None:
         self.assertEqual(self.conf.read_text(), self.original)
@@ -908,9 +973,9 @@ class TestSambaConfigActivation(unittest.TestCase):
                 self.assertEqual(self.commands.count(activation), 1)
                 self.commands.clear()
                 self.configure(operation)
-                self.assertNotIn("systemctl restart smbd", self.commands)
+                self.assertEqual(self.commands.count("systemctl restart smbd"), int(operation == "global"))
                 self.assertNotIn("systemctl reload smbd", self.commands)
-                self.assertFalse(any(command.startswith("testparm") for command in self.commands))
+                self.assertFalse(any(command.startswith("testparm -s ") for command in self.commands))
 
     def test_activation_interrupt_restores_previous_file(self) -> None:
         self.failure, self.error = "systemctl restart smbd", KeyboardInterrupt()

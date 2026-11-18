@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
@@ -16,8 +18,10 @@ from desktop.xrdp_steps import (
     _install_xrdp_packages,
     _remove_legacy_xrdp_socket_environment,
     _validate_xrdp_tls_certificate,
+    _verify_xrdp_listener,
     harden_xrdp,
     install_xrdp,
+    stop_unneeded_xrdp,
 )
 from desktop.desktop_environment_steps import configure_xfce_for_rdp, install_desktop
 from desktop.session_steps import install_session_runtime
@@ -114,13 +118,14 @@ class TestGenerateXrdpIni(unittest.TestCase):
         self.assertIn("xrdpvr=false", rendered)
         self.assertIn("certificate=/etc/xrdp/cert.pem", rendered)
         self.assertIn("key_file=/etc/xrdp/key.pem", rendered)
+        self.assertIn("runtime_user=xrdp\nruntime_group=xrdp\n", rendered)
         self.assertNotIn("channel_code", rendered)
         xorg_section = rendered.split("[Xorg]\n", 1)[1]
         self.assertNotIn("\nip=", xorg_section)
 
     def test_renders_listener_and_secure_coding_channel_defaults(self):
         template = (
-            "address={RDP_BIND_ADDRESS}\n"
+            "port={RDP_LISTENER}\n"
             "rdpdr={RDP_DRIVE_REDIRECTION}\n"
             "rdpsnd={RDP_AUDIO}\n"
             "cliprdr={RDP_CLIPBOARD}\n"
@@ -133,14 +138,14 @@ class TestGenerateXrdpIni(unittest.TestCase):
 
         rendered = _generate_xrdp_ini(config, template)
 
-        self.assertIn("address=127.0.0.1", rendered)
+        self.assertIn("port=tcp://127.0.0.1:3389", rendered)
         self.assertIn("rdpdr=false", rendered)
         self.assertIn("rdpsnd=false", rendered)
         self.assertIn("cliprdr=true", rendered)
 
     def test_renders_explicit_channel_policy(self):
         template = (
-            "address={RDP_BIND_ADDRESS}\n"
+            "port={RDP_LISTENER}\n"
             "rdpdr={RDP_DRIVE_REDIRECTION}\n"
             "rdpsnd={RDP_AUDIO}\n"
             "cliprdr={RDP_CLIPBOARD}\n"
@@ -158,10 +163,60 @@ class TestGenerateXrdpIni(unittest.TestCase):
 
         rendered = _generate_xrdp_ini(config, template)
 
-        self.assertIn("address=10.0.0.25", rendered)
+        self.assertIn("port=tcp://10.0.0.25:3389", rendered)
         self.assertIn("rdpdr=true", rendered)
         self.assertIn("rdpsnd=true", rendered)
         self.assertIn("cliprdr=false", rendered)
+
+    def test_renders_explicit_ipv6_listener(self):
+        config = SetupConfig(host="vm", username="agent", system_type="workstation_dev",
+                             enable_rdp=True, rdp_bind_address="2001:db8::10")
+        self.assertEqual(_generate_xrdp_ini(config, "port={RDP_LISTENER}"), "port=tcp6://{2001:db8::10}:3389")
+
+
+class TestXrdpListenerPolicy(unittest.TestCase):
+    def test_listener_requires_the_configured_address_and_service_identity(self):
+        config = SetupConfig(host="vm", username="agent", system_type="workstation_dev")
+        with patch("desktop.xrdp_steps.pwd.getpwnam", return_value=SimpleNamespace(pw_uid=100)), \
+             patch("desktop.xrdp_steps.grp.getgrnam", return_value=SimpleNamespace(gr_gid=101)), \
+             patch("desktop.xrdp_steps.time.monotonic", side_effect=[0, 5, 0, 5, 0]), \
+             patch("desktop.xrdp_steps.run") as run:
+            for bind, identity, should_pass in (
+                ("0.0.0.0", "Uid:\t100\t100\t100\t100\nGid:\t101\t101\t101\t101\n", False),
+                ("127.0.0.1", "Uid:\t0\t0\t0\t0\nGid:\t0\t0\t0\t0\n", False),
+                ("127.0.0.1", "Uid:\t100\t100\t100\t100\nGid:\t101\t101\t101\t101\n", True),
+            ):
+                with self.subTest(bind=bind, identity=identity):
+                    run.side_effect = [
+                        SimpleNamespace(stdout="42\n"),
+                        SimpleNamespace(stdout=f'LISTEN 0 50 {bind}:3389 0.0.0.0:* users:(("xrdp",pid=42,fd=9))\n'),
+                        SimpleNamespace(stdout=""),
+                        SimpleNamespace(stdout=identity),
+                    ]
+                    if should_pass:
+                        _verify_xrdp_listener(config)
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, "Could not verify unprivileged xRDP listener"):
+                            _verify_xrdp_listener(config)
+
+    def test_headless_setup_stops_only_a_managed_frontend(self):
+        config = SetupConfig(host="vm", username="admin", system_type="server_lite")
+        from plugins.server import build_server_steps
+
+        self.assertIn(stop_unneeded_xrdp, [step for _name, step in build_server_steps(config)])
+        with TemporaryDirectory() as directory, \
+             patch("desktop.xrdp_steps.can_manage_system_services", return_value=True), \
+             patch("desktop.xrdp_steps.is_package_installed", return_value=True), \
+             patch("desktop.xrdp_steps.is_dry_run", return_value=False), \
+             patch("desktop.xrdp_steps._XRDP_CONFIG", str(Path(directory) / "xrdp.ini")), \
+             patch("desktop.xrdp_steps._XRDP_SESMAN_CONFIG", str(Path(directory) / "sesman.ini")), \
+             patch("desktop.xrdp_steps.run") as run:
+            (Path(directory) / "xrdp.ini").write_text("[Globals]\nport=3389\n")
+            stop_unneeded_xrdp(config)
+            run.assert_not_called()
+            (Path(directory) / "sesman.ini").write_text("[Xorg]\nparam=/usr/local/libexec/basaltwater-xrdp-Xorg\n")
+            stop_unneeded_xrdp(config)
+            run.assert_called_once_with("systemctl disable --now xrdp")
 
 
 class TestEnsureUserInGroup(unittest.TestCase):
@@ -296,7 +351,8 @@ class TestInstallXrdp(unittest.TestCase):
     """Test XRDP installation and configuration."""
 
     def setUp(self):
-        for name in ("assert_desktop_idle", "install_session_runtime", "_require_peer_authenticated_sesrun"):
+        for name in ("assert_desktop_idle", "install_session_runtime", "_require_peer_authenticated_sesrun",
+                     "_verify_xrdp_listener"):
             runtime_patcher = patch(f"desktop.xrdp_steps.{name}")
             self.addCleanup(runtime_patcher.stop)
             runtime_patcher.start()
@@ -363,7 +419,7 @@ class TestInstallXrdp(unittest.TestCase):
 
             install_xrdp(config)
 
-        install_calls = [c for c in mock_run.call_args_list if 'apt-get install' in str(c)]
+        install_calls = [c for c in mock_run.call_args_list if 'apt-get ' in str(c) and ' install ' in str(c)]
         self.assertGreater(len(install_calls), 0)
         self.assertIn("--no-upgrade xserver-xorg-core", str(install_calls[0]))
         self.assertIn("xrdp", str(install_calls[1]))
@@ -512,7 +568,7 @@ class TestInstallXrdp(unittest.TestCase):
             "runuser -u testuser -- mkdir -p /home/testuser/.local/share/xorg",
             run_commands,
         )
-        self.assertIn("chmod 700 /home/testuser/.local/share/xorg", run_commands)
+        self.assertIn("runuser -u testuser -- chmod 700 /home/testuser/.local/share/xorg", run_commands)
 
     @patch('desktop.xrdp_steps.run')
     @patch('desktop.xrdp_steps.os.path.exists')

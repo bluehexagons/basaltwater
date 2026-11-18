@@ -12,7 +12,7 @@ import secrets
 import shlex
 import socket
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from common.agent_steps import BASE_AGENT_SKILL_NAMES, install_managed_agent_skills
 from lib.atomic_io import write_text_atomic
@@ -762,6 +762,8 @@ def _configure_web_policy(
     local_ca: bool,
     users: list[str],
     access_sources: Sequence[str],
+    *,
+    route_access_sources: Mapping[str, Sequence[str]] | None = None,
 ) -> bool:
     sources = [
         validate_network_ip_or_cidr(source, "internal HTTPS access source")
@@ -770,6 +772,10 @@ def _configure_web_policy(
     content = json.dumps(
         {
             "access_sources": list(dict.fromkeys(sources)),
+            **({"route_access_sources": {
+                name: [validate_network_ip_or_cidr(source, "HTTPS route access source") for source in allowed]
+                for name, allowed in route_access_sources.items()
+            }} if route_access_sources is not None else {}),
             "base_url": base_url,
             "ca_certificate": GODOT_WEB_CA_DOWNLOAD if local_ca else None,
             "certificate": cert_path,
@@ -952,6 +958,7 @@ def configure_internal_web_host(
     *,
     configure_static_site: bool = False,
     install_utility: bool = False,
+    route_access_sources: Mapping[str, Sequence[str]] | None = None,
 ) -> tuple[str, bool, str, str, bool]:
     """Ensure the shared internal HTTPS origin and forwarding policy exist."""
 
@@ -998,6 +1005,7 @@ def configure_internal_web_host(
         local_ca,
         normalized_users,
         normalized_sources,
+        route_access_sources=route_access_sources,
     )
     if install_utility:
         _configure_web_control_service()

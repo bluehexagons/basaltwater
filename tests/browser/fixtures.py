@@ -188,7 +188,6 @@ class FixtureEnvironment:
         self.broker = SyntheticBroker()
         self.headscale_broker = SyntheticHeadscaleBroker()
         self.urls: dict[str, str] = {}
-        self.updates = 0
         self.issues = 0
         self.loop = asyncio.new_event_loop()
         self.thread = threading.Thread(target=self.loop.run_forever, daemon=True)
@@ -215,10 +214,7 @@ class FixtureEnvironment:
             state = self.panel_state()
             self.backends["panel"].RequestHandlerClass.state = state
             providers = {"t3code": {"label": "T3 Code", "command": ["fixture-pair"], "base_url_flag": "--base-url",
-                                    "url_field": "url", "expires_field": "expires", "public_port": 1, "https_public_port": 1,
-                                    "connect": {"link_command": ["fixture-disabled"], "unlink_command": ["fixture-disabled"],
-                                                "status_command": ["fixture-connect-status"],
-                                                "restart_request": str(self.directory / "unused-restart")}}}
+                                    "url_field": "url", "expires_field": "expires", "public_port": 1, "https_public_port": 1}}
             self.backends["pairing"].pairing_state = pairing.PairingState(providers)
             self.backends["approval"] = ApprovalServer(("127.0.0.1", 0), password_record(self.username, self.password),
                                                         "https://localhost", self.broker)
@@ -275,7 +271,7 @@ class FixtureEnvironment:
         home = self.directory / "home"
         home.mkdir()
         state = panel.WebPanelState({"host": "fixture-host", "username": self.username, "system_type": "server_dev",
-                                     "title": "Browser fixture", "features": {"t3_update": True, "notification_ingest": False},
+                                     "title": "Browser fixture", "features": {"t3code": True, "notification_ingest": False},
                                      "services": [], "access": [{
                                          "label": "SMB share: long_name_write",
                                          "value": "smb://fixture-host/long_name_write",
@@ -289,19 +285,11 @@ class FixtureEnvironment:
         self.stack.enter_context(patch.object(state, "audit_snapshot", return_value={"status": "ok", "events": []}))
         self.stack.enter_context(patch.object(panel, "collect_service_health", return_value=[
             {"label": "Synthetic service", "value": "active", "description": "Fixture only"}]))
-        self.stack.enter_context(patch.object(state, "t3_update_available", return_value=True))
-        self.stack.enter_context(patch.object(state, "trigger_t3_update", side_effect=self.synthetic_update))
         self.stack.enter_context(patch.object(jobs, "collect_jobs", return_value=jobs.JobSnapshot(job_rows(), [], absent=9)))
         return state
 
-    def synthetic_update(self) -> bool:
-        self.updates += 1
-        return True
 
     def provider_command(self, command, **kwargs):
-        if command == ["fixture-connect-status"]:
-            return subprocess.CompletedProcess(command, 0, json.dumps({"desired": True, "authenticated": True,
-                "linked": True, "provisioned": True, "relayUrl": None, "publishEnabled": False}), "")
         if command[0] != "fixture-pair":
             raise AssertionError(f"Unexpected command in browser fixture: {command[0]}")
         self.issues += 1
@@ -343,7 +331,7 @@ class FixtureEnvironment:
         if request.path in {"/project/", "/pair"}:
             return web.Response(text="<!doctype html><title>Disposable project</title><h1>Synthetic destination</h1>", content_type="text/html")
         if request.path == "/__fixture__/state":
-            return web.json_response({"updates": self.updates, "pairing_links": self.issues})
+            return web.json_response({"pairing_links": self.issues})
         headers = {key: value for key, value in request.headers.items() if key.lower() not in {"connection", "transfer-encoding", "x-forwarded-proto", "x-real-ip", "x-basaltwater-user"}}
         source = "192.0.2.2" if request.headers.get("X-Fixture-Engine") == "firefox" else "192.0.2.1"
         headers.update({"X-Forwarded-Proto": "https", "X-Forwarded-Host": request.host, "X-Real-IP": source})

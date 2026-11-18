@@ -138,7 +138,7 @@ providers explicitly with `--codex`, `--claude`, or `--opencode`.
 | Setup plan only | `--dry-run` (use installer `--plan` before `--local-setup` for a full preview) |
 | Restrict inbound workstation access | `--lan-access` and/or `--access-source PRIVATE_IP_OR_CIDR`; `--no-lan-access --no-access-source` closes managed access |
 | Remote shell access | SSH follows detected service state on local setup; explicitly use `--ssh` or `--no-ssh` to override; remote setup defaults to SSH; see [SSH access](#ssh-access) |
-| Setup-result webhooks | `--notify webhook URL` (repeatable), `--notification-level LEVEL`, `--notification-strict-https` |
+| Setup-result webhooks | `--notify webhook URL` (repeatable), `--notification-level LEVEL`, `--notification-ca-file PATH` |
 
 Examples:
 
@@ -319,9 +319,9 @@ event. Validated setup preflight or step failures send the failing phase and
 exception type; inspect local output for details. Delivery failure prints a
 warning and preserves the setup outcome.
 
-HTTPS accepts self-signed certificates by default, matching other Basaltwater
-senders. `--notification-strict-https` verifies the receiver certificate and
-hostname using the normal CA trust store. Notifications need outbound access
+HTTPS verifies receiver certificates and hostnames by default. For a private
+CA, add trust on the workstation or supply a sender-local PEM path with
+`--notification-ca-file`. Notifications need outbound access
 only; no listener, mail transport, or notification timer is installed. The
 CachyOS integration sends setup results, including those from refresh; it does
 not install the Debian maintenance/security notification jobs or monitor Sunshine.
@@ -641,7 +641,8 @@ runtime updates, and activation recovery, use the
 - Package installation and pruning old pacman downloads may prompt for sudo.
   Agent CLIs, the T3 web runtime, user-cache cleanup, and repository checks are
   otherwise noninteractive. No update or cleanup timers are installed.
-- Cache cleanup runs after tool readiness. If cleanup fails, setup reports an
+- Package pressure recovery runs before installing tools; ordinary cache cleanup
+  runs after tool readiness. If cleanup fails, setup reports an
   incomplete result and returns nonzero; installed tools are retained. Resolve
   the cleanup error and rerun setup. This profile has no automatic cache retry.
 - This local profile saves a private successful selection for later maintenance,
@@ -654,7 +655,8 @@ runtime updates, and activation recovery, use the
 
 ## Cleanup during setup
 
-Every setup run performs cleanup after tool readiness. It installs
+Every setup run checks for package-cache pressure before installing tools and
+performs ordinary cleanup after tool readiness. It installs
 `pacman-contrib` for the distro's [paccache version selection](https://man.archlinux.org/man/paccache.8),
 but does not enable `paccache.timer` or install another scheduled service.
 Current CachyOS already offers cache cleanup in Shelly's Utilities page, and
@@ -670,6 +672,14 @@ distro cleanup or update tools. AUR build caches, including Shelly's, stay intac
   Package transaction locks defer cleanup. Private download directories,
   partial downloads, symlinks, custom cache locations, and AUR build trees are
   preserved. Packages are never uninstalled, including orphaned packages.
+- **Low-space package recovery:** when `/var/cache/pacman/pkg` has less than
+  2 GiB available or fewer than 10,000 free inodes, the early pass retains one
+  cached version per package and seven days of accesses/modifications, plus
+  every currently installed version. It uses the same path, ownership,
+  transaction-lock and identity checks and stops selecting archives when
+  capacity recovers. Already selected signatures finish with their archives.
+  If `paccache` is not installed yet, the early pass reports that limitation;
+  the later ordinary cleanup follows installation of `pacman-contrib`.
 - **Developer caches:** reuse the shared user-cache policies for npm/npx, pip,
   uv, Go, Codex, and Electron downloads. Only known rebuildable caches are
   pruned; size/age limits and free-space checks control larger evictions.
@@ -681,10 +691,13 @@ distro cleanup or update tools. AUR build caches, including Shelly's, stay intac
   environment, covering both desktop `~/.t3` and the isolated managed web
   directory. Current logs and T3 databases are preserved.
 
-For a read-only package-cache inventory from this checkout:
+Preview or apply package-cache cleanup from this checkout:
 
 ```fish
 python3 common/cachyos_cleanup.py --dry-run
+python3 common/cachyos_cleanup.py --pressure --dry-run
+# Apply the pressure policy only while the cache filesystem is low:
+sudo python3 common/cachyos_cleanup.py --pressure --apply
 ```
 
 The helper reports candidate archive/signature counts. Setup's `--dry-run`

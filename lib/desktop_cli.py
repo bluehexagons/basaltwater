@@ -46,6 +46,8 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     instructions.add_argument("--json", action="store_true")
     from desktop.development import add_development_parser
     add_development_parser(commands)
+    from desktop.gamepad_qa import add_gamepad_parser
+    add_gamepad_parser(commands)
     evidence = commands.add_parser("evidence", help="Record manual launches, inputs and captures with project/task provenance")
     evidence_commands = evidence.add_subparsers(dest="evidence_command", required=True)
     from desktop.qa_cli import add_qa_parser
@@ -87,6 +89,7 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     starting = commands.add_parser("start")
     starting.add_argument("--json", action="store_true")
     starting.add_argument("--remember", action="store_true", help="Native opt-in to a reusable KDE grant; initial approval remains required")
+    starting.add_argument("--touch", action="store_true", help="Native: explicitly request touchscreen consent for bounded multitouch gestures")
     starting.add_argument("--session-seconds", type=int, default=0, help="Optional native lifetime, 60–28800 seconds; 0 (default) is unlimited")
     renewal = commands.add_parser("renew", help="Change an optional native backend lifetime without changing agent permission")
     renewal.add_argument("--generation", required=True)
@@ -196,7 +199,7 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     action.add_argument("--generation", required=True)
     action.add_argument("--observation", help="Bind input to the latest screenshot's single-use observation_id")
     action.add_argument("--geometry", required=True, nargs=2, type=int, metavar=("WIDTH", "HEIGHT"))
-    action.add_argument("kind", choices=("key", "keycode", "text", "click", "move", "drag"))
+    action.add_argument("kind", choices=("key", "keycode", "text", "click", "move", "drag", "relative", "scroll", "touch"))
     action.add_argument("--key")
     action.add_argument("--codes", nargs="+", type=int, help="Native physical chord: 1–8 distinct Linux evdev keyboard codes (1–255), e.g. 29 30 for Ctrl+A; no XKB +8 offset")
     action.add_argument("--text")
@@ -204,11 +207,14 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     action.add_argument("--hold-ms", type=int, help="Native key/button press duration, 0–5000 ms; e.g. 120 for game buttons")
     action.add_argument("--x", type=int)
     action.add_argument("--y", type=int)
+    action.add_argument("--dx", type=int, help="Native relative logical units (-4096..4096) or discrete scroll steps (-100..100)")
+    action.add_argument("--dy", type=int, help="Native relative logical units or scroll steps; negative scroll is up/left")
+    action.add_argument("--frames", metavar="FILE", help="Native touch: path to a JSON file containing 2–128 complete contact frames within 5000 ms, final contacts empty")
     action.add_argument("--to-x", type=int, help="Native drag endpoint in full-monitor capture pixels")
     action.add_argument("--to-y", type=int)
     action.add_argument("--duration-ms", type=int, help="Native drag duration, 1–5000 ms (default: 300)")
-    action.add_argument("--button", type=int, choices=range(1, 8), default=1,
-                        help="Integer: 1 left, 2 middle, 3 right, 4/5 vertical wheel, 6/7 horizontal wheel; drag uses 1–3")
+    action.add_argument("--button", type=int, choices=range(1, 10), default=1,
+                        help="1 left, 2 middle, 3 right, 4/5 vertical wheel, 6/7 horizontal wheel; native 8 side/9 extra; drag uses 1–3")
     action.add_argument("--observe", action="store_true", help="After completed input, settle and capture again; native skips the initial sample; never replay on capture failure")
     action.add_argument("--observe-window", help="Debian: capture only this window ID after input (requires --observe); never falls back to the desktop")
     action.add_argument("--settle-ms", type=int, default=120, help="Settling delay for --observe, 0–5000 ms (default: 120)")
@@ -226,7 +232,10 @@ def run_desktop_command(args: argparse.Namespace) -> int:
     try:
         command = args.desktop_command
         control_command = "basaltw desktop --native" if backend is not runtime else "basaltw desktop"
-        if command == "preflight":
+        if command == "gamepad":
+            from desktop.gamepad_qa import run_command
+            result = run_command(args, native=backend is not runtime)
+        elif command == "preflight":
             from desktop.preflight import preflight
             result = preflight(args.repository, backend=backend, native=backend is not runtime,
                                managed_source=args.managed_source, instructions=args.instruction, output=args.output)
@@ -304,11 +313,12 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                       "ownership_transferred": False, "permission_changed": False, "desktop_preserved": True}
         elif command == "start":
             if backend is runtime:
-                if args.remember or args.session_seconds != 0:
-                    raise ValueError("Persistent grants and session lifetime require --native")
+                if args.remember or args.touch or args.session_seconds != 0:
+                    raise ValueError("Persistent grants, touchscreen consent and session lifetime require --native")
                 result = backend.start()
             else:
-                result = backend.start(remember=args.remember, session_seconds=args.session_seconds)
+                result = backend.start(remember=args.remember, session_seconds=args.session_seconds,
+                                       **({"touch": True} if args.touch else {}))
         elif command == "revoke":
             if backend is runtime:
                 raise ValueError("Portal grant revocation requires --native")
@@ -447,6 +457,15 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                         observation_output = str(Path(args.output).absolute()) if args.output else client.artifact_path()
                         client.validate_capture_output(observation_output, backend=backend)
                     payload.update({name: getattr(args, name) for name in ("generation", "geometry", "kind", "key", "text", "x", "y", "button")})
+                    if args.dx is not None:
+                        payload["dx"] = args.dx
+                    if args.dy is not None:
+                        payload["dy"] = args.dy
+                    if args.frames is not None:
+                        from desktop.pointer_gestures import MAX_PLAN_BYTES
+                        from lib.atomic_io import read_json_file
+                        validate_filesystem_path(args.frames, must_exist=True)
+                        payload["frames"] = read_json_file(args.frames, max_bytes=MAX_PLAN_BYTES)
                     payload["codes"] = getattr(args, "codes", None)
                     client.validate_keycodes(payload)
                     payload["delay_ms"] = (10 if backend is not runtime and args.kind == "text" and args.delay_ms is None else args.delay_ms)
@@ -476,7 +495,7 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                                       existing_window_ids=([item["id"] for item in observed["windows"] if item["id"] in previous]
                                                            if previous is not None else None),
                                       window_association="title substring; inspect PID/class before acting")
-        exit_code = int("error" in result or result.get("healthy") is False or result.get("state") == "failed"
+        exit_code = int("error" in result or result.get("ok") is False or result.get("healthy") is False or result.get("state") == "failed"
                         or (result.get("state") == "stopped" and bool(result.get("last_failure"))))
         if getattr(args, "save_output", False):
             from desktop.observations import save_observation

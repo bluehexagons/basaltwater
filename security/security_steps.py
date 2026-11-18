@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import glob
 import ipaddress
 import json
 import os
@@ -10,6 +11,7 @@ import shlex
 import shutil
 import stat
 import time
+from pathlib import Path
 from urllib.parse import quote
 
 from common.build_ssh_admission import (
@@ -31,6 +33,7 @@ from lib.machine_state import (
     is_vm,
 )
 from lib.remote_utils import is_dry_run, run
+from lib.ufw_ingress import verify_live_ufw_ingress
 from lib.validation import (
     validate_filesystem_path,
     validate_network_ip,
@@ -46,33 +49,57 @@ _DISTRO_APT_UPDATE_UNITS = (
 _JOURNAL_CONF_DIR = "/etc/systemd/journald.conf.d"
 _JOURNAL_CONF_FILE = f"{_JOURNAL_CONF_DIR}/basaltwater.conf"
 _SSHD_DROPIN_DIR = "/etc/ssh/sshd_config.d"
+_SSHD_CONFIG = "/etc/ssh/sshd_config"
 _SSHD_DROPIN_FILE = f"{_SSHD_DROPIN_DIR}/00-basaltwater-hardening.conf"
 _LEGACY_SSHD_DROPIN_FILE = f"{_SSHD_DROPIN_DIR}/99-basaltwater-hardening.conf"
 _SSHD_RUNTIME_DIR = "/run/sshd"
+_SSHD_ENVIRONMENT_FILE = Path("/etc/default/ssh")
+_SSH_MATCH_REQUIRED = {
+    "passwordauthentication": {"no"},
+    "kbdinteractiveauthentication": {"no"},
+    "challengeresponseauthentication": {"no"},
+    "pubkeyauthentication": {"yes"},
+    "permitrootlogin": {"prohibit-password", "without-password"},
+    "authenticationmethods": {"publickey"},
+    "permitemptypasswords": {"no"},
+    "x11forwarding": {"no"},
+    "disableforwarding": {"yes"},
+    "permituserrc": {"no"},
+    "allowgroups": set(),
+    "denygroups": set(),
+    "allowusers": set(),
+    "denyusers": set(),
+}
 _SYSCTL_HARDENING_FILE = "/etc/sysctl.d/99-security-hardening.conf"
 _FAIL2BAN_SSHD_JAIL = "/etc/fail2ban/jail.d/sshd.local"
 _FAIL2BAN_XRDP_JAIL = "/etc/fail2ban/jail.d/xrdp.local"
 _FAIL2BAN_XRDP_FILTER = "/etc/fail2ban/filter.d/xrdp.conf"
+_FAIL2BAN_MANAGED_MARKER = "# Managed by Basaltwater\n"
+_FAIL2BAN_LEGACY_XRDP_JAIL = """[xrdp]
+enabled = true
+port = 3389
+protocol = tcp
+filter = xrdp
+logpath = /var/log/xrdp-sesman.log
+           /var/log/xrdp.log
+maxretry = 3
+bantime = 3600
+findtime = 600
+"""
 _AUDIT_RULES_FILE = "/etc/audit/rules.d/99-basaltwater.rules"
 _FAILLOCK_CONF = "/etc/security/faillock.conf"
 _PAM_FAILLOCK_PROFILE = "/usr/share/pam-configs/faillock-basaltwater"
 _PAM_COMMON_AUTH = "/etc/pam.d/common-auth"
-_PAM_COMMON_ACCOUNT = "/etc/pam.d/common-account"
 _ISSUE_BANNER = "Authorized access only. All activity is monitored and logged.\n"
 _SECURITY_MONITOR_SCRIPT = "/opt/basaltwater/security/service_tools/security_monitor.py"
 _SSH_RULE_COMMENT_PREFIX = "basaltwater SSH"
+_LEGACY_CLOUDFLARE_SSH_COMMENT_PREFIX = "basaltwater cloudflare ssh"
 _RDP_RULE_COMMENT_PREFIX = "basaltwater RDP"
 _WEB_RULE_COMMENT_PREFIX = "basaltwater web TCP"
 _MDNS_RULE_COMMENT_PREFIX = "basaltwater mDNS UDP"
 _PROXMOX_MANAGEMENT_COMMENT_PREFIX = "basaltwater access source"
 _UFW_NUMBERED_RULE_RE = re.compile(r"^\[\s*(\d+)\]")
-_UFW_BROAD_INBOUND_RE = re.compile(
-    r"^(?:\[\s*\d+\]\s+)?(.+?)\s+(?:ALLOW|LIMIT)\s+IN\s+Anywhere\b"
-)
-_PAM_ACTIVE_LINES = (
-    re.compile(r"^\s*auth\s+\[default=die\]\s+pam_faillock\.so\s+authfail\b"),
-    re.compile(r"^\s*account\s+required\s+pam_faillock\.so\b"),
-)
+_PAM_AUTH_LINE = re.compile(r"^-?auth\s+(\[[^\]]+\]|\S+)\s+(\S+)(?:\s+(.*))?$")
 _APPARMOR_USERNS_PROFILE = "/etc/apparmor.d/unprivileged_userns"
 _APPARMOR_USERNS_RESTRICTION = (
     "/proc/sys/kernel/apparmor_restrict_unprivileged_userns"
@@ -177,7 +204,7 @@ def _rdp_firewall_rules(config: SetupConfig) -> list[tuple[str, str]]:
 
 
 def _remove_stale_managed_rules(
-    comment_prefix: str,
+    comment_prefix: str | tuple[str, ...],
     desired_comments: set[str],
 ) -> None:
     """Remove obsolete comment-tagged rules in descending UFW order."""
@@ -186,12 +213,13 @@ def _remove_stale_managed_rules(
     if result.returncode != 0 or not isinstance(stdout, str):
         raise _ufw_failure("Could not inspect obsolete managed firewall rules", result)
 
+    prefixes = (comment_prefix,) if isinstance(comment_prefix, str) else comment_prefix
     stale_rule_numbers: list[int] = []
     for line in stdout.splitlines():
         if "#" not in line:
             continue
         comment = line.split("#", 1)[1].strip()
-        if comment != comment_prefix and not comment.startswith(f"{comment_prefix} "):
+        if not any(comment == prefix or comment.startswith(f"{prefix} ") for prefix in prefixes):
             continue
         if comment in desired_comments:
             continue
@@ -241,6 +269,36 @@ def _configure_rdp_firewall(config: SetupConfig) -> None:
     )
 
 
+def clear_disabled_rdp_firewall(config: SetupConfig) -> None:
+    """Remove owned direct RDP ingress even while UFW is inactive."""
+    if config.enable_rdp or not can_manage_firewall(config.machine_type):
+        return
+    if is_dry_run():
+        print("  [DRY-RUN] Would remove managed direct RDP firewall rules")
+        return
+    if not shutil.which("ufw"):
+        return
+    status = _run_ufw("ufw status")
+    if status.returncode != 0:
+        raise _ufw_failure("Could not verify UFW before removing direct RDP rules", status)
+    if "Status: active" in status.stdout:
+        _remove_stale_managed_rules(_RDP_RULE_COMMENT_PREFIX, set())
+        return
+
+    saved = _run_ufw("ufw show added")
+    if saved.returncode != 0:
+        raise _ufw_failure("Could not inspect saved UFW rules", saved)
+    for line in saved.stdout.splitlines():
+        if not line.startswith("ufw limit ") or f" comment '{_RDP_RULE_COMMENT_PREFIX} " not in line:
+            continue
+        rule = shlex.split(line)
+        if rule[-2] != "comment" or not rule[-1].startswith(f"{_RDP_RULE_COMMENT_PREFIX} "):
+            continue
+        deleted = _run_ufw(shlex.join(["ufw", "--force", "delete", *rule[1:]]))
+        if deleted.returncode != 0:
+            raise _ufw_failure("Could not remove a saved direct RDP rule", deleted)
+
+
 def _verify_ssh_firewall_peer(config: SetupConfig) -> None:
     """Reject a source policy that would prevent the setup peer reconnecting."""
     sources = [
@@ -248,12 +306,16 @@ def _verify_ssh_firewall_peer(config: SetupConfig) -> None:
         for source in config.effective_ssh_sources()
     ]
     connection = os.environ.get("SSH_CONNECTION", "")
-    if not sources or not connection:
+    if not connection:
         return
 
     fields = connection.split()
     if len(fields) != 4:
         raise RuntimeError("Cannot verify the current SSH peer before changing the firewall")
+    if fields[3] != "22":
+        raise RuntimeError("Managed SSH firewall rules require the target SSH listener on TCP 22")
+    if not sources:
+        return
     try:
         peer = ipaddress.ip_address(validate_network_ip(fields[0], "SSH setup peer"))
     except ValueError as exc:
@@ -287,10 +349,9 @@ def _configure_ssh_firewall(config: SetupConfig) -> None:
                 "Failed to install the requested SSH firewall rule",
                 result,
             )
-        _remove_stale_managed_rules(_SSH_RULE_COMMENT_PREFIX, set())
+        _prune_managed_ssh_rules([])
         return
 
-    desired_comments: set[str] = set()
     for source in sources:
         comment = f"{_SSH_RULE_COMMENT_PREFIX} trusted source {source}"
         result = _run_ufw(
@@ -303,17 +364,52 @@ def _configure_ssh_firewall(config: SetupConfig) -> None:
                 "Failed to install the requested SSH firewall rule",
                 result,
             )
-        desired_comments.add(comment)
-
     for broad_rule in ("allow ssh", "limit ssh", "allow 22/tcp", "limit 22/tcp"):
         _run_ufw(f"ufw delete {broad_rule}")
-    _remove_stale_managed_rules(_SSH_RULE_COMMENT_PREFIX, desired_comments)
+    _prune_managed_ssh_rules(sources)
+
+
+def _prune_managed_ssh_rules(sources: list[str]) -> None:
+    desired = {f"{_SSH_RULE_COMMENT_PREFIX} trusted source {source}" for source in sources}
+    # An equivalent legacy rule may retain its comment when UFW skips duplicates.
+    desired.update(
+        f"{_LEGACY_CLOUDFLARE_SSH_COMMENT_PREFIX} {ipaddress.ip_network(source, strict=False)}"
+        for source in sources
+    )
+    _remove_stale_managed_rules((_SSH_RULE_COMMENT_PREFIX, _LEGACY_CLOUDFLARE_SSH_COMMENT_PREFIX), desired)
+
+
+def _prune_managed_web_ports(config: SetupConfig, desired_comments: set[str]) -> None:
+    """Defer changes to any applied Cloudflare origin rules until activation."""
+    if config.enable_cloudflare:
+        from web.cloudflare_firewall import setup_origin_rule
+
+        status = _run_ufw("ufw status numbered")
+        if status.returncode != 0 or not isinstance(status.stdout, str):
+            raise _ufw_failure("Could not inspect managed web firewall rules", status)
+        for line in status.stdout.splitlines():
+            _rule, separator, comment = line.partition("#")
+            if separator and setup_origin_rule(line, comment.strip()):
+                desired_comments.add(comment.strip())
+    _remove_stale_managed_rules(_WEB_RULE_COMMENT_PREFIX, desired_comments)
 
 
 def _configure_managed_web_ports(config: SetupConfig) -> list[int]:
     """Reconcile basaltwater-managed TCP web ports."""
 
     ports = config.effective_web_ports()
+    if config.enable_cloudflare:
+        from web.cloudflare_firewall import ORIGIN_PORTS
+
+        status = run("ufw status verbose", check=False, capture_output=True, env={**os.environ, "LC_ALL": "C"})
+        stdout = status.stdout or ""
+        if status.returncode != 0 or not re.search(r"^Status: (?:active|inactive)\s*$", stdout, re.MULTILINE):
+            raise _ufw_failure("Could not verify the Cloudflare origin firewall before web setup", status)
+        if "Status: active" in stdout and not re.search(
+            r"^Default:\s+(?:deny|reject)\s+\(incoming\)", stdout, re.MULTILINE,
+        ):
+            raise RuntimeError("Cloudflare origin setup requires a deny or reject incoming UFW default")
+        ports = [port for port in ports if port not in ORIGIN_PORTS]
     sources = [
         validate_network_ip_or_cidr(source, "web port source")
         for source in config.effective_access_sources()
@@ -348,7 +444,7 @@ def _configure_managed_web_ports(config: SetupConfig) -> list[int]:
                 )
             desired_comments.add(comment)
 
-    _remove_stale_managed_rules(_WEB_RULE_COMMENT_PREFIX, desired_comments)
+    _prune_managed_web_ports(config, desired_comments)
     return ports
 
 
@@ -378,10 +474,10 @@ def _configure_mdns_firewall(config: SetupConfig) -> None:
     _remove_stale_managed_rules(_MDNS_RULE_COMMENT_PREFIX, {comment})
 
 
-def _source_restricted_firewall_status(config: SetupConfig, *, include_rdp: bool) -> str:
+def _source_restricted_firewall_status(config: SetupConfig, *, include_rdp: bool) -> None:
     """Require a filtering default before relying on source-specific allows."""
     if not (config.effective_ssh_sources() or (include_rdp and config.effective_rdp_sources())):
-        return ""
+        return
     result = run("ufw status verbose", check=False, capture_output=True, env={**os.environ, "LC_ALL": "C"})
     stdout = getattr(result, "stdout", None)
     if result.returncode != 0 or not isinstance(stdout, str) or "Status: active" not in stdout:
@@ -391,7 +487,6 @@ def _source_restricted_firewall_status(config: SetupConfig, *, include_rdp: bool
             "Source-restricted firewall policy requires a deny or reject incoming default. "
             "Review ufw status verbose and the server's required services before rerunning setup."
         )
-    return stdout
 
 
 def _ufw_destination_allows_tcp(destination: str, port: int) -> bool:
@@ -432,17 +527,29 @@ def _ufw_destination_allows_tcp(destination: str, port: int) -> bool:
     return False
 
 
+def _firewall_ssh_context(config: SetupConfig) -> tuple[str, str] | None:
+    fields = os.environ.get("SSH_CONNECTION", "").split()
+    if config.effective_ssh_sources() and len(fields) == 4:
+        return fields[0], fields[2]
+    return None
+
+
+def _preflight_source_restricted_firewall(config: SetupConfig, *, include_rdp: bool) -> None:
+    _source_restricted_firewall_status(config, include_rdp=include_rdp)
+    peer = _firewall_ssh_context(config)
+    if peer is not None and not is_dry_run():
+        verify_live_ufw_ingress({("tcp", 22): config.effective_ssh_sources()}, run,
+                               peer=peer, families=(ipaddress.ip_address(peer[0]).version,),
+                               before_changes=True)
+
+
 def _prune_enabled_firewall_rules(
     config: SetupConfig, *, web_ports: list[int] | None, include_rdp: bool
 ) -> None:
     """Prune saved rules that UFW could not enumerate while it was inactive."""
     sources = config.effective_access_sources()
-    desired = {
-        _SSH_RULE_COMMENT_PREFIX: {
-            f"{_SSH_RULE_COMMENT_PREFIX} trusted source {source}"
-            for source in config.effective_ssh_sources()
-        },
-    }
+    _prune_managed_ssh_rules(config.effective_ssh_sources())
+    desired: dict[str, set[str]] = {}
     if web_ports is not None:
         desired[_WEB_RULE_COMMENT_PREFIX] = {
             f"{_WEB_RULE_COMMENT_PREFIX} {port}" + (f" source {source}" if source else "")
@@ -453,35 +560,40 @@ def _prune_enabled_firewall_rules(
     if config.clear_mdns or (config.enable_mdns and can_manage_mdns()):
         desired[_MDNS_RULE_COMMENT_PREFIX] = {_MDNS_RULE_COMMENT_PREFIX} if config.enable_mdns else set()
     for prefix, comments in desired.items():
-        _remove_stale_managed_rules(prefix, comments)
+        if prefix == _WEB_RULE_COMMENT_PREFIX:
+            _prune_managed_web_ports(config, comments)
+        else:
+            _remove_stale_managed_rules(prefix, comments)
 
 
 def _verify_source_restricted_firewall(
     config: SetupConfig, *, web_ports: list[int], include_rdp: bool
 ) -> None:
-    """Fail setup if an active UFW rule still opens a restricted port globally."""
-    restricted_ports: dict[int, str] = {}
+    """Verify new connections against the ordered live filter tables."""
+    restricted_ports: dict[tuple[str, int], list[str]] = {}
     if config.effective_ssh_sources():
-        restricted_ports[22] = "SSH"
+        restricted_ports["tcp", 22] = config.effective_ssh_sources()
     if config.effective_access_sources():
-        restricted_ports.update({port: f"web TCP {port}" for port in web_ports})
+        restricted_ports.update({("tcp", port): config.effective_access_sources() for port in web_ports})
     if include_rdp and config.effective_rdp_sources():
-        restricted_ports[3389] = "RDP"
-    if not restricted_ports:
+        restricted_ports["tcp", 3389] = config.effective_rdp_sources()
+    if not restricted_ports or is_dry_run():
         return
+    _source_restricted_firewall_status(config, include_rdp=include_rdp)
+    verify_live_ufw_ingress(restricted_ports, run, peer=_firewall_ssh_context(config))
 
-    # Verbose output expands application profiles into their numeric ports.
-    stdout = _source_restricted_firewall_status(config, include_rdp=include_rdp)
-    for line in stdout.splitlines():
-        match = _UFW_BROAD_INBOUND_RE.match(line.strip())
-        if not match:
-            continue
-        for port, service in restricted_ports.items():
-            if _ufw_destination_allows_tcp(match.group(1), port):
-                raise RuntimeError(
-                    f"Source-restricted {service} firewall policy still has a broad UFW rule: "
-                    f"{line.strip()}"
-                )
+
+def _verify_new_firewall(config: SetupConfig, *, web_ports: list[int] | None, include_rdp: bool) -> None:
+    try:
+        _prune_enabled_firewall_rules(config, web_ports=web_ports, include_rdp=include_rdp)
+        _verify_source_restricted_firewall(config, web_ports=web_ports or [], include_rdp=include_rdp)
+    except RuntimeError as exc:
+        if _firewall_ssh_context(config) is not None:
+            result = _run_ufw("ufw --force disable")
+            if result.returncode != 0:
+                raise _ufw_failure("Could not restore the previously inactive UFW firewall", result) from exc
+            raise RuntimeError(f"Restored the previously inactive UFW firewall. {exc}") from exc
+        raise
 
 
 def configure_firewall(config: SetupConfig) -> None:
@@ -493,7 +605,7 @@ def configure_firewall(config: SetupConfig) -> None:
     firewall_active = result.returncode == 0
 
     if firewall_active:
-        _source_restricted_firewall_status(config, include_rdp=config.enable_rdp)
+        _preflight_source_restricted_firewall(config, include_rdp=config.enable_rdp)
     if not firewall_active:
         os.environ["DEBIAN_FRONTEND"] = "noninteractive"
         run(f"{_APT_GET} install -y -qq ufw")
@@ -528,10 +640,7 @@ def configure_firewall(config: SetupConfig) -> None:
             raise RuntimeError("Firewall could not be enabled (check command output)")
         return
 
-    _prune_enabled_firewall_rules(config, web_ports=web_ports, include_rdp=config.enable_rdp)
-    _verify_source_restricted_firewall(
-        config, web_ports=web_ports, include_rdp=config.enable_rdp
-    )
+    _verify_new_firewall(config, web_ports=web_ports, include_rdp=config.enable_rdp)
     ssh_policy = (
         "SSH source-restricted"
         if config.effective_ssh_sources()
@@ -554,6 +663,18 @@ def configure_firewall(config: SetupConfig) -> None:
             )
     else:
         print(f"  ✓ Firewall configured ({ssh_policy})")
+
+
+def _remove_managed_xrdp_jail() -> None:
+    if not os.path.isfile(_FAIL2BAN_XRDP_JAIL) or os.path.islink(_FAIL2BAN_XRDP_JAIL):
+        return
+    try:
+        with open(_FAIL2BAN_XRDP_JAIL, encoding="utf-8") as jail:
+            content = jail.read()
+        if content.startswith(_FAIL2BAN_MANAGED_MARKER) or content == _FAIL2BAN_LEGACY_XRDP_JAIL:
+            os.unlink(_FAIL2BAN_XRDP_JAIL)
+    except FileNotFoundError:
+        pass
 
 
 def configure_fail2ban(config: SetupConfig) -> None:
@@ -604,23 +725,13 @@ failregex = ^.*AUTHFAIL: user=\\S+ ip=<HOST>(?::\\d+)?\\s.*$
 ignoreregex =
 """
 
-        fail2ban_xrdp_jail = """[xrdp]
-enabled = true
-port = 3389
-protocol = tcp
-filter = xrdp
-logpath = /var/log/xrdp-sesman.log
-           /var/log/xrdp.log
-maxretry = 3
-bantime = 3600
-findtime = 600
-"""
-
         with open(_FAIL2BAN_XRDP_FILTER, "w") as f:
             f.write(fail2ban_xrdp_filter)
 
         with open(_FAIL2BAN_XRDP_JAIL, "w") as f:
-            f.write(fail2ban_xrdp_jail)
+            f.write(_FAIL2BAN_MANAGED_MARKER + _FAIL2BAN_LEGACY_XRDP_JAIL)
+    else:
+        _remove_managed_xrdp_jail()
 
     # systemd can report a successful restart before Fail2ban's asynchronous
     # configuration fails. Reject missing log sources and invalid jails first.
@@ -634,22 +745,127 @@ findtime = 600
         print("  ✓ fail2ban configured (sshd jail, 1 hour ban)")
 
 
+def _verify_ssh_matches(path: Path, *, conditional: bool = False, depth: int = 0) -> None:
+    """Check policy options in Match blocks, including conditional includes."""
+    if depth > 16:
+        raise RuntimeError("Too many nested SSH includes to verify Match policy")
+    in_match = conditional
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        tokens = shlex.split(line, comments=True)
+        if not tokens:
+            continue
+        keyword, separator, first_arg = tokens[0].partition("=")
+        key = keyword.lower()
+        args = ([first_arg] if separator and first_arg else []) + tokens[1:]
+        if args and args[0].startswith("="):
+            args[0] = args[0].removeprefix("=")
+            if not args[0]:
+                args.pop(0)
+        if key == "match":
+            in_match = conditional or [value.lower() for value in args] != ["all"]
+        elif key == "include":
+            for pattern in args:
+                absolute_pattern = str(Path(_SSHD_CONFIG).parent / pattern)
+                for include in sorted(glob.glob(absolute_pattern)):
+                    _verify_ssh_matches(Path(include), conditional=in_match, depth=depth + 1)
+        elif in_match and key in _SSH_MATCH_REQUIRED and " ".join(args).lower() not in _SSH_MATCH_REQUIRED[key]:
+            raise RuntimeError(f"SSH Match policy at {path}:{number} conflicts with managed hardening ({keyword})")
+
+
+def _verify_ssh_service_listeners(sshd_path: str = "/usr/sbin/sshd") -> None:
+    """Refuse socket activation or an already running daemon on another port."""
+    for unit in ("ssh.socket", "sshd.socket"):
+        result = run(["systemctl", "show", unit, "--property=LoadState,ActiveState,UnitFileState,Listen,Triggers,Accept"],
+                     check=False, capture_output=True, timeout=30)
+        properties = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+        if properties.get("LoadState") == "not-found":
+            continue
+        if result.returncode != 0 or "LoadState" not in properties:
+            raise RuntimeError(f"Could not verify SSH listener configuration for {unit}")
+        if properties.get("ActiveState") == "active" or properties.get("UnitFileState") in {"enabled", "enabled-runtime"}:
+            endpoints = re.findall(r"(\S+) \(Stream\)", properties.get("Listen", ""))
+            if not endpoints or any(endpoint.rsplit(":", 1)[-1] != "22" for endpoint in endpoints):
+                raise RuntimeError(f"Managed SSH firewall and ban rules require {unit} on TCP 22")
+            if properties.get("Triggers") not in {"ssh.service", "sshd.service"} or properties.get("Accept") != "no":
+                raise RuntimeError(f"Could not verify the SSH service activated by {unit}")
+
+    for unit in ("ssh.service", "sshd.service"):
+        result = run([
+            "systemctl", "show", unit,
+            "--property=LoadState,ExecStart,Environment,EnvironmentFiles,PassEnvironment",
+        ], check=False, capture_output=True, timeout=30)
+        properties = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+        if properties.get("LoadState") == "not-found":
+            continue
+        command = re.fullmatch(
+            r"\{ path=(/\S*/sshd) ; argv\[\]=(.*?) ; .* \}", properties.get("ExecStart", ""),
+        )
+        if result.returncode != 0 or command is None:
+            raise RuntimeError(f"Could not verify the daemon command for {unit}")
+        arguments = shlex.split(command[2])
+        if not arguments or arguments[0] != command[1] or os.path.realpath(command[1]) != os.path.realpath(sshd_path):
+            raise RuntimeError(f"Could not verify the daemon executable for {unit}")
+        options = arguments[1:]
+        if "$SSHD_OPTS" in options:
+            options.remove("$SSHD_OPTS")
+            options.extend(_ssh_service_environment_options(unit, properties))
+        if any(option not in {"-D", "-e", "-4", "-6"} for option in options):
+            raise RuntimeError(f"SSH daemon options in {unit} can override the verified SSH configuration")
+
+    result = run(["ss", "-Hltnp"], capture_output=True, timeout=30)
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) >= 5 and '"sshd",' in line and fields[3].rsplit(":", 1)[-1] != "22":
+            raise RuntimeError("Managed SSH firewall and ban rules require the running sshd listener on TCP 22")
+
+
+def _ssh_service_environment_options(unit: str, properties: dict[str, str]) -> list[str]:
+    """Read the packaged SSHD_OPTS assignment without evaluating shell code."""
+    if ("SSHD_OPTS" in properties.get("PassEnvironment", "").split()
+            or re.search(r"\bSSHD_OPTS=", properties.get("Environment", ""))):
+        raise RuntimeError(f"Could not verify overridden SSHD_OPTS for {unit}")
+    files = properties.get("EnvironmentFiles", "")
+    if not files:
+        return []
+    if files not in {f"{_SSHD_ENVIRONMENT_FILE} (ignore_errors=yes)", f"{_SSHD_ENVIRONMENT_FILE} (ignore_errors=no)"}:
+        raise RuntimeError(f"Could not verify the SSH environment files for {unit}")
+    try:
+        content = _SSHD_ENVIRONMENT_FILE.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        if files.endswith("ignore_errors=yes)"):
+            return []
+        raise
+    options: list[str] = []
+    for line in content.splitlines():
+        if not line.strip() or line.lstrip().startswith(("#", ";")):
+            continue
+        key, separator, value = line.partition("=")
+        if not separator or key.strip() != "SSHD_OPTS" or "\\" in value:
+            raise RuntimeError(f"Could not verify SSHD_OPTS in {_SSHD_ENVIRONMENT_FILE}")
+        options = shlex.split(" ".join(shlex.split(value)))
+    return options
+
+
 def _verify_ssh_policy(sshd_path: str, config: SetupConfig | None,
                        transport_groups: list[str] | None = None) -> None:
     """Check human and exact managed transport admission and authentication."""
     if transport_groups is None:
         transport_groups = managed_transport_groups()
     address = "127.0.0.1"
+    local_address = "127.0.0.1"
+    local_port = "22"
     connection = os.environ.get("SSH_CONNECTION", "").split()
     if connection:
-        if len(connection) != 4 or not validate_ip_address(connection[0]):
+        if len(connection) != 4 or not all(validate_ip_address(connection[index]) for index in (0, 2)):
             raise RuntimeError("Cannot determine the SSH setup peer")
-        address = connection[0]
+        address, _, local_address, local_port = connection
+        if local_port != "22":
+            raise RuntimeError("Managed SSH firewall and ban rules require the target SSH listener on TCP 22")
     setup_user = config.username if config is not None else "root"
     for username in dict.fromkeys(("root", setup_user, *transport_groups)):
         if not validate_username(username):
             raise ValueError("Cannot verify SSH policy for an invalid username")
-        context = f"user={username},host={address},addr={address}"
+        context = f"user={username},host={address},addr={address},laddr={local_address},lport={local_port}"
         effective = run(
             f"{shlex.quote(sshd_path)} -T -C {shlex.quote(context)}",
             check=False,
@@ -658,6 +874,8 @@ def _verify_ssh_policy(sshd_path: str, config: SetupConfig | None,
         if effective.returncode != 0:
             raise RuntimeError("Could not inspect effective SSH configuration")
         settings = {}
+        ports: set[str] = set()
+        listen_ports: set[str] = set()
         allowed_groups: set[str] = set()
         for line in (effective.stdout or "").splitlines():
             key, separator, value = line.partition(" ")
@@ -666,6 +884,10 @@ def _verify_ssh_policy(sshd_path: str, config: SetupConfig | None,
                     # OpenSSH may emit one line per group rather than a single
                     # space-separated value. Every literal entry contributes.
                     allowed_groups.update(value.split())
+                elif key == "port":
+                    ports.add(value.strip())
+                elif key == "listenaddress":
+                    listen_ports.add(value.rsplit(":", 1)[-1].strip())
                 else:
                     settings[key] = value.strip()
         required = {
@@ -674,6 +896,8 @@ def _verify_ssh_policy(sshd_path: str, config: SetupConfig | None,
             "pubkeyauthentication": {"yes"},
             "permitrootlogin": {"prohibit-password", "without-password"},
             "authenticationmethods": {"publickey"},
+            "permitemptypasswords": {"no"},
+            "x11forwarding": {"no"},
         }
         if config is not None and config.harden_user and username == config.username:
             required.update({"disableforwarding": {"yes"}, "permituserrc": {"no"}})
@@ -685,10 +909,15 @@ def _verify_ssh_policy(sshd_path: str, config: SetupConfig | None,
                 f"Effective SSH policy for {username} conflicts with hardening: "
                 + ", ".join(conflicts)
             )
+        if ports != {"22"} or listen_ports != {"22"}:
+            raise RuntimeError("Managed SSH firewall and ban rules require every configured sshd listener on TCP 22")
         groups = run(f"id -nG {shlex.quote(username)}", check=False, capture_output=True)
         expected = username if username in transport_groups else "remoteusers"
         if groups.returncode != 0 or expected not in (groups.stdout or "").split():
             raise RuntimeError(f"SSH identity {username} is not a member of {expected}")
+    _verify_ssh_matches(Path(_SSHD_CONFIG))
+    if can_manage_system_services(config.machine_type if config is not None else None):
+        _verify_ssh_service_listeners(sshd_path)
 
 
 def refresh_transport_ssh_admission(role: str, usernames: list[str]) -> None:
@@ -1178,6 +1407,24 @@ def configure_apparmor(config: SetupConfig) -> None:
     )
 
 
+def _audit_rule_fields(line: str) -> frozenset[tuple[str, str]]:
+    """Normalize managed rules as printed by auditctl -l."""
+    parts = line.split()
+    fields = set()
+    for option, value in zip(parts[::2], parts[1::2]):
+        if option == "-S":
+            fields.update((option, syscall) for syscall in value.split(",") if syscall != "all")
+            continue
+        if option == "-k":
+            option, value = "-F", f"key={value}"
+        if option == "-F" and value.startswith("perm="):
+            value = "perm=" + "".join(sorted(value.removeprefix("perm=")))
+        elif option == "-F" and value.startswith("dir="):
+            value = value.rstrip("/") if value != "dir=/" else value
+        fields.add((option, value))
+    return frozenset(fields)
+
+
 def configure_auditd(config: SetupConfig) -> None:
     if is_dry_run():
         print("  [DRY-RUN] Would configure auditd rules")
@@ -1231,9 +1478,6 @@ def configure_auditd(config: SetupConfig) -> None:
 -a always,exit -F arch=b32 -F path=/var/log/wtmp -F perm=wa -k session
 -a always,exit -F arch=b64 -F path=/var/log/btmp -F perm=wa -k session
 -a always,exit -F arch=b32 -F path=/var/log/btmp -F perm=wa -k session
-
-# Enable audit (not immutable - allows future rule updates)
--e 1
 """
 
     os.makedirs("/etc/audit/rules.d", exist_ok=True)
@@ -1255,14 +1499,30 @@ def configure_auditd(config: SetupConfig) -> None:
     # reconciles an inactive service; augenrules performs the supported live
     # rule reload below whether or not the on-disk rules changed.
     service_result = run("systemctl start auditd", check=False)
-    load_result = run("augenrules --load", check=False)
-
     if service_result.returncode != 0:
         raise RuntimeError("auditd is required on this host but its service did not start")
+    load_result = run("augenrules --load", check=False)
     if load_result.returncode != 0:
         raise RuntimeError("auditd is required on this host but its rules did not load")
+    status = run("auditctl -s", capture_output=True, check=False)
+    enabled = re.search(r"^enabled\s+([012])\s*$", status.stdout or "", re.MULTILINE)
+    if status.returncode != 0 or enabled is None:
+        raise RuntimeError("Could not verify the kernel audit enable mode")
+    if enabled.group(1) == "0":
+        print("  ⚠ Kernel auditing is disabled by host policy. Managed rules are staged for auditd.")
+        return
+    listed = run("auditctl -l", capture_output=True, check=False)
+    if listed.returncode != 0:
+        raise RuntimeError("Could not verify the kernel audit rules")
+    managed = {_audit_rule_fields(line) for line in audit_rules.splitlines() if line.startswith("-a ")}
+    active = {_audit_rule_fields(line) for line in (listed.stdout or "").splitlines() if line.startswith("-a ")}
+    if not managed.issubset(active):
+        if enabled.group(1) == "2":
+            print("  ⚠ Kernel audit policy is immutable. Reboot required to load staged Basaltwater rules.")
+            return
+        raise RuntimeError("Managed audit rules are missing from the active kernel ruleset")
     if rules_changed:
-        print("  ✓ auditd configured (monitoring identity, sudoers, SSH config, modules)")
+        print("  ✓ auditd configured and live rules verified (identity, sudoers, SSH config, modules)")
     else:
         print("  ✓ auditd already configured; service and rules reconciled")
 
@@ -1276,22 +1536,43 @@ def _managed_text_matches(path: str, expected: str) -> bool:
 
 
 def _pam_lockout_active() -> bool:
-    """Confirm the generated PAM auth and account stacks use faillock."""
+    """Confirm Debian's generated authentication paths enforce and clear lockout."""
 
-    for path, pattern in zip(
-        (_PAM_COMMON_AUTH, _PAM_COMMON_ACCOUNT), _PAM_ACTIVE_LINES
-    ):
-        try:
-            with open(path, encoding="utf-8") as file_obj:
-                if not any(
-                    pattern.search(line)
-                    for line in file_obj
-                    if not line.lstrip().startswith("#")
-                ):
-                    return False
-        except OSError:
+    try:
+        with open(_PAM_COMMON_AUTH, encoding="utf-8") as file_obj:
+            lines = [line.strip() for line in file_obj if line.strip() and not line.lstrip().startswith("#")]
+    except OSError:
+        return False
+    stack = []
+    for line in lines:
+        entry = _PAM_AUTH_LINE.fullmatch(line)
+        if not entry:
             return False
-    return True
+        control, module, options = entry.groups()
+        stack.append((control, os.path.basename(module), options or ""))
+    try:
+        deny = stack.index(("requisite", "pam_deny.so", ""))
+    except ValueError:
+        return False
+    if (
+        deny < 3
+        or stack[0] != ("required", "pam_faillock.so", "preauth")
+        or stack[deny - 1] != ("[default=die]", "pam_faillock.so", "authfail")
+        or stack[deny + 1:deny + 2] != [("required", "pam_permit.so", "")]
+        or stack[-1] != ("required", "pam_faillock.so", "authsucc")
+    ):
+        return False
+    # Credential providers must jump over authfail and the deny fallback to
+    # pam_permit on success, and fall through to the next provider on failure.
+    for index, (control, _module, _options) in enumerate(stack[1:deny - 1], start=1):
+        if control.split() != [f"[success={deny - index}", "default=ignore]"]:
+            return False
+    # An additional module may end the stack before authsucc. Accept only
+    # straight-line controls and reject an extra or duplicated faillock hook.
+    return all(
+        control in {"required", "optional", "requisite"} and module != "pam_faillock.so"
+        for control, module, _options in stack[deny + 2:-1]
+    )
 
 
 def configure_pam_lockout(config: SetupConfig) -> None:
@@ -1307,39 +1588,57 @@ def configure_pam_lockout(config: SetupConfig) -> None:
 deny = 5
 fail_interval = 900
 unlock_time = 600
+silent
 """
 
-    pam_profile = """Name: basaltwater account lockout (pam_faillock)
+    profiles = {
+        _PAM_FAILLOCK_PROFILE + "-preauth": """Name: basaltwater account lockout check
 Default: yes
-Priority: 0
+Priority: 1000000
+Auth-Type: Primary
+Auth:
+\trequired pam_faillock.so preauth
+""",
+        _PAM_FAILLOCK_PROFILE: """Name: basaltwater account lockout failure accounting
+Default: yes
+Priority: -1000000
 Auth-Type: Primary
 Auth:
 \t[default=die] pam_faillock.so authfail
-Auth-Initial:
-\trequired pam_faillock.so preauth
-Account-Type: Primary
-Account:
-\trequired pam_faillock.so
-"""
+""",
+        _PAM_FAILLOCK_PROFILE + "-authsucc": """Name: basaltwater account lockout success accounting
+Default: yes
+Priority: -1000000
+Auth-Type: Additional
+Auth:
+\trequired pam_faillock.so authsucc
+""",
+    }
 
-    profile_matches = _managed_text_matches(_PAM_FAILLOCK_PROFILE, pam_profile)
+    changed_profiles = {
+        path: content for path, content in profiles.items()
+        if not _managed_text_matches(path, content)
+    }
     settings_match = _managed_text_matches(_FAILLOCK_CONF, faillock_conf)
-    if profile_matches and settings_match and _pam_lockout_active():
+    if not changed_profiles and settings_match and _pam_lockout_active():
         print("  ✓ PAM lockout already configured")
         return
 
     os.makedirs(os.path.dirname(_PAM_FAILLOCK_PROFILE), exist_ok=True)
-    if not profile_matches:
-        write_text_atomic(_PAM_FAILLOCK_PROFILE, pam_profile, mode=0o644)
+    for path, content in changed_profiles.items():
+        write_text_atomic(path, content, mode=0o644)
     if not settings_match:
         write_text_atomic(_FAILLOCK_CONF, faillock_conf, mode=0o644)
 
     os.environ["DEBIAN_FRONTEND"] = "noninteractive"
-    result = run("pam-auth-update --enable faillock-basaltwater", check=False)
+    result = run(
+        "pam-auth-update --enable faillock-basaltwater-preauth faillock-basaltwater faillock-basaltwater-authsucc",
+        check=False,
+    )
     if result.returncode != 0:
         raise RuntimeError("PAM lockout profile could not be enabled")
     if not _pam_lockout_active():
-        raise RuntimeError("PAM lockout is absent from the active auth or account stack")
+        raise RuntimeError("PAM lockout is absent from the active auth stack or its controls are out of order")
 
     print("  ✓ PAM account lockout configured (5 failures in 15 min → 10 min lockout)")
 
@@ -1454,7 +1753,7 @@ def configure_firewall_web(config: SetupConfig) -> None:
     result = run("ufw status 2>/dev/null | grep -q 'Status: active'", check=False)
     firewall_active = result.returncode == 0
     if firewall_active:
-        _source_restricted_firewall_status(config, include_rdp=False)
+        _preflight_source_restricted_firewall(config, include_rdp=False)
     if not firewall_active:
         os.environ["DEBIAN_FRONTEND"] = "noninteractive"
         run(f"{_APT_GET} install -y -qq ufw")
@@ -1483,11 +1782,8 @@ def configure_firewall_web(config: SetupConfig) -> None:
         else:
             raise RuntimeError("Firewall could not be enabled (check command output)")
         return
-    _prune_enabled_firewall_rules(config, web_ports=web_ports, include_rdp=False)
-    _verify_source_restricted_firewall(
-        config, web_ports=web_ports, include_rdp=False
-    )
-    
+    _verify_new_firewall(config, web_ports=web_ports, include_rdp=False)
+
     print(
         "  ✓ Firewall configured (SSH; web TCP ports: "
         + ", ".join(str(port) for port in web_ports)
@@ -1511,7 +1807,7 @@ def configure_firewall_ssh_only(config: SetupConfig, *, active_only: bool = Fals
         return
 
     if firewall_active:
-        _source_restricted_firewall_status(config, include_rdp=False)
+        _preflight_source_restricted_firewall(config, include_rdp=False)
     if not firewall_active:
         os.environ["DEBIAN_FRONTEND"] = "noninteractive"
         run(f"{_APT_GET} install -y -qq ufw")
@@ -1535,8 +1831,7 @@ def configure_firewall_ssh_only(config: SetupConfig, *, active_only: bool = Fals
             raise RuntimeError("Firewall could not be enabled (check command output)")
         return
 
-    _prune_enabled_firewall_rules(config, web_ports=None, include_rdp=False)
-    _verify_source_restricted_firewall(config, web_ports=[], include_rdp=False)
+    _verify_new_firewall(config, web_ports=None, include_rdp=False)
     ssh_policy = (
         "SSH source-restricted"
         if config.effective_ssh_sources()
@@ -1617,6 +1912,23 @@ def _check_proxmox_firewall(*, require_enabled: bool) -> dict[str, object]:
     )
 
 
+def _verify_proxmox_single_node_activation() -> None:
+    """Keep first activation on multi-node clusters in the operator's hands."""
+    result = run("pvesh get /nodes --output-format json", check=False, capture_output=True)
+    try:
+        nodes = json.loads(result.stdout or "null") if result.returncode == 0 else None
+    except (ValueError, TypeError) as exc:
+        raise RuntimeError("Could not verify Proxmox cluster membership before firewall activation") from exc
+    if not isinstance(nodes, list) or not nodes or not all(
+        isinstance(node, dict) and isinstance(node.get("node"), str) and node["node"] for node in nodes
+    ):
+        raise RuntimeError("Could not verify Proxmox cluster membership before firewall activation")
+    if len(nodes) != 1:
+        raise RuntimeError(
+            "Enable the firewall explicitly in Proxmox after checking management access on every cluster node, then rerun setup"
+        )
+
+
 def _proxmox_source_key(source: str) -> str:
     validated = validate_network_ip_or_cidr(source, "Proxmox management source")
     return str(ipaddress.ip_network(validated, strict=False))
@@ -1656,23 +1968,17 @@ def configure_proxmox_management_firewall(config: SetupConfig) -> None:
         print("  [DRY-RUN] Would verify native firewall policy and reconcile managed Proxmox sources")
         return
     cluster_options = _check_proxmox_firewall(require_enabled=False) if desired_sources else None
+    activate = cluster_options is not None and cluster_options.get("enable", 0) not in (1, True)
+    if activate:
+        _verify_proxmox_single_node_activation()
     existing_entries = _proxmox_management_entries()
-    if existing_entries is None:
-        if not desired_sources:
-            print("  ✓ Proxmox management access filter not requested")
-            return
-        result = run(
-            "pvesh create /cluster/firewall/ipset --name management "
-            "--comment 'Proxmox standard management access set'",
-            check=False,
-        )
-        if result.returncode != 0:
-            raise RuntimeError("Could not create the Proxmox management IP set")
-        existing_entries = []
+    if existing_entries is None and not desired_sources:
+        print("  ✓ Proxmox management access filter not requested")
+        return
 
     existing_by_cidr = {
         str(entry.get("cidr")): entry
-        for entry in existing_entries
+        for entry in existing_entries or []
         if isinstance(entry.get("cidr"), str)
     }
     existing_by_key = {_proxmox_source_key(cidr): entry for cidr, entry in existing_by_cidr.items()}
@@ -1699,6 +2005,15 @@ def configure_proxmox_management_firewall(config: SetupConfig) -> None:
         if not any(peer in network for network in allowed) or any(peer in network for network in excluded):
             raise RuntimeError("Current SSH peer is outside the requested or retained management sources")
 
+    if existing_entries is None:
+        result = run(
+            "pvesh create /cluster/firewall/ipset --name management "
+            "--comment 'Proxmox standard management access set'",
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError("Could not create the Proxmox management IP set")
+
     for source in desired_sources:
         if _proxmox_source_key(source) in existing_by_key:
             continue
@@ -1717,12 +2032,13 @@ def configure_proxmox_management_firewall(config: SetupConfig) -> None:
     if desired_sources:
         _verify_proxmox_sources(desired_sources, allow_stale=True)
         try:
-            result = run("pvesh set /cluster/firewall/options --enable 1", check=False)
-            if result.returncode != 0:
-                raise RuntimeError("Could not enable the Proxmox cluster firewall")
+            if activate:
+                result = run("pvesh set /cluster/firewall/options --enable 1", check=False)
+                if result.returncode != 0:
+                    raise RuntimeError("Could not enable the Proxmox cluster firewall")
             _check_proxmox_firewall(require_enabled=True)
         except Exception:
-            if cluster_options is not None and cluster_options.get("enable", 0) not in (1, True):
+            if activate:
                 restored = run("pvesh set /cluster/firewall/options --enable 0", check=False)
                 if restored.returncode != 0:
                     raise RuntimeError("Firewall activation failed and previous enablement could not be restored")

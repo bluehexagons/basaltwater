@@ -120,6 +120,19 @@ process.stdout.write(JSON.stringify({models:result, config:data.config, exports:
         result = self.evaluate({"gpt-6.1-sol": self.model(cost={"input": 4, "output": 20})})
         self.assertEqual(result["models"]["gpt-6.1-sol"]["limit"]["input"], 80_000)
 
+    def test_gpt_62_budgets_use_reviewed_prices_and_earlier_metadata_tiers(self):
+        result = self.evaluate({
+            "gpt-6.2-sol": self.model(id="gpt-6.2-sol", cost={"input": 2, "output": 10}),
+            "gpt-6.2-astra": self.model(id="gpt-6.2-astra", cost={"input": 8, "output": 40}),
+        })
+        for model in result["models"].values():
+            self.assertEqual(model["limit"]["input"], 240_000)
+        result = self.evaluate({"gpt-6.2-astra": self.model(id="gpt-6.2-astra", cost={
+            "input": 8, "output": 40,
+            "tiers": [{"tier": {"type": "context", "size": 200_000}, "input": 16}],
+        })})
+        self.assertEqual(result["models"]["gpt-6.2-astra"]["limit"]["input"], 160_000)
+
     def test_metadata_lowers_budget_for_input_output_cache_and_legacy_price_tiers(self):
         for increase in ({"input": 4}, {"output": 15}, {"cache": {"read": 1}}):
             with self.subTest(increase=increase):

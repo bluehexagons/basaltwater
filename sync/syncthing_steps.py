@@ -31,12 +31,15 @@ from lib.setup_directories import directory_fd
 from lib.unit_transaction import inspect_unit_state, snapshot_unit_file
 from lib.validation import _validate_syncthing_root, validate_filesystem_path
 from lib.vm_storage import storage_mounts
+from sync.service_tools.syncthing_guard import (
+    GUI_ADDRESS, _check_folder_paths, _check_storage_mounts, _validate_offline_config,
+)
 
 
 SYNCTHING_HOME = "/var/lib/basaltwater/syncthing"
 SYNCTHING_SERVICE_NAME = "basaltwater-syncthing"
 SYNCTHING_SERVICE_FILE = f"/etc/systemd/system/{SYNCTHING_SERVICE_NAME}.service"
-SYNCTHING_GUI_ADDRESS = "127.0.0.1:8384"
+SYNCTHING_GUI_ADDRESS = GUI_ADDRESS
 SYNCTHING_API_URL = f"http://{SYNCTHING_GUI_ADDRESS}/rest/config"
 _DEVICE_ID_PATTERN = re.compile(r"^[A-Z2-7]{7}(?:-[A-Z2-7]{7}){7}$")
 
@@ -79,7 +82,9 @@ Type=simple
 User={config.username}
 Group={group_name}
 UMask=0007
-ExecStart=/usr/bin/syncthing serve --home={SYNCTHING_HOME} --gui-address=http://{SYNCTHING_GUI_ADDRESS} --no-browser --no-restart --no-upgrade
+ExecStart=/usr/bin/python3 -I /opt/basaltwater/sync/service_tools/syncthing_guard.py {_systemd_quote(share_root)} {_systemd_quote(SYNCTHING_HOME)}
+RuntimeDirectory={SYNCTHING_SERVICE_NAME}
+RuntimeDirectoryMode=0700
 Restart=on-failure
 RestartSec=5s
 SuccessExitStatus=3 4
@@ -95,6 +100,7 @@ ProtectKernelLogs=true
 ProtectKernelModules=true
 ProtectKernelTunables=true
 ProtectSystem=strict
+MountFlags=private
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 RestrictRealtime=true
 RestrictSUIDSGID=true
@@ -132,7 +138,7 @@ def _cli(
 ) -> Any:
     return _run_as_user(
         username,
-        ["cli", f"--home={SYNCTHING_HOME}", *arguments],
+        ["cli", f"--home={SYNCTHING_HOME}", f"--gui-address=http://{SYNCTHING_GUI_ADDRESS}", *arguments],
         capture_output=capture_output,
         check=check,
     )
@@ -184,22 +190,11 @@ def _validate_folder_paths(current: dict[str, Any], share_root: str) -> None:
     folders = current.get("folders")
     if not isinstance(folders, list):
         raise RuntimeError("Syncthing configuration is missing folders")
-    resolved_root = os.path.realpath(share_root)
-    for folder in folders:
-        path = folder.get("path") if isinstance(folder, dict) else None
-        try:
-            contained = (
-                isinstance(path, str)
-                and os.path.isabs(path)
-                and os.path.commonpath((resolved_root, os.path.realpath(path)))
-                == resolved_root
-            )
-        except ValueError:
-            contained = False
-        if not contained:
-            raise RuntimeError(
-                f"Syncthing folder path is outside the configured storage root: {path}"
-            )
+    try:
+        _check_folder_paths([folder.get("path") if isinstance(folder, dict) else None
+                             for folder in folders], share_root)
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
 
 
 def build_syncthing_policy_config(
@@ -228,6 +223,7 @@ def build_syncthing_policy_config(
         {
             "enabled": True,
             "address": SYNCTHING_GUI_ADDRESS,
+            "authMode": "static",
             "useTLS": False,
             "debugging": False,
             "insecureAdminAccess": False,
@@ -355,6 +351,7 @@ def _prepare_share_root(config: SetupConfig, group_name: str) -> None:
             f"Refusing Syncthing share root with symbolic-link traversal: {share_root}"
         )
     assert_declared_storage_mount(config, share_root)
+    _check_storage_mounts(share_root, SYNCTHING_HOME)
     uid, gid, _group = _account(config.username)
     declared_mount = any(mount.path == share_root for mount in storage_mounts(config))
     try:
@@ -741,6 +738,7 @@ def setup_syncthing(config: SetupConfig, **_kwargs: Any) -> None:
             ],
             input_data=admin_password + "\n",
         )
+        _validate_offline_config(SYNCTHING_HOME, share_root)
 
         write_text_atomic(
             SYNCTHING_SERVICE_FILE,

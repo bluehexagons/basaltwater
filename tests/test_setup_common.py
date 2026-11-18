@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from pathlib import Path
 import sys
 import tempfile
 import unittest
@@ -312,11 +313,9 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
         self.assertEqual(result, 0)
         remote_command = mock_build_ssh.call_args.kwargs["remote_command"]
         self.assertIn("-m lib.setup_payloads --timeout", remote_command)
-        self.assertIn(
-            "flock --exclusive --nonblock "
-            "/run/lock/basaltwater-setup-bootstrap.lock",
-            remote_command,
-        )
+        self.assertIn("exec 8</run/lock/basaltwater-setup-bootstrap.lock", remote_command)
+        self.assertIn("flock --exclusive --nonblock 8", remote_command)
+        self.assertLess(remote_command.index("Unsafe setup lock"), remote_command.index("tar xzf"))
         self.assertNotIn("--verbose /run/lock/basaltwater-setup.lock", remote_command)
         self.assertNotIn("supersecret", remote_command)
         self.assertTrue(remote_command.startswith("timeout --signal=TERM --kill-after=10s 14400 "))
@@ -443,7 +442,7 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
         remote_command = mock_build.call_args.kwargs["remote_command"]
         self.assertIn("lib.setup_upgrade --username agent", remote_command)
         self.assertIn('tar xzf - -C "$basaltwater_stage"', remote_command)
-        self.assertIn("python3 -u -m lib.setup_payloads", remote_command)
+        self.assertIn("python3 -E -s -B -u -m lib.setup_payloads", remote_command)
         self.assertNotIn("sudo -n", remote_command)
 
     def test_hosted_vm_without_nopasswd_uses_retained_root_ssh(self):
@@ -464,7 +463,7 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
         self.assertEqual(mock_build.call_args.args[1], "root")
         remote_command = mock_build.call_args.kwargs["remote_command"]
         self.assertIn("lib.setup_upgrade --username agent", remote_command)
-        self.assertIn("python3 -u -m lib.setup_payloads", remote_command)
+        self.assertIn("python3 -E -s -B -u -m lib.setup_payloads", remote_command)
         self.assertNotIn("sudo -n", remote_command)
 
     def test_adopts_only_a_controller_verified_replacement_host(self):
@@ -502,13 +501,15 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
                  patch.object(setup_common, "PERSISTENT_STATE_DIR", state_dir), \
                  patch.object(setup_common, "copy_project_files"), \
                  patch.object(setup_common.os, "geteuid", return_value=0), \
+                 patch.object(setup_common, "require_runtime_source"), \
+                 patch("lib.runtime_source.require_source_parent"), \
                  patch.object(setup_common, "_target_setup_lock"), \
                  patch.object(setup_common, "run_streamed", return_value=0) as mock_stream:
                 result = setup_common.run_remote_setup(config)
 
             self.assertEqual(result, 0)
             self.assertEqual(os.stat(install_dir).st_mode & 0o777, 0o755)
-            self.assertEqual(mock_stream.call_args.kwargs["env"]["PYTHONUNBUFFERED"], "1")
+            self.assertEqual(mock_stream.call_args.args[0][1:4], ["-I", "-B", "-u"])
             self.assertEqual(mock_stream.call_args.kwargs["timeout"], 14400)
 
     def test_local_setup_preserves_managed_git_worktree(self):
@@ -560,6 +561,40 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
                 self.assertEqual(stream.read(), '{"status":"recovery_required"}')
             self.assertFalse(os.path.lexists(state_dir))
             self.assertFalse(os.path.islink(old_state))
+
+    def test_runtime_activation_quarantines_writable_code_even_when_publication_fails(self):
+        from lib import setup_common
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            runtime = base / "basaltwater"
+            build = base / "staged"
+            state = base / "durable-state"
+            for directory in (runtime / "lib", build, state):
+                directory.mkdir(mode=0o755, parents=True)
+            (runtime / "lib").chmod(0o775)
+            (runtime / "lib/module.py").write_text("# previous source", encoding="utf-8")
+            (build / "basaltwater.py").write_text("# new source", encoding="utf-8")
+            (build / "basaltwater.py").chmod(0o644)
+            (state / "setup.json").write_text("saved", encoding="utf-8")
+            rename = os.rename
+
+            def interrupt(source, destination):
+                if destination == str(runtime):
+                    raise OSError("publication interrupted")
+                rename(source, destination)
+
+            with patch.object(setup_common, "REMOTE_INSTALL_DIR", str(runtime)), \
+                    patch.object(setup_common, "PERSISTENT_STATE_DIR", str(state)), \
+                    patch.object(setup_common.os, "rename", side_effect=interrupt):
+                with self.assertRaisesRegex(OSError, "publication interrupted"):
+                    setup_common._activate_local_runtime(str(build))
+
+            quarantine, = base.glob(".basaltwater-quarantine-*")
+            self.assertEqual(quarantine.stat().st_mode & 0o777, 0o700)
+            self.assertTrue((quarantine / "source/lib/module.py").is_file())
+            self.assertFalse(runtime.exists())
+            self.assertEqual((state / "setup.json").read_text(), "saved")
 
     def test_local_runtime_refuses_unexpected_state_link(self):
         from lib import setup_common
@@ -832,12 +867,16 @@ class TestCloneRepository(unittest.TestCase):
 
             run_results = [
                 MagicMock(returncode=0),
-                MagicMock(returncode=0, stdout="origin/main\n"),
+                MagicMock(returncode=0),
+                MagicMock(returncode=0),
+                MagicMock(returncode=0),
                 MagicMock(returncode=0),
                 MagicMock(returncode=0),
             ]
 
             with patch("subprocess.run", side_effect=run_results) as mock_run, \
+                 patch.object(setup_common, "resource_lock"), \
+                 patch.object(setup_common.shutil, "copytree") as copytree, \
                  patch("lib.deploy_utils.get_git_commit_hash", return_value="abc123"):
                 result = setup_common.clone_repository(
                     git_url,
@@ -847,12 +886,19 @@ class TestCloneRepository(unittest.TestCase):
 
         self.assertEqual(result, (os.path.join(work_dir, repository_stage_name(git_url)), "abc123"))
         commands = [call.args[0] for call in mock_run.call_args_list]
-        self.assertIn(["git", "-C", cache_repo, "reset", "--hard", "origin/main"], commands)
+        self.assertEqual(commands[1], ["git", "-C", cache_repo, "remote", "set-head", "origin", "--auto"])
+        self.assertIn(["git", "-C", cache_repo, "reset", "--hard", "refs/remotes/origin/HEAD"], commands)
         self.assertIn(["git", "-C", cache_repo, "clean", "-fdx"], commands)
         self.assertLess(
-            commands.index(["git", "-C", cache_repo, "reset", "--hard", "origin/main"]),
+            commands.index(["git", "-C", cache_repo, "reset", "--hard", "refs/remotes/origin/HEAD"]),
             commands.index(["git", "-C", cache_repo, "clean", "-fdx"]),
         )
+        foreground = ["-c", "maintenance.autoDetach=false", "-c", "gc.autoDetach=false"]
+        self.assertEqual(commands[0], ["git", *foreground, "-C", cache_repo, "fetch", "--all"])
+        clone_path = result[0]
+        self.assertEqual(commands[-2], ["git", *foreground, "clone", "--no-local", "--", cache_repo, clone_path])
+        self.assertEqual(commands[-1], ["git", "-C", clone_path, "remote", "set-url", "origin", git_url])
+        copytree.assert_not_called()
 
     def test_cache_path_distinguishes_same_named_repositories(self):
         from lib.setup_common import _repository_cache_path

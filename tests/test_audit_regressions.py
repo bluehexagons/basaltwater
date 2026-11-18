@@ -118,7 +118,7 @@ class SetupSafetyTests(unittest.TestCase):
                         function(config)
             self.assertEqual([event[0] for event in events], ["udp", "tunnel"])
             self.assertEqual(events[0][1][0].port, 3478)
-            tunnel.assert_called_once_with(config, allow_create=True)
+            tunnel.assert_called_once_with(config, allow_create=True, deployed_hostnames=[])
 
     def test_runtime_staging_does_not_follow_controller_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -286,7 +286,7 @@ class SetupSafetyTests(unittest.TestCase):
         certbot.assert_not_called()
         ssl.assert_not_called()
         nginx.assert_called_once_with({"example.com": [deployment]}, enable_https_redirect=False)
-        tunnel.assert_called_once_with(config, allow_create=True)
+        tunnel.assert_called_once_with(config, allow_create=True, deployed_hostnames=["example.com"])
         firewall.assert_called_once_with(config)
         self.assertEqual(events, ["nginx", "tunnel"])
 

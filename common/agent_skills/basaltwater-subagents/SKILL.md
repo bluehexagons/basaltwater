@@ -27,13 +27,12 @@ Start with Luna for provisional, bounded work such as classification, documentat
 small fixes, focused tests, and app-script or export validation. Use medium by
 default for these tasks. Explicit deterministic, trivial tasks may use low when
 their inputs and checks are narrow. Use high or xhigh for Luna only when the
-task has concrete complexity that warrants it. Use Sol high for broad coding,
-integration, ambiguous cross-file work, and reviews. Sol and Claude Opus are
-the recommended higher-end frontier choices on subscriptions. Astra and Fable
-are discouraged for general use: their extra cost usually buys too little gain.
-Consider them only for a specific unmet need with evidence of benefit. These
-are guidance suggestions, not performance proof: retain project policy and
-record actual outcomes. Choose standard service.
+task has concrete complexity that warrants it. Use GPT-6.2 Sol high for broad
+coding, integration, ambiguous cross-file work, and reviews. Claude Opus is a
+strong option for demanding Claude work. Trial GPT-6.2 Astra or Claude Fable
+for a specific unmet need and compare accepted results, allowance and rework
+before promoting it. Retain proven project settings and record actual
+outcomes. Choose standard service.
 Never autonomously select or inherit fast service (including Codex `priority`),
 `max`, or `ultra`; honor explicit confirmed user selections. Apply settings
 through the tool and check the returned provider, model, and options. Active

@@ -4,8 +4,9 @@ This procedure manages Debian's upstream `t3code.service`. CachyOS web uses
 `basaltwater-cachyos-t3.service` and staged setup activation; use its installed
 `basaltwater-cachyos-t3code` skill. CachyOS desktop and native Windows use their
 AUR and WinGet packages, respectively. On CachyOS, `t3 service install` creates
-a separate service and can select different data. Upstream background services
-are unsupported on native Windows; use its desktop installation workflow.
+a separate service and can select different data. Upstream 0.1.10 also supports
+Windows background services; Basaltwater's Windows profile still manages the
+desktop. Do not install a service as an incidental desktop repair.
 
 Basaltwater targets stable T3 releases. When T3 Code is selected, a setup
 rerun checks npm's `t3@latest` stable channel and updates the upstream service
@@ -16,13 +17,41 @@ completion worker waits for the setup process to exit and checks stable HTTP
 readiness afterward. Internal non-refresh service checks reuse a healthy running
 service. Prefer the
 connected client's explicit **Update server** action when an update should be
-performed outside setup. For a host-side update, set `T3_RELEASE` to the exact
-stable version required by the stable client, or `latest` when both should
-use the latest stable release. Nightly and preview builds are used only for
-isolated forward-compatibility testing. Stable `0.1.0` introduces orchestration
-V2: before the first upgrade follow the
+performed outside setup. For an existing managed Debian service, use T3's
+native host updater as the target account:
+
+```bash
+t3 update --channel stable CLIENT_VERSION
+basaltw agent doctor --capability t3code --wait-for-t3-startup
+```
+
+Replace `CLIENT_VERSION` with the exact stable version required by the client.
+Omit it only when both sides should use the latest stable release. Check
+`t3 --version` first: setup preserves an existing `t3` command. If that command
+belongs to another installation, invoke the managed CLI as
+`~/.local/bin/basaltwater-t3code-pairing-provider` instead. Keep the same T3 home;
+do not change `--base-dir` as part of an update.
+
+In an interactive terminal, the native updater asks before restarting the
+background service. Arrange interruption of active turns and terminals before
+accepting. Without interactive input it stages the update without restarting
+unless `--yes` is supplied; staging does not establish that the new version is
+running. If activation was deferred, run `t3 service restart` at the arranged
+time, then check readiness. Older launchers can remain down after a crash or
+reboot until that restart. Preserve update-policy and downgrade refusals. See
+the tagged [native updater](https://github.com/pingdotgg/t3code/blob/v0.1.10/docs/user/updating.md#update-a-connected-server).
+
+## Launcher recovery
+
+If the managed CLI is unavailable or the client requires a newer service
+launcher, rerun the saved Basaltwater setup command. To reconcile the launcher
+directly, set `T3_RELEASE` below to the exact stable version required by the
+client. This installation path can restart the service; arrange the
+interruption first. Nightly and preview builds are used only for isolated
+forward-compatibility testing. Stable `0.1.0` introduces orchestration V2:
+before the first upgrade follow the
 [thread migration procedure](thread-migration.md), arrange the interruption and
-private recovery copy, and update the client as well. Then run:
+private recovery copy, and update the client as well. For launcher recovery:
 
 ```bash
 T3_RELEASE=CLIENT_VERSION
@@ -42,17 +71,15 @@ env -u npm_config_dangerously_allow_all_scripts \
     -u npm_config_dangerously_allow_all_scripts \
     -u NPM_CONFIG_DANGEROUSLY_ALLOW_ALL_SCRIPTS \
     t3 service install'
-basaltw agent doctor --capability t3code --fix --wait-for-t3-startup
+basaltw agent doctor --capability t3code --wait-for-t3-startup
 ```
 
-If the client says the update requires a newer T3 Code service launcher,
-reconcile it with the matching stable release's command above. Alternatively,
-rerunning the saved Basaltwater setup command on that VM also reconciles the
-launcher and runtime. The doctor validates the selected runtime. Do not pass
+The doctor validates the selected runtime; use its separate `--fix` only for
+an authorized repair. Do not pass
 `--allow-downgrade` or restore older application data over a newer database
 without release-specific upstream recovery instructions.
 Basaltwater recognizes service-state
-protocols 2 and 3, including the standalone executable runtime layout used by
+protocols 2 through 4, including the standalone executable runtime layout used by
 current T3 releases.
 
 For older npm-backed runtimes, keep those npm settings scoped to this trusted
@@ -90,13 +117,20 @@ An updater may already have restarted the service even when it reports failure;
 setup checks the invocation before deciding another restart is needed. Pending
 configuration reconciliation survives interrupted setup and is completed on retry.
 The opt-in doctor flag `--wait-for-t3-startup` allows the same startup window
-without restarting an active migration. The web panel uses it after updating;
-normal doctor checks remain quick.
+without restarting an active migration. Use it for host-side verification
+after native updates; normal doctor checks remain quick. The web panel links
+to T3's native environment settings for updates.
 If an older Basaltwater setup timed out, inspect the boot log and service state
 first; do not assume the migration crashed or delete either database. Update
 Basaltwater and rerun the saved setup command to apply the readiness fix.
 
 ## Release tracks and archive layout
+
+Stable 0.1.10 advances the launcher to protocol 4, retaining protocol 3 launcher
+compatibility and the durable state/layout contracts. Basaltwater recognizes
+protocol 4 for retained failed-update inspection and runtime retention; future
+unknown protocols remain blocked for maintenance. Migrations advance to 96.
+See the [release integration](release-0.1.10.md) for evidence and ownership.
 
 Stable 0.1.9 retains protocol 3, the standalone archive layout and the
 administrative pairing contract. Its database adds migration 81; retain

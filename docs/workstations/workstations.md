@@ -325,15 +325,14 @@ Supported `--browser` values are `brave`, `firefox`, `librewolf`, `helium`,
 
 - Brave and LibreWolf use Debian repositories unless `--flatpak` is selected.
 - Firefox uses `firefox-esr` through apt, or the Flathub build with Flatpak.
-- Helium is downloaded from its upstream GitHub release for amd64 or arm64.
-- Browsh installs Firefox as a dependency, resolves the newest stable release
-  with a Debian package for the target architecture, and provides a terminal
-  browser.
+- Helium installs a pinned upstream Debian package for amd64 or arm64.
+- Browsh provides a terminal browser. Setup verifies Firefox is installed and
+  selects a pinned upstream Debian package for amd64, arm64, armhf, or i386.
 - Lynx installs the Debian terminal browser and does not become a graphical
   default.
 
 A requested browser must finish its package command successfully and pass the
-installed-package or application check. Download, release-resolution and missing
+installed-package or application check. Download, verification and missing
 browser failures stop setup before default-browser configuration or later browser
 selections. Browsh also verifies Firefox before downloading its own package and
 repairs that dependency on rerun. Brave retains its Flatpak-to-APT fallback;
@@ -350,8 +349,16 @@ unrelated third-party source error, repair or disable that source separately
 before rerunning setup.
 
 Native Helium and Browsh packages are staged in private, randomly named
-temporary directories and removed after installation. Setup does not leave
-uninstalled browser-extension packages in the shared `/tmp` directory.
+temporary directories. Setup compares the download's SHA-256 with the
+architecture-specific pin before invoking APT. Reruns keep the installed
+package if its version meets or exceeds the pin and upgrade older packages
+after verification. A failed download or checksum check leaves an existing
+package in place. Refresh the version and all supported architecture digests
+in `desktop/browser_steps.py` together when qualifying a new upstream
+release. Use the publisher's release metadata or checksum manifest and
+confirm the package filename and Debian version for each architecture.
+[Helium releases](https://github.com/imputnet/helium-linux/releases) ·
+[Browsh releases](https://github.com/browsh-org/browsh/releases)
 
 The first browser in a repeated list is written to the setup user's
 `~/.config/mimeapps.list` as the HTTP/HTTPS default. Text-only browsers do not

@@ -69,6 +69,8 @@ def validate_model_policy(value: object) -> JSONDict:
         if identifier in seen or model.get("provider") != "openai" or model.get("family") not in _FAMILIES:
             raise ValueError("Models must have unique IDs and an OpenAI Luna, Sol, or Astra role")
         seen.add(identifier)
+        if type(model.get("preferred", False)) is not bool:
+            raise ValueError("Model preference must be a boolean")
         efforts = model.get("efforts")
         if not isinstance(efforts, list) or not efforts or any(effort not in SAFE_EFFORTS for effort in efforts):
             raise ValueError("Catalog efforts must exclude max and ultra")
@@ -226,10 +228,45 @@ def report_model_outcomes(repository: str) -> list[JSONDict]:
             for key, group in sorted(groups.items())]
 
 
+def _t3_catalog(providers: object) -> object:
+    if not isinstance(providers, list) or any(not isinstance(provider, dict) for provider in providers):
+        raise ValueError("Invalid T3 provider inventory")
+    codex = [provider for provider in providers
+             if provider.get("driverKind") == "codex" and provider.get("canRunChildTask") is True]
+    if len(codex) != 1:
+        raise ValueError("Expected one child-capable T3 Codex provider; scope the inventory to the intended instance")
+    return codex[0].get("models")
+
+
+def _t3_efforts(model: JSONDict) -> list[str]:
+    options = model.get("options")
+    if options is None:
+        return []
+    if not isinstance(options, list) or any(not isinstance(option, dict) for option in options):
+        raise ValueError("Invalid T3 model options")
+    choices: dict[str, list[str]] = {}
+    for option in options:
+        identifier = option.get("id")
+        if identifier not in ("reasoningEffort", "serviceTier"):
+            continue
+        values = option.get("values")
+        if (identifier in choices or not isinstance(values, list)
+                or any(not isinstance(value, str) for value in values)):
+            raise ValueError("Invalid T3 reasoning or service tier options")
+        choices[identifier] = values
+    if "default" not in choices.get("serviceTier", ["default"]):
+        return []
+    return choices.get("reasoningEffort", [])
+
+
 def _available(path: str) -> dict[str, list[str]]:
-    """Read a session inventory or Codex's public model-selector cache."""
+    """Read a session inventory, T3 capabilities, or Codex's model-selector cache."""
     value = read_json_file(os.path.abspath(os.path.expanduser(path)))
-    models = value.get("models") if isinstance(value, dict) else value
+    t3 = isinstance(value, dict) and "models" not in value and "providers" in value
+    if t3:
+        models = _t3_catalog(value["providers"])
+    else:
+        models = value.get("models") if isinstance(value, dict) else value
     if not isinstance(models, list) or len(models) > 100:
         raise ValueError("Available models must be a list or an object containing models")
     result: dict[str, list[str]] = {}
@@ -239,7 +276,7 @@ def _available(path: str) -> dict[str, list[str]]:
         if "visibility" in model and model["visibility"] != "list":
             continue
         identifier = _name(model.get("id", model.get("slug")), "available model ID")
-        efforts = model.get("efforts")
+        efforts = _t3_efforts(model) if t3 else model.get("efforts")
         if efforts is None:
             levels = model.get("supported_reasoning_levels", [])
             if not isinstance(levels, list):
@@ -306,8 +343,10 @@ def recommend_agent_model(
     pool = proven or fallback
     empirical = bool(proven) and all(candidate["cost_per_accepted_usd"] is not None for candidate in pool)
     cost_field = "cost_per_accepted_usd" if empirical else "estimated_token_cost_usd"
+    preferred = {model["id"] for model in policy["models"] if model.get("preferred")}
     selected = min(pool, key=lambda item: (
-        item[cost_field], SAFE_EFFORTS.index(item["effort"]), item["model"],
+        item[cost_field], SAFE_EFFORTS.index(item["effort"]),
+        not proven and item["model"] not in preferred, item["model"],
     )) if pool else None
     return {
         "task": task, "evaluation": rule["evaluation"], "selection": selected,
@@ -329,7 +368,8 @@ def add_models_parser(commands: argparse._SubParsersAction) -> None:
         command.add_argument("--json", action="store_true")
         if action == "recommend":
             command.add_argument("task", metavar="TASK_CLASS")
-            command.add_argument("--available", required=True, metavar="JSON_FILE")
+            command.add_argument("--available", required=True, metavar="JSON_FILE",
+                                 help="Session model inventory, T3 capabilities, or Codex model cache")
             command.add_argument("--astra-reason", default="", metavar="JUSTIFICATION")
         if action == "record":
             for field in ("task", "model", "effort", "outcome", "validation"):

@@ -83,19 +83,18 @@ ends. The same TLS option is available for pairing and approval development.
 Select a first-party surface with the same command:
 
 ```bash
-make panel-dev PANEL_ARGS="--surface connect"
 make panel-dev PANEL_ARGS="--surface pairing --https"
 make panel-dev PANEL_ARGS="--surface approval"
 make panel-dev PANEL_ARGS="--surface desktop"
 make panel-dev PANEL_ARGS="--surface console --port 8766"
 ```
 
-The printed URL opens the selected page. Pairing and Connect share the production
-portal: `/devices` shows enrollment and relay controls, `/connect/t3code` shows
-Connect, and `/` exercises automatic browser enrollment. Links end at a synthetic
-local destination. Start authorization, enter any sample response, refresh status,
-and toggle startup through the real nonce-protected forms. No relay is installed,
-account authorized, or service restarted. Sample responses are discarded.
+The printed URL opens the selected page. Pairing uses the production portal:
+`/devices` shows enrollment and a native T3 handoff; `/` exercises automatic
+browser enrollment. Pairing links end at a synthetic local destination.
+The handoff checks its origin and displays native host commands; no relay is
+installed, account authorized, or service restarted. The former `connect`
+development surface and portal authorization forms have been removed.
 
 Approval runs the production approval handler against a simulated broker. `full`
 includes pending, approved, denied and expired requests; `minimal` includes one
@@ -114,10 +113,9 @@ installed pinned release, or supplied with `--guacamole-assets /absolute/share/a
 The checksum must match the reviewed client; this command installs nothing.
 
 All surfaces share scenario/reset controls, stable URLs and credentials, source
-watching and browser refresh. `full` starts Connect linked and the synthetic desktop
-running; `minimal` and `empty` start Connect disabled, and `empty` leaves the
-desktop stopped until Connect to desktop is selected. `degraded` simulates provider,
-relay, broker and desktop failures. Saved Connect state and approval decisions
+watching and browser refresh. `full` starts the synthetic desktop running;
+`empty` leaves it stopped until Connect to desktop is selected. `degraded`
+simulates provider, broker and desktop failures. Saved approval decisions
 survive source reloads and clear on reset/scenario changes. Nonces, approval CSRF
 tokens, and desktop/console sessions are renewed on source reload; an active
 display or unsaved form offers a reload link instead of an automatic refresh.
@@ -128,7 +126,7 @@ Run the matching focused browser checks while editing, then the full suite:
 
 ```bash
 make browser-test BROWSER_ARGS="--grep 'specialized development' --require-guacamole"
-make browser-test BROWSER_ARGS="--grep 'specialized development connect'"
+make browser-test BROWSER_ARGS="--grep 'specialized development pairing'"
 ```
 
 The local suite launches each specialized development command and checks real
@@ -148,7 +146,7 @@ records from `scripts/panel_samples.py`; interactive changes never alter exports
 ## Run the local suite
 
 Use a development machine with the Python development extra installed, Node.js
-24.22.1+ (24 LTS) or 26.12.1+ (26 Current), OpenSSL, NSS `certutil`
+24.22.1+ (24 LTS) or 26.12.1+ (26 LTS), OpenSSL, NSS `certutil`
 (Debian's `libnss3-tools`), and the selected browsers'
 existing OS dependencies. The command never installs packages or downloads
 browser payloads. On a managed development VM with the pinned runtime:
@@ -163,7 +161,8 @@ make browser-test
 `managed` uses stable Playwright 1.64.1 under
 `/opt/basaltwater-playwright-stable`. MCP's separate alpha dependency is never
 used by this application suite. Both managed contexts use the checksum-pinned,
-root-owned Node 24.22.1 interpreter under `/opt/basaltwater-node`.
+root-owned [service Node interpreter](browser-automation.md#installed-components-and-agent-configuration)
+under `/opt/basaltwater-node`.
 
 If Firefox's matching payload is absent, explicitly provision it first with
 `basaltw agent browser install --engine firefox --context managed --json`.
@@ -236,8 +235,8 @@ light/dark themes, desktop/narrow layout, enlarged text, meters, actual form
 submissions and redirects, authentication challenges, Secure/HttpOnly/SameSite
 pairing cookies, nonce replay, forged CSRF, approval origin and replay rejection,
 denial and expiry of a previously rendered approval form, safe status recovery
-after a rejected decision, long approval values at narrow widths, readable Connect
-authorization links and keyboard focus, on-demand jobs and diagnostics loading,
+after a rejected decision, long approval values at narrow widths, native T3
+handoff links and host-command guidance, on-demand jobs and diagnostics loading,
 job failure and inactive-timer details, log-filter handoff and broader searches,
 empty and incomplete collection notices, and completed CA downloads checked
 against the displayed fingerprint. Jobs and diagnostics scenarios use synthetic

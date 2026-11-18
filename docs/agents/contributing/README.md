@@ -173,8 +173,9 @@ then Docker Hub, with a two-minute bound per pull. This keeps registry fallback
 inside a runnable step; job-container initialization would fail before fallback.
 The selected `actions/setup-python` interpreter and supported `actions/setup-node`
 runtime are mounted read-only from the runner tool cache. Python creates a private
-container venv; checks still run in Debian. Branch CI covers Node 24.22.1 and
-26.12.1. Only image pulls fall back:
+container venv; checks still run in Debian. Branch CI follows the latest
+available patches on Node 24 and 26, and release CI follows Node 24. Only image
+pulls fall back:
 failed package installation, checks and coverage are never replayed. Cleanup
 removes only that invocation's named container. An all-registry failure means
 checks did not start. Inspect the failed step before changing application code.
@@ -269,10 +270,10 @@ For interactive panel edits, run `make panel-dev` in the activated environment.
 It serves the production handlers on loopback with sample scenarios, simulated
 host actions, private temporary state and automatic source/browser reload.
 Use `PANEL_ARGS="--scenario degraded"` for failure states or `PANEL_ARGS="--https"`
-for transport-sensitive forms. `PANEL_ARGS="--surface connect"` opens T3 Connect;
-`pairing`, `approval`, `desktop`, and `console` select the other specialized
-panels with the same reset/reload workflow. Desktop and Console require reviewed
-Guacamole assets and enable HTTPS automatically.
+for transport-sensitive forms. `PANEL_ARGS="--surface pairing"` opens device
+enrollment and the native T3 handoff; `approval`, `desktop`, and `console` select
+the other specialized panels with the same reset/reload workflow. Desktop and
+Console require reviewed Guacamole assets and enable HTTPS automatically.
 See the [local panel workflow](../browser-testing.md#develop-the-web-panel-locally)
 for scenario/reset controls, supported simulated actions and certificate trust.
 For a focused browser check use

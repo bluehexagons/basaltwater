@@ -65,10 +65,13 @@ Interpreter services, Godot, environment files, unmanaged working/data paths,
 and alternate proxy settings are refused. Approved exec arguments, runtime
 environment, managed working directories, SQLite backup/retention, public UDP
 and fixed ports use the [target runtime policy](build-target-policy.md).
-Unmodeled dataclass fields are refused too. CI/publishing workflows are outside
-this bounded slice. SPA is the only static option in the current manifest and
-target schemas. Existing target renderer cache/compression behavior remains its
-own policy; no new gzip/expires override is invented or silently discarded.
+Unmodeled dataclass fields are refused too. A coexisting `ci` declaration is
+accepted, but delivery selects only component build commands and exports;
+it does not run CI install/build/test steps. CI-only manifests and publishing
+workflows remain outside this bounded slice. SPA is the only static option in
+the current manifest and target schemas. Existing target renderer cache/compression
+behavior remains its own policy; no new gzip/expires override is invented or
+silently discarded.
 
 Explicit `build_runtimes` take precedence, including an empty list for shell-only
 builds. Otherwise source preparation records shared marker-based inference

@@ -29,12 +29,13 @@ from lib.release_management import (
     write_json_state,
 )
 from lib.remote_utils import generate_password, is_service_active, run, user_exists
+from lib.ufw_ingress import verify_live_ufw_ingress
 from lib.unit_transaction import replace_units
 from lib.validation import (
     validate_filesystem_path, validate_gogs_owned_directory, validate_gogs_settings,
     validate_network_port, validate_no_control_characters,
 )
-from web.cloudflare_steps import run_cloudflare_tunnel_setup
+from web.cloudflare_firewall import legacy_gogs_origin_rule
 from web.ssl_steps import install_certbot, obtain_letsencrypt_certificate, setup_certificate_renewal
 from web.web_steps import install_nginx
 
@@ -809,8 +810,6 @@ def _write_gogs_nginx_config(
             f"  ✓ Self-signed TLS enabled for Gogs on {server_name}:{public_port}"
         )
 
-    if config.enable_cloudflare:
-        run_cloudflare_tunnel_setup(config)
     configure_nginx_auth_failure_ban("gogs", GOGS_AUTH_FAILURE_LOG)
 
 
@@ -859,10 +858,12 @@ def _ufw_numbered_rules() -> list[tuple[int, str, str]]:
 def _remove_managed_gogs_rules(
     rules: list[tuple[int, str, str]],
     desired_comments: set[str],
+    *,
+    preserve_origin: bool,
 ) -> None:
     stale_numbers = [
         number
-        for number, comment, _line in rules
+        for number, comment, line in rules
         if (
             comment.startswith(_GOGS_RULE_COMMENT_PREFIX)
             or comment in {
@@ -871,6 +872,7 @@ def _remove_managed_gogs_rules(
             }
         )
         and comment not in desired_comments
+        and not (preserve_origin and legacy_gogs_origin_rule(line, comment))
     ]
     for number in sorted(stale_numbers, reverse=True):
         result = run(f"ufw --force delete {number}", check=False)
@@ -906,7 +908,7 @@ def _reconcile_gogs_direct_firewall(config: SetupConfig, port: int) -> None:
         if available.returncode != 0:
             return
         existing_rules = _ufw_numbered_rules()
-        _remove_managed_gogs_rules(existing_rules, set())
+        _remove_managed_gogs_rules(existing_rules, set(), preserve_origin=config.enable_cloudflare)
         return
 
     existing_rules = _ufw_numbered_rules()
@@ -954,7 +956,10 @@ def _reconcile_gogs_direct_firewall(config: SetupConfig, port: int) -> None:
             "UFW did not retain all requested Gogs source rules: "
             + ", ".join(sorted(missing))
         )
-    _remove_managed_gogs_rules(updated_rules, desired_comments)
+    # The Cloudflare step owns the legacy rules on standard web ports.
+    _remove_managed_gogs_rules(updated_rules, desired_comments, preserve_origin=config.enable_cloudflare)
+    if sources:
+        verify_live_ufw_ingress({("tcp", port): sources}, run, families=(4, 6) if domain else (4,))
 
 
 def _maybe_configure_firewall(config: SetupConfig, domain: str, port: int) -> None:

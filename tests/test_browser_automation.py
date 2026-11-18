@@ -141,7 +141,7 @@ class BrowserAutomationProvisioningTests(unittest.TestCase):
         with (
             patch.object(browser_automation_steps, "is_dry_run", return_value=False),
             patch.object(browser_automation_steps.os.path, "isfile", return_value=True),
-            patch.object(browser_automation_steps, "verify_service_node"),
+            patch.object(browser_automation_steps, "install_service_node", return_value=True) as node,
             patch.object(browser_automation_steps, "_verify_runtime_package"),
             patch.object(browser_automation_steps, "_write_launchers") as write_launchers,
             patch.object(browser_automation_steps, "_install_runtime_package") as runtime,
@@ -149,9 +149,24 @@ class BrowserAutomationProvisioningTests(unittest.TestCase):
         ):
             browser_automation_steps.reconcile_existing_browser_automation(config)
 
+        node.assert_called_once_with()
         write_launchers.assert_called_once_with()
         runtime.assert_not_called()
         browser.assert_not_called()
+
+    def test_service_node_upgrade_failure_keeps_existing_launchers(self) -> None:
+        config = _config("codex", browser_automation=None)
+        with (
+            patch.object(browser_automation_steps, "is_dry_run", return_value=False),
+            patch.object(browser_automation_steps.os.path, "isfile", return_value=True),
+            patch.object(browser_automation_steps, "_verify_runtime_package"),
+            patch.object(browser_automation_steps, "install_service_node", side_effect=RuntimeError("Node verification failed")),
+            patch.object(browser_automation_steps, "_write_launchers") as write_launchers,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Node verification failed"):
+                browser_automation_steps.reconcile_existing_browser_automation(config)
+
+        write_launchers.assert_not_called()
 
     def test_missing_existing_install_is_not_partially_recreated(self) -> None:
         config = _config("codex", browser_automation=None)

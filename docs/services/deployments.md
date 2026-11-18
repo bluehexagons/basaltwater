@@ -38,7 +38,18 @@ basaltw setup server_web web.example.com deploy \
 
 Each source selector receives its own cache and upload path. Setup fetches the
 selected ref on every run and stops if it is missing, including during dry runs.
-Without a selector, deployments continue to follow the repository's default branch.
+Without a selector, every cache refresh checks the repository's current default
+branch, including changes to that default since the cache was created. If Git
+cannot determine it, setup stops instead of using a stale branch. Empty
+repositories and clones without a checked-out HEAD commit are also refused.
+
+For ordinary target builds, cache refresh and staging share a repository lock.
+Automatic Git maintenance finishes in the foreground, and staging uses Git's
+transfer protocol to create an independent clone with the original remote URL.
+This avoids copying object files that maintenance may move or remove. A staging
+failure stops setup with a nonzero exit status before the setup payload is sent;
+batch summaries record it as a failed command.
+
 For ordinary target builds, use the controller's Git credential helper or SSH
 key for private repositories. Selected-builder deployments use HTTPS and the
 controller's configured global Git credential helper, as described below.
@@ -54,6 +65,8 @@ Selected Debian Node/static/Go flows have native coverage, including saved
 revision updates, SQLite backups, UDP and retained refresh. Consult the
 [coverage map](../plans/testing-coverage.md) for the tested boundaries; a dry run
 does not establish that a particular deployment will succeed.
+The [real project qualification](../testing/build-projects.md) additionally
+covers a React/Vite manifest with separate deployment and CI commands.
 
 Enroll the builder with `--build-server`, which automatically installs Go, Node
 and Python and grants wildcard projects. Optionally restrict enrollment with
@@ -155,6 +168,9 @@ Automatic and explicitly granted fixed ports, canonical health paths, managed
 working directories, SQLite backups and public UDP declarations are supported.
 Persistent data remains in the ordinary deployment's shared directory when
 the same target root and component names are retained.
+Services may request a target-owned `runtime_binding` ID, with a matching target
+runtime grant and a separately provisioned private file. See
+[runtime secret bindings](runtime-bindings.md) for setup, rotation and recovery.
 
 A ready SPA and Go API can share one application and release bundle:
 
@@ -185,8 +201,11 @@ A separately authorized application can retain a neighboring route such as
 `/neighbor` on the same domain. This example does not build an npm frontend.
 
 The selected-builder flow refuses Godot/interpreter services, `env_file`,
-unmanaged working or database paths, alternate proxy settings and CI/publishing
-workflows. Environment grants are literal administrator-approved configuration;
+unmanaged working or database paths, alternate proxy settings and publishing
+workflows. A manifest may also declare `ci`, but deployment runs only its
+component build commands; CI install/build/test steps require a separate workflow
+build. CI-only manifests cannot be deployed.
+Environment grants are literal administrator-approved configuration;
 do not put secrets in manifests or policy drafts. It also refuses target
 Go, Node and Godot installation flags, build-host and legacy app-server roles,
 network activation and custom setup steps. SSL and Cloudflare settings are
@@ -532,9 +551,12 @@ In addition to the common fields (`name`, `type`, `domain`, `path`, `build`, and
 - `env_file`: absolute server path, or a path using deploy-time templates; the
   file must be readable but not writable by the component's dedicated service
   account, and its parent directory must not be writable by that account;
+- `runtime_binding`: a named administrator-owned environment file, scoped to
+  this release root and component; mutually exclusive with `env_file`. See
+  [runtime secret bindings](runtime-bindings.md);
 - `runtime_env`: environment values written directly into the generated
-  systemd unit; values may use deploy-time templates and override matching
-  entries from `env_file`;
+  systemd unit; values may use deploy-time templates. EnvironmentFile entries
+  take precedence over matching `Environment=` values;
 - `health`: optional URL path polled on `127.0.0.1:port` after startup;
 - `reverse_proxy`: set false for a worker or internal service that should not
   receive an Nginx route;

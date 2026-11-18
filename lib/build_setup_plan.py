@@ -28,7 +28,7 @@ from lib.validators import validate_host
 _COMPONENT_FIELDS = frozenset({
     "name", "type", "domain", "path", "build", "env", "output", "binary", "exec",
     "port", "env_file", "reverse_proxy", "health", "working_dir", "runtime_env",
-    "sqlite_backup", "backup_retention", "public_udp", "spa", "artifacts",
+    "sqlite_backup", "backup_retention", "public_udp", "spa", "artifacts", "runtime_binding",
 })
 
 
@@ -52,7 +52,8 @@ def _projection(component: Component, domain: str) -> dict[str, Any]:
     if component.type == "static" and (component.exec is not None or component.runtime_env or component.env_file is not None
             or component.working_dir is not None or component.sqlite_backup is not None
             or component.public_udp or component.backup_retention != 10
-            or component.port is not None or component.reverse_proxy is not True):
+            or component.port is not None or component.reverse_proxy is not True
+            or component.runtime_binding is not None):
         raise ValueError(f"Component {component.name!r} has unsupported execution or routing settings")
     rendered = render_template(component.domain, {"domain": domain})
     if not validate_host(rendered) or "{{" in rendered or "}}" in rendered:
@@ -103,8 +104,10 @@ def prepare_delivery_plan(
         raise ValueError("Delivery planning requires a version-1 deployment manifest")
     if set(vars(manifest)) != {"version", "components", "ci", "publishing", "build_runtimes"}:
         raise ValueError("Manifest has unsupported fields")
-    if manifest.ci or manifest.publishing:
-        raise ValueError("CI and publishing workflows are outside delivery planning")
+    if manifest.publishing:
+        raise ValueError("Publishing workflows are outside delivery planning")
+    # Deployment selects component commands. A coexisting CI declaration is
+    # used only by explicit workflow requests, never by artifact delivery.
     domain = _destination(destination)
     if not isinstance(source_path, str):
         raise ValueError("Source snapshot must be an absolute text path")

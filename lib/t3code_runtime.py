@@ -9,14 +9,16 @@ import re
 from lib.validation import validate_filesystem_path
 
 
-# Protocols 2 and 3 have the activeVersion state field and runtime layouts
+# Protocols 2 through 4 have the activeVersion state field and runtime layouts
 # understood below. Later protocol numbers may keep those fields and layouts;
 # active runtime selection checks both before returning an executable.
 T3_MINIMUM_ACTIVE_SERVICE_PROTOCOL = 2
 
 # State-changing and destructive maintenance remains restricted to protocols
 # whose complete state semantics have been reviewed here.
-T3_KNOWN_SERVICE_PROTOCOLS = frozenset((2, 3))
+# Protocol 4 (T3 0.1.10) coordinates selection writes and unit reconciliation;
+# its durable activeVersion/update records retain protocol 3's semantics.
+T3_KNOWN_SERVICE_PROTOCOLS = frozenset((2, 3, 4))
 
 T3_VERSION_PATTERN = re.compile(
     r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"

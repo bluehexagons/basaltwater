@@ -63,6 +63,7 @@ class LocalIdentityTests(unittest.TestCase):
         self.enterContext(patch.object(lifecycle, "PASSWD_FILE", str(self.path)))
         self.stamp = self.enterContext(patch.object(lifecycle, "_stamp", return_value=(1,)))
         self.lookup = self.enterContext(patch.object(lifecycle.pwd, "getpwnam", return_value=identity()))
+        self.enterContext(patch("smb.unix_accounts.os.getgrouplist", return_value=[1000]))
 
     def test_local_inventory_projects_only_names_and_uids_and_refuses_nss_mismatch(self):
         self.path.write_text("root:x:0:0:PRIVATE ROOT:/root:/bin/bash\nalice:x:1000:1000:PRIVATE:/home/alice:/bin/bash\n")
@@ -126,6 +127,7 @@ class LifecycleExecutionTests(unittest.TestCase):
         self.enterContext(patch("lib.atomic_io.os.fchown"))
         self.stamp = self.enterContext(patch.object(lifecycle, "_stamp", return_value=(1,)))
         self.identities = self.enterContext(patch.object(lifecycle, "_identity", return_value=identity()))
+        self.enterContext(patch("smb.unix_accounts.os.getgrouplist", return_value=[1000]))
         self.local = self.enterContext(patch.object(lifecycle, "_local_accounts", return_value=[{"username": "alice", "uid": 1000}]))
         self.revision = self.enterContext(patch.object(lifecycle, "_creation_revision", return_value="a" * 64))
         self.rows = self.enterContext(patch.object(lifecycle, "_accounts", side_effect=[[row()], []]))
