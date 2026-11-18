@@ -1,6 +1,6 @@
 # Basaltwater v2.0 preview and release qualification
 
-The current preview candidate is `v2.0.0-rc.3` (Python package `2.0.0rc3`).
+The current preview candidate is `v2.0.0-rc.4` (Python package `2.0.0rc4`).
 The latest final release remains `v0.2.0`. This document is the qualification
 record and release gate for the eventual stable `v2.0.0` release.
 
@@ -25,7 +25,7 @@ Increment `N` for each new candidate. Do not move or reuse a published tag.
 The release workflow marks `-rc.` tags as prereleases, and the installer’s
 `stable` channel matches only unqualified `vMAJOR.MINOR.PATCH` tags. Preview
 users select an exact candidate, for example `basaltw channel
-v2.0.0-rc.3`. A release candidate is for qualification and feedback; it does
+v2.0.0-rc.4`. A release candidate is for qualification and feedback; it does
 not claim that the stable release matrix has passed.
 
 Publishing a preview requires the tag’s Python package version to match the
@@ -75,21 +75,28 @@ private hostnames, personal data, or raw logs that contain them.
 
 ### Preview publication gate
 
-- [x] `pyproject.toml` declares `2.0.0rc3` for `v2.0.0-rc.3`.
-- [x] Release CI passes on Python 3.11 and 3.15, builds the wheel, and
+- [x] `pyproject.toml` declares `2.0.0rc4` for `v2.0.0-rc.4`.
+- [ ] Release CI passes on Python 3.11 and 3.15, builds the wheel, and
   installs and smoke-tests the packaged launchers on Python 3.13.
-- [x] The GitHub release is marked **pre-release** and contains the wheel built
+- [ ] The GitHub release is marked **pre-release** and contains the wheel built
   from the tagged commit.
-- [x] An isolated disposable controller installs the exact candidate tag and
+- [ ] An isolated disposable controller installs the exact candidate tag and
   reports its candidate version through `basaltw --version` and
   `basaltw channel`.
-- [x] `stable` still selects the latest unqualified stable tag; preview tags
+- [ ] `stable` still selects the latest unqualified stable tag; preview tags
   remain opt-in.
 
 Passing this gate permits a preview for feedback. It does not pass the live
 qualification matrix or authorize the final stable release.
 
 ### Candidate results
+
+#### `v2.0.0-rc.4`
+
+RC 4 blocks Debian refresh previews and dispatch while a source activation
+needs recovery. It also checks T3 device-pairing credentials before target
+setup can change packages or services. Repeat those recovery and T3 cases,
+the controller install and upgrade, and the exact-candidate release matrix.
 
 #### `v2.0.0-rc.3`
 
@@ -304,7 +311,7 @@ candidate.
 | DSK-01 | Shared XRDP desktop | On a disposable Debian workstation, cover fresh setup, human-first and concurrent starts, supported clients, keyboard/input/clipboard, resize and reconnect, frontend/network interruption, desktop crash/reboot, logout, interrupted setup, legacy-session blocking, and administrator rollback. Confirm the documented persistence and handoff behavior; see [XRDP guidance](workstations/xrdp.md). | Not run for `v2.0.0-rc.2` |
 | DSK-02 | Proxmox local browser kiosk | On a disposable Proxmox VE 9 console VM and target laptop, verify CLI/web boot, Firefox navigation, offline saved destinations and tab opening, local status/doctor/start/stop/restart, native/guest consoles, VT switching with a console focused, input/scaling, service stop/restart and child cleanup, crash recovery, package rerun, removal, and current lid/suspend behavior; see the [kiosk checklist](workstations/proxmox-kiosk.md#proxmox-and-hardware-qualification). | **Deferred** to a later release |
 | PRV-01 | Privileged executor and Admin refresh lifecycle | On a disposable Debian/systemd VM, cover approval origin, TLS, review window and credential privacy; source activation, setup failures, partial activation, explicit recovery identity and evidence retention. Interrupt the worker/broker or lose a dispatch response; confirm uncertain work is never replayed. Exercise pipe-holding or TERM-ignoring descendants and replaced paths; cleanup must remain bounded. Preserve active builds, unpushed work, T3 and desktop state through maintenance/readiness checks. See [privilege approvals](agents/privilege-approvals.md) and the [broker reference](agents/privilege-broker-reference.md). | **Fail** on `v2.0.0-rc.3`. CLI preview bypassed the pending source activation marker. The fix is on `main`. Live Admin refresh and preservation of active builds, T3 and desktop sessions remain open. |
-| T3-01 | T3 Code server and client | On a disposable Debian VM, qualify stable T3 0.1.8 with a compatible V2 client and supported provider versions. Confirm complete managed skills after restarting the agent session. Retain fresh-install/V1 migration, 0.1.7 upgrade, pairing, provider/terminal, update/reboot, gateway preview/recording, and direct/Connect evidence. Exercise delegation, opt-in linked environments and access ceilings, workspace binding, queues/recovery, schedules/webhooks including fresh sessions, PR watches, projectless promotion, guarded release-track switching and the changed 0.1.8 workflows using the [stable feature cases](agents/t3-code.md#stable-feature-qualification). | Not run for `v2.0.0-rc.2`; disposable 0.1.8 runtime/pairing/database component checks do not qualify this full case |
+| T3-01 | T3 Code server and client | On a disposable Debian VM, qualify stable T3 0.1.10 with a compatible V2 client and supported provider versions. Confirm complete managed skills after restarting the agent session. Retain fresh-install, V1-to-V2 migration, 0.1.9-to-0.1.10 upgrade, pairing, provider/terminal, update/reboot, gateway preview/recording, and direct/Connect evidence. Cover the additional client and server workflows in the [stable feature cases](agents/t3-code.md#stable-feature-qualification). | **Not run** in full. |
 | BRW-01 | Browser qualification | Pass the Guacamole integration boundary in Chromium and Firefox; on disposable Debian, complete the manual Firefox ESR checks and verify internal HTTPS enrollment on a managed deployment. See [browser testing](agents/browser-testing.md#guacamole-boundary) and its [native release procedure](agents/browser-testing.md#native-debian-firefox-esr-release-qualification). | **Pass** for `v2.0.0-rc.3` with the disposable Guacamole protocol fixture, native Debian Firefox ESR and an installed Debian 13 gateway |
 | SEC-01 | Required audit coverage | On a required-audit Debian profile, verify `/usr/sbin/auditctl -s`, managed rules from `auditctl -l`, a fresh healthy panel snapshot, and security-monitor collection. Confirm missing tools, stopped auditd, or missing rules are surfaced as source failures. | **Pass** for `v2.0.0-rc.3` on a Debian 13 `server_web` VM |
 | TLS-01 | Certificate trust reporting | Exercise a self-signed endpoint with its configured CA, a publicly trusted endpoint, missing CA material, and failed TLS verification. Confirm `basaltwater-web ca --json` and the panel never claim public trust without verification. | **Pass** for `v2.0.0-rc.3` on a Debian 13 `server_web` VM |
