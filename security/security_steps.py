@@ -1683,6 +1683,23 @@ def _check_proxmox_firewall(*, require_enabled: bool) -> dict[str, object]:
     )
 
 
+def _verify_proxmox_single_node_activation() -> None:
+    """Keep first activation on multi-node clusters in the operator's hands."""
+    result = run("pvesh get /nodes --output-format json", check=False, capture_output=True)
+    try:
+        nodes = json.loads(result.stdout or "null") if result.returncode == 0 else None
+    except (ValueError, TypeError) as exc:
+        raise RuntimeError("Could not verify Proxmox cluster membership before firewall activation") from exc
+    if not isinstance(nodes, list) or not nodes or not all(
+        isinstance(node, dict) and isinstance(node.get("node"), str) and node["node"] for node in nodes
+    ):
+        raise RuntimeError("Could not verify Proxmox cluster membership before firewall activation")
+    if len(nodes) != 1:
+        raise RuntimeError(
+            "Enable the firewall explicitly in Proxmox after checking management access on every cluster node, then rerun setup"
+        )
+
+
 def _proxmox_source_key(source: str) -> str:
     validated = validate_network_ip_or_cidr(source, "Proxmox management source")
     return str(ipaddress.ip_network(validated, strict=False))
@@ -1722,23 +1739,17 @@ def configure_proxmox_management_firewall(config: SetupConfig) -> None:
         print("  [DRY-RUN] Would verify native firewall policy and reconcile managed Proxmox sources")
         return
     cluster_options = _check_proxmox_firewall(require_enabled=False) if desired_sources else None
+    activate = cluster_options is not None and cluster_options.get("enable", 0) not in (1, True)
+    if activate:
+        _verify_proxmox_single_node_activation()
     existing_entries = _proxmox_management_entries()
-    if existing_entries is None:
-        if not desired_sources:
-            print("  ✓ Proxmox management access filter not requested")
-            return
-        result = run(
-            "pvesh create /cluster/firewall/ipset --name management "
-            "--comment 'Proxmox standard management access set'",
-            check=False,
-        )
-        if result.returncode != 0:
-            raise RuntimeError("Could not create the Proxmox management IP set")
-        existing_entries = []
+    if existing_entries is None and not desired_sources:
+        print("  ✓ Proxmox management access filter not requested")
+        return
 
     existing_by_cidr = {
         str(entry.get("cidr")): entry
-        for entry in existing_entries
+        for entry in existing_entries or []
         if isinstance(entry.get("cidr"), str)
     }
     existing_by_key = {_proxmox_source_key(cidr): entry for cidr, entry in existing_by_cidr.items()}
@@ -1765,6 +1776,15 @@ def configure_proxmox_management_firewall(config: SetupConfig) -> None:
         if not any(peer in network for network in allowed) or any(peer in network for network in excluded):
             raise RuntimeError("Current SSH peer is outside the requested or retained management sources")
 
+    if existing_entries is None:
+        result = run(
+            "pvesh create /cluster/firewall/ipset --name management "
+            "--comment 'Proxmox standard management access set'",
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError("Could not create the Proxmox management IP set")
+
     for source in desired_sources:
         if _proxmox_source_key(source) in existing_by_key:
             continue
@@ -1783,12 +1803,13 @@ def configure_proxmox_management_firewall(config: SetupConfig) -> None:
     if desired_sources:
         _verify_proxmox_sources(desired_sources, allow_stale=True)
         try:
-            result = run("pvesh set /cluster/firewall/options --enable 1", check=False)
-            if result.returncode != 0:
-                raise RuntimeError("Could not enable the Proxmox cluster firewall")
+            if activate:
+                result = run("pvesh set /cluster/firewall/options --enable 1", check=False)
+                if result.returncode != 0:
+                    raise RuntimeError("Could not enable the Proxmox cluster firewall")
             _check_proxmox_firewall(require_enabled=True)
         except Exception:
-            if cluster_options is not None and cluster_options.get("enable", 0) not in (1, True):
+            if activate:
                 restored = run("pvesh set /cluster/firewall/options --enable 0", check=False)
                 if restored.returncode != 0:
                     raise RuntimeError("Firewall activation failed and previous enablement could not be restored")

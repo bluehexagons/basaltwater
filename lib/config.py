@@ -1057,6 +1057,12 @@ class SetupConfig:
         self.web_interfaces = web_interfaces or None
         if self.clear_access_sources:
             self.access_sources = None
+        if (
+            not _loading_saved_config
+            and self.system_type in {"server_proxmox", "server_wsl"}
+            and (self.ssh_access_sources or self.clear_ssh_access_sources)
+        ):
+            raise ValueError(f"{self.system_type} does not support --ssh-access-source or --no-ssh-access-source")
         if self.clear_ssh_access_sources:
             self.ssh_access_sources = None
         if self.ssh_access_sources is not None:

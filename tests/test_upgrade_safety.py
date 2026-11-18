@@ -5,10 +5,13 @@ from __future__ import annotations
 from contextlib import redirect_stdout
 import io
 import os
+from pathlib import Path
+from types import SimpleNamespace
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
+from common import common_steps
 from common.common_steps import copy_ssh_keys_to_user
 from lib.config import SetupConfig
 from lib.setup_common import prepare_deployments, run_remote_setup
@@ -90,43 +93,71 @@ class TestDeploymentPreflight(unittest.TestCase):
 
 
 class TestSshKeyUpgrade(unittest.TestCase):
+    def setUp(self) -> None:
+        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        root_ssh = self.root / "root-ssh"
+        root_ssh.mkdir(mode=0o700)
+        root_keys = root_ssh / "authorized_keys"
+        root_keys.write_text("ssh-ed25519 ROOT\nssh-ed25519 EXISTING\n")
+        root_inodes = {root_ssh.stat().st_ino, root_keys.stat().st_ino}
+        self.home = self.root / "home"
+        self.home.mkdir(mode=0o700)
+        self.ssh = self.home / ".ssh"
+        self.keys = self.ssh / "authorized_keys"
+        uid = os.getuid() or 1000
+        gid = os.getgid() or 1000
+        account = SimpleNamespace(pw_dir=str(self.home), pw_uid=uid, pw_gid=gid)
+        self.enterContext(patch.object(common_steps, "_ROOT_SSH_DIRECTORY", str(root_ssh)))
+        self.enterContext(patch.object(common_steps.pwd, "getpwnam", return_value=account))
+        fstat = os.fstat
+
+        def stat_as_setup(fd):
+            info = fstat(fd)
+            return SimpleNamespace(
+                st_uid=0 if info.st_ino in root_inodes else uid,
+                st_gid=0 if info.st_ino in root_inodes else gid,
+                st_dev=info.st_dev, st_ino=info.st_ino, st_mode=info.st_mode,
+                st_nlink=info.st_nlink,
+            )
+
+        self.enterContext(patch.object(common_steps.os, "fstat", side_effect=stat_as_setup))
+        self.chown = self.enterContext(patch.object(common_steps.os, "fchown"))
+        real_stat = os.stat
+
+        def stat_keys(path, *, dir_fd=None, follow_symlinks=True):
+            info = real_stat(path, dir_fd=dir_fd, follow_symlinks=follow_symlinks)
+            if dir_fd is not None and path == "authorized_keys":
+                return SimpleNamespace(
+                    st_uid=uid, st_gid=gid, st_dev=info.st_dev,
+                    st_ino=info.st_ino, st_mode=info.st_mode, st_nlink=info.st_nlink,
+                )
+            return info
+
+        self.enterContext(patch.object(common_steps.os, "stat", side_effect=stat_keys))
+
     def test_existing_user_keys_are_preserved_and_root_keys_deduplicated(self) -> None:
-        def open_for_read(path: str, *_args: object, **_kwargs: object) -> io.StringIO:
-            if path == "/root/.ssh/authorized_keys":
-                return io.StringIO("ssh-ed25519 ROOT\nssh-ed25519 EXISTING\n")
-            return io.StringIO("ssh-ed25519 EXISTING\nssh-rsa USERONLY\n")
+        self.ssh.mkdir(mode=0o755)
+        self.keys.write_text("ssh-ed25519 EXISTING\nssh-rsa USERONLY\n")
+        copy_ssh_keys_to_user(_config())
+        self.assertEqual(self.keys.read_text(), "ssh-ed25519 EXISTING\nssh-rsa USERONLY\nssh-ed25519 ROOT\n")
+        self.assertEqual(self.ssh.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(self.keys.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.chown.call_count, 2)
 
-        with patch("common.common_steps.get_user_home", return_value="/home/alice"), \
-             patch("common.common_steps.os.path.exists", return_value=True), \
-             patch("common.common_steps.os.path.lexists", return_value=True), \
-             patch("common.common_steps.os.path.islink", return_value=False), \
-             patch("common.common_steps.os.path.isfile", return_value=True), \
-             patch("common.common_steps.os.path.isdir", return_value=True), \
-             patch("builtins.open", side_effect=open_for_read), \
-             patch("common.common_steps.write_text_atomic") as write_atomic, \
-             patch("common.common_steps.run"):
-            copy_ssh_keys_to_user(_config())
-
-        write_atomic.assert_called_once_with(
-            "/home/alice/.ssh/authorized_keys",
-            "ssh-ed25519 EXISTING\nssh-rsa USERONLY\nssh-ed25519 ROOT\n",
-            mode=0o600,
-        )
+    def test_fresh_home_gets_private_keys_file(self) -> None:
+        copy_ssh_keys_to_user(_config())
+        self.assertEqual(self.keys.read_text(), "ssh-ed25519 ROOT\nssh-ed25519 EXISTING\n")
+        self.assertEqual(self.keys.stat().st_mode & 0o777, 0o600)
 
     def test_symlinked_authorized_keys_is_refused(self) -> None:
-        with patch("common.common_steps.get_user_home", return_value="/home/alice"), \
-             patch("common.common_steps.os.path.exists", return_value=True), \
-             patch("common.common_steps.os.path.lexists", return_value=True), \
-             patch(
-                 "common.common_steps.os.path.islink",
-                 side_effect=lambda path: path.endswith("authorized_keys")
-                 and path != "/root/.ssh/authorized_keys",
-             ), \
-             patch("common.common_steps.os.path.isfile", return_value=True), \
-             patch("common.common_steps.os.path.isdir", return_value=True), \
-             patch("common.common_steps.run"):
-            with self.assertRaisesRegex(RuntimeError, "non-regular authorized_keys"):
-                copy_ssh_keys_to_user(_config())
+        self.ssh.mkdir(mode=0o700)
+        other = self.root / "other"
+        other.write_text("unrelated\n")
+        self.keys.symlink_to(other)
+        with self.assertRaisesRegex(RuntimeError, "regular authorized_keys"):
+            copy_ssh_keys_to_user(_config())
+        self.assertEqual(other.read_text(), "unrelated\n")
+        self.chown.assert_not_called()
 
 
 if __name__ == "__main__":

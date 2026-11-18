@@ -174,6 +174,12 @@ def build_server_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
             ("Configuring firewall for requested services" if config.enable_rdp or config.enable_samba
              else "Configuring firewall for requested web ports", configure_firewall)
         )
+    elif config.system_type == "server_lite" and (
+        config.ssh_access_sources or config.clear_ssh_access_sources
+    ):
+        from security.security_steps import configure_firewall_ssh_only
+
+        steps.append(("Configuring SSH access sources", configure_firewall_ssh_only))
 
     steps.extend(get_security_steps(lite=config.system_type in {"server_web", "server_lite"}))
     extend_desktop_steps(config, steps)

@@ -19,6 +19,7 @@ class TestNativeManagementFirewall(unittest.TestCase):
         self.enterContext(patch.dict(os.environ, {}, clear=True))
         self.enterContext(patch("security.security_steps.is_dry_run", return_value=False))
         self.cluster = {"enable": 0}
+        self.nodes = [{"node": "pve"}]
         self.node = {}
         self.entries = [{"cidr": "172.16.0.0/12", "comment": "basaltwater access source 172.16.0.0/12"}]
         self.fail_command = ""
@@ -35,6 +36,8 @@ class TestNativeManagementFirewall(unittest.TestCase):
         stdout = ""
         if command == "pvesh get /cluster/firewall/options --output-format json":
             stdout = json.dumps(self.cluster)
+        elif command == "pvesh get /nodes --output-format json":
+            stdout = json.dumps(self.nodes)
         elif "/options --output-format" in command:
             stdout = json.dumps(self.node)
         elif command.startswith("pvesh get /cluster/firewall/ipset/management"):
@@ -61,6 +64,22 @@ class TestNativeManagementFirewall(unittest.TestCase):
                     configure_proxmox_management_firewall(self.config)
                 self.assertEqual(self._mutations(), [])
                 del options[field]
+
+    def test_multi_node_first_activation_requires_operator_action(self) -> None:
+        self.nodes.append({"node": "pve2", "status": "offline"})
+        with self.assertRaisesRegex(RuntimeError, "checking management access on every cluster node"):
+            configure_proxmox_management_firewall(self.config)
+        self.assertEqual(self._mutations(), [])
+
+        self.cluster["enable"] = 1
+        configure_proxmox_management_firewall(self.config)
+        self.assertFalse(any(command.startswith("pvesh set ") for command in self._mutations()))
+
+    def test_unknown_cluster_membership_stops_before_mutation(self) -> None:
+        self.nodes = []
+        with self.assertRaisesRegex(RuntimeError, "Could not verify Proxmox cluster membership"):
+            configure_proxmox_management_firewall(self.config)
+        self.assertEqual(self._mutations(), [])
 
     def test_inactive_backend_and_compile_failure_stop_before_mutation(self) -> None:
         for command in ("systemctl is-active --quiet pve-firewall", "pve-firewall compile"):

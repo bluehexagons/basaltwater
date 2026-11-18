@@ -19,9 +19,11 @@ from lib.config import SetupConfig
 from lib.cache import load_setup_command, merge_setup_configs, save_setup_command
 from lib.validation import validate_samba_settings, validate_web_interface_settings
 from plugins.proxmox import build_server_proxmox_steps
+from plugins.server import build_server_steps
 from security.security_steps import (
     configure_firewall,
     configure_firewall_web,
+    configure_firewall_ssh_only,
     configure_proxmox_management_firewall,
 )
 from smb.samba_steps import configure_samba_firewall
@@ -29,6 +31,19 @@ from web.gogs_steps import generate_gogs_app_ini
 
 
 class TestAccessSourceConfig(unittest.TestCase):
+    def test_server_lite_applies_ssh_only_selection_and_clearing(self) -> None:
+        for settings in ({"ssh_access_sources": ["192.0.2.12"]}, {"clear_ssh_access_sources": True}):
+            with self.subTest(settings=settings):
+                config = SetupConfig(host="host.example.test", username="admin", system_type="server_lite", **settings)
+                self.assertIn(configure_firewall_ssh_only, [step for _name, step in build_server_steps(config)])
+
+    def test_unsupported_profiles_refuse_ssh_only_source_options(self) -> None:
+        for profile in ("server_proxmox", "server_wsl"):
+            for settings in ({"ssh_access_sources": ["192.0.2.12"]}, {"clear_ssh_access_sources": True}):
+                with self.subTest(profile=profile, settings=settings):
+                    with self.assertRaisesRegex(ValueError, "does not support --ssh-access-source"):
+                        SetupConfig(host="localhost", username="admin", system_type=profile, **settings)
+
     def test_ssh_sources_cli_saved_remote_and_command_round_trips(self) -> None:
         parser = create_setup_argument_parser("test")
         config = SetupConfig.from_args(parser.parse_args([
@@ -652,6 +667,8 @@ class TestProxmoxManagementFilter(unittest.TestCase):
             stdout = ""
             if command == "pvesh get /cluster/firewall/options --output-format json":
                 stdout = json.dumps(cluster)
+            elif command == "pvesh get /nodes --output-format json":
+                stdout = '[{"node":"pve"}]'
             elif "/options --output-format" in command:
                 stdout = "{}"
             elif command.startswith("pvesh get /cluster/firewall/ipset/management"):
