@@ -30,8 +30,8 @@ class ScrubTriagePanelTests(unittest.TestCase):
         self.assertIn("DELETE 2 FILES", review)
         self.assertIn("/srv/data/0&lt;x&gt;.bin", review)
         self.assertIn("Permanently remove", review)
-        self.assertIn("No separate approval is needed", review)
-        self.assertIn("<button>Permanently delete files</button>", review)
+        self.assertIn("Open the pending request", review)
+        self.assertIn("<button>Request approval</button>", review)
         with patch.object(actions, "exchange", return_value=status()) as exchange:
             with self.assertRaises(ValueError):
                 self.manager.submit(ticket, "DELETE 1 FILES")

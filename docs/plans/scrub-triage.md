@@ -54,10 +54,9 @@ unavailable and remains a separate future reviewed operation.
   action. Record durable per-item results so an interruption cannot repeat
   completed moves or deletions. Retain batch parameters and outcomes in root-only
   per-job claim records even after another job replaces the panel's latest result.
-- Permanent deletion gets a separate review listing every path, a count-based
-  typed confirmation. The broker automatically authorizes the confirmed scrub
-  action without another approval-page interaction. Explain that source bytes
-  are removed; keep the finding/disposition history and parity metadata.
+- Permanent deletion requires a review listing every path, a count-based typed
+  confirmation and an approval decision for that batch. Explain that deletion
+  removes source bytes and retains the disposition history and parity metadata.
 
 ## Acceptance
 

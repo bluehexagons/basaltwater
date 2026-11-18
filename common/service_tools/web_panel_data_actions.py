@@ -207,6 +207,12 @@ def render_saved_review(ticket: str, parameters: dict, csrf: str) -> str:
     label, effect = DATA_ACTIONS[action]
     if "items" in parameters and action == "verify":
         label = "Verify selected files"
+    if action == "verify":
+        next_step = "Confirm to start verification."
+        button = label
+    else:
+        next_step = "Confirm to request approval. Open the pending request in Activity &amp; approvals to review the exact files and authorize the worker."
+        button = "Request approval"
     required = confirmation_phrase(parameters)
     confirmation = (f'<label for="recovery-confirm">Type <code>{required}</code> to confirm</label><input id="recovery-confirm" name="confirmation" required autocomplete="off">'
                     if required else '<input type="hidden" name="confirmation" value="">')
@@ -216,9 +222,9 @@ def render_saved_review(ticket: str, parameters: dict, csrf: str) -> str:
     targets = _targets(parameters) if "items" in parameters else ""
     return f'''<section class="event data-review" aria-labelledby="recovery-review">{render_heading("Review: " + label, "security", heading_id="recovery-review")}
 <p>{html.escape(effect)}</p>{targets}<dl class="job-facts">{facts}</dl>
-<p>Confirm to start this action. No separate approval is needed. The worker checks the reviewed finding and file metadata, verifies changed files before quarantine, and runs independently for up to six hours.</p>
+<p>{next_step} The worker checks the reviewed finding and file metadata, verifies changed files before quarantine, and runs independently for up to six hours.</p>
 <p>Batches report each file separately. Interrupted or uncertain work is never replayed automatically. Inspect outcomes and individually review remaining files before retrying.</p>
-<form method="post" action="/actions/data/submit" class="data-recovery-form">{csrf}<input type="hidden" name="ticket" value="{html.escape(ticket, quote=True)}">{confirmation}<button>{html.escape(label)}</button></form>
+<form method="post" action="/actions/data/submit" class="data-recovery-form">{csrf}<input type="hidden" name="ticket" value="{html.escape(ticket, quote=True)}">{confirmation}<button>{html.escape(button)}</button></form>
 <a href="{html.escape(_findings_url(parameters), quote=True)}">Cancel review</a></section>'''
 
 

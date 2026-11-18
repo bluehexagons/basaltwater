@@ -33,16 +33,15 @@ installed with the main web panel by default. `--no-privilege-broker` disables i
 Account creation and password
 entry also require the configured HTTPS panel.
 
-For share, account and routine changes:
+For share, account, routine and scrub recovery changes, follow these steps.
 
 1. Choose an action and review its exact target and effects.
 2. Enter the displayed confirmation and create an approval request.
 3. Open that request's approval review and approve or deny it using the panel login.
 4. Return to **Activity & approvals**, refresh and check the worker result.
 
-Scrub finding actions start directly after their panel review and confirmation;
-the broker automatically authorizes the bounded `data.run` request. There is no
-second approval-page visit. Other operations retain the separate approval above.
+Scrub verification starts after panel confirmation. Quarantine, deletion,
+repair, restoration and acceptance each require approval of the exact request.
 **Dispatched** means a worker was
 launched; it does not establish completion. Cancel an unclaimed request from
 activity. Cancellation cannot undo changes already made.
@@ -196,8 +195,8 @@ followed by a controller command for reading its private evidence:
 | **Accept current content** | Replace the integrity baseline with content you independently confirmed is correct; type `ACCEPT CURRENT CONTENT` |
 
 Choose **Review recovery**, check the file, scrub root, parity directory and copy
-path, enter any required confirmation and start the action. Check its worker result
-in **Activity & approvals**; no separate approval is required. The worker rejects changed findings
+path and enter any required confirmation. Open the pending approval for recovery
+actions. Check the worker result in **Activity & approvals**. The worker rejects changed findings
 or changed file identities. A missing-file scan records absence as its reviewed
 identity; a file appearing afterward blocks recovery. Verify older findings
 without an identity before recovery. Verification that still detects damage
@@ -214,9 +213,9 @@ Long paths can require a smaller batch to fit the review limit.
 
 **Review selected findings** lists every exact path and one action. Quarantine
 requires `CHANGE FILE`; permanent deletion has its own review and requires
-`DELETE N FILES`, with the displayed count in place of `N`. Confirm to start the
-reviewed batch directly. Verify has no
-typed confirmation. No batch can accept a new parity baseline.
+`DELETE N FILES`, with the displayed count in place of `N`. Approve the exact
+batch in **Activity & approvals**. Verification starts directly after review.
+Acceptance of a new parity baseline is available for individual files only.
 
 Quarantine atomically moves source files into a recognized root-owned, mode-0700
 `.basaltwater-quarantine` directory on the source filesystem, preserving relative

@@ -107,8 +107,9 @@ require existing parity so a candidate cannot silently become a new baseline.
 The [Shares & Data triage controls](../services/shares-data.md#triage-selected-findings)
 support batches of up to ten findings from one scrub task: verify, quarantine or
 permanently delete. Exact paths and one action are reviewed and confirmed in the
-panel; the broker authorizes the request automatically without a separate approval
-visit. Deletion requires the displayed `DELETE N FILES` confirmation. Repair,
+panel. Verification can start immediately. Quarantine, deletion, repair, restore
+and acceptance need a decision on the pending approval. Deletion also requires
+the displayed `DELETE N FILES` confirmation. Repair,
 restore and acceptance stay individual operations.
 
 Quarantine automatically verifies a selected file against existing parity when
