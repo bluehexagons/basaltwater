@@ -26,7 +26,7 @@ from lib.agent_storage import (
     cleanup_t3_rotated_logs as reconcile_t3_rotated_logs,
 )
 from lib.cleanup_paths import process_uses_path, remove_checked_path
-from lib.cleanup_process_observer import use_process_observer
+from lib.cleanup_process_observer import CacheName, observed_cache_in_use, use_process_observer
 from lib.go_cache_cleanup import clean_go_build_cache
 from lib.logging_utils import get_service_logger, log_event
 from lib.t3code_runtime import (
@@ -460,14 +460,30 @@ def _cache_activity(path: str, process_names: tuple[str, ...]) -> Literal["activ
         log_event(logger, "User cache cleanup deferred while in use", path=path)
         return "active"
     if incomplete:
-        log_event(logger, "User cache cleanup deferred because open-file inspection is incomplete", path=path)
+        log_event(logger, "Local cache open-file inspection is incomplete", path=path)
         return "incomplete"
     return "idle"
 
 
-def defer_active_cache(path: str, process_names: tuple[str, ...]) -> bool:
+def defer_active_cache(
+    path: str,
+    process_names: tuple[str, ...],
+    *,
+    observed_cache: CacheName | None = None,
+) -> bool:
     """Preserve referenced caches and defer when open-file coverage is incomplete."""
-    return _cache_activity(path, process_names) != "idle"
+    activity = _cache_activity(path, process_names)
+    if activity == "active" or observed_cache is None:
+        return activity != "idle"
+    try:
+        in_use = observed_cache_in_use(observed_cache)
+    except OSError:
+        log_event(logger, "Cache cleanup deferred because the maintenance observer is unavailable", cache=observed_cache)
+        return True
+    if in_use is None:
+        return activity != "idle"
+    log_event(logger, "Checked cache references with the maintenance observer", cache=observed_cache, in_use=in_use)
+    return in_use
 
 
 def cleanup_managed_directory(
@@ -853,7 +869,10 @@ def cleanup_pip_cache(context: UserContext, *, dry_run: bool) -> list[str]:
         return [failure]
     if path is None or executable is None:
         return []
-    if defer_active_cache(path, ("pip", "pip3")):
+    if defer_active_cache(
+        path, ("pip", "pip3"),
+        observed_cache="pip" if path == os.path.join(context.home, ".cache", "pip") else None,
+    ):
         return []
 
     usage, inventory_failure = inventory_cache(context, "pip", path)
@@ -882,7 +901,10 @@ def cleanup_uv_cache(context: UserContext, *, dry_run: bool) -> list[str]:
         return [failure]
     if path is None or executable is None:
         return []
-    if defer_active_cache(path, ("uv",)):
+    if defer_active_cache(
+        path, ("uv",),
+        observed_cache="uv" if path == os.path.join(context.home, ".cache", "uv") else None,
+    ):
         return []
 
     usage, inventory_failure = inventory_cache(context, "uv", path)
@@ -993,7 +1015,8 @@ def cleanup_electron_downloads(context: UserContext, *, dry_run: bool) -> list[s
     root = os.path.join(context.home, ".cache", "electron")
     if not is_safe_managed_path(context, root, "Electron downloads") or not os.path.isdir(root):
         return []
-    if defer_active_cache(root, ("npm", "npx", "pnpm", "yarn", "electron")):
+    process_names = ("npm", "npx", "pnpm", "yarn", "electron")
+    if defer_active_cache(root, process_names, observed_cache="electron"):
         return []
     pattern = re.compile(r"electron-v[0-9]+\.[0-9]+\.[0-9]+-linux-(?:x64|arm64|armv7l)\.zip")
     failures: list[str] = []
@@ -1020,7 +1043,7 @@ def cleanup_electron_downloads(context: UserContext, *, dry_run: bool) -> list[s
                 continue
             if not remove_checked_path(
                 path, info, uid=context.uid, dry_run=dry_run,
-                in_use=lambda: defer_active_cache(path, ("npm", "npx", "pnpm", "yarn", "electron")),
+                in_use=lambda: defer_active_cache(path, process_names, observed_cache="electron"),
             ):
                 continue
             log_event(

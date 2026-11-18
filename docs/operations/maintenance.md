@@ -542,9 +542,14 @@ On a 32 GiB desktop, keep only a few small projects locally and check
 Cache eviction is deferred while a matching tool or referencing process is
 running, including processes that reference the cache only through an open file.
 Descriptor inspection is bounded; unavailable coverage, including protected
-account processes, defers broader cache maintenance. For npm's default cache,
-the job can still evict just `~/.npm/_cacache` on disk pressure or above its
-size limit. It uses the same owned local inventory, package-manager activity
+account processes, defers broader cache maintenance. For the default Electron,
+pip, and uv cache paths, the managed launcher also checks protected account
+processes. It returns only the labels of caches with an open file, working
+directory, or executable inside them. Known references, scan failures, and
+custom paths with incomplete coverage still defer deletion.
+
+For npm's default cache, the job can still evict just `~/.npm/_cacache` under
+disk pressure or above its size limit. It uses the same owned local inventory, package-manager activity
 checks and identity-checked disposal as the
 [one-time npm cleanup task](../agents/storage-cleanup.md#host-evidence-and-approved-cache-operations).
 This path preserves npx workspaces, npm logs and configuration, and custom

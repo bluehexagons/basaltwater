@@ -231,6 +231,49 @@ class TestPressureCleanup(unittest.TestCase):
             self.assertEqual(maintenance.cleanup_electron_downloads(self.context, dry_run=False), [])
         self.assertEqual(archive.read_text(), "download")
 
+    def test_managed_electron_scan_resolves_incomplete_visibility_and_rechecks_use(self):
+        root = self.home / ".cache" / "electron" / "hash"
+        root.mkdir(parents=True)
+        archive = root / "electron-v40.0.0-linux-x64.zip"
+        archive.write_text("download")
+        old = time.time() - 31 * 86400
+        os.utime(archive, (old, old))
+
+        def incomplete(_path, *, include_open_files, on_incomplete):
+            self.assertTrue(include_open_files)
+            on_incomplete()
+            return False
+
+        with (
+            patch.object(maintenance, "process_uses_path", side_effect=incomplete),
+            patch.object(maintenance, "observed_cache_in_use", side_effect=[False, True, False, False]) as observe,
+        ):
+            self.assertEqual(maintenance.cleanup_electron_downloads(self.context, dry_run=False), [])
+            self.assertTrue(archive.is_file())
+            self.assertEqual(maintenance.cleanup_electron_downloads(self.context, dry_run=False), [])
+            self.assertFalse(archive.exists())
+        self.assertEqual([call.args for call in observe.call_args_list], [("electron",)] * 4)
+
+    def test_missing_cache_observation_preserves_incomplete_and_custom_caches(self):
+        def incomplete(_path, *, include_open_files, on_incomplete):
+            self.assertTrue(include_open_files)
+            on_incomplete()
+            return False
+
+        with patch.object(maintenance, "process_uses_path", side_effect=incomplete):
+            for observation in (None, OSError("unavailable"), True, False):
+                with (
+                    self.subTest(observation=observation),
+                    patch.object(maintenance, "observed_cache_in_use",
+                                 return_value=observation,
+                                 side_effect=observation if isinstance(observation, OSError) else None) as observe,
+                ):
+                    self.assertTrue(maintenance.defer_active_cache("/custom/pip", ("pip",)))
+                    observe.assert_not_called()
+                    self.assertEqual(maintenance.defer_active_cache(
+                        str(self.home / ".cache" / "pip"), ("pip",), observed_cache="pip",
+                    ), observation is not False)
+
 
 class TestT3RuntimeRetention(unittest.TestCase):
     def setUp(self):
