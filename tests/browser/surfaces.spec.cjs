@@ -104,7 +104,7 @@ const test = base.extend({
       }
     }
   },
-  diagnostics: [async ({ page, context }, use, info) => {
+  diagnostics: [async ({ page, context, developmentServer }, use, info) => {
     const allowed = new Set();
     const expectedConsole = [];
     const errors = [];
@@ -142,8 +142,9 @@ const test = base.extend({
     for (const failure of failures) {
       // The status controller cancels passive reads on navigation, pause and
       // hidden tabs. status.spec.cjs verifies cancellation and resumption.
-      if (failure.method === 'GET' && /^\/api\/panel\/v1\/(host|web|audit|proxmox|agents|storage|services)$/.test(new URL(failure.url).pathname)
-          && /ERR_ABORTED|NS_BINDING_ABORTED/.test(failure.error)) {
+      const panelStatus = /^\/api\/panel\/v1\/(host|web|audit|proxmox|agents|storage|services)$/.test(new URL(failure.url).pathname);
+      const developmentStatus = developmentServer && failure.url === developmentServer.url + '/__dev__/status';
+      if (failure.method === 'GET' && (panelStatus || developmentStatus) && /ERR_ABORTED|NS_BINDING_ABORTED/.test(failure.error)) {
         cancelledStatus.push(failure);
         continue;
       }
@@ -1213,20 +1214,28 @@ test.describe('Shares & Data', () => {
     const review = page.locator('.data-review');
     await expect(review).toContainText('Only accept content you have independently confirmed is correct');
     await expect(review).toContainText('/srv/archive/photos/holiday.jpg');
+    const requestApproval = review.getByRole('button', { name: 'Request approval', exact: true });
     const recoveryTicket = await review.locator('input[name=ticket]').inputValue();
     await review.getByLabel('Type ACCEPT CURRENT CONTENT to confirm', { exact: true }).fill('wrong');
     diagnostics.allowed.add(dev.url + '/actions/data/submit');
     diagnostics.expectedConsole.push('the server responded with a status of 409');
     const refused = page.waitForResponse(response => response.url() === dev.url + '/actions/data/submit');
-    await review.getByRole('button', { name: 'Accept current content', exact: true }).click();
+    await requestApproval.click();
     expect((await refused).status()).toBe(409);
     await expect(page.getByRole('alert')).toContainText('could not be confirmed');
     await expect(review.locator('input[name=ticket]')).toHaveValue(recoveryTicket);
     await review.getByLabel('Type ACCEPT CURRENT CONTENT to confirm', { exact: true }).fill('ACCEPT CURRENT CONTENT');
     diagnostics.allowed.delete(dev.url + '/actions/data/submit');
-    await review.getByRole('button', { name: 'Accept current content', exact: true }).click();
-    await expect(page.getByRole('region', { name: 'Recovery activity', exact: true })).toContainText('dispatched');
-    await expect(page.getByRole('button', { name: 'Cancel recovery request', exact: true })).toHaveCount(0);
+    await requestApproval.click();
+    const activity = page.getByRole('region', { name: 'Recovery activity', exact: true });
+    const recovery = activity.getByRole('article').filter({
+      has: page.getByRole('heading', { name: 'Accept current content', exact: true }),
+    });
+    await expect(recovery.getByText('Dispatch:', { exact: false })).toContainText('pending');
+    await expect(recovery.getByRole('link', { name: 'Open recovery approval', exact: false })).toBeVisible();
+    await recovery.getByRole('button', { name: 'Cancel recovery request', exact: true }).click();
+    await expect(recovery.getByText('Dispatch:', { exact: false })).toContainText('cancelled');
+    await expect(recovery.getByRole('button', { name: 'Cancel recovery request', exact: true })).toHaveCount(0);
     const firstFinding = page.locator('.data-finding').first();
     await firstFinding.locator('summary').click();
     await firstFinding.getByLabel('Recovery action', { exact: true }).selectOption('verify');
@@ -1566,17 +1575,20 @@ for (const surface of ['pairing', 'approval', 'desktop', 'console']) {
       test.setTimeout(90000);
       const entry = dev.url + dev.entry;
       const toolbar = page.locator('#panel-development');
+      const waitForGeneration = async () => {
+        await expect(toolbar).toHaveAttribute('data-generation', dev.generation());
+        await page.waitForLoadState('load');
+      };
       const reload = async () => {
         await dev.restart(() => fs.writeFileSync(dev.watched, crypto.randomUUID()));
         await expect(page.locator('#panel-reload')).toBeVisible();
         await page.locator('#panel-reload').click();
-        await expect(toolbar).toHaveAttribute('data-generation', dev.generation());
+        await waitForGeneration();
       };
       const scenario = async name => {
         await toolbar.getByLabel('Scenario').selectOption(name);
         await dev.restart(() => toolbar.getByRole('button', { name: 'Switch scenario' }).click());
-        await page.waitForLoadState('load');
-        await page.goto(entry);
+        await waitForGeneration();
         await expect(toolbar.getByLabel('Scenario')).toHaveValue(name);
       };
       await page.goto(entry);
@@ -1657,8 +1669,7 @@ for (const surface of ['pairing', 'approval', 'desktop', 'console']) {
         await reload();
       }
       await dev.restart(() => toolbar.getByRole('button', { name: 'Reset sample data' }).click());
-      await page.waitForLoadState('load');
-      await page.goto(entry);
+      await waitForGeneration();
       if (surface === 'approval') {
         await page.getByRole('link', { name: 'development-only' }).first().click();
         await expect(page.getByRole('button', { name: 'Approve once', exact: true })).toBeVisible();

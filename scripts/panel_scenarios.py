@@ -345,10 +345,14 @@ class Scenario:
                 return {"blocked": {}, "requests": [row for row in records if row.get("plan", {}).get("operation", "admin.run") == "admin.run"],
                         "privilege_requests": privilege, "restartable_services": ["example.service"], "unit_state": "inactive"}
             if message["action"] == "request":
-                if message["operation"] in {"service.restart", "command.run", "data.run", "data.routine", "samba.account", "samba.shares"}:
-                    request = privilege_request(message["operation"], message["parameters"],
-                        "failed" if self.name == "degraded" else "dispatched" if message["operation"] == "data.run" else
-                        "pending" if message["operation"] in {"data.routine", "samba.account", "samba.shares"} else "succeeded")
+                operation = message["operation"]
+                if operation in {"service.restart", "command.run", "data.run", "data.routine", "samba.account", "samba.shares"}:
+                    state = "pending" if operation in {"data.run", "data.routine", "samba.account", "samba.shares"} else "succeeded"
+                    request = privilege_request(operation, message["parameters"], state)
+                    if self.name == "degraded":
+                        request["state"] = "failed"
+                    elif operation == "data.run" and request["plan"]["mode"] == "allow":
+                        request["state"] = "dispatched"
                     request["review_url"] = "/requests/" + request["id"]
                     self.data["requests"].insert(0, request)
                     self.save()

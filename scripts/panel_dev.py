@@ -43,17 +43,25 @@ ENTRY_PATHS = {"panel": "/", "pairing": "/devices",
 RELOAD_SCRIPT = """'use strict';
 const toolbar = document.getElementById('panel-development');
 let dirty = false;
+let readingStatus = false;
 document.addEventListener('input', event => { if (!toolbar.contains(event.target)) dirty = true; });
-setInterval(async () => {
+const refreshTimer = setInterval(async () => {
+  if (readingStatus) return;
+  readingStatus = true;
   try {
     const response = await fetch('/__dev__/status', {cache: 'no-store'});
     if (!response.ok) return;
     const status = await response.json();
     if (status.generation !== toolbar.dataset.generation) {
-      if (!dirty && !document.querySelector('#screen canvas')) location.replace(location.href);
-      else document.getElementById('panel-reload').hidden = false;
+      if (!dirty && !document.querySelector('#screen canvas')) {
+        clearInterval(refreshTimer);
+        location.replace(location.href);
+      } else {
+        document.getElementById('panel-reload').hidden = false;
+      }
     }
   } catch (_) { /* The worker is restarting; try again next interval. */ }
+  finally { readingStatus = false; }
 }, 1000);
 """
 
