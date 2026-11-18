@@ -144,6 +144,12 @@ native management IP set, and `server_wsl` has no managed ingress policy.
 For a legacy saved Proxmox or WSL configuration containing SSH-only sources,
 rerun its setup command with both SSH-only flags omitted.
 
+Managed SSH filtering and Fail2ban expect the target daemon and any active or
+enabled SSH activation socket to use TCP 22. Setup checks the effective
+OpenSSH configuration and scans `Match` blocks and their includes for settings
+that conflict with managed authentication and forwarding. A conflict identifies
+the directive or service to correct before setup can activate its policy.
+
 Before changing UFW rules or defaults, setup checks the current connection's
 `SSH_CONNECTION` source against the combined generic and SSH-only access
 sources. If the controller would be excluded, setup stops with an explicit `--ssh-access-source`

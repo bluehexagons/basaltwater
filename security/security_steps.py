@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import glob
 import ipaddress
 import json
 import os
@@ -10,6 +11,7 @@ import shlex
 import shutil
 import stat
 import time
+from pathlib import Path
 from urllib.parse import quote
 
 from common.build_ssh_admission import (
@@ -46,9 +48,26 @@ _DISTRO_APT_UPDATE_UNITS = (
 _JOURNAL_CONF_DIR = "/etc/systemd/journald.conf.d"
 _JOURNAL_CONF_FILE = f"{_JOURNAL_CONF_DIR}/basaltwater.conf"
 _SSHD_DROPIN_DIR = "/etc/ssh/sshd_config.d"
+_SSHD_CONFIG = "/etc/ssh/sshd_config"
 _SSHD_DROPIN_FILE = f"{_SSHD_DROPIN_DIR}/00-basaltwater-hardening.conf"
 _LEGACY_SSHD_DROPIN_FILE = f"{_SSHD_DROPIN_DIR}/99-basaltwater-hardening.conf"
 _SSHD_RUNTIME_DIR = "/run/sshd"
+_SSH_MATCH_REQUIRED = {
+    "passwordauthentication": {"no"},
+    "kbdinteractiveauthentication": {"no"},
+    "challengeresponseauthentication": {"no"},
+    "pubkeyauthentication": {"yes"},
+    "permitrootlogin": {"prohibit-password", "without-password"},
+    "authenticationmethods": {"publickey"},
+    "permitemptypasswords": {"no"},
+    "x11forwarding": {"no"},
+    "disableforwarding": {"yes"},
+    "permituserrc": {"no"},
+    "allowgroups": set(),
+    "denygroups": set(),
+    "allowusers": set(),
+    "denyusers": set(),
+}
 _SYSCTL_HARDENING_FILE = "/etc/sysctl.d/99-security-hardening.conf"
 _FAIL2BAN_SSHD_JAIL = "/etc/fail2ban/jail.d/sshd.local"
 _FAIL2BAN_XRDP_JAIL = "/etc/fail2ban/jail.d/xrdp.local"
@@ -286,12 +305,16 @@ def _verify_ssh_firewall_peer(config: SetupConfig) -> None:
         for source in config.effective_ssh_sources()
     ]
     connection = os.environ.get("SSH_CONNECTION", "")
-    if not sources or not connection:
+    if not connection:
         return
 
     fields = connection.split()
     if len(fields) != 4:
         raise RuntimeError("Cannot verify the current SSH peer before changing the firewall")
+    if fields[3] != "22":
+        raise RuntimeError("Managed SSH firewall rules require the target SSH listener on TCP 22")
+    if not sources:
+        return
     try:
         peer = ipaddress.ip_address(validate_network_ip(fields[0], "SSH setup peer"))
     except ValueError as exc:
@@ -674,22 +697,75 @@ ignoreregex =
         print("  ✓ fail2ban configured (sshd jail, 1 hour ban)")
 
 
+def _verify_ssh_matches(path: Path, *, conditional: bool = False, depth: int = 0) -> None:
+    """Check policy options in Match blocks, including conditional includes."""
+    if depth > 16:
+        raise RuntimeError("Too many nested SSH includes to verify Match policy")
+    in_match = conditional
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        tokens = shlex.split(line, comments=True)
+        if not tokens:
+            continue
+        keyword, separator, first_arg = tokens[0].partition("=")
+        key = keyword.lower()
+        args = ([first_arg] if separator and first_arg else []) + tokens[1:]
+        if args and args[0].startswith("="):
+            args[0] = args[0].removeprefix("=")
+            if not args[0]:
+                args.pop(0)
+        if key == "match":
+            in_match = conditional or [value.lower() for value in args] != ["all"]
+        elif key == "include":
+            for pattern in args:
+                absolute_pattern = str(Path(_SSHD_CONFIG).parent / pattern)
+                for include in sorted(glob.glob(absolute_pattern)):
+                    _verify_ssh_matches(Path(include), conditional=in_match, depth=depth + 1)
+        elif in_match and key in _SSH_MATCH_REQUIRED and " ".join(args).lower() not in _SSH_MATCH_REQUIRED[key]:
+            raise RuntimeError(f"SSH Match policy at {path}:{number} conflicts with managed hardening ({keyword})")
+
+
+def _verify_ssh_service_listeners() -> None:
+    """Refuse socket activation or an already running daemon on another port."""
+    for unit in ("ssh.socket", "sshd.socket"):
+        result = run(["systemctl", "show", unit, "--property=LoadState,ActiveState,UnitFileState,Listen"],
+                     check=False, capture_output=True, timeout=30)
+        properties = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+        if properties.get("LoadState") == "not-found":
+            continue
+        if result.returncode != 0 or "LoadState" not in properties:
+            raise RuntimeError(f"Could not verify SSH listener configuration for {unit}")
+        if properties.get("ActiveState") == "active" or properties.get("UnitFileState") in {"enabled", "enabled-runtime"}:
+            endpoints = re.findall(r"(\S+) \(Stream\)", properties.get("Listen", ""))
+            if not endpoints or any(endpoint.rsplit(":", 1)[-1] != "22" for endpoint in endpoints):
+                raise RuntimeError(f"Managed SSH firewall and ban rules require {unit} on TCP 22")
+
+    result = run(["ss", "-Hltnp"], capture_output=True, timeout=30)
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) >= 5 and '"sshd",' in line and fields[3].rsplit(":", 1)[-1] != "22":
+            raise RuntimeError("Managed SSH firewall and ban rules require the running sshd listener on TCP 22")
+
+
 def _verify_ssh_policy(sshd_path: str, config: SetupConfig | None,
                        transport_groups: list[str] | None = None) -> None:
     """Check human and exact managed transport admission and authentication."""
     if transport_groups is None:
         transport_groups = managed_transport_groups()
     address = "127.0.0.1"
+    local_address = "127.0.0.1"
+    local_port = "22"
     connection = os.environ.get("SSH_CONNECTION", "").split()
     if connection:
-        if len(connection) != 4 or not validate_ip_address(connection[0]):
+        if len(connection) != 4 or not all(validate_ip_address(connection[index]) for index in (0, 2)):
             raise RuntimeError("Cannot determine the SSH setup peer")
-        address = connection[0]
+        address, _, local_address, local_port = connection
+        if local_port != "22":
+            raise RuntimeError("Managed SSH firewall and ban rules require the target SSH listener on TCP 22")
     setup_user = config.username if config is not None else "root"
     for username in dict.fromkeys(("root", setup_user, *transport_groups)):
         if not validate_username(username):
             raise ValueError("Cannot verify SSH policy for an invalid username")
-        context = f"user={username},host={address},addr={address}"
+        context = f"user={username},host={address},addr={address},laddr={local_address},lport={local_port}"
         effective = run(
             f"{shlex.quote(sshd_path)} -T -C {shlex.quote(context)}",
             check=False,
@@ -698,6 +774,8 @@ def _verify_ssh_policy(sshd_path: str, config: SetupConfig | None,
         if effective.returncode != 0:
             raise RuntimeError("Could not inspect effective SSH configuration")
         settings = {}
+        ports: set[str] = set()
+        listen_ports: set[str] = set()
         allowed_groups: set[str] = set()
         for line in (effective.stdout or "").splitlines():
             key, separator, value = line.partition(" ")
@@ -706,6 +784,10 @@ def _verify_ssh_policy(sshd_path: str, config: SetupConfig | None,
                     # OpenSSH may emit one line per group rather than a single
                     # space-separated value. Every literal entry contributes.
                     allowed_groups.update(value.split())
+                elif key == "port":
+                    ports.add(value.strip())
+                elif key == "listenaddress":
+                    listen_ports.add(value.rsplit(":", 1)[-1].strip())
                 else:
                     settings[key] = value.strip()
         required = {
@@ -714,6 +796,8 @@ def _verify_ssh_policy(sshd_path: str, config: SetupConfig | None,
             "pubkeyauthentication": {"yes"},
             "permitrootlogin": {"prohibit-password", "without-password"},
             "authenticationmethods": {"publickey"},
+            "permitemptypasswords": {"no"},
+            "x11forwarding": {"no"},
         }
         if config is not None and config.harden_user and username == config.username:
             required.update({"disableforwarding": {"yes"}, "permituserrc": {"no"}})
@@ -725,10 +809,15 @@ def _verify_ssh_policy(sshd_path: str, config: SetupConfig | None,
                 f"Effective SSH policy for {username} conflicts with hardening: "
                 + ", ".join(conflicts)
             )
+        if ports != {"22"} or listen_ports != {"22"}:
+            raise RuntimeError("Managed SSH firewall and ban rules require every configured sshd listener on TCP 22")
         groups = run(f"id -nG {shlex.quote(username)}", check=False, capture_output=True)
         expected = username if username in transport_groups else "remoteusers"
         if groups.returncode != 0 or expected not in (groups.stdout or "").split():
             raise RuntimeError(f"SSH identity {username} is not a member of {expected}")
+    _verify_ssh_matches(Path(_SSHD_CONFIG))
+    if can_manage_system_services(config.machine_type if config is not None else None):
+        _verify_ssh_service_listeners()
 
 
 def refresh_transport_ssh_admission(role: str, usernames: list[str]) -> None:
