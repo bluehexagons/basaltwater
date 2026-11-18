@@ -24,6 +24,7 @@ from lib.ssh_utils import (
     ssh_batch_mode,
     ssh_process_timeout,
     strict_ssh_transport,
+    workspace_pinned_ssh,
 )
 
 
@@ -240,6 +241,29 @@ class TestSshUtils(unittest.TestCase):
                         sum(option.startswith("StrictHostKeyChecking=") for option in command),
                         1,
                     )
+
+    @patch("lib.ssh_utils.get_workspace_known_hosts_path", return_value="/workspace/known_hosts")
+    def test_provisioned_guest_handoff_requires_workspace_ed25519_pin(self, _path):
+        host = "192.0.2.40"
+        with workspace_pinned_ssh(host):
+            self.assertEqual(get_ssh_control_path(host, "root"), "none")
+            command = build_ssh_command(
+                host, "root", "/keys/guest", port=2222, batch_mode=False,
+                known_hosts_path="/other/pins", control_path="/tmp/old-socket",
+                allow_host_key_prompt=True,
+            )
+            ordinary = build_ssh_command("192.0.2.41", "root", batch_mode=False, allow_host_key_prompt=True)
+        self.assertIn("StrictHostKeyChecking=ask", ordinary)
+        self.assertEqual(command[command.index("-p") + 1], "22")
+        self.assertNotIn("/other/pins", " ".join(command))
+        self.assertNotIn("/tmp/old-socket", " ".join(command))
+        for option in (
+            "StrictHostKeyChecking=yes", "UserKnownHostsFile=/workspace/known_hosts",
+            "GlobalKnownHostsFile=/dev/null", "KnownHostsCommand=none",
+            "VerifyHostKeyDNS=no", "HostKeyAlgorithms=ssh-ed25519", "UpdateHostKeys=no",
+            "ControlPath=none", f"HostKeyAlias={host}",
+        ):
+            self.assertIn(option, command)
 
     @patch("lib.ssh_utils.sys.stdin.isatty", return_value=True)
     def test_setup_resolves_terminal_policy_before_host_key_confirmation(self, _isatty):

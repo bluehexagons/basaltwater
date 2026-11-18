@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import ipaddress
+import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
@@ -308,130 +309,52 @@ class TestProxmoxSshRun(unittest.TestCase):
 
 
 class TestProvisionedGuestHostKeyEnrollment(unittest.TestCase):
-    @patch("lib.proxmox_guest._ssh_opts", return_value=[])
-    @patch("lib.proxmox_guest.replace_scanned_host_keys")
-    @patch("lib.proxmox_guest.is_host_key_enrolled", return_value=True)
-    @patch("lib.proxmox_guest._ssh_run")
-    def test_failed_rescan_preserves_previously_enrolled_workspace_key(
-        self, mock_run, mock_enrolled, mock_replace, _mock_opts,
-    ) -> None:
-        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="timeout")
-        refresh_managed_guest_host_keys("192.0.2.40", "192.0.2.10", "root", None)
-        mock_enrolled.assert_called_once_with("192.0.2.40")
-        mock_replace.assert_not_called()
-
-    @patch("lib.proxmox_guest._ssh_opts", return_value=[])
-    @patch("lib.proxmox_guest.replace_scanned_host_keys")
-    @patch("lib.proxmox_guest.is_host_key_enrolled", return_value=False)
-    @patch("lib.proxmox_guest._ssh_run")
-    def test_failed_rescan_without_workspace_trust_still_fails_closed(
-        self, mock_run, _mock_enrolled, mock_replace, _mock_opts,
-    ) -> None:
-        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="timeout")
-        with self.assertRaisesRegex(ProvisionError, "Could not read"):
-            refresh_managed_guest_host_keys("192.0.2.40", "192.0.2.10", "root", None)
-        mock_replace.assert_not_called()
-
-    @patch("lib.proxmox_guest._ssh_opts", return_value=[])
     @patch("lib.proxmox_guest.get_workspace_known_hosts_path", return_value="/workspace/known_hosts")
-    @patch("lib.proxmox_guest.is_host_key_enrolled", return_value=True)
-    @patch("lib.proxmox_guest.replace_scanned_host_keys", side_effect=OSError("write failed"))
+    @patch("lib.proxmox_guest.pin_verified_ed25519_key", return_value=["workspace", "user"])
     @patch("lib.proxmox_guest._ssh_run")
-    def test_persistence_failure_is_not_treated_as_unavailable_rescan(
-        self, mock_run, _mock_replace, mock_enrolled, _mock_path, _mock_opts,
-    ) -> None:
-        mock_run.return_value = MagicMock(returncode=0, stdout="192.0.2.40 ssh-ed25519 AAAA", stderr="")
-        with self.assertRaisesRegex(ProvisionError, "Could not enroll"):
-            refresh_managed_guest_host_keys("192.0.2.40", "192.0.2.10", "root", None)
-        mock_enrolled.assert_not_called()
+    def test_fresh_enrollment_reads_the_created_guest_by_id(self, run, pin, _path):
+        key = "ssh-ed25519 SYNTHETIC test\n"
+        for tool, output, command in (
+            ("pct", key, "pct exec 105 --"),
+            ("qm", json.dumps({"exited": 1, "exitcode": 0, "out-data": key}),
+             "qm guest exec 105 --timeout 15 --synchronous 1 --"),
+        ):
+            with self.subTest(tool=tool):
+                run.return_value = subprocess.CompletedProcess([], 0, output, "")
+                enroll_provisioned_guest_host_keys(
+                    "192.0.2.40", "192.0.2.10", "root", ["node-options"],
+                    tool=tool, vmid=105,
+                )
+                self.assertEqual(run.call_args.args[:3], ("192.0.2.10", "root", ["node-options"]))
+                self.assertEqual(run.call_args.args[3], command + " /bin/cat /etc/ssh/ssh_host_ed25519_key.pub")
+                pin.assert_called_once_with(
+                    "192.0.2.40", key, ["/workspace/known_hosts", "~/.ssh/known_hosts"],
+                )
+                pin.reset_mock()
 
-    @patch(
-        "lib.proxmox_guest.get_workspace_known_hosts_path",
-        return_value="/workspace/known_hosts",
-    )
-    @patch(
-        "lib.proxmox_guest.os.path.expanduser",
-        return_value="/home/developer/.ssh/known_hosts",
-    )
-    @patch(
-        "lib.proxmox_guest.replace_scanned_host_keys",
-    )
-    @patch("lib.proxmox_guest._ssh_run")
-    def test_scans_through_proxmox_and_replaces_workspace_and_user_keys(
-        self,
-        mock_run,
-        mock_replace,
-        _mock_expanduser,
-        _mock_workspace_known_hosts,
-    ) -> None:
-        scan = "192.0.2.40 ssh-ed25519 AAAA"
-        mock_run.return_value = MagicMock(returncode=0, stdout=scan, stderr="")
-
-        enroll_provisioned_guest_host_keys(
-            "192.0.2.40",
-            "192.0.2.10",
-            "root",
-            ["-i", "/keys/proxmox"],
-        )
-
-        self.assertIn(
-            "ssh-keyscan -T 10 -t ed25519 192.0.2.40",
-            mock_run.call_args.args[3],
-        )
-        self.assertTrue(mock_run.call_args.kwargs["quiet"])
-        self.assertEqual(
-            mock_replace.call_args_list,
-            [
-                call(
-                    "192.0.2.40",
-                    scan,
-                    known_hosts_path="/workspace/known_hosts",
-                ),
-                call(
-                    "192.0.2.40",
-                    scan,
-                    known_hosts_path="/home/developer/.ssh/known_hosts",
-                ),
-            ],
-        )
-
-    @patch("lib.proxmox_guest.replace_scanned_host_keys")
-    @patch("lib.proxmox_guest._ssh_run")
-    def test_missing_key_fails_before_guest_login(self, mock_run, mock_replace) -> None:
-        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="timeout")
-
-        with self.assertRaisesRegex(ProvisionError, "timeout"):
-            enroll_provisioned_guest_host_keys(
-                "192.0.2.40",
-                "192.0.2.10",
-                "root",
-                [],
-            )
-
-        mock_replace.assert_not_called()
-
-    @patch("lib.proxmox_guest.enroll_provisioned_guest_host_keys")
     @patch("lib.proxmox_guest._ssh_opts", return_value=["node-options"])
-    def test_refresh_builds_authenticated_node_options(
-        self,
-        mock_opts,
-        mock_enroll,
-    ) -> None:
-        refresh_managed_guest_host_keys(
-            "192.0.2.40",
-            "192.0.2.10",
-            "root",
-            "/keys/proxmox",
-        )
-
-        mock_opts.assert_called_once_with("/keys/proxmox")
-        mock_enroll.assert_called_once_with(
-            "192.0.2.40",
-            "192.0.2.10",
-            "root",
-            ["node-options"],
-            dry_run=False,
-        )
+    @patch("lib.proxmox_guest._ssh_run")
+    @patch("lib.proxmox_guest.pin_verified_ed25519_key")
+    def test_missing_or_unsuccessful_identity_stops_cached_refresh(self, pin, run, opts):
+        for vmid, returncode, stdout in (
+            (None, 0, ""),
+            (105, 1, ""),
+            (105, 0, "invalid JSON"),
+            (105, 0, '{"exited":0,"out-data":"key"}'),
+            (105, 0, '{"exited":1,"exitcode":1,"out-data":"key"}'),
+            (105, 0, '{"exited":1,"exitcode":0,"out-truncated":1,"out-data":"key"}'),
+        ):
+            with self.subTest(vmid=vmid, returncode=returncode, stdout=stdout):
+                run.reset_mock(return_value=True)
+                run.return_value = subprocess.CompletedProcess([], returncode, stdout, "")
+                with self.assertRaises(ProvisionError):
+                    refresh_managed_guest_host_keys(
+                        "192.0.2.40", "192.0.2.10", "root", "/keys/proxmox",
+                        tool="qm", vmid=vmid,
+                    )
+                self.assertEqual(run.call_count, int(vmid is not None))
+                pin.assert_not_called()
+                opts.assert_called_with("/keys/proxmox")
 
 
 class TestGuestRouteRepair(unittest.TestCase):

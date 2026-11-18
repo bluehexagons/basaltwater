@@ -29,6 +29,17 @@ class _SSHTransport:
 
 
 _STRICT_TRANSPORT: ContextVar[_SSHTransport | None] = ContextVar("strict_ssh_transport", default=None)
+_WORKSPACE_PINNED_HOST: ContextVar[str | None] = ContextVar("workspace_pinned_host", default=None)
+
+
+@contextmanager
+def workspace_pinned_ssh(host: str | None) -> Iterator[None]:
+    """Require the workspace Ed25519 pin on direct SSH to this provisioned guest."""
+    token = _WORKSPACE_PINNED_HOST.set(host)
+    try:
+        yield
+    finally:
+        _WORKSPACE_PINNED_HOST.reset(token)
 
 
 @contextmanager
@@ -121,7 +132,7 @@ def get_ssh_control_path(
     can reuse it while OpenSSH's ``ControlPersist`` window is active.
     Strict transport returns OpenSSH's ``none`` sentinel without creating a path.
     """
-    if _STRICT_TRANSPORT.get() is not None:
+    if _STRICT_TRANSPORT.get() is not None or _WORKSPACE_PINNED_HOST.get() == host:
         return "none"
     trust_path = (
         os.path.abspath(os.path.expanduser(known_hosts_path))
@@ -184,6 +195,15 @@ def build_ssh_command(
             "-o", "ControlMaster=no", "-o", "ControlPersist=no", "-o", "ControlPath=none",
             "-o", "PermitLocalCommand=no", "-o", "RequestTTY=no", "-o", "ConnectionAttempts=1",
         ]
+    elif _WORKSPACE_PINNED_HOST.get() == host:
+        known_hosts_path, port, control_path = None, 22, None
+        allow_host_key_prompt = False
+        command.extend([
+            "-o", f"HostName={host}", "-o", f"HostKeyAlias={host}",
+            "-o", "GlobalKnownHostsFile=/dev/null", "-o", "KnownHostsCommand=none",
+            "-o", "HostKeyAlgorithms=ssh-ed25519", "-o", "VerifyHostKeyDNS=no",
+            "-o", "UpdateHostKeys=no", "-o", "ControlPath=none", "-o", "ControlMaster=no",
+        ])
     if ssh_key:
         command.extend(["-i", ssh_key])
     if port is not None:

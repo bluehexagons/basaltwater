@@ -9,7 +9,7 @@ The flow is:
 
 1. Resolve the cloud image (curated catalog, explicit URL, or pre-uploaded
    ``storage:import/...`` / ``storage:iso/...`` reference).
-2. Download the qcow2 onto the Proxmox node, verify SHA-512 when known.
+2. Download or reuse the qcow2 on the Proxmox node and verify its SHA-512.
 3. Allocate the next VMID, detect the bridge / gateway / nameservers (reused
    helpers from :mod:`lib.proxmox_node`).
 4. ``qm create`` with a recovery console + virtio-scsi. Desktop/RDP guests
@@ -37,12 +37,15 @@ from typing import Optional, cast
 
 from lib.cloud_images import (
     CloudImage,
+    cloud_image_url_filename,
     is_local_image_ref,
+    is_sha512_digest,
     parse_image_argument,
     resolve_cloud_image,
 )
 from lib.config import SetupConfig
 from lib.proxmox_guest import (
+    GuestAlreadyExists,
     ProvisionError,
     _build_guest_hostname,
     _create_with_vmid_retry,
@@ -84,13 +87,13 @@ from lib.vm_storage import (
 )
 
 
-class VMAlreadyExists(Exception):
+class VMAlreadyExists(GuestAlreadyExists):
     """Raised when a VM with the target IP already exists on the Proxmox node."""
 
 
 @dataclass
 class _ResolvedImage:
-    """Either a remote URL with optional sha512, or an existing storage ref."""
+    """Either a digest-pinned remote URL or an existing storage reference."""
     url: Optional[str]
     sha512: Optional[str]
     filename: Optional[str]
@@ -823,12 +826,13 @@ def _reconcile_existing_vm(
     lifecycle_config: Optional[SetupConfig] = None,
     require_existing: bool = False,
     require_existing_name: bool = False,
+    saved_existing_name: str | None = None,
     start_existing: bool = False,
     allow_managed_data_disks: bool = False,
     attach_missing_data_disks: Optional[set[str]] = None,
     allow_memory_overcommit: bool = False,
     dry_run: bool = False,
-) -> bool:
+) -> int | None:
     """Reuse the VM at ``target_ip`` and reconcile safe provider settings.
 
     A desired name owned by another VM is rejected before provisioning so a
@@ -836,7 +840,7 @@ def _reconcile_existing_vm(
     """
 
     if dry_run:
-        return False
+        return None
     if desired_cores is not None and desired_cores < 1:
         raise ProvisionError("VM cores must be at least 1")
     if (desired_memory_mib is None) != (desired_balloon_min_mib is None):
@@ -908,9 +912,16 @@ def _reconcile_existing_vm(
                 f"No VM matching saved name '{desired_name}' and IP {target_ip} "
                 f"was found on Proxmox node {node_ip}"
             )
-        return False
+        return None
 
     matched = ip_matches[0]
+    if saved_existing_name and matched.name.lower() not in {
+        saved_existing_name.lower(), (desired_name or "").lower(),
+    }:
+        raise ProvisionError(
+            f"VM {matched.vmid} at {target_ip} is named '{matched.name}', "
+            f"expected saved name '{saved_existing_name}' or requested name '{desired_name}'"
+        )
     conflicting_names = [vm for vm in name_matches if vm.vmid != matched.vmid]
     if conflicting_names:
         ids = ", ".join(str(vm.vmid) for vm in conflicting_names)
@@ -1376,11 +1387,11 @@ def _reconcile_existing_vm(
             user=user, ssh_opts=ssh_opts, ssh_run=_ssh_run,
         )
     print(f"  ✓ VM {matched.vmid} already exists and is reachable at IP {target_ip}")
-    return True
+    return matched.vmid
 
 
-def ensure_vm_running(config: SetupConfig) -> None:
-    """Start or resume a saved VM and wait for SSH without changing its shape."""
+def ensure_vm_running(config: SetupConfig) -> int | None:
+    """Start or resume a saved VM and return its verified VMID."""
     node_ip = config.hosted_node
     if not node_ip or not validate_host(node_ip):
         raise ProvisionError("Invalid Proxmox host")
@@ -1414,7 +1425,7 @@ def ensure_vm_running(config: SetupConfig) -> None:
                 node_ip, config.hosted_user, ssh_opts, ["guest-admission"],
                 wait=True, description="guest memory admission",
             ):
-                _reconcile_existing_vm(
+                return _reconcile_existing_vm(
                     node_ip, target_ip, hostname, config.hosted_user, ssh_opts,
                     require_existing=True, require_existing_name=True,
                     start_existing=True,
@@ -1432,14 +1443,14 @@ def check_vm_exists(
 ) -> bool:
     """Return True if a reachable VM is configured with ``target_ip``."""
 
-    return _reconcile_existing_vm(
+    return bool(_reconcile_existing_vm(
         node_ip,
         target_ip,
         None,
         user,
         ssh_opts,
         dry_run=dry_run,
-    )
+    ))
 
 
 def verify_vm_rebind_source_stopped(
@@ -1519,9 +1530,9 @@ def _resolve_image(
                 None,
             )
         if url:
-            filename = url.rsplit("/", 1)[-1]
+            filename = cloud_image_url_filename(url)
             sha512 = getattr(config, "vm_image_sha512", None)
-            if not isinstance(sha512, str) or not re.fullmatch(r"[0-9A-Fa-f]{128}", sha512):
+            if not is_sha512_digest(sha512):
                 raise ProvisionError(
                     "Custom VM image URLs require --image-sha512 with 128 hexadecimal characters"
                 )
@@ -1533,7 +1544,7 @@ def _resolve_image(
     return (
         _ResolvedImage(
             url=image["url"],
-            sha512=image["sha512"] or None,
+            sha512=image["sha512"],
             filename=image["filename"],
             storage_ref=None,
         ),
@@ -1642,6 +1653,10 @@ def _download_image_to_host(
     """Fetch ``image`` onto the Proxmox node; return the absolute remote path."""
     if not image.url or not image.filename:
         raise ProvisionError("Internal error: download requested without URL")
+    if not is_sha512_digest(image.sha512):
+        raise ProvisionError("A valid SHA-512 digest is required for downloaded VM images")
+    if cloud_image_url_filename(image.url) != image.filename:
+        raise ProvisionError("VM image staging filename does not match its URL")
     if storage_content not in {"import", "iso"}:
         raise ProvisionError(
             f"Unsupported VM image storage content type: {storage_content}"
@@ -1673,6 +1688,7 @@ def _download_image_to_host(
                 f"Could not resolve image storage path for {image_ref}: "
                 f"{(path_result.stderr or path_result.stdout or '').strip() or 'pvesm path failed'}"
             )
+    validate_filesystem_path(remote_path)
     remote_dir = remote_path.rsplit("/", 1)[0]
 
     if dry_run:
@@ -1687,22 +1703,20 @@ def _download_image_to_host(
             f"Failed to prepare image storage path on {node_ip}: "
             f"{(mkdir_result.stderr or mkdir_result.stdout or '').strip() or 'mkdir failed'}"
         )
-    partial_path = f"{remote_path}.part"
+    quoted_path = shlex.quote(remote_path)
     fetch = (
-        f"if [ ! -f {shlex.quote(remote_path)} ]; then "
-        f"trap {shlex.quote(f'rm -f {shlex.quote(partial_path)}')} EXIT; "
-        f"wget -q --https-only --show-progress -O {shlex.quote(partial_path)} "
-        f"{shlex.quote(image.url)} && "
-        f"mv {shlex.quote(partial_path)} {shlex.quote(remote_path)}; "
-        "trap - EXIT; "
-        f"fi"
+        "set -eu; "
+        f"verify() {{ printf '%s  %s\\n' {image.sha512.lower()} \"$1\" | sha512sum -c -; }}; "
+        f"if [ -e {quoted_path} ] || [ -L {quoted_path} ]; then "
+        f"test ! -L {quoted_path}; test -f {quoted_path}; verify {quoted_path}; "
+        "else "
+        f"partial=$(mktemp -- {shlex.quote(remote_path + '.part.XXXXXXXX')}); "
+        "trap 'rm -f -- \"$partial\"' EXIT; "
+        f"wget -q --https-only --show-progress -O \"$partial\" {shlex.quote(image.url)}; "
+        "verify \"$partial\"; "
+        f"mv -T -- \"$partial\" {quoted_path}; "
+        "fi"
     )
-    commands = [fetch]
-    if image.sha512:
-        commands.append(
-            f"echo {shlex.quote(image.sha512 + '  ' + remote_path)} "
-            "| sha512sum -c -"
-        )
     image_lock = hashlib.sha256(remote_path.encode("utf-8")).hexdigest()[:24]
     locked_fetch = shlex.join(
         [
@@ -1711,7 +1725,7 @@ def _download_image_to_host(
             f"/run/lock/basaltwater-image-{image_lock}.lock",
             "/bin/sh",
             "-c",
-            " && ".join(commands),
+            fetch,
         ]
     )
     print(f"  Downloading cloud image: {image.url}")
@@ -1721,10 +1735,7 @@ def _download_image_to_host(
             f"Failed to stage cloud image on {node_ip}: "
             f"{(result.stderr or result.stdout or '').strip() or 'unknown error'}"
         )
-    if image.sha512:
-        print(f"  ✓ SHA-512 verified")
-    else:
-        print(f"  ⚠ No SHA-512 pinned for {image.filename}; skipping verification")
+    print("  ✓ SHA-512 verified")
 
     return remote_path
 
@@ -2155,7 +2166,7 @@ def _wait_for_guest_agent(
 
     print(
         "  ⚠ qemu-guest-agent was not ready after "
-        f"{timeout}s; continuing with the SSH handoff"
+        f"{timeout}s; setup still requires verified cloud-init and SSH identity"
     )
 
 
@@ -2209,6 +2220,7 @@ def provision_vm(
     allow_existing_data_disks: bool = False,
     require_existing_vm: bool = False,
     require_existing_name: bool = False,
+    saved_existing_name: str | None = None,
     start_existing_vm: bool = True,
     verify_existing_bridge: bool = False,
     verify_existing_storage: bool = False,
@@ -2220,6 +2232,7 @@ def provision_vm(
         "allow_existing_data_disks": allow_existing_data_disks,
         "require_existing_vm": require_existing_vm,
         "require_existing_name": require_existing_name,
+        "saved_existing_name": saved_existing_name,
         "start_existing_vm": start_existing_vm,
         "verify_existing_bridge": verify_existing_bridge,
         "verify_existing_storage": verify_existing_storage,
@@ -2254,6 +2267,7 @@ def _provision_vm_locked(
     allow_existing_data_disks: bool = False,
     require_existing_vm: bool = False,
     require_existing_name: bool = False,
+    saved_existing_name: str | None = None,
     start_existing_vm: bool = True,
     verify_existing_bridge: bool = False,
     verify_existing_storage: bool = False,
@@ -2269,6 +2283,7 @@ def _provision_vm_locked(
             when the caller has matched this guest to saved provisioning state.
         require_existing_vm: Refuse to create a replacement when rebind lookup fails.
         require_existing_name: Require an existing VM to retain the saved name.
+        saved_existing_name: Verify the saved or explicitly requested name before reconciling.
         start_existing_vm: Start or resume a verified existing VM and wait for SSH.
         verify_existing_bridge: Require an existing VM's net0 bridge to match.
         verify_existing_storage: Require existing disks to match declared pools.
@@ -2497,7 +2512,7 @@ def _provision_vm_locked(
         wait=True,
         description="guest capacity admission",
     ):
-        existing_vm_reconciled = _reconcile_existing_vm(
+        existing_vmid = _reconcile_existing_vm(
             node_ip,
             target_ip,
             hostname,
@@ -2514,6 +2529,7 @@ def _provision_vm_locked(
             lifecycle_config=config,
             require_existing=require_existing_vm,
             require_existing_name=require_existing_name,
+            saved_existing_name=saved_existing_name,
             start_existing=start_existing_vm,
             allow_managed_data_disks=allow_existing_data_disks,
             attach_missing_data_disks=attach_missing_data_disks,
@@ -2523,9 +2539,9 @@ def _provision_vm_locked(
                 False,
             ),
         )
-    if existing_vm_reconciled:
+    if existing_vmid:
         raise VMAlreadyExists(
-            f"VM with IP {target_ip} already exists on {node_ip}"
+            f"VM with IP {target_ip} already exists on {node_ip}", vmid=existing_vmid,
         )
 
     root_pool = resolved_root_pool or _resolve_storage_pool(
@@ -2699,6 +2715,8 @@ def _provision_vm_locked(
             node_ip,
             user,
             ssh_opts,
+            tool="qm",
+            vmid=vmid,
             dry_run=dry_run,
         )
         provision_complete = True

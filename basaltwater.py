@@ -117,6 +117,7 @@ from lib.setup_common import (
     run_remote_setup,
 )
 from lib.setup_reboot import restart_after_setup, shutdown_after_setup
+from lib.ssh_utils import workspace_pinned_ssh
 from lib.state_read import StateReadError
 from lib.interactive_setup import prompt_for_missing_passwords
 from lib.system_utils import get_current_username
@@ -1817,6 +1818,7 @@ def _is_cached_provisioned_guest_identity(
 def _refresh_existing_managed_guest_host_keys(
     config: SetupConfig,
     cached_config: Optional[SetupConfig],
+    vmid: int | None,
 ) -> None:
     """Refresh SSH trust only for an existing guest known in local metadata."""
     if not _is_cached_provisioned_guest_identity(config, cached_config):
@@ -1826,6 +1828,8 @@ def _refresh_existing_managed_guest_host_keys(
         cast(str, config.hosted_node),
         config.hosted_user,
         config.hosted_key,
+        tool="qm" if config.machine_type == "vm" else "pct",
+        vmid=vmid,
         dry_run=config.dry_run,
     )
 
@@ -2122,14 +2126,15 @@ def run_setup_command(args: argparse.Namespace) -> int:
             if config.machine_type == "vm":
                 from lib.proxmox_vm import ensure_vm_running
 
-                ensure_vm_running(config)
+                vmid = ensure_vm_running(config)
             else:
                 from lib.proxmox_node import ensure_container_running
 
-                ensure_container_running(config)
+                vmid = ensure_container_running(config)
             _refresh_existing_managed_guest_host_keys(
                 config,
                 cached_provisioning,
+                vmid,
             )
         except (ProvisionError, ValueError, OSError, subprocess.SubprocessError) as exc:
             print(
@@ -2165,6 +2170,13 @@ def run_setup_command(args: argparse.Namespace) -> int:
                         cached_provisioning,
                     )
                 )
+                saved_name = None
+                if allow_existing_data_disks:
+                    assert cached_provisioning is not None
+                    saved_name = cached_provisioning.system_hostname or _build_guest_hostname(
+                        _provisioning_cache_target(cached_provisioning.host),
+                        cached_provisioning.friendly_name, default_prefix="vm",
+                    )
                 if provider_rebind:
                     provision_vm(
                         config,
@@ -2191,14 +2203,14 @@ def run_setup_command(args: argparse.Namespace) -> int:
                         image=config.vm_image,
                         allow_existing_data_disks=allow_existing_data_disks,
                         require_existing_vm=True,
+                        saved_existing_name=saved_name,
                         verify_existing_storage=True,
                         **storage_extension_options,
                     )
                 else:
                     existing_vm_options = (
-                        {"require_existing_vm": True}
-                        if allow_existing_data_disks
-                        else {}
+                        {"require_existing_vm": True, "saved_existing_name": saved_name}
+                        if allow_existing_data_disks else {}
                     )
                     provision_vm(
                         config,
@@ -2206,7 +2218,7 @@ def run_setup_command(args: argparse.Namespace) -> int:
                         allow_existing_data_disks=allow_existing_data_disks,
                         **existing_vm_options,
                     )
-            except VMAlreadyExists:
+            except VMAlreadyExists as existing:
                 from lib.swap_config import swap_device_disk_names
 
                 has_managed_data_disks = bool(
@@ -2228,6 +2240,7 @@ def run_setup_command(args: argparse.Namespace) -> int:
                     _refresh_existing_managed_guest_host_keys(
                         config,
                         cached_provisioning,
+                        existing.vmid,
                     )
                 except ProvisionError as exc:
                     print(
@@ -2247,11 +2260,12 @@ def run_setup_command(args: argparse.Namespace) -> int:
             print(f"{'='*60}")
             try:
                 provision_container(config)
-            except ContainerAlreadyExists:
+            except ContainerAlreadyExists as existing:
                 try:
                     _refresh_existing_managed_guest_host_keys(
                         config,
                         cached_provisioning,
+                        existing.vmid,
                     )
                 except ProvisionError as exc:
                     print(
@@ -2272,13 +2286,14 @@ def run_setup_command(args: argparse.Namespace) -> int:
 
     if config.hosted_node and config.static_ipv4 and config.network_gateway4:
         try:
-            ensure_guest_ipv4_route(
-                config.static_ipv4,
-                config.network_gateway4,
-                "root",
-                config.ssh_key,
-                dry_run=config.dry_run,
-            )
+            with workspace_pinned_ssh(_provisioning_cache_target(config.host)):
+                ensure_guest_ipv4_route(
+                    config.static_ipv4,
+                    config.network_gateway4,
+                    "root",
+                    config.ssh_key,
+                    dry_run=config.dry_run,
+                )
         except ProvisionError as exc:
             print(f"\n✗ Failed to prepare the provisioned guest network: {exc}")
             return 1
@@ -2304,10 +2319,11 @@ def run_setup_command(args: argparse.Namespace) -> int:
         return 0
 
     try:
-        if automated_setup(config):
-            returncode = run_remote_setup(runtime_config, after_setup=finish_automated_setup)
-        else:
-            returncode = run_remote_setup(runtime_config)
+        with workspace_pinned_ssh(runtime_config.host if config.hosted_node else None):
+            if automated_setup(config):
+                returncode = run_remote_setup(runtime_config, after_setup=finish_automated_setup)
+            else:
+                returncode = run_remote_setup(runtime_config)
         if returncode == 0:
             replaced_cache_host = adopt_verified_network_host(
                 config,

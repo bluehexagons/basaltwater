@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import os
 import re
 import subprocess
-from typing import Callable, Optional
+from contextlib import ExitStack
+from typing import Callable, Optional, Sequence
 
 from lib.atomic_io import write_text_atomic
 from lib.concurrency import resource_lock
@@ -83,7 +86,7 @@ def _matching_known_host_lines(path: str, host_name: str) -> set[str]:
         text=True,
         check=False,
     )
-    if result.returncode not in {0, 1}:
+    if result.returncode not in {0, 1} or result.stderr:
         raise RuntimeError("could not inspect existing SSH host keys")
     return {
         line.strip()
@@ -138,19 +141,9 @@ def _persist_scan(
     known_hosts = os.path.abspath(
         os.path.expanduser(known_hosts_path or get_workspace_known_hosts_path())
     )
-    validate_filesystem_path(known_hosts, must_exist=False)
-    parent = os.path.dirname(known_hosts)
-    if os.path.lexists(parent):
-        if os.path.islink(parent) or not os.path.isdir(parent):
-            raise RuntimeError(f"refusing unsafe SSH directory: {parent}")
-    else:
-        os.makedirs(parent, mode=0o700)
-    if os.path.lexists(known_hosts) and (
-        os.path.islink(known_hosts) or not os.path.isfile(known_hosts)
-    ):
-        raise RuntimeError(f"refusing unsafe known_hosts file: {known_hosts}")
-
     with resource_lock("known-hosts", known_hosts, wait=True):
+        _check_known_hosts_path(known_hosts)
+        os.makedirs(os.path.dirname(known_hosts), mode=0o700, exist_ok=True)
         existing_lines: list[str] = []
         if os.path.exists(known_hosts):
             with open(known_hosts, encoding="utf-8") as file_obj:
@@ -169,25 +162,56 @@ def _persist_scan(
     return known_hosts
 
 
-def replace_scanned_host_keys(
-    host: str,
-    scan: str,
-    *,
-    port: int = 22,
-    known_hosts_path: Optional[str] = None,
-) -> str:
-    """Replace one known-hosts file's keys with an already trusted key scan."""
+def _check_known_hosts_path(path: str) -> None:
+    validate_filesystem_path(path)
+    parent = os.path.dirname(path)
+    if os.path.lexists(parent) and (os.path.islink(parent) or not os.path.isdir(parent)):
+        raise RuntimeError(f"refusing unsafe SSH directory: {parent}")
+    if os.path.lexists(path) and (os.path.islink(path) or not os.path.isfile(path)):
+        raise RuntimeError(f"refusing unsafe known_hosts file: {path}")
+
+
+def pin_verified_ed25519_key(host: str, public_key: str, paths: Sequence[str]) -> list[str]:
+    """Add a management-channel key only if all existing host pins agree."""
     if not validate_host(host):
         raise ValueError(f"Invalid host: {host}")
-    if not 1 <= port <= 65535:
-        raise ValueError("SSH port must be between 1 and 65535")
-    normalized_scan, _fingerprints = _normalize_scan(host, scan, port)
-    return _persist_scan(
-        host,
-        normalized_scan,
-        port,
-        known_hosts_path=known_hosts_path,
-    )
+    lines = public_key.strip().splitlines()
+    fields = lines[0].split() if len(lines) == 1 else []
+    if len(fields) < 2 or fields[0] != "ssh-ed25519" or len(fields[1]) != 68:
+        raise ValueError("expected one Ed25519 SSH public key")
+    try:
+        blob = base64.b64decode(fields[1], validate=True)
+    except binascii.Error as exc:
+        raise ValueError("invalid Ed25519 SSH public key encoding") from exc
+    if len(blob) != 51 or not blob.startswith(b"\x00\x00\x00\x0bssh-ed25519\x00\x00\x00\x20"):
+        raise ValueError("invalid Ed25519 SSH public key data")
+
+    key = fields[:2]
+    known_hosts_paths = sorted({os.path.abspath(os.path.expanduser(path)) for path in paths})
+    with ExitStack() as stack:
+        for path in known_hosts_paths:
+            stack.enter_context(resource_lock("known-hosts", path, wait=True))
+        updates: dict[str, str] = {}
+        for path in known_hosts_paths:
+            _check_known_hosts_path(path)
+            existing = ""
+            if os.path.isfile(path):
+                matches = _matching_known_host_lines(path, host)
+                if any(line.split()[1:3] != key for line in matches):
+                    raise RuntimeError(
+                        f"conflicting SSH host key for {host} in {path}; "
+                        "verify the guest and explicitly rotate its pins before retrying"
+                    )
+                if matches:
+                    continue
+                with open(path, encoding="utf-8", newline="") as file_obj:
+                    existing = file_obj.read()
+            separator = "\n" if existing and not existing.endswith("\n") else ""
+            updates[path] = existing + separator + f"{host} {' '.join(key)}\n"
+        for path, content in updates.items():
+            os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+            write_text_atomic(path, content, mode=0o600)
+    return known_hosts_paths
 
 
 def enroll_host_key(

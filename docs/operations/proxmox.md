@@ -148,30 +148,18 @@ The `server_proxmox` setup profile enables snippets on active `local` directory
 storage when the node has no snippets pool configured; see the host defaults below.
 Custom VM image URLs must use HTTPS and include a matching 128-character
 SHA-512 value with `--image-sha512`; the curated Debian catalog carries pinned
-hashes automatically.
+hashes automatically. New and cached downloads both require a matching digest
+before import. See [VM image selection](../reference/machine-types.md#provisioning-a-proxmox-vm).
 
-After a newly created VM or LXC begins accepting SSH, Basaltwater scans its
-ED25519 host key from the already authenticated Proxmox node and records it in
-the workspace `known_hosts` file and the invoking user's default
-`~/.ssh/known_hosts` before the first direct guest login. The same refresh
-occurs on a later setup rerun when saved Basaltwater metadata still identifies
-the same address, machine type, and Proxmox node. This lets a managed guest
-recover from a legitimate host-key change before either Basaltwater or plain
-`ssh HOST` performs a strict check. If a saved guest's firewall blocks the node's
-rescan, setup retains an already enrolled workspace key and the following
-direct SSH connection must still match it. It does not discover or replace a
-key through an unauthenticated controller-side scan. A changed guest key in
-this case requires restoring node access or independent verification and
-explicit enrollment. All following guest SSH still uses
-`StrictHostKeyChecking=yes`. Existing or adopted guests without matching saved
-metadata are not trusted automatically; verify them independently and use
-`basaltw ssh-key enroll HOST` when workspace enrollment is required.
+For a new or saved managed guest, Basaltwater reads the Ed25519 host key from
+the selected VMID or CTID over authenticated Proxmox SSH. VMs need a working
+QEMU guest agent. A conflict in either trust file or a failed management-channel
+read stops setup before the first direct guest login. For explicit enrollment,
+rotation and address reuse, see [SSH authentication](ssh.md#proxmox-guest-host-keys).
 
 Guest SSH readiness accepts TCP reachability from either the Proxmox node or
-the controller, so source-restricted guest firewall rules can permit only the
-controller. Readiness alone does not authenticate a guest; host-key enrollment
-and strict SSH verification remain separate requirements. First provisioning
-still needs node-to-guest SSH access to enroll the new key.
+the controller. Source-restricted guest firewall rules can permit only the
+controller because key enrollment uses the Proxmox management channel.
 
 ## Joining a cluster with two-factor authentication
 
@@ -695,12 +683,10 @@ shell history; the password is not persisted in saved setup state.
 After a guest has been provisioned, a later `setup` invocation can retain
 `--provision-on`. If the target has saved local setup metadata, Basaltwater
 reuses its recorded Proxmox details and skips the full provider-shape check
-before updating the guest. It still contacts the authenticated Proxmox node to
-rescan and replace the managed guest's workspace and default user SSH host keys
-before the first direct connection, retaining existing workspace trust when
-that rescan is blocked as described above. Guest-shape options emitted by a saved
-reconstructed command are also accepted when they match that metadata. Changing
-any of
+before updating the guest. It still identifies the guest on the authenticated
+Proxmox node and verifies its host key before the first direct connection.
+Guest-shape options emitted by a saved reconstructed command are also
+accepted when they match that metadata. Changing any of
 `--machine`, `--bridge`, `--memory`, `--balloon-min`, `--balloon-shares`,
 `--allow-memory-overcommit`, `--storage`, `--cores`, `--cpu-type`,
 `--base`, `--image`, or `--image-storage` requests a provisioning check instead.
@@ -768,17 +754,17 @@ setup rejects the rerun instead of saving a value it did not apply. Use the
 explicit `vm` or `proxmox` management command for a supported lifecycle change,
 or provision a replacement guest.
 
-During a provisioning check, the configured IPv4 address is the stable guest
-identity. If that VM already exists and the corrected declaration changes its
-Proxmox name, Basaltwater applies and verifies the rename before continuing
-setup. A desired name already owned by a different VM is rejected rather than
-creating an ambiguous duplicate. Repeating the saved `--name` and `--hostname`
+During a saved VM provisioning check, the configured IPv4 address must match
+a unique VM with the saved or requested Proxmox name. If the corrected
+declaration changes its Proxmox name, Basaltwater applies and verifies the
+rename before continuing setup. Setup rejects a desired name already owned
+by a different VM. Repeating the saved `--name` and `--hostname`
 values is an ordinary idempotent rerun and does not perform a full provider
 check. Changing `--hostname`, or changing `--name` when it supplies the VM
 hostname, performs the identity check. Regardless of whether a full
-provisioning check is needed, the authenticated Proxmox node attempts to refresh
-the saved guest's workspace and default user SSH host keys before Basaltwater checks
-the guest route or starts remote setup. A guest without matching saved metadata
+provisioning check is needed, Basaltwater verifies the saved guest's SSH host
+key through the authenticated Proxmox node before checking the guest route or
+starting remote setup. A guest without matching saved metadata
 still requires explicit host-key enrollment. Use the explicit host and VMID
 forms to inspect or repair provider-side drift and duplicates created by older
 releases.

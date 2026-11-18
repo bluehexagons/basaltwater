@@ -49,7 +49,7 @@ def _args(**overrides: object) -> Namespace:
 class TestCachedProvisioningMetadata(unittest.TestCase):
     def setUp(self) -> None:
         self.ensure_vm_running = self.enterContext(
-            patch("lib.proxmox_vm.ensure_vm_running")
+            patch("lib.proxmox_vm.ensure_vm_running", return_value=111)
         )
 
     def test_setup_parser_accepts_additive_mounted_disk_without_root(self) -> None:
@@ -911,6 +911,8 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             "10.0.0.10",
             "root",
             None,
+            tool="qm",
+            vmid=111,
             dry_run=False,
         )
         mock_prepare.assert_called_once_with(current)
@@ -1003,12 +1005,14 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
              patch("basaltwater.print_setup_summary"), \
              patch(
                  "basaltwater.refresh_managed_guest_host_keys",
-                 side_effect=basaltwater.ProvisionError("scan failed"),
+                 side_effect=basaltwater.ProvisionError("conflicting SSH host key"),
              ), \
+             patch("basaltwater.ensure_guest_ipv4_route") as mock_route, \
              patch("basaltwater.run_remote_setup") as mock_remote:
             result = basaltwater.run_setup_command(_args())
 
         self.assertEqual(result, 1)
+        mock_route.assert_not_called()
         mock_remote.assert_not_called()
 
     def test_cached_vm_start_failure_stops_before_trust_refresh_or_setup(self) -> None:
@@ -1179,7 +1183,7 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
              patch("basaltwater.ensure_guest_ipv4_route"), \
              patch(
                  "lib.proxmox_vm.provision_vm",
-                 side_effect=VMAlreadyExists(),
+                 side_effect=VMAlreadyExists(vmid=121),
              ) as mock_provision, \
              patch(
                  "basaltwater.refresh_managed_guest_host_keys",
@@ -1192,12 +1196,15 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             image=current.vm_image,
             allow_existing_data_disks=True,
             require_existing_vm=True,
+            saved_existing_name="vm-10-0-0-50",
         )
         mock_refresh.assert_called_once_with(
             "10.0.0.50",
             "10.0.0.10",
             "root",
             "/keys/proxmox",
+            tool="qm",
+            vmid=121,
             dry_run=False,
         )
 
@@ -1255,6 +1262,7 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             image=current.vm_image,
             allow_existing_data_disks=True,
             require_existing_vm=True,
+            saved_existing_name="vm-10-0-0-50",
             verify_existing_storage=True,
         )
         self.assertTrue(mock_save.called)
@@ -1326,6 +1334,7 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             image=current.vm_image,
             allow_existing_data_disks=True,
             require_existing_vm=True,
+            saved_existing_name="vm-10-0-0-50",
             verify_existing_storage=True,
             attach_missing_data_disks={"team-data"},
         )
@@ -1488,7 +1497,7 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
              ) as mock_source, \
              patch(
                  "lib.proxmox_vm.provision_vm",
-                 side_effect=VMAlreadyExists(),
+                 side_effect=VMAlreadyExists(vmid=131),
              ) as mock_provision, \
              patch(
                  "basaltwater.refresh_managed_guest_host_keys",
@@ -1512,6 +1521,8 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             "10.0.0.11",
             "root",
             "/keys/pve2",
+            tool="qm",
+            vmid=131,
             dry_run=False,
         )
         mock_save.assert_called_once()
