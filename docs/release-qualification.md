@@ -76,20 +76,60 @@ private hostnames, personal data, or raw logs that contain them.
 ### Preview publication gate
 
 - [x] `pyproject.toml` declares `2.0.0rc3` for `v2.0.0-rc.3`.
-- [ ] Release CI passes on Python 3.11 and 3.15, builds the wheel, and
+- [x] Release CI passes on Python 3.11 and 3.15, builds the wheel, and
   installs and smoke-tests the packaged launchers on Python 3.13.
-- [ ] The GitHub release is marked **pre-release** and contains the wheel built
+- [x] The GitHub release is marked **pre-release** and contains the wheel built
   from the tagged commit.
-- [ ] An isolated disposable controller installs the exact candidate tag and
+- [x] An isolated disposable controller installs the exact candidate tag and
   reports its candidate version through `basaltw --version` and
   `basaltw channel`.
-- [ ] `stable` still selects the latest unqualified stable tag; preview tags
+- [x] `stable` still selects the latest unqualified stable tag; preview tags
   remain opt-in.
 
 Passing this gate permits a preview for feedback. It does not pass the live
 qualification matrix or authorize the final stable release.
 
 ### Candidate results
+
+#### `v2.0.0-rc.3`
+
+On 2026-11-18 UTC, release qualification used `v2.0.0-rc.3` at
+`e8b9288461c4c65f8a832b5bac1e680893413744` (package `2.0.0rc3`). Release CI
+passed on Python 3.11 and 3.15 in Debian Trixie. Python 3.13 built and
+smoke-tested the wheel before GitHub published the prerelease.
+[Release workflow](https://github.com/bluehexagons/basaltwater/actions/runs/44396675945)
+
+- The published wheel matched the CI artifact byte for byte and passed an
+  isolated installation and launcher smoke test. Its SHA-256 is
+  `75ac0e6836bc21f808ee6d5083a0b5b1643b4b580e397150c4e2c89ec2f9fba2`.
+  The public source archive matched the tagged installer, package metadata,
+  and both changed runtime modules.
+  [GitHub prerelease](https://github.com/bluehexagons/basaltwater/releases/tag/v2.0.0-rc.3)
+- A disposable Debian 13 VM installed the exact tag in an isolated controller
+  account and upgraded a second controller account from `v2.0.0-rc.2`. The
+  upgrade preserved the private test file and its mode. `dev` resolved to `main`.
+  `stable` resolved to historical `v0.2.0` and refused to activate it. The same
+  VM upgraded its system installation with the pinned installer, preserving the
+  saved setup and deployed service binary. The exact installer versions and
+  both deployed applications were verified again after reboot.
+- The installed candidate ran both builder and target roles on the VM, with
+  separate authorization for the target. Over verified HTTPS, the builder
+  rejected an invalid signature and deduplicated the signed push. A new build
+  produced the verified artifact and descriptor, and authenticated SSH delivery
+  served the artifact on the target.
+- During typed Go service replacement, 17 of 55 paired HTTPS checks observed
+  HTTP 503 before healthy activation. In the rejected rollout, 397 of 439 paired
+  checks observed the pause. None returned a response from the unhealthy
+  release, which answered its direct loopback health probes. The neighboring
+  application stayed available throughout. Rollback restored the original
+  binary and HTTPS response. A separate SIGKILL during the pause left the route
+  on HTTP 503 and blocked another reconciliation until snapshot recovery.
+- Retained bundles from prior runs consumed the lab target's staging allowance.
+  After verifying that the refused stage left no artifact intent or payload,
+  the operator increased the disposable target's configured quota from 1 GiB
+  to 2 GiB and retried the same reservation. The retained evidence stayed intact.
+
+#### `v2.0.0-rc.2`
 
 On 2026-11-18 UTC, release qualification used `v2.0.0-rc.2` at
 `4e24c2928fd0294b696fed8778ad9e52d4f5cb35` (package `2.0.0rc2`). Release CI
@@ -150,29 +190,18 @@ operator. The remaining stable work includes supported profile and recovery
 matrices, Firefox ESR and desktop/T3 checks, multi-node Proxmox, storage and
 application recovery, and the physical kiosk seat.
 
-### Development follow-up for target deployment
-
-On 2026-11-18 UTC, a Debian 13 VM ran the candidate with the target activation
-and Nginx changes for replacing an existing typed artifact release. A healthy
-replacement paused the affected route with HTTP 503 until it passed health
-verification. During the unhealthy replacement, 396 of 438 paired HTTPS checks
-observed the pause. None returned a response from the unhealthy release, and
-the neighboring static application returned its expected response in every pair.
-Rollback restored the original service binary and HTTPS response. A separate
-SIGKILL after the Nginx pause took effect left the affected route on HTTP 503
-and blocked a second reconciliation. Restoring the saved configuration
-recovered both HTTPS routes. These checks await repetition on `v2.0.0-rc.3`.
-
 ### Stable qualification matrix
 
 All rows below are required before publishing `v2.0.0`. Record **Pass** only
 when the exact candidate commit completed the listed operation and the result
-was checked; otherwise use **Fail**, **Blocked**, or **Not run**.
+was checked. Use **Fail**, **Blocked**, or **Not run** for other outcomes.
+Results recorded for earlier tags still need qualification on the current
+candidate.
 
 | ID | Qualification case | Required evidence | Status |
 | --- | --- | --- | --- |
-| REL-01 | Source and wheel | Candidate CI passes; wheel installs outside the source tree; `basaltw --version` and packaged entry points match the candidate metadata. | **Pass** for `v2.0.0-rc.2` |
-| REL-02 | Installer channels | Fresh exact-tag install and upgrade work; `stable` does not select an `-rc.` tag; `dev` still selects `main`. | **Pass** for `v2.0.0-rc.2` on Debian 13 VM |
+| REL-01 | Source and wheel | Candidate CI passes; wheel installs outside the source tree; `basaltw --version` and packaged entry points match the candidate metadata. | **Pass** for `v2.0.0-rc.3` |
+| REL-02 | Installer channels | Fresh exact-tag install and upgrade work; `stable` does not select an `-rc.` tag; `dev` still selects `main`. | **Pass** for `v2.0.0-rc.3` on Debian 13 VM |
 | INS-01 | Clean Debian installations | Install controller, server, and agent profiles on disposable Debian hosts; cover the supported bare-metal/VM/LXC paths that each profile supports. Check commands, permissions, and selected services. | Not run for `v2.0.0-rc.2` |
 | INS-02 | Existing-install upgrades | Upgrade a supported Basaltwater installation and verify user data, setup state, credentials, and owned runtime paths. Exercise the documented intermediate-version migration for any remaining legacy installation; do not assume direct migration from historical `v0.2.0`. | Not run for `v2.0.0-rc.2` |
 | INS-03 | Interruption and recovery | Interrupt migration and setup at documented safe test points. Confirm the operation marker blocks unsafe reruns, recovery guidance identifies retained state, and a successful retry preserves the prior working state. | Not run for `v2.0.0-rc.2` |
@@ -191,7 +220,7 @@ was checked; otherwise use **Fail**, **Blocked**, or **Not run**.
 | STO-02 | NAS, Samba, Gogs, and Syncthing | Qualify setup/reruns, boot ordering, missing mounts, identity preservation, and service-user access on disposable storage. | Not run for `v2.0.0-rc.2` |
 | STO-03 | Storage failure and restoration | Cause sync and scrub failures with disposable data; verify the failure is reported and exercise the documented restore path. A successful mirror alone is not recovery evidence. | Not run for `v2.0.0-rc.2` |
 | APP-01 | HomeBox lifecycle | On a disposable amd64 Debian VM, test reboot and mounted-data recovery; certificate issuance/renewal and firewall reachability; browser login, items, attachments, and WebSockets; setup rerun, upgrade rollback, and full restore. | Not run for `v2.0.0-rc.2`; selected native loopback/API setup, rerun, full restore, upgrade, reboot and disable/re-enable checks do not qualify the complete lifecycle |
-| CICD-01 | Signed webhook builds, delivery and rollback | Submit a signed webhook and verify the resulting artifact. Separately authorize delivery of that artifact to an explicitly enrolled target and check its health. Force an unhealthy activation and confirm the previous working release is restored and the failure is reported. Automatic webhook-to-target delivery is deferred. | **Pass** for `v2.0.0-rc.2` on separate Debian 13 VMs. Existing-route traffic reached the unhealthy release while health verification ran. |
+| CICD-01 | Signed webhook builds, delivery and rollback | Submit a signed webhook and verify the resulting artifact. Separately authorize delivery of that artifact to an explicitly enrolled target and check its health. Force an unhealthy activation and confirm the previous working release is restored and the failure is reported. Automatic webhook-to-target delivery is deferred. | **Pass** for `v2.0.0-rc.3` on a Debian 13 VM. Nginx isolated the rejected release from HTTPS traffic, and rollback restored the previous release. |
 | REL-03 | Prepublication identifiers and assets | Confirm namespace/name clearance, the matching wheel and release notes, planned source/download URLs, and documented upgrade instructions before tagging. | Not run for `v2.0.0-rc.2` |
 
 The experimental CachyOS desktop profile is not expanded in this release pass
