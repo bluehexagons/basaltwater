@@ -347,11 +347,13 @@ use its documented session launcher and preserve unrelated applications.
 2. Obtain `ca.crt` from the local fixture directory. Compare its SHA-256 through
    the independent local terminal. For a disposable remote VM, transfer only
    its public CA through trusted SSH and follow [client CA trust](../services/client-ca-trust.md).
-3. In this disposable Firefox profile only, import the verified CA under
-   Settings → Privacy & Security → Certificates → View Certificates →
-   Authorities, enabling website trust. Restart the profile if needed, then
-   reload the valid HTTPS URLs. Never disable certificate checks or enroll the
-   fixture CA globally.
+3. In this disposable Firefox profile only, open the certificate manager from
+   Privacy and security in Settings. In the redesigned Settings, open
+   **Connection and software security → Advanced settings → Manage certificates**.
+   In the older layout, choose **Certificates → View Certificates**. Open
+   **Authorities**, import the verified CA and enable website trust. Restart
+   the profile if needed, then reload the valid HTTPS URLs. Keep certificate
+   checks enabled and restrict enrollment to the disposable profile.
 4. Check panel navigation, keyboard focus, disclosures, meters, light/dark
    appearance, 100%/200% browser zoom, and desktop/narrow widths. Download the
    public CA and compare its SHA-256 with the independent local value.

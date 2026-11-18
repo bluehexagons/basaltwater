@@ -143,8 +143,10 @@ const test = base.extend({
       // The status controller cancels passive reads on navigation, pause and
       // hidden tabs. status.spec.cjs verifies cancellation and resumption.
       const panelStatus = /^\/api\/panel\/v1\/(host|web|audit|proxmox|agents|storage|services)$/.test(new URL(failure.url).pathname);
-      const developmentStatus = developmentServer && failure.url === developmentServer.url + '/__dev__/status';
-      if (failure.method === 'GET' && (panelStatus || developmentStatus) && /ERR_ABORTED|NS_BINDING_ABORTED/.test(failure.error)) {
+      // Navigation can also supersede the development-only reload script or its status read.
+      const developmentRefresh = developmentServer && ['/__dev__/status', '/__dev__/reload.js']
+        .some(route => failure.url === developmentServer.url + route);
+      if (failure.method === 'GET' && (panelStatus || developmentRefresh) && /ERR_ABORTED|NS_BINDING_ABORTED/.test(failure.error)) {
         cancelledStatus.push(failure);
         continue;
       }
