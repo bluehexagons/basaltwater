@@ -418,6 +418,7 @@ def _make_static_location(path: str, serve_path: str, index_file: str, try_files
         f"        {directive} {directory};",
         f"        index {index_file};",
         "        autoindex off;",
+        "        disable_symlinks on;",
         "        charset utf-8;",
         f"        try_files {try_files};"
     ]

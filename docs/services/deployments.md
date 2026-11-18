@@ -419,11 +419,20 @@ Selected-builder deployments use these exports within the narrower
 `output` is a repository-relative path served by Nginx after the build.
 The manifest parser rejects absolute paths, paths that escape the repository
 and unsafe Nginx syntax.
-For ordinary on-target static builds, setup checks that the resulting directory
-exists. A build can introduce symlinks after source validation. Have the build
-verify that the output root and its descendants contain only intended public
-directories and regular files before it reports success. Component URL paths
-use the same Nginx-safe syntax.
+After all on-target component builds finish, setup copies the release into
+private staging. Each ordinary static `output` and its ancestors must be real
+directories. The public tree may contain directories and regular files. Setup
+rejects symlinks, files with multiple hard links, special files, and missing
+outputs before stopping services or replacing the active release. Selecting
+`"."` applies these checks to the whole repository. Keep only intended public
+content in the selected directory.
+
+Nginx serves the snapshot at the configured output path and refuses symlink
+traversal for both root sites and subpaths. The active release is a directory
+swapped by rename. A `current` symlink in the serving path is also refused.
+Redeploy an existing site to install the snapshot and regenerate its locations.
+
+Component URL paths use the same Nginx-safe syntax as output paths.
 Set the optional `spa` field to the boolean `true` when client-side routes need
 to load directly. It defaults to `false`. When enabled, root sites fall back to
 `/index.html`, and a static component mounted at `/dashboard` falls back to
@@ -589,8 +598,11 @@ builders and retained artifact refresh, use [the flow above](#build-on-a-saved-b
 
 - Manifest deployments build every component on each deployment; they do not
   use incremental builds.
-- Builds run in a temporary sibling release and are accepted only after every
-  component build, service activation, and declared health check succeeds.
+- Builds run in a temporary sibling directory. For manifests containing an
+  ordinary static component, allow space for both the build workspace and a
+  complete release snapshot during deployment. The snapshot keeps service
+  executables and their relative links outside public outputs at their usual
+  paths. The operation marker records both directories during staging.
 - Existing application services are stopped and verified inactive before
   basaltwater opens a declared SQLite database for its privileged backup; a
   backup failure restarts the unchanged release.
@@ -609,7 +621,10 @@ builders and retained artifact refresh, use [the flow above](#build-on-a-saved-b
 - Static output directories and service binaries are checked before any active
   service is stopped. A declared binary must exist and be executable.
 - Existing release files are replaced only after services are stopped. Static
-  files are owned by the deployment user.
+  files are owned by the deployment user. For ordinary static components,
+  writes through a build-time file handle cannot change the served copy. A
+  service or health-check failure restores the previous release, including
+  its static files.
 - Automatic static deployments stage in a temporary sibling directory and
   replace the active tree atomically. A staging failure leaves the active
   release untouched; failure to clean up the previous release retains it for
