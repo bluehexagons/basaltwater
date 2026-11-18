@@ -78,8 +78,10 @@ token logon identity and readable control state without screenshots, input or
 application launch. It uses the token's AuthenticationId plus Windows boot and
 session identity; it does not assume a logon SID appears in the .NET group list.
 See [Microsoft's token statistics](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-token_statistics).
-Status also reports human
-control state. Window discovery returns current-account/session windows with
+Control state and keyboard-lease files are created with the current account's
+SID as owner and a private ACL. An existing file with an unexpected owner
+stops the operation. Status also reports human control state.
+Window discovery returns current-account/session windows with
 decimal handles, identities, physical geometry and monitor device IDs. It can
 omit inaccessible windows. UI Automation inspection returns bounded controls
 and references; some custom or embedded controls expose limited information.

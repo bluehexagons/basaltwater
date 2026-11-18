@@ -38,9 +38,6 @@ public sealed class HeldStore : IDisposable {
         if((File.GetAttributes(path)&FileAttributes.ReparsePoint)!=0) throw new Exception("Held-input ownership cannot use reparse paths");
         mutex=new Mutex(false,name);
     }
-    public static void Create(string directory) {
-        using(var f=new FileStream(Path.Combine(directory,"ownership.bin"),FileMode.CreateNew,FileAccess.Write,FileShare.ReadWrite)) { f.SetLength(64); }
-    }
     public T Locked<T>(Func<State,T> action) {
         bool entered=false;
         try {

@@ -32,11 +32,14 @@ function Write-NativeHeldJson([string]$Path,$Record,[int]$Limit=65536) {
     if (Test-Path -LiteralPath $Path) { Assert-NativeDesktopPrivatePath $Path }
     $temp = $Path + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
     try {
-        [IO.File]::WriteAllText($temp,($Record | ConvertTo-Json -Depth 12 -Compress),(New-Object Text.UTF8Encoding($false)))
+        New-NativeDesktopPrivateFile $temp ([Text.Encoding]::UTF8.GetBytes(($Record | ConvertTo-Json -Depth 12 -Compress)))
         if ((Get-Item -LiteralPath $temp).Length -gt $Limit) { throw 'Held-input receipt exceeds bound' }
         if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($temp,$Path,[Management.Automation.Language.NullString]::Value) }
         else { [IO.File]::Move($temp,$Path) }
     } finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp } }
+}
+function New-NativeHeldOwnership([string]$Directory) {
+    New-NativeDesktopPrivateFile (Join-Path $Directory 'ownership.bin') (New-Object byte[] 64)
 }
 function Resolve-NativeHeldDirectory([string]$Id) {
     if ($Id -notmatch '\A[0-9a-f]{32}\z') { throw 'Invalid held-input lease ID' }
@@ -52,8 +55,11 @@ function Assert-NativeHeldRecord($Record,[string]$Id,[string]$Directory) {
 function Request-NativeHeldCancellation([string]$Directory,[string]$Name) {
     if($Name -cne ('Local\Basaltwater.Hold.'+(Split-Path -Leaf $Directory))){throw 'Invalid held-input cancellation identity'}
     $path=Join-Path $Directory 'cancel'; Assert-NativeDesktopPath $path
-    if (Test-Path -LiteralPath $path) { Assert-NativeDesktopPrivatePath $path }
-    [IO.File]::WriteAllText($path,'cancel')
+    try { New-NativeDesktopPrivateFile $path ([Text.Encoding]::ASCII.GetBytes('cancel')) }
+    catch [IO.IOException] {
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw }
+        Assert-NativeDesktopPrivatePath $path
+    }
     $signal=$null
     try {$signal=[Threading.EventWaitHandle]::OpenExisting($Name+'.cancel');$null=$signal.Set()}
     catch [Threading.WaitHandleCannotBeOpenedException] { } # Startup also checks the durable marker.
@@ -154,7 +160,7 @@ function Start-NativeHeldLease($Request,$Context,$State) {
     Write-NativeHeldJson (Join-Path $directory 'request.json') $record
     # Reserve before dispatch. Failure stays inspectable and never starts a driver.
     Write-NativeHeldJson (Join-Path $root 'active.json') @{ id=$id }
-    [IO.File]::WriteAllBytes((Join-Path $directory 'ownership.bin'),(New-Object byte[] 64))
+    New-NativeHeldOwnership $directory
     try { Start-NativeHeldWatchdog $record }
     catch {
         Request-NativeHeldCancellation $directory $record.name
