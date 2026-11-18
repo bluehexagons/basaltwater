@@ -20,11 +20,26 @@ function Assert-Throws([scriptblock]$Action, [string]$Pattern) {
         Assert-True ($Name -eq 'SunshineService') 'Unexpected service discovery'
         return $script:Service
     }
-    function Set-Service($Name, $StartupType) {
-        Assert-True ($Name -eq 'SunshineService' -and $StartupType -eq 'Automatic') 'Wrong service or startup selection'
-        $script:Calls += 'enable'; $script:Service.StartType = 'Automatic'
+    $script:Elevations = 0; $script:ElevatedExit = 0; $script:CancelElevation = $false
+    function Start-Process($FilePath, $ArgumentList, $WorkingDirectory, $Verb, $WindowStyle, [switch]$Wait, [switch]$PassThru) {
+        $systemDirectory = [Environment]::SystemDirectory
+        Assert-True ($FilePath -eq (Join-Path $systemDirectory 'sc.exe') -and $WorkingDirectory -eq $systemDirectory) 'Service controller did not use the Windows system directory'
+        Assert-True ($WindowStyle -eq 'Hidden' -and $Wait -and $PassThru) 'Native service operation was not supervised'
+        Assert-True (($Verb -eq 'RunAs') -eq (-not $script:Admin)) 'Unexpected service elevation'
+        Assert-True ($ArgumentList -cin @('config SunshineService start= auto', 'start SunshineService')) 'Unexpected service arguments'
+        if ($Verb -eq 'RunAs') { $script:Elevations++ }
+        if ($script:CancelElevation) { throw 'UAC cancelled' }
+        if ($script:ElevatedExit -eq 0) {
+            if ($ArgumentList -eq 'config SunshineService start= auto') {
+                $script:Calls += 'enable'; $script:Service.StartType = 'Automatic'
+            } else {
+                $script:Calls += 'start'; $script:Service.Status = 'StartPending'
+            }
+        }
+        $result = [pscustomobject]@{ ExitCode = $script:ElevatedExit }
+        $result | Add-Member ScriptMethod Dispose { }
+        return $result
     }
-    function Start-Service { throw 'Unbounded Start-Service was invoked' }
     $script:Admin = $false; $script:InstallFailure = $false; $script:Calls = @(); $script:Service = $null
     Install-NativeSunshine -Plan
     Assert-True ($script:Calls.Count -eq 0) 'Plan changed packages/services'
@@ -35,7 +50,6 @@ function Assert-Throws([scriptblock]$Action, [string]$Pattern) {
     $script:Disposes = 0; $script:WaitFailure = $false
     $script:Service | Add-Member ScriptMethod Dispose { $script:Disposes++ }
     $script:Service | Add-Member ScriptMethod Refresh { }
-    $script:Service | Add-Member ScriptMethod Start { $script:Calls += 'start'; $this.Status = 'StartPending' }
     $script:Service | Add-Member ScriptMethod WaitForStatus {
         param($Status, $Timeout)
         Assert-True ($Status -eq 'Running' -and $Timeout.TotalSeconds -eq 30) 'Service startup timeout was lost'
@@ -66,24 +80,12 @@ function Assert-Throws([scriptblock]$Action, [string]$Pattern) {
     Assert-Throws { Install-NativeSunshine } 'installer failed'
     Assert-True (($script:Calls -join ',') -eq 'winget,install') 'Failed install continued to service changes'
     $script:InstallFailure = $false; $script:WaitFailure = $false; $script:Admin = $false
-    $script:Elevations = 0; $script:ElevatedExit = 0; $script:CancelElevation = $false
-    function Start-Process($FilePath, $ArgumentList, $Verb, $WindowStyle, [switch]$Wait, [switch]$PassThru) {
-        Assert-True ($Verb -eq 'RunAs' -and $WindowStyle -eq 'Hidden' -and $Wait -and $PassThru) 'Service elevation changed interactive account setup or showed a console'
-        $command = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String(($ArgumentList -split ' ')[-1]))
-        Assert-True ($command.Contains('Set-NativeSunshineService') -and -not $command.Contains('Invoke-NativeAgentSetup')) 'Elevation included account setup'
-        $script:Elevations++
-        if ($script:CancelElevation) { throw 'UAC cancelled' }
-        if ($script:ElevatedExit -eq 0) { Set-NativeSunshineService }
-        $result = [pscustomobject]@{ ExitCode = $script:ElevatedExit }
-        $result | Add-Member ScriptMethod Dispose { }
-        return $result
-    }
     $script:Service.Status = 'Running'
     Install-NativeSunshine
     Assert-True ($script:Elevations -eq 0) 'Healthy service unnecessarily prompted for UAC'
-    $script:Service.Status = 'Stopped'
+    $script:Service.Status = 'Stopped'; $script:Service.StartType = 'Manual'
     Install-NativeSunshine
-    Assert-True ($script:Elevations -eq 1 -and $script:Service.Status -eq 'Running') 'Standard-user setup did not configure its selected service through UAC'
+    Assert-True ($script:Elevations -eq 2 -and $script:Service.Status -eq 'Running') 'Standard-user setup did not configure and start the service through native UAC actions'
     $script:Service.Status = 'Stopped'; $script:ElevatedExit = 19
     Assert-Throws { Install-NativeSunshine } 'exit code 19'
     $script:CancelElevation = $true

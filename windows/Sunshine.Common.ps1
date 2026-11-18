@@ -16,15 +16,34 @@ function Get-NativeSunshineHealth {
     } finally { $service.Dispose() }
 }
 
+function Invoke-NativeSunshineServiceControl([string]$Operation) {
+    $arguments = switch ($Operation) {
+        'enable' { 'config SunshineService start= auto' }
+        'start' { 'start SunshineService' }
+        default { throw 'Unsupported Sunshine service operation' }
+    }
+    $systemDirectory = [Environment]::SystemDirectory
+    $elevation = @{}
+    if (-not (Test-NativeSunshineAdministrator)) { $elevation.Verb = 'RunAs' }
+    $process = Start-Process -FilePath (Join-Path $systemDirectory 'sc.exe') -ArgumentList $arguments `
+        -WorkingDirectory $systemDirectory -WindowStyle Hidden -Wait -PassThru -ErrorAction Stop @elevation
+    try {
+        # Starting concurrently with Windows or another operator is harmless.
+        if ($process.ExitCode -ne 0 -and -not ($Operation -eq 'start' -and $process.ExitCode -eq 1056)) {
+            throw "Sunshine service configuration failed (exit code $($process.ExitCode)); rerun setup to retry."
+        }
+    } finally { $process.Dispose() }
+}
+
 function Set-NativeSunshineService {
     $service = Get-Service -Name SunshineService -ErrorAction SilentlyContinue
     if (-not $service) { throw 'The Sunshine installer did not provide SunshineService. Repair the vendor installation with the service feature enabled.' }
     try {
-        Set-Service -Name SunshineService -StartupType Automatic -ErrorAction Stop
+        if ($service.StartType -ne 'Automatic') { Invoke-NativeSunshineServiceControl enable }
         $service.Refresh()
-        # Start-Service itself waits without a bound in StartPending. Start()
-        # submits the request, leaving our explicit timeout in control.
-        if ($service.Status -eq 'Stopped') { $service.Start() }
+        # The service controller submits the start. Keep the bounded wait in
+        # the original process, including for a service already starting.
+        if ($service.Status -eq 'Stopped') { Invoke-NativeSunshineServiceControl start }
         elseif ($service.Status -notin @('Running', 'StartPending')) { throw 'Sunshine service is stopping or paused; resolve its state before retrying setup.' }
         $service.WaitForStatus('Running', [timespan]::FromSeconds(30))
     } finally { $service.Dispose() }
@@ -40,22 +59,7 @@ function Install-NativeSunshine([switch]$Plan) {
     Ensure-WingetPackage LizardByte.Sunshine 'Sunshine installation'
     $health = Get-NativeSunshineHealth
     if ($health.State -eq 'missing') { throw $health.Detail }
-    if (-not $health.Healthy) {
-        if (Test-NativeSunshineAdministrator) { Set-NativeSunshineService }
-        else {
-            # Elevate only machine-wide service configuration, retaining the
-            # intended user's PATH, skills, selections and provider logins.
-            $helper = Join-Path $PSScriptRoot 'Sunshine.Common.ps1'
-            $command = "`$ErrorActionPreference = 'Stop'; . '" + $helper.Replace("'", "''") + "'; Set-NativeSunshineService"
-            $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
-            $process = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') `
-                -ArgumentList ('-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ' + $encoded) `
-                -Verb RunAs -WindowStyle Hidden -Wait -PassThru -ErrorAction Stop
-            try {
-                if ($process.ExitCode -ne 0) { throw "Sunshine service configuration failed (exit code $($process.ExitCode)); rerun setup to retry." }
-            } finally { $process.Dispose() }
-        }
-    }
+    if (-not $health.Healthy) { Set-NativeSunshineService }
     $health = Get-NativeSunshineHealth
     if (-not $health.Healthy) { throw $health.Detail }
     Write-Host 'Sunshine service is running and starts at Windows boot. Open https://localhost:47990 locally to set credentials and pair Moonlight.'
