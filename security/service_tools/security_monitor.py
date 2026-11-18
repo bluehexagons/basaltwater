@@ -60,6 +60,7 @@ _SSH_MAX_GROUPS = 1000
 _MAX_AUDIT_RECORD_BYTES = 256 * 1024
 _MAX_SOURCE_LINE_BYTES = 64 * 1024
 _SCAN_WINDOW = timedelta(minutes=15)
+_RETENTION_NOTICE_INTERVAL_SECONDS = 24 * 60 * 60
 _SOURCE_TIMEOUT_SECONDS = 60
 _AUDIT_PATH = '/usr/sbin:/sbin:/usr/bin:/bin'
 _AUDIT_LINE_TYPE = re.compile(r'^(?:node=\S+\s+)?type=(\w+)\s')
@@ -658,6 +659,9 @@ def _next_state(
     notified = _notified_retention_gaps(previous or {})
     if notified:
         next_state['notified_retention_gaps'] = notified
+    attempts = _retention_notice_attempts(previous or {})
+    if attempts:
+        next_state['retention_notice_attempts'] = attempts
     if health.status != "not_configured":
         next_state["rdp_certificate_status"] = health.status
         next_state["rdp_certificate_issue"] = health.issue or ""
@@ -669,33 +673,57 @@ def _notified_retention_gaps(state: dict[str, object]) -> list[JSONDict]:
     return retained_gaps({'retention_gaps': state.get('notified_retention_gaps')}, [])
 
 
+def _retention_notice_attempts(state: dict[str, object]) -> dict[str, JSONDict]:
+    """Read at most one attempt timestamp and gap start per known source."""
+    raw = state.get('retention_notice_attempts')
+    if not isinstance(raw, dict):
+        return {}
+    attempts: dict[str, JSONDict] = {}
+    for source in _SOURCE_LABELS:
+        value = raw.get(source)
+        if not isinstance(value, dict):
+            continue
+        start, attempted_at = value.get('since'), value.get('attempted_at')
+        if isinstance(start, str) and 0 < len(start) <= 32 and type(attempted_at) is int:
+            attempts[source] = {'since': start, 'attempted_at': attempted_at}
+    return attempts
+
+
 def _new_retention_reports(
     state: dict[str, object], gaps: list[JSONDict], floors: dict[str, datetime],
     since: datetime, wall_now: datetime,
-) -> tuple[list[JSONDict], list[JSONDict]]:
-    """Identify coverage gaps extending beyond the last successfully sent report."""
+) -> tuple[list[JSONDict], list[JSONDict], dict[str, JSONDict]]:
+    """Report new gaps immediately and coalesce extensions and retries over a day."""
     # A source boundary can explain many catch-up windows at once. Keep
     # observed scan history separate from the broader interval in the report.
-    notified = _notified_retention_gaps(state)
-    prior = {gap['source']: gap for gap in notified}
+    reported = {str(gap['source']): gap for gap in _notified_retention_gaps(state)}
+    attempts = _retention_notice_attempts(state)
+    observed_at = int(wall_now.timestamp())
     end = wall_now.replace(microsecond=0) - timedelta(seconds=1)
     coverage = {
         gap['source']: gap for gap in retained_gaps(state, window_gaps(floors, since, end))
     }
     reports = []
-    reported_ranges = []
     for gap in gaps:
-        source = gap['source']
+        source = str(gap['source'])
         interval = coverage[source]
-        previous = prior.get(source)
-        if previous and previous['since'] <= interval['since'] and previous['until'] >= interval['until']:
+        start = interval['since']
+        previous = reported.get(source)
+        if previous and previous['since'] == start and previous['until'] >= interval['until']:
             continue
-        reported_ranges.append(interval)
+        attempt = attempts.get(source)
+        if attempt and attempt['since'] == start:
+            elapsed = observed_at - int(attempt['attempted_at'])
+            if 0 <= elapsed < _RETENTION_NOTICE_INTERVAL_SECONDS:
+                continue
+        # A failed send may have reached some destinations. Pace retries too.
+        attempts[source] = {'since': start, 'attempted_at': observed_at}
+        reported[source] = interval
         reports.append({
-            **gap, 'coverage_since': interval['since'], 'coverage_until': interval['until'],
-            'oldest_retained': floors[str(source)].isoformat(timespec='seconds'),
+            **gap, 'coverage_since': start, 'coverage_until': interval['until'],
+            'oldest_retained': floors[source].isoformat(timespec='seconds'),
         })
-    return reports, retained_gaps({'retention_gaps': notified}, reported_ranges)
+    return reports, [reported[source] for source in sorted(reported)], attempts
 
 
 def _state_collection_errors(state: dict[str, object]) -> list[str]:
@@ -1274,7 +1302,9 @@ def main() -> int:
         return 1
 
     certificate_event = _certificate_health_event(state, certificate_health)
-    report_gaps, notified_gaps = _new_retention_reports(state, gaps, floors, since, wall_now)
+    report_gaps, notified_gaps, notice_attempts = _new_retention_reports(
+        state, gaps, floors, since, wall_now,
+    )
     certificate_failed = certificate_health.status == "error"
     critical_audit_keys = [key for key in audit_keys if key in _CRITICAL_KEYS]
     lockouts = ssh_summary.get('lockouts', [])
@@ -1456,8 +1486,10 @@ def main() -> int:
               status=status, events=', '.join(summary_parts),
               window=f"{since_str} → {now.strftime('%Y-%m-%d %H:%M:%S')}")
     next_state = _next_state(next_cursor, certificate_health, previous=state, gaps=gaps)
-    if delivered and report_gaps:
-        next_state['notified_retention_gaps'] = notified_gaps
+    if notification_configs and report_gaps:
+        next_state['retention_notice_attempts'] = notice_attempts
+        if delivered:
+            next_state['notified_retention_gaps'] = notified_gaps
     _save_state(next_state)
     return 1 if certificate_failed or gaps else 0
 

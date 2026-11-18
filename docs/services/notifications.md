@@ -203,11 +203,12 @@ Basaltwater setup window are treated as expected maintenance; the setup result
 records that work. The monitor holds its cursor while a required source is
 unavailable so events are not silently skipped.
 
-During catch-up, the monitor reports the coverage gap through the observed
-retention boundary and continues logging each affected scan window locally.
-Windows already covered by a delivered gap report do not send duplicate gap
-notifications. An extended or separate gap can send a new report, and findings
-from retained logs continue to notify.
+During catch-up, the monitor reports each newly uncovered source and includes
+the interval through its observed retention boundary. It logs every affected
+scan window locally. Extensions of the same continuous gap are combined into
+at most one update every 24 hours per source. Failed attempts follow the same
+interval because a report can reach some targets before another target fails.
+Separate gaps and findings from retained logs still notify promptly.
 
 ## Webhook API
 
