@@ -704,6 +704,7 @@ class SetupConfig:
     clear_samba_metadata_cache: bool = False
     samba_shares: Optional[NestedStrList] = None
     share_credentials: Optional[NestedStrList] = None
+    resolved_credentials: Optional[NestedStrList] = field(default=None, repr=False)
     enable_smbclient: bool = False
     smb_mounts: Optional[NestedStrList] = None
     enable_syncthing: bool = False
@@ -1719,6 +1720,8 @@ class SetupConfig:
                 "--git-credential "
                 f"{shlex.quote(origin)} {shlex.quote(username)}"
             )
+        for record in self.resolved_credentials or []:
+            args.append(f"--resolved-credential {shlex.quote(json.dumps(record))}")
         for origin, encoded_pem in self.git_ca_pems or []:
             args.append(
                 "--git-ca-pem "
@@ -2431,10 +2434,6 @@ class SetupConfig:
         MIN_SHARE_FIELDS = SHARE_USERS_INDEX + 1
         required_share_credentials: StrList = []
         seen_share_credentials: set[str] = set()
-        for _origin, username in self.git_credentials or []:
-            if username not in seen_share_credentials:
-                required_share_credentials.append(username)
-                seen_share_credentials.add(username)
         if self.antistatic_admin:
             if self.antistatic_admin not in seen_share_credentials:
                 required_share_credentials.append(self.antistatic_admin)
@@ -2625,6 +2624,7 @@ class SetupConfig:
         data.pop('system_type', None)
         data.pop('password', None)
         data.pop('share_credentials', None)
+        data.pop('resolved_credentials', None)
         data.pop('deploy_latest', None)
         for transient_field in (
             'refresh_packages',
@@ -2730,6 +2730,8 @@ class SetupConfig:
         """Decode saved settings, deferring only the reserved Syncthing tree policy."""
         validate_current_setup_fields(data)
         data = dict(data)
+        data.pop('share_credentials', None)
+        data.pop('resolved_credentials', None)
         from lib.notifications import notification_strict_https_from_state
 
         data["notification_strict_https"] = notification_strict_https_from_state(data)
@@ -3456,6 +3458,7 @@ class SetupConfig:
             clear_samba_metadata_cache=clear_samba_metadata_cache,
             samba_shares=getattr(args, 'samba_shares', None),
             share_credentials=getattr(args, 'share_credentials', None),
+            resolved_credentials=getattr(args, 'resolved_credentials', None),
             enable_smbclient=enable_smbclient,
             smb_mounts=smb_mounts,
             enable_syncthing=enable_syncthing,

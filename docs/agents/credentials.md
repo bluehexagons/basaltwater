@@ -28,48 +28,79 @@ they have different storage, rotation, and sharing rules.
 
 ## Workspace credential store
 
-The workspace store contains named passwords and tokens for Basaltwater-managed
-services. Setup can resolve a GitHub token with `--git-auth-credential NAME`
-and install it for the target's GitHub CLI. Provider tools do not read this
-store directly; Codex, Claude Code, and OpenCode use their own authentication.
+The workspace store keys each password or token by service, destination, and
+credential name. The same username can have independent passwords for
+different Git origins, Gogs targets, and SMB shares. Provider tools use their
+own authentication. Setup can resolve a saved GitHub token and install it for
+the target's GitHub CLI.
 
 ```bash
-basaltw credentials set workspace-user
+basaltw credentials set alice --service git --destination https://git.example.test:8443
+basaltw credentials set alice --service gogs --destination server.example.test
+basaltw credentials set alice --service smb --destination //nas.example.test/docs
 basaltw credentials list
-basaltw credentials remove workspace-user
+basaltw credentials remove alice --service smb --destination //nas.example.test/docs
 ```
 
-Omit the password from `credentials set` to use a hidden prompt. The default
-store is private to the active workspace:
+Omit the password from `credentials set` to use a hidden prompt. Listing shows
+the service, destination, and name. Use the global `--workspace PATH` option to
+select a different workspace. The default store lives at
+`~/.config/basaltwater/credentials.json`.
 
-```text
-~/.config/basaltwater/credentials.json
-```
+| Service | Destination | How setup selects the name |
+| --- | --- | --- |
+| `git` | HTTPS origin, including any nondefault port | `--git-credential HTTPS_ORIGIN USERNAME` |
+| `gogs` | Setup target host | The setup username, when `--gogs` is enabled |
+| `smb` | `//HOST/SHARE` from the mount specification | The username in `--mount-smb /mnt/MOUNT HOST USERNAME SHARE SUBDIR` |
+| `samba` | Setup target host | Usernames in `--share` |
+| `syncthing` | Setup target host | `--syncthing-admin USERNAME`, which defaults to `syncthing-admin` |
+| `antistatic` | Setup target host | `--antistatic-admin USERNAME` |
+| `github` | Setup target host receiving the token | `--git-auth-credential NAME` |
+
+Use the host from the setup command for target-scoped services. For Gogs,
+this is the host running the instance. The public Gogs domain belongs in the
+`git` scope when it forms the origin used by Git clients. An SMB scope follows
+the server and share regardless of the client machine, mountpoint, or
+subdirectory. Use the share spelling from `--mount-smb`. Use the configured
+host spelling for destination aliases. Git origins normalize case and the
+default HTTPS port.
+
+Saved controller configurations retain these selectors. A fresh setup, patch,
+or replay uses the current value for each scope. To rotate a saved secret, run
+`credentials set` with the same service, destination, and name. Gogs generates
+an initial admin password when that target and user have no Gogs entry. Gogs
+preserves an existing admin account.
 
 The store must be an owned regular file with one link, no symlink, and valid
 versioned JSON no larger than 1 MiB. Reads repair its permissions to `0600`
 through the opened file descriptor. Invalid stores block credential updates and
 remain available for recovery; only a missing file starts an empty store.
 
-Use the global `--workspace PATH` option to select another workspace. The
-repeatable setup option `--credential USERNAME PASSWORD` updates the same
-store, but a command-line password may be exposed through shell history and
-the process list.
+### Migrate unbound credentials
 
-Common consumers are:
+Version 1 entries appear as `legacy` and `(unbound)` in `credentials list`.
+Setup never selects them by name. Verify which account and destination a legacy
+value belongs to before copying it into a scope.
 
-- managed Syncthing, using `syncthing-admin` by default;
-- initial Gogs administration when the name matches the setup user;
-- Samba shares and SMB mounts;
-- origin-scoped Git HTTPS credentials for non-GitHub servers; and
-- GitHub tokens explicitly selected with `--git-auth-credential NAME`.
+```bash
+basaltw credentials migrate alice --service git --destination https://git.example.test:8443
+```
 
-Within a workspace, the lookup key is the credential name alone. Two Git
-origins configured with the same username resolve the same stored password.
-The same name can also select a password for an SMB mount or the initial Gogs
-administrator. Use a distinct name for a provider token. When independent
-servers require the same username with different secrets, use a separate
-controller workspace for each trust domain and enroll its SSH host keys there.
+Migration keeps the legacy entry and refuses to overwrite a different value
+already saved in that scope. Scoped writes upgrade the file to version 2.
+Use a controller with version 2 support for subsequent operations. If the old
+value has an uncertain destination, use
+`credentials set` with a verified password for each intended scope.
+`credentials remove alice --service legacy` removes only the unbound entry.
+For compatibility, omitting both scope flags with `credentials set` or
+`credentials remove` selects the legacy entry.
+
+The repeatable setup option `--credential USERNAME PASSWORD` applies only
+when the command declares exactly one scope for that name. Setup rejects the
+option if the name is unused or appears in multiple scopes. Inline Samba and
+SMB passwords use the scope of the share or mount. A real setup saves these
+explicit inputs in their resolved scopes. Command-line secrets can be exposed
+through shell history and the process list. Prefer the hidden prompt.
 
 For initial Gogs administration, use a unique bootstrap password and rotate it
 in Gogs after setup. The target's account-creation command receives the
@@ -115,7 +146,7 @@ authorities, and Git LFS.
 | Agent auth source is missing | Canonical path and keyring limitations in [Agent authentication](agent-authentication.md) |
 | Source file is rejected | It must be regular, non-symlink, nonempty, no larger than 4 MiB, and not group/world-writable |
 | Codex reports expired auth | Run `basaltw agent doctor HOST USER --tool codex --capability host --json`, then use [Codex maintenance](agent-authentication.md#codex-maintenance) |
-| Syncthing, Samba, or Gogs password is wrong | Confirm the workspace, credential name, and service-specific rotation procedure |
+| Syncthing, Samba, or Gogs password is wrong | Confirm the workspace, service, destination, credential name, and service-specific rotation procedure |
 
 ## Related documentation
 

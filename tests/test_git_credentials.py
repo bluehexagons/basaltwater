@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import io
 import os
 import shlex
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -159,7 +161,7 @@ class TestGitCredentialConfiguration(unittest.TestCase):
         reconstructed = "\n".join(config.to_setup_command())
         self.assertIn(f"--git-credential {ORIGIN} gitadmin", reconstructed)
         self.assertIn("--git-ca-certificate", reconstructed)
-        self.assertIn("--credential gitadmin [REDACTED]", reconstructed)
+        self.assertNotIn("--credential gitadmin", reconstructed)
         self.assertNotIn("super-secret-value", reconstructed)
 
     def test_runtime_resolution_uses_workspace_password_and_stages_ca(self) -> None:
@@ -168,7 +170,7 @@ class TestGitCredentialConfiguration(unittest.TestCase):
             with open(source, "w", encoding="utf-8") as file_obj:
                 file_obj.write("placeholder")
             os.chmod(source, 0o600)
-            set_workspace_credential("gitadmin", "chosen-password", workspace)
+            set_workspace_credential("gitadmin", "chosen-password", workspace, service="git", destination=ORIGIN)
             config = _config(
                 git_credentials=[[ORIGIN, "gitadmin"]],
                 git_ca_certificates=[[ORIGIN, source]],
@@ -184,8 +186,8 @@ class TestGitCredentialConfiguration(unittest.TestCase):
                 runtime = prepare_runtime_config(config, workspace)
 
         self.assertEqual(
-            runtime.share_credentials,
-            [["gitadmin", "chosen-password"]],
+            runtime.resolved_credentials,
+            [["git", ORIGIN, "gitadmin", "chosen-password"]],
         )
         self.assertIsNone(runtime.git_ca_certificates)
         self.assertEqual(runtime.git_ca_pems[0][0], ORIGIN)
@@ -205,8 +207,8 @@ class TestGitCredentialConfiguration(unittest.TestCase):
         self.assertEqual(parsed_remote.git_credentials, [[ORIGIN, "gitadmin"]])
         self.assertEqual(parsed_remote.git_ca_pems, runtime.git_ca_pems)
         self.assertEqual(
-            parsed_remote.share_credentials,
-            [["gitadmin", "chosen-password"]],
+            parsed_remote.resolved_credentials,
+            runtime.resolved_credentials,
         )
 
     def test_runtime_fetches_ca_over_host_key_verified_ssh(self) -> None:
@@ -264,6 +266,25 @@ class TestGitCredentialConfiguration(unittest.TestCase):
                     _config(git_credentials=[[ORIGIN, "gitadmin"]]),
                     workspace,
                 )
+
+    def test_target_git_validation_rejects_username_only_password(self) -> None:
+        config = _config(
+            git_credentials=[[ORIGIN, "gitadmin"]],
+            share_credentials=[["gitadmin", "unscoped-value"]],
+        )
+        with self.assertRaisesRegex(ValueError, "Missing resolved credential for Git user"):
+            validate_agent_git_settings(config)
+
+    def test_invalid_private_credential_argument_omits_secret_from_error(self) -> None:
+        parser = create_setup_argument_parser("remote", for_remote=True)
+        stderr = io.StringIO()
+        with redirect_stderr(stderr), self.assertRaises(SystemExit):
+            parser.parse_args([
+                "--resolved-credential",
+                '["git", "invalid-origin", "gitadmin", "private-fixture"]',
+            ])
+        self.assertIn("Invalid resolved credential", stderr.getvalue())
+        self.assertNotIn("private-fixture", stderr.getvalue())
 
     def test_validation_requires_git_policy_and_rejects_github_override(self) -> None:
         with self.assertRaisesRegex(ValueError, "--git-access"):
@@ -510,10 +531,14 @@ class TestTargetGitCredentialSetup(unittest.TestCase):
                 pw_uid=os.getuid(),
                 pw_gid=os.getgid(),
             )
+            second_origin = "https://git.example.test:8443"
             config = _config(
-                git_credentials=[[ORIGIN, "gitadmin"]],
+                git_credentials=[[ORIGIN, "gitadmin"], [second_origin, "gitadmin"]],
                 git_ca_pems=[[ORIGIN, "encoded"]],
-                share_credentials=[["gitadmin", "p@ss word"]],
+                resolved_credentials=[
+                    ["git", ORIGIN, "gitadmin", "p@ss word"],
+                    ["git", second_origin, "gitadmin", "second-password"],
+                ],
             )
             pem = (
                 "-----BEGIN CERTIFICATE-----\nQQ==\n"
@@ -537,6 +562,7 @@ class TestTargetGitCredentialSetup(unittest.TestCase):
                 include_content = file_obj.read()
 
             self.assertIn("gitadmin:p%40ss%20word@192.168.0.51:3000", credential_content)
+            self.assertIn("gitadmin:second-password@git.example.test:8443", credential_content)
             self.assertNotIn("p@ss word", include_content)
             self.assertIn(f'[credential "{ORIGIN}"]', include_content)
             self.assertIn("helper =", include_content)
@@ -591,7 +617,7 @@ class TestTargetGitCredentialSetup(unittest.TestCase):
                     configure_git_https_credentials(
                         _config(
                             git_credentials=[[ORIGIN, "gitadmin"]],
-                            share_credentials=[["gitadmin", "password"]],
+                            resolved_credentials=[["git", ORIGIN, "gitadmin", "password"]],
                         )
                     )
 

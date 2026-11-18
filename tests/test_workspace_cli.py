@@ -8,7 +8,7 @@ import os
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -374,6 +374,8 @@ class TestWorkspaceCli(unittest.TestCase):
         args.credentials_command = "set"
         args.username = "operator"
         args.password = None
+        args.service = "gogs"
+        args.destination = "target.example.test"
         args.workspace = None
         parser.parse_args.return_value = args
 
@@ -385,7 +387,32 @@ class TestWorkspaceCli(unittest.TestCase):
 
         self.assertEqual(result, 0)
         mock_getpass.assert_called_once_with("Password for operator: ")
-        mock_set_credential.assert_called_once_with("operator", "secret")
+        mock_set_credential.assert_called_once_with(
+            "operator", "secret", service="gogs", destination="target.example.test",
+        )
+
+    def test_credentials_cli_migrates_lists_and_removes_one_scope(self):
+        with tempfile.TemporaryDirectory() as workspace, patch.dict(os.environ):
+            def run(*command):
+                output = io.StringIO()
+                argv = ["basaltw", "--workspace", workspace, "credentials", *command]
+                with patch.object(sys, "argv", argv), redirect_stdout(output):
+                    self.assertEqual(basaltwater.main(), 0, output.getvalue())
+                return output.getvalue()
+
+            run("set", "alice", "legacy-fixture")
+            scope = ("--service", "git", "--destination", "https://git.example.test")
+            run("migrate", "alice", *scope)
+            with patch("basaltwater.getpass.getpass", return_value="scoped-fixture"):
+                run("set", "alice", "--service", "gogs", "--destination", "target.example.test")
+            listing = run("list")
+            self.assertIn("git\thttps://git.example.test\talice", listing)
+            self.assertIn("gogs\ttarget.example.test\talice", listing)
+            self.assertIn("legacy\t(unbound)\talice", listing)
+            self.assertNotIn("fixture", listing)
+            run("remove", "alice", *scope)
+            self.assertNotIn("https://git.example.test", run("list"))
+            self.assertIn("legacy\t(unbound)\talice", run("list"))
 
     def test_unified_runtime_validation_rejects_antistatic_admin_without_tls(self):
         config = SetupConfig(

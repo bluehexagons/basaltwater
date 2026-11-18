@@ -66,7 +66,9 @@ from lib.completions import run_completion_setup
 from lib.config_cleanup import run_cleanup
 from lib.config import WEB_PANEL_DEFAULT_PORT_SENTINEL, SetupConfig
 from lib.credentials import (
+    CREDENTIAL_SERVICES,
     list_workspace_credentials,
+    migrate_workspace_credential,
     prepare_runtime_config,
     remove_workspace_credential,
     set_workspace_credential,
@@ -672,10 +674,24 @@ def create_basaltwater_parser(*, _command: str | None = None) -> Tuple[argparse.
         help="Credential password (omit to enter it without exposing it in shell history or process arguments)",
     )
 
-    credentials_subparsers.add_parser("list", help="List saved credential usernames")
+    credentials_subparsers.add_parser("list", help="List saved credential scopes and usernames")
 
     credentials_remove_parser = credentials_subparsers.add_parser("remove", help="Remove a saved credential")
     credentials_remove_parser.add_argument("username", help="Credential username to remove")
+    credentials_migrate_parser = credentials_subparsers.add_parser(
+        "migrate", help="Copy a legacy credential to one verified service and destination"
+    )
+    credentials_migrate_parser.add_argument("username", help="Legacy credential username")
+    for credential_parser in (credentials_set_parser, credentials_remove_parser, credentials_migrate_parser):
+        migrating = credential_parser is credentials_migrate_parser
+        credential_parser.add_argument(
+            "--service", choices=CREDENTIAL_SERVICES if migrating else (*CREDENTIAL_SERVICES, "legacy"),
+            default="legacy", required=migrating, help="Credential service (legacy means unbound)",
+        )
+        credential_parser.add_argument(
+            "--destination", required=migrating,
+            help="HTTPS origin for Git, //HOST/SHARE for SMB, or setup target for other services",
+        )
 
     add_network_subparser(subparsers)
     add_batch_subparser(subparsers)
@@ -2494,7 +2510,7 @@ def run_shares_command(args: argparse.Namespace) -> int:
     runtime_config.custom_steps = "reconcile_samba_shares"
     start_time = time.time()
     if not cached_config.dry_run:
-        store_cli_credentials(cached_config)
+        store_cli_credentials(share_config)
     returncode = run_remote_setup(runtime_config)
     end_time = time.time()
 
@@ -2724,28 +2740,39 @@ def _dispatch_command(args: argparse.Namespace, parser: argparse.ArgumentParser)
                 password = args.password
                 if password is None:
                     password = getpass.getpass(f"Password for {args.username}: ")
-                set_workspace_credential(args.username, password)
-                print(f"Saved credential for {args.username} in {get_workspace_dir()}")
+                set_workspace_credential(
+                    args.username, password, service=args.service, destination=args.destination,
+                )
+                if args.service == "legacy":
+                    print(f"Saved unbound legacy credential for {args.username} in {get_workspace_dir()}")
+                else:
+                    print(f"Saved {args.service} credential for {args.username} at {args.destination}")
                 return 0
             if args.credentials_command == "list":
-                usernames = list_workspace_credentials()
-                if not usernames:
+                identities = list_workspace_credentials()
+                if not identities:
                     print("No saved credentials.")
                     return 0
-                for username in usernames:
-                    print(username)
+                for service, destination, username in identities:
+                    print(f"{service}\t{destination or '(unbound)'}\t{username}")
                 return 0
             if args.credentials_command == "remove":
-                removed = remove_workspace_credential(args.username)
+                removed = remove_workspace_credential(
+                    args.username, service=args.service, destination=args.destination,
+                )
                 if removed:
                     print(f"Removed credential for {args.username}")
                 else:
                     print(f"No saved credential for {args.username}")
                 return 0
-        except ValueError as e:
+            if args.credentials_command == "migrate":
+                migrate_workspace_credential(args.username, args.service, args.destination)
+                print(f"Bound legacy credential for {args.username} to {args.service} at {args.destination}")
+                return 0
+        except (ValueError, OSError, ResourceBusyError, ResourceLockSafetyError) as e:
             print(f"Error: {e}")
             return 1
-        print("Error: credentials command required (set, list, remove)")
+        print("Error: credentials command required (set, list, remove, migrate)")
         return 1
     else:
         parser.print_help()
