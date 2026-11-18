@@ -308,6 +308,20 @@ meter::-moz-meter-bar { background: var(--accent); }
 .event-meta { margin: 3px 0 0; color: var(--muted); font-size: .82rem; }
 .event-detail { margin: 8px 0 0; }
 .event-values { margin: 8px 0 0; color: var(--muted); font-size: .85rem; }
+.event-timing { display: flex; flex-wrap: wrap; gap: 2px 16px; }
+.event-actions { margin: 8px 0 0; padding-left: 20px; }
+.event > details { margin-top: 0; }
+.event > details > pre { margin-top: 0; }
+.event-findings { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.event-findings > li { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
+.event-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 12px;
+  margin: 4px 0 0; font-size: .85rem; }
+.event-facts dt { color: var(--muted); }
+.event-facts dd { margin: 0; }
+@media (max-width: 460px) {
+  .event-facts { grid-template-columns: minmax(0, 1fr); }
+  .event-facts dd { margin-bottom: 4px; }
+}
 .badge {
   display: inline-block;
   padding: 2px 7px;
