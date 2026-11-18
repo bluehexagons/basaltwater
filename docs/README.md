@@ -27,8 +27,8 @@ each section index routes to its detailed pages.
 
 ## Project records
 
-- [Security review](security-review.md) identifies the affected configurations,
-  precautions operators can take now, and acceptance checks for open findings.
+- The audit records fourteen findings, their fixes, the steps for existing
+  installations and the checks completed for each change. [Security review](security-review.md)
 - [Release qualification](release-qualification.md) tracks the v2.0 preview and
   stable release gate.
 - [Migration guide](migration-guide.md) covers the completed rename and
