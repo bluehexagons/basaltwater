@@ -591,6 +591,14 @@ class TestConfigureFail2Ban(unittest.TestCase):
 
 
 class TestConfigureAuditd(unittest.TestCase):
+    @patch("security.security_steps.audit_permission_syscalls", return_value=frozenset({"openat", "fchmodat"}))
+    def test_permission_rule_verification_uses_the_native_syscall_mask(self, compile_mask):
+        managed = "-a always,exit -F arch=b32 -F path=/etc/passwd -F perm=wa -k identity"
+        active = "-a always,exit -F arch=b32 -S fchmodat,openat -F path=/etc/passwd -F perm=wa -F key=identity"
+        self.assertTrue(security_steps._audit_rules_match(managed, active))
+        self.assertFalse(security_steps._audit_rules_match(managed, active.replace("fchmodat,", "")))
+        compile_mask.assert_called_with("b32", "aw")
+
     @patch("security.security_steps.is_hardware", return_value=False)
     @patch("security.security_steps.is_vm", return_value=True)
     @patch("security.security_steps.os.makedirs")

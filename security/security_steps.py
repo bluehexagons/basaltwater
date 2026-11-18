@@ -18,6 +18,7 @@ from common.build_ssh_admission import (
     admission_content, build_host_recovery_groups, managed_transport_groups, ssh_admission_lock,
 )
 from lib.atomic_io import write_text_atomic
+from lib.audit_rules import audit_permission_syscalls
 from lib.maintenance_systemd import configure_maintenance_timer
 from lib.kernel_restart import install_kernel_restart_hook
 from lib.config import SetupConfig
@@ -1425,6 +1426,29 @@ def _audit_rule_fields(line: str) -> frozenset[tuple[str, str]]:
     return frozenset(fields)
 
 
+def _audit_rules_match(managed_rules: str, current_rules: str) -> bool:
+    active = {_audit_rule_fields(line) for line in current_rules.splitlines() if line.startswith("-a ")}
+    for line in managed_rules.splitlines():
+        if not line.startswith("-a "):
+            continue
+        fields = _audit_rule_fields(line)
+        if fields in active:
+            continue
+        options = dict(
+            value.split("=", 1) for option, value in fields
+            if option == "-F" and value.startswith(("arch=", "perm="))
+        )
+        if "arch" not in options or "perm" not in options or any(option == "-S" for option, _ in fields):
+            return False
+        # For implicit permission filters, auditctl lists the architecture's
+        # expanded mask. A narrower explicit mask does not cover the rule.
+        syscalls = audit_permission_syscalls(options["arch"], options["perm"])
+        expanded = fields | {("-S", name) for name in syscalls}
+        if expanded not in active:
+            return False
+    return True
+
+
 def configure_auditd(config: SetupConfig) -> None:
     if is_dry_run():
         print("  [DRY-RUN] Would configure auditd rules")
@@ -1514,9 +1538,7 @@ def configure_auditd(config: SetupConfig) -> None:
     listed = run("auditctl -l", capture_output=True, check=False)
     if listed.returncode != 0:
         raise RuntimeError("Could not verify the kernel audit rules")
-    managed = {_audit_rule_fields(line) for line in audit_rules.splitlines() if line.startswith("-a ")}
-    active = {_audit_rule_fields(line) for line in (listed.stdout or "").splitlines() if line.startswith("-a ")}
-    if not managed.issubset(active):
+    if not _audit_rules_match(audit_rules, listed.stdout or ""):
         if enabled.group(1) == "2":
             print("  ⚠ Kernel audit policy is immutable. Reboot required to load staged Basaltwater rules.")
             return
@@ -1710,14 +1732,7 @@ def _retire_distro_apt_updates() -> None:
 
 
 def configure_auto_updates(config: SetupConfig) -> None:
-    """Configure automatic package updates using a custom systemd service.
-
-    This replaces the legacy unattended-upgrades approach. The new service
-    runs ``apt-get update && apt-get dist-upgrade --no-remove`` which:
-    - Does not require any hardcoded origins or codenames
-    - Automatically handles all configured repositories
-    - Supports dependency additions while refusing automated package removals
-    """
+    """Schedule independent Debian security and guarded distribution updates."""
     if config.dry_run or is_dry_run():
         print("  [DRY-RUN] Would configure automatic package updates")
         return
