@@ -1260,6 +1260,13 @@ def add_setup_arguments(
             "matching workspace password; repeat for additional origins"
         ),
     )
+    if for_remote:
+        from lib.credentials import parse_resolved_credential
+
+        parser.add_argument(
+            "--resolved-credential", dest="resolved_credentials",
+            action="append", type=parse_resolved_credential, help=argparse.SUPPRESS,
+        )
     parser.add_argument("--git-name", dest="git_author_name", metavar="NAME",
                         help="Set the target user's global Git commit name; saved per VM")
     parser.add_argument("--git-email", dest="git_author_email", metavar="EMAIL",
@@ -1622,10 +1629,10 @@ def add_setup_arguments(
     parser.add_argument("--credential", dest="share_credentials",
                         action="append", nargs=2, metavar=("USERNAME", "PASSWORD"),
                         help=(
-                            "Save a workspace credential for a Gogs admin, Git HTTPS login, "
-                            "Samba share, or SMB mount. Passing PASSWORD may expose it in "
-                            "shell history and process arguments; use basaltw credentials "
-                            "set USERNAME for hidden entry. Repeat as needed"
+                            "Supply a password for exactly one declared consumer of USERNAME. "
+                            "Passing PASSWORD may expose it in shell history and process "
+                            "arguments. Use basaltw credentials set with a service and "
+                            "destination for hidden entry. Repeat as needed"
                         ))
     
     parser.add_argument("--smbclient", dest="enable_smbclient", 
@@ -1754,7 +1761,7 @@ def add_setup_arguments(
         dest="antistatic_admin",
         metavar="USERNAME",
         help="Enable the HTTPS-only antistatic-server admin interface. Resolve the password "
-             "from --credential USERNAME PASSWORD or the workspace credential store.",
+             "from --credential USERNAME PASSWORD or a workspace credential scoped to this target.",
     )
     antistatic_admin_group.add_argument(
         "--no-antistatic-admin",

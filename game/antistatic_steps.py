@@ -25,6 +25,7 @@ from lib.release_management import (
     write_json_state,
 )
 from lib.auth_failure_bans import configure_nginx_auth_failure_ban
+from lib.credentials import get_runtime_credential
 from lib.remote_utils import install_package, run, user_exists
 from lib.state_read import StateReadError
 from lib.unit_transaction import replace_units
@@ -653,9 +654,9 @@ def _quote_systemd_environment_value(value: str) -> str:
 def _antistatic_admin_password(config: SetupConfig) -> str | None:
     if not config.antistatic_admin:
         return None
-    for credential in config.share_credentials or []:
-        if len(credential) == 2 and credential[0] == config.antistatic_admin:
-            return credential[1]
+    password = get_runtime_credential(config, config.antistatic_admin, service="antistatic")
+    if password is not None:
+        return password
     raise ValueError(f"Missing credential for Antistatic admin: {config.antistatic_admin}")
 
 

@@ -703,7 +703,7 @@ def setup_syncthing(config: SetupConfig, **_kwargs: Any) -> None:
     admin_username = config.syncthing_admin
     if not admin_username:
         raise RuntimeError("Syncthing administrator username was not configured")
-    admin_password = get_runtime_credential(config, admin_username)
+    admin_password = get_runtime_credential(config, admin_username, service="syncthing")
     if admin_password is None:
         raise RuntimeError(
             f"Syncthing administrator credential is missing: {admin_username}"

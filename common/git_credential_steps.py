@@ -244,7 +244,7 @@ def configure_git_https_credentials(config: SetupConfig) -> None:
     credential_lines: list[str] = []
     for origin, username in config.git_credentials or []:
         normalized_origin = normalize_git_https_origin(origin)
-        password = get_runtime_credential(config, username)
+        password = get_runtime_credential(config, username, service="git", origin=normalized_origin)
         if password is None:
             raise RuntimeError(
                 f"Missing staged Git credential for {username} at {normalized_origin}"

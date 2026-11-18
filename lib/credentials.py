@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from argparse import ArgumentTypeError
 import copy
 import json
 import os
+import shlex
 import stat
 import subprocess
 
-from lib.atomic_io import write_json_atomic
+from lib.atomic_io import write_text_atomic
 from lib.concurrency import resource_lock
 from lib.state_read import StateReadError
 from lib.config import SetupConfig
@@ -25,6 +27,8 @@ from lib.ssh_utils import (
     ssh_batch_mode,
     ssh_process_timeout,
 )
+from lib.validation import validate_no_control_characters
+from lib.validators import validate_host
 from lib.workspace import (
     ensure_workspace_dir,
     get_credentials_path,
@@ -32,8 +36,10 @@ from lib.workspace import (
 )
 
 
-CREDENTIALS_VERSION = 1
+CREDENTIALS_VERSION = 2
 MAX_CREDENTIAL_STORE_BYTES = 1024 * 1024
+CREDENTIAL_SERVICES = ("git", "gogs", "smb", "samba", "syncthing", "antistatic", "github")
+CredentialKey = tuple[str, str, str]
 
 
 def _normalize_credential_username(username: str) -> str:
@@ -49,14 +55,86 @@ def _normalize_credential_username(username: str) -> str:
     return normalized
 
 
-def _normalize_credential_password(password: str) -> str:
-    normalized = password.strip()
-    if not normalized:
+def _checked_password(key: CredentialKey, password: str) -> str:
+    # An inline SMB password has always been passed to mount.cifs verbatim.
+    value = password if key[0] == "smb" else password.strip()
+    if not value:
         raise ValueError("Credential password must not be empty")
-    return normalized
+    return value
 
 
-def _load_workspace_credentials_unlocked(workspace: str | None = None) -> dict[str, str]:
+def _credential_key(service: str, destination: str | None, username: str) -> CredentialKey:
+    username = _normalize_credential_username(username)
+    if service == "legacy":
+        if destination is not None:
+            raise ValueError("Legacy credentials do not have a destination")
+        return service, "", username
+    if service not in CREDENTIAL_SERVICES or not destination:
+        raise ValueError("A scoped credential requires a service and destination")
+    if service == "git":
+        destination = normalize_git_https_origin(destination)
+    elif service == "smb":
+        host, separator, share = destination.removeprefix("//").partition("/")
+        if not destination.startswith("//") or not separator or not validate_host(host):
+            raise ValueError("SMB credential destination must be //HOST/SHARE")
+        if not share or share in {".", ".."} or any(
+            char in "/\\" or char.isspace() for char in share
+        ):
+            raise ValueError("SMB credential destination requires a valid share name")
+        validate_no_control_characters(share, "SMB credential share")
+        destination = f"//{host.lower()}/{share}"
+    else:
+        if not validate_host(destination) and destination != "::1":
+            raise ValueError("Credential destination must be a setup target hostname or IP")
+        destination = destination.lower()
+    return service, destination, username
+
+
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate credential store key")
+        result[key] = value
+    return result
+
+
+def _decode_workspace_credentials(payload: object) -> dict[CredentialKey, str]:
+    if not isinstance(payload, dict):
+        raise ValueError("Credential store must contain a JSON object")
+    version = payload.get("version")
+    if type(version) is not int or version not in (1, CREDENTIALS_VERSION):
+        raise ValueError("Unsupported credential store version")
+    legacy = payload.get("credentials")
+    scoped = payload.get("scoped_credentials") if version == CREDENTIALS_VERSION else []
+    if not isinstance(legacy, dict) or not isinstance(scoped, list):
+        raise ValueError("Invalid credential store sections")
+
+    credentials: dict[CredentialKey, str] = {}
+    for username, entry in legacy.items():
+        key = _credential_key("legacy", None, username)
+        if key[2] != username or not isinstance(entry, dict):
+            raise ValueError("Invalid legacy credential")
+        password = entry.get("password")
+        if not isinstance(password, str) or not password.strip():
+            raise ValueError("Invalid legacy password")
+        credentials[key] = password
+
+    for entry in scoped:
+        if not isinstance(entry, list) or len(entry) != 4 or not all(
+            isinstance(value, str) for value in entry
+        ):
+            raise ValueError("Invalid scoped credential")
+        service, destination, username, password = entry
+        key = _credential_key(service, destination, username)
+        if key != (service, destination, username) or key in credentials:
+            raise ValueError("Invalid or duplicate scoped credential")
+        _checked_password(key, password)
+        credentials[key] = password
+    return credentials
+
+
+def _load_workspace_credentials_unlocked(workspace: str | None = None) -> dict[CredentialKey, str]:
     ensure_workspace_dir(workspace)
     credentials_path = get_credentials_path(workspace)
     try:
@@ -75,35 +153,17 @@ def _load_workspace_credentials_unlocked(workspace: str | None = None) -> dict[s
             content = file_obj.read(MAX_CREDENTIAL_STORE_BYTES + 1)
             if len(content) > MAX_CREDENTIAL_STORE_BYTES:
                 raise ValueError("credential store exceeds 1 MiB")
-            payload = json.loads(content.decode("utf-8"))
-            if not isinstance(payload, dict):
-                raise ValueError("credential store must contain a JSON object")
-            if type(payload.get("version")) is not int or payload["version"] != CREDENTIALS_VERSION:
-                raise ValueError("unsupported credential store version")
-            credentials_obj = payload.get("credentials")
-            if not isinstance(credentials_obj, dict):
-                raise ValueError("credential store credentials field must be an object")
+            payload = json.loads(content.decode("utf-8"), object_pairs_hook=_unique_json_object)
+            credentials = _decode_workspace_credentials(payload)
             if stat.S_IMODE(info.st_mode) != 0o600:
                 os.fchmod(file_obj.fileno(), 0o600)
     except (OSError, ValueError, RecursionError) as exc:
         raise StateReadError(credentials_path, "unsafe, unreadable, or malformed credential store") from exc
 
-    credentials: dict[str, str] = {}
-    for username, entry in credentials_obj.items():
-        normalized_username = _normalize_credential_username(username)
-        if normalized_username != username:
-            raise StateReadError(credentials_path, "credential usernames must be normalized")
-        if not isinstance(entry, dict):
-            raise ValueError(f"Credential entry for {normalized_username} must be an object")
-        password = entry.get("password")
-        if not isinstance(password, str) or not password.strip():
-            raise ValueError(f"Credential entry for {normalized_username} must contain a nonempty password string")
-        credentials[normalized_username] = password
-
     return credentials
 
 
-def load_workspace_credentials(workspace: str | None = None) -> dict[str, str]:
+def load_workspace_credentials(workspace: str | None = None) -> dict[CredentialKey, str]:
     """Load saved workspace credentials."""
     path = get_credentials_path(workspace)
     with resource_lock("workspace-credentials", path, wait=True):
@@ -111,193 +171,239 @@ def load_workspace_credentials(workspace: str | None = None) -> dict[str, str]:
 
 
 def _save_workspace_credentials_unlocked(
-    credentials: dict[str, str], workspace: str | None = None
+    credentials: dict[CredentialKey, str], workspace: str | None = None
 ) -> None:
     ensure_workspace_dir(workspace)
     credentials_path = get_credentials_path(workspace)
-    normalized_credentials = {
-        _normalize_credential_username(username): _normalize_credential_password(password)
-        for username, password in credentials.items()
-    }
     payload = {
         "version": CREDENTIALS_VERSION,
         "credentials": {
             username: {"password": password}
-            for username, password in sorted(normalized_credentials.items())
+            for (service, _, username), password in credentials.items()
+            if service == "legacy"
         },
+        "scoped_credentials": [
+            [*key, password]
+            for key, password in sorted(credentials.items())
+            if key[0] != "legacy"
+        ],
     }
+    content = json.dumps(payload, sort_keys=True, indent=2) + "\n"
+    if len(content) > MAX_CREDENTIAL_STORE_BYTES:
+        raise ValueError("Credential store would exceed 1 MiB")
+    write_text_atomic(credentials_path, content, mode=0o600)
 
-    write_json_atomic(credentials_path, payload, mode=0o600, sort_keys=True)
 
-
-def set_workspace_credential(username: str, password: str, workspace: str | None = None) -> None:
+def set_workspace_credential(
+    username: str, password: str, workspace: str | None = None, *,
+    service: str = "legacy", destination: str | None = None,
+) -> None:
     """Add or replace a workspace credential."""
+    key = _credential_key(service, destination, username)
     path = get_credentials_path(workspace)
     with resource_lock("workspace-credentials", path, wait=True):
         credentials = _load_workspace_credentials_unlocked(workspace)
-        credentials[_normalize_credential_username(username)] = _normalize_credential_password(password)
+        credentials[key] = _checked_password(key, password)
         _save_workspace_credentials_unlocked(credentials, workspace)
 
 
-def remove_workspace_credential(username: str, workspace: str | None = None) -> bool:
+def remove_workspace_credential(
+    username: str, workspace: str | None = None, *,
+    service: str = "legacy", destination: str | None = None,
+) -> bool:
     """Remove a saved workspace credential."""
-    normalized_username = _normalize_credential_username(username)
+    key = _credential_key(service, destination, username)
     path = get_credentials_path(workspace)
     with resource_lock("workspace-credentials", path, wait=True):
         credentials = _load_workspace_credentials_unlocked(workspace)
-        removed = credentials.pop(normalized_username, None) is not None
-        if removed or os.path.exists(path):
+        removed = credentials.pop(key, None) is not None
+        if removed:
             _save_workspace_credentials_unlocked(credentials, workspace)
         return removed
 
 
-def list_workspace_credentials(workspace: str | None = None) -> list[str]:
-    """Return saved credential usernames."""
+def list_workspace_credentials(workspace: str | None = None) -> list[CredentialKey]:
+    """Return saved identities without exposing their secrets."""
     return sorted(load_workspace_credentials(workspace))
 
 
-def get_runtime_credential(config: SetupConfig, username: str) -> str | None:
-    """Return the last runtime credential matching ``username``, if present."""
-    requested_username = _normalize_credential_username(username)
-    password: str | None = None
-    for credential_spec in config.share_credentials or []:
-        if len(credential_spec) != 2:
-            raise ValueError("Credential spec requires USERNAME and PASSWORD")
-        credential_username, credential_password = credential_spec
-        if _normalize_credential_username(credential_username) == requested_username:
-            password = _normalize_credential_password(credential_password)
-    return password
+def migrate_workspace_credential(
+    username: str, service: str, destination: str, workspace: str | None = None,
+) -> None:
+    """Copy one legacy entry into an explicitly chosen scope."""
+    key = _credential_key(service, destination, username)
+    path = get_credentials_path(workspace)
+    with resource_lock("workspace-credentials", path, wait=True):
+        credentials = _load_workspace_credentials_unlocked(workspace)
+        password = credentials.get(("legacy", "", key[2]))
+        if password is None:
+            raise ValueError(f"No legacy credential for {key[2]}")
+        if key in credentials:
+            if credentials[key] != password:
+                raise ValueError("Scoped credential already exists. Use credentials set to replace it")
+            return
+        credentials[key] = password
+        _save_workspace_credentials_unlocked(credentials, workspace)
 
 
 def store_cli_credentials(config: SetupConfig, workspace: str | None = None) -> None:
     """Persist credentials supplied on the command line."""
+    _, supplied = _collect_credential_inputs(config)
+    if not supplied:
+        return
     path = get_credentials_path(workspace)
     with resource_lock("workspace-credentials", path, wait=True):
-        _store_cli_credentials_unlocked(config, workspace)
+        credentials = _load_workspace_credentials_unlocked(workspace)
+        credentials.update(supplied)
+        _save_workspace_credentials_unlocked(credentials, workspace)
 
 
-def _store_cli_credentials_unlocked(
-    config: SetupConfig, workspace: str | None = None
-) -> None:
-    credentials = _load_workspace_credentials_unlocked(workspace)
-    if config.share_credentials:
-        for username, password in config.share_credentials:
-            credentials[_normalize_credential_username(username)] = _normalize_credential_password(password)
-
-    if config.samba_shares:
-        for share_spec in config.samba_shares:
-            if len(share_spec) < 4:
-                continue
-            for user_spec in str(share_spec[3]).split(","):
-                normalized_user = user_spec.strip()
-                if ":" not in normalized_user:
-                    continue
-                username, password = normalized_user.split(":", 1)
-                credentials[_normalize_credential_username(username)] = _normalize_credential_password(password)
-
-    if config.smb_mounts:
-        for mount_spec in config.smb_mounts:
-            credentials_field = str(mount_spec[2]) if len(mount_spec) >= 3 else ""
-            if len(mount_spec) < 3 or ":" not in credentials_field:
-                continue
-            username, password = credentials_field.split(":", 1)
-            credentials[_normalize_credential_username(username)] = _normalize_credential_password(password)
-
-    if not credentials:
-        return
-
-    _save_workspace_credentials_unlocked(credentials, workspace)
+def _local_users(config: SetupConfig) -> list[tuple[str, str]]:
+    return [
+        (service, username)
+        for service, username in (
+            ("gogs", config.username if config.gogs else None),
+            ("antistatic", config.antistatic_admin),
+            ("syncthing", config.syncthing_admin),
+        )
+        if username
+    ]
 
 
-def _collect_required_credential_usernames(config: SetupConfig) -> list[str]:
-    usernames: list[str] = []
-    seen_usernames: set[str] = set()
-
-    if config.antistatic_admin:
-        usernames.append(config.antistatic_admin)
-        seen_usernames.add(config.antistatic_admin)
-    if config.syncthing_admin and config.syncthing_admin not in seen_usernames:
-        usernames.append(config.syncthing_admin)
-        seen_usernames.add(config.syncthing_admin)
-
-    for share_spec in config.samba_shares or []:
-        if len(share_spec) < 4:
-            continue
-        for user_spec in str(share_spec[3]).split(","):
-            normalized_user = user_spec.strip()
-            if not normalized_user or ":" in normalized_user or normalized_user in seen_usernames:
-                continue
-            seen_usernames.add(normalized_user)
-            usernames.append(normalized_user)
-
-    return usernames
+def _samba_users(config: SetupConfig) -> list[str]:
+    return [
+        user.strip()
+        for spec in config.samba_shares or [] if len(spec) >= 4
+        for user in spec[3].split(",") if user.strip()
+    ]
 
 
-def _resolve_share_credentials(config: SetupConfig, credential_map: dict[str, str]) -> list[list[str]]:
-    resolved_credentials: list[list[str]] = []
-    seen_usernames: set[str] = set()
+def _smb_key(spec: list[str]) -> CredentialKey:
+    if len(spec) != 5:
+        raise ValueError("SMB mount requires MOUNTPOINT HOST CREDENTIALS SHARE SUBDIR")
+    return _credential_key("smb", f"//{spec[1]}/{spec[3]}", spec[2].partition(":")[0])
 
-    if config.share_credentials:
-        for username, password in config.share_credentials:
-            normalized_username = _normalize_credential_username(username)
-            normalized_password = _normalize_credential_password(password)
-            credential_map[normalized_username] = normalized_password
-            if normalized_username not in seen_usernames:
-                seen_usernames.add(normalized_username)
-                resolved_credentials.append([normalized_username, normalized_password])
 
-    for username in _collect_required_credential_usernames(config):
-        password = credential_map.get(username)
-        if password is None:
-            if username == config.antistatic_admin:
-                raise ValueError(
-                    f"Missing credential for Antistatic admin: {username}. "
-                    "Run basaltw credentials set USERNAME to enter it securely"
-                )
-            if username == config.syncthing_admin:
-                raise ValueError(
-                    f"Missing credential for Syncthing admin: {username}. "
-                    "Run basaltw credentials set USERNAME to enter it securely"
-                )
+def _collect_credential_inputs(
+    config: SetupConfig,
+) -> tuple[set[CredentialKey], dict[CredentialKey, str]]:
+    requests = {
+        _credential_key(service, config.host, username)
+        for service, username in _local_users(config)
+    }
+    supplied: dict[CredentialKey, str] = {}
+
+    def add_password(key: CredentialKey, password: str) -> None:
+        password = _checked_password(key, password)
+        if key in supplied and supplied[key] != password:
+            service, destination, username = key
+            raise ValueError(f"Conflicting credentials for {service} user {username} at {destination}")
+        supplied[key] = password
+
+    for username in _samba_users(config):
+        username, separator, password = username.partition(":")
+        key = _credential_key("samba", config.host, username)
+        requests.add(key)
+        if separator:
+            add_password(key, password)
+
+    for spec in config.smb_mounts or []:
+        key = _smb_key(spec)
+        requests.add(key)
+        _, separator, password = spec[2].partition(":")
+        if separator:
+            add_password(key, password)
+
+    for origin, username in config.git_credentials or []:
+        requests.add(_credential_key("git", origin, username))
+    if config.git_auth_credential is not None:
+        requests.add(_credential_key("github", config.host, config.git_auth_credential))
+
+    for username, password in config.share_credentials or []:
+        username = _normalize_credential_username(username)
+        matches = [key for key in requests if key[2] == username]
+        if len(matches) != 1:
+            detail = "matches multiple destinations or services" if matches else "has no declared consumer"
             raise ValueError(
-                f"Missing credential for share user: {username}. "
-                "Run basaltw credentials set USERNAME or use --credential USERNAME PASSWORD"
+                f"--credential {username} {detail}. Use basaltw credentials set "
+                "USERNAME --service SERVICE --destination DESTINATION"
             )
-        if username not in seen_usernames:
-            seen_usernames.add(username)
-            resolved_credentials.append([username, password])
+        add_password(matches[0], password)
 
-    if config.gogs:
-        gogs_admin = _normalize_credential_username(config.username)
-        password = credential_map.get(gogs_admin)
-        if password is not None and gogs_admin not in seen_usernames:
-            seen_usernames.add(gogs_admin)
-            resolved_credentials.append(
-                [gogs_admin, _normalize_credential_password(password)]
-            )
+    return requests, supplied
 
-    for credential_spec in config.git_credentials or []:
-        if len(credential_spec) != 2:
-            raise ValueError(
-                "--git-credential requires HTTPS_ORIGIN and USERNAME"
-            )
-        origin, username = credential_spec
-        normalized_origin = normalize_git_https_origin(origin)
-        normalized_username = _normalize_credential_username(username)
-        password = credential_map.get(normalized_username)
-        if password is None:
-            raise ValueError(
-                f"Missing credential for Git user {normalized_username} at "
-                f"{normalized_origin}. Run basaltw credentials set USERNAME "
-                "or use --credential USERNAME PASSWORD"
-            )
-        if normalized_username not in seen_usernames:
-            seen_usernames.add(normalized_username)
-            resolved_credentials.append(
-                [normalized_username, _normalize_credential_password(password)]
-            )
 
-    return resolved_credentials
+def get_runtime_credential(
+    config: SetupConfig, username: str, *, service: str = "gogs", origin: str = "",
+) -> str | None:
+    """Read only the entry staged for this consumer in the private setup payload."""
+    username = _normalize_credential_username(username)
+    for staged_service, selector, name, password in config.resolved_credentials or []:
+        if (staged_service, selector, name) == (service, origin, username):
+            return password
+
+    # Direct target invocations can still pass an explicit --credential to a
+    # local service when that username identifies exactly one consumer.
+    if service == "git" or config.resolved_credentials is not None:
+        return None
+    local_services = [
+        name for name, user in _local_users(config) if user == username
+    ]
+    if local_services != [service] or any(
+        user.partition(":")[0].strip() == username for user in _samba_users(config)
+    ):
+        return None
+    passwords = {
+        password if service == "antistatic" else password.strip()
+        for name, password in config.share_credentials or []
+        if name.strip() == username
+    }
+    if len(passwords) > 1:
+        raise ValueError(f"Conflicting credentials for {service} user {username}")
+    return next(iter(passwords), None)
+
+
+def parse_resolved_credential(value: str) -> list[str]:
+    """Decode one private target argument without exposing invalid input."""
+    try:
+        record = json.loads(value)
+        if not isinstance(record, list) or len(record) != 4 or not all(
+            isinstance(item, str) for item in record
+        ):
+            raise ValueError
+        service, origin, username, password = record
+        if (service not in {"git", "gogs", "syncthing", "antistatic"}
+                or (service == "git" and normalize_git_https_origin(origin) != origin)
+                or (service != "git" and origin)
+                or _normalize_credential_username(username) != username
+                or not password.strip()):
+            raise ValueError
+    except (ValueError, RecursionError):
+        raise ArgumentTypeError("Invalid resolved credential") from None
+    return record
+
+
+def _missing_credential(
+    key: CredentialKey, saved: dict[CredentialKey, str],
+) -> ValueError:
+    service, destination, username = key
+    label = {
+        "antistatic": "Antistatic admin:",
+        "git": "Git user",
+        "github": "GitHub credential:",
+        "samba": "share user:",
+        "smb": "SMB mount user:",
+        "syncthing": "Syncthing admin:",
+    }[service]
+    prefix = "Missing " if service == "github" else "Missing credential for "
+    prefix += f"{label} {username} at {destination}."
+    selection = shlex.join([username, "--service", service, "--destination", destination])
+    if ("legacy", "", username) in saved:
+        return ValueError(
+            f"{prefix} A legacy entry exists. After verifying its destination, "
+            f"run basaltw credentials migrate {selection}"
+        )
+    return ValueError(f"{prefix} Run basaltw credentials set {selection}")
 
 
 def _read_git_ca_bundle_from_ssh(
@@ -410,23 +516,16 @@ def _prepare_git_ca_pems(
 
 def _resolve_named_smb_mounts(
     smb_mounts: list[list[str]] | None,
-    credential_map: dict[str, str],
+    passwords: dict[CredentialKey, str],
 ) -> list[list[str]] | None:
     if not smb_mounts:
         return smb_mounts
 
     resolved_mounts: list[list[str]] = []
     for mount_spec in smb_mounts:
+        key = _smb_key(mount_spec)
         resolved_spec = list(mount_spec)
-        if len(resolved_spec) >= 3 and ":" not in resolved_spec[2]:
-            username = _normalize_credential_username(resolved_spec[2])
-            password = credential_map.get(username)
-            if password is None:
-                raise ValueError(
-                    f"Missing credential for SMB mount user: {username}. "
-                    "Run basaltw credentials set USERNAME or use --credential USERNAME PASSWORD"
-                )
-            resolved_spec[2] = f"{username}:{password}"
+        resolved_spec[2] = f"{key[2]}:{passwords[key]}"
         resolved_mounts.append(resolved_spec)
     return resolved_mounts
 
@@ -441,25 +540,38 @@ def prepare_runtime_config(config: SetupConfig, workspace: str | None = None) ->
 
     validate_github_auth_sources(config)
     runtime_config = copy.deepcopy(config)
-    credential_map = load_workspace_credentials(workspace)
-    runtime_config.share_credentials = _resolve_share_credentials(runtime_config, credential_map) or None
-    runtime_config.smb_mounts = _resolve_named_smb_mounts(runtime_config.smb_mounts, credential_map)
+    requests, supplied = _collect_credential_inputs(config)
+    saved = load_workspace_credentials(workspace)
+    passwords: dict[CredentialKey, str] = {}
+    samba_credentials: list[list[str]] = []
+    scoped_credentials: list[list[str]] = []
+    for key in sorted(requests):
+        service, destination, username = key
+        password = supplied.get(key, saved.get(key))
+        if password is None:
+            if service == "gogs":
+                continue
+            raise _missing_credential(key, saved)
+        password = _checked_password(key, password)
+        passwords[key] = password
+        if service == "samba":
+            samba_credentials.append([username, password])
+        elif service == "github":
+            runtime_config.git_auth_token = validate_github_token(password)
+            runtime_config.git_auth_credential = None
+            runtime_config.copy_agent_keys = True
+        elif service != "smb":
+            # Server-side setup runs locally on its selected target. Only Git
+            # still needs a destination selector there to distinguish origins.
+            selector = destination if service == "git" else ""
+            scoped_credentials.append([service, selector, username, password])
+
+    runtime_config.share_credentials = samba_credentials or None
+    runtime_config.resolved_credentials = scoped_credentials or None
+    runtime_config.smb_mounts = _resolve_named_smb_mounts(config.smb_mounts, passwords)
     runtime_config.git_ca_pems = _prepare_git_ca_pems(runtime_config, workspace)
     runtime_config.git_ca_certificates = None
-    if config.git_auth_credential is not None:
-        token = get_runtime_credential(config, config.git_auth_credential)
-        if token is None:
-            token = credential_map.get(config.git_auth_credential)
-        if token is None:
-            raise ValueError(
-                f"Missing GitHub credential: {config.git_auth_credential}. "
-                "Run basaltw credentials set NAME to enter the token securely"
-            )
-        runtime_config.git_auth_token = validate_github_token(token)
-        # Resolve the controller reference before creating the private payload.
-        runtime_config.git_auth_credential = None
-        runtime_config.copy_agent_keys = True
-    elif config.git_auth_token is not None:
+    if config.git_auth_token is not None:
         runtime_config.git_auth_token = validate_github_token(config.git_auth_token)
         runtime_config.copy_agent_keys = True
     if config.git_auth_token is not None or config.git_auth_credential is not None:

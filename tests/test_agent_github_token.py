@@ -106,7 +106,7 @@ class GitHubSetupTokenTests(unittest.TestCase):
     def test_named_token_round_trip_and_private_payload(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             workspace = str(Path(directory) / "workspace")
-            set_workspace_credential("vm-github", TOKEN, workspace)
+            set_workspace_credential("vm-github", TOKEN, workspace, service="github", destination="192.0.2.41")
             config = self._config(
                 "--git-auth-credential", "vm-github", profile="agent_code_vm"
             )
@@ -144,7 +144,7 @@ class GitHubSetupTokenTests(unittest.TestCase):
             self.assertTrue(runtime.github_auth_payload)
             self.assertNotIn(TOKEN, output.getvalue())
             self.assertNotIn(TOKEN, " ".join(runtime.to_remote_args()))
-            set_workspace_credential("vm-github", "updated-fixture-token", workspace)
+            set_workspace_credential("vm-github", "updated-fixture-token", workspace, service="github", destination="192.0.2.41")
             updated = prepare_runtime_config(replay, workspace)
             self.assertEqual(updated.git_auth_token, "updated-fixture-token")
 
@@ -167,7 +167,7 @@ class GitHubSetupTokenTests(unittest.TestCase):
 
     def test_inline_workspace_credential_overrides_saved_value(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
-            set_workspace_credential("vm-github", "old-token", workspace)
+            set_workspace_credential("vm-github", "old-token", workspace, service="github", destination="192.0.2.41")
             config = self._config(
                 "--git-access", "read", "--git-auth-credential", "vm-github",
                 "--credential", "vm-github", TOKEN,
@@ -181,7 +181,7 @@ class GitHubSetupTokenTests(unittest.TestCase):
             config = self._config("--git-auth-credential", "vm-github")
             with self.assertRaisesRegex(ValueError, "Missing GitHub credential"):
                 prepare_runtime_config(config, workspace)
-            set_workspace_credential("vm-github", "malformed secret token", workspace)
+            set_workspace_credential("vm-github", "malformed secret token", workspace, service="github", destination="192.0.2.41")
             with self.assertRaises(ValueError) as error:
                 prepare_runtime_config(config, workspace)
             self.assertNotIn("malformed secret token", str(error.exception))
