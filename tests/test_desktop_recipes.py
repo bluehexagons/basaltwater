@@ -485,9 +485,11 @@ class PublishedRecipeTests(unittest.TestCase):
                  ("desktop-observations.md", "desktop-evaluation.md", "desktop-control.md", "cachyos-desktop.md",
                   "short-observation-sequences.md")]
         files += [ROOT / "common/agent_skills" / name for name in
-                  ("basaltwater-cachyos-desktop/references/native-control.md", "basaltwater-desktop/references/windows.md")]
+                  ("basaltwater-cachyos-desktop/references/native-control.md",
+                   "basaltwater-cachyos-desktop/references/native-control-recipes.md",
+                   "basaltwater-desktop/references/windows.md")]
         files.append(ROOT / "common/agent_skills/basaltwater-desktop/references/session.md")
-        files.append(ROOT / "docs/plans/game-testing-handoffs/next-cycle.md")
+        files.append(ROOT / "docs/plans/game-testing-handoffs/next-cycle-handoff-contract.md")
         count = 0
         replacements = {"WIDTH": "2400", "HEIGHT": "1600", "X": "100", "Y": "100"}
         for name in files:

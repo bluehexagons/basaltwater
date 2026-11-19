@@ -1,8 +1,8 @@
-# Earlier preview qualification: RC 3 and RC 2
+# Preview qualification for RC 3 and RC 2
 
-[Documentation index](release-qualification.md) · [RC 5 and RC 4](release-candidate-history.md)
+[Preview qualification index](release-candidate-history.md) · [RC 5 and RC 4](release-candidate-history-rc5-rc4.md)
 
-#### `v2.0.0-rc.3`
+## `v2.0.0-rc.3`
 
 On 2026-11-18 UTC, release qualification used `v2.0.0-rc.3` at
 `e8b9288461c4c65f8a832b5bac1e680893413744` (package `2.0.0rc3`). Release CI
@@ -139,7 +139,7 @@ smoke-tested the wheel before GitHub published the prerelease.
   installed `server_web` gateway succeeded after the CA was transferred over
   verified SSH and enrolled in a disposable Firefox profile.
 
-#### `v2.0.0-rc.2`
+## `v2.0.0-rc.2`
 
 On 2026-11-18 UTC, release qualification used `v2.0.0-rc.2` at
 `4e24c2928fd0294b696fed8778ad9e52d4f5cb35` (package `2.0.0rc2`). Release CI

@@ -1,10 +1,8 @@
-# Earlier preview qualification
+# Preview qualification for RC 5 and RC 4
 
-[Documentation index](release-qualification.md)
+[Preview qualification index](release-candidate-history.md)
 
-#### RC 5 and RC 4
-
-#### `v2.0.0-rc.5`
+## `v2.0.0-rc.5`
 
 Qualification on 2026-11-19 UTC used commit
 `c705dcd7c7362041f92033c20e86e9ac716059d9` (package `2.0.0rc5`). Release CI
@@ -108,7 +106,7 @@ jobs now receive the GitHub tag and check the package version against it.
   input to queue. The worker refused the job after detecting the changed
   configuration, and a fresh signed build passed after restarting the worker.
 
-#### `v2.0.0-rc.4`
+## `v2.0.0-rc.4`
 
 RC 4 blocks Debian refresh previews and dispatch while a source activation
 needs recovery. It also checks T3 device-pairing credentials before target

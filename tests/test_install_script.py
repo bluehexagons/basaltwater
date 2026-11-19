@@ -1199,6 +1199,8 @@ class TestInstallScript(unittest.TestCase):
         root = Path(PROJECT_ROOT)
         documents = [
             root / CACHYOS_INSTALL_DOC,
+            root / "docs/workstations/cachyos-install-options.md",
+            root / "docs/workstations/cachyos-install-ssh.md",
             root / "docs/workstations/cachyos-t3-code.md",
             root / "docs/workstations/cachyos-profile-reference.md",
         ]
