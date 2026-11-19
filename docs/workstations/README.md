@@ -5,9 +5,12 @@ native Windows coding accounts, Ubuntu WSL build machines, and development
 workflows that use native desktop applications. For coding-agent security and VM profiles, start at
 [Agent systems](../agents/README.md).
 
+Start with [workflow routes](workflows.md) for native development, Blender
+assets, visual checks, or handoffs. Use the platform references below for
+installation and diagnostics.
+
 | Guide | Use it for |
 | --- | --- |
-| [Workflow routes](workflows.md) | Short paths for native development, Blender assets, visual verification and handoff |
 | [Proxmox local browser kiosk](proxmox-kiosk.md) | Optional local Firefox kiosk on a Proxmox VE 9 host with DRM graphics and local input devices |
 | [Workstations](workstations.md) | Debian desktop profiles, software choices, and application flags |
 | [CachyOS setup](cachyos.md) | Add coding tools to an existing KDE workstation |
