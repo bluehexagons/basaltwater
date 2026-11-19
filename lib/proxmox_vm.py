@@ -2614,14 +2614,7 @@ def _provision_vm_locked(
         create_setup_user=not has_home_mount(config),
         nopasswd=config.nopasswd,
     )
-    user_data_path = _upload_user_data(
-        user_data, hostname, snippet_pool, node_ip, user, ssh_opts, dry_run=dry_run
-    )
-    user_data_ref = (
-        f"{snippet_pool}:snippets/{os.path.basename(user_data_path)}"
-        if user_data_path
-        else None
-    )
+    user_data_path: Optional[str] = None
     vm_started = False
     vm_removed = False
     provision_complete = False
@@ -2653,6 +2646,15 @@ def _provision_vm_locked(
                 ssh_opts,
             )
             vmid = _get_next_vmid(node_ip, user, ssh_opts)
+            # Stage per-guest cloud-init only after capacity and VMID checks.
+            user_data_path = _upload_user_data(
+                user_data, hostname, snippet_pool, node_ip, user, ssh_opts, dry_run=dry_run
+            )
+            user_data_ref = (
+                f"{snippet_pool}:snippets/{os.path.basename(user_data_path)}"
+                if user_data_path
+                else None
+            )
             create_kwargs = {
                 "vmid": vmid,
                 "target_ip": target_ip,

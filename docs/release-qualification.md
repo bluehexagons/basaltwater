@@ -1,6 +1,6 @@
 # Basaltwater v2.0 preview and release qualification
 
-The current preview candidate is `v2.0.0-rc.5` (Python package `2.0.0rc5`).
+The current preview candidate is `v2.0.0-rc.6` (Python package `2.0.0rc6`).
 The latest final release remains `v0.2.0`. This document is the qualification
 record and release gate for the eventual stable `v2.0.0` release.
 
@@ -25,7 +25,7 @@ Increment `N` for each new candidate. Do not move or reuse a published tag.
 The release workflow marks `-rc.` tags as prereleases, and the installer’s
 `stable` channel matches only unqualified `vMAJOR.MINOR.PATCH` tags. Preview
 users select an exact candidate, for example `basaltw channel
-v2.0.0-rc.5`. A release candidate is for qualification and feedback; it does
+v2.0.0-rc.6`. A release candidate is for qualification and feedback; it does
 not claim that the stable release matrix has passed.
 
 Publishing a preview requires the tag’s Python package version to match the
@@ -75,7 +75,7 @@ private hostnames, personal data, or raw logs that contain them.
 
 ### Preview publication gate
 
-- [x] `pyproject.toml` declares `2.0.0rc5` for `v2.0.0-rc.5`.
+- [x] `pyproject.toml` declares `2.0.0rc6` for `v2.0.0-rc.6`.
 - [ ] Release CI passes on Python 3.11 and 3.15, builds the wheel, and
   installs and smoke-tests the packaged launchers on Python 3.13.
 - [ ] The GitHub release is marked **pre-release** and contains the wheel built
@@ -91,12 +91,116 @@ qualification matrix or authorize the final stable release.
 
 ### Candidate results
 
+#### `v2.0.0-rc.6`
+
+RC 6 defers the cloud-init snippet upload until Proxmox capacity checks
+and VMID allocation have succeeded. Exercise both a refused allocation and
+a successful fresh VM boot on the exact candidate. Verify that neither
+leaves a snippet behind. RC 5 results below retain their original scope.
+
 #### `v2.0.0-rc.5`
 
-RC 5 passes the GitHub release tag into the Debian test containers. The
-packaging check validates the exact tag on release builds and the package
-version format on development builds. Repeat the controller install and
-upgrade, refresh recovery, and T3 setup on this candidate.
+Qualification on 2026-11-19 UTC used commit
+`c705dcd7c7362041f92033c20e86e9ac716059d9` (package `2.0.0rc5`). Release CI
+passed on Python 3.11 and 3.15 in Debian Trixie. Python 3.13 built and
+smoke-tested the wheel before GitHub published the prerelease. Debian release
+jobs now receive the GitHub tag and check the package version against it.
+[Release workflow](https://github.com/bluehexagons/basaltwater/actions/runs/44425585733)
+
+- The published wheel matched the tested CI artifact byte for byte and passed
+  a second isolated installation and launcher smoke test. Its SHA-256 is
+  `642798fc94717f108493a74208c31cf187dee4715d310d5386426632cf0bdc4d`.
+  The public source archive matched the tagged installer, package metadata,
+  target setup and refresh modules.
+  [GitHub prerelease](https://github.com/bluehexagons/basaltwater/releases/tag/v2.0.0-rc.5)
+- A Debian 13 VM installed the exact tag in a fresh controller account and
+  upgraded a second account from RC 3. The upgrade preserved private file
+  bytes and mode. `stable` resolved to historical `v0.2.0` and refused to
+  activate it. `dev` selected `main`, and switching back selected RC 5 again.
+  A pinned system installer also preserved the workstation's saved setup and
+  account state during the upgrade.
+- On a Debian 13 VM, a SIGKILL immediately after source activation left a
+  private recovery marker. Both exact RC 5 refresh preview and dispatch
+  refused with its operation ID and launched no refresh unit. Explicit
+  rollback restored the prior snapshot and retained the staged checkout,
+  saved setup, unpushed work and storage data. Preview worked again after
+  recovery.
+- On the Debian 13 workstation, a target run with the pairing credential
+  hidden in a private mount namespace failed before changing the package
+  database, writing a setup marker or replacing the saved configuration.
+  A dry run accepted the existing credential. The workstation also completed
+  a full exact RC 5 setup using that credential.
+- Chromium trusted the workstation's enrolled CA and paired with the managed
+  T3 0.1.10 server. The session persisted through reload. A second browser
+  profile could not reuse the same link. After reboot, all nine required T3
+  doctor checks, gateway and pairing HTTPS, and SQLite integrity passed.
+- Native FreeRDP exercised human-first startup and concurrent agent starts,
+  keyboard input, clipboard in both directions, dynamic resize, reconnect
+  after an XRDP frontend restart, and logout. Killing the disposable Xorg
+  process retired its generation. A new session started and logged out, and
+  the XRDP frontend and sesman came back after reboot. A live PAM/logind X11
+  session blocked the managed desktop setup guard until that session logged out.
+- The standalone HTTPS approval panel ran a refresh preview with a live
+  desktop and T3 service. An approved refresh with a held build lease failed,
+  retained the drain, and kept the same T3 process, desktop generation,
+  source, and unpushed file. After the lease ended, a separate approval
+  completed refresh on the pinned candidate.
+- A clean unprivileged Debian 13 `server_web` LXC passed exact source, saved
+  setup, managed account, and package checks. Nginx served HTTP and SSH access
+  worked again after the container restarted. A managed-account rename ran
+  through a separate SSH administrator. After a SIGKILL immediately after
+  identity cutover, explicit resume preserved the UID, GID, private file and
+  timer definition. SSH and the timer passed after another container reboot.
+- The Debian 13 storage VM reran provider and guest setup with its existing
+  origin/cache pair, backup disk and additional disk. The LVM UUID, mount
+  UUIDs, disk serials, application accounts, and Syncthing device ID stayed
+  stable across the reboot and RC 5 reconciliation, even as Linux changed
+  device names. The mirror and scrub tests passed again. An unavailable backup
+  mount blocked sync, and damaged source bytes left the healthy mirror intact
+  until restore recovered the file contents and metadata.
+- A failing systemd data mount prevented Samba, Gogs, Syncthing and HomeBox
+  from starting against the underlying filesystem. All four recovered after
+  restoring the mount and restarting their units. A fresh authenticated Samba
+  round trip, the Gogs login endpoint, and Syncthing's device identity passed.
+- The single-node provider identified a detached managed disk from live
+  Proxmox configuration. The Debian guest could not finish boot while the
+  disk was absent. Reattaching its original retained volume brought back the
+  mount, service identities and mirrored data without replacing the disk.
+  The guest refused a deliberately changed serial. With a preexisting
+  identity recorded consistently in the provider and guest, a later rerun
+  preserved the retained legacy serial, original volume and filesystem UUID.
+- The provider refused a new headless VM whose memory floor would exceed the
+  host target. It had already uploaded a cloud-init snippet, which the test
+  operator removed after verifying that no guest referenced it.
+- HomeBox login, the inventory item and its attachment, and the WebSocket
+  passed in Chromium over a verified SSH tunnel. The candidate HomeBox CLI
+  archived the service, restored a deliberately damaged attachment with its
+  original bytes and ownership, and verified health after the restore.
+- On a Debian 13 web VM, the 31 managed audit rules and the native collection
+  and status panel verified a real file event. Missing audit tooling, stopped
+  auditd and a missing managed rule surfaced failures and preserved cursors.
+  Audit, Fail2ban and SSH retention-gap evidence survived a subsequent healthy
+  collection. The certificate CLI and panel agreed for private and public
+  trust, missing trust material, and verification failures.
+- The Guacamole suite passed all 100 Playwright cases across Chromium and
+  Firefox on the exact tag. Native Firefox ESR 153.7.0 passed keyboard, zoom,
+  security-panel, pairing and approval checks. Firefox's native Certificate
+  Manager imported the fixture CA with website trust and continued to reject
+  the wrong hostname. A new Firefox profile rejected the installed workstation
+  gateway before importing its CA and accepted it after profile-only enrollment.
+- An invalid webhook signature was refused and duplicate signed deliveries
+  produced one build. The operator independently verified the bundle and then
+  authorized it for the enrolled target. A recovery marker from an earlier
+  test kept the first admission uncertain. After verifying the earlier
+  rollback, a distinct authorization delivered the artifact to both HTTPS
+  routes. The original admission retained its uncertain result. An unhealthy
+  replacement ran its loopback health probes, stayed hidden from HTTPS traffic,
+  and rolled back to the verified working binary. The neighboring static
+  application remained available throughout 439 paired HTTPS samples.
+  The reused builder reached its configured reservation limit and retained a
+  second signed input as `retry_pending`. Increasing the lab quota allowed the
+  input to queue. The worker refused the job after detecting the changed
+  configuration, and a fresh signed build passed after restarting the worker.
 
 #### `v2.0.0-rc.4`
 
@@ -105,6 +209,7 @@ needs recovery. It also checks T3 device-pairing credentials before target
 setup can change packages or services. The Debian release jobs fell back to a
 stale version constant because the test containers did not get the release
 tag. The workflow stopped before prerelease publication.
+[Release workflow](https://github.com/bluehexagons/basaltwater/actions/runs/44425135437)
 
 #### `v2.0.0-rc.3`
 
@@ -132,6 +237,13 @@ smoke-tested the wheel before GitHub published the prerelease.
   managed account, package state, and working Codex and GitHub CLI launchers
   were checked. Provider authorization was disabled for this fixture. The
   account, tools, and SSH access passed again after reboot.
+- A Debian 13 `server_lite` VM installed Samba, Gogs, Syncthing and HomeBox on
+  a Proxmox-backed mount with a writethrough LVM cache and a separate mirror
+  disk. An authenticated Samba round trip, initial parity, missing backup mount,
+  integrity failure, mirror protection, restore, disk addition and reboot
+  passed. HomeBox 0.27.1 browser login, inventory, attachment and WebSocket
+  checks passed over the SSH tunnel. A full archive restored an intentionally
+  damaged attachment and its file metadata, and health passed after restore.
 - On the Debian 13 `agent_vm`, a SIGKILL during APT index refresh left the
   original setup marker and blocked an ordinary retry. The operator checked
   the saved setup, package state, private file, and SSH host identity before
@@ -309,28 +421,28 @@ candidate.
 
 | ID | Qualification case | Required evidence | Status |
 | --- | --- | --- | --- |
-| REL-01 | Source and wheel | Candidate CI passes; wheel installs outside the source tree; `basaltw --version` and packaged entry points match the candidate metadata. | **Pass** for `v2.0.0-rc.3` |
-| REL-02 | Installer channels | Fresh exact-tag install and upgrade work; `stable` does not select an `-rc.` tag; `dev` still selects `main`. | **Pass** for `v2.0.0-rc.3` on Debian 13 VM |
-| INS-01 | Clean Debian installations | Install controller, server, and agent profiles on disposable Debian hosts; cover the supported bare-metal/VM/LXC paths that each profile supports. Check commands, permissions, and selected services. | **Not run** in full. The controller install and clean Debian 13 `agent_vm` passed on `v2.0.0-rc.3`. |
+| REL-01 | Source and wheel | Candidate CI passes; wheel installs outside the source tree; `basaltw --version` and packaged entry points match the candidate metadata. | **Pass** for `v2.0.0-rc.5` |
+| REL-02 | Installer channels | Fresh exact-tag install and upgrade work; `stable` does not select an `-rc.` tag; `dev` still selects `main`. | **Pass** for `v2.0.0-rc.5` on Debian 13 VM |
+| INS-01 | Clean Debian installations | Install controller, server, and agent profiles on disposable Debian hosts; cover the supported bare-metal/VM/LXC paths that each profile supports. Check commands, permissions, and selected services. | **Not run** in full. A fresh controller and Debian 13 `server_web` LXC passed on `v2.0.0-rc.5`. An earlier `agent_vm` fresh install passed on `v2.0.0-rc.3`. Bare-metal installations require a disposable physical host. |
 | INS-02 | Existing-install upgrades | Upgrade a supported Basaltwater installation and verify user data, setup state, credentials, and owned runtime paths. Exercise the documented intermediate-version migration for any remaining legacy installation; do not assume direct migration from historical `v0.2.0`. | **Pass** for `v2.0.0-rc.3` controller and Debian server upgrades, including pinned intermediate user and system cutovers. |
 | INS-03 | Interruption and recovery | Interrupt migration and setup at documented safe test points. Confirm the operation marker blocks unsafe reruns, recovery guidance identifies retained state, and a successful retry preserves the prior working state. | **Pass** for `v2.0.0-rc.3` setup and upgrade guards on Debian 13. The pinned intermediate user and system cutovers both recovered from SIGKILL and completed on a fresh apply. |
 | INS-04 | Services and private data | Compare pre/post checksums and modes for preserved private data; validate application access, managed service/timer health, agent configuration, and absence of retired namespace paths. | **Not run** in full. Private data, live services and timers, and retirement of the legacy runtime passed after Debian server migration and `v2.0.0-rc.3` setup. Broader agent configuration preservation remains open. |
-| USR-01 | Managed target-user rename | On a disposable Debian/systemd target, rename a managed account through a separate SSH administrator. Verify UID/GID, home contents, SSH access, setup state/cache, managed units, service state, interruption handling, and resume. | **Pass** for `v2.0.0-rc.3` on Debian 13 LXC |
-| DSK-01 | Shared XRDP desktop | On a disposable Debian workstation, cover fresh setup, human-first and concurrent starts, supported clients, keyboard/input/clipboard, resize and reconnect, frontend/network interruption, desktop crash/reboot, logout, interrupted setup, legacy-session blocking, and administrator rollback. Confirm the documented persistence and handoff behavior; see [XRDP guidance](workstations/xrdp.md). | Not run for `v2.0.0-rc.2` |
+| USR-01 | Managed target-user rename | On a disposable Debian/systemd target, rename a managed account through a separate SSH administrator. Verify UID/GID, home contents, SSH access, setup state/cache, managed units, service state, interruption handling, and resume. | **Pass** for `v2.0.0-rc.5` on Debian 13 LXC, including verified resume and reboot |
+| DSK-01 | Shared XRDP desktop | On a disposable Debian workstation, cover fresh setup, human-first and concurrent starts, supported clients, keyboard/input/clipboard, resize and reconnect, frontend/network interruption, desktop crash/reboot, logout, interrupted setup, legacy-session blocking, and administrator rollback. Confirm the documented persistence and handoff behavior; see [XRDP guidance](workstations/xrdp.md). | **Not run** in full. RC 5 passed native FreeRDP, frontend restart, Xorg crash, and reboot. Other clients and legacy console migration remain open. |
 | DSK-02 | Proxmox local browser kiosk | On a disposable Proxmox VE 9 console VM and target laptop, verify CLI/web boot, Firefox navigation, offline saved destinations and tab opening, local status/doctor/start/stop/restart, native/guest consoles, VT switching with a console focused, input/scaling, service stop/restart and child cleanup, crash recovery, package rerun, removal, and current lid/suspend behavior; see the [kiosk checklist](workstations/proxmox-kiosk.md#proxmox-and-hardware-qualification). | **Deferred** to a later release |
-| PRV-01 | Privileged executor and Admin refresh lifecycle | On a disposable Debian/systemd VM, cover approval origin, TLS, review window and credential privacy; source activation, setup failures, partial activation, explicit recovery identity and evidence retention. Interrupt the worker/broker or lose a dispatch response; confirm uncertain work is never replayed. Exercise pipe-holding or TERM-ignoring descendants and replaced paths; cleanup must remain bounded. Preserve active builds, unpushed work, T3 and desktop state through maintenance/readiness checks. See [privilege approvals](agents/privilege-approvals.md) and the [broker reference](agents/privilege-broker-reference.md). | **Fail** on `v2.0.0-rc.3`. CLI preview bypassed the pending source activation marker. The fix is on `main`. Live Admin refresh and preservation of active builds, T3 and desktop sessions remain open. |
-| T3-01 | T3 Code server and client | On a disposable Debian VM, qualify stable T3 0.1.10 with a compatible V2 client and supported provider versions. Confirm complete managed skills after restarting the agent session. Retain fresh-install, V1-to-V2 migration, 0.1.9-to-0.1.10 upgrade, pairing, provider/terminal, update/reboot, gateway preview/recording, and direct/Connect evidence. Cover the additional client and server workflows in the [stable feature cases](agents/t3-code.md#stable-feature-qualification). | **Not run** in full. |
-| BRW-01 | Browser qualification | Pass the Guacamole integration boundary in Chromium and Firefox; on disposable Debian, complete the manual Firefox ESR checks and verify internal HTTPS enrollment on a managed deployment. See [browser testing](agents/browser-testing.md#guacamole-boundary) and its [native release procedure](agents/browser-testing.md#native-debian-firefox-esr-release-qualification). | **Pass** for `v2.0.0-rc.3` with the disposable Guacamole protocol fixture, native Debian Firefox ESR and an installed Debian 13 gateway |
-| SEC-01 | Required audit coverage | On a required-audit Debian profile, verify `/usr/sbin/auditctl -s`, managed rules from `auditctl -l`, a fresh healthy panel snapshot, and security-monitor collection. Confirm missing tools, stopped auditd, or missing rules are surfaced as source failures. | **Pass** for `v2.0.0-rc.3` on a Debian 13 `server_web` VM |
-| TLS-01 | Certificate trust reporting | Exercise a self-signed endpoint with its configured CA, a publicly trusted endpoint, missing CA material, and failed TLS verification. Confirm `basaltwater-web ca --json` and the panel never claim public trust without verification. | **Pass** for `v2.0.0-rc.3` on a Debian 13 `server_web` VM |
-| SEC-02 | Security-log retention gaps | Move audit/journal cursors beyond retained source data and verify the missing interval is reported rather than silently treated as clean. If gap detection remains open, record the release risk decision, mitigation, and owner; do not imply that unobserved intervals were checked. | **Pass** for `v2.0.0-rc.3` for gaps before the oldest retained entries on a Debian 13 `server_web` VM |
-| STO-01 | Disk and LVM identity | Exercise mixed retained/new layouts, provider and guest reruns, reboot, missing disks, and interrupted setup. Confirm existing persistent identities are preserved and new identities use Basaltwater names. | Not run for `v2.0.0-rc.2` |
+| PRV-01 | Privileged executor and Admin refresh lifecycle | On a disposable Debian/systemd VM, cover approval origin, TLS, review window and credential privacy; source activation, setup failures, partial activation, explicit recovery identity and evidence retention. Interrupt the worker/broker or lose a dispatch response; confirm uncertain work is never replayed. Exercise pipe-holding or TERM-ignoring descendants and replaced paths; cleanup must remain bounded. Preserve active builds, unpushed work, T3 and desktop state through maintenance/readiness checks. See [privilege approvals](agents/privilege-approvals.md) and the [broker reference](agents/privilege-broker-reference.md). | **Not run** in full on RC 5. Exact RC 5 passed interrupted source activation recovery, protected preview, and approved refresh with both busy and idle build capacity. Some executor recovery cases were last tested on RC 3. |
+| T3-01 | T3 Code server and client | On a disposable Debian VM, qualify stable T3 0.1.10 with a compatible V2 client and supported provider versions. Confirm complete managed skills after restarting the agent session. Retain fresh-install, V1-to-V2 migration, 0.1.9-to-0.1.10 upgrade, pairing, provider/terminal, update/reboot, gateway preview/recording, and direct/Connect evidence. Cover the additional client and server workflows in the [stable feature cases](agents/t3-code.md#stable-feature-qualification). | **Not run** in full. RC 5 passed credential preflight, private HTTPS, Chromium pairing and link reuse refusal, managed service recovery after reboot, and database integrity. Provider/Connect and migration qualification remain open. |
+| BRW-01 | Browser qualification | Pass the Guacamole integration boundary in Chromium and Firefox; on disposable Debian, complete the manual Firefox ESR checks and verify internal HTTPS enrollment on a managed deployment. See [browser testing](agents/browser-testing.md#guacamole-boundary) and its [native release procedure](agents/browser-testing.md#native-debian-firefox-esr-release-qualification). | **Pass** for `v2.0.0-rc.5` with 100 Chromium and Firefox Playwright cases, native Debian Firefox ESR, and managed HTTPS enrollment |
+| SEC-01 | Required audit coverage | On a required-audit Debian profile, verify `/usr/sbin/auditctl -s`, managed rules from `auditctl -l`, a fresh healthy panel snapshot, and security-monitor collection. Confirm missing tools, stopped auditd, or missing rules are surfaced as source failures. | **Pass** for `v2.0.0-rc.5` on a Debian 13 `server_web` VM |
+| TLS-01 | Certificate trust reporting | Exercise a self-signed endpoint with its configured CA, a publicly trusted endpoint, missing CA material, and failed TLS verification. Confirm `basaltwater-web ca --json` and the panel never claim public trust without verification. | **Pass** for `v2.0.0-rc.5` on a Debian 13 `server_web` VM |
+| SEC-02 | Security-log retention gaps | Move audit/journal cursors beyond retained source data and verify the missing interval is reported rather than silently treated as clean. If gap detection remains open, record the release risk decision, mitigation, and owner; do not imply that unobserved intervals were checked. | **Pass** for `v2.0.0-rc.5` for gaps before the oldest retained audit, Fail2ban and SSH entries on a Debian 13 `server_web` VM |
+| STO-01 | Disk and LVM identity | Exercise mixed retained/new layouts, provider and guest reruns, reboot, missing disks, and interrupted setup. Confirm existing persistent identities are preserved and new identities use Basaltwater names. | **Not run** in full. RC 5 preserved the LVM cache and persistent disk identities across reruns, reboot, and a detached disk and reattachment. A known legacy serial was retained and a changed identity was refused. Interrupted disk setup remains open. |
 | PVE-01 | Multi-node Proxmox | Install and rerun on multiple nodes of a disposable cluster, including separate `/run/lock` and `/var/lib` filesystems. Confirm lock exclusion and guest operations across nodes. This does not qualify standalone maintenance, storage-specific health, interrupted updates, guest evacuation, unavailable backup targets, or isolated restore; see [Proxmox operations](operations/proxmox.md). | **Deferred** to a later release |
-| STO-02 | NAS, Samba, Gogs, and Syncthing | Qualify setup/reruns, boot ordering, missing mounts, identity preservation, and service-user access on disposable storage. | Not run for `v2.0.0-rc.2` |
-| STO-03 | Storage failure and restoration | Cause sync and scrub failures with disposable data; verify the failure is reported and exercise the documented restore path. A successful mirror alone is not recovery evidence. | Not run for `v2.0.0-rc.2` |
-| APP-01 | HomeBox lifecycle | On a disposable amd64 Debian VM, test reboot and mounted-data recovery; certificate issuance/renewal and firewall reachability; browser login, items, attachments, and WebSockets; setup rerun, upgrade rollback, and full restore. | Not run for `v2.0.0-rc.2`; selected native loopback/API setup, rerun, full restore, upgrade, reboot and disable/re-enable checks do not qualify the complete lifecycle |
-| CICD-01 | Signed webhook builds, delivery and rollback | Submit a signed webhook and verify the resulting artifact. Separately authorize delivery of that artifact to an explicitly enrolled target and check its health. Force an unhealthy activation and confirm the previous working release is restored and the failure is reported. Automatic webhook-to-target delivery is deferred. | **Pass** for `v2.0.0-rc.3` on a Debian 13 VM. Nginx isolated the rejected release from HTTPS traffic, and rollback restored the previous release. |
-| REL-03 | Prepublication identifiers and assets | Confirm namespace/name clearance, the matching wheel and release notes, planned source/download URLs, and documented upgrade instructions before tagging. | Not run for `v2.0.0-rc.2` |
+| STO-02 | NAS, Samba, Gogs, and Syncthing | Qualify setup/reruns, boot ordering, missing mounts, identity preservation, and service-user access on disposable storage. | **Not run** in full on RC 5. Mounted service reruns, boot ordering, failing data mount, identity and directory access, and authenticated Samba read/write passed. Fresh setup passed on RC 3. |
+| STO-03 | Storage failure and restoration | Cause sync and scrub failures with disposable data; verify the failure is reported and exercise the documented restore path. A successful mirror alone is not recovery evidence. | **Pass** for `v2.0.0-rc.5` on a Debian 13 VM. Missing backup storage blocked sync, and parity failure protected the mirror until verified restore. |
+| APP-01 | HomeBox lifecycle | On a disposable amd64 Debian VM, test reboot and mounted-data recovery; certificate issuance/renewal and firewall reachability; browser login, items, attachments, and WebSockets; setup rerun, upgrade rollback, and full restore. | **Not run** in full. RC 5 passed mounted setup reconciliation, reboot, browser login and access, WebSocket, and verified archive restore. Public certificate issuance, renewal, and firewall reachability require a disposable public HTTPS endpoint. |
+| CICD-01 | Signed webhook builds, delivery and rollback | Submit a signed webhook and verify the resulting artifact. Separately authorize delivery of that artifact to an explicitly enrolled target and check its health. Force an unhealthy activation and confirm the previous working release is restored and the failure is reported. Automatic webhook-to-target delivery is deferred. | **Pass** for `v2.0.0-rc.5` on a Debian 13 VM. Both HTTPS routes served the verified signed artifact. Nginx isolated the unhealthy replacement until rollback restored the working release. |
+| REL-03 | Prepublication identifiers and assets | Confirm namespace/name clearance, the matching wheel and release notes, planned source/download URLs, and documented upgrade instructions before tagging. | **Not run** in full. RC 5's published wheel, source URLs, and exact-tag upgrade were verified. Stable name clearance and publication sign-off remain open. |
 
 The experimental CachyOS desktop profile is not expanded in this release pass
 and is not part of the Debian stable-support gate. No new CachyOS capabilities

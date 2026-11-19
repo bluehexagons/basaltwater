@@ -801,6 +801,15 @@ class TestCloudInitBootstrap(unittest.TestCase):
             stderr="injected failure" if failed else "",
         )
 
+    @patch("lib.proxmox_vm._report_memory_capacity", return_value=False)
+    @patch("lib.proxmox_vm._upload_user_data")
+    def test_memory_refusal_does_not_upload_cloud_init(self, upload, _capacity):
+        with self.assertRaisesRegex(ProvisionError, "memory floor would exceed"):
+            _provision_vm_locked(self.config)
+
+        upload.assert_not_called()
+        self.assertEqual(self.events, [])
+
     def test_success_verifies_before_enrollment_detachment_and_unlink(self):
         _provision_vm_locked(self.config)
         self.assertIn("qm guest exec 101", self.events[0])
