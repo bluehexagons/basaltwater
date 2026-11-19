@@ -1,8 +1,8 @@
-# AI Agent Quick Start
+# Basaltwater agent instructions
 
-These instructions apply to the repository. Read `docs/agents/contributing/README.md`
-and its linked references when a task needs more detail. Higher-priority user,
-developer, and system instructions still govern the session.
+These instructions apply throughout the repository. Start with the task route
+below and open the relevant reference. Active session instructions govern tools,
+permissions, and delegation.
 
 ## Instruction ownership
 
@@ -15,10 +15,12 @@ policy where these meet; installed skills and saved notes do not override it.
 See [project standards](docs/agents/project-standards.md) and
 [handoffs](docs/agents/handoffs.md) for shared conventions.
 
-Use the live provider catalog when choosing an agent model or reasoning effort.
-For current workload choices and account access, see
-[model selection](docs/agents/agent-subagents.md) and
-[T3 Code](docs/agents/t3-code.md).
+| Task | Start here |
+| --- | --- |
+| Change repository code or run checks | [Contributor guide](docs/agents/contributing/README.md) |
+| Find operator commands or setup procedures | [Documentation index](docs/README.md) |
+| Operate a managed coding VM or workstation | [Agent systems](docs/agents/README.md) |
+| Delegate work or select a model | [Subagent workflows](docs/agents/agent-subagents.md) and the live session catalog |
 
 ## Before Editing
 
@@ -27,75 +29,19 @@ For current workload choices and account access, see
 3. Use `apply_patch` for edits and stage only the files in the requested scope.
 4. Review `git diff --check` and the final diff before committing.
 
-## Essential Pattern
+## Repository rules
 
-```python
-from __future__ import annotations
-from lib.machine_state import can_modify_kernel
-
-def harden_kernel() -> None:
-    """Apply a kernel-specific setup step when the machine permits it."""
-    if not can_modify_kernel():
-        print("  ✓ Skipping (container)")
-        return
-    # Implementation
-```
-
-## Critical Rules
-
-1. **Always** use `from __future__ import annotations`
-2. **Never** commit secrets, credentials, personal infrastructure details, or
-   private business/project information.
-   Keep private endpoints, host/storage inventories, account paths, and raw
-   operational evidence outside Git. Use fictional examples in documentation;
-   publishing specific private details requires an explicit user request.
-   See [documentation privacy](docs/agents/project-standards.md#documentation-and-private-operational-state).
-3. **Always** validate inputs with the appropriate validator: use
-   `lib/validation.py` for paths, packages, network/configuration values, and
-   `lib/validators.py` for hosts, IPs, and usernames.
-4. **Never** break function signatures without updating all callers
-5. **Always** read complete file before changing
-6. **Always** keep docs up to date when changing patterns
-7. **Always** remove unused code — don't keep for "API compatibility"
-8. **Always** use the machine capability helper that matches the operation;
-   `can_modify_kernel()` is not a blanket check for packages or services
-9. **Always** mock system calls in tests and use temporary directories
-
-## Quick Commands
-
-```bash
-# Check syntax
-python3 -m py_compile file.py
-sh -n install.sh
-git diff --check
-
-# Dry run test
-basaltw setup server_web test.com --dry-run
-
-# Fast local checks; select the relevant suite while editing
-make check-fast
-make test SUITE=web
-
-# Full checks and coverage in CI, or locally for broad/offline validation
-make check-ci
-```
-
-## Key Files
-
-| Purpose | File | Import | Key Functions |
-|---------|------|--------|---------------|
-| Configuration | `lib/config.py` | `SetupConfig` | `SetupConfig` |
-| Runtime configuration | `lib/runtime_config.py` | `RuntimeConfig` | `RuntimeConfig` |
-| Types | `lib/types.py` | `JSONDict`, `StrList` | `JSONDict`, `StrList`, `MaybeStr` |
-| Machine State | `lib/machine_state.py` | `is_container`, `can_modify_kernel` | `is_container`, `can_modify_kernel`, `is_vm` |
-| Validation | `lib/validation.py` | `validate_filesystem_path` | `validate_filesystem_path`, `validate_package_name` |
-| Host/user validation | `lib/validators.py` | `validate_host` | `validate_host`, `validate_ip_address`, `validate_username` |
-| SSH Operations | `lib/remote_utils.py` | `run` | `run`, `is_service_active` |
-| Setup composition | `plugins/*.py` | `PluginDefinition` | Step builders and capability extensions |
-| Self-setup | `lib/orchestrator_bootstrap.py` | `run_orchestrator_bootstrap` | Local package/bootstrap flow |
-| antistatic_server | `lib/config.py` | `SetupConfig` | `SetupConfig.antistatic_server` |
-| antistatic_db | `lib/config.py` | `SetupConfig` | `SetupConfig.antistatic_db` |
-| SSH Keys | `lib/config.py` | `SetupConfig` | `SetupConfig.ssh_key` |
+- Use `from __future__ import annotations` in Python.
+- Keep secrets, private infrastructure and business details, and raw operational
+  evidence outside Git. Use fictional examples. Publishing specific private
+  details requires an explicit user request. See [documentation privacy](docs/agents/project-standards.md#documentation-and-private-operational-state).
+- Validate paths, packages, and network/configuration values with
+  `lib/validation.py`. Validate hosts, IPs, and usernames with `lib/validators.py`.
+- Use the machine capability helper for the operation. Reserve
+  `can_modify_kernel()` for kernel changes.
+- Update every caller when signatures change. Remove unused code and update the
+  documentation when patterns change.
+- Mock system calls and use temporary directories in tests.
 
 ## Setup Boundaries
 
@@ -107,10 +53,5 @@ make check-ci
   `lib/orchestrator_bootstrap.py`. The shell installer forwards options placed
   before `--setup` or `--local-setup` to that bootstrap command.
 
-When adding a setup feature, put the implementation in its owning package,
-wire it through the relevant `plugins/*.py` builder or capability extension,
-add focused tests, and update the command/reference documentation.
-
----
-
-**See `docs/agents/contributing/README.md` for detailed patterns and workflows**
+Implement setup features in their owning package, wire them through the relevant
+plugin builder or extension, add focused tests, and update the command reference.
