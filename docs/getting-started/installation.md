@@ -8,8 +8,8 @@ For a guided first experiment, use [Try Basaltwater on a Debian
 VM](getting-started.md). This page also covers advanced installation choices;
 choose one path rather than running every example.
 
-This guide describes the `v2.0.0` release-candidate series. The current source
-package version is `2.0.0rc3`, corresponding to preview tag `v2.0.0-rc.3`.
+This guide describes the `v2.0.0` release-candidate series. See the
+[release qualification record](../release-qualification.md) for the current candidate.
 The `dev` channel follows `main` and `stable` selects the latest final release.
 Select a preview by its exact tag.
 
@@ -337,13 +337,13 @@ launcher stays installed while the worktree's channel changes:
 | --- | --- |
 | `stable` | Latest `vMAJOR.MINOR.PATCH` release tag |
 | `dev` | `main` branch |
-| `v<version>` | One exact tag, such as `v2.0.0` or `v2.0.0-rc.3` |
+| `v<version>` | One exact tag, such as `v2.0.0` or `v2.0.0-rc.5` |
 | `branch-<branch>` | Any existing branch |
 | `commit-<hash>` | One exact commit |
 
 The v2.0 preview sequence uses Git tags `v2.0.0-rc.N`, with matching Python
 package versions `2.0.0rcN`. Select a published preview with
-`basaltw channel v2.0.0-rc.3` and update with `basaltw upgrade`. The `stable`
+`basaltw channel v2.0.0-rc.5` and update with `basaltw upgrade`. The `stable`
 selector matches plain three-part version tags. Release candidates are for
 qualification and feedback.
 

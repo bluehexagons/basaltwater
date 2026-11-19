@@ -7,7 +7,7 @@ a recovery path. The [plan index](README.md) maps related work; the
 
 ## Current baseline
 
-- The current preview candidate is `v2.0.0-rc.3` (Python package `2.0.0rc3`).
+- The release matrix records the current preview candidate.
 - Managed operations have durable guards, state validation, unit/Nginx recovery
   and deployment rollback. They do not reverse arbitrary scripts, packages,
   database migrations or application data.

@@ -10,16 +10,14 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CURRENT_PREVIEW_VERSION = "2.0.0rc3"
+PACKAGE_VERSION_PATTERN = re.compile(r"\d+\.\d+\.\d+(?:rc[1-9]\d*)?")
 RELEASE_TAG_PATTERN = re.compile(
     r"v(?P<stable>\d+\.\d+\.\d+)(?:-rc\.(?P<candidate>[1-9]\d*))?"
 )
 
 
 def expected_release_version() -> str | None:
-    """Return the package version required by this checkout or release tag."""
-    if os.environ.get("GITHUB_REF_TYPE") != "tag":
-        return CURRENT_PREVIEW_VERSION
+    """Return the package version required by a release tag."""
     tag = os.environ.get("GITHUB_REF_NAME", "")
     match = RELEASE_TAG_PATTERN.fullmatch(tag)
     if match is None:
@@ -32,13 +30,16 @@ def expected_release_version() -> str | None:
 def main() -> int:
     with (ROOT / "pyproject.toml").open("rb") as file_obj:
         project = tomllib.load(file_obj)["project"]
-    expected_version = expected_release_version()
-    if expected_version is None or project.get("version") != expected_version:
-        print(
-            "pyproject.toml version must match the current preview or exact "
-            f"release tag (expected {expected_version or 'a vX.Y.Z or vX.Y.Z-rc.N tag'})"
-        )
+    version = project.get("version")
+    if not isinstance(version, str) or PACKAGE_VERSION_PATTERN.fullmatch(version) is None:
+        print("pyproject.toml must declare a package version in X.Y.Z or X.Y.ZrcN form")
         return 1
+    if os.environ.get("GITHUB_REF_TYPE") == "tag":
+        expected_version = expected_release_version()
+        if version != expected_version:
+            print(f"pyproject.toml version must match the exact release tag "
+                  f"(expected {expected_version or 'a vX.Y.Z or vX.Y.Z-rc.N tag'})")
+            return 1
     scripts = project.get("scripts", {})
     if project.get("name") != "basaltwater":
         print("pyproject.toml must declare the basaltwater distribution")

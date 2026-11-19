@@ -17,7 +17,7 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import run_tests
-from scripts import check_development, run_debian_ci, test_inventory
+from scripts import check_development, check_package_metadata, run_debian_ci, test_inventory
 
 
 class TestDevelopmentChecks(unittest.TestCase):
@@ -109,6 +109,13 @@ class TestDebianCI(unittest.TestCase):
         self.assertEqual([command[1] for command in commands], ["pull", "pull", "pull", "run", "rm"])
         self.assertEqual(commands[-1][-1], commands[-2][commands[-2].index("--name") + 1])
 
+    def test_container_inherits_the_release_reference(self) -> None:
+        with patch.object(run_debian_ci.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as run:
+            self.assertEqual(self.run_ci(), 0)
+        launch = next(call.args[0] for call in run.call_args_list if call.args[0][1] == "run")
+        environment = {value for flag, value in zip(launch, launch[1:]) if flag == "--env"}
+        self.assertTrue({"GITHUB_REF_TYPE", "GITHUB_REF_NAME"} <= environment)
+
     def test_all_registries_failing_does_not_start_checks(self) -> None:
         with patch.object(run_debian_ci.subprocess, "run", return_value=SimpleNamespace(returncode=1)) as run:
             with self.assertRaisesRegex(RuntimeError, "checks were not started"):
@@ -132,6 +139,31 @@ class TestDebianCI(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.run_ci(**options)
                 run.assert_not_called()
+
+
+class TestPackageMetadata(unittest.TestCase):
+    def test_development_versions_and_exact_release_tag(self) -> None:
+        with tempfile.TemporaryDirectory() as temp, contextlib.redirect_stdout(io.StringIO()):
+            root = Path(temp)
+            reference = root / "docs/reference/command-line.md"
+            reference.parent.mkdir(parents=True)
+            reference.write_text("basaltw setup\n")
+            with patch.object(check_package_metadata, "ROOT", root):
+                for version, ref_type, ref_name, expected in (
+                    ("3.4.5rc17", "branch", "main", 0),
+                    ("3.4.5rc0", "branch", "main", 1),
+                    ("3.4.5rc17", "tag", "v3.4.5-rc.17", 0),
+                    ("3.4.5rc17", "tag", "v3.4.5-rc.18", 1),
+                    ("3.4.5", "tag", "v3.4.5", 0),
+                    ("3.4.5", "tag", "v3.4.5-rc.0", 1),
+                ):
+                    with self.subTest(version=version, ref_type=ref_type, ref_name=ref_name):
+                        (root / "pyproject.toml").write_text(
+                            f'[project]\nname = "basaltwater"\nversion = "{version}"\n'
+                            '[project.scripts]\nbasaltw = "basaltwater:main"\n'
+                        )
+                        with patch.dict(os.environ, GITHUB_REF_TYPE=ref_type, GITHUB_REF_NAME=ref_name):
+                            self.assertEqual(check_package_metadata.main(), expected)
 
 
 class TestRunTestsSuites(unittest.TestCase):

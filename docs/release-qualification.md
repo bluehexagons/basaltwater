@@ -1,6 +1,6 @@
 # Basaltwater v2.0 preview and release qualification
 
-The current preview candidate is `v2.0.0-rc.4` (Python package `2.0.0rc4`).
+The current preview candidate is `v2.0.0-rc.5` (Python package `2.0.0rc5`).
 The latest final release remains `v0.2.0`. This document is the qualification
 record and release gate for the eventual stable `v2.0.0` release.
 
@@ -25,7 +25,7 @@ Increment `N` for each new candidate. Do not move or reuse a published tag.
 The release workflow marks `-rc.` tags as prereleases, and the installer’s
 `stable` channel matches only unqualified `vMAJOR.MINOR.PATCH` tags. Preview
 users select an exact candidate, for example `basaltw channel
-v2.0.0-rc.4`. A release candidate is for qualification and feedback; it does
+v2.0.0-rc.5`. A release candidate is for qualification and feedback; it does
 not claim that the stable release matrix has passed.
 
 Publishing a preview requires the tag’s Python package version to match the
@@ -75,7 +75,7 @@ private hostnames, personal data, or raw logs that contain them.
 
 ### Preview publication gate
 
-- [x] `pyproject.toml` declares `2.0.0rc4` for `v2.0.0-rc.4`.
+- [x] `pyproject.toml` declares `2.0.0rc5` for `v2.0.0-rc.5`.
 - [ ] Release CI passes on Python 3.11 and 3.15, builds the wheel, and
   installs and smoke-tests the packaged launchers on Python 3.13.
 - [ ] The GitHub release is marked **pre-release** and contains the wheel built
@@ -91,12 +91,20 @@ qualification matrix or authorize the final stable release.
 
 ### Candidate results
 
+#### `v2.0.0-rc.5`
+
+RC 5 passes the GitHub release tag into the Debian test containers. The
+packaging check validates the exact tag on release builds and the package
+version format on development builds. Repeat the controller install and
+upgrade, refresh recovery, and T3 setup on this candidate.
+
 #### `v2.0.0-rc.4`
 
 RC 4 blocks Debian refresh previews and dispatch while a source activation
 needs recovery. It also checks T3 device-pairing credentials before target
-setup can change packages or services. Repeat those recovery and T3 cases,
-the controller install and upgrade, and the exact-candidate release matrix.
+setup can change packages or services. The Debian release jobs fell back to a
+stale version constant because the test containers did not get the release
+tag. The workflow stopped before prerelease publication.
 
 #### `v2.0.0-rc.3`
 

@@ -100,6 +100,7 @@ def run_debian_ci(
             "--env", f"BASALTWATER_CI_PYTHON={executable}",
             "--env", f"BASALTWATER_CI_NODE_DIR={node_executable.parent}",
             "--env", f"LD_LIBRARY_PATH={executable.parent.parent / 'lib'}",
+            "--env", "GITHUB_REF_TYPE", "--env", "GITHUB_REF_NAME",
             "--workdir", "/workspace", image, "bash", "-euc", script,
         ], check=False, timeout=900)
         return result.returncode
