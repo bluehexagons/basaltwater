@@ -204,7 +204,7 @@ manual. Routine configuration changes use setup reruns.
 repeats this machine's last successful setup using the updated code. It supports
 Debian and CachyOS. See [refresh behavior](#refresh-this-machine) below and
 [CachyOS first use](../workstations/cachyos.md#upgrade-and-repeat-your-last-setup).
-The separate [native Windows launcher](../workstations/windows.md#native-basaltw-commands)
+The separate [native Windows launcher](../workstations/windows-maintenance.md#native-basaltw-commands)
 also provides `refresh` for its saved workstation installation.
 
 For the desktop command catalog, including accessibility, window operations,

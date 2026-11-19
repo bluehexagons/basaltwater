@@ -63,7 +63,7 @@ failing phase and exception type, retaining detailed output locally.
 Successful setup stores webhook URLs and policy in the private user-owned
 local selection and receipt; displayed refresh commands redact URLs. Use
 `refresh`, rather than generic remote-host `patch`, `info`, or `cmd`, to retain
-or change that selection. See [CachyOS notification maintenance](../workstations/cachyos-maintenance.md#webhook-notifications)
+or change that selection. See [CachyOS notification maintenance](../workstations/cachyos-refresh.md#webhook-notifications)
 for adding targets to an existing setup, disabling delivery, and replacing targets.
 
 ## Send notifications to a Basaltwater web panel

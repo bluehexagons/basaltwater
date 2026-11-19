@@ -153,7 +153,7 @@ the client. Add `--lan-access` or explicit `--access-source` values for restrict
 inbound access, then configure and pair Sunshine in its local web UI.
 Sunshine supports Intel, AMD, and NVIDIA GPUs; installing its package does not
 verify capture or hardware encoding. See the
-[Sunshine checks](cachyos-maintenance.md#sunshine-service-and-encoder-checks) before pairing.
+[Sunshine checks](cachyos-streaming.md#sunshine-service-and-encoder-checks) before pairing.
 
 The T3 web service selects Node automatically; both T3 modes require Codex,
 Claude, or OpenCode. Python
@@ -345,7 +345,7 @@ recording whether delivery succeeded, failed, or was suppressed by policy.
 It contains no webhook URLs or tokens. `basaltw local cachyos-doctor` reads this
 evidence without sending a test event. Receiver acceptance does not verify
 downstream processing; older setups without this record remain unverified.
-For an existing setup, see [notification maintenance](cachyos-maintenance.md#webhook-notifications).
+For an existing setup, see [notification maintenance](cachyos-refresh.md#webhook-notifications).
 
 ## Codex-only agent setup
 
@@ -384,4 +384,4 @@ See [Codex authentication](https://learn.chatgpt.com/docs/auth).
 
 Verify a real Codex task after login; local login status does not test provider
 access or T3's GUI environment. Standalone update and rollback behavior is
-documented in [maintenance](cachyos-maintenance.md#codex-updates).
+documented in [maintenance](cachyos-refresh.md#codex-updates).

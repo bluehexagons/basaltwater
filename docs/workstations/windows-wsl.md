@@ -82,7 +82,7 @@ completion status under `%LOCALAPPDATA%\Basaltwater\t3-completion`.
 Setup also prints a Windows restart notice based on available update, servicing
 and pending file replacement indicators. Unreadable checks are reported as
 unknown; Windows is never rebooted automatically. See the
-[native workstation guidance](windows.md#install) for the limitations.
+[native workstation guidance](windows-install.md#install) for the limitations.
 For native GitHub Actions jobs with WSL access, see
 [Windows GitHub runners](windows-github-runner.md). `-BuildServer` alone does
 not register a GitHub runner.
@@ -220,7 +220,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $state.Source
 tools, and selected WinGet packages without changing the pinned Basaltwater
 source. Selected Windows packages, including T3, receive available WinGet
 updates. WinGet's catalog can lag the app's own updater; see
-[native update behavior](windows.md#review-selections-from-a-checkout).
+[native update behavior](windows-tool-selection.md#review-selections-from-a-checkout).
 To advance the source deliberately, run a freshly downloaded installer
 with `-Resume -UpdateSource` and optional `-Version REF`; it stages the new
 revision for both Windows and Ubuntu before reapplying setup.

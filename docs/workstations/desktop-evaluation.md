@@ -276,7 +276,7 @@ audio and video qualification remains separate.
 
 ## Refresh and freeze a comparison condition
 
-After saving active work, follow the existing [CachyOS refresh procedure](cachyos-maintenance.md#upgrade-and-repeat-your-last-setup).
+After saving active work, follow the existing [CachyOS refresh procedure](cachyos-refresh.md#upgrade-and-repeat-your-last-setup).
 `basaltw refresh --dry-run` previews the saved selection; `basaltw refresh` applies
 it and can reload T3 after setup. A development channel follows `main`; a pinned
 channel remains pinned. The unchanged `2.0.0rc1` version string cannot identify

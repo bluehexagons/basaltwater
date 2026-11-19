@@ -54,7 +54,7 @@ If a monitor is asleep or capture is black/frozen, enabled agents should try
 before input. This bounded KDE display-power request needs no running portal
 and preserves agent permission, screen locking and idle policy. See the
 [native control reference](../../common/agent_skills/basaltwater-cachyos-desktop/references/native-control.md#sleeping-displays)
-and [Moonlight recovery](cachyos-maintenance.md#sleeping-monitors-and-moonlight).
+and [Moonlight recovery](cachyos-streaming.md#sleeping-monitors-and-moonlight).
 Native `doctor` now reports `checks.display_power` with observed output names,
 on/off/mixed state and observation time. The local CachyOS doctor also includes
 `session.display-power` prominently among deferred observations when asleep or

@@ -2,7 +2,7 @@
 
 Debian hosts use the automatic recovery and daily maintenance below. CachyOS
 has [setup-time package recovery](../workstations/cachyos.md#cleanup-during-setup);
-Windows provides [explicit native storage cleanup](../workstations/windows.md#low-space-recovery).
+Windows provides [explicit native storage cleanup](../workstations/windows-maintenance.md#low-space-recovery).
 
 Basaltwater's Debian setup and deployment paths share a storage exclusion lock.
 This feature does not require coding-agent tooling or the web-server profile.

@@ -125,7 +125,7 @@ Native Windows refresh delivers the same shared workflows through its existing
 bundle catalog; WinGet availability and the running desktop version must be
 checked separately. Ubuntu WSL refresh must advance the pinned Basaltwater
 source to refresh Linux guidance, independently of the Windows client update.
-See [Windows refresh](../workstations/windows.md#review-selections-from-a-checkout)
+See [Windows refresh](../workstations/windows-tool-selection.md#review-selections-from-a-checkout)
 and [WSL source refresh](../workstations/windows-wsl.md#manage-and-recover).
 These repository changes do not remotely refresh other machines or establish
 native Windows/WSL or Debian systemd lifecycle qualification.

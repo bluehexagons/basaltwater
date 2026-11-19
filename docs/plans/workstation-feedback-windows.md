@@ -220,7 +220,7 @@ The accompanying completion-record changes are documentation only.
 
 Both required increments and subsequent bounded discovery are implemented:
 
-- [`doctor --skills`](../workstations/windows.md#verify-this-account) compares
+- [`doctor --skills`](../workstations/windows-first-checks.md#verify-this-account) compares
   known bundles against saved source, preserves personal files and reports
   explicit completion independently of session-loaded state. Shared source and
   inventory resource validation rejects unrecordable/reserved paths before writes.

@@ -38,7 +38,7 @@ ownership without launching Electron. Quit/reopen an already-running T3 when
 updating its package directly. Setup/refresh instead queues a graceful reload
 after all steps, saved state and notifications finish. `cachy-update` may skip AUR
 checks when only Shelly is installed; use `shelly list-updates aur` for routine
-checks. See [desktop updates](cachyos-maintenance.md#t3-desktop-updates) and
+checks. See [desktop updates](cachyos-t3-maintenance.md#t3-desktop-updates) and
 [Shelly's CLI reference](https://www.seafoam-labs.org/shelly-alpm/docs/cli-reference/).
 
 Before invoking Shelly, setup creates its missing AUR cache directories as your
@@ -71,14 +71,14 @@ Manage startup in KDE's **System Settings → Autostart**; a desktop setup or
 refresh re-enables the managed entry. Custom files or symlinks at its destination
 are preserved and reported before package changes. Switching successfully to
 web mode removes this entry; a failed web activation preserves it. See
-[login-startup maintenance](cachyos-maintenance.md#t3-desktop-login-startup).
+[login-startup maintenance](cachyos-t3-maintenance.md#t3-desktop-login-startup).
 
 Use the app's **Settings → Connections** for desktop pairing or T3 Connect,
 when supported by the installed version. The managed web-service commands below
 target a separate environment and should not be used to configure the desktop.
 
-For helper errors, see [AUR download failures](cachyos-maintenance.md#aur-download-failures).
-For an established installation, see [switching modes](cachyos-maintenance.md#switch-modes-on-a-later-setup).
+For helper errors, see [AUR download failures](cachyos-diagnostics.md#aur-download-failures).
+For an established installation, see [switching modes](cachyos-t3-maintenance.md#switch-modes-on-a-later-setup).
 
 ## T3 Code web service: host locally or on a trusted LAN
 
@@ -258,4 +258,4 @@ The service follows the desktop user's session. Setup validates its CLI,
 native terminal dependency and generated unit; its completion worker verifies
 the HTTP UI. Check that worker's result, then a real thread and terminal after pairing. For service errors,
 runtime updates, and activation recovery, use the
-[maintenance reference](cachyos-maintenance.md#web-service-updates-and-recovery).
+[maintenance reference](cachyos-t3-maintenance.md#web-service-updates-and-recovery).

@@ -165,7 +165,7 @@ service quit for the session is distinguished from disabled or temporary startup
 `health.mirrors` separately identifies a failed CachyOS mirror refresh service
 and points to its local journal and DNS/connectivity checks. It does not contact
 mirrors, retry the service, or verify mirror freshness. See
-[mirror recovery](cachyos-maintenance.md#mirror-refresh-failures).
+[mirror recovery](cachyos-diagnostics.md#mirror-refresh-failures).
 Update observations use existing pacman metadata, which may be stale and does not
 cover AUR releases. Setup prints the same host observations before installing
 packages.
@@ -174,7 +174,7 @@ Successful setup and refresh also print best-effort system restart advice from
 the booted kernel's modules and core-package installation dates. Unavailable
 evidence is labelled unknown or incomplete, and CachyOS is never rebooted
 automatically. Follow distro and firmware notices too; see
-[restart notices](cachyos-maintenance.md#system-restart-notices).
+[restart notices](cachyos-refresh.md#system-restart-notices).
 
 To check your first setup, record its CachyOS, Plasma, kernel, GPU/driver,
 and tool versions; authenticate an agent; complete a small edit/test task and
@@ -202,12 +202,12 @@ for updates, saved selections, mode changes, and recovery.
 
 ### Upgrade and repeat your last setup
 
-See [saved setup and refresh](cachyos-maintenance.md#upgrade-and-repeat-your-last-setup).
+See [saved setup and refresh](cachyos-refresh.md#upgrade-and-repeat-your-last-setup).
 
 ### AUR download failures
 
-See [helper diagnostics](cachyos-maintenance.md#aur-download-failures).
+See [helper diagnostics](cachyos-diagnostics.md#aur-download-failures).
 
 ### Switch modes on a later setup
 
-See [mode changes and data boundaries](cachyos-maintenance.md#switch-modes-on-a-later-setup).
+See [mode changes and data boundaries](cachyos-t3-maintenance.md#switch-modes-on-a-later-setup).

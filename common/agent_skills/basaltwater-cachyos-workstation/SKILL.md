@@ -134,7 +134,7 @@ The workstation doctor does not verify effective UFW rules. For an authorized
 privileged check, use KDE's existing polkit agent when available or the owner's
 terminal. Explain the command before requesting authentication; never ask for
 a password in chat or tool input. Keep diagnosis read-only and unprivileged.
-See the [privileged-check procedure](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos-maintenance.md#privileged-checks-from-an-agent).
+See the [privileged-check procedure](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos-diagnostics.md#privileged-checks-from-an-agent).
 
 Optional webhook targets are stored in the private local setup selection and
 receipt. Previews send nothing; delivery failure is reported separately from

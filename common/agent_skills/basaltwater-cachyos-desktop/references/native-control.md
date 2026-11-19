@@ -70,7 +70,7 @@ substitute. If capture stays stuck after wake, inspect status before restarting
 the helper and obtaining any KDE approval it requests.
 
 For Moonlight connection failures while the monitor sleeps, see
-[Sunshine display wake](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos-maintenance.md#sleeping-monitors-and-moonlight).
+[Sunshine display wake](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos-streaming.md#sleeping-monitors-and-moonlight).
 
 ## Observe, act, verify
 
@@ -185,7 +185,7 @@ Verify delivered application events before claiming binding coverage: a native
 Godot 4.7.2 probe reported bracket physical codes 123/125 on Wayland and 91/93
 on XWayland for the same evdev codes 26/27. Physical injection does not normalize
 an engine's backend-specific key mapping. See the
-[dated qualification](https://github.com/bluehexagons/basaltwater/blob/main/docs/testing/cachyos.md#native-keyboard-and-task-inventory-improvements-2026-11-02).
+[dated qualification](https://github.com/bluehexagons/basaltwater/blob/main/docs/testing/cachyos-desktop-evidence.md#native-keyboard-and-task-inventory-improvements-2026-11-02).
 
 `status.input_capabilities` identifies helpers supporting physical input;
 restart older helpers after updating. `status.input_state` reports counts of

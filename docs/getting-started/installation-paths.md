@@ -136,7 +136,7 @@ container. `--qemu-guest-agent` requires root and system-package installation.
 This converts graphical access to one shared XFCE/XRDP desktop and installs
 GitHub CLI and Codex. Log out of GNOME first and run from SSH or a text console.
 Console graphical login is disabled; applications and home data remain.
-See [XRDP migration and recovery](../workstations/xrdp.md#migration-and-recovery) before converting
+See [XRDP migration and recovery](../workstations/xrdp-recovery.md#migration-and-recovery) before converting
 a machine that currently relies on local graphical login.
 
 ```sh
