@@ -470,15 +470,14 @@ completed with 10,441 tests, 25 skips and 82% branch-aware coverage.
 
 Private transcripts and state comparisons are retained by the qualification
 operator. The remaining stable work includes supported profile and recovery
-matrices, shared desktop and T3 checks, and storage and application
-recovery. Multi-node Proxmox and kiosk qualification are deferred to a later
+matrices, shared desktop and T3 checks, storage recovery, and signed delivery.
+HomeBox, multi-node Proxmox, and kiosk qualification are deferred to a later
 release.
 
-Bare-metal installation needs a disposable physical Debian host. HomeBox
-certificate issuance and renewal need a public test hostname with reachable
-ingress. Authenticated T3 provider, Connect and native-client cases need
-disposable accounts and compatible clients. Stable publication also requires
-the release owner's identifier and asset sign-off.
+Bare-metal installation needs a disposable physical Debian host.
+Authenticated T3 provider, Connect and native-client cases need disposable
+accounts and compatible clients. Stable publication also requires the
+release owner's identifier and asset sign-off.
 
 ### Stable qualification matrix
 
@@ -510,7 +509,7 @@ candidate.
 | PVE-01 | Multi-node Proxmox | Install and rerun on multiple nodes of a disposable cluster, including separate `/run/lock` and `/var/lib` filesystems. Confirm lock exclusion and guest operations across nodes. This does not qualify standalone maintenance, storage-specific health, interrupted updates, guest evacuation, unavailable backup targets, or isolated restore; see [Proxmox operations](operations/proxmox.md). | **Deferred** to a later release |
 | STO-02 | NAS, Samba, Gogs, and Syncthing | Qualify setup/reruns, boot ordering, missing mounts, identity preservation, and service-user access on disposable storage. | **Pass** for RC 6 on a Debian 13 VM. Fresh setup, rerun, reboot, failing data mount, service recovery, identity and directory access, and authenticated Samba read/write passed. |
 | STO-03 | Storage failure and restoration | Cause sync and scrub failures with disposable data; verify the failure is reported and exercise the documented restore path. A successful mirror alone is not recovery evidence. | **Pass** for `v2.0.0-rc.6` on a Debian 13 VM. Missing backup storage blocked sync, and parity failure protected the mirror until verified restore. |
-| APP-01 | HomeBox lifecycle | On a disposable amd64 Debian VM, test reboot and mounted-data recovery; certificate issuance/renewal and firewall reachability; browser login, items, attachments, and WebSockets; setup rerun, upgrade rollback, and full restore. | **Not run** in full. RC 6 passed fresh mounted setup, rerun, reboot, mount-failure recovery, browser workflows and verified archive restore. Upgrade rollback remains open. Public certificate issuance, renewal, and firewall reachability require a disposable public HTTPS endpoint. |
+| APP-01 | HomeBox lifecycle | On a disposable amd64 Debian VM, test reboot and mounted-data recovery; certificate issuance/renewal and firewall reachability; browser login, items, attachments, and WebSockets; setup rerun, upgrade rollback, and full restore. | **Deferred** to a later release. RC 6 evidence covers mounted setup, reboot, mount-failure recovery, browser workflows and archive restore. Public HTTPS and upgrade rollback remain open. |
 | CICD-01 | Signed webhook builds, delivery and rollback | Submit a signed webhook and verify the resulting artifact. Separately authorize delivery of that artifact to an explicitly enrolled target and check its health. Force an unhealthy activation and confirm the previous working release is restored and the failure is reported. Automatic webhook-to-target delivery is deferred. | **Pass** for `v2.0.0-rc.5` on a Debian 13 VM. Both HTTPS routes served the verified signed artifact. Nginx isolated the unhealthy replacement until rollback restored the working release. |
 | REL-03 | Prepublication identifiers and assets | Confirm namespace/name clearance, the matching wheel and release notes, planned source/download URLs, and documented upgrade instructions before tagging. | **Not run** in full. The RC 6 wheel and source URLs were verified. Stable name clearance and publication sign-off remain open. |
 
