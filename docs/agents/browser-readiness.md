@@ -50,7 +50,7 @@ use the developer-machine `make browser-test` workflow in
 [browser qualification](browser-testing.md). It records each engine separately
 and keeps intensive tests out of ordinary CI. Native Debian Firefox ESR has a
 separate release checklist there; neither runtime doctor establishes that
-coverage. Projects retain their own [browser policy](project-tooling.md#project-browser-tests).
+coverage. Projects retain their own [browser policy](project-manifests.md#project-browser-tests).
 
 ### Engine and context coverage
 

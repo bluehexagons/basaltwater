@@ -100,7 +100,7 @@ debug commands, and pkg-config module versions without launching graphics or
 project scripts. A selected baseline fails when required commands or host
 modules are missing. Missing project-owned SDL3/SDL3_image is reported in
 `project_bootstrap_required` and does not fail host readiness. Unsafe selection
-state remains an explicit failure. See [Debian native tooling](../agents/project-tooling.md#debian-native-game-development).
+state remains an explicit failure. See [Debian native tooling](../agents/project-native-builds.md#debian-native-game-development).
 Absent optional toolchains do not fail the capability.
 `--capability t3code` checks the managed service, native runtime, pairing helper,
 endpoint, provider authentication, Git identity and credential helper, and the

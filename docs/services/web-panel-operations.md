@@ -42,7 +42,7 @@ basaltw setup agent_vm sender.example agent --codex \
 
 To disable receiving, patch with
 `--web-panel --ssl --no-web-panel-notification-ingest`. For token rotation and
-the API contract, see the [web panel reference](web-panel-reference.md#notification-ingest).
+the API contract, see the [web panel reference](web-panel-events-reference.md#notification-ingest).
 See [Notifications](notifications.md) for event meaning, delivery levels, and
 retries.
 

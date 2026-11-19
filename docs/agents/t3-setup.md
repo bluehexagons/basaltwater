@@ -7,7 +7,7 @@ profiles. The retired desktop AppImage installation is not managed.
 
 For an existing CachyOS KDE workstation, use the limited local profile described
 in the [CachyOS guide](../workstations/cachyos.md). Choose the native `t3code-bin` package with
-`--t3code-desktop` using the [desktop installer example](../workstations/cachyos.md#install-with-t3-code-desktop),
+`--t3code-desktop` using the [desktop installer example](../workstations/cachyos-install.md#install-with-t3-code-desktop),
 or the [managed web service](../workstations/cachyos.md#t3-code-web-service-host-locally-or-on-a-trusted-lan)
 for loopback access, direct private-LAN pairing, and optional T3 Connect.
 The two setup flags are mutually exclusive and can be switched on later runs;

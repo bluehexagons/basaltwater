@@ -7,7 +7,7 @@ CachyOS/Arch repositories and AUR recipes on 2026-09-27. Versions below are not
 pinned: full distro updates remain the owner's responsibility.
 
 Choose your software before the first setup. Add these flags after
-`--local-setup agent_cachyos` in the [fish installer](cachyos.md#quick-start),
+`--local-setup agent_cachyos` in the [fish installer](cachyos-install.md#quick-start),
 or preview the complete selection if you installed only the launcher:
 
 ```fish

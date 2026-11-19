@@ -381,6 +381,6 @@ This native ESR/deployment record remains a manual release requirement; the
 automated local suite never marks it complete.
 
 For projects created with Basaltwater, follow the
-[project browser policy](project-tooling.md#project-browser-tests). Agent runtime
+[project browser policy](project-manifests.md#project-browser-tests). Agent runtime
 selection and opt-in Firefox MCP registration are described in
 [browser automation](browser-automation.md#verification).

@@ -33,7 +33,7 @@ Remove `--dry-run` from the patch example to apply it.
 
 ## Existing CachyOS KDE workstation
 
-After [installing the launcher](../workstations/cachyos.md#install-with-t3-code-desktop), run
+After [installing the launcher](../workstations/cachyos-install.md#install-with-t3-code-desktop), run
 these from your local desktop terminal as yourself:
 
 ```bash
@@ -114,7 +114,7 @@ can limit the evidence. Invalid command-line selectors exit `2` before collectio
 | Configure signed builds | [Signed webhook builds](../services/webhook-builds.md) |
 | Configure shares, sync, parity, or backups | [Storage and data guides](../storage/README.md) |
 | Provision or operate a coding VM | [Agent systems](../agents/README.md) |
-| Set up Codex and T3 Code desktop on CachyOS | [CachyOS desktop example](../workstations/cachyos.md#install-with-t3-code-desktop) |
+| Set up Codex and T3 Code desktop on CachyOS | [CachyOS desktop example](../workstations/cachyos-install.md#install-with-t3-code-desktop) |
 | Choose a headless, full-capability, approval-panel, or hardened agent VM | [Agentic VMs](../agents/agentic-vms.md) |
 
 ## Safe operating habits

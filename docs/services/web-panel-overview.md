@@ -73,7 +73,7 @@ Other agent runtimes expose diagnostics without prompt forms. T3 exposes its
 workspace entry without requiring Codex. Independent task worktrees require
 selected, installed Git. Dashboard
 notifications require ingest; certificate help requires gateway metadata.
-Empty service/access sections are omitted. See [feature discovery](web-panel-reference.md#feature-discovery-and-navigation)
+Empty service/access sections are omitted. See [feature discovery](web-panel-status-reference.md#feature-discovery-and-navigation)
 for the full availability contract.
 
 Agent tools and Admin controls group actions by task, with explicit effects
@@ -176,7 +176,7 @@ trust and scans retain their explicit controls or page-load behavior. Polling
 never starts a scan, prompt or privileged action. With JavaScript disabled,
 the same initial readings, timestamps, navigation and forms remain available;
 use page refresh links for newer snapshots. See the
-[status API contract](web-panel-reference.md#passive-status-api) for budgets and
+[status API contract](web-panel-status-reference.md#passive-status-api) for budgets and
 freshness thresholds.
 
 ## Storage usage diagnostic

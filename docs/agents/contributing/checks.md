@@ -27,6 +27,11 @@ Choose all affected domains; shared configuration, validators, plugin compositio
 test infrastructure, or uncertain dependencies warrant a full local run.
 Use `make check-ci` for that broad validation or when CI is unavailable.
 
+The installer suite reads and executes the published download and quick-start
+examples. When moving them, update the source paths in
+[`tests/test_install_script.py`](../../../tests/test_install_script.py) and run
+`make test TEST=tests.test_install_script` with fish on `PATH`.
+
 Use the project's environment rather than installing development dependencies
 into CachyOS's or Debian's system Python.
 

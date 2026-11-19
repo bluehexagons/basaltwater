@@ -130,7 +130,7 @@ in your browser's local time. Hover over a time to see the sender's original
 value. Older evidence without an offset remains in the sender's local time.
 
 For enablement, disablement, rotation, retention, and API limits, see
-[Web panel notification ingest](web-panel-reference.md#notification-ingest).
+[Web panel notification ingest](web-panel-events-reference.md#notification-ingest).
 
 > Treat the full fragment-bearing URL as a credential. Do not paste it into
 > tickets, logs, or shared terminal output. It remains in the sender's saved

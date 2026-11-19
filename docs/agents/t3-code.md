@@ -1,7 +1,7 @@
 # T3 Code server
 
 Use this guide for the managed Debian web service. For an existing CachyOS KDE
-workstation, see [CachyOS T3 setup](../workstations/cachyos.md#install-with-t3-code-desktop).
+workstation, see [CachyOS T3 setup](../workstations/cachyos-install.md#install-with-t3-code-desktop).
 For Windows or WSL, see [workstation setup](../workstations/windows.md).
 
 In an active T3 session, use its instructions and live tool schemas. Check the

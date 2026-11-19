@@ -110,7 +110,7 @@ It preserves the human account and desktop, leaves OS updates to CachyOS/the
 user, and does not support CachyOS VM/container provisioning or server setup.
 
 For your first Codex setup with the native T3 Code desktop app, use the
-[complete CachyOS installer example](docs/workstations/cachyos.md#install-with-t3-code-desktop).
+[complete CachyOS installer example](docs/workstations/cachyos-install.md#install-with-t3-code-desktop).
 The guide uses fish, CachyOS's default shell, and walks through selecting tools,
 installing the launcher, provider login, and checking the first coding task.
 

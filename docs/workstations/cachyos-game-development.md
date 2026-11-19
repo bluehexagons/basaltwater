@@ -9,7 +9,7 @@ rolling development toolchain need not reproduce a release SDK.
 For game-specific layouts and commands, use the optional
 [Antistatic integration](../integrations/antistatic/cachyos.md).
 
-For a first installation, use the [fish installer](cachyos.md#quick-start)
+For a first installation, use the [fish installer](cachyos-install.md#quick-start)
 with the options below after `--local-setup agent_cachyos`. If the launcher is
 already installed, preview your first development selection in fish as the
 normal desktop account, without `sudo`:
@@ -150,7 +150,7 @@ scripts expect siblings. Use explicit paths for managed worktrees and let each
 repository's instructions own its maintenance. Repeated `--repo HTTPS_URL`
 clones missing repositories after local authentication; setup retains existing
 checkouts without pulling, installing dependencies or running project scripts.
-See [workspace conventions](../agents/project-tooling.md#related-checkouts-and-host-roles).
+See [workspace conventions](../agents/project-manifests.md#related-checkouts-and-host-roles).
 
 Use a project's documented Electron launch for native file dialogs and sync.
 Browser authoring remains useful when a browser can reach its local URL.
@@ -183,9 +183,9 @@ context reports a recognized software renderer; it does not change drivers or
 qualify a separate application's context. Use `basaltw agent resources --json`
 for the current process's affinity, visible inherited cgroup limits and
 timestamped pressure.
-See [native context checks and compiler caching](../agents/project-tooling.md#opt-in-native-graphics-context-check)
+See [native context checks and compiler caching](../agents/project-native-builds.md#opt-in-native-graphics-context-check)
 for shared Debian/CachyOS recipes. Existing container engines can use the
-[storage/preflight commands](../agents/project-tooling.md#container-storage-and-sdk-headroom)
+[storage/preflight commands](../agents/project-container-builds.md#container-storage-and-sdk-headroom)
 without adding container provisioning to this workstation profile.
 `agent manifest PATH --capability workstation --json` reports Podman/Docker
 PATH availability and any project-declared `container_engines` recipe wrapper,

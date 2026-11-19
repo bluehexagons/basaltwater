@@ -63,7 +63,7 @@ details; **Open Proxmox VE** opens the full panel. A separate root collector
 publishes a sanitized read-only snapshot; the web worker remains unprivileged
 and cannot control guests. Host metrics, services, mounted storage, scheduled
 jobs and Proxmox service/firewall diagnostics are also available. See the
-[web panel reference](../services/web-panel-reference.md#host-snapshot) for
+[web panel reference](../services/web-panel-status-reference.md#host-snapshot) for
 scope, collection limits and troubleshooting. Rerun panel setup on an existing
 installation to install the updated service and collector. Dashboard refreshes
 read only the cache; guest management uses Proxmox's own UI and login.

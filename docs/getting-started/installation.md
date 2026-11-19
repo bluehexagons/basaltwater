@@ -28,7 +28,7 @@ installs missing tools through pacman/upstream installers, and leaves OS
 updates and desktop configuration to you. The Debian examples below configure
 a broader host stack and do not apply to CachyOS.
 For Codex with T3 Code's native desktop package, follow the
-[complete CachyOS desktop installer example](../workstations/cachyos.md#install-with-t3-code-desktop).
+[complete CachyOS desktop installer example](../workstations/cachyos-install.md#install-with-t3-code-desktop).
 It uses `--local-setup agent_cachyos --t3code-desktop` with `--codex` as the desktop user,
 without running the installer under `sudo`.
 

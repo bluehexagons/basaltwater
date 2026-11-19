@@ -40,7 +40,7 @@ shared-layer savings. Use `agent containers preflight --engine podman
 copy/reserve assumptions; it is not a guarantee. Diagnose without pruning.
 Cleanup requires task ownership and separate authorization; preserve SDK caches
 and all referenced workloads. Larger storage or migration is a separate action.
-See [container headroom](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/project-tooling.md#container-storage-and-sdk-headroom).
+See [container headroom](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/project-container-builds.md#container-storage-and-sdk-headroom).
 
 For useful local cleanup candidates, run `basaltw agent storage inspect --json`.
 It measures fixed cache, Trash, temporary, log, runtime and project roots using
