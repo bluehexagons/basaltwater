@@ -141,6 +141,26 @@ wheel on Python 3.13. The branch test workflow also passed.
   retention gaps persisted after a later healthy scan. The certificate CLI
   and panel agreed for all five trust cases, including public trust, a
   missing CA and hostname mismatch.
+- A clean Debian 13 `server_lite` VM mounted Proxmox-backed data and backup
+  disks with a writethrough LVM cache. Samba accepted an authenticated write
+  and read. An unavailable backup mount blocked sync, and parity failure
+  preserved the healthy mirror until restore recovered the bytes and file
+  metadata. A failing data mount blocked Samba, Gogs, Syncthing and HomeBox.
+  All four recovered when the mount was restored.
+- A SIGKILL during disk addition interrupted setup just after it mounted
+  the extra disk. A normal rerun refused to proceed and kept the original
+  operation marker. The operator verified the original state, stopped the
+  partial mount and archived the failed operation before retrying. A fresh
+  setup reused the added volume, its filesystem UUID and a file written
+  before interruption. The original Proxmox bindings, mounts, LVM cache
+  identity and data stayed intact, and the mounted services and their
+  identities survived reboot.
+- The mounted HomeBox deployment passed browser login, inventory, attachment
+  and WebSocket checks. Its CLI archive recovered a deliberately damaged
+  attachment with the original bytes, ownership and mode. Health passed
+  after restore. A burst of fixture connections hit the guest SSH rate
+  limit. The first attempt left the damaged attachment and backup available.
+  A new restore succeeded once SSH admitted connections again.
 
 #### `v2.0.0-rc.5`
 
@@ -486,11 +506,11 @@ candidate.
 | SEC-01 | Required audit coverage | On a required-audit Debian profile, verify `/usr/sbin/auditctl -s`, managed rules from `auditctl -l`, a fresh healthy panel snapshot, and security-monitor collection. Confirm missing tools, stopped auditd, or missing rules are surfaced as source failures. | **Pass** for `v2.0.0-rc.6` on a Debian 13 `server_web` VM |
 | TLS-01 | Certificate trust reporting | Exercise a self-signed endpoint with its configured CA, a publicly trusted endpoint, missing CA material, and failed TLS verification. Confirm `basaltwater-web ca --json` and the panel never claim public trust without verification. | **Pass** for `v2.0.0-rc.6` on a Debian 13 `server_web` VM |
 | SEC-02 | Security-log retention gaps | Move audit/journal cursors beyond retained source data and verify the missing interval is reported rather than silently treated as clean. If gap detection remains open, record the release risk decision, mitigation, and owner; do not imply that unobserved intervals were checked. | **Pass** for `v2.0.0-rc.6` for gaps before the oldest retained audit, Fail2ban and SSH entries on a Debian 13 `server_web` VM |
-| STO-01 | Disk and LVM identity | Exercise mixed retained/new layouts, provider and guest reruns, reboot, missing disks, and interrupted setup. Confirm existing persistent identities are preserved and new identities use Basaltwater names. | **Not run** in full. RC 5 preserved the LVM cache and persistent disk identities across reruns, reboot, and a detached disk and reattachment. A known legacy serial was retained and a changed identity was refused. Interrupted disk setup remains open. |
+| STO-01 | Disk and LVM identity | Exercise mixed retained/new layouts, provider and guest reruns, reboot, missing disks, and interrupted setup. Confirm existing persistent identities are preserved and new identities use Basaltwater names. | RC 6 passed interrupted disk addition, explicit recovery, rerun and reboot with the original and added disk identities intact. The detached-disk and retained legacy serial cases passed on RC 5. |
 | PVE-01 | Multi-node Proxmox | Install and rerun on multiple nodes of a disposable cluster, including separate `/run/lock` and `/var/lib` filesystems. Confirm lock exclusion and guest operations across nodes. This does not qualify standalone maintenance, storage-specific health, interrupted updates, guest evacuation, unavailable backup targets, or isolated restore; see [Proxmox operations](operations/proxmox.md). | **Deferred** to a later release |
-| STO-02 | NAS, Samba, Gogs, and Syncthing | Qualify setup/reruns, boot ordering, missing mounts, identity preservation, and service-user access on disposable storage. | **Not run** in full on RC 5. Mounted service reruns, boot ordering, failing data mount, identity and directory access, and authenticated Samba read/write passed. Fresh setup passed on RC 3. |
-| STO-03 | Storage failure and restoration | Cause sync and scrub failures with disposable data; verify the failure is reported and exercise the documented restore path. A successful mirror alone is not recovery evidence. | **Pass** for `v2.0.0-rc.5` on a Debian 13 VM. Missing backup storage blocked sync, and parity failure protected the mirror until verified restore. |
-| APP-01 | HomeBox lifecycle | On a disposable amd64 Debian VM, test reboot and mounted-data recovery; certificate issuance/renewal and firewall reachability; browser login, items, attachments, and WebSockets; setup rerun, upgrade rollback, and full restore. | **Not run** in full. RC 5 passed mounted setup reconciliation, reboot, browser login and access, WebSocket, and verified archive restore. Public certificate issuance, renewal, and firewall reachability require a disposable public HTTPS endpoint. |
+| STO-02 | NAS, Samba, Gogs, and Syncthing | Qualify setup/reruns, boot ordering, missing mounts, identity preservation, and service-user access on disposable storage. | **Pass** for RC 6 on a Debian 13 VM. Fresh setup, rerun, reboot, failing data mount, service recovery, identity and directory access, and authenticated Samba read/write passed. |
+| STO-03 | Storage failure and restoration | Cause sync and scrub failures with disposable data; verify the failure is reported and exercise the documented restore path. A successful mirror alone is not recovery evidence. | **Pass** for `v2.0.0-rc.6` on a Debian 13 VM. Missing backup storage blocked sync, and parity failure protected the mirror until verified restore. |
+| APP-01 | HomeBox lifecycle | On a disposable amd64 Debian VM, test reboot and mounted-data recovery; certificate issuance/renewal and firewall reachability; browser login, items, attachments, and WebSockets; setup rerun, upgrade rollback, and full restore. | **Not run** in full. RC 6 passed fresh mounted setup, rerun, reboot, mount-failure recovery, browser workflows and verified archive restore. Upgrade rollback remains open. Public certificate issuance, renewal, and firewall reachability require a disposable public HTTPS endpoint. |
 | CICD-01 | Signed webhook builds, delivery and rollback | Submit a signed webhook and verify the resulting artifact. Separately authorize delivery of that artifact to an explicitly enrolled target and check its health. Force an unhealthy activation and confirm the previous working release is restored and the failure is reported. Automatic webhook-to-target delivery is deferred. | **Pass** for `v2.0.0-rc.5` on a Debian 13 VM. Both HTTPS routes served the verified signed artifact. Nginx isolated the unhealthy replacement until rollback restored the working release. |
 | REL-03 | Prepublication identifiers and assets | Confirm namespace/name clearance, the matching wheel and release notes, planned source/download URLs, and documented upgrade instructions before tagging. | **Not run** in full. The RC 6 wheel and source URLs were verified. Stable name clearance and publication sign-off remain open. |
 
