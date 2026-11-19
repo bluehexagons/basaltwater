@@ -7,12 +7,9 @@ metadata:
 
 # T3 preview testing
 
-Follow the active session's browser policy and tool schemas. Use the
-[shared preview reference](../basaltwater-project-development/references/collaborative-preview.md)
-for host setup, browser-origin checks, and fallback.
-
-When policy permits fallback, use a ready configured desktop browser or the
-project's existing browser tests. Check the desktop skill and readiness
-before launch or input. This profile supplies preview guidance and relies on
-project-provided or separately configured alternatives. Verify actual
-behavior and report the browser, origin, and any coverage gap.
+Follow the active session's browser policy and live schemas. Open the [shared
+preview reference](../basaltwater-project-development/references/collaborative-preview.md)
+for host setup, browser origin, trust, and permitted fallback. Use a ready
+configured alternative or project browser tests only when the session permits
+it. Check desktop readiness before launch or input. Report the browser, origin,
+verified behavior, and coverage gaps.

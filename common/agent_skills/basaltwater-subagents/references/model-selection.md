@@ -1,9 +1,8 @@
-# Cost-aware subagents and project learning
+# Cost-aware subagent selection
 
 This workflow applies to Debian agent VMs, CachyOS workstations, and Ubuntu
-under Windows Subsystem for Linux (WSL). The commands below use Bash or fish
-syntax; run them in the corresponding Linux shell and use the actual project
-path for that environment.
+under Windows Subsystem for Linux (WSL). For CLI commands that maintain
+project evaluation records, see [project model policy](model-policy.md).
 
 ## Subscription cost and performance
 
@@ -136,156 +135,8 @@ solely to satisfy a schema or treat the selector's API estimate as a subscriptio
 recommendation. Changing selector roles or billing support is a separate code
 change requiring validation.
 
-## Project policy and outcomes
+## Choose a topic
 
-The parent owns `.basaltwater/agent-models.json` and
-`.basaltwater/agent-model-results.json` in the **primary checkout**. Commands
-resolve linked worktrees to that same checkout. Review and commit these non-secret
-project files within the user's authorized scope; workers report observations
-to the parent rather than concurrently edit them.
-
-If the project ignores `.basaltwater/`, inspect its ignore rules before staging.
-When evidence should travel with the repository, allow only these two files;
-installation-channel state and unrelated local data must stay ignored. For
-example, put these rules after an existing directory exclusion in the project's
-`.gitignore`, within the authorized scope:
-
-```gitignore
-!/.basaltwater/
-/.basaltwater/*
-!/.basaltwater/agent-models.json
-!/.basaltwater/agent-model-results.json
-```
-
-Stage the two reviewed files explicitly. Do not force-add the whole directory.
-
-```bash
-basaltw agent models init ~/repos/PROJECT --json
-basaltw agent models recommend ~/repos/PROJECT classification --available SESSION_MODELS.json --json
-basaltw agent models record ~/repos/PROJECT --task classification --model gpt-6-luna --effort medium --outcome accepted --validation 'Parent checked every category against the agreed rules' --json
-basaltw agent models report ~/repos/PROJECT --json
-```
-
-`init` creates a starter policy and refuses to overwrite an existing one. Its
-catalog is a dated seed that requires review, not a live availability assertion.
-`--available` must describe this session's actual delegation choices:
-
-```json
-[
-  {"id": "gpt-6-luna", "efforts": ["low", "medium", "high", "xhigh"]},
-  {"id": "gpt-6.2-sol", "efforts": ["low", "medium", "high", "xhigh"]}
-]
-```
-
-The command also accepts Codex's public `models_cache.json` shape, with `slug`,
-`visibility`, and `supported_reasoning_levels`. That cache describes terminal
-Codex selection; use it only when it represents the task's actual interface.
-Do not substitute a broad API model list for a subagent tool's availability.
-
-In a T3 thread, `--available` also accepts the JSON payload from
-`orchestrator_capabilities`. Save the structured payload with its `providers`
-array in a private local file. If several Codex instances can run children,
-retain only the intended instance in that array. Use the target environment's
-result for linked work. A filtered search compares only the returned models.
-The selector reads `reasoningEffort` choices and skips models whose advertised
-service tiers exclude `default`. When applying a Standard recommendation with
-`delegate_task`, set `reasoningEffort` to the recommended value and explicitly
-set `serviceTier` to `default` when offered. Check the effective settings before
-launching if the tool omits a tier choice.
-
-Only models with fresh verified metadata and a supported safe effort are
-eligible. The task's requested effort is a minimum; shipped bounded Luna task
-classes start at `medium`, while broad coding and review start at Sol `high`.
-Existing project policies and explicit operator selections are preserved.
-A provisional setting uses the lowest supported safe effort at or above the
-task minimum. Proven settings at higher supported efforts also compete using
-their own evidence and costs, so
-successful `high` results are not hidden by an unsuccessful `medium` default.
-Untested higher efforts are not automatic retries. Change the task minimum only
-after reviewing its needs. Inspect the returned effort and cost before launch.
-No eligible choice returns nonzero and `selection: null`.
-
-`accepted` means the parent accepted the initial result after validation;
-`reworked` means correction was needed; `failed` includes unusable results and
-escalations. Record failures as well as successes. Use `--attempts`, `--seconds`,
-and `--rework-minutes` when observed. `--cost-usd` is optional: leave unavailable
-billing unknown, including subscription sessions without dollar telemetry. Also
-leave unobserved runtime and parent rework unknown; explicitly record zero when
-you checked and found no rework. Reports expose the known rework subtotal and
-sample count, and return a null total when observations are incomplete.
-Optional telemetry omitted from saved outcomes is also unknown. Invalid or
-overflowing numeric values produce a validation error; inspect the project data
-and correct it without replacing history or inventing measurements.
-Never invent a cost or treat missing cost as zero. Each cost should cover all
-attempts represented by that outcome; record another model's escalation as
-another outcome. Validation should describe acceptance evidence without prompts,
-credentials, or confidential source excerpts.
-
-Results remain separate by task class, evaluation version, exact model ID, and
-effort. Set task-specific acceptance criteria and update its `evaluation` value
-when those criteria, prompts, harness behavior, platform-dependent checks, or the
-workload materially change. Separate Debian-specific and CachyOS-specific task
-classes when their acceptance requirements differ. Old versions remain visible
-in `report` but do not drive current choices.
-Split easy file classification from ambiguous classification rather than average
-them into a misleading score.
-
-For bounded Luna work, assign one owner and state the deliverable, owned files
-or checks, and acceptance criteria. Active examples include a small fix with
-focused tests, a named test selection, or validation of an app script/export.
-For script/export validation, return the process status and only bounded,
-actionable failure excerpts. Do not let workers compete for desktop or app
-session control. A timeout does not prove a desktop mutation failed: inspect
-completion and state before deciding what to do next; never blindly relaunch it.
-
-## Adapt to newly available models
-
-At the start of a delegation session, and when access or model options change:
-
-1. Inspect the actual exposed model IDs and supported efforts. Export a fresh
-   availability file for `recommend`; availability alone says nothing about price
-   or suitability.
-2. Act on `uncatalogued_models`, `stale_models`, and `refresh_required`: inspect
-   current official OpenAI metadata, access, reasoning support, and standard
-   pricing. Add or revise the relevant project catalog entries with their exact
-   ID, OpenAI provider, Luna/Sol/Astra role, safe efforts, rates, source URL, and
-   `verified_on` date. Do not guess a new model's role from its name or reset the
-   date without checking its source. Rerun the recommendation after refresh.
-3. Evaluate a promising candidate on representative bounded tasks using the
-   same inputs and acceptance criteria as the incumbent. Include tool use,
-   format adherence, correctness, runtime, retries, and parent rework. Keep a
-   proven incumbent while gathering evidence; an expensive candidate needs a
-   concrete reason, especially Astra.
-4. Record reviewed outcomes and compare results. The defaults require at least
-   three recent samples with 80% initial acceptance before an alternative is
-   treated as proven. These small-sample thresholds are configurable project
-   conventions, not statistical proof. Use more evidence for consequential work.
-5. Promote a candidate when its observed effectiveness and total cost justify
-   it. Exact model IDs keep a new release from inheriting an older release's
-   success history. Roll back a regression and retain the failed observations.
-
-The selector chooses the cheapest proven setting that meets the project quality
-threshold. If all proven choices have complete cost observations, it compares
-total observed cost divided by initially accepted outcomes, including failed
-attempt costs. Otherwise it compares standard token-cost estimates consistently
-for every candidate using the task's expected input/output tokens. Estimates
-omit variable reasoning, caching, context surcharges, tools, and subscription
-accounting; review the reported runtime and rework as well. Sparse alternatives
-are returned as `trial_candidates`, not silently promoted over proven choices.
-
-With no proven setting, a provisional choice starts at the task's family or a
-stronger available family; poorly performing settings with enough evidence are
-excluded. An optional catalog `preferred: true` breaks ties between provisional
-candidates at the same estimated cost and effort. The seed uses it for GPT-6.2
-Sol and keeps GPT-6.1 Sol available for older sessions. Reviewed settings keep
-their evidence-based ranking. Astra requires `--astra-reason` to explain the
-expected benefit.
-The default catalog lifetime is 30 days and the evidence window is 90 days.
-Recheck sooner after releases, deprecations, pricing/access changes, or repeated
-failures. Preserve older evidence for history while checking recent results.
-
-New IDs and revised project defaults need no Basaltwater release. Basaltwater
-still maintains the shipped seed and workflow when provider schemas, role
-assumptions, or tool interfaces change. Discovery and representative evaluation
-are agent responsibilities; the local selector does not contact a provider,
-run an evaluation, spend money, or automatically switch a session.
+<a id="project-policy-and-outcomes"></a>
+<a id="adapt-to-newly-available-models"></a>
+- [Project model policy and outcomes](model-policy.md) Initialize, recommend, record results, and qualify new models.

@@ -15,6 +15,11 @@ for catalog inspection; presence does not prove session access.
 
 ## Choose and brief a worker
 
+For large documentation reviews, give each worker a bounded file group and
+request findings, coverage limits, and paths. GPT-6 Luna at medium reasoning
+and Standard service is a starting point when the live catalog exposes it.
+Use separate passes for broad audits and final integration review.
+
 Use the live session's provider/model catalog and option descriptors. Prefer
 available subscription usage; verify authentication, quota, and whether a model
 requires separately billed credits. Compare acceptance, latency, retries and
@@ -56,6 +61,6 @@ owns combined validation, model records, and cleanup.
   and runtime limits. Honor disabled skills; paths do not bypass selection.
 - **T3 schedule migration or recovery:** read [scheduling](references/t3-scheduling.md).
 - **Project model policy, new models, or outcome tracking:** read
-  [model selection and learning](references/model-selection.md). Review existing
+  [project model policy](references/model-policy.md). Review existing
   project policy before choosing workers. The local `agent models` commands
   record/recommend; they do not discover online models or launch agents.

@@ -43,12 +43,21 @@ keep private infrastructure and business details outside Git; see the
 
 ## Documentation conventions
 
-Guides lead with the task, use short procedures and lookup tables, and link to
-a detailed reference instead of duplicating it. The category indexes own the
-document maps, so add a new guide to its topic index and this page when the
-topic itself is new.
+Keep entrypoints short enough to scan before opening a procedure. Category
+indexes route by task. Split long pages where a reader can choose a complete
+procedure or reference without loading adjacent material. Keep prerequisites,
+authority, and recovery boundaries with the procedure that needs them. When
+moving a section, preserve incoming anchors and use direct links in new material.
 
-Plans state current scope, next actions and acceptance. Update them in place;
-keep progress/change logs and raw test evidence outside public planning pages.
-The [coverage map](plans/testing-coverage.md) summarizes qualification limits,
-and the release matrix remains the exact-candidate publication gate.
+Skill entrypoints carry triggers, prerequisites, and essential boundaries.
+Ship optional procedures as relative references in the same bundle. Check
+co-installation before linking to another bundle. See [skill maintenance](agents/agent-skill-maintenance.md).
+
+Keep volatile versions and model settings near their source or a dated
+verification. Use installed CLI help and the live provider catalog for
+execution. Plans state scope, next action, and acceptance. Keep dated summaries
+in [testing evidence](testing/evidence.md) and raw operational evidence private.
+The [coverage map](plans/testing-coverage.md) gives known limits and the
+[release matrix](release-qualification.md) governs exact-candidate publication.
+
+Run `make docs-check` before committing link or command reference changes.

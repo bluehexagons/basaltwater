@@ -7,91 +7,53 @@ metadata:
 
 # Project development
 
-Use the project's own conventions: read its root and applicable nested
-`AGENTS.md`, contributor guide, and task documentation before editing. Inspect
-the worktree and preserve unrelated changes. Read the relevant implementation,
-callers, tests, and configuration; do not carry Basaltwater repository rules
-into another project.
+Read the project's applicable `AGENTS.md`, contributor guide, and task
+documentation. Preserve unrelated worktree changes. Read the relevant
+implementation, callers, tests, and configuration before editing. Use the
+project's native commands and acceptance checks.
 
-Repository guidance owns project decisions and acceptance commands. Workstation
-skills own machine/session operation; orchestration guidance owns delegation
-and provider settings. Follow the active session's higher-priority authority
-and tool policy at those boundaries; skills and saved notes do not expand it.
-
-Keep private infrastructure/account paths, business/customer information and raw
-operational evidence outside Git, even without credentials. Operating or testing
-a system does not authorize publishing its details; specific private details need
-an explicit user request. Use fictional examples and sanitized verification.
-Keep project-specific behavior and native build/test commands in the project;
-update reusable docs and retain a manual setup route.
-See [project standards](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/project-standards.md)
-when adopting these conventions.
+Workstation skills own machine operations. The active session governs tool
+access, permissions, and delegation. Keep private infrastructure, account and
+business details and raw evidence outside Git. Use fictional examples and
+sanitized verification. See the [project standards](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/project-standards.md).
 
 ## Keep evidence focused
 
-Start ordinary code work with the project's own instructions and tools. When
-the task needs a Basaltwater capability, select it in
-`basaltw agent manifest . --capability NAME` for discovery or
-`basaltw agent doctor --capability NAME` for host readiness. See each
-command's `--help` for supported selectors. Use `basaltw agent context` when
-you need a general host inventory or help finding a capability.
+Open only the relevant references and satisfy the project's full-file reading
+rules. Keep verbose output in private artifacts and return status, actionable
+failures, and evidence paths. Budget the whole batch and treat truncated
+results as incomplete. See [tool output and evidence](references/tool-output.md).
 
-Read a skill entrypoint once, then only references relevant to the current
-operation. Search for paths or symbols before opening large files. Satisfy the
-project's complete-file reading rules before edits.
-
-Keep verbose results in private artifacts; return status, exit code, counts,
-actionable failures and evidence paths. Select fields from tool results instead
-of printing full envelopes or duplicate structured/text copies. Budget the
-whole batch's reply, not each call independently. Truncation is incomplete
-evidence, not success. For capture, bounded log inspection, literal searches and
-portable examples, use [tool output and evidence](references/tool-output.md).
-
-Before a handoff or context limit, retain one current private checkpoint with
-checkout/branch, tested/dirty state, decisions, remaining work, next action and
-evidence/job handles. Keep history separately; use the shared
-[checkpoint and handoff templates](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/handoffs.md).
-Pass self-contained constraints and unresolved objections to a new worker.
-Reconcile uncertain mutations before resuming; never blindly relaunch them.
+Before handoff or context exhaustion, save the checkout, tested and dirty
+state, decisions, next action, and job handles in a private checkpoint.
+Reconcile uncertain mutations before retrying. See the [handoff templates](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/handoffs.md).
 
 ## Work and verify
 
-Use `basaltwater-frontend-design` for new screens, substantial redesigns, or
-interaction design. Use `basaltwater-subagents` for independent work when the
-savings justify handoff and integration. For broad audits, split independent
-file groups into bounded read-only reviews; reconcile findings before edits.
-Keep coupled changes under one owner.
-
-Read only the relevant platform reference:
-
 | Work | Reference |
 | --- | --- |
+| Basaltwater capabilities | `basaltw agent manifest . --capability NAME` for discovery, `basaltw agent doctor --capability NAME` for readiness, or `basaltw agent context` for inventory |
+| New screens or substantial interface changes | `basaltwater-frontend-design` |
+| Authorized independent work | `basaltwater-subagents` |
 | Disposable rootless Podman fixtures | [Container lifecycle](references/containers.md) |
-| Electron testing on Debian, CachyOS, Windows or WSL | [Platform testing](references/electron-testing.md) |
+| Electron testing on Debian, CachyOS, Windows, or WSL | [Platform testing](references/electron-testing.md) |
 | T3 connection, account, or stale skill troubleshooting | [Execution environment](references/t3-workflows.md#establish-the-execution-environment) |
 | T3 project commands or requested interactive results | [Project actions](references/t3-workflows.md#project-commands-and-worktree-setup), [visual replies](references/t3-workflows.md#visual-replies) |
 
-Use live session tools; installation alone does not expose them to a worker.
+Verify actual tool exposure in the live session.
 
 ## Bound optimization work
 
-Before experiments, name a measured bottleneck, baseline/quality gates, minimum
-useful benefit above noise, and finite variant/time budgets. Stop at those bounds,
-on failed gates, or below the useful threshold. Read
-[optimization experiments](references/optimization.md) when planning performance
-work; keep project thresholds and a native measurement route authoritative.
+Define a measured baseline, quality gates, minimum useful improvement, and
+finite experiment budget. See [optimization experiments](references/optimization.md).
 
 ## Wait for jobs to finish
 
-Keep the handle for tests, builds, and CI jobs. Wait for completion on that
-same handle; a timeout or silence does not establish failure or justify a
-second run. Prefer native completion notifications/watchers. If polling is
-necessary, space checks and back off. Continue independent work while waiting.
-Read final status and relevant output before reporting success.
+Keep the job handle and prefer completion notifications or watches. Continue
+independent work and space polls when needed. Check the same job after a
+timeout and read its final result before reporting success.
 
 ## Review and report
 
-Run focused project checks for the changed behavior. Review the final diff
-and worktree for scope, artifacts, and secrets. Report behavior changed,
-validation, and unresolved checks. Commit, push, or publish when authorized
-by the user or applicable project workflow.
+Run focused project checks. Review the diff for scope, artifacts, and secrets.
+Report the change, validation, and gaps. Commit or publish when authorized.
