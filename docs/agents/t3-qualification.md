@@ -46,12 +46,22 @@ passed. The database advanced from migration 96 to 102 and 0.1.10's preflight
 refused the downgrade. Earlier checks are in the [0.1.10](t3-releases/0.1.10.md),
 [0.1.9](t3-releases/0.1.9.md), and [0.1.8](t3-releases/0.1.8.md) records.
 
+In disposable Linux tests, Basaltwater's native preview resolver returned a
+loopback port that a T3 0.1.11 server relayed over an authenticated WebSocket.
+The server rejected the tunnel when started with the host setting off. The
+sparse worktree preflight agreed with a fresh Git sparse checkout and left the
+source checkout and Git configuration intact. The T3 0.1.11 worktree API
+created the predicted sparse checkout and rejected a revision with missing
+committed patterns. Native desktop and mobile rendering, thread setup actions,
+and live issue and PR operations require their own qualification.
+
 Use the relevant shared reference instead of copying upstream UI/tool details:
 
 | Work | Integration boundary |
 | --- | --- |
 | Delegation, linked environments and worktrees | Follow injected session instructions and the [orchestration reference](../../common/agent_skills/basaltwater-subagents/references/t3-orchestration.md). T3 owns thread/worktree binding; shell directory changes do not rebind a thread. Linked environments require deliberate enrollment and apply caller/peer access ceilings. |
 | Schedules and PR monitoring | Use [native scheduling](../../common/agent_skills/basaltwater-subagents/references/t3-scheduling.md) and PR watches for T3-owned work. Independent Basaltwater tasks do not inherit T3 tools, preview or conversation. Choose one scheduler per job. |
+| Issues, PRs, and CI checks | Use the [issue-to-PR workflow](../../common/agent_skills/basaltwater-project-development/references/t3-issue-to-pr.md) for tracker context, authoring, and check results within the active connection's grants. |
 | Goals, resume, project actions and visual replies | Use the [shared workflow](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md). T3 supports goals for Codex/Claude/OpenCode and native stopped-thread continuation. Keep project commands canonical and inspect settle actions before cleanup. |
 | Pairing, Connect device approval and outside agents | Use [operations](../../common/agent_skills/basaltwater-t3code/references/operations.md) and upstream [device approval](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/remote-access.md#approve-new-devices). Initial relay configuration uses the [host workflow](../services/device-pairing.md#t3-connect-management). |
 | Additional providers and guest collaboration | Review [ACP Registry and local commands](../../common/agent_skills/basaltwater-t3code/references/operations.md#additional-providers) for provider ownership, or [guest links](../../common/agent_skills/basaltwater-t3code/references/operations.md#guest-links) for owner-approved collaboration on one thread. |
@@ -93,7 +103,7 @@ Consider the remaining reductions below when evolving the integration:
 | Ordinary prompts, schedules and PR monitoring | T3 schedules/webhooks and native PR watches; the panel repository starters have been removed | Host jobs that must operate independently of T3 and fixed storage operations |
 | Worktrees, scratch, captures and logs | T3's opt-in retention for its own data; native numbered-log expiry has no aggregate byte cap, so it does not fully replace Basaltwater cleanup | Basaltwater-owned worktrees, the 256 MiB rotated-log cap, runtime rollback protection, credential redaction, host pressure inventory and recovery |
 | Pairing and remote access | T3's native account linking, relay controls and Connect device approval; the duplicate portal console and root restart bridge have been removed | Direct/private-LAN enrollment, gateway TLS and source restrictions, other hosted services |
-| Browser and power management | T3 preview and native keep-awake behavior for T3 work | Explicit terminal-agent Playwright, application test suites, desktop access and host readiness |
+| Browser and power management | Native [T3 preview](browser-t3-preview.md#collaborative-preview-and-private-networks) for development ports and native keep-awake behavior for T3 work | Independently reachable HTTPS previews, terminal-agent Playwright, application test suites, desktop access and host readiness |
 | Updates and client documentation | T3's updater and tagged manuals; the panel updater has been removed | Initial installation, package ownership, setup reconciliation, security policy and failed-start recovery |
 
 Before retiring a duplicate, inventory its users and saved state, establish the

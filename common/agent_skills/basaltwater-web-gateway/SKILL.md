@@ -15,7 +15,7 @@ Nginx/firewall changes. Run as the configured owner without sudo.
 | --- | --- |
 | Publish or verify a built snapshot | [Static sites](references/static-sites.md) |
 | Start or restart a supervised live project | [Managed previews](references/previews.md) |
-| Expose an existing service or resolve its T3 URL | [Live forwards](references/forwards.md) |
+| Provide a separate HTTPS URL for an existing service | [Live forwards](references/forwards.md) |
 | Keep an already configured development site current after edits | [Refresh](references/refresh.md) |
 | Godot exports | Installed Godot web skill |
 

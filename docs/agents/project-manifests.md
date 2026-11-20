@@ -35,6 +35,30 @@ See [CachyOS game tooling](../workstations/cachyos-game-development.md) and
 Optional project layouts and release commands belong in the
 [integration guides](../integrations/README.md).
 
+## T3 Code project actions and worktrees
+
+Use the repository's `t3.json` to share actions through T3 Code's project
+Actions settings. In a Linux checkout, Basaltwater's actions invoke `make check-fast` and
+`make check-ci` using the checkout's `.venv` when present. Install development
+dependencies using the [contributor guide](contributing/README.md) first.
+
+Projects that benefit from sparse worktrees can set `worktreeSparsePatternsPath`
+to a committed non-cone sparse-checkout pattern file. Check the revision you
+intend to start from, and repeat `--require-file` for tracked files needed by
+worktree setup, project instructions, and the affected area.
+
+```bash
+basaltw manifest check-t3-worktree --ref HEAD \
+  --require-file AGENTS.md --require-file scripts/worktree-setup.sh --json
+```
+
+The command reads committed Git objects and reports the commit, `full` or
+`sparse` status, and the pattern path if configured. It checks the sparse
+field independently of the rest of the T3 project schema. For sparse
+inclusion checks, use a Git version with `sparse-checkout check-rules`.
+The command writes no Git or worktree configuration and runs no project
+scripts. After preflight, verify setup and checks in a fresh T3 worktree.
+
 ## Initialize a manifest
 
 `manifest init [REPOSITORY]` inspects project files without executing scripts,

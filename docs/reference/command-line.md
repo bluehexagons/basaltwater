@@ -96,6 +96,7 @@ basaltw self-setup [options]
 basaltw local [subcommand]
 basaltw manifest init [REPOSITORY] [--kind KIND] [--dry-run] [--json]
 basaltw manifest validate [REPOSITORY] [--json]
+basaltw manifest check-t3-worktree [REPOSITORY] [--ref REF] [--require-file PATH]... [--json]
 basaltw node status [--project PATH] [--version VERSION_OR_RANGE] [--json]
 basaltw node env [--project PATH] [--version VERSION_OR_RANGE]
 basaltw node exec [--project PATH] [--version VERSION_OR_RANGE] -- COMMAND...

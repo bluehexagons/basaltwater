@@ -13,6 +13,7 @@ import tempfile
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.node_project import select_package_manager
 from lib.project_manifest import MANIFEST_FILENAME, load_manifest, parse_manifest
+from lib.t3_project import check_t3_worktree
 from lib.validation import validate_filesystem_path
 
 
@@ -237,12 +238,19 @@ def add_project_manifest_subparser(subparsers: argparse._SubParsersAction) -> No
         if name == "init":
             command.add_argument("--kind", choices=KINDS, default="auto")
             command.add_argument("--dry-run", action="store_true")
+    worktree = commands.add_parser("check-t3-worktree", help="Check sparse checkout at a committed revision")
+    worktree.add_argument("repository", nargs="?", default=".")
+    worktree.add_argument("--ref", default="HEAD")
+    worktree.add_argument("--require-file", action="append", default=[])
+    worktree.add_argument("--json", action="store_true")
 
 
 def run_project_manifest_command(args: argparse.Namespace) -> int:
     try:
         if args.manifest_command == "init":
             result = initialize_manifest(args.repository, kind=args.kind, dry_run=args.dry_run)
+        elif args.manifest_command == "check-t3-worktree":
+            result = check_t3_worktree(args.repository, ref=args.ref, required_files=args.require_file)
         else:
             manifest = load_manifest(args.repository)
             if manifest is None:
@@ -250,6 +258,10 @@ def run_project_manifest_command(args: argparse.Namespace) -> int:
             result = {"status": "valid", "components": len(manifest.components), "ci_stages": list(manifest.ci), "publishing": manifest.publishing}
         if args.json:
             print(json.dumps(result, indent=2))
+        elif args.manifest_command == "check-t3-worktree":
+            print(f"T3 worktree at {result['commit']} uses a {result['status']} checkout.")
+            if result["patterns_path"] is not None:
+                print(f"Patterns file {result['patterns_path']}")
         else:
             print(f"Manifest: {result['status']}" + (f" ({result['path']})" if "path" in result else ""))
             if "manifest" in result:

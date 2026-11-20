@@ -1,10 +1,11 @@
 # Live forwards
 
-For a collaborative preview of an already-running loopback server, resolve its
-port before guessing an `environment-port` or client-loopback URL:
+Use T3's [native preview](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/browser-t3-preview.md#collaborative-preview-and-private-networks)
+for collaborative work in T3. Resolve a forward when the task calls for an
+independently reachable HTTPS URL or gateway-provided headers.
 
 ```bash
-basaltwater-web preview resolve --port PORT --json
+basaltwater-web preview resolve --route gateway --port PORT --json
 ```
 
 The read-only resolver returns an existing owned route as `navigation.url`, or

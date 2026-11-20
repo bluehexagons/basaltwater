@@ -77,6 +77,10 @@ files from the branch being checked out before running setup. Ensure required
 setup inputs are included. A missing pattern file aborts creation. This needs
 Git 2.35+ and enables `extensions.worktreeConfig` for the repository.
 See [worktree settings](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/project-settings.md#defaults-and-inheritance).
+When reviewing a sparse checkout, run `basaltw manifest check-t3-worktree
+--ref REF --require-file PATH` against the intended commit. Repeat
+`--require-file` for the setup script and inputs it depends on. Try setup and
+the project's checks in a disposable T3 worktree before relying on the rules.
 
 `runOnSettle` can execute on every settlement of a thread with its own
 worktree. Use it only for an intended, repeatable project operation; do not
@@ -103,9 +107,7 @@ and [settings and cleanup](https://github.com/pingdotgg/t3code/blob/v0.1.8/docs/
 
 ## Choose a topic
 
-- Project issue lists support saved views and thread links. Issue changes over
-  a remote connection require `source-control:write` and tracker authorization.
-  [T3 issue tracking](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/source-control.md#issues)
+- [T3 issue-to-PR workflow](t3-issue-to-pr.md) Track an issue, run project checks, and follow the resulting PR from the thread.
 
 <a id="shared-016-client-workflows"></a>
 <a id="shared-017-client-workflows"></a>

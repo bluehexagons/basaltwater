@@ -76,14 +76,11 @@ non-browser checks. For a desktop-browser `ERR_CERT_AUTHORITY_INVALID`, optional
 [client CA enrollment](../services/client-ca-trust.md) can restore private-origin access;
 a timeout or unreachable address needs network diagnosis. Never bypass TLS.
 
-For server-hosted preview, use `target: {kind: "environment-port", port: PORT}`
-to reach a VM loopback development port directly when the live tool schema
-exposes `target`; otherwise open a tab and navigate to the loopback URL.
-When a desktop-hosted browser
-needs a reachable VM URL, run
-`basaltwater-web preview resolve --port PORT --json`. It returns a verified
-owned gateway URL for `preview_navigate`, or an exact forward creation command
-with actionable failure fields. See [Internal HTTPS previews](../services/internal-web.md#forward-an-existing-loopback-service).
+Use T3's native environment-port preview for loopback development servers.
+The browser guide covers [native port navigation and tunnel diagnostics](browser-t3-preview.md#collaborative-preview-and-private-networks).
+Use [the HTTPS gateway](../services/internal-web.md#forward-an-existing-loopback-service)
+when the task needs a URL reachable independently of T3 or gateway-provided
+headers.
 The browser guide also covers navigation/component attribution, uncertain
 input acknowledgments, and [offline-cache freshness](browser-automation.md#offline-cache-freshness).
 For T3's own Chrome download, missing libraries/fonts, or AppArmor errors, use
@@ -127,7 +124,9 @@ enforce the workspace boundary without an approval escalation path. This is a
 Codex policy and does not change another provider CLI's native permission model
 or remove T3's collaborative preview. See
 [Agentic coding security](agent-security.md).
-The workspace skill uses the safe local lifecycle command:
+
+Use T3's worktree mode for an isolated T3 thread. The following commands manage
+Basaltwater-owned checkouts for independent terminal jobs:
 
 ```bash
 basaltw agent workspace create ~/repos/PROJECT TASK --json

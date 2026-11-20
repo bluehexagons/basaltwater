@@ -39,6 +39,7 @@ Reconcile uncertain mutations before retrying. See the [handoff templates](https
 | Electron testing on Debian, CachyOS, Windows, or WSL | [Platform testing](references/electron-testing.md) |
 | T3 connection, account, or stale skill troubleshooting | [Execution environment](references/t3-workflows.md#establish-the-execution-environment) |
 | T3 project commands | [Project actions](references/t3-workflows.md#project-commands-and-worktree-setup) |
+| Work tracked by a T3 issue or pull request | [Issue-to-PR workflow](references/t3-issue-to-pr.md) |
 | Return images or other visual evidence in T3 | [Visual replies](references/t3-visual-replies.md) |
 
 Verify actual tool exposure in the live session.

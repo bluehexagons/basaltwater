@@ -256,10 +256,11 @@ def _parser() -> argparse.ArgumentParser:
     preview = commands.add_parser("preview", help="Manage supervised live previews")
     preview_commands = preview.add_subparsers(dest="preview_command", required=True)
     preview_resolve = preview_commands.add_parser(
-        "resolve", help="Resolve a loopback port to a collaborative HTTPS preview",
+        "resolve", help="Check a loopback HTTP server for T3 preview or a managed HTTPS forward",
     )
     preview_resolve.add_argument("--port", type=validate_positive_integer, required=True)
     preview_resolve.add_argument("--host", default="127.0.0.1")
+    preview_resolve.add_argument("--route", choices=("gateway", "t3"), default="gateway")
     preview_resolve.add_argument("--profile", choices=("general", "godot"), default="general")
     preview_resolve.add_argument("--json", action="store_true")
     preview_start = preview_commands.add_parser(
@@ -2214,10 +2215,69 @@ def _preview_transport_issue(error: Exception) -> str:
     return "transport_failure"
 
 
+def _preview_upstream_headers(url: str) -> tuple[int, dict[str, str]]:
+    request = urllib.request.Request(url, headers={"User-Agent": "basaltwater-web-preview/1"})
+    try:
+        with open_loopback(request, timeout=3) as response:
+            return response.status, {key.lower(): value for key, value in response.headers.items()}
+    except urllib.error.HTTPError as exc:
+        with exc:
+            return exc.code, {key.lower(): value for key, value in exc.headers.items()}
+
+
+def _has_godot_isolation_headers(headers: dict[str, str]) -> bool:
+    return (
+        headers.get("cross-origin-opener-policy") == "same-origin"
+        and headers.get("cross-origin-embedder-policy") == "require-corp"
+    )
+
+
+def _resolve_t3_preview(args: argparse.Namespace, host: str, url_host: str) -> int:
+    if host not in ("127.0.0.1", "::1"):
+        raise ValueError("T3 environment ports use 127.0.0.1 or ::1")
+    port = validate_network_port(args.port, "preview port")
+    upstream_url = f"http://{url_host}:{port}/"
+    result: dict[str, object] = {
+        "ok": False,
+        "component": "upstream",
+        "upstream_url": upstream_url,
+        "navigation": None,
+        "issue": None,
+        "remediation": "Start or repair the loopback HTTP server, then retry resolution.",
+    }
+    try:
+        status, headers = _preview_upstream_headers(upstream_url)
+    except OSError as exc:
+        result.update(issue=_preview_transport_issue(exc), error=str(exc))
+    else:
+        result["upstream_status"] = status
+        if not _forward_https_status_is_healthy(status, headers):
+            result.update(issue="http_error", error=f"Loopback HTTP endpoint returned {status}")
+        elif args.profile == "godot" and not _has_godot_isolation_headers(headers):
+            result.update(
+                issue="isolation_headers_missing",
+                error="Loopback HTTP endpoint is missing Godot cross-origin isolation headers",
+                remediation="Configure isolation headers on the dev server or use a Godot HTTPS forward.",
+            )
+        else:
+            result.update(
+                ok=True, navigation={"target": {"kind": "environment-port", "port": port}}, remediation=None,
+            )
+    if args.json:
+        print(json.dumps(result, sort_keys=True))
+    elif result["ok"]:
+        print(json.dumps(result["navigation"], sort_keys=True))
+    else:
+        print(f"{result['component']}: {result['issue']}. {result['remediation']}", file=sys.stderr)
+    return 0 if result["ok"] else 1
+
+
 def _preview_resolve(args: argparse.Namespace) -> int:
-    """Find an owned route or report its exact creation command without mutation."""
+    """Check native T3 navigation or resolve an owned HTTPS route without mutation."""
     host = validate_network_ip(args.host, "preview host")
     url_host = f"[{host}]" if ":" in host else host
+    if args.route == "t3":
+        return _resolve_t3_preview(args, host, url_host)
     host, port = _parse_upstream(f"{url_host}:{args.port}")
     upstream_url = f"http://{url_host}:{port}/"
     result: dict[str, object] = {
@@ -2247,17 +2307,7 @@ def _preview_resolve(args: argparse.Namespace) -> int:
         result["component"] = "upstream"
         result["remediation"] = "Start or repair the loopback HTTP server, then retry resolution."
         try:
-            request = urllib.request.Request(
-                upstream_url, headers={"User-Agent": "basaltwater-web-preview/1"},
-            )
-            try:
-                with open_loopback(request, timeout=3) as response:
-                    status = response.status
-                    headers = {key.lower(): value for key, value in response.headers.items()}
-            except urllib.error.HTTPError as exc:
-                status = exc.code
-                headers = {key.lower(): value for key, value in exc.headers.items()}
-                exc.close()
+            status, headers = _preview_upstream_headers(upstream_url)
             result["upstream_status"] = status
             if not _forward_https_status_is_healthy(status, headers):
                 result.update(issue="http_error", error=f"Loopback HTTP endpoint returned {status}")
@@ -2289,10 +2339,7 @@ def _preview_resolve(args: argparse.Namespace) -> int:
                 result["gateway_status"] = status
                 if not _forward_https_status_is_healthy(status, headers):
                     result.update(issue="http_error", error=f"Gateway HTTPS endpoint returned {status}")
-                elif args.profile == "godot" and (
-                    headers.get("cross-origin-opener-policy") != "same-origin"
-                    or headers.get("cross-origin-embedder-policy") != "require-corp"
-                ):
+                elif args.profile == "godot" and not _has_godot_isolation_headers(headers):
                     result.update(issue="isolation_headers_missing", error="Gateway is missing Godot cross-origin isolation headers")
                 else:
                     result.update(

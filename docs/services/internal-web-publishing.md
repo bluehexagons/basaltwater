@@ -182,8 +182,10 @@ publication available.
 
 ## Start a managed live preview
 
-Use a supervised preview when hot-module replacement, an API, or WebSockets are
-required:
+Use the [native T3 preview](../agents/browser-t3-preview.md#collaborative-preview-and-private-networks)
+for a development server running in a T3 workspace. Use a supervised gateway
+preview when the server needs a managed lifecycle and a separate HTTPS URL
+for hot-module replacement, an API, or WebSockets:
 
 ```bash
 cd ~/repos/my-vite-project
@@ -279,10 +281,11 @@ after the final build. These refreshes do not authorize production deployment.
 
 ## Forward an existing loopback service
 
-For T3 collaborative preview, resolve the existing loopback port first:
+Resolve a gateway route when the task needs an independently reachable HTTPS
+URL or gateway-provided isolation headers:
 
 ```bash
-basaltwater-web preview resolve --port 8080 --json
+basaltwater-web preview resolve --route gateway --port 8080 --json
 ```
 
 Resolution is read-only. It probes the loopback HTTP endpoint, finds a forward

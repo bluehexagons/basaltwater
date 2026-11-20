@@ -1,0 +1,13 @@
+{
+  "$schema": "https://t3.codes/schema/t3.json",
+  "scripts": [
+    {
+      "name": "Fast checks",
+      "command": "env PATH=\"$PWD/.venv/bin:$PATH\" make check-fast"
+    },
+    {
+      "name": "CI checks",
+      "command": "env PATH=\"$PWD/.venv/bin:$PATH\" make check-ci"
+    }
+  ]
+}

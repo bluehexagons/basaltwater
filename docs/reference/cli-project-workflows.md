@@ -16,6 +16,11 @@ and routes before committing the proposal. `--kind` accepts `auto`, `node-site`,
 `manifest validate` checks an existing manifest without modifying it. Both
 subcommands support JSON output.
 
+`manifest check-t3-worktree` inspects the selected Git commit for T3 sparse
+checkout settings. Use `--ref REF` to select a revision and repeat
+`--require-file PATH` to check setup inputs. See the
+[project worktree guide](../agents/project-manifests.md#t3-code-project-actions-and-worktrees).
+
 `node status` reports the selected installed runtime, and `node env` prints a
 quoted PATH export for shell activation. Selection honors an explicit
 `--version`, project `.node-version` or `.nvmrc` pins, and package Node engine

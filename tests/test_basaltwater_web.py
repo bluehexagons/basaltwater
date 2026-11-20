@@ -738,6 +738,41 @@ class TestPreviewResolution(unittest.TestCase):
         self.assertIsNone(result["command"])
         self.assertEqual(self.loopback.call_args.kwargs["timeout"], 3)
 
+    def test_t3_environment_port_resolves_without_gateway_policy(self) -> None:
+        with patch.object(basaltwater_web, "_load_policy") as policy:
+            status, result = self.resolve("--route", "t3", "--host", "::1")
+        self.assertEqual(status, 0)
+        self.assertEqual(result["upstream_url"], "http://[::1]:8080/")
+        self.assertEqual(result["navigation"], {"target": {"kind": "environment-port", "port": 8080}})
+        self.assertEqual(self.loopback.call_args.args[0].full_url, result["upstream_url"])
+        policy.assert_not_called()
+        self.routes.assert_not_called()
+        self.https.assert_not_called()
+
+    def test_t3_upstream_failure_returns_no_navigation(self) -> None:
+        self.loopback.side_effect = urllib.error.URLError(ConnectionRefusedError("refused"))
+        status, result = self.resolve("--route", "t3")
+        self.assertEqual(status, 1)
+        self.assertEqual(result["issue"], "connection_refused")
+        self.assertEqual(result["component"], "upstream")
+        self.assertIsNone(result["navigation"])
+
+    def test_t3_godot_profile_checks_upstream_headers(self) -> None:
+        _, result = self.resolve("--route", "t3", "--profile", "godot")
+        self.assertEqual(result["issue"], "isolation_headers_missing")
+        response = self.loopback.return_value.__enter__.return_value
+        response.headers = {
+            "Cross-Origin-Opener-Policy": "same-origin",
+            "Cross-Origin-Embedder-Policy": "require-corp",
+        }
+        self.assertEqual(self.resolve("--route", "t3", "--profile", "godot")[0], 0)
+
+    def test_t3_rejects_addresses_the_tunnel_does_not_target(self) -> None:
+        for host in ("127.0.0.2", "192.0.2.1"):
+            with self.subTest(host=host):
+                self.assertEqual(self.resolve("--route", "t3", "--host", host)[0], 2)
+        self.loopback.assert_not_called()
+
     def test_missing_route_returns_executable_command(self) -> None:
         self.routes.return_value = []
         status, result = self.resolve()

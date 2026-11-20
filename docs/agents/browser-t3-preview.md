@@ -74,11 +74,19 @@ access to an environment's development services.
 [Managed policy](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/managed-policy.md#other-capabilities)
 · [Tunnel authorization](https://github.com/pingdotgg/t3code/blob/v0.1.11/apps/server/src/preview/PreviewTunnel.ts)
 
+For a readiness check, run `basaltwater-web preview resolve --route t3 --port
+8080 --json` on the T3 host. Use `--host ::1` for an IPv6-only listener.
+Success returns `navigation.target` for the native environment port. This
+checks loopback HTTP only. If local desktop or mobile rendering still fails,
+inspect the host's **Preview tunnel** setting and use `t3 policy show` with the
+service's data directory to inspect installed and loaded policy. Check the
+connected client's grant and transport, and try a streamed tab where available.
+
 When the task calls for a separately reachable HTTPS URL for a VM loopback
 service, resolve the gateway route:
 
 ```bash
-basaltwater-web preview resolve --port 8080 --json
+basaltwater-web preview resolve --route gateway --port 8080 --json
 ```
 
 Open the returned `navigation.url` in the desktop browser, using

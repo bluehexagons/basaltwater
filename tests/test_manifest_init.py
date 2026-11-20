@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
+import argparse
+from contextlib import redirect_stdout
+from io import StringIO
 import json
 import os
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
 
-from lib.manifest_init import initialize_manifest, propose_manifest
+from lib.manifest_init import (
+    add_project_manifest_subparser,
+    initialize_manifest,
+    propose_manifest,
+    run_project_manifest_command,
+)
 from lib.project_manifest import load_manifest, parse_manifest
 
 
@@ -185,6 +194,80 @@ class ManifestInitTests(unittest.TestCase):
         ):
             with self.subTest(invalid=invalid), self.assertRaises(ValueError):
                 parse_manifest(invalid)
+
+
+class T3WorktreeTests(unittest.TestCase):
+    def setUp(self):
+        root = self.enterContext(tempfile.TemporaryDirectory())
+        self.root = Path(root)
+        self.commit = "a" * 40
+        self.config = b'{ /* config */ "worktreeSparsePatternsPath": "./.t3/sparse", }'
+        self.patterns = b"/app/\n!/app/private\n"
+        self.files = {"t3.json": "b" * 40, ".t3/sparse": "c" * 40, "app/start script.sh": "d" * 40}
+        self.included = b"app/start script.sh\0"
+        self.enterContext(patch("lib.t3_project.subprocess.run", side_effect=self.run_git))
+
+    def run_git(self, command, *, input, **kwargs):
+        self.assertEqual(command[:4], ["git", "--literal-pathspecs", "-C", str(self.root)])
+        args = command[4:]
+        if args[0] == "rev-parse":
+            self.assertEqual(args, ["rev-parse", "--verify", "--end-of-options", "release^{commit}"])
+            output = self.commit.encode() + b"\n"
+        elif args[0] == "ls-tree":
+            self.assertEqual(args[1:5], ["--full-tree", "-z", self.commit, "--"])
+            path = args[5]
+            output = f"100644 blob {self.files[path]}\t{path}\0".encode() if path in self.files else b""
+        elif args == ["cat-file", "blob", self.files["t3.json"]]:
+            output = self.config
+        elif args == ["cat-file", "blob", self.files.get(".t3/sparse")]:
+            output = self.patterns
+        else:
+            self.assertEqual(args[:5], ["sparse-checkout", "check-rules", "--no-cone", "-z", "--rules-file"])
+            self.assertEqual(Path(args[5]).read_bytes(), self.patterns)
+            self.assertEqual(input, b"app/start script.sh\0")
+            output = self.included
+        return subprocess.CompletedProcess(command, 0, output, b"")
+
+    def check_worktree(self, *files):
+        parser = argparse.ArgumentParser()
+        add_project_manifest_subparser(parser.add_subparsers(required=True))
+        argv = ["manifest", "check-t3-worktree", str(self.root), "--ref", "release", "--json"]
+        for file in files:
+            argv.extend(["--require-file", file])
+        output = StringIO()
+        with redirect_stdout(output):
+            status = run_project_manifest_command(parser.parse_args(argv))
+        return status, json.loads(output.getvalue())
+
+    def test_verifies_committed_rules_and_literal_required_path(self):
+        (self.root / "t3.json").write_text("{}")
+        status, result = self.check_worktree("app/start script.sh")
+        self.assertEqual(status, 0)
+        self.assertEqual(result, {
+            "status": "sparse", "commit": self.commit, "patterns_path": ".t3/sparse",
+            "required_files": ["app/start script.sh"],
+        })
+
+    def test_reports_excluded_and_missing_files(self):
+        self.included = b""
+        status, result = self.check_worktree("app/start script.sh")
+        self.assertEqual(status, 1)
+        self.assertIn("exclude required files", result["error"])
+        _, result = self.check_worktree("missing.sh")
+        self.assertIn("Required files missing", result["error"])
+        del self.files[".t3/sparse"]
+        _, result = self.check_worktree()
+        self.assertIn("Sparse patterns file '.t3/sparse' is missing", result["error"])
+
+    def test_full_checkout_and_invalid_paths(self):
+        self.config = b'{"$schema":"https://t3.codes/schema/t3.json",}'
+        status, result = self.check_worktree("app/start script.sh")
+        self.assertEqual(status, 0)
+        self.assertEqual(result["status"], "full")
+        for value in ("../rules", "/tmp/rules", "C:/rules", "dir/./rules", "a\nb"):
+            with self.subTest(value=value):
+                self.config = json.dumps({"worktreeSparsePatternsPath": value}).encode()
+                self.assertEqual(self.check_worktree()[0], 1)
 
 
 if __name__ == '__main__':

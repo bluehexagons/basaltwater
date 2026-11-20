@@ -22,18 +22,28 @@ tabs and the web app still stream from the host. Desktop port forwarding and
 mobile **Open on this device** also use the host's preview tunnel. A forwarded
 port is reachable by local apps on the client. Stop the forward when finished.
 
+For a loopback readiness failure on a host with the Basaltwater web utility, run
+`basaltwater-web preview resolve --route t3 --port PORT --json`. Use the
+returned `navigation.target` with the retained tab ID. Add `--host ::1` for
+an IPv6-only listener. For threaded Godot, `--profile godot` checks that the
+upstream sends cross-origin isolation headers. Verify rendering and secure
+context in the selected browser when the task calls for browser verification.
+
 Check **Settings → Sharing & access → Preview tunnel** on the host if client
 rendering or forwarding is unavailable. The setting defaults on in 0.1.11.
-Managed policy `limits.previewTunnel: false` takes precedence. Follow the
-owner's policy and use a streamed tab where available. A desktop tunnel may
-fail when the connection depends on a system proxy or privately issued HTTPS.
+Managed policy `limits.previewTunnel: false` takes precedence, and the client
+needs `terminal:operate`. On a managed host, `t3 policy show` reports installed
+and loaded policy for the selected runtime and data directory. A successful
+loopback probe covers the HTTP server only. Use a streamed tab where available
+when the tunnel is disabled or local rendering depends on a system proxy or
+privately issued HTTPS.
 See [remote browsers and forwarding](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/remote-access.md#browser-on-a-remote-environment).
 
 When the task calls for a separately reachable gateway URL, resolve the
 managed VM's loopback development port:
 
 ```bash
-basaltwater-web preview resolve --port PORT --json
+basaltwater-web preview resolve --route gateway --port PORT --json
 ```
 
 Use the returned `navigation.url`. For `forward_missing`, use the exact
