@@ -13,7 +13,7 @@ import subprocess
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 from lib import agent_browser, agent_cli, t3_preview
 from lib.agent_readiness import build_agent_readiness_record
@@ -297,11 +297,35 @@ class TestT3Preview(unittest.TestCase):
         }})
         self.connect.assert_called_once_with(("::1", 8080), timeout=3)
         self.tls.return_value.wrap_socket.assert_called_once_with(
-            self.connect.return_value.__enter__.return_value, server_hostname="localhost",
+            self.connect.return_value, server_hostname="localhost",
         )
         request = self.connection.return_value.request.call_args
         self.assertEqual(request.args, ("GET", "/app/?tab=one"))
         self.assertEqual(request.kwargs["headers"]["Host"], "localhost:8080")
+
+    def test_default_falls_back_to_ipv6_after_ipv4_connect_failure(self) -> None:
+        self.connect.side_effect = [ConnectionRefusedError("IPv4 refused"), self.connect.return_value]
+        status, result = self.resolve("--path", "/app/")
+        self.assertEqual(status, 0)
+        self.assertEqual(result["upstream_url"], "http://[::1]:8080/app/")
+        self.assertEqual(result["navigation"], {"target": {"kind": "environment-port", "port": 8080, "path": "/app/"}})
+        self.assertEqual(self.connect.call_args_list, [
+            call(("127.0.0.1", 8080), timeout=3), call(("::1", 8080), timeout=3),
+        ])
+
+    def test_explicit_host_does_not_fall_back(self) -> None:
+        self.connect.side_effect = ConnectionRefusedError("refused")
+        status, result = self.resolve("--host", "127.0.0.1")
+        self.assertEqual(status, 1)
+        self.assertEqual(result["issue"], "connection_refused")
+        self.connect.assert_called_once_with(("127.0.0.1", 8080), timeout=3)
+
+    def test_http_response_prevents_fallback(self) -> None:
+        self.response.status = 404
+        status, result = self.resolve()
+        self.assertEqual(status, 1)
+        self.assertEqual(result["issue"], "http_error")
+        self.connect.assert_called_once_with(("127.0.0.1", 8080), timeout=3)
 
     def test_invalid_address_or_path_fails_before_network(self) -> None:
         for extra in (
@@ -326,6 +350,8 @@ class TestT3Preview(unittest.TestCase):
                 self.assertEqual(result["issue"], expected)
                 self.assertEqual(result["component"], "upstream")
                 self.assertIsNone(result["navigation"])
+                self.assertEqual(self.connect.call_count, 2 if protocol == "http" else 1)
+                self.connect.reset_mock()
 
     def test_godot_checks_upstream_headers(self) -> None:
         self.assertEqual(self.resolve("--profile", "godot")[1]["issue"], "isolation_headers_missing")

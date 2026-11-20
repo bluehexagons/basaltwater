@@ -138,6 +138,12 @@ Add `--container-storage` to opt into bounded aggregate Podman/Docker probes;
 the flag also includes host checks and supports the remote `HOST USER` form.
 Ordinary host checks and support collection do not invoke container engines.
 
+The `browser_cache` warning reports a Playwright cache larger than 2 GiB.
+Review its browser revisions and package references with the
+[shared cache guidance](../agents/storage-cleanup-caches.md#shared-cache-conventions).
+Start by measuring the cache with
+`basaltw agent storage inspect --path "$HOME/.cache/ms-playwright" --json`.
+
 `agent storage inspect` prints JSON capacity and cleanup-candidate evidence
 without deleting files, reading their contents or creating reports. Default
 roots cover caches, Trash, logs, temporary data, managed runtimes, projects,
@@ -260,9 +266,10 @@ form. Doctor JSON output retains its existing result-array shape when
 
 ## Native T3 preview readiness
 
-Run on the Linux T3 environment host. `agent browser resolve-preview` probes the
-development server directly on `127.0.0.1` by default or `::1` with
-`--host ::1`. It works with the core CLI on hosts without a managed gateway.
+Run on the Linux T3 environment host. `agent browser resolve-preview` connects
+to `127.0.0.1` first and tries `::1` if that TCP connection fails, matching
+the T3 preview tunnel. Use `--host` to check one address explicitly. It works
+with the core CLI on hosts without a managed gateway.
 
 ```bash
 basaltw agent browser resolve-preview --port 8080 --protocol https --path '/app/?view=details#summary' --json
@@ -273,8 +280,9 @@ T3 preview's `localhost` host name and keeps the fragment in the returned
 `navigation.target`. It checks the initial response without following
 redirects. HTTPS verifies the certificate for `localhost` using the probe
 host's trust store. Add `--profile godot` to check cross-origin isolation
-headers. `upstream_url` identifies the literal loopback endpoint used for the
-probe. Browser rendering, tunnel access and client trust need separate checks.
+headers. `upstream_url` identifies the endpoint used for the probe, or the first
+address if both connection attempts fail. Browser rendering, tunnel
+access and client trust need separate checks.
 
 Exit status 0 returns a native environment-port target. Status 1 reports an
 upstream failure with `issue` and `remediation`, and status 2 reports an

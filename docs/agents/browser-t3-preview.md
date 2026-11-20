@@ -80,10 +80,11 @@ Use the core Basaltwater CLI to check readiness on a Linux T3 host.
 basaltw agent browser resolve-preview --port 8080 --path '/app/?view=details#summary' --json
 ```
 
-Success returns `navigation.target` for the native environment port. Omit
-`--path` for `/` or use `--host ::1` for an IPv6-only listener. For a local HTTPS
-server, add `--protocol https` to check its certificate for `localhost` with
-the probe host's trust store. Gateway provisioning is optional for this check.
+Success returns `navigation.target` for the native environment port. The probe
+tries IPv4 loopback first and uses IPv6 loopback when the TCP connection fails.
+Use `--host` to check one address explicitly. Omit `--path` for `/`. For a local
+HTTPS server, add `--protocol https` to check its certificate for `localhost`
+with the probe host's trust store. Gateway provisioning is optional for this check.
 See the [CLI reference](../reference/cli-agent-diagnostics.md#native-t3-preview-readiness).
 
 On native Windows, use the project's readiness check on the selected host.

@@ -29,12 +29,13 @@ without a managed web gateway.
 basaltw agent browser resolve-preview --port PORT --path '/app/?view=details#summary' --json
 ```
 
-Use the returned `navigation.target` with the retained tab ID. Omit `--path`
-for `/`. Add `--host ::1` for an IPv6-only listener or `--protocol https` to
-verify TLS for `localhost` using the probe host's trust store. For threaded
-Godot, `--profile godot` checks the upstream cross-origin isolation headers.
-Verify rendering and secure context in the selected browser when the task
-calls for browser verification.
+Use the returned `navigation.target` with the retained tab ID. The probe tries
+`127.0.0.1` first and falls back to `::1` on a TCP connection failure. Use
+`--host` to check one address explicitly. Omit `--path` for `/`. Add
+`--protocol https` to verify TLS for `localhost` using the probe host's trust
+store. For threaded Godot, `--profile godot` checks the upstream cross-origin
+isolation headers. Verify rendering and secure context in the selected browser
+when the task calls for browser verification.
 
 On native Windows, use the project's readiness check on the selected host and
 build the environment-port target from its port, protocol and path. For a

@@ -2203,7 +2203,7 @@ def _preview_resolve(args: argparse.Namespace) -> int:
         return run_t3_preview_command(args)
     if args.protocol is not None or args.path is not None:
         raise ValueError("--protocol and --path require --route t3")
-    host = validate_network_ip(args.host, "preview host")
+    host = "127.0.0.1" if args.host is None else validate_network_ip(args.host, "preview host")
     url_host = f"[{host}]" if ":" in host else host
     host, port = _parse_upstream(f"{url_host}:{args.port}")
     upstream_url = f"http://{url_host}:{port}/"

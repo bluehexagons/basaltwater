@@ -742,13 +742,15 @@ class TestPreviewResolution(unittest.TestCase):
     def test_t3_environment_port_resolves_without_gateway_policy(self) -> None:
         with (
             patch.object(basaltwater_web, "_load_policy") as policy,
+            patch.object(t3_preview.socket, "create_connection") as connect,
             patch.object(t3_preview, "_upstream_headers", return_value=(200, {})) as upstream,
         ):
-            status, result = self.resolve("--route", "t3", "--host", "::1", "--path", "/app/")
+            connect.side_effect = [ConnectionRefusedError("IPv4 refused"), connect.return_value]
+            status, result = self.resolve("--route", "t3", "--path", "/app/")
         self.assertEqual(status, 0)
         self.assertEqual(result["upstream_url"], "http://[::1]:8080/app/")
         self.assertEqual(result["navigation"], {"target": {"kind": "environment-port", "port": 8080, "path": "/app/"}})
-        upstream.assert_called_once_with("::1", 8080, "http", "/app/")
+        upstream.assert_called_once_with(connect.return_value, 8080, "http", "/app/")
         policy.assert_not_called()
         self.routes.assert_not_called()
         self.https.assert_not_called()
