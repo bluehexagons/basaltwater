@@ -169,6 +169,26 @@ def cleanup_cachyos_packages(config: SetupConfig) -> None:
     _cleanup_packages(config, pressure=False)
 
 
+def report_pending_package_configs(config: SetupConfig) -> None:
+    """Report pacman configuration backups without editing them."""
+    if config.dry_run or is_dry_run():
+        return
+    try:
+        result = run_captured(["/usr/bin/pacdiff", "--output", "--pacmandb", "--nocolor"],
+                              env=_ENVIRONMENT, timeout=30, max_bytes=128 * 1024)
+    except (OSError, subprocess.SubprocessError):
+        print("  WARNING: Could not check pending package configuration. Inspect with `sudo pacdiff --output`.")
+        return
+    if result.returncode or (result.stderr or "").strip():
+        print("  WARNING: Package configuration check was incomplete. Inspect with `sudo pacdiff --output`.")
+        return
+    paths = (result.stdout or "").splitlines()
+    if paths:
+        print(f"  WARNING: {len(paths)} package configuration files need review. Inspect with `sudo pacdiff --output`.")
+        for path in paths[:10]:
+            print(f"    {path!r}")
+
+
 def recover_cachyos_package_space(config: SetupConfig) -> None:
     """Recover old downloads before installing tools on a low-capacity host."""
     if not config.dry_run and not is_dry_run() and not Path(PACCACHE).is_file():

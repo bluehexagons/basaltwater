@@ -23,6 +23,10 @@
 - If the upgrade replaces the Python minor version running setup, rerun setup
   with the updated interpreter to finish. Recreate a development virtual
   environment if its base interpreter version was removed.
+- After package installation, setup reports pending `.pacnew`, `.pacsave`, and
+  `.pacorig` files visible in a read-only scan of pacman's package database.
+  Use `sudo pacdiff --output` to inspect the package database as root.
+  See the [pacdiff manual](https://man.archlinux.org/man/pacdiff.8.en).
 - `--repo` clones only a missing repository. An existing destination must be a
   Git repository with the requested origin and must be writable by you; setup
   does not delete or repair conflicting directories.

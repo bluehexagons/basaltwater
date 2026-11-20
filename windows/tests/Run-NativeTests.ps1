@@ -100,6 +100,10 @@ try {
         Ensure-UbuntuPython
         Assert-True ($global:BootstrapPythonInstalled) 'Fresh bootstrap did not install missing Python'
         Assert-True ($global:BootstrapCalls.Count -eq 4) 'Missing Python should trigger probe, apt update/install, and verification'
+        Assert-True ($global:BootstrapCalls[1] -contains 'APT::Update::Error-Mode=any') 'Bootstrap could accept a partial package index update'
+        Assert-True ($global:BootstrapCalls[2] -contains '--no-remove' -and
+            $global:BootstrapCalls[2] -contains 'DPkg::Lock::Timeout=300' -and
+            $global:BootstrapCalls[2] -contains 'Dpkg::Options::=--force-confold') 'Bootstrap lacked normal Ubuntu package safeguards'
         $global:BootstrapCalls = @()
         Ensure-UbuntuPython
         Assert-True ($global:BootstrapCalls.Count -eq 1) 'Existing Python should skip apt bootstrap'
@@ -110,7 +114,9 @@ try {
         $global:BootstrapOldPython = $false
         $global:BootstrapPythonInstalled = $false
         $global:BootstrapPackageFailure = $true
+        $global:BootstrapCalls = @()
         Assert-Throws { Ensure-UbuntuPython } 'package index failed'
+        Assert-True ($global:BootstrapCalls.Count -eq 2) 'Bootstrap used stale package indexes after an update failure'
     } finally {
         Remove-Item Function:\wsl.exe
         Remove-Item Function:\Save-State
@@ -225,6 +231,7 @@ try {
     try {
         $plan = & (Join-Path $repo 'install.ps1') -Plan -BuildServer -AgentTool gh,codex 6>&1 | Out-String
         Assert-True ($plan -match 'Plan: install WinGet/WSL') 'Installer plan did not complete'
+        Assert-True ($plan -match 'prune obsolete APT downloads') 'The WSL plan did not show Ubuntu package maintenance'
         Assert-Throws {
             & (Join-Path $repo 'install.ps1') -Plan -DistroName Debian
         } 'official stable Ubuntu WSL name'

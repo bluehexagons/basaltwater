@@ -234,6 +234,30 @@ class PackageCleanupTests(unittest.TestCase):
             _real_cache_available()
 
 
+class PendingPackageConfigTests(unittest.TestCase):
+    @patch.object(cleanup, "is_dry_run", return_value=False)
+    @patch.object(cleanup, "run_captured")
+    @patch("builtins.print")
+    def test_package_config_review_is_read_only_and_advisory(self, output, capture, dry_run):
+        paths = "/etc/example.conf.pacnew\n/etc/previous.conf.pacsave\n"
+        capture.side_effect = [subprocess.CompletedProcess([], 0, paths, ""),
+                               subprocess.CompletedProcess([], 0, "", ""),
+                               FileNotFoundError()]
+        config = SimpleNamespace(dry_run=False)
+        cleanup.report_pending_package_configs(config)
+        self.assertEqual(capture.call_args.args[0],
+                         ["/usr/bin/pacdiff", "--output", "--pacmandb", "--nocolor"])
+        self.assertIn("2 package configuration files need review", output.call_args_list[0].args[0])
+        self.assertIn("/etc/example.conf.pacnew", output.call_args_list[1].args[0])
+        output.reset_mock()
+        cleanup.report_pending_package_configs(config)
+        output.assert_not_called()
+        cleanup.report_pending_package_configs(config)
+        self.assertIn("Could not check pending package configuration", output.call_args.args[0])
+        cleanup.report_pending_package_configs(SimpleNamespace(dry_run=True))
+        self.assertEqual(capture.call_count, 3)
+
+
 class T3CacheTests(unittest.TestCase):
     def test_managed_web_logs_preserve_current_logs_database_and_links(self):
         with tempfile.TemporaryDirectory() as home:

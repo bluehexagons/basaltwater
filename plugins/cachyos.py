@@ -29,7 +29,9 @@ PLUGIN = PluginDefinition(
 
 
 def build_cachyos_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
-    from common.cachyos_cleanup import cleanup_cachyos_packages, recover_cachyos_package_space
+    from common.cachyos_cleanup import (
+        cleanup_cachyos_packages, recover_cachyos_package_space, report_pending_package_configs,
+    )
     from common.cachyos_steps import (
         install_cachyos_packages,
         configure_cachyos_desktop_control,
@@ -81,6 +83,7 @@ def build_cachyos_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
         steps.append(("Installing or updating CachyOS T3 Code user service", install_cachyos_t3))
     if config.install_sunshine:
         steps.append(("Enabling Sunshine at KDE login and starting streaming host", configure_sunshine))
+    steps.append(("Checking for pending pacman configuration review", report_pending_package_configs))
     steps.append(("Checking local coding tool readiness", report_cachyos_readiness))
     steps.append(("Pruning old CachyOS package downloads (keeps three versions and 30 days)", cleanup_cachyos_packages))
     steps.append(("Reconciling developer-tool caches", reconcile_cachyos_user_cache))

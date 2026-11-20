@@ -282,11 +282,13 @@ function Ensure-UbuntuPython {
         throw "Ubuntu system Python 3.11 or newer is required; select a supported Ubuntu distro. Setup does not upgrade the Ubuntu release."
     }
     Invoke-Checked "Ubuntu Python prerequisite package index" {
-        & wsl.exe --distribution $state.Distro --user root --exec /usr/bin/apt-get update -qq
+        & wsl.exe --distribution $state.Distro --user root --exec /usr/bin/apt-get update -qq `
+            '-o' 'APT::Update::Error-Mode=any'
     }
     Invoke-Checked "Ubuntu Python prerequisite" {
         & wsl.exe --distribution $state.Distro --user root --exec /usr/bin/env `
-            DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install -y -qq python3
+            DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install -y -qq --no-remove `
+            '-o' 'DPkg::Lock::Timeout=300' '-o' 'Dpkg::Options::=--force-confdef' '-o' 'Dpkg::Options::=--force-confold' python3
     }
     Invoke-Checked "Ubuntu Python 3.11+ prerequisite verification" {
         & wsl.exe --distribution $state.Distro --user root --exec @pythonCheck
@@ -488,6 +490,7 @@ try {
             return
         }
         Write-Host "Plan: install WinGet/WSL and stable Ubuntu, configure $Profile, selected runtimes/agents, and optional T3 desktop/worker."
+        Write-Host 'Plan: refresh Ubuntu packages and selected runtimes, and prune obsolete APT downloads.'
         Write-Host "A reboot and interactive Ubuntu/provider login may be required."
         if ($runnerConfig) { Write-Host 'GitHub Actions: native Windows login tasks with WSL access; registration may be completed later.' }
         return
@@ -654,7 +657,7 @@ try {
         & wsl.exe --distribution $state.Distro --user root --exec /usr/bin/python3 $prepare stage --source $sourcePath --revision $state.Revision
     }
     $linuxSource = "/opt/basaltwater/releases/" + $state.Revision
-    $setupArgs = @("--system-type", "server_wsl", "--username", $state.LinuxUser, "--machine", "wsl")
+    $setupArgs = @("--system-type", "server_wsl", "--username", $state.LinuxUser, "--machine", "wsl", "--refresh-packages")
     if ($state.Node) { $setupArgs += "--node" }
     if ($state.Python) { $setupArgs += "--python" }
     if ($state.Go) { $setupArgs += "--go" }

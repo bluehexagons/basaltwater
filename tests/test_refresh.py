@@ -88,6 +88,7 @@ class DebianRefreshTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
             arguments = json.loads(path.read_text())
             self.assertIn("--node", arguments)
+            self.assertIn("--refresh-packages", arguments)
             self.assertEqual(arguments[arguments.index("--expected-setup-revision") + 1], refresh.saved_setup_revision())
             self.assertEqual(arguments[arguments.index("--system-type") + 1], "server_lite")
             self.assertTrue(kwargs["interactive"])

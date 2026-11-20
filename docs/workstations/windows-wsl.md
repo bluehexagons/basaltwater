@@ -95,6 +95,12 @@ are under `%LOCALAPPDATA%\Basaltwater`; credentials are never saved in setup
 state. Reusing `-Resume` reapplies the pinned setup and updates WinGet and Ubuntu
 packages. If WinGet reports a restart requirement, restart Windows manually and
 rerun the pinned installer with `-Resume`.
+Ubuntu setup requires a successful APT index refresh before upgrading, allows new
+dependencies, keeps locally modified package configuration, and prunes obsolete APT
+downloads. It also rechecks selected versioned runtimes, including Node.js and uv.
+Installed packages are retained. If Ubuntu reports a pending restart, finish
+active work and restart the selected distribution with the management script's
+`stop` and `start` actions.
 WSL and Ubuntu release upgrades are deliberate maintenance; an existing
 Ubuntu distribution is not silently replaced. The user may need to log in to
 each selected agent after setup. On an unmanaged Windows machine, choose the

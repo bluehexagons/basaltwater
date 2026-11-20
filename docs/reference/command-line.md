@@ -281,8 +281,9 @@ T3/SSH terminal as successful setup; inspect the job before retrying.
 
 The target account, packages, services, and other
 saved settings are reused; it does not infer a replacement profile or
-re-provision the machine. The normal selected setup steps still apply, including
-Debian's package updates and service reconciliation. Existing staged deployment
+re-provision the machine. Each Debian refresh forces an APT update and upgrade
+and rechecks selected versioned runtimes, even after an earlier successful setup.
+The normal service reconciliation steps still apply. Existing staged deployment
 sources are reused; refreshing does not fetch new application repositories from
 a controller. Provider credentials and existing local account passwords are
 retained; transient credential-copy, network-activation, and swap-initialization

@@ -406,6 +406,7 @@ def run_refresh_command(args: argparse.Namespace) -> int:
         expected_revision = saved_setup_revision()
         config = _debian_setup()
         arguments = shlex.split(" ".join(config.to_remote_args()))
+        arguments.append("--refresh-packages")
         # A target refresh reuses local provider credentials instead of asking
         # for a fresh interactive Codex login.
         arguments.extend(["--agent-auth-mode", "none"])
