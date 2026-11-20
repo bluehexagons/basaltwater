@@ -99,8 +99,16 @@ Ubuntu setup requires a successful APT index refresh before upgrading, allows ne
 dependencies, keeps locally modified package configuration, and prunes obsolete APT
 downloads. It also rechecks selected versioned runtimes, including Node.js and uv.
 Installed packages are retained. If Ubuntu reports a pending restart, finish
-active work and restart the selected distribution with the management script's
-`stop` and `start` actions.
+active work first. For `-BuildServer` setups, use the management script's
+`stop` and `start` actions to restart the distro and login worker. For setups
+without the worker, run these commands in Windows PowerShell. [WSL command reference](https://learn.microsoft.com/en-us/windows/wsl/basic-commands#terminate)
+
+```powershell
+$state = Get-Content "$env:LOCALAPPDATA\Basaltwater\wsl-setup.json" -Raw | ConvertFrom-Json
+wsl.exe --terminate $state.Distro
+wsl.exe --distribution $state.Distro --user $state.LinuxUser
+```
+
 WSL and Ubuntu release upgrades are deliberate maintenance; an existing
 Ubuntu distribution is not silently replaced. The user may need to log in to
 each selected agent after setup. On an unmanaged Windows machine, choose the

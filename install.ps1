@@ -274,6 +274,12 @@ function Ensure-Wsl {
     return $false
 }
 
+function Write-WslWindowsRestartInstructions([string]$Source) {
+    $installer = (Join-Path $Source 'install.ps1').Replace("'", "''")
+    Write-Host 'Restart Windows, log back into this account, then run in PowerShell.'
+    Write-Host "powershell.exe -NoProfile -ExecutionPolicy Bypass -File '$installer' -Resume"
+}
+
 function Ensure-UbuntuPython {
     $pythonCheck = @('/usr/bin/python3', '-c', 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 2)')
     & wsl.exe --distribution $state.Distro --user root --exec @pythonCheck 2>$null | Out-Null
@@ -632,9 +638,7 @@ try {
     if (-not (Ensure-Wsl)) {
         $state.Phase = "restart-required"
         Save-State $state
-        Write-Host "Restart Windows, log back into this account, then run:"
-        Write-Host ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' +
-            (Join-Path $state.Source "install.ps1") + '" -Resume')
+        Write-WslWindowsRestartInstructions $state.Source
         return
     }
     $state.Phase = 'applying'
@@ -706,6 +710,8 @@ try {
         if ($Profile -eq 'agent_windows') {
             $installerReason = [string]$setupError.Exception.Data['Basaltwater.WindowsRestartReason']
             if (Invoke-NativeWindowsRestart -State $state -Required -InstallerReason $installerReason -NoReboot:$NoReboot -NoRestartT3:$NoRestartT3) { return }
+        } else {
+            Write-WslWindowsRestartInstructions $state.Source
         }
     }
     Write-Error $setupError

@@ -287,10 +287,13 @@ class TestNodeSetup(unittest.TestCase):
         )
 
         with (
+            patch.dict(os.environ, {"DEBIAN_FRONTEND": "dialog"}),
             patch.object(common_steps, "_ensure_user_tool_shell_environment"),
             self.assertRaisesRegex(RuntimeError, "could not verify the refreshed"),
         ):
             common_steps.install_node(config)
+        apt = next(call for call in mock_run.call_args_list if "libstdc++6 libatomic1" in call.args[0])
+        self.assertEqual(apt.kwargs["env"]["DEBIAN_FRONTEND"], "noninteractive")
         self.assertTrue(any(
             "npm install -g pnpm --ignore-scripts=false --allow-scripts=pnpm" in call.args[0]
             for call in mock_run.call_args_list

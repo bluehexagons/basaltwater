@@ -16,7 +16,7 @@ if os.name == "posix":
     from lib.managed_storage import operation_guard as real_storage_operation_guard
 
     _host_fixture_modules = frozenset({
-        "test_audit_regressions", "test_build_serving", "test_build_target_activation",
+        "test_audit_regressions", "test_build_runtime_bindings", "test_build_serving", "test_build_target_activation",
         "test_deployment_project_tooling", "test_deploy_recovery", "test_godot_deploy",
         "test_legacy_deployment", "test_manifest_deploy", "test_refresh", "test_remote_setup",
         "test_samba_management", "test_cachyos_remote", "test_build_target_bootstrap",

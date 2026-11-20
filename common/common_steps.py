@@ -21,7 +21,7 @@ from lib.node_toolchain import is_supported_node, resolve_node_release
 from lib.apt_sources import ensure_debian_package_sources
 from lib.setup_directories import directory_fd
 from lib.config import SetupConfig
-from lib.maintenance_defaults import APT_LOCK_OPTIONS, APT_UPDATE_OPTIONS
+from lib.maintenance_defaults import APT_LOCK_OPTIONS, APT_UPDATE_OPTIONS, APT_UPGRADE_SAFETY_OPTIONS
 from lib.machine_state import can_manage_time_sync, can_modify_kernel
 from lib.remote_utils import (
     DEFAULT_COMMAND_TIMEOUT_SECONDS,
@@ -229,7 +229,8 @@ def update_and_upgrade_packages(config: SetupConfig) -> None:
         details = getattr(update_result, "stderr", "") or "check network connectivity and APT sources"
         raise RuntimeError(f"APT package list update failed: {str(details).strip()[:300]}")
     print("  Upgrading packages...")
-    run(f"{_APT_GET} upgrade -y -qq {_APT_DPKG_NONINTERACTIVE_OPTIONS}")
+    run(f"{_APT_GET} upgrade -y -q --with-new-pkgs {shlex.join(APT_UPGRADE_SAFETY_OPTIONS)} "
+        f"{_APT_DPKG_NONINTERACTIVE_OPTIONS}")
     run(f"{_APT_GET} autoremove -y -qq {_APT_DPKG_NONINTERACTIVE_OPTIONS}")
 
     try:
@@ -1068,6 +1069,7 @@ def install_node_for_user(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib", "node_install.py",
     ))
     install_binary = f"python3 -I {node_installer} {safe_nvm_dir}"
+    apt_env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
 
     _chown_existing_paths(username, _user_tool_paths(user_home))
     
@@ -1094,7 +1096,7 @@ def install_node_for_user(
 
             print("  Repairing Node.js LTS, npm, and pnpm baseline")
             target = resolve_node_release("lts/*")
-            run(f"{_APT_GET} install -y -qq libstdc++6 libatomic1")
+            run(f"{_APT_GET} install -y -qq libstdc++6 libatomic1", env=apt_env)
             nvm_target_env = f"{nvm_env} && nvm use {shlex.quote(target)}"
             _run_as_login_user(
                 username,
@@ -1118,7 +1120,7 @@ def install_node_for_user(
             return
         print("  Refreshing Node.js LTS, npm, and pnpm")
         target = resolve_node_release("lts/*")
-        run(f"{_APT_GET} install -y -qq libstdc++6 libatomic1")
+        run(f"{_APT_GET} install -y -qq libstdc++6 libatomic1", env=apt_env)
         nvm_target_env = f"{nvm_env} && nvm use {shlex.quote(target)}"
         _run_as_login_user(
             username,
@@ -1147,8 +1149,7 @@ def install_node_for_user(
         return
     
     target = resolve_node_release("lts/*")
-    os.environ["DEBIAN_FRONTEND"] = "noninteractive"
-    run(f"{_APT_GET} install -y -qq curl libstdc++6 libatomic1")
+    run(f"{_APT_GET} install -y -qq curl libstdc++6 libatomic1", env=apt_env)
 
     # Install nvm as the user, explicitly setting NVM_DIR to avoid picking up
     # any system-wide NVM_DIR (e.g. /opt/nvm) from the environment

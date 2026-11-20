@@ -548,9 +548,14 @@ function Invoke-NativeAgentSetup {
                                 @{ Code = 3010; Phase = 'restart-required'; Error = 'requires a Windows restart' })) {
                 $wslState | ConvertTo-Json | Set-Content -LiteralPath $wslStatePath -Encoding UTF8
                 $wslUpgradeExit = $case.Code
-                Assert-Throws { & $wslInstaller -Profile server_wsl -Resume } $case.Error
+                $setupOutput = [Collections.Generic.List[string]]::new()
+                Assert-Throws {
+                    & $wslInstaller -Profile server_wsl -Resume 6>&1 | ForEach-Object { $setupOutput.Add([string]$_) }
+                } $case.Error
                 $phase = (Get-Content -LiteralPath $wslStatePath -Raw | ConvertFrom-Json).Phase
                 Assert-True ($phase -eq $case.Phase) "WSL setup recorded $phase after WinGet exit $($case.Code)"
+                $resumeCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File '$wslInstaller' -Resume"
+                Assert-True (($resumeCommand -in $setupOutput) -eq ($case.Phase -eq 'restart-required')) 'WSL setup did not report the matching restart instructions'
             }
         }
     } finally {

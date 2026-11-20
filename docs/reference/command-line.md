@@ -283,6 +283,7 @@ The target account, packages, services, and other
 saved settings are reused; it does not infer a replacement profile or
 re-provision the machine. Each Debian refresh forces an APT update and upgrade
 and rechecks selected versioned runtimes, even after an earlier successful setup.
+APT can install new dependencies required by the upgraded packages.
 The normal service reconciliation steps still apply. Existing staged deployment
 sources are reused; refreshing does not fetch new application repositories from
 a controller. Provider credentials and existing local account passwords are
