@@ -110,8 +110,8 @@ endpoint. It retains the manual portal actions:
   can be copied into a desktop or mobile T3 Code client.
 
 The broker uses T3's supported administrative-session CLI and authenticated
-pairing API to issue a five-minute link with the standard client capabilities
-plus `access:read`, `access:write`, and `relay:write`. Its temporary two-minute
+pairing API to issue a five-minute link with T3's standard client permissions,
+including `access:read`, `access:write`, and `relay:write`. Its temporary two-minute
 administrative bearer session is revoked immediately after the pairing link is
 created. Pairing URLs are returned only to the authenticated request. They are
 not written to setup output, Nginx access logs, the broker journal, provider
@@ -134,10 +134,12 @@ The authenticated `/devices` page hands off to **Open T3 Code** on the primary
 T3 origin. Opening this link reuses native authentication; it does not issue a
 pairing credential. If the browser needs enrollment, use **Pair this browser**.
 
-T3 owns account linking, relay installation and preferences, and Connect device
-approval. In the desktop app, use **Settings → Sharing & access**. A headless
-server's initial linking is a host operation: open its integrated T3 terminal
-or SSH, run the native command, and follow its prompts:
+T3 owns account linking, relay preferences, and Connect device approval.
+Starting with T3 0.1.11, creating the Connect link and configuring its relay
+require `relay:configure`. The portal grants `relay:write` for existing relay
+preferences and unlinking. Use **Settings → Sharing & access** in the host's
+local desktop app, or run the native command as the service account through
+the headless server's integrated terminal or SSH:
 
 ```bash
 t3 connect link --headless
@@ -149,8 +151,8 @@ Wait for active turns to finish before restarting; a service restart interrupts
 them. The native command handles relay-install confirmation and authorization.
 Inspect the resulting relay status and verify a client connection. To turn
 Connect off, run `t3 connect unlink`, then `t3 service restart`.
-See upstream [remote access](https://github.com/pingdotgg/t3code/blob/v0.1.10/docs/user/remote-access.md)
-and [Connect troubleshooting](https://github.com/pingdotgg/t3code/blob/v0.1.10/docs/user/t3-connect-troubleshooting.md).
+See upstream [remote access](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/remote-access.md)
+and [Connect troubleshooting](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/t3-connect-troubleshooting.md).
 
 ### Migration from the portal console
 

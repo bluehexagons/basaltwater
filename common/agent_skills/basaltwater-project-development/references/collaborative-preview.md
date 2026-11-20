@@ -15,11 +15,22 @@ browser without a current tab can still open one.
 The server browser uses the T3 host's routes and trust store. Use
 `target: {kind: "environment-port", port: PORT}` when the live open or
 navigate schema supports it. On the server this reaches loopback directly.
-When tools support desktop automation, its routes and trust belong to the
-desktop. On a remote connection, the port target points to the connection
-host and requires reachability from the desktop.
+When tools support desktop automation, check the tab's runtime and connection.
+In 0.1.11, a tab opened by the user in the desktop app for a remote environment
+can render locally and tunnel `localhost` to the T3 host. Agent-opened server
+tabs and the web app still stream from the host. Desktop port forwarding and
+mobile **Open on this device** also use the host's preview tunnel. A forwarded
+port is reachable by local apps on the client. Stop the forward when finished.
 
-When a desktop needs a managed VM's loopback development port, resolve it first:
+Check **Settings → Sharing & access → Preview tunnel** on the host if client
+rendering or forwarding is unavailable. The setting defaults on in 0.1.11.
+Managed policy `limits.previewTunnel: false` takes precedence. Follow the
+owner's policy and use a streamed tab where available. A desktop tunnel may
+fail when the connection depends on a system proxy or privately issued HTTPS.
+See [remote browsers and forwarding](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/remote-access.md#browser-on-a-remote-environment).
+
+When the task calls for a separately reachable gateway URL, resolve the
+managed VM's loopback development port:
 
 ```bash
 basaltwater-web preview resolve --port PORT --json

@@ -2,7 +2,7 @@
 
 Follow the active T3 instructions and live schemas. For native delegation,
 thread controls, queue operations, and tool results, use the
-[T3 orchestration contract](https://github.com/pingdotgg/t3code/blob/v0.1.10/docs/orchestration-v2/orchestrator-mcp-server.md).
+[T3 orchestration contract](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/orchestration-v2/orchestrator-mcp-server.md).
 Basaltwater's installed guidance does not grant access to those tools.
 
 ## Discovery and delegation fallback
@@ -16,7 +16,7 @@ session supplies an ACP bridge, use its instructions for reaching T3 tools.
 
 ## Linked environments
 
-Use the [T3 linked-environment guide](https://github.com/pingdotgg/t3code/blob/v0.1.10/docs/user/remote-access.md#link-another-environment)
+Use the [T3 linked-environment guide](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/remote-access.md#link-another-environment)
 for enrollment and revocation. The peer's grant limits operations in addition
 to the caller's runtime mode. Inspect provider readiness on the peer and
 resolve ambiguous project matches explicitly.
@@ -32,6 +32,12 @@ T3 binds its worktrees at launch. A shell directory change does not rebind a
 thread. Preparation starts from a commit, while worktrees still share the
 host account, services, ports, and caches. Keep each editing task isolated
 and inspect the branch and diff before integration.
+
+For an explicitly requested new thread, 0.1.11 supports `clientRequestId`
+on `t3_thread_launch`. If the initial call included a key and the reply was
+lost, retry the same request with that key from the same provider session.
+If the initial call had no key, look up the thread before retrying. Follow
+the active tool schema for available launch options.
 
 Use T3's own lifecycle for its worktrees and scratch. Reserve
 `basaltw agent workspace` for Basaltwater-managed paths. Inspect the owner's
@@ -58,4 +64,7 @@ approval response does not resolve a workflow approval hold. Check the awaited
 run and current PR head before reporting readiness. PR guides can launch
 separate model runs under the project's guide settings. Read an existing
 guide first and compare its recorded head to the current head before citing it.
-See the [native PR tools](https://github.com/pingdotgg/t3code/blob/v0.1.10/apps/server/src/mcp/toolkits/pullRequests/tools.ts).
+T3 0.1.11 adds native PR mutations and CI rerun tools. For an authorized
+mutation, verify the target PR, head, check run, and any affected stack
+layers. Link and watch calls track state. See the
+[native PR tools](https://github.com/pingdotgg/t3code/blob/v0.1.11/apps/server/src/mcp/toolkits/pullRequests/tools.ts).

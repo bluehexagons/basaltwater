@@ -56,7 +56,10 @@ preserves provider management, settings, previews, filesystem access, and server
 updates for newly paired clients. If an existing client reports legacy
 permissions after upgrading, enroll it again through the protected pairing
 entrypoint. See the
-[upstream permission contract](https://github.com/pingdotgg/t3code/blob/v0.1.0/packages/contracts/src/auth.ts).
+[upstream permission contract](https://github.com/pingdotgg/t3code/blob/v0.1.11/packages/contracts/src/auth.ts).
+In 0.1.11 the standard client grant covers existing Connect preferences and
+unlinking. On managed Debian, use the host-side workflow for initial linking
+and relay configuration. [Connect management](../services/device-pairing.md#t3-connect-management)
 
 The helper sends its temporary administrative bearer only to an explicit
 loopback address or `localhost`, with proxies and redirects disabled. Remote
@@ -134,9 +137,10 @@ the interruption before accepting; without interactive input it stages the
 update unless `--yes` is supplied. If restart was deferred, run
 `t3 service restart` at the arranged time, then check readiness. A staged
 version is not necessarily running, and an older launcher can remain down
-after a crash or reboot until that restart. Preserve update-policy and
-downgrade refusals. See the tagged
-[native update guide](https://github.com/pingdotgg/t3code/blob/v0.1.10/docs/user/updating.md#update-a-connected-server).
+after a crash or reboot until that restart. In 0.1.11 the local updater checks
+the candidate against the database before switching. Preserve update-policy
+and downgrade refusals. See the tagged
+[native update guide](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/updating.md#update-a-connected-server).
 
 The native command and Basaltwater setup operate on the same upstream-managed
 user service. To update through setup, rerun the saved command with its

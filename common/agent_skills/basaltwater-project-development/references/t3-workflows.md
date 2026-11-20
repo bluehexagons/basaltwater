@@ -2,7 +2,7 @@
 
 Use these integrations when the active T3 session exposes the relevant tools.
 Follow its injected instructions and live schemas. This reference follows
-[T3 Code 0.1.10](https://github.com/pingdotgg/t3code/releases/tag/v0.1.10).
+[T3 Code 0.1.11](https://github.com/pingdotgg/t3code/releases/tag/v0.1.11).
 
 ## Establish the execution environment
 
@@ -71,6 +71,13 @@ check the setup result before launching dependent checks. New worktrees start
 from committed files and share host ports and services. Allocate distinct ports
 and keep secrets in the project's existing private configuration.
 
+In 0.1.11, `worktreeSparsePatternsPath` in `t3.json` can point to a
+repository-relative non-cone sparse-checkout pattern file. T3 reads both
+files from the branch being checked out before running setup. Ensure required
+setup inputs are included. A missing pattern file aborts creation. This needs
+Git 2.35+ and enables `extensions.worktreeConfig` for the repository.
+See [worktree settings](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/project-settings.md#defaults-and-inheritance).
+
 `runOnSettle` can execute on every settlement of a thread with its own
 worktree. Use it only for an intended, repeatable project operation; do not
 attach broad cleanup, publication, or deployment as an incidental setup step.
@@ -95,6 +102,10 @@ Contract: [project file schema](https://github.com/pingdotgg/t3code/blob/v0.1.9/
 and [settings and cleanup](https://github.com/pingdotgg/t3code/blob/v0.1.8/docs/user/project-settings.md).
 
 ## Choose a topic
+
+- Project issue lists support saved views and thread links. Issue changes over
+  a remote connection require `source-control:write` and tracker authorization.
+  [T3 issue tracking](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/source-control.md#issues)
 
 <a id="shared-016-client-workflows"></a>
 <a id="shared-017-client-workflows"></a>

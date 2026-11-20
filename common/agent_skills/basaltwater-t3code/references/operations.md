@@ -158,6 +158,12 @@ Basic Auth credentials. It automatically issues a one-time browser credential
 and opens T3; `/devices` retains manual pairing and T3 Connect controls.
 Use the primary T3 URL afterwards to reuse the native session.
 
+With compatible 0.1.11 hosts and clients, directly paired device sessions
+can renew with their device key while in use. Re-pair if a session expires
+after inactivity or an older host cannot renew it. Check the active route's
+permissions when switching between direct pairing and Connect. See
+[direct pairing and routes](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/remote-access.md#pair-over-a-lan-or-private-network).
+
 If pairing returns to the key form, check hostname/scheme changes and cookie
 acceptance. Reopen the protected entry to recover a rejected session. Never
 print cookies or credentials. An unpaired browser may log WebSocket auth
@@ -177,6 +183,13 @@ failure. Leave cloud sign-in unverified when it fails. Preserve managed
 TLS/authentication policy and upstream assets.
 
 ## Connect device approval
+
+T3 0.1.11 requires `relay:configure` for initial Connect linking and relay
+configuration. Basaltwater-issued links carry the standard client grant,
+including `relay:write` for existing relay preferences and unlinking.
+For initial setup on managed Debian, run `t3 connect link --headless` as the
+service account and arrange the restart described in
+[Connect management](https://github.com/bluehexagons/basaltwater/blob/main/docs/services/device-pairing.md#t3-connect-management).
 
 In 0.1.10 the owner can enable **Require approval for new devices** in the
 host's **Settings → Sharing & access**. A new Connect device shows a code;
@@ -253,12 +266,14 @@ links can change only threads they started and skip project setup scripts.
 Discovery, remote delegation, and workspace constraints are in the subagent
 skill's [T3 reference](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-subagents/references/t3-orchestration.md#linked-environments).
 
-Links last 30 days; renew by linking again. **Forget** removes the local link
-and credential, while revocation on the peer's **Settings → Sharing & access**
-ends its grant there. Turning the beta off pauses link use, including result
-delivery from that peer, without stopping work already running. Do not treat
+On 0.1.11, links between compatible environments renew while agents use them.
+After 30 days unused, or after 30 days with an older peer, link again using a
+new code. **Forget** removes the local link and credential. Revocation in
+the peer's **Settings → Sharing & access** ends its grant there. Turning the
+beta off pauses link use and result delivery from that peer while existing
+work continues. Do not treat
 a forgotten link or unavailable result as proof that remote edits stopped.
-See the [tagged link guide](https://github.com/pingdotgg/t3code/blob/v0.1.4/docs/user/remote-access.md#link-another-environment).
+See the [tagged link guide](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/remote-access.md#link-another-environment).
 
 ## Server-side Git
 

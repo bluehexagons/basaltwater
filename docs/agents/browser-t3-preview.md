@@ -56,13 +56,26 @@ Pass exactly one of `url` or `target`. The target defaults to HTTP and accepts
 `protocol: "https"` for TLS. The server browser resolves `environment-port`
 directly to `localhost:PORT`, so VM loopback needs no gateway forward. See the
 [server resolver and preferred-host registration](https://github.com/pingdotgg/t3code/blob/v0.1.3/apps/server/src/preview/ServerBrowser.ts).
-Desktop-hosted tabs use the client resolver, which rewrites the environment's
-connection host and may reject public relay targets; it does not tunnel to VM
-loopback. See the
-[desktop resolver](https://github.com/pingdotgg/t3code/blob/v0.1.3/apps/web/src/browser/browserTargetResolver.ts).
 
-When a desktop browser needs a reachable URL for a VM loopback service, resolve
-the existing HTTPS route:
+In 0.1.11, desktop tabs opened by the user against another environment can
+render locally and tunnel `localhost` to that environment. Server tabs and
+web clients still stream from the host. Desktop port forwarding and mobile
+**Open on this device** use the same preview tunnel. A forwarded port is
+reachable by apps on the client and stops when the forward closes or the
+desktop app quits. Private HTTPS or system-proxy-dependent connections may
+require a streamed tab. See
+[remote browser and port forwarding](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/remote-access.md#browser-on-a-remote-environment).
+
+The preview tunnel defaults on in 0.1.11. The host's **Preview tunnel** setting
+can disable it, and managed policy `limits.previewTunnel: false` takes
+precedence. A client needs `terminal:operate` to use the tunnel. Streamed
+tabs can still reach the host's loopback. Review both paths when assessing
+access to an environment's development services.
+[Managed policy](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/managed-policy.md#other-capabilities)
+· [Tunnel authorization](https://github.com/pingdotgg/t3code/blob/v0.1.11/apps/server/src/preview/PreviewTunnel.ts)
+
+When the task calls for a separately reachable HTTPS URL for a VM loopback
+service, resolve the gateway route:
 
 ```bash
 basaltwater-web preview resolve --port 8080 --json

@@ -22,6 +22,8 @@ from lib.validation import validate_filesystem_path
 from lib.validators import validate_host
 
 
+# Remote device enrollment uses the standard client scopes. T3 0.1.11 adds
+# relay:configure for owner-side Connect setup, outside this pairing grant.
 ADMINISTRATIVE_SCOPES = (
     "orchestration:read",
     "orchestration:operate",

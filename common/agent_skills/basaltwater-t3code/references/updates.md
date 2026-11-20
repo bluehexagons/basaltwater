@@ -38,8 +38,10 @@ accepting. Without interactive input it stages the update without restarting
 unless `--yes` is supplied; staging does not establish that the new version is
 running. If activation was deferred, run `t3 service restart` at the arranged
 time, then check readiness. Older launchers can remain down after a crash or
-reboot until that restart. Preserve update-policy and downgrade refusals. See
-the tagged [native updater](https://github.com/pingdotgg/t3code/blob/v0.1.10/docs/user/updating.md#update-a-connected-server).
+reboot until that restart. In 0.1.11, the local `t3 update` command checks the
+target build against the database before switching. Keep the active version
+when preflight reports an incompatible or unreadable database. See the tagged
+[native updater](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/updating.md#update-a-connected-server).
 
 ## Launcher recovery
 
@@ -125,6 +127,11 @@ first; do not assume the migration crashed or delete either database. Update
 Basaltwater and rerun the saved setup command to apply the readiness fix.
 
 ## Release tracks and archive layout
+
+Stable 0.1.11 retains launcher protocol 4 and accepts protocol 3 launchers for
+remote updates. Database migrations advance to 102. See the
+[0.1.11 operator record](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/t3-releases/0.1.11.md)
+for compatibility and verification.
 
 Stable 0.1.10 advances the launcher to protocol 4, retaining protocol 3 launcher
 compatibility and the durable state/layout contracts. Basaltwater recognizes

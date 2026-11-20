@@ -184,11 +184,15 @@ class T3CodeAdministrativePairingTest(unittest.TestCase):
             "orchestration:read", "orchestration:operate", "terminal:operate",
             "review:write", "relay:read", "access:read", "access:write", "relay:write",
         )
-        for scopes in (current, legacy):
-            with self.subTest(scopes=scopes):
+        for granted, expected in (
+            (current, current),
+            ((*current, "relay:configure"), current),
+            (legacy, legacy),
+        ):
+            with self.subTest(granted=granted):
                 issued = MagicMock(stdout=json.dumps({
                     "sessionId": "session-1", "token": "temporary-secret",
-                    "scopes": list(scopes),
+                    "scopes": list(granted),
                 }))
                 with (
                     patch.object(t3code_admin_pair, "_run_t3", return_value=issued),
@@ -198,7 +202,7 @@ class T3CodeAdministrativePairingTest(unittest.TestCase):
                         "/opt/t3", "/tmp/state"
                     )
                 self.assertEqual((session, token), ("session-1", "temporary-secret"))
-                self.assertEqual(set(delegated), set(scopes))
+                self.assertEqual(set(delegated), set(expected))
                 revoke.assert_not_called()
 
     def test_rejects_incomplete_or_malformed_granular_grants_and_revokes(self) -> None:
