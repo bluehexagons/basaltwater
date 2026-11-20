@@ -37,7 +37,9 @@ From Command Prompt, the equivalent one-line entry point is:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$p=Join-Path $env:TEMP ('basaltwater-wsl-'+[guid]::NewGuid()+'.ps1'); Invoke-WebRequest 'https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.ps1' -UseBasicParsing -OutFile $p -ErrorAction Stop; & $p -Profile server_wsl -BuildServer -T3CodeDesktop -Node -Python -AgentTool gh,codex"
 ```
 
-Use `-Plan` to check the intended options without installing. `-LinuxUser`,
+Once WSL is enabled, setup runs `winget upgrade --all` for applicable installed
+Windows packages from enabled implicit sources before preparing Ubuntu. Use `-Plan` to
+preview the upgrade and the selected options. `-LinuxUser`,
 `-DistroName`, and `-DistroLocation` select the Ubuntu account, official stable
 Ubuntu WSL distribution, and absolute Windows drive directory for a new
 distro. Without a distro name, setup selects the newest versioned stable Ubuntu
@@ -90,7 +92,9 @@ not register a GitHub runner.
 If WSL needs a restart, setup prints an exact `-Resume` command. Restart
 Windows, log in to the same account, and run it. The state and pinned source
 are under `%LOCALAPPDATA%\Basaltwater`; credentials are never saved in setup
-state. Reusing `-Resume` reapplies the pinned setup and updates Ubuntu packages.
+state. Reusing `-Resume` reapplies the pinned setup and updates WinGet and Ubuntu
+packages. If WinGet reports a restart requirement, restart Windows manually and
+rerun the pinned installer with `-Resume`.
 WSL and Ubuntu release upgrades are deliberate maintenance; an existing
 Ubuntu distribution is not silently replaced. The user may need to log in to
 each selected agent after setup. On an unmanaged Windows machine, choose the
@@ -216,10 +220,9 @@ $state = Get-Content "$env:LOCALAPPDATA\Basaltwater\wsl-setup.json" -Raw | Conve
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $state.Source 'windows\Manage-Wsl.ps1') -Action status
 ```
 
-`refresh` updates WSL, Ubuntu packages, selected
-tools, and selected WinGet packages without changing the pinned Basaltwater
-source. Selected Windows packages, including T3, receive available WinGet
-updates. WinGet's catalog can lag the app's own updater; see
+`refresh` updates WSL, Ubuntu packages, selected tools, and eligible WinGet
+packages using the pinned Basaltwater source. WinGet's catalogs can lag the
+app's own updater. See
 [native update behavior](windows-tool-selection.md#review-selections-from-a-checkout).
 To advance the source deliberately, run a freshly downloaded installer
 with `-Resume -UpdateSource` and optional `-Version REF`; it stages the new

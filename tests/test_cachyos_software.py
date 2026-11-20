@@ -58,8 +58,6 @@ class SoftwareTests(unittest.TestCase):
             package = argv[-1]
             return CompletedProcess(argv, 0 if package in self.installed else 1,
                                     f"{package} {self.installed[package]}\n" if package in self.installed else "")
-        if argv[:2] == ["pacman", "-Si"]:
-            return CompletedProcess(argv, 0, "")
         if argv[:2] == ["pacman", "-Qqo"]:
             name = Path(argv[-1]).name
             package = "material-maker-bin" if name == "material-maker" and "material-maker-bin" in self.installed else name
@@ -106,7 +104,8 @@ class SoftwareTests(unittest.TestCase):
 
     def test_preflight_only_queries_and_does_not_create_cache(self):
         software.preflight_software(self.config(*FLAGS))
-        self.assertTrue(all(command[0] == "pacman" for command, _ in self.events))
+        self.assertTrue(all(command[:2] in (["pacman", "-Q"], ["pacman", "-Qqo"])
+                            for command, _ in self.events))
         self.assertEqual(list(self.home.iterdir()), [])
 
     def test_install_keeps_review_prompts_and_rerun_does_not_upgrade(self):
@@ -132,17 +131,11 @@ class SoftwareTests(unittest.TestCase):
             software.install_software(self.config("--butler"))
         self.assertTrue(all(command[0] == "pacman" for command, _ in self.events))
 
-    def test_missing_helper_and_missing_runtime_dependency_fail_before_mutation(self):
+    def test_missing_helper_fails_before_mutation(self):
         self.which.side_effect = None
         self.which.return_value = None
         with self.assertRaisesRegex(RuntimeError, "requires Shelly"):
             software.preflight_software(self.config("--butler"))
-        self.installed["steamcmd"] = "latest-7"
-        self.which.side_effect = lambda name, **kw: "/usr/bin/steamcmd" if name == "steamcmd" else None
-        self.run.side_effect = lambda argv, **kw: (CompletedProcess(argv, 1, "")
-            if argv[:2] == ["pacman", "-Si"] else self.command(argv, **kw))
-        with self.assertRaisesRegex(RuntimeError, "SteamCMD requires lib32-glibc"):
-            software.preflight_software(self.config("--steamcmd"))
         self.assertEqual(list(self.home.iterdir()), [])
 
     def test_unowned_aur_helper_stops_preflight_before_install(self):

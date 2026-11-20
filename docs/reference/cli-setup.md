@@ -24,6 +24,10 @@
 | `server_proxmox` | Proxmox host server |
 | `custom_steps` | Run an explicitly selected step list for advanced or development workflows |
 
+`agent_cachyos` runs `pacman -Syu` on the target before installing selected
+tools. This applies to setup reruns and local refresh. `--dry-run` previews the
+step. See [CachyOS package behavior](../workstations/cachyos-profile-reference.md#package-and-repository-behavior).
+
 ### Core Flags
 
 | Flag | Description |

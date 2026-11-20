@@ -150,16 +150,16 @@ An older installed CLI cannot recognize newly added flags. Run `basaltw upgrade`
 once first to acquire this refresh interface and any new options.
 Alternatively, rerun `setup` with all desired options. That successful run
 replaces the record rather than merging with earlier selections.
-Refresh follows the same update behavior as setup: managed agent CLIs update,
-web mode updates/restarts its service, and desktop mode checks for T3 AUR updates
-with interactive package review when an update is available. Finish active work first.
+Refresh runs the same `pacman -Syu` upgrade as setup. Managed agent CLIs update,
+web mode updates and restarts its service, and desktop mode checks for T3 AUR
+updates with interactive package review when an update is available. Finish
+active work first.
 
 Missing or invalid saved options stop refresh before the source upgrade.
 An upgrade failure prevents setup. If setup fails after a successful upgrade,
 Basaltwater stays upgraded and returns setup's failure status; resolve the
 error and repeat `refresh`, or run an explicit setup to change the selection.
-On CachyOS this repeats only the local `agent_cachyos` profile. It does not
-upgrade CachyOS itself or redeploy saved remote hosts. Debian also supports
+On CachyOS this repeats the local `agent_cachyos` profile. Debian also supports
 refresh, using its existing target-side record and root setup runner; see
 [refresh on Debian](../reference/command-line.md#refresh-this-machine).
 
@@ -173,7 +173,7 @@ alone does not trigger the package check. Install times also cover reinstalls,
 so this is a conservative recommendation rather than proof that rebooting is
 mandatory. Missing or unreadable metadata is reported as unknown or incomplete;
 absence of a detected signal does not override CachyOS or firmware notices.
-No package database refresh, privileged check, or automatic restart is added.
+The restart observation itself is read-only and unprivileged.
 
 The package dates use the documented
 [ALPM local metadata format](https://man.archlinux.org/man/extra/alpm-db/alpm-db-descv1.5.en).

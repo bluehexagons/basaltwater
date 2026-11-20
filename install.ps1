@@ -454,6 +454,7 @@ try {
         }
     }
     if ($Plan) {
+        Write-Host 'Plan: upgrade installed Windows packages with winget upgrade --all.'
         if ($Profile -eq 'agent_windows') {
             Write-Host 'Plan: install stable PowerShell 7 if missing, then run native setup in PowerShell 7.'
             if ($updateSourceSelected) { Write-Host 'Plan: resolve current Basaltwater source when applying; preview uses local source without downloads.' }
@@ -633,7 +634,10 @@ try {
             (Join-Path $state.Source "install.ps1") + '" -Resume')
         return
     }
+    $state.Phase = 'applying'
+    Save-State $state
     Ensure-Winget
+    Update-WingetPackages
     Invoke-Checked "WSL update" { & wsl.exe --update }
     Select-Distro
     Ensure-Distro
@@ -693,12 +697,13 @@ try {
     Invoke-NativeSetupCompletion -Source $state.Source -T3CodeDesktop:$state.T3CodeDesktop -NoRestartT3:$NoRestartT3
 } catch {
     $setupError = $_
-    if ($Profile -eq 'agent_windows' -and $setupLock -and
-        $setupError.Exception.Data['Basaltwater.WindowsRestartRequired']) {
+    if ($setupLock -and $setupError.Exception.Data['Basaltwater.WindowsRestartRequired']) {
         $state.Phase = 'restart-required'
         Save-State $state
-        $installerReason = [string]$setupError.Exception.Data['Basaltwater.WindowsRestartReason']
-        if (Invoke-NativeWindowsRestart -State $state -Required -InstallerReason $installerReason -NoReboot:$NoReboot -NoRestartT3:$NoRestartT3) { return }
+        if ($Profile -eq 'agent_windows') {
+            $installerReason = [string]$setupError.Exception.Data['Basaltwater.WindowsRestartReason']
+            if (Invoke-NativeWindowsRestart -State $state -Required -InstallerReason $installerReason -NoReboot:$NoReboot -NoRestartT3:$NoRestartT3) { return }
+        }
     }
     Write-Error $setupError
     exit 1

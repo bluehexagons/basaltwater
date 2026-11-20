@@ -34,10 +34,15 @@ When calling a script directly inside PowerShell, `-T3CodeDesktop:$false`
 disables the desktop selection. Windows PowerShell 5.1 cannot pass that switch
 value through `powershell.exe -File`; use its `-Command` form for this opt-out.
 
-Setup and refresh install available updates for selected tools using exact
-WinGet identities, without a separate update-check command. npm providers are
-updated through npm. Tools are rediscovered and version-checked afterward;
-a failed update or broken tool stops setup. T3 Code is updated too, and its
+Setup and refresh start package maintenance with `winget upgrade --all`.
+The bulk pass covers applicable installed apps from enabled implicit sources,
+including the Microsoft Store when configured. It honors WinGet pins and skips
+packages with unknown installed versions. Windows OS updates are handled through
+Windows Update. Setup then reconciles selected tools by exact WinGet identity and updates
+npm providers through npm. Tools are rediscovered and version-checked afterward.
+A failed upgrade or broken tool stops setup. For a bulk upgrade failure, review
+WinGet's per-package output for the reported error or restart requirement.
+T3 Code is updated too, and its
 installer may close the running desktop. If that interrupts a T3 terminal,
 the default detached refresh continues independently. For a foreground installer,
 resume from a separate PowerShell window using the saved installation.

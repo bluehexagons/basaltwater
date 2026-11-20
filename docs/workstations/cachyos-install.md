@@ -4,9 +4,10 @@
 
 ## Quick start
 
-Finish the normal CachyOS installation first: update the system, configure KDE,
-and install the appropriate GPU driver. Then open a terminal in your normal
-desktop session and run this as yourself (without `sudo`).
+Finish the normal CachyOS installation, including KDE and the appropriate GPU
+driver. Then open a terminal in your normal desktop session and run this as
+yourself (without `sudo`). The setup phase upgrades repository packages before
+installing the coding tools.
 
 The commands on this page use **fish**, CachyOS's
 [default login shell](https://wiki.cachyos.org/configuration/post_install_setup/#changing-the-default-shell).

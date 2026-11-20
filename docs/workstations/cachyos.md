@@ -8,10 +8,9 @@ general server profiles. KDE capture/input is available through explicitly
 started, user-approved [native desktop automation](cachyos-desktop.md).
 Managed Playwright remains deferred.
 
-Support targets the **latest fully updated CachyOS rolling release**, not older
-ISO defaults or generic Arch installations. Update through CachyOS's normal
-full-system update workflow before setup. The current KDE baseline uses Plasma
-Wayland and Plasma Login Manager; Shelly supplies the default package-manager
+Support targets the **latest CachyOS rolling release**. Setup and refresh run
+a full repository upgrade before installing the coding tools. The current KDE
+baseline uses Plasma Wayland and Plasma Login Manager. Shelly supplies the default package-manager
 GUI and CLI. Basaltwater uses that CLI for explicitly selected AUR software and
 leaves the desktop, login manager, DNS, drivers, and distro update services under
 CachyOS management. See the upstream [January](https://blog.cachyos.org/blog/2601-january-release/),

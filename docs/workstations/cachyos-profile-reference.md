@@ -4,14 +4,15 @@
 
 ## Package and repository behavior
 
-- Package state is checked with `pacman -Q`; missing packages use
-  `pacman -S --needed`. Setup does not refresh package databases or perform a
-  system upgrade. Use CachyOS's normal update workflow first, and never use
-  `pacman -Sy` as a repair for a partial upgrade.
-- Package installation and pruning old pacman downloads may prompt for sudo.
+- Setup and refresh run `sudo pacman -Syu --noconfirm` using the enabled
+  repositories before installing missing packages with `pacman -S --needed`.
+  Pacman honors configured package exclusions. AUR updates follow the selected
+  tool's own workflow. `--dry-run` includes the upgrade in the plan.
+- Package upgrades, installation and pruning old pacman downloads may prompt
+  for sudo.
   Agent CLIs, the T3 web runtime, user-cache cleanup, and repository checks are
   otherwise noninteractive. No update or cleanup timers are installed.
-- Package pressure recovery runs before installing tools; ordinary cache cleanup
+- Package pressure recovery runs before the upgrade. Ordinary cache cleanup
   runs after tool readiness. If cleanup fails, setup reports an
   incomplete result and returns nonzero; installed tools are retained. Resolve
   the cleanup error and rerun setup. This profile has no automatic cache retry.
@@ -19,6 +20,9 @@
   rather than a generic host configuration for `patch`, `deploy`, or `cmd`.
 - If a CachyOS mirror or DNS lookup fails, fix the resolver or mirror through
   CachyOS's normal maintenance workflow and retry your selected installer.
+- If the upgrade replaces the Python minor version running setup, rerun setup
+  with the updated interpreter to finish. Recreate a development virtual
+  environment if its base interpreter version was removed.
 - `--repo` clones only a missing repository. An existing destination must be a
   Git repository with the requested origin and must be writable by you; setup
   does not delete or repair conflicting directories.

@@ -44,6 +44,7 @@ def build_cachyos_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
         reconcile_cachyos_user_cache,
         save_cachyos_setup,
         report_cachyos_host_health,
+        upgrade_cachyos_packages,
     )
     from lib.cachyos import validate_cachyos_config
     from common.cachyos_firewall import configure_firewall, firewall_requested
@@ -56,7 +57,8 @@ def build_cachyos_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
     steps = [
         ("Observing workstation health (read-only)", report_cachyos_host_health),
         ("Recovering old package downloads if storage is low", recover_cachyos_package_space),
-        ("Installing missing workstation packages (no system upgrade)", install_cachyos_packages),
+        ("Updating CachyOS system packages (pacman -Syu)", upgrade_cachyos_packages),
+        ("Installing missing workstation packages", install_cachyos_packages),
     ]
     if desktop_automation_requested(config):
         steps.append(("Adding human desktop control to the application menu", configure_cachyos_desktop_control))

@@ -26,10 +26,10 @@ already accept SSH for its existing non-root desktop account. Review the
 [remote development guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos-development.md)
 for controller setup, desktop-session limits, and service commissioning.
 
-Packages use pacman. Leave full OS upgrades to the user's CachyOS workflow and
-never repair a package failure with a partial `pacman -Sy` upgrade. Update
-externally managed tools with their original package manager. Setup cleanup is
-bounded and runs only during setup/refresh; there is no CachyOS cleanup timer.
+Setup and refresh upgrade enabled repository packages with `sudo pacman -Syu`
+before installing missing tools. Use the same full-upgrade workflow outside
+setup. Update externally managed tools with their original package manager.
+Bounded cleanup runs during setup and refresh.
 See the [CachyOS maintenance guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos-maintenance.md)
 for cleanup and diagnostics.
 
