@@ -128,8 +128,14 @@ Native forge account detection is managed in T3. In the affected environment,
 open **Settings → Source control & issues** and choose **Rescan** after signing
 in. GitHub detection can use a saved token, `GH_TOKEN` in the T3 service
 environment, or a login in GitHub CLI 2.81.0 or newer. Check the installed
-version when using a distro-provided `gh`. A Git HTTPS helper or SSH key is
-still needed when the repository's Git transport requires it. See
+version as the T3 service user when using a manually managed `gh`. When Debian
+setup selects both GitHub CLI and the T3 web interface, it upgrades older `gh`
+packages through GitHub's apt repository and preserves manually installed
+executables.
+The GitHub CLI setup step fails if apt cannot supply a compatible version.
+Check package holds and pinning in that case.
+A Git HTTPS helper or SSH key is still needed when the repository's Git
+transport requires it. See
 [T3 account setup](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/source-control.md#connect-an-account).
 
 ### Provider status timeouts

@@ -27,7 +27,7 @@ from lib.agent_skill_bundles import (
 from lib.config import SetupConfig
 from lib.maintenance_systemd import configure_maintenance_timer
 from lib.orchestrator_bootstrap import LAUNCHER_NAME
-from lib.remote_utils import install_package, is_dry_run, run
+from lib.remote_utils import install_package, install_with_verify, is_dry_run, run
 from lib.types import StrList
 from lib.validation import (
     validate_filesystem_path,
@@ -65,6 +65,7 @@ _AGENT_CLI_MARKER = "# Managed by basaltwater agent setup"
 _FRESH_AGENT_TOOLS_ATTRIBUTE = "_freshly_installed_agent_tools"
 _GIT_IDENTITY_PAYLOAD_PATH = os.path.join("config", "git", "identity.json")
 _MAX_GIT_IDENTITY_PAYLOAD_BYTES = 16 * 1024
+_T3_GITHUB_CLI_MINIMUM = "2.81.0"
 
 
 def _user_home(config: SetupConfig) -> str:
@@ -314,15 +315,48 @@ def _install_agent_cli_wrapper(config: SetupConfig, launcher_path: str) -> None:
     print(f"  Installed agent VM management command: {launcher_path}")
 
 
+def _github_cli_package_supports_t3() -> bool | None:
+    """Check the installed Debian package, if present."""
+    package = run(
+        ["dpkg-query", "-W", "-f=${db:Status-Status} ${Version}", "--", "gh"],
+        check=False, capture_output=True,
+    )
+    status, _, version = (package.stdout or "").strip().partition(" ")
+    if package.returncode != 0 or status != "installed" or not version:
+        return None
+    upstream_version = version.rsplit(":", 1)[-1]
+    comparison = run(
+        ["dpkg", "--compare-versions", upstream_version, "ge", _T3_GITHUB_CLI_MINIMUM],
+        check=False,
+    )
+    return comparison.returncode == 0
+
+
 def install_github_cli(config: SetupConfig) -> None:
-    """Install the GitHub CLI from GitHub's Debian apt repository."""
-    if shutil.which("gh"):
+    """Install GitHub CLI and reconcile older Debian packages for T3 Code."""
+    t3_selected = "t3code" in (config.web_interfaces or ())
+    if not t3_selected and shutil.which("gh"):
         print("  GitHub CLI already installed")
         return
 
     if is_dry_run():
-        print("  [DRY-RUN] Would install GitHub CLI")
+        action = "ensure T3-compatible GitHub CLI" if t3_selected else "install GitHub CLI"
+        print(f"  [DRY-RUN] Would {action}")
         return
+
+    if t3_selected and (path := _tool_path(config, "gh")):
+        supports_t3 = (
+            _github_cli_package_supports_t3() if os.path.realpath(path) == "/usr/bin/gh" else None
+        )
+        if supports_t3 is None:
+            print(
+                "  Existing GitHub CLI retained. T3 Code requires "
+                f"gh {_T3_GITHUB_CLI_MINIMUM} or newer for GitHub CLI authentication."
+            )
+            return
+        if supports_t3:
+            print("  GitHub CLI already installed and compatible with T3 Code")
+            return
 
     os.environ["DEBIAN_FRONTEND"] = "noninteractive"
     run(["apt-get", "install", "-y", "-qq", "ca-certificates", "curl", "gpg"])
@@ -343,7 +377,17 @@ def install_github_cli(config: SetupConfig) -> None:
         file_obj.write(source_line)
 
     run(["apt-get", "update", "-qq"])
-    if not install_package("GitHub CLI", "gh", ["apt-get", "install", "-y", "-qq", "gh"]):
+    install_command = ["apt-get", "install", "-y", "-qq", "gh"]
+    if t3_selected:
+        installed = install_with_verify(
+            f"GitHub CLI {_T3_GITHUB_CLI_MINIMUM} or newer", install_command,
+            lambda: _github_cli_package_supports_t3() is True,
+        )
+        if not installed:
+            raise RuntimeError(
+                f"T3 Code requires GitHub CLI {_T3_GITHUB_CLI_MINIMUM} or newer for CLI authentication"
+            )
+    elif not install_package("GitHub CLI", "gh", install_command):
         raise RuntimeError("GitHub CLI installation failed")
 
 

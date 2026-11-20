@@ -71,6 +71,9 @@ For a headless T3 Code VM without selecting a broader profile, use
 `--t3code-ready`. It adds GitHub CLI, read-write Git, the T3 web
 service, and protected pairing. Credentials remain opt-in through the normal
 `--git-auth` and `--agent-auth` options.
+When setup selects GitHub CLI alongside the T3 web service, it upgrades apt
+packages below T3's supported GitHub CLI version. See
+[server-side Git checks](../agents/t3-providers.md#server-side-git-checks).
 
 ```bash
 basaltw setup agent_vm 10.0.0.10 agentuser --codex \
