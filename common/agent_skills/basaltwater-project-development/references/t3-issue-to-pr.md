@@ -28,5 +28,14 @@ replies, and merges within the requested scope. T3 can settle a thread when a
 linked PR merges, so read its worktree action settings before relying on logs
 or a long-running command after merge.
 
+If an expected tool or account is missing, check the selected T3 environment
+and the thread repository's remote. Connect the account on the environment
+host through **Settings → Source control & issues**, then choose **Rescan**.
+For GitHub, T3 uses a saved token, the server's `GH_TOKEN`, or a signed-in
+GitHub CLI version 2.81.0 or newer. If using the CLI, run `gh --version` and
+`gh auth status` as the T3 service account. Git clone and push use their own
+Git transport credentials. Connect Linear in the same settings and select its
+team for the project. Remote tracker writes require `source-control:write`.
+
 [T3 source control](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/source-control.md)
 · [Project actions and worktrees](t3-workflows.md#project-commands-and-worktree-setup)

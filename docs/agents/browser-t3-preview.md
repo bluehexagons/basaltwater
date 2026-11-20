@@ -74,13 +74,27 @@ access to an environment's development services.
 [Managed policy](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/managed-policy.md#other-capabilities)
 · [Tunnel authorization](https://github.com/pingdotgg/t3code/blob/v0.1.11/apps/server/src/preview/PreviewTunnel.ts)
 
-For a readiness check, run `basaltwater-web preview resolve --route t3 --port
-8080 --json` on the T3 host. Use `--host ::1` for an IPv6-only listener.
-Success returns `navigation.target` for the native environment port. This
-checks loopback HTTP only. If local desktop or mobile rendering still fails,
-inspect the host's **Preview tunnel** setting and use `t3 policy show` with the
-service's data directory to inspect installed and loaded policy. Check the
-connected client's grant and transport, and try a streamed tab where available.
+Use the core Basaltwater CLI to check readiness on a Linux T3 host.
+
+```bash
+basaltw agent browser resolve-preview --port 8080 --path '/app/?view=details#summary' --json
+```
+
+Success returns `navigation.target` for the native environment port. Omit
+`--path` for `/` or use `--host ::1` for an IPv6-only listener. For a local HTTPS
+server, add `--protocol https` to check its certificate for `localhost` with
+the probe host's trust store. Gateway provisioning is optional for this check.
+See the [CLI reference](../reference/cli-agent-diagnostics.md#native-t3-preview-readiness).
+
+On native Windows, use the project's readiness check on the selected host.
+When a T3 project action starts the server, set its **Preview URL** to the
+exact development address. T3 uses that address for readiness and navigation.
+See [T3 local servers](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/remote-access.md#local-servers).
+
+If local desktop or mobile rendering still fails, inspect the host's
+**Preview tunnel** setting and use `t3 policy show` with the service's data
+directory to inspect installed and loaded policy. Check the connected client's
+grant, transport and trust, and try a streamed tab where available.
 
 When the task calls for a separately reachable HTTPS URL for a VM loopback
 service, resolve the gateway route:

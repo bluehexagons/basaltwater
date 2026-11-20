@@ -41,9 +41,10 @@ from lib.validation import (
     validate_network_port,
     validate_positive_integer,
 )
-from lib.local_http import open_loopback
+from lib.local_http import has_corp_isolation_headers, http_status_is_healthy, http_transport_issue, open_loopback
 from lib.remote_utils import CommandTimeoutError, run as run_command
 from lib.node_project import NodePackageManager, select_package_manager
+from lib.t3_preview import add_t3_preview_arguments, run_t3_preview_command
 from lib.ufw_ingress import verify_live_ufw_ingress
 
 
@@ -256,13 +257,10 @@ def _parser() -> argparse.ArgumentParser:
     preview = commands.add_parser("preview", help="Manage supervised live previews")
     preview_commands = preview.add_subparsers(dest="preview_command", required=True)
     preview_resolve = preview_commands.add_parser(
-        "resolve", help="Check a loopback HTTP server for T3 preview or a managed HTTPS forward",
+        "resolve", help="Check a loopback service for T3 preview or a managed HTTPS forward",
     )
-    preview_resolve.add_argument("--port", type=validate_positive_integer, required=True)
-    preview_resolve.add_argument("--host", default="127.0.0.1")
+    add_t3_preview_arguments(preview_resolve)
     preview_resolve.add_argument("--route", choices=("gateway", "t3"), default="gateway")
-    preview_resolve.add_argument("--profile", choices=("general", "godot"), default="general")
-    preview_resolve.add_argument("--json", action="store_true")
     preview_start = preview_commands.add_parser(
         "start",
         help="Start and expose a preview",
@@ -1121,17 +1119,6 @@ def _https_headers(url: str) -> tuple[int, dict[str, str]]:
         raise RuntimeError(f"HTTPS request failed for {url}: {exc}") from exc
 
 
-def _forward_https_status_is_healthy(
-    status: int,
-    headers: dict[str, str],
-) -> bool:
-    """Accept a deliberate HTTP authentication challenge from a live forward."""
-
-    return status < 400 or (
-        status == 401 and bool(headers.get("www-authenticate", "").strip())
-    )
-
-
 def _validate_health_path(value: str) -> str:
     if (
         not value.startswith("/")
@@ -1254,7 +1241,7 @@ def _doctor(name: str, as_json: bool) -> int:
 
     status, headers = _https_headers(url)
     errors: list[str] = []
-    if not _forward_https_status_is_healthy(status, headers):
+    if not http_status_is_healthy(status, headers):
         errors.append(f"HTTPS endpoint returned {status}")
     if profile == "godot":
         if headers.get("cross-origin-opener-policy") != "same-origin":
@@ -2200,21 +2187,6 @@ def _preview_list(as_json: bool) -> int:
     return 0
 
 
-def _preview_transport_issue(error: Exception) -> str:
-    """Classify failures without confusing HTTP responses with transport errors."""
-    if isinstance(error, RuntimeError) and error.__cause__ is not None:
-        error = error.__cause__
-    if isinstance(error, urllib.error.URLError):
-        error = error.reason
-    if isinstance(error, ssl.SSLCertVerificationError):
-        return "certificate_untrusted"
-    if isinstance(error, TimeoutError):
-        return "timeout"
-    if isinstance(error, ConnectionRefusedError):
-        return "connection_refused"
-    return "transport_failure"
-
-
 def _preview_upstream_headers(url: str) -> tuple[int, dict[str, str]]:
     request = urllib.request.Request(url, headers={"User-Agent": "basaltwater-web-preview/1"})
     try:
@@ -2225,59 +2197,14 @@ def _preview_upstream_headers(url: str) -> tuple[int, dict[str, str]]:
             return exc.code, {key.lower(): value for key, value in exc.headers.items()}
 
 
-def _has_godot_isolation_headers(headers: dict[str, str]) -> bool:
-    return (
-        headers.get("cross-origin-opener-policy") == "same-origin"
-        and headers.get("cross-origin-embedder-policy") == "require-corp"
-    )
-
-
-def _resolve_t3_preview(args: argparse.Namespace, host: str, url_host: str) -> int:
-    if host not in ("127.0.0.1", "::1"):
-        raise ValueError("T3 environment ports use 127.0.0.1 or ::1")
-    port = validate_network_port(args.port, "preview port")
-    upstream_url = f"http://{url_host}:{port}/"
-    result: dict[str, object] = {
-        "ok": False,
-        "component": "upstream",
-        "upstream_url": upstream_url,
-        "navigation": None,
-        "issue": None,
-        "remediation": "Start or repair the loopback HTTP server, then retry resolution.",
-    }
-    try:
-        status, headers = _preview_upstream_headers(upstream_url)
-    except OSError as exc:
-        result.update(issue=_preview_transport_issue(exc), error=str(exc))
-    else:
-        result["upstream_status"] = status
-        if not _forward_https_status_is_healthy(status, headers):
-            result.update(issue="http_error", error=f"Loopback HTTP endpoint returned {status}")
-        elif args.profile == "godot" and not _has_godot_isolation_headers(headers):
-            result.update(
-                issue="isolation_headers_missing",
-                error="Loopback HTTP endpoint is missing Godot cross-origin isolation headers",
-                remediation="Configure isolation headers on the dev server or use a Godot HTTPS forward.",
-            )
-        else:
-            result.update(
-                ok=True, navigation={"target": {"kind": "environment-port", "port": port}}, remediation=None,
-            )
-    if args.json:
-        print(json.dumps(result, sort_keys=True))
-    elif result["ok"]:
-        print(json.dumps(result["navigation"], sort_keys=True))
-    else:
-        print(f"{result['component']}: {result['issue']}. {result['remediation']}", file=sys.stderr)
-    return 0 if result["ok"] else 1
-
-
 def _preview_resolve(args: argparse.Namespace) -> int:
     """Check native T3 navigation or resolve an owned HTTPS route without mutation."""
+    if args.route == "t3":
+        return run_t3_preview_command(args)
+    if args.protocol is not None or args.path is not None:
+        raise ValueError("--protocol and --path require --route t3")
     host = validate_network_ip(args.host, "preview host")
     url_host = f"[{host}]" if ":" in host else host
-    if args.route == "t3":
-        return _resolve_t3_preview(args, host, url_host)
     host, port = _parse_upstream(f"{url_host}:{args.port}")
     upstream_url = f"http://{url_host}:{port}/"
     result: dict[str, object] = {
@@ -2309,7 +2236,7 @@ def _preview_resolve(args: argparse.Namespace) -> int:
         try:
             status, headers = _preview_upstream_headers(upstream_url)
             result["upstream_status"] = status
-            if not _forward_https_status_is_healthy(status, headers):
+            if not http_status_is_healthy(status, headers):
                 result.update(issue="http_error", error=f"Loopback HTTP endpoint returned {status}")
             elif route is None:
                 name_base = f"preview-{owner}-{'v6-' if ':' in host else ''}{port}"
@@ -2337,9 +2264,9 @@ def _preview_resolve(args: argparse.Namespace) -> int:
                 )
                 status, headers = _https_headers(url)
                 result["gateway_status"] = status
-                if not _forward_https_status_is_healthy(status, headers):
+                if not http_status_is_healthy(status, headers):
                     result.update(issue="http_error", error=f"Gateway HTTPS endpoint returned {status}")
-                elif args.profile == "godot" and not _has_godot_isolation_headers(headers):
+                elif args.profile == "godot" and not has_corp_isolation_headers(headers):
                     result.update(issue="isolation_headers_missing", error="Gateway is missing Godot cross-origin isolation headers")
                 else:
                     result.update(
@@ -2347,7 +2274,7 @@ def _preview_resolve(args: argparse.Namespace) -> int:
                         network_origin="vm",
                     )
         except (OSError, RuntimeError) as exc:
-            issue = _preview_transport_issue(exc)
+            issue = http_transport_issue(exc)
             result.update(issue=issue, error=str(exc))
             if issue == "certificate_untrusted":
                 result["remediation"] = "Inspect VM certificate trust with basaltwater-web ca; preserve TLS verification."

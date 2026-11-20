@@ -98,6 +98,7 @@ Useful checks:
 
 ```bash
 basaltw agent doctor --capability t3code --capability host
+gh --version
 gh auth status
 git config --global --get user.name
 git config --global --get user.email
@@ -122,6 +123,14 @@ observations in `checks` and identifies the mandatory service checks in
 `required_checks`. Use `agent doctor --tool gh` to check GitHub credentials
 directly. The doctor does not send a model prompt or establish that a previous
 provider timeout was resolved by running diagnostics.
+
+Native forge account detection is managed in T3. In the affected environment,
+open **Settings → Source control & issues** and choose **Rescan** after signing
+in. GitHub detection can use a saved token, `GH_TOKEN` in the T3 service
+environment, or a login in GitHub CLI 2.81.0 or newer. Check the installed
+version when using a distro-provided `gh`. A Git HTTPS helper or SSH key is
+still needed when the repository's Git transport requires it. See
+[T3 account setup](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/source-control.md#connect-an-account).
 
 ### Provider status timeouts
 

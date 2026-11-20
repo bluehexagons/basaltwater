@@ -23,6 +23,7 @@ basaltw agent storage inspect --json
 basaltw agent storage clean-podman --json
 basaltw agent containers inspect --engine podman --json
 basaltw agent graphics doctor --context xvfb --json
+basaltw agent browser resolve-preview --port 8080 --json
 basaltw agent doctor --tool codex --tool opencode --capability browser
 basaltw agent doctor --capability browser
 basaltw agent doctor --capability t3code --capability host
@@ -256,3 +257,27 @@ from an older successful audit. Both options support the remote `HOST USER`
 form. Doctor JSON output retains its existing result-array shape when
 `--record` is used; query the saved evidence separately with `--last-record
 --json`.
+
+## Native T3 preview readiness
+
+Run on the Linux T3 environment host. `agent browser resolve-preview` probes the
+development server directly on `127.0.0.1` by default or `::1` with
+`--host ::1`. It works with the core CLI on hosts without a managed gateway.
+
+```bash
+basaltw agent browser resolve-preview --port 8080 --protocol https --path '/app/?view=details#summary' --json
+```
+
+The defaults are HTTP and `/`. The probe sends the path and query with the
+T3 preview's `localhost` host name and keeps the fragment in the returned
+`navigation.target`. It checks the initial response without following
+redirects. HTTPS verifies the certificate for `localhost` using the probe
+host's trust store. Add `--profile godot` to check cross-origin isolation
+headers. `upstream_url` identifies the literal loopback endpoint used for the
+probe. Browser rendering, tunnel access and client trust need separate checks.
+
+Exit status 0 returns a native environment-port target. Status 1 reports an
+upstream failure with `issue` and `remediation`, and status 2 reports an
+invalid request. Where the gateway utility is installed,
+`basaltwater-web preview resolve --route t3` accepts the same flags.
+See [T3 preview routing](../agents/browser-t3-preview.md#collaborative-preview-and-private-networks).

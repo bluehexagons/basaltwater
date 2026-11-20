@@ -22,21 +22,33 @@ tabs and the web app still stream from the host. Desktop port forwarding and
 mobile **Open on this device** also use the host's preview tunnel. A forwarded
 port is reachable by local apps on the client. Stop the forward when finished.
 
-For a loopback readiness failure on a host with the Basaltwater web utility, run
-`basaltwater-web preview resolve --route t3 --port PORT --json`. Use the
-returned `navigation.target` with the retained tab ID. Add `--host ::1` for
-an IPv6-only listener. For threaded Godot, `--profile godot` checks that the
-upstream sends cross-origin isolation headers. Verify rendering and secure
-context in the selected browser when the task calls for browser verification.
+The core Basaltwater CLI can check a development server on a Linux T3 host
+without a managed web gateway.
+
+```bash
+basaltw agent browser resolve-preview --port PORT --path '/app/?view=details#summary' --json
+```
+
+Use the returned `navigation.target` with the retained tab ID. Omit `--path`
+for `/`. Add `--host ::1` for an IPv6-only listener or `--protocol https` to
+verify TLS for `localhost` using the probe host's trust store. For threaded
+Godot, `--profile godot` checks the upstream cross-origin isolation headers.
+Verify rendering and secure context in the selected browser when the task
+calls for browser verification.
+
+On native Windows, use the project's readiness check on the selected host and
+build the environment-port target from its port, protocol and path. For a
+development server started by a T3 project action, set the action's **Preview
+URL** to the exact address, including any required path.
 
 Check **Settings → Sharing & access → Preview tunnel** on the host if client
 rendering or forwarding is unavailable. The setting defaults on in 0.1.11.
 Managed policy `limits.previewTunnel: false` takes precedence, and the client
 needs `terminal:operate`. On a managed host, `t3 policy show` reports installed
 and loaded policy for the selected runtime and data directory. A successful
-loopback probe covers the HTTP server only. Use a streamed tab where available
-when the tunnel is disabled or local rendering depends on a system proxy or
-privately issued HTTPS.
+loopback probe covers the development server only. Use a streamed tab where
+available when the tunnel is disabled or local rendering depends on a system
+proxy or privately issued HTTPS.
 See [remote browsers and forwarding](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/remote-access.md#browser-on-a-remote-environment).
 
 When the task calls for a separately reachable gateway URL, resolve the

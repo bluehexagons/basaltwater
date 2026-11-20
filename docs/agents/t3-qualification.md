@@ -46,11 +46,14 @@ passed. The database advanced from migration 96 to 102 and 0.1.10's preflight
 refused the downgrade. Earlier checks are in the [0.1.10](t3-releases/0.1.10.md),
 [0.1.9](t3-releases/0.1.9.md), and [0.1.8](t3-releases/0.1.8.md) records.
 
-In disposable Linux tests, Basaltwater's native preview resolver returned a
-loopback port that a T3 0.1.11 server relayed over an authenticated WebSocket.
-The server rejected the tunnel when started with the host setting off. The
-sparse worktree preflight agreed with a fresh Git sparse checkout and left the
-source checkout and Git configuration intact. The T3 0.1.11 worktree API
+In disposable Linux tests, a T3 0.1.11 server relayed the nested path and query
+returned by `basaltw agent browser resolve-preview` over an authenticated
+WebSocket. The server rejected tunnel requests when started with the host
+setting off. Direct resolver checks covered IPv4 and IPv6 loopback, a trusted
+HTTPS certificate for `localhost`, an untrusted issuer, and a wrong host name.
+
+The sparse worktree preflight agreed with a fresh Git sparse checkout and left
+the source checkout and Git configuration intact. The T3 0.1.11 worktree API
 created the predicted sparse checkout and rejected a revision with missing
 committed patterns. Native desktop and mobile rendering, thread setup actions,
 and live issue and PR operations require their own qualification.
