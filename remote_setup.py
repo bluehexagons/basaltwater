@@ -29,7 +29,7 @@ from lib.machine_state import (
     save_machine_state,
     save_setup_config,
 )
-from lib.notifications import send_setup_notification
+from lib.notifications import WebhookFailure, send_setup_notification
 from lib.operation_state import OperationRecord, OperationStateStore
 from lib.remote_utils import detect_os, is_dry_run, set_dry_run
 from lib.security_activity import record_setup_activity
@@ -230,6 +230,7 @@ def _send_setup_notification(
     notification_level: object = None,
     strict_https: object = None,
     ca_file: object = None,
+    webhook_failures: set[WebhookFailure] | None = None,
 ) -> bool:
     """Send the setup result and make best-effort delivery failures visible."""
 
@@ -244,6 +245,7 @@ def _send_setup_notification(
             notification_level=notification_level,
             strict_https=strict_https,
             ca_file=ca_file,
+            webhook_failures=webhook_failures,
         )
     except Exception:
         # Delivery must neither fail a completed setup nor mask its original
@@ -751,17 +753,19 @@ def _send_cachyos_setup_notification(config: SetupConfig, *, success: bool, erro
         host = socket.gethostname()
     except OSError:
         host = config.host
+    webhook_failures: set[WebhookFailure] = set()
     delivered = _send_setup_notification(
         notify_specs=config.notify_specs, system_type=config.system_type,
         host=host, success=success, errors=errors,
         notification_level=config.notification_level,
         strict_https=config.notification_strict_https,
         ca_file=config.notification_ca_file,
+        webhook_failures=webhook_failures,
     )
     try:
         from lib.cachyos_notification_state import record_notification_result
 
-        record_notification_result(config, success=success, delivered=delivered)
+        record_notification_result(config, success=success, delivered=delivered, failures=webhook_failures)
     except Exception:
         print("  ⚠ Could not record webhook delivery metadata; setup outcome retained.", file=sys.stderr)
 

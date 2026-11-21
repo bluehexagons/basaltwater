@@ -14,6 +14,7 @@ import subprocess
 import time
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
+from enum import StrEnum
 from logging import DEBUG, ERROR, INFO, Logger, WARNING
 from typing import Any, Literal, Optional, cast
 from uuid import uuid4
@@ -47,6 +48,37 @@ _EVENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 _WEBHOOK_RETRY_DELAYS_SECONDS = (1.0, 3.0)
 _WEBHOOK_RETRYABLE_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
 _MAX_RETRY_AFTER_SECONDS = 30
+
+
+class WebhookFailure(StrEnum):
+    """Categories safe to retain without receiver or exception details."""
+
+    CA_FILE = "ca_file"
+    CERTIFICATE = "certificate"
+    TLS = "tls"
+    HTTP = "http"
+    CONNECTION = "connection"
+    UNKNOWN = "unknown"
+
+
+class _WebhookCAError(RuntimeError):
+    pass
+
+
+def _classify_webhook_failure(error: Exception) -> WebhookFailure:
+    if isinstance(error, _WebhookCAError):
+        return WebhookFailure.CA_FILE
+    cause = error.__cause__ if isinstance(error, RuntimeError) else error
+    if isinstance(cause, urllib.error.HTTPError):
+        return WebhookFailure.HTTP
+    reason = cause.reason if isinstance(cause, urllib.error.URLError) else cause
+    if isinstance(reason, ssl.SSLCertVerificationError):
+        return WebhookFailure.CERTIFICATE
+    if isinstance(reason, ssl.SSLError):
+        return WebhookFailure.TLS
+    if isinstance(cause, OSError):
+        return WebhookFailure.CONNECTION
+    return WebhookFailure.UNKNOWN
 
 
 @dataclass
@@ -156,15 +188,20 @@ class Notification:
 class NotificationSender:
     """Handles sending notifications to configured targets."""
     
-    def __init__(self, configs: list[NotificationConfig], logger: Optional[Logger] = None):
+    def __init__(
+        self, configs: list[NotificationConfig], logger: Optional[Logger] = None, *,
+        webhook_failures: set[WebhookFailure] | None = None,
+    ):
         """Initialize notification sender.
         
         Args:
             configs: List of notification configurations
             logger: Optional logger for debugging
+            webhook_failures: Optional set populated with sanitized failure categories
         """
         self.configs = configs
         self.logger = logger
+        self.webhook_failures = webhook_failures
     
     def send(self, notification: Notification) -> bool:
         """Send notification to all configured targets.
@@ -197,6 +234,8 @@ class NotificationSender:
                     self._send_mailbox(config.target, notification)
             except Exception as e:
                 all_succeeded = False
+                if config.type == "webhook" and self.webhook_failures is not None:
+                    self.webhook_failures.add(_classify_webhook_failure(e))
                 if self.logger:
                     log_event(
                         self.logger,
@@ -394,6 +433,8 @@ def send_notification(
     dedup_key: Optional[str] = None,
     actions: Optional[list[str]] = None,
     delivery_policy: NotificationDeliveryPolicy = "always",
+    *,
+    webhook_failures: set[WebhookFailure] | None = None,
 ) -> bool:
     """Send a notification to configured targets."""
     notification = Notification(
@@ -410,7 +451,7 @@ def send_notification(
         delivery_policy=delivery_policy,
     )
     
-    sender = NotificationSender(configs, logger=logger)
+    sender = NotificationSender(configs, logger=logger, webhook_failures=webhook_failures)
     return sender.send(notification)
 
 
@@ -755,6 +796,8 @@ def send_setup_notification(
     notification_level: object = None,
     strict_https: object = None,
     ca_file: object = None,
+    *,
+    webhook_failures: set[WebhookFailure] | None = None,
 ) -> bool:
     """Send a notification summarizing setup results.
 
@@ -770,6 +813,7 @@ def send_setup_notification(
         strict_https: Require certificate and hostname verification for HTTPS
             webhook targets
         ca_file: Optional additional PEM trust bundle on the sender
+        webhook_failures: Optional set populated with sanitized failure categories
 
     Returns:
         True if all notifications were sent successfully, False otherwise
@@ -815,6 +859,7 @@ def send_setup_notification(
         event_type="setup",
         state="success" if success else "firing",
         dedup_key=f"setup:{system_type}:{host}",
+        webhook_failures=webhook_failures,
     )
 
 
@@ -925,7 +970,7 @@ def _webhook_ssl_context(strict_https: bool = True, ca_file: str | None = None) 
             try:
                 context.load_verify_locations(cafile=ca_file)
             except (OSError, ValueError) as exc:
-                raise RuntimeError("Could not load the notification CA file on the sender") from exc
+                raise _WebhookCAError("Could not load the notification CA file on the sender") from exc
         return context
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     context.check_hostname = False

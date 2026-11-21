@@ -12,9 +12,20 @@ import stat
 
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.config import SetupConfig
-from lib.notifications import normalize_notification_level, parse_notification_args
+from lib.notifications import WebhookFailure, normalize_notification_level, parse_notification_args
 from lib.remote_utils import is_dry_run
 from lib.validation import validate_filesystem_path
+
+
+_FAILURE_GUIDANCE = {
+    WebhookFailure.CA_FILE: "The sender could not load the configured CA file. Check --notification-ca-file.",
+    WebhookFailure.CERTIFICATE: "HTTPS certificate verification failed. Check the receiver hostname and chain. "
+    "For a private CA, verify it independently and supply its PEM with --notification-ca-file.",
+    WebhookFailure.TLS: "The HTTPS handshake failed. Check the receiver's TLS configuration.",
+    WebhookFailure.HTTP: "The receiver returned an unsuccessful HTTP status. Check the endpoint and token.",
+    WebhookFailure.CONNECTION: "The connection failed. Check DNS, routing, and receiver availability.",
+    WebhookFailure.UNKNOWN: "Check receiver connectivity, target/token, and setup output locally.",
+}
 
 
 def _path() -> Path:
@@ -42,7 +53,9 @@ def _configuration(config: SetupConfig) -> tuple[int, str]:
     return len(targets), hashlib.sha256(json.dumps(payload).encode()).hexdigest()
 
 
-def record_notification_result(config: SetupConfig, *, success: bool, delivered: bool) -> None:
+def record_notification_result(
+    config: SetupConfig, *, success: bool, delivered: bool, failures: set[WebhookFailure] | None = None,
+) -> None:
     """Save aggregate delivery evidence without changing successful setup state."""
     if config.dry_run or is_dry_run() or not config.notify_specs:
         return
@@ -54,18 +67,24 @@ def record_notification_result(config: SetupConfig, *, success: bool, delivered:
     count, digest = _configuration(config)
     level = normalize_notification_level(config.notification_level)
     suppressed = level == "off" or (success and level in {"warning", "error"})
+    delivery = "suppressed" if suppressed else "delivered" if delivered else "failed"
+    failure_categories = (
+        sorted(WebhookFailure(reason) for reason in (failures or {WebhookFailure.UNKNOWN}))
+        if delivery == "failed" else []
+    )
     path = _path()
     # The first failed setup can notify before a successful selection exists.
     # Check newly created ancestors again before writing private metadata.
     path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
     _path()
     write_json_atomic(str(path), {
-        "schema_version": 1,
+        "schema_version": 2,
         "recorded_at": datetime.now(timezone.utc).isoformat(timespec="microseconds"),
         "configuration_digest": digest,
         "target_count": count,
         "setup_succeeded": success,
-        "delivery": "suppressed" if suppressed else "delivered" if delivered else "failed",
+        "delivery": delivery,
+        "failure_categories": failure_categories,
     }, mode=0o600)
 
 
@@ -80,8 +99,12 @@ def collect_notification_health(config: SetupConfig) -> tuple[str, str]:
             return "deferred", "Webhook targets saved; no delivery receipt recorded yet. Receiver delivery is unverified."
         value = read_json_file(str(path), max_bytes=8192)
         fields = {"schema_version", "recorded_at", "configuration_digest", "target_count", "setup_succeeded", "delivery"}
-        if (not isinstance(value, dict) or set(value) != fields
-                or type(value["schema_version"]) is not int or value["schema_version"] != 1
+        if (not isinstance(value, dict) or type(value.get("schema_version")) is not int
+                or value["schema_version"] not in {1, 2}):
+            raise ValueError("Invalid notification receipt schema")
+        if value["schema_version"] == 2:
+            fields.add("failure_categories")
+        if (set(value) != fields
                 or type(value["setup_succeeded"]) is not bool
                 or type(value["target_count"]) is not int or not 1 <= value["target_count"] <= 4096
                 or value["delivery"] not in {"delivered", "failed", "suppressed"}
@@ -89,6 +112,13 @@ def collect_notification_health(config: SetupConfig) -> tuple[str, str]:
                 or not re.fullmatch(r"[0-9a-f]{64}", value["configuration_digest"])
                 or not isinstance(value["recorded_at"], str) or len(value["recorded_at"]) > 40):
             raise ValueError("Invalid notification receipt")
+        categories = value.get("failure_categories", [])
+        if (not isinstance(categories, list) or len(categories) > len(WebhookFailure)
+                or (value["schema_version"] == 2 and bool(categories) != (value["delivery"] == "failed"))):
+            raise ValueError("Invalid webhook failure categories")
+        failures = {WebhookFailure(category) for category in categories}
+        if len(failures) != len(categories):
+            raise ValueError("Duplicate webhook failure categories")
         recorded = datetime.fromisoformat(value["recorded_at"])
         if recorded.tzinfo is None or recorded > datetime.now(timezone.utc):
             raise ValueError("Invalid notification receipt timestamp")
@@ -114,7 +144,8 @@ def collect_notification_health(config: SetupConfig) -> tuple[str, str]:
                 raise ValueError("Inconsistent notification receipt")
             return "deferred", "Latest successful setup notification suppressed by delivery level; no receiver delivery attempted."
         if value["delivery"] == "failed":
-            return "failed", "Last setup webhook delivery incomplete; inspect receiver connectivity, target/token, and setup output locally."
+            guidance = " ".join(_FAILURE_GUIDANCE[failure] for failure in sorted(failures or {WebhookFailure.UNKNOWN}))
+            return "failed", f"Last setup webhook delivery incomplete. {guidance}"
         outcome = "successful" if value["setup_succeeded"] else "failed"
         return "available", f"Last {outcome} setup result accepted by all {count} configured webhook targets; downstream processing is not verified."
     except FileNotFoundError:
