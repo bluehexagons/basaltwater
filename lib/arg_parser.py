@@ -1732,7 +1732,7 @@ def add_setup_arguments(
         "--notification-strict-https",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="Verify certificates and hostnames for HTTPS webhooks (default)",
+        help="Verify HTTPS webhook certificates and hostnames (default accepts self-signed certificates)",
     )
     parser.add_argument(
         "--notification-allow-unverified-https",
@@ -1744,7 +1744,7 @@ def add_setup_arguments(
     parser.add_argument(
         "--notification-ca-file",
         metavar="PATH",
-        help="Additional PEM CA bundle on the webhook sender; use an empty value to clear",
+        help="Enable webhook HTTPS verification with an additional sender-local PEM CA bundle; use an empty value to clear",
     )
     
     parser.add_argument("--antistatic-server", dest="antistatic_server",

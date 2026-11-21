@@ -272,7 +272,7 @@ class TestSaveLoadSetupConfig(unittest.TestCase):
                 notification_state = ms.load_notification_state()
                 assert notification_state is not None
                 self.assertEqual(notification_state['notify_specs'], [])
-                self.assertTrue(notification_state['notification_strict_https'])
+                self.assertIsNone(notification_state['notification_strict_https'])
                 self.assertFalse(notification_state['notification_allow_unverified_https'])
 
     def test_save_setup_config_excludes_password(self):

@@ -88,14 +88,14 @@ class NotificationConfig:
     type: Literal["webhook", "mailbox"]
     target: str = field(repr=False)
     level: NotificationLevel = DEFAULT_NOTIFICATION_LEVEL
-    strict_https: bool = True
+    strict_https: bool | None = None
     ca_file: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if isinstance(self.target, str):
             self.target = self.target.strip()
         self.level = normalize_notification_level(self.level)
-        self.strict_https = normalize_notification_strict_https(self.strict_https)
+        self.strict_https = normalize_notification_strict_https(self.strict_https, self.ca_file)
     
     def __str__(self) -> str:
         return f"{self.type}:{notification_target_summary(self.type, self.target)}"
@@ -266,7 +266,7 @@ class NotificationSender:
         url: str,
         notification: Notification,
         *,
-        strict_https: bool = True,
+        strict_https: bool | None = None,
         ca_file: str | None = None,
     ) -> None:
         """Send webhook notification via HTTP POST."""
@@ -521,7 +521,7 @@ def parse_notification_args(
         return []
 
     level = normalize_notification_level(notification_level)
-    strict_tls = normalize_notification_strict_https(strict_https)
+    strict_tls = normalize_notification_strict_https(strict_https, ca_file)
     ca_file = normalize_notification_ca_file(ca_file, strict_tls)
     
     configs: list[NotificationConfig] = []
@@ -564,7 +564,7 @@ def validate_notification_config(config: NotificationConfig) -> None:
         raise ValueError("Invalid notification configuration")
     normalize_notification_level(config.level)
     normalize_notification_ca_file(
-        config.ca_file, normalize_notification_strict_https(config.strict_https),
+        config.ca_file, normalize_notification_strict_https(config.strict_https, config.ca_file),
     )
     target = config.target.strip()
     if not target:
@@ -675,11 +675,11 @@ def notification_level_from_state(
         return DEFAULT_NOTIFICATION_LEVEL
 
 
-def normalize_notification_strict_https(value: object) -> bool:
+def normalize_notification_strict_https(value: object, ca_file: object = None) -> bool:
     """Return whether HTTPS notification webhooks must verify certificates."""
 
     if value is None:
-        return True
+        return ca_file not in (None, "")
     if not isinstance(value, bool):
         raise ValueError("Strict notification HTTPS setting must be boolean")
     return value
@@ -697,12 +697,14 @@ def normalize_notification_ca_file(value: object, strict_https: bool) -> str | N
     return value
 
 
-def notification_strict_https_from_state(state: JSONDict) -> bool:
-    """Treat legacy false defaults as verified unless a new opt-out was recorded."""
-    return not (
-        state.get("notification_strict_https") is False
-        and state.get("notification_allow_unverified_https") is True
-    )
+def notification_strict_https_from_state(state: JSONDict) -> bool | None:
+    """Read the saved setting, including the legacy implicit false value."""
+    value = state.get("notification_strict_https")
+    if value is False and state.get("notification_allow_unverified_https") is not True:
+        return None
+    if value is None or isinstance(value, bool):
+        return value
+    return True  # Preserve verification for malformed saved policy.
 
 
 def load_notification_configs_from_state(logger: Optional[Logger] = None) -> list[NotificationConfig]:
@@ -947,7 +949,7 @@ class _RejectWebhookRedirects(urllib.request.HTTPRedirectHandler):
 def _open_webhook_request(
     request: urllib.request.Request,
     *,
-    strict_https: bool = True,
+    strict_https: bool | None = None,
     ca_file: str | None = None,
 ) -> Any:
     handlers: list[Any] = [_RejectWebhookRedirects()]
@@ -961,10 +963,10 @@ def _open_webhook_request(
     return opener.open(request, timeout=NETWORK_TIMEOUT_SECONDS)
 
 
-def _webhook_ssl_context(strict_https: bool = True, ca_file: str | None = None) -> ssl.SSLContext:
+def _webhook_ssl_context(strict_https: bool | None = None, ca_file: str | None = None) -> ssl.SSLContext:
     """Return the configured TLS policy for an HTTPS webhook."""
 
-    if strict_https:
+    if normalize_notification_strict_https(strict_https, ca_file):
         context = ssl.create_default_context()
         if ca_file:
             try:

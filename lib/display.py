@@ -594,7 +594,7 @@ def print_setup_summary(config: SetupConfig, description: Optional[str] = None) 
     )
     if notification_configs:
         tls_mode = "strict HTTPS"
-        if config.notification_strict_https is False:
+        if not notification_configs[0].strict_https:
             tls_mode = "unverified HTTPS allowed"
         elif config.notification_ca_file:
             tls_mode = "strict HTTPS with additional CA trust"

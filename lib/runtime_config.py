@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional, Any
 
-from lib.notifications import notification_strict_https_from_state
+from lib.notifications import normalize_notification_strict_https, notification_strict_https_from_state
 
 
 @dataclass
@@ -41,7 +41,7 @@ class RuntimeConfig:
     friendly_name: Optional[str] = None
     smb_mounts: Optional[list[list[str]]] = None
     notification_level: Optional[str] = None
-    notification_strict_https: bool = True
+    notification_strict_https: bool | None = None
     storage_mounts: list[list[str]] = field(default_factory=list)
     notification_ca_file: str | None = None
 
@@ -67,7 +67,9 @@ class RuntimeConfig:
             smb_mounts=data.get("smb_mounts"),
             storage_mounts=data.get("storage_mounts"),
             notification_level=data.get("notification_level"),
-            notification_strict_https=notification_strict_https_from_state(data),
+            notification_strict_https=normalize_notification_strict_https(
+                notification_strict_https_from_state(data), data.get("notification_ca_file"),
+            ),
             notification_ca_file=data.get("notification_ca_file"),
         )
         # Validate raw saved declarations before normalizing optional fields.
@@ -97,8 +99,8 @@ class RuntimeConfig:
             smb_mounts=config.smb_mounts,
             storage_mounts=getattr(config, "storage_mounts", None) or [],
             notification_level=getattr(config, 'notification_level', None),
-            notification_strict_https=(
-                getattr(config, 'notification_strict_https', None) is not False
+            notification_strict_https=normalize_notification_strict_https(
+                getattr(config, "notification_strict_https", None), getattr(config, "notification_ca_file", None),
             ),
             notification_ca_file=getattr(config, "notification_ca_file", None),
         )

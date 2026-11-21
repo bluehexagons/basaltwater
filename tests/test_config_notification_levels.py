@@ -78,7 +78,10 @@ class TestNotificationLevelConfig(unittest.TestCase):
         saved = config.to_dict()
         restored = SetupConfig.from_dict(config.host, config.system_type, saved)
         self.assertEqual(restored.notification_ca_file, ca_file)
+        self.assertIsNone(restored.notification_strict_https)
         self.assertEqual(RuntimeConfig.from_dict(saved).notification_ca_file, ca_file)
+        self.assertTrue(RuntimeConfig.from_dict(saved).notification_strict_https)
+        self.assertTrue(RuntimeConfig.from_setup_config(restored).notification_strict_https)
         self.assertEqual(merge_setup_configs(restored, _setup_config()).notification_ca_file, ca_file)
         cleared = merge_setup_configs(
             restored, _setup_config(notification_ca_file="", notification_strict_https=False),
@@ -155,6 +158,15 @@ class TestNotificationLevelConfig(unittest.TestCase):
 
         self.assertTrue(runtime.notification_strict_https)
         self.assertTrue(runtime.to_dict()["notification_strict_https"])
+
+    def test_omitted_verification_setting_uses_default_after_state_round_trip(self) -> None:
+        config = _setup_config()
+        saved = config.to_dict()
+        restored = SetupConfig.from_dict(config.host, config.system_type, saved)
+        self.assertIsNone(restored.notification_strict_https)
+        self.assertNotIn("--notification-strict-https", restored.to_remote_args())
+        self.assertFalse(RuntimeConfig.from_dict(saved).notification_strict_https)
+        self.assertFalse(RuntimeConfig.from_setup_config(restored).notification_strict_https)
 
 
 class TestNotificationLevelDelivery(unittest.TestCase):

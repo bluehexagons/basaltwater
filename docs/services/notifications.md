@@ -26,23 +26,21 @@ commands replace webhook URLs with `https://REPLACE_WITH_WEBHOOK_URL`; insert
 the real target before replaying a command. The saved target remains available
 to scheduled notification jobs.
 
-HTTPS webhook delivery verifies the receiver's certificate and hostname by
-default, including for saved configurations from earlier versions. For a private
-CA, install its verified public certificate in the sender's normal trust store,
-or pass `--notification-ca-file /etc/basaltwater/receiver-ca.pem` to setup or
-patch. The absolute path points to a readable PEM bundle on the sending machine.
+HTTPS webhook delivery accepts self-signed certificates by default and skips
+certificate and hostname verification. Use `--notification-strict-https` to
+verify both, especially for senders that transmit bearer tokens. Previously
+saved strict settings remain in effect. For a private CA, either install the
+verified public certificate in the sender's trust store and enable strict
+checking, or pass `--notification-ca-file /etc/basaltwater/receiver-ca.pem` to
+enable verification with an additional CA bundle on the sending machine.
 Keep the file and its directory under the control of the account that manages
 sender trust. The bundle adds trust for notification webhooks alongside the
 system CAs. Use `--notification-ca-file ''` to clear the saved bundle path.
 
-For receivers that still require compatibility, explicitly pass
-`--notification-allow-unverified-https` (also accepted as
-`--no-notification-strict-https`). This disables certificate and hostname checks
-for all HTTPS notification targets on that sender, including bearer-token
-targets. Use `--notification-strict-https` to restore verification. The
-compatibility option and a private CA bundle cannot be combined. The policy
-applies to setup and scheduled notifications. Tokenless HTTP targets remain
-available for receivers on trusted networks.
+Use `--notification-allow-unverified-https` (or
+`--no-notification-strict-https`) to override a saved strict setting. Clear any
+saved CA bundle in the same command. The policy applies to setup and scheduled
+notifications. Tokenless HTTP targets remain available on trusted networks.
 
 ## CachyOS workstation webhooks
 
@@ -107,6 +105,7 @@ by the panel):
 
 ```bash
 basaltw patch sender.example agent \
+  --notification-strict-https \
   --notify webhook \
   'https://panel.example/api/v1/notifications#TOKEN_FROM_PANEL_HOST'
 ```

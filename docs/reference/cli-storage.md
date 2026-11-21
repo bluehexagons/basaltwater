@@ -51,9 +51,9 @@ a new baseline. All paths refer to the target. Commands support `--json`,
 | `--scrub DIR DBPATH REDUNDANCY FREQ` | Configure par2 integrity checking |
 | `--notify TYPE TARGET` | Configure notifications |
 | `--notification-level LEVEL` | Set outbound volume to `verbose`, `normal` (default), `warning`, `error`, or `off`; local logs are unaffected |
-| `--notification-strict-https` | Verify certificates and hostnames for HTTPS notification webhooks (default) |
-| `--notification-allow-unverified-https` | Explicitly disable webhook HTTPS verification for compatibility |
-| `--notification-ca-file PATH` | Add an absolute sender-local PEM trust bundle for HTTPS webhooks. Pass an empty value to clear it |
+| `--notification-strict-https` | Verify HTTPS webhook certificates and hostnames. The default accepts self-signed certificates |
+| `--notification-allow-unverified-https` | Override saved strict checking and accept unverified HTTPS webhook certificates |
+| `--notification-ca-file PATH` | Enable webhook HTTPS verification with an additional sender-local PEM trust bundle at an absolute path. Pass an empty value to clear the bundle |
 
 Samba shares are authenticated and hardened; `TYPE` is `read` or `write`, and
 `PATH` is one absolute directory. The metadata-cache option moves only Samba's

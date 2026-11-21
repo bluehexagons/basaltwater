@@ -154,7 +154,7 @@ class CachyOSNotificationTests(unittest.TestCase):
                     self.assertNotIn("secret transport", output.getvalue())
 
     def test_doctor_reports_safe_categories_for_multiple_webhook_failures(self):
-        config = self.webhook_config("--notify", "webhook", "https://other.example/hook")
+        config = self.webhook_config("--notification-strict-https", "--notify", "webhook", "https://other.example/hook")
         self.request.side_effect = [
             URLError(ssl.SSLCertVerificationError(1, "secret certificate detail " + TARGET)),
             HTTPError(TARGET, 403, "secret response", None, None),
@@ -171,6 +171,15 @@ class CachyOSNotificationTests(unittest.TestCase):
         self.assertIn("unsuccessful HTTP status", reason)
         for private in ("secret", "panel.example", "other.example", TOKEN):
             self.assertNotIn(private, receipt + reason)
+
+    def test_saved_workstation_selection_preserves_default_and_strict_tls(self):
+        for flags, strict in (((), False), (("--notification-strict-https",), True)):
+            with self.subTest(flags=flags):
+                config = self.webhook_config(*flags)
+                refresh.save_successful_setup(config)
+                restored = refresh.load_saved_setup()[1]
+                self.assertEqual(remote_setup.run_cachyos_setup(restored), 0)
+                self.assertIs(self.request.call_args.kwargs["strict_https"], strict)
 
     def test_legacy_failed_receipt_keeps_generic_guidance(self):
         config = self.webhook_config()

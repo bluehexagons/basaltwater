@@ -398,7 +398,7 @@ class TestNotificationSender(unittest.TestCase):
         self.assertNotIn(token, request.full_url)
 
     @patch('lib.notifications._open_webhook_request')
-    def test_webhook_defaults_to_verified_tls(self, mock_open):
+    def test_webhook_defaults_to_accepting_unverified_tls(self, mock_open):
         response = unittest.mock.MagicMock()
         response.__enter__.return_value.status = 202
         response.__exit__.return_value = False
@@ -413,7 +413,7 @@ class TestNotificationSender(unittest.TestCase):
             )
         )
 
-        self.assertTrue(mock_open.call_args.kwargs['strict_https'])
+        self.assertFalse(mock_open.call_args.kwargs['strict_https'])
 
     @patch('lib.notifications._open_webhook_request')
     def test_webhook_private_ca_is_forwarded_to_request(self, mock_open):
@@ -551,7 +551,7 @@ class TestNotificationSender(unittest.TestCase):
             method='POST',
         )
 
-        self.assertIs(_open_webhook_request(request), response)
+        self.assertIs(_open_webhook_request(request, strict_https=True), response)
 
         handler = mock_build.call_args.args[0]
         self.assertIsInstance(handler, _RejectWebhookRedirects)
@@ -565,7 +565,7 @@ class TestNotificationSender(unittest.TestCase):
         )
 
     @patch('urllib.request.build_opener')
-    def test_webhook_requests_can_install_explicit_unverified_tls_handler(self, mock_build):
+    def test_webhook_requests_install_unverified_tls_handler_by_default(self, mock_build):
         response = unittest.mock.MagicMock()
         mock_build.return_value.open.return_value = response
         request = urllib.request.Request(
@@ -574,7 +574,7 @@ class TestNotificationSender(unittest.TestCase):
             method='POST',
         )
 
-        self.assertIs(_open_webhook_request(request, strict_https=False), response)
+        self.assertIs(_open_webhook_request(request), response)
 
         https_handler = mock_build.call_args.args[1]
         self.assertIsInstance(https_handler, urllib.request.HTTPSHandler)
@@ -587,8 +587,8 @@ class TestNotificationSender(unittest.TestCase):
         self.assertEqual(context.verify_mode, ssl.CERT_NONE)
         self.assertFalse(context.check_hostname)
 
-    def test_webhook_tls_context_requires_normal_certificate_checks_by_default(self):
-        context = _webhook_ssl_context()
+    def test_webhook_tls_context_requires_normal_certificate_checks_in_strict_mode(self):
+        context = _webhook_ssl_context(True)
 
         self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
         self.assertTrue(context.check_hostname)
@@ -615,7 +615,7 @@ class TestParseNotificationArgs(unittest.TestCase):
         configs = parse_notification_args([['webhook', 'https://example.com/hook']])
         self.assertEqual(len(configs), 1)
         self.assertEqual(configs[0].type, 'webhook')
-        self.assertTrue(configs[0].strict_https)
+        self.assertFalse(configs[0].strict_https)
 
     def test_strict_https_is_applied_to_webhook_targets(self):
         configs = parse_notification_args(
@@ -938,14 +938,15 @@ class TestSendNotificationSafe(unittest.TestCase):
 
 
 class TestLoadNotificationConfigsFromState(unittest.TestCase):
-    def test_ambiguous_legacy_false_migrates_to_verified_and_new_opt_out_round_trips(self):
+    def test_saved_verification_policy_keeps_strict_settings_and_accepts_legacy_defaults(self):
         saved = {
             "notify_specs": [["webhook", "https://panel.example/hook"]],
             "notification_strict_https": False,
         }
         for extra, strict in (
-            ({}, True),
-            ({"notification_allow_unverified_https": "true"}, True),
+            ({}, False),
+            ({"notification_strict_https": None}, False),
+            ({"notification_strict_https": True}, True),
             ({"notification_allow_unverified_https": True}, False),
             ({"notification_ca_file": "/fixture/private-ca.pem"}, True),
         ):

@@ -983,7 +983,7 @@ class SetupConfig:
 
         normalize_notification_ca_file(
             self.notification_ca_file,
-            normalize_notification_strict_https(self.notification_strict_https),
+            normalize_notification_strict_https(self.notification_strict_https, self.notification_ca_file),
         )
         validate_syncthing_settings(self, loading_saved_config=_loading_saved_config)
         selected_godot_bundles = list(dict.fromkeys(self.godot_bundles or []))
@@ -2710,7 +2710,6 @@ class SetupConfig:
             self.web_panel_notification_ingest
         )
         data['guacamole'] = bool(self.guacamole)
-        data['notification_strict_https'] = self.notification_strict_https is not False
         data['notification_allow_unverified_https'] = self.notification_strict_https is False
         data['cloudflare_allow_direct'] = bool(self.cloudflare_allow_direct)
         if self.enable_syncthing and not self.syncthing_root:
