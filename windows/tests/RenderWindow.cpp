@@ -52,6 +52,7 @@ int wmain(int argc, wchar_t** argv) {
         std::ofstream settings(profile + L"\\gpu-fixture.json");
         settings << "{\"disposable_profile_honored\":true}"; settings.close();
         std::ofstream log(evidence + L"\\gpu-events.jsonl", std::ios::binary);
+        const auto stop = profile + L"\\stop";
         ShowWindow(hwnd, SW_SHOW);
         LARGE_INTEGER frequency; QueryPerformanceFrequency(&frequency);
         auto start = GetTickCount64(); int frames = 0; bool published = false, running = true;
@@ -61,7 +62,7 @@ int wmain(int argc, wchar_t** argv) {
                 if (msg.message == WM_QUIT) running = false;
                 TranslateMessage(&msg); DispatchMessageW(&msg);
             }
-            if (!running) break;
+            if (!running || GetFileAttributesW(stop.c_str()) != INVALID_FILE_ATTRIBUTES) break;
             // Deliberately slow alternation makes independent PNG pixel checks decisive.
             bool blue = ((GetTickCount64() - start) / 500) % 2 != 0;
             float color[] = {blue ? 0.0f : 1.0f, blue ? 0.0f : 0.5f, blue ? 1.0f : 0.0f, 1.0f};

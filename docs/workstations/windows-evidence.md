@@ -130,7 +130,10 @@ pwsh -NoProfile -File windows/tests/Qualify-ProcessAudio.ps1 -Output C:\private\
 ```
 
 Graphics qualification independently checks both color phases of a synthetic
-D3D11 window and metadata, then closes its supervised task/profile. `-Pacing`
+D3D11 window and metadata. Its stop marker requests normal exit through the
+disposable profile, so cleanup works even when desktop input is unavailable.
+The runner waits for the supervised task to settle and verifies profile removal.
+`-Pacing`
 adds a process trace and requires observation of deliberate workload hitches;
 it needs existing ETW permission. Do not elevate the entire fixture runner.
 The watchdog runner deliberately stalls its main thread without touching the

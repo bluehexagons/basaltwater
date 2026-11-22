@@ -12,12 +12,19 @@ $windows=Split-Path -Parent $PSScriptRoot
 function Assert-Gpu([bool]$Condition,[string]$Message){if(-not $Condition){throw $Message}}
 $directory=New-NativeEvidenceBundle $Output
 $entry=Join-Path $windows 'Invoke-Basaltw.ps1'
-$task=$null;$window=$null;$complete=$false;$failure=$null
-function Invoke-QualificationCli([string[]]$Arguments){
+$repo=Split-Path -Parent $windows
+$revision=git -C $repo rev-parse HEAD
+if($LASTEXITCODE -ne 0){throw 'Could not read the qualification source revision'}
+$changes=git -C $repo status --porcelain
+if($LASTEXITCODE -ne 0){throw 'Could not read the qualification worktree status'}
+$task=$null;$complete=$false;$failure=$null
+function Invoke-QualificationCli([string[]]$Arguments,[switch]$AllowWaitFailure){
     $lines=& pwsh.exe -NoProfile -File $entry @Arguments
     $code=$LASTEXITCODE
     $value=($lines | Out-String) | ConvertFrom-Json
-    if($code -ne 0){throw "Native qualification CLI failed (exit $code): $($value | ConvertTo-Json -Depth 8 -Compress)"}
+    if($code -ne 0 -and -not ($AllowWaitFailure -and $null -ne $value -and $value.PSObject.Properties['WaitState'])){
+        throw "Native qualification CLI failed (exit $code): $($value | ConvertTo-Json -Depth 8 -Compress)"
+    }
     return $value
 }
 try {
@@ -64,17 +71,21 @@ try {
 finally {
     if($task){
         try {
-            if($window){
-                $inventory=Invoke-QualificationCli @('desktop','windows')
-                $current=@($inventory.result.windows | Where-Object { $_.id -eq $window.id -and $_.identity -ceq $window.identity })
-                if($current.Count -eq 1){$null=Invoke-QualificationCli @('desktop','window','close','--window',[string]$window.id,'--identity',$window.identity,'--generation',$inventory.generation)}
-            } else {$null=Invoke-QualificationCli @('desktop','develop','cancel',$task.Id)}
-            $settled=Invoke-QualificationCli @('desktop','develop','wait',$task.Id,'--timeout','45')
+            $profile=$task.TestSession.ProfilePath
+            if(Test-Path -LiteralPath $profile -PathType Container){
+                [IO.File]::WriteAllText((Join-Path $profile 'stop'),'stop')
+            }
+            $settled=Invoke-QualificationCli @('desktop','develop','wait',$task.Id,'--timeout','15') -AllowWaitFailure
+            if($settled.TimedOut){
+                $null=Invoke-QualificationCli @('desktop','develop','cancel',$task.Id)
+                $settled=Invoke-QualificationCli @('desktop','develop','wait',$task.Id,'--timeout','30') -AllowWaitFailure
+            }
             Write-NativeHeldJson (Join-Path $directory 'settled.json') $settled 65536
-            Assert-Gpu ($settled.Receipt.State -eq 'complete' -and $settled.Receipt.TestSession.ProfileCleanup -eq 'removed') 'Fixture session cleanup incomplete'
-        } catch {$complete=$false;$failure='Cleanup: '+$_.Exception.Message}
+            Assert-Gpu ($settled.WaitState -eq 'completed' -and $settled.Receipt.TestSession.ProfileCleanup -eq 'removed') 'Fixture session cleanup incomplete'
+            Assert-Gpu (-not $complete -or $settled.Receipt.State -eq 'complete') 'Fixture did not exit normally'
+        } catch {$complete=$false;$failure=(@($failure,('Cleanup: '+$_.Exception.Message)) | Where-Object {$_}) -join ' | '}
     }
-    Write-NativeHeldJson (Join-Path $directory 'qualification.json') @{schema_version=1;complete=$complete;error=$failure;tested_source=(git -C (Split-Path -Parent $windows) rev-parse HEAD);dirty=$true;finished_utc=[DateTime]::UtcNow.ToString('o');limitations=@('Synthetic D3D11 window only','No HDR fidelity or physical scanout assertion','No game or audio qualification')} 65536
+    Write-NativeHeldJson (Join-Path $directory 'qualification.json') @{schema_version=1;complete=$complete;error=$failure;tested_source=$revision;dirty=[bool]$changes;finished_utc=[DateTime]::UtcNow.ToString('o');limitations=@('Synthetic D3D11 window only','No HDR fidelity or physical scanout assertion','No game or audio qualification')} 65536
 }
 if(-not $complete){throw $failure}
 Write-Host "GPU-window qualification passed; private evidence: $directory"
