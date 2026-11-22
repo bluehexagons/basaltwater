@@ -76,7 +76,9 @@ public class HealthProbeFixture {
     Assert-True (-not (Get-Process -Id $probeId -ErrorAction SilentlyContinue)) 'Descendant survived an exited version wrapper'
     $env:BASALTWATER_HEALTH_FIXTURE_MODE = 'hang'
     $env:BASALTWATER_HEALTH_FIXTURE_PID = Join-Path $temporary 'probe.pid'
-    $result = Invoke-NativeHealthProbe $fixture -TimeoutSeconds 1
+    # Include the real PowerShell wrapper's startup in the deadline. A one-second
+    # budget can expire before the fixture starts on a busy native workstation.
+    $result = Invoke-NativeHealthProbe $fixture -TimeoutSeconds 5
     Assert-True ($result.State -eq 'timed-out') 'Hanging version probe did not time out'
     $probeId = [int][IO.File]::ReadAllText($env:BASALTWATER_HEALTH_FIXTURE_PID)
     Assert-True (-not (Get-Process -Id $probeId -ErrorAction SilentlyContinue)) 'Timed-out version process survived cleanup'

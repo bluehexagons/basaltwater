@@ -2,8 +2,9 @@
 Run only on the parent's authorized interactive desktop. Not an offline test.
 No setup, control transitions, installed-source refresh or permission changes.
 #>
-param([Parameter(Mandatory=$true)][string]$EvidenceDirectory,[switch]$Warm)
+param([Parameter(Mandatory=$true)][string]$EvidenceDirectory,[switch]$Warm,[switch]$ObservationsOnly,[switch]$RealAges,[switch]$TightTimeline)
 $ErrorActionPreference='Stop'
+if($PSVersionTable.PSVersion.Major -eq 5){$env:PSModulePath=[Environment]::GetEnvironmentVariable('PSModulePath','Machine')}
 . (Join-Path $PSScriptRoot '..\Desktop.Common.ps1')
 Assert-NativeDesktopPath $EvidenceDirectory
 if(Test-Path -LiteralPath $EvidenceDirectory){throw 'Evidence directory must be NEW'}
@@ -21,7 +22,7 @@ Add-Type -AssemblyName System.Drawing
 `$form.Add_KeyDown({param(`$s,`$e) `$null=`$held.Add([string]`$e.KeyCode);[IO.File]::AppendAllText('$literal',('down:'+`$e.KeyCode+"``n"))})
 `$form.Add_KeyUp({param(`$s,`$e) `$null=`$held.Remove([string]`$e.KeyCode);[IO.File]::AppendAllText('$literal',('up:'+`$e.KeyCode+"``n"))})
 `$form.Add_MouseDown({param(`$s,`$e) [IO.File]::AppendAllText('$literal',('mouse-down:'+`$e.Button+"``n"))})
-`$form.Add_MouseUp({param(`$s,`$e) [IO.File]::AppendAllText('$literal',('mouse-up:'+`$e.Button+"``n"))})
+`$form.Add_MouseUp({param(`$s,`$e) `$point=`$form.PointToScreen(`$e.Location);[IO.File]::AppendAllText('$literal',('mouse-up:'+`$e.Button+':'+`$point.X+','+`$point.Y+"``n"))})
 `$form.Add_MouseWheel({param(`$s,`$e) [IO.File]::AppendAllText('$literal',('wheel:'+`$e.Delta+"``n"))})
 `$timer=New-Object Windows.Forms.Timer
 `$timer.Interval=20
@@ -30,7 +31,7 @@ Add-Type -AssemblyName System.Drawing
 [Windows.Forms.Application]::Run(`$form)
 `$timer.Dispose();`$form.Dispose()
 "@)
-$process=$null;$ownedWorker=$false
+$process=$null;$ownedWorker=$false;$holder=$null
 function Invoke-Probe([string[]]$Arguments){
     $reply=Invoke-NativeDesktopCli $Arguments
     [IO.File]::AppendAllText((Join-Path $EvidenceDirectory 'receipts.jsonl'),(($reply|ConvertTo-Json -Depth 20 -Compress)+"`n"))
@@ -47,6 +48,19 @@ function Get-ProbeInputArgs {
     $target=Get-ProbeTarget;$w=$target.window
     return @('--window',[string]$w.id,'--identity',$w.identity,'--generation',$target.generation,'--width',[string]$w.width,'--height',[string]$w.height)
 }
+function Save-ProbeReply($Reply){[IO.File]::AppendAllText((Join-Path $EvidenceDirectory 'receipts.jsonl'),(($Reply|ConvertTo-Json -Depth 20 -Compress)+"`n"))}
+function New-ProbeCapture([int]$Age=60){
+    $target=Get-ProbeTarget
+    return Invoke-Probe @('screenshot','--window',[string]$target.window.id,'--identity',$target.window.identity,'--generation',$target.generation,'--output',(Join-Path $EvidenceDirectory ([guid]::NewGuid().ToString('N')+'.png')),'--max-age-seconds',[string]$Age)
+}
+function Get-CapturedKeyArgs($Capture){
+    $w=$target.window
+    return @('input','key','--key','B','--window',[string]$w.id,'--identity',$w.identity,'--generation',$Capture.generation,'--width',[string]$w.width,'--height',[string]$w.height,'--observation',$Capture.result.observation_id)
+}
+function Assert-ProbeRefusal([string[]]$Arguments,[string]$Pattern){
+    $reply=Invoke-NativeDesktopCli $Arguments;Save-ProbeReply $reply
+    if($reply.ok -or $reply.error -notmatch $Pattern){throw ('Expected '+$Pattern+': '+($reply|ConvertTo-Json -Depth 12 -Compress))}
+}
 try {
     $worker=Invoke-Probe @('worker','status')
     if(-not $worker.result.cleanup_confirmed){throw 'Stop the existing desktop worker before qualification'}
@@ -54,7 +68,7 @@ try {
     $start=[Diagnostics.ProcessStartInfo]::new()
     $start.FileName=Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $code="& '"+$fixture.Replace("'","''")+"'"
-    $start.Arguments='-NoProfile -Sta -EncodedCommand '+[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($code))
+    $start.Arguments='-NoProfile -ExecutionPolicy Bypass -Sta -EncodedCommand '+[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($code))
     $start.UseShellExecute=$false;$start.CreateNoWindow=$true;$start.WindowStyle='Hidden';$start.EnvironmentVariables.Remove('PSModulePath')
     $process=[Diagnostics.Process]::Start($start)
     $startup=[Diagnostics.Stopwatch]::StartNew();$target=$null
@@ -64,11 +78,16 @@ try {
     }
     if(-not $target){throw 'Fixture window startup timed out'}
     $null=Invoke-Probe @('window','focus','--window',[string]$target.window.id,'--identity',$target.window.identity,'--generation',$target.generation)
+    if(-not $ObservationsOnly){
     $null=Invoke-Probe (@('input','hold')+(Get-ProbeInputArgs)+@('--key','W+J','--milliseconds','400'))
-    $null=Invoke-Probe (@('input','hold')+(Get-ProbeInputArgs)+@('--timeline','0:W+J,150:J,250:A+J,350:-','--milliseconds','450'))
+    $timeline=if($TightTimeline){@('--timeline','0:W+J,150:J,250:A+J,350:-','--milliseconds','450')}else{@('--timeline','0:W+J,300:J,600:A+J,900:-','--milliseconds','1200')}
+    $null=Invoke-Probe (@('input','hold')+(Get-ProbeInputArgs)+$timeline)
     $null=Invoke-Probe (@('input','move')+(Get-ProbeInputArgs)+@('--x','100','--y','100'))
     foreach($button in @('left','right','middle')){
+        $before=Get-ProbeTarget
         $null=Invoke-Probe (@('input','hold')+(Get-ProbeInputArgs)+@('--button',$button,'--x','100','--y','100','--to-x','200','--to-y','100','--milliseconds','400'))
+        $expected='mouse-up:'+$button.Substring(0,1).ToUpper()+$button.Substring(1)+':'+($before.window.x+200)+','+($before.window.y+100)
+        if(-not [IO.File]::ReadAllText($events).Contains($expected)){throw "Drag endpoint effect missing: $expected"}
         $null=Invoke-Probe (@('input','move')+(Get-ProbeInputArgs)+@('--x','100','--y','100'))
     }
     $null=Invoke-Probe (@('input','wheel')+(Get-ProbeInputArgs)+@('--x','100','--y','100','--delta','120','--observe',(Join-Path $EvidenceDirectory 'post.png')))
@@ -76,8 +95,55 @@ try {
     foreach($expected in @('tick:J+W','tick:J','tick:A+J','up:W','up:J','up:A','mouse-down:Left','mouse-up:Left','mouse-down:Right','mouse-up:Right','mouse-down:Middle','mouse-up:Middle','wheel:120')){
         if(-not $log.Contains($expected)){throw "Fixture effect missing: $expected"}
     }
-    Write-Host 'Source WinForms input effects passed. SDL, hard-loss, physical takeover, fullscreen and warm-worker qualification remain separate.'
+    }
+    $target=Get-ProbeTarget
+    $capture=New-ProbeCapture
+    $saved=Join-Path $EvidenceDirectory 'mapped-capture.json';Write-NativeHeldJson $saved $capture 65536
+    $mapped=Invoke-Probe @('map-point','--capture',$saved,'--view-width','320','--view-height','240','--x','160','--y','120')
+    if($mapped.x -ne 320 -or $mapped.y -ne 240 -or $mapped.authority_renewed){throw 'Native receipt mapping differs from the presented image'}
+    $null=Invoke-Probe (Get-CapturedKeyArgs $capture)
+    Assert-ProbeRefusal (Get-CapturedKeyArgs $capture) 'latest successful'
+    $old=New-ProbeCapture;$capture=New-ProbeCapture
+    Assert-ProbeRefusal (Get-CapturedKeyArgs $old) 'latest successful'
+    $null=Invoke-Probe (Get-CapturedKeyArgs $capture)
+    # Real owned lease, observed through fixture ticks before capture admission.
+    $selectors=Get-ProbeInputArgs;$eventOffset=[IO.File]::ReadAllText($events).Length
+    $arguments=@('desktop','input','hold')+$selectors+@('--key','W','--milliseconds','5000')
+    $entry=Join-Path (Split-Path -Parent $PSScriptRoot) 'Invoke-Basaltw.ps1'
+    $literalArgs=@($arguments|ForEach-Object {"'"+$_.Replace("'","''")+"'"}) -join ','
+    $command='$probeArguments=@('+$literalArgs+"); & '"+$entry.Replace("'","''")+"' @probeArguments"
+    $encoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+    $holder=Start-Process powershell.exe -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand',$encoded) -WindowStyle Hidden -RedirectStandardOutput (Join-Path $EvidenceDirectory 'monitor-hold.json') -RedirectStandardError (Join-Path $EvidenceDirectory 'monitor-hold.stderr') -PassThru
+    $clock=[Diagnostics.Stopwatch]::StartNew()
+    while(-not [IO.File]::ReadAllText($events).Substring($eventOffset).Contains('tick:W')){
+        if($holder.HasExited -or $clock.Elapsed.TotalSeconds -gt 25){throw 'Monitoring probe never observed an actual held key'}
+        Start-Sleep -Milliseconds 20
+    }
+    $monitor=Invoke-Probe (@('screenshot')+$selectors[0..5]+@('--output',(Join-Path $EvidenceDirectory 'during-hold.png')))
+    if($null -ne $monitor.result.observation_id -or $monitor.result.observation_unavailable_reason -ne 'keyboard-lease-active-or-uncertain'){throw 'Capture during actual held input minted authority'}
+    if(-not $holder.WaitForExit(30000)){throw 'Monitoring hold did not settle'}
+    $held=Get-Content -LiteralPath (Join-Path $EvidenceDirectory 'monitor-hold.json') -Raw|ConvertFrom-Json
+    if(-not $held.ok -or -not $held.receipt.cleanup_confirmed){throw 'Monitoring hold cleanup unconfirmed'}
+    $holder.Dispose();$holder=$null
+    $capture=New-ProbeCapture
+    if(-not $capture.result.observation_id){throw 'Fresh capture after cleanup did not regain authority'}
+    $null=Invoke-Probe (Get-CapturedKeyArgs $capture)
+    if($RealAges){
+        $capture=New-ProbeCapture
+        Start-Sleep -Seconds 61
+        $null=Invoke-Probe @('status')
+        Assert-ProbeRefusal (Get-CapturedKeyArgs $capture) 'expired'
+        $capture=New-ProbeCapture 180
+        Start-Sleep -Seconds 91
+        $null=Invoke-Probe (Get-CapturedKeyArgs $capture)
+        $capture=New-ProbeCapture
+        if($capture.result.capture_freshness.max_age_seconds -ne 60){throw 'Explicit lifetime leaked into the next capture'}
+    }
+    Write-NativeHeldJson (Join-Path $EvidenceDirectory 'qualification.json') @{complete=$true;warm=[bool]$Warm;observations_only=[bool]$ObservationsOnly;real_ages=[bool]$RealAges;scope='WinForms effects, single-use/supersession/mapping, actual held-input monitoring and cleanup; optional real expiry'}
+    Write-Host 'Source WinForms input and observation effects passed. SDL, physical takeover and fullscreen remain separate.'
 } finally {
+    if($holder -and -not $holder.HasExited){$holder.Kill();$null=$holder.WaitForExit(3000)}
+    if($holder){$holder.Dispose()}
     try{if($ownedWorker){$null=Invoke-Probe @('worker','stop')}}finally{
         if($process){
             if(-not $process.HasExited){$null=$process.CloseMainWindow();if(-not $process.WaitForExit(3000)){$process.Kill();$null=$process.WaitForExit(3000)}}

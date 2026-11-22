@@ -40,8 +40,10 @@ mutation/control invalidation and capture admission clocks. Debian now supports
 post-input capture and completion timestamps. Compact Linux output retains
 window origins. Windows capture rechecks the target rectangle and removes its
 own incomplete output on failure. Debian has native fixture coverage below;
-CachyOS and Windows qualification remain open. Windows regressions are added
-for the native pass. No model or gameplay benchmark is established by this
+CachyOS qualification remains open. Native Windows PowerShell 5.1 regressions
+and cold-worker WinForms gestures now pass; see the
+[Windows contract](../workstations/windows-held-input.md) for scoped observation
+qualification. No model or gameplay benchmark is established by this
 implementation.
 
 ### Debian XFCE qualification, 2026-11-03
@@ -144,9 +146,10 @@ Remaining implementation tasks, independently assignable after qualification:
   holds on Debian. Closing an X connection alone does not establish release of
   injected state; do not extend the current subprocess adapter with long holds.
 
-- [ ] Apply the [reported Windows game-testing feedback](windows-game-testing.md#consuming-game-feedback-and-next-windows-pass):
+- [x] Implement the [reported Windows game-testing feedback](windows-game-testing.md#consuming-game-feedback-and-next-windows-pass):
   multi-key/timeline leases, wheel and mouse gestures, and specific target-stop
-  diagnostics. Parent input help is fixed in source; native revalidation is open.
+  diagnostics. Parent input help and native WinForms effects pass in source;
+  SDL and lifecycle acceptance retain their separate scopes.
 - [x] Carry observation deadlines through Windows held-key preparation, watchdog
   startup and driver admission for `hold --observation`. Source and offline
   coverage are implemented; native cold/warm qualification remains above.

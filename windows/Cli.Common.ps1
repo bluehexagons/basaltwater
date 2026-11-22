@@ -144,13 +144,20 @@ Native desktop commands (explicit actions use the current account's session):
   inspect --pid PID [--name NAME] [--role ROLE] [--json]
   screenshot --window HWND --identity TOKEN --generation GEN --output NEW.png [--max-age-seconds 60]
   screenshot --monitor DEVICE --output NEW.png [--max-age-seconds 60]
+  capture --window HWND --identity TOKEN --generation GEN --width W --height H --output NEW_DIRECTORY
+  pacing --task ID --project PATH --output NEW_DIRECTORY [--seconds 5] [--member PID:FILETIME]
+  audio --task ID --project PATH [--member PID:FILETIME] [--seconds 1]
   window focus|move|resize|maximize|minimize|restore|close --window HWND --identity TOKEN --generation GEN
   element invoke|set-text|focus --ref REF --generation GEN [--text TEXT]
-  input key|chord|sequence|text|click --window HWND --identity TOKEN --generation GEN --width W --height H
+  input key|chord|sequence|text|click|move|wheel --window HWND --identity TOKEN --generation GEN --width W --height H
   input key --help  Supported editing keys, chords, sequences and text limits
     key --key CTRL+SHIFT+HOME | sequence --keys HOME,SHIFT+END,F11 (max 32 chords)
-  input hold --key W --milliseconds 500 [--repeat-ms 100] (same window selectors)
-  input key|chord|sequence|text|click ... [--observation ID]  Bind to latest window capture
+  input hold --key W+J --milliseconds 500 [--repeat-ms 100] (same window selectors)
+  input hold --timeline 0:W+J,200:J,400:- --milliseconds 500 (max 8 keys, 32 events)
+  input hold --button left|right|middle --x X --y Y [--to-x X --to-y Y] --milliseconds 500
+  input move --x X --y Y | input wheel --x X --y Y --delta 120 (same window selectors)
+  input ... [--observation ID] [--observe NEW.png]  Single-use capture and optional post-input capture
+  screenshot ... [--compact] | map-point --capture RECEIPT.json --view-width W --view-height H --x X --y Y
   input release|lease --lease ID          Cancel/read a finite keyboard lease
   control enabled|human-override|disabled --human-approved [--seconds N|--indefinite]
   open PATH [--reveal] | terminal --project PATH [--msvc]
@@ -187,6 +194,19 @@ Tokens do not prove semantic or scene validity. Input without a token keeps its 
                 Write-Host ($result | ConvertTo-Json -Depth 12)
                 return 1
             }
+        } elseif ($options.Count -and $options[0] -eq 'capture') {
+            . (Join-Path $source 'windows\Capture.Common.ps1')
+            $result = Invoke-NativeWindowCapture @($options | Select-Object -Skip 1)
+        } elseif ($options.Count -and $options[0] -eq 'pacing') {
+            . (Join-Path $source 'windows\Development.Common.ps1')
+            . (Join-Path $source 'windows\Development.Diagnostics.ps1')
+            . (Join-Path $source 'windows\Capture.Common.ps1')
+            . (Join-Path $source 'windows\Capture.Pacing.ps1')
+            $result = Invoke-NativePacing @($options | Select-Object -Skip 1)
+        } elseif ($options.Count -and $options[0] -eq 'audio') {
+            . (Join-Path $source 'windows\Capture.Common.ps1')
+            . (Join-Path $source 'windows\Audio.Cli.ps1')
+            $result = Invoke-NativeProcessAudioCli @($options | Select-Object -Skip 1)
         } elseif ($options.Count -and $options[0] -in @('open','terminal','notify')) {
             $result = Invoke-NativeDesktopHandoff -Source $source -Arguments $options
         } else { $result = Invoke-NativeDesktopCli $options }

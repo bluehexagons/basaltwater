@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Globalization;
 
 public static class BasaltwaterNativeCli {
     [DllImport("kernel32.dll")] private static extern uint GetConsoleCP();
@@ -12,9 +13,14 @@ public static class BasaltwaterNativeCli {
         try {
             string entry = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Invoke-Basaltw.ps1");
             if (!File.Exists(entry)) throw new IOException("CLI entrypoint missing");
+            string caller;
+            using (var self = Process.GetCurrentProcess()) {
+                caller = "$global:BasaltwaterNativeCaller = @{ pid=" + self.Id.ToString(CultureInfo.InvariantCulture) +
+                    "; filetime=[long]" + self.StartTime.ToFileTimeUtc().ToString(CultureInfo.InvariantCulture) + " }\n";
+            }
             // The fixed bootstrap reads one private stdin packet, then splats
             // strings into the existing script. Project arguments are never code.
-            string script = @"
+            string script = caller + @"
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 try {

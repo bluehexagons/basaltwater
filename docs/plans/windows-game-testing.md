@@ -1,8 +1,11 @@
 # Windows game testing facilities
 
-Status: input fidelity, opt-in test sessions, owned-child diagnostics and bounded
-keyboard holds are implemented; capture, pacing and audio facilities remain
-planned. Basaltwater owns OS facilities and lifecycle/evidence collection.
+Status: input fidelity, opt-in test sessions, owned-child diagnostics, bounded
+keyboard/mouse leases, GPU-window capture, process pacing and owned-process
+audio are implemented. See [Windows evidence](../workstations/windows-evidence.md)
+for explicit commands, native qualification and limits. Successful privileged
+pacing collection still requires target acceptance; access denial is a failed
+trace. Basaltwater owns OS facilities and lifecycle/evidence collection.
 Projects own readiness signals, assertions, deterministic replays and capture
 recipes. This plan does not introduce commands for unimplemented features.
 
@@ -57,8 +60,9 @@ live readiness; normal wait/cancel confirm completion. Cleanup uncertainty keeps
 the reservation and remaining profile. Revision/dirty state, Windows version and
 selected executable/file versions are recorded without environment/arguments.
 The bounded [environment report](../workstations/windows-environment.md) records
-GPU/driver and display geometry, mode refresh and API scaling. DPI/HDR and
-automatic captures/recordings remain deferred. Project
+GPU/driver and display geometry, mode refresh and API scaling. Explicit WGC
+captures additionally retain per-window DPI and read-only display-color state
+when available. Automatic captures/recordings remain deferred. Project
 adapters must prove profile use and perform their own readiness assertions.
 
 The broader session design and acceptance targets remain:
@@ -134,6 +138,15 @@ envelopes, held observation deadlines and completion-preserving post captures.
 The [operator contract](../workstations/windows-held-input.md) documents bounds
 and the opt-in WinForms source probe. Offline PowerShell 5.1 tests do not promote
 native acceptance; the checklist below remains open for live qualification.
+
+Native source qualification now covers cold-worker WinForms overlapping keys,
+short timed transitions, wheel/post-action capture and all three mouse-button
+drags, including exact endpoint effects. The compiled control guard reads fresh
+bounded state and validates handle ACLs on every check. This removes repeated
+PowerShell provider overhead without caching control authority or widening
+deadlines. The opt-in runner separately exercises warm workers and observation
+lifetimes. SDL/gameplay, physical takeover and hard-loss acceptance retain the
+narrower checklist below.
 
 - [ ] Qualify the implemented multiple ordinary keys within one finite lease and bounded
   input timeline for combinations such as `W+J`, `A+M` and direction changes

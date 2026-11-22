@@ -38,7 +38,7 @@ for ($i=0; $i -lt $literal.Count; $i++) { if ($result.Argv[$i] -cne $literal[$i]
     & $shell -NoProfile -ExecutionPolicy Bypass -File $planProbe -Launcher $launcher -Project $temporary
     Assert-True ($LASTEXITCODE -eq 0 -and -not (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'Basaltwater\development'))) 'Native dry-run created state or changed argv'
     Set-Content -LiteralPath $entry -Encoding UTF8 -Value @'
-@{ Arguments = @($args) } | ConvertTo-Json -Depth 4 -Compress
+@{ Arguments = @($args); Caller = $global:BasaltwaterNativeCaller; BootstrapPid = $PID } | ConvertTo-Json -Depth 4 -Compress
 exit 23
 '@
     # PS7's native .exe argv mode preserves quotes/empty values before Main().
@@ -49,6 +49,7 @@ param($Launcher)
 $expected = @('two words', '', 'quote"here', 'trailing\', '%PATH%', '$literal & ;', "line`nbreak", 'lambda λ', '--', '--dry-run')
 $result = & $Launcher @expected | ConvertFrom-Json
 if ($LASTEXITCODE -ne 23 -or $result.Arguments.Count -ne $expected.Count) { throw 'Launcher lost exit status or argument count' }
+if ($result.Caller.pid -le 0 -or $result.Caller.pid -eq $result.BootstrapPid -or $result.Caller.filetime -le 0) { throw 'Launcher lost original evidence caller identity' }
 for ($i=0; $i -lt $expected.Count; $i++) { if ($result.Arguments[$i] -cne $expected[$i]) { throw "Argument $i changed" } }
 '@
     & $shell -NoProfile -ExecutionPolicy Bypass -File $probe -Launcher $launcher

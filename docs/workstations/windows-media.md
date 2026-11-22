@@ -29,8 +29,10 @@ Gyan is a third-party Windows build. Preinstalled binaries retain their existing
 update owner. AV refresh revalidates existing binaries; it does not silently
 upgrade them. For a WinGet-managed installation, explicitly review and apply
 `winget upgrade --id Gyan.FFmpeg --exact --source winget`, then rerun discovery
-and qualification. No installer or refresh was executed during implementation;
-package installation/upgrade behavior still needs separate native acceptance.
+and qualification. Exact-source WinGet installation of Gyan.FFmpeg 9.0.2,
+native discovery and the public source `media doctor` route pass. A full
+workstation installer/refresh and a future version upgrade remain separate
+acceptance.
 The file-only qualification below records the discovered build's decoder results.
 Keep decoder security updates current.
 
@@ -133,7 +135,7 @@ Only successful runs write `qualification.json`. Explicit gates remain active
 with `python -O`. Reports retain executable paths, effective limits, elapsed
 time, Job CPU, peak Job commit and artifact byte counts; individual manifests
 record versions and measurement filters. Raw paths/media/logs stay private.
-On native Windows 11 x64 with Python 3.15.2 and Gyan FFmpeg/ffprobe 9.0.2,
+On native Windows 11 x64 with Python 3.11 and 3.15.2 and Gyan FFmpeg/ffprobe 9.0.2,
 the common 18-fixture suite passes, including deadline and cancellation cleanup.
 The synthetic 2–6 second, at most 640×360 inputs analyze in under one second
 per valid fixture in the initial run. The retained bundle is under 8 MiB;
@@ -141,6 +143,8 @@ the largest measured production Job commit is under 84 MiB. Decoded RGB boundary
 errors are below 3/255. These are single-run observations with uncontrolled warm
 caches; they do not establish sustained throughput, whole-machine memory,
 1080p/120-second capacity or physical playback quality. Existing WinGet package
-discovery and version probes pass; installation and upgrade were not executed
-by the qualification runner. Windows live capture, playback, game testing and
-GPU qualification remain separate integration work.
+discovery and version probes pass; the qualification runner itself performs no
+installation or upgrade. Separate [Windows evidence qualification](windows-evidence.md)
+covers synthetic GPU-window capture, debug-video timing and owned-process audio.
+Physical playback, device recovery, HDR fidelity and game outcomes require
+their own checks.

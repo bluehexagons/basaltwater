@@ -1,32 +1,6 @@
 <# Opt-in integration seam. Dot-source after Development.Common.ps1 and
    Development.Diagnostics.ps1. No desktop worker, setup, or audio routing. #>
-function Get-ProcessAudioAdmission([string]$Id,[string]$Project,[string]$Member = '') {
-    $record = Get-DevelopmentStatus $Id
-    $directory = Get-DevelopmentDirectory $Id
-    Assert-DevelopmentPath $Project
-    $projectPath = [IO.Path]::GetFullPath($Project).TrimEnd('\','/')
-    if (-not (Test-Path -LiteralPath $projectPath -PathType Container) -or
-        -not [string]::Equals($projectPath, [string]$record.Project, [StringComparison]::OrdinalIgnoreCase)) {
-        throw 'Audio requires the exact retained project directory'
-    }
-    if ($record.State -ne 'running' -or $record.CompletedUtc -or
-        $record.OwnerSid -ne (Get-DevelopmentSid) -or
-        [int]$record.SessionId -ne [Diagnostics.Process]::GetCurrentProcess().SessionId -or
-        $record.JobName -cnotmatch '\ALocal\\BasaltwaterDevelopment-[a-f0-9]{32}-job\z') {
-        throw 'Audio requires a live current-account/session task and its exact Job'
-    }
-    if ($Member) {
-        if ($Member -notmatch '\A[1-9][0-9]{0,9}:[1-9][0-9]{0,18}\z' -or -not $record.TrackChildren) { throw 'Audio requires a retained member PID:FILETIME and --track-children' }
-        $catalog = Read-DevelopmentMembers $directory
-        $selected = @($catalog.Members | Where-Object Token -CEQ $Member)
-        if ($selected.Count -ne 1 -or $selected[0].State -ne 'observed' -or $selected[0].Role -notin @('root','child')) { throw 'Audio member is stale, unrelated, or not a native target' }
-        $target = $selected[0]
-    } else {
-        $target = Read-DevelopmentTarget $directory
-        if (-not $target -or $target.State -ne 'created') { throw 'Audio native root identity unavailable or exited' }
-    }
-    [pscustomobject]@{ Record = $record; Target = $target; Directory = $directory }
-}
+. (Join-Path $PSScriptRoot 'Evidence.Target.ps1')
 function Invoke-ProcessAudioNative([string]$Helper,[string[]]$Arguments,[Threading.CancellationToken]$CancellationToken) {
     $info = [Diagnostics.ProcessStartInfo]::new()
     $info.FileName = $Helper; $info.UseShellExecute = $false; $info.CreateNoWindow = $true
@@ -55,14 +29,18 @@ function Invoke-DevelopmentProcessAudio {
     param([Parameter(Mandatory)][string]$Id, [Parameter(Mandatory)][string]$Project,
         [Parameter(Mandatory)][string]$Helper, [switch]$OptIn,
         [ValidateRange(0.1,30.0)][double]$Seconds = 1, [string]$Member = '',
+        [ValidateRange(1,2147483647)][int]$CallerProcessId = $PID,
+        [long]$CallerCreatedFileTimeUtc = 0,
         [Threading.CancellationToken]$CancellationToken = [Threading.CancellationToken]::None)
     if (-not $OptIn) { throw 'Process audio requires explicit -OptIn' }
     if ($PSVersionTable.PSVersion.Major -lt 7) { throw 'Process audio requires PowerShell 7' }
     if ([double]::IsNaN($Seconds) -or [double]::IsInfinity($Seconds)) { throw 'Invalid audio duration' }
     if ($CancellationToken.IsCancellationRequested) { throw 'Audio cancelled before admission' }
+    if ($CallerCreatedFileTimeUtc -lt 0 -or ($CallerProcessId -ne $PID -and $CallerCreatedFileTimeUtc -le 0)) { throw 'Original audio caller requires its creation identity' }
+    if ($CallerCreatedFileTimeUtc -gt 0) { $null = [DateTime]::FromFileTimeUtc($CallerCreatedFileTimeUtc) }
     Assert-DevelopmentPath $Helper
     if (-not (Test-Path -LiteralPath $Helper -PathType Leaf)) { throw 'Optional process audio helper missing; build Audio.Capture.cpp with Audio.Capture.Build.ps1 first' }
-    $admission = Get-ProcessAudioAdmission $Id $Project $Member
+    $admission = Get-DevelopmentEvidenceTarget $Id $Project $Member
     $folder = Join-Path $admission.Directory 'audio'
     $lease = Enter-DevelopmentStateLock (Join-Path $admission.Directory 'audio.lock')
     $cancel = $null; $registration = $null
@@ -81,7 +59,7 @@ function Invoke-DevelopmentProcessAudio {
         if (@($files | Where-Object Extension -EQ '.json').Count -ge 8 -or $files.Count -gt 14 -or
             @($files | Where-Object PSIsContainer).Count -or $totalBytes -gt 42MB) { throw 'Audio retention limit reached (8 captures, 48 MiB maximum); inspect private evidence' }
         # Re-read state and exact retained selection after acquiring serialization.
-        $admission = Get-ProcessAudioAdmission $Id $Project $Member
+        $admission = Get-DevelopmentEvidenceTarget $Id $Project $Member
         $stem = Join-Path $folder ([guid]::NewGuid().ToString('N'))
         $cancelName = 'Local\BasaltwaterAudio-' + [guid]::NewGuid().ToString('N')
         $cancel = [Threading.EventWaitHandle]::new($false,[Threading.EventResetMode]::ManualReset,$cancelName)
@@ -91,9 +69,9 @@ function Invoke-DevelopmentProcessAudio {
         }
         $registration = [Basaltwater.Audio.Cancellation]::Register($CancellationToken,$cancel)
         $self = [Diagnostics.Process]::GetCurrentProcess()
-        try { $parentCreated = $self.StartTime.ToUniversalTime().ToFileTimeUtc().ToString([Globalization.CultureInfo]::InvariantCulture) } finally { $self.Dispose() }
+        try { $parentCreated = $(if ($CallerCreatedFileTimeUtc -gt 0) { $CallerCreatedFileTimeUtc } else { $self.StartTime.ToUniversalTime().ToFileTimeUtc() }).ToString([Globalization.CultureInfo]::InvariantCulture) } finally { $self.Dispose() }
         $arguments = @('--capture',[string]$admission.Target.ProcessId,[string]$admission.Target.CreatedFileTimeUtc,
-            $admission.Record.JobName,[string][int][Math]::Round($Seconds*1000),($stem + '.wav'),[string]$PID,$parentCreated,$cancelName)
+            $admission.Record.JobName,[string][int][Math]::Round($Seconds*1000),($stem + '.wav'),[string]$CallerProcessId,$parentCreated,$cancelName)
         try { $report = Invoke-ProcessAudioNative $Helper $arguments $CancellationToken }
         catch { $report = [pscustomobject]@{ ok = $false; reason = 'helper_unavailable'; Error = $_.Exception.Message } }
         $wave = $stem + '.wav'
@@ -102,6 +80,7 @@ function Invoke-DevelopmentProcessAudio {
             if ((Get-Item -LiteralPath $wave).Length -gt 5292044) { throw 'Audio WAV exceeds hard size limit' }
         } elseif ($report.ok) { throw 'Audio helper returned success without WAV' }
         $envelope = [pscustomobject]@{ Version = 1; Id = $Id; Project = $admission.Record.Project;
+            Caller = @{ ProcessId = $CallerProcessId; CreatedFileTimeUtc = $parentCreated };
             TargetToken = "$($admission.Target.ProcessId):$($admission.Target.CreatedFileTimeUtc)";
             Selection = $(if ($Member) { 'member-tree' } else { 'root-tree' });
             WavPath = $(if (Test-Path -LiteralPath $wave) { $wave } else { $null });

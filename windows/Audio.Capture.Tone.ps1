@@ -10,6 +10,11 @@ Add-Type -AssemblyName System.Windows.Extensions
 $memory = [IO.MemoryStream]::new()
 $writer = [IO.BinaryWriter]::new($memory,[Text.Encoding]::ASCII,$true)
 $player = $null
+function Publish-ToneState([bool]$Playing) {
+    $path=Join-Path $ProfilePath 'tone-state.json';$temporary=$path+'.tmp'
+    [IO.File]::WriteAllText($temporary,(@{playing=$Playing;frequency=$Frequency;pid=$PID;utc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Compress))
+    if(Test-Path -LiteralPath $path){[IO.File]::Replace($temporary,$path,[Management.Automation.Language.NullString]::Value)}else{[IO.File]::Move($temporary,$path)}
+}
 try {
     $writer.Write([Text.Encoding]::ASCII.GetBytes('RIFF')); $writer.Write([int]88236)
     $writer.Write([Text.Encoding]::ASCII.GetBytes('WAVEfmt ')); $writer.Write([int]16)
@@ -21,6 +26,7 @@ try {
     }
     $writer.Flush(); $memory.Position = 0
     $player = [System.Media.SoundPlayer]::new($memory); $player.Load(); $player.PlayLooping()
+    Publish-ToneState $true
     if ($env:BASALTWATER_TEST_READY_FILE -and $env:BASALTWATER_TEST_READY_TOKEN) {
         $temporary = $env:BASALTWATER_TEST_READY_FILE + '.tone-tmp'
         [IO.File]::WriteAllText($temporary,(@{ Token = $env:BASALTWATER_TEST_READY_TOKEN } | ConvertTo-Json))
@@ -28,12 +34,14 @@ try {
     }
     $clock = [Diagnostics.Stopwatch]::StartNew(); $playing = $true
     while ($clock.Elapsed.TotalSeconds -lt $DurationSeconds) {
+        if(Test-Path -LiteralPath (Join-Path $ProfilePath 'stop')){break}
         $silent = Test-Path -LiteralPath (Join-Path $ProfilePath 'silence')
-        if ($silent -and $playing) { $player.Stop(); $playing = $false }
-        elseif (-not $silent -and -not $playing) { $player.PlayLooping(); $playing = $true }
+        if ($silent -and $playing) { $player.Stop(); $playing = $false; Publish-ToneState $false }
+        elseif (-not $silent -and -not $playing) { $player.PlayLooping(); $playing = $true; Publish-ToneState $true }
         Start-Sleep -Milliseconds 20
     }
 } finally {
     if ($player) { $player.Stop(); $player.Dispose() }
+    Publish-ToneState $false
     $writer.Dispose(); $memory.Dispose()
 }

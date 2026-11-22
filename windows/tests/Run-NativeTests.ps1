@@ -505,6 +505,8 @@ New-Item -ItemType Junction -Path (Join-Path (Split-Path -Parent $PSScriptRoot) 
     try {
         & $python.Source -B -m unittest tests.test_agent_output -v
         if ($LASTEXITCODE -ne 0) { throw 'Native agent output-capture checks failed' }
+        & $python.Source -B -m unittest discover -s windows/tests -p test_media_windows.py
+        if ($LASTEXITCODE -ne 0) { throw 'Windows file-media contracts failed' }
     } finally { Pop-Location }
 
     & (Join-Path $PSScriptRoot 'Run-JobProcessTests.ps1')
@@ -517,6 +519,12 @@ New-Item -ItemType Junction -Path (Join-Path (Split-Path -Parent $PSScriptRoot) 
     if (-not $?) { throw 'Native storage cleanup tests failed' }
     & (Join-Path $PSScriptRoot 'Run-GitHubRunnerTests.ps1')
     if (-not $?) { throw 'GitHub runner offline qualification failed' }
+    & (Join-Path $PSScriptRoot 'Run-MediaTests.ps1')
+    if (-not $?) { throw 'Windows AV setup tests failed' }
+    & (Join-Path $PSScriptRoot 'Run-CaptureTests.ps1')
+    if (-not $?) { throw 'Windows capture/pacing contracts failed' }
+    & pwsh.exe -NoProfile -File (Join-Path $PSScriptRoot 'Run-ProcessAudioTests.ps1')
+    if ($LASTEXITCODE -ne 0) { throw 'Windows process-audio contracts failed' }
     Write-Host 'Native Windows qualification passed.'
 } finally {
     $env:LOCALAPPDATA = $originalLocalAppData

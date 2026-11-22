@@ -38,8 +38,12 @@ the pointer, then reobserve. `input hold --button left --x X --y Y
 Both endpoints must lie inside the observed outer window. Moves carry a
 synthetic marker and use the virtual desktop coordinate space, including negative
 monitor origins. Target placement, foreground, geometry and pointer occlusion
-are guarded throughout. Moves are scheduled every 20 ms; this is an OS input
-schedule, not a game-frame trajectory. Partial delivery stops without replay.
+are guarded throughout. A drag has at most 32 explicitly scheduled positions,
+with its exact endpoint scheduled before release. Guard/ownership waits cannot
+authorize a move after its deadline; missed steps fail without catch-up. This
+is an OS input schedule, not a game-frame trajectory. Partial delivery stops
+without replay. Very short requests may fail safely when guards consume the
+available time; the accepted duration range is not a timing guarantee.
 `input wheel --x X --y Y --delta 120` accepts nonzero multiples of 120 within
 -1200..1200, with the same target and physical-input guards as clicks.
 
@@ -146,8 +150,11 @@ across multiple ticks, explicit repeat, focus-loss cancellation and release afte
 driver/caller loss. Keep these results distinct from installed revision health
 and game-specific assertions in the [acceptance record](windows-testing.md).
 
-The new multi-key, timeline, pointer and observation routes have offline coverage,
-not a live source qualification claim. The parent may run the opt-in source probe:
+The multi-key, timeline, pointer and observation routes have offline coverage.
+Native cold-worker WinForms qualification also passes overlapping keys,
+150/250/350 ms transitions, all three button drags with exact endpoint effects,
+wheel delivery and post-action capture. This does not qualify another toolkit
+or a game's frame-polled state. Run the opt-in source probe:
 
 ```powershell
 powershell.exe -NoProfile -Sta -File windows/tests/Qualify-DesktopInput.ps1 -EvidenceDirectory 'F:\private\new-input-probe'
@@ -157,7 +164,15 @@ It opens one disposable WinForms window, retains effects/receipts and closes onl
 its owned child. It does not refresh installed code or change human control.
 Run with no active warm worker.
 Repeat with `-Warm` and another new evidence directory to exercise an owned
-warm worker; the runner stops only the worker it starts. Separately qualify SDL
+warm worker; the runner stops only the worker it starts. `-ObservationsOnly`
+skips gestures; `-RealAges` additionally waits for real default expiry and a
+successful action after 90 seconds with an explicit 180-second capture.
+`-TightTimeline` selects the shorter 450 ms timeline; this passed once with cold
+workers, but safely refused under concurrent test load. The default probe uses
+300 ms event spacing. Record actual send times rather than assuming that an
+accepted offset is achievable on every loaded system.
+The runner also checks token reuse/supersession, receipt mapping and null
+authority during an actual held key. Separately qualify SDL
 frame-polled overlap, cold/warm monitoring captures, capture expiry during slow
 watchdog startup, fullscreen reason codes, physical takeover, cancellation and
 hard caller/driver/watchdog loss. The probe alone does not establish these cases.

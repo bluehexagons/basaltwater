@@ -27,12 +27,15 @@ try {
     function Get-DevelopmentStatus($Id) { $record }
     $target = @{ ProcessId = 42; CreatedFileTimeUtc = '1'; State = 'created'; ExitCode = $null }
     Write-DevelopmentJson (Join-Path $directory 'target.json') $target
-    $script:calls = 0
+    $script:calls = 0; $script:expectedCaller = $PID; $script:expectedCreation = $null
     function Invoke-ProcessAudioNative($Helper,$Arguments,$CancellationToken) {
         $script:calls++
         Assert-True ($Arguments[0] -eq '--capture' -and $Arguments[1] -eq '42' -and $Arguments[2] -eq '1' -and
             $Arguments[3] -ceq $record.JobName -and $Arguments[4] -eq '100') 'Helper lost pinned identity, Job or duration'
         Assert-True (-not $CancellationToken.IsCancellationRequested) 'Cancelled request launched'
+        Assert-True ($Arguments[6] -eq [string]$script:expectedCaller -and
+            [long]$Arguments[7] -gt 0 -and ($null -eq $script:expectedCreation -or
+            $Arguments[7] -eq [string]$script:expectedCreation)) 'Original public caller identity was replaced by the intermediary'
         [IO.File]::WriteAllBytes($Arguments[5], [byte[]]::new(44))
         [pscustomobject]@{ ok = $true; reason = 'completed'; frames = 0 }
     }
@@ -64,13 +67,17 @@ try {
     $member = @{ ProcessId = 42; CreatedFileTimeUtc = '1'; Token = '42:1'; ParentToken = $null;
         Role = 'child'; State = 'observed'; ExitCode = $null; ExitCodeHex = $null }
     Write-DevelopmentJson (Join-Path $directory 'members.json') @{ Version = 1; Coverage = 'partial'; Overflow = $false; Error = $null; Members = @($member) }
-    Assert-Throws { Get-ProcessAudioAdmission $id $project '42:2' } 'stale, unrelated'
-    Assert-Throws { Get-ProcessAudioAdmission $id $project '43:1' } 'stale, unrelated'
-    $selected = Get-ProcessAudioAdmission $id $project '42:1'
+    Assert-Throws { Get-DevelopmentEvidenceTarget $id $project '42:2' } 'stale, unrelated'
+    Assert-Throws { Get-DevelopmentEvidenceTarget $id $project '43:1' } 'stale, unrelated'
+    $selected = Get-DevelopmentEvidenceTarget $id $project '42:1'
     Assert-True ($selected.Target.Token -ceq '42:1') 'Retained child selection failed'
     Assert-True ($script:calls -eq 0) 'Rejected admission launched a helper'
     $result = & $invoke
     Assert-True ($result.Capture.ok -and $result.TargetToken -ceq '42:1' -and (Test-Path -LiteralPath $result.MetadataPath)) 'Capture metadata not retained'
+    Assert-Throws { Invoke-DevelopmentProcessAudio -Id $id -Project $project -Helper $helper -OptIn -CallerProcessId 2147483646 } 'creation identity'
+    $script:expectedCaller=2147483646; $script:expectedCreation=1
+    $originalCaller=Invoke-DevelopmentProcessAudio -Id $id -Project $project -Helper $helper -OptIn -Seconds 0.1 -CallerProcessId $script:expectedCaller -CallerCreatedFileTimeUtc $script:expectedCreation
+    Assert-True ($originalCaller.Caller.ProcessId -eq $script:expectedCaller -and $originalCaller.Caller.CreatedFileTimeUtc -eq '1') 'Original caller provenance missing from receipt'
     function Invoke-ProcessAudioNative { throw 'fixture cancelled' }
     $failure = & $invoke
     Assert-True (-not $failure.Capture.ok -and (Test-Path -LiteralPath $failure.MetadataPath)) 'Failed helper lost receipt'

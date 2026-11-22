@@ -503,7 +503,12 @@ public static partial class Native {
                 long start=Stopwatch.GetTimestamp(), deadline=start+milliseconds*Stopwatch.Frequency/1000;
                 HeldPress(store,plan,marker,receipt,start,deadline,SendHeld);
                 int eventIndex=1;
-                long nextMove=start+20*Stopwatch.Frequency/1000;
+                // Reserve time for the guarded endpoint before release. A
+                // rolling 20 ms schedule could start a final move whose guard
+                // crossed expiry, and never guaranteed the requested endpoint.
+                int dragSteps=Math.Max(1,Math.Min(32,milliseconds/150)),dragStep=1;
+                long dragEnd=deadline-Math.Min(100,milliseconds/2)*Stopwatch.Frequency/1000;
+                long nextMove=start+(dragEnd-start)/dragSteps;
                 long next=repeatMilliseconds==0 ? deadline : start+repeatMilliseconds*Stopwatch.Frequency/1000;
                 while(true) {
                     long now=Stopwatch.GetTimestamp(); if(now>=deadline) { reason="expired"; break; }
@@ -511,17 +516,18 @@ public static partial class Native {
                     now=Stopwatch.GetTimestamp(); if(now>=deadline) { reason="expired"; break; }
                     bool alive=store.Locked<bool>(delegate(HeldStore.State s) { return s.phase==1 && now-s.heartbeat<=Stopwatch.Frequency/4; });
                     if(!alive) { reason="watchdog-stopped"; break; }
-                    if(plan.drag && now>=nextMove) {
+                    if(plan.drag && dragStep<=dragSteps && now>=nextMove) {
                         store.Locked<int>(delegate(HeldStore.State s) {
                             var stop=plan.admission();if(stop!=null) throw new Exception(stop);
                             long actual=Stopwatch.GetTimestamp();
-                            if(s.phase!=1 || actual>=deadline || actual-s.heartbeat>Stopwatch.Frequency/4 || actual-nextMove>Stopwatch.Frequency/10) throw new Exception("Drag schedule expired");
-                            double fraction=Math.Min(1.0,(actual-start)/(double)Math.Max(1,deadline-start-20*Stopwatch.Frequency/1000));
+                            long eventDeadline=dragStep<dragSteps ? start+(dragEnd-start)*(dragStep+1)/dragSteps : deadline;
+                            if(s.phase!=1 || actual>=eventDeadline || actual-s.heartbeat>Stopwatch.Frequency/4 || actual-nextMove>Stopwatch.Frequency/10) throw new Exception("Drag schedule expired; no catch-up");
+                            double fraction=dragStep/(double)dragSteps;
                             var batch=new [] {PointerMove(plan.origin_x+plan.x+(int)Math.Round((plan.to_x-plan.x)*fraction),plan.origin_y+plan.y+(int)Math.Round((plan.to_y-plan.y)*fraction),marker)};
-                            actual=Stopwatch.GetTimestamp();if(actual>=deadline || actual-s.heartbeat>Stopwatch.Frequency/4) throw new Exception("Drag expired before move");
+                            actual=Stopwatch.GetTimestamp();if(actual>=eventDeadline || actual-s.heartbeat>Stopwatch.Frequency/4 || actual-nextMove>Stopwatch.Frequency/10) throw new Exception("Drag expired before move");
                             uint sent=SendHeld(batch);Stamp(receipt,"move",nextMove,actual,batch,sent);if(sent!=1) throw new Exception("Drag move rejected; no replay");return 0;
                         });
-                        nextMove=now+20*Stopwatch.Frequency/1000;
+                        dragStep++;nextMove=start+(dragEnd-start)*dragStep/dragSteps;
                     }
                     if(plan.timeline!=null && eventIndex<plan.timeline.Length) {
                         long scheduled=start+plan.timeline[eventIndex].milliseconds*Stopwatch.Frequency/1000;
@@ -530,6 +536,7 @@ public static partial class Native {
                     }
                     if(repeatMilliseconds!=0 && now>=next) {
                         bool repeated=store.Locked<bool>(delegate(HeldStore.State s) {
+                            HeldAdmission(plan);
                             long actual=Stopwatch.GetTimestamp();
                             reason=HeldRepeatStop(actual,next,deadline,repeatMilliseconds*Stopwatch.Frequency/1000);
                             if(reason!=null) return false;
@@ -543,6 +550,8 @@ public static partial class Native {
                     }
                     Thread.Sleep(5);
                 }
+                if(plan.timeline!=null && reason=="expired" && eventIndex<plan.timeline.Length) throw new Exception("Timeline did not complete before expiry; no catch-up");
+                if(plan.drag && reason=="expired" && dragStep<=dragSteps) throw new Exception("Drag endpoint was not delivered before expiry");
                 HeldRelease(store,plan,transferred,marker,receipt,reason,SendHeld);
             } catch(Exception e) { receipt.error=e.Message; HeldFailureEvidence(receipt,e); HeldRelease(store,plan,transferred,marker,receipt,e is HeldGuardFailure ? e.Message : "failed",SendHeld); }
             finally { foreach(var handle in transferred) if(handle!=null) handle.Dispose(); }

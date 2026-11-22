@@ -11,10 +11,14 @@ Kdenlive CPU and VA-API exports pass on the native integrated Arc target;
 interactive Movit is unavailable in the tested editor build. Windows opt-in
 AV discovery/setup and bounded file inspection are implemented with optional
 Python and native Windows Job/ACL controls; offline tests and the native
-18-fixture suite pass with Gyan FFmpeg/ffprobe 9.0.2. Package installation/upgrade
-behavior still needs separate acceptance. See the
-[Windows media guide](../workstations/windows-media.md). NVIDIA and Windows live
-capture/playback/GPU milestones remain separate; optional speech recognition is
+18-fixture suite pass with Gyan FFmpeg/ffprobe 9.0.2 on Python 3.11 and 3.15.
+Exact-source package installation and discovery also pass; full workstation
+refresh and version upgrades need separate acceptance. See the
+[Windows media guide](../workstations/windows-media.md). Separate
+[Windows evidence](../workstations/windows-evidence.md) qualifies synthetic
+D3D11 capture, timestamp-preserving debug video and process-audio exclusion;
+physical playback, HDR and device recovery remain separate. NVIDIA production
+milestones remain separate; optional speech recognition is
 deferred without a demonstrated need. The [CachyOS handoff](audio-video-cachyos-handoff.md) gives the next agent
 the setup, baseline and production acceptance sequence. This plan extends
 [multimedia bundles issue #25](https://github.com/bluehexagons/basaltwater/issues/25)
@@ -33,7 +37,7 @@ Meteor Lake graphics; discrete Arc and NVIDIA still need their own target runs.
 | --- | --- | --- |
 | CachyOS desktop with discrete GPU | Human and agent collaboration, including demanding video production | Opt-in `--av-tools`, Kdenlive, Shotcut, Audacity, Ardour, LMMS and OBS selections and [desktop media guidance](../../common/agent_skills/basaltwater-cachyos-desktop/references/media.md) exist. Qualify actual editing, exchange and GPU workflows. |
 | Debian agent host | File analysis and modest production within measured CPU/software-rendering limits | `--av-tools`, `--audio-tools`, Audacity and Shotcut are opt-in; headless profiles can select applications. The [media workflow](../../common/agent_skills/basaltwater-desktop/references/media.md) covers basic edits. Establish bounded CLI workflows and practical limits. |
-| Native Windows | Simple file analysis for debugging | Opt-in `-AvTools`, native discovery and optional-Python file inspection preserve the version-1 contract with Windows Job/ACL controls. The common 18-fixture native decoder suite passes; see the [Windows media guide](../workstations/windows-media.md) for remaining package/live-media boundaries. Live process audio is separate [planned work](windows-game-testing.md). |
+| Native Windows | File analysis and explicit game-debugging evidence | Opt-in `-AvTools`, discovery and optional-Python file inspection preserve the version-1 contract with Windows Job/ACL controls. The 18-fixture native decoder suite, synthetic D3D11 capture/debug video and process-tree audio exclusion pass; see [file media](../workstations/windows-media.md) and [live evidence](../workstations/windows-evidence.md) for scope. |
 
 The existing CachyOS native audio analyzer is a useful reference, not yet a
 portable API: it accepts bounded WAV input, uses Linux paths and is tied to the
@@ -121,8 +125,9 @@ mean one existing CLI or runtime can be used unchanged on all three platforms.
   file inspection explicitly requires optional Python 3.11+. The inspection core
   keeps the version-1 contract but replaces Linux imports, snapshot/locking,
   storage and subprocess supervision with native Windows controls. The native
-  qualification runner passes with Gyan 9.0.2; actual package installation and
-  upgrade behavior remain separate acceptance work;
+  qualification runner passes with Gyan 9.0.2 at both supported Python endpoints;
+  package installation/discovery pass, while full workstation refresh and version
+  upgrades remain separate acceptance work;
   installing FFmpeg alone does not port the Linux process dependency graph.
   Add device/application-audio diagnostics only for a demonstrated debugging
   workflow. No Windows implementation or additional Python dependency is added

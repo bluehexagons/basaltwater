@@ -32,20 +32,16 @@ try {
         [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $repo $file), [ref]$tokens, [ref]$errors) | Out-Null
         Assert-True ($errors.Count -eq 0) "PowerShell syntax errors in $file`: $errors"
     }
-    & (Join-Path $PSScriptRoot 'Run-GameDevelopmentTests.ps1')
-    & (Join-Path $PSScriptRoot 'Run-CliTests.ps1')
-    & (Join-Path $PSScriptRoot 'Run-NativeCliTests.ps1')
-    & (Join-Path $PSScriptRoot 'Run-WorkstationHealthTests.ps1')
-    & (Join-Path $PSScriptRoot 'Run-T3CompletionTests.ps1')
-    & (Join-Path $PSScriptRoot 'Run-WindowsRestartTests.ps1')
-    & (Join-Path $PSScriptRoot 'Run-SunshineTests.ps1')
-    & (Join-Path $PSScriptRoot 'Run-InstallerEntryTests.ps1')
-    & (Join-Path $PSScriptRoot 'Run-PowerShellTests.ps1')
-    & (Join-Path $PSScriptRoot 'Run-ShellIntegrationTests.ps1')
-    & (Join-Path $PSScriptRoot 'Run-RefreshTests.ps1')
-    & (Join-Path $PSScriptRoot 'Run-DesktopTests.ps1')
-    & (Join-Path $PSScriptRoot 'Run-DevelopmentTests.ps1')
-    & (Join-Path $PSScriptRoot 'Run-SkillInventoryTests.ps1')
+    # These fixtures import helpers, compile native types and replace process
+    # environment. A child script scope does not isolate environment or loaded
+    # assemblies. Keep each fixture in its own Windows PowerShell process.
+    $testShell=Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    foreach($suite in @('GameDevelopment','Cli','NativeCli','WorkstationHealth',
+        'T3Completion','WindowsRestart','Sunshine','InstallerEntry','PowerShell',
+        'ShellIntegration','Refresh','Desktop','Development','SkillInventory')){
+        & $testShell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot ('Run-'+$suite+'Tests.ps1'))
+        if($LASTEXITCODE -ne 0){throw "Native $suite fixture failed"}
+    }
     . (Join-Path $repo 'windows\Bootstrap.Common.ps1')
     . (Join-Path $repo 'windows\AgentWorkstation.Common.ps1')
     # Cross a real native argv boundary: function mocks do not model PS 5.1 quoting.

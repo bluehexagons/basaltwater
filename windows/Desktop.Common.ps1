@@ -289,7 +289,7 @@ catch { `$result = @{ error = `$_.Exception.Message; ok=`$false; submitted=`$fal
         # Encode script, never interpolate user arguments into executable code.
         $start = New-Object Diagnostics.ProcessStartInfo
         $start.FileName = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
-        $start.Arguments = '-NoLogo -NoProfile -NonInteractive -Sta -EncodedCommand ' + [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($entry))
+        $start.Arguments = '-NoLogo -NoProfile -NonInteractive -Sta -ExecutionPolicy Bypass -EncodedCommand ' + [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($entry))
         $start.UseShellExecute = $false; $start.CreateNoWindow = $true; $start.WindowStyle = 'Hidden'
         # .NET process launches do not apply pwsh's Windows PowerShell path filtering.
         $start.EnvironmentVariables.Remove('PSModulePath')

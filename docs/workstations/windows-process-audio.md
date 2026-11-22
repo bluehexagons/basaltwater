@@ -1,10 +1,17 @@
 # Bounded Windows process audio
 
-This optional facility implements process-tree loopback, pending live audio
-qualification. It is not yet a public CLI command. Ordinary desktop observation
-does not need MSVC and never starts recording. The parent CLI must explicitly
-select this wrapper, pass the exact retained project and task ID, and require
-user opt-in. Keep recordings and metadata in private task evidence outside Git.
+This optional facility implements process-tree loopback through an explicit
+public CLI action. Ordinary desktop observation never starts recording. Pass
+the exact retained project/task and select recording explicitly:
+
+```powershell
+basaltw desktop audio --task TASK_ID --project C:\repos\sample-game --seconds 2
+```
+
+The CLI builds the optional helper with existing x64 C++/SDK tools when needed;
+`--helper EXE` selects a supplied binary. Keep recordings and metadata in private
+task evidence outside Git. See [Windows evidence](windows-evidence.md) for GPU
+capture, presentation tracing and source CLI invocation before installation.
 
 Build once with existing x64 MSVC C++ tools and a Windows SDK containing
 `audioclientactivationparams.h` (SDK 20348 or newer). No dependencies are installed:
@@ -65,7 +72,10 @@ matching the sample. The retained PCM vector is at most 5,292,000 bytes, WAV
 These are audio payload bounds, not total process RSS (COM/Windows allocate their
 own runtime state). There is no growing packet log. Activation waits at most five
 seconds, polling waits at most 20 ms, and an independent helper thread terminates
-the helper after 42 seconds or caller-process exit. The wrapper waits at most 44
+the helper after 42 seconds or original public caller-process exit. The CLI
+passes that caller's PID and creation identity through its PowerShell 7
+intermediary; losing the outer CLI stops recording even if the intermediary
+survives. Direct wrapper calls default to their own caller. The wrapper waits at most 44
 seconds, then kills and confirms exit with a two-second cleanup bound. A blocked
 kernel I/O operation can still cause explicit cleanup uncertainty. No helper
 children are created. Optional cancellation is checked before activation and in
@@ -99,8 +109,14 @@ named Job. `--verify` never calls an audio API. Mock tests use temporary state
 for opt-in, exact-project/account/session/lifecycle admission, retained child
 selection, cancellation, missing helper, failed capture evidence and disk quotas.
 
-Live qualification belongs to the parent and must be performed before claiming
-availability. Use two unrelated project-owned synthetic audio processes, each
+The opt-in `windows/tests/Qualify-ProcessAudio.ps1 -Output NEW_DIRECTORY`
+runner passes on native Windows with two unrelated project-owned synthetic
+tones: it captures the selected 440 Hz tone, excludes the unrelated 997 Hz tone,
+and captures silence when only the unrelated fixture plays. Real cancellation
+retains partial audio, outer-CLI loss stops the recorder, and both fixtures
+settle normally. This is process-loopback signal evidence, without physical
+listening or device-recovery qualification. Extend target acceptance with two
+unrelated project-owned synthetic audio processes, each
 with a deterministic PCM tone generator (for example 440 Hz and 997 Hz):
 
 `windows/Audio.Capture.Tone.ps1` is a runnable parent-only fixture. It emits a
@@ -124,8 +140,8 @@ pwsh.exe -NoProfile -File C:\example\basaltwater\windows\Audio.Capture.Tone.ps1 
 Use the wrapper invocation above while both run, selecting A's retained native
 root or tone worker member. Creating an empty `silence` file in A's retained
 test-profile directory stops only A's fixture output; deleting it resumes A.
-This fixture does not implement a spectral assertion: use the project's WAV/FFT
-checker with explicit thresholds and retain those thresholds with results.
+The qualification runner includes bounded PCM spectral assertions with explicit
+thresholds. Other project recipes should likewise retain their thresholds.
 
 1. Launch generator A through the existing supervisor with a disposable profile,
    readiness and `--track-children`. Launch generator B independently, outside
@@ -149,5 +165,7 @@ checker with explicit thresholds and retain those thresholds with results.
    unavailable audio activation must fail explicitly. Device disconnect/reconnect
    is a separate operator-assisted test; do not infer recovery from packet counts.
 
-No live audio, exclusion, device recovery or installed CLI qualification is
-established by the offline suite. Do not commit raw WAVs, host identities or logs.
+The offline suite establishes no live audio. The native runner's synthetic
+exclusion/cancellation/caller-loss result does not qualify device recovery,
+physical listening, every duration/format, or another game's audio pipeline.
+Do not commit raw WAVs, host identities or logs.

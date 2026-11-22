@@ -29,8 +29,11 @@ scenes, `--max-age-seconds 180` allows more thinking time (1–600; default 60).
 Use `input ... --observation ID` for one discrete action with the matching window
 selectors and capture dimensions. New captures, mutations and control/session
 changes invalidate the token; status/windows never renew it. Monitor captures
-cannot authorize window input. Token-bound holds and post-input `--observe` are
-pending on Windows. See the shared [observation contract](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/desktop-observations.md).
+cannot authorize window input. Token-bound holds preserve the absolute capture
+deadline through watchdog startup and first-down admission. Post-input
+`--observe NEW.png` retains completed input if the later capture fails. Compact
+receipts support `map-point --capture RECEIPT.json --view-width W --view-height H`.
+See the shared [observation contract](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/desktop-observations.md).
 During an active or uncertain keyboard lease, captures return a null observation
 ID with `observation_unavailable_reason: keyboard-lease-active-or-uncertain`.
 Use those images for monitoring; take a fresh capture after confirmed cleanup
@@ -58,6 +61,24 @@ observation and human handoff remain available. Discover its ID in
 `status.input_lease`; use `input release --lease ID` to request cancellation and
 `input lease --lease ID` to inspect cleanup. A physical-owner or uncertain release
 requires inspection, not replay. See the [keyboard lease contract](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/windows-held-input.md).
+
+Leases support up to eight keys (`--key W+J`), 32 ordered timeline events
+(`--timeline '0:W+J,300:J,600:-'`), and a single left/right/middle button with
+optional drag endpoints. Use `input move` to place the pointer before a mouse
+lease; wheel deltas are bounded multiples of 120. Every send retains guards,
+ownership and deadlines. Short schedules can fail safely when guard overhead
+or machine load consumes their budget; there is no catch-up or replay.
+
+For actual GPU pixels, explicitly select `desktop capture` with fresh window
+identity/generation/geometry and a new private directory. This WGC route records
+timestamped PNGs and client/DPI/display metadata and never mints input authority.
+`desktop pacing` collects a bounded retained-process PresentMon trace with
+existing ETW permission; it never automatically elevates. `desktop audio`
+explicitly captures only the retained task/member process tree, with a bounded
+WAV and original-caller lifetime. All are opt-in; ordinary observations start
+no recording. Helpers need existing optional C++/SDK tools. See
+[Windows evidence](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/windows-evidence.md)
+for limits, qualification and unsupported hardware/device boundaries.
 
 Human override/disabled control blocks mutations and artifact/terminal handoff.
 Observation remains available. Only an explicit human decision authorizes a
