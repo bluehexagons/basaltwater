@@ -86,6 +86,12 @@ Report the change, validation, and gaps.
 
 When asked to commit or push, reconcile the worktree and local commits against
 the full request, including in-scope edits and commits from earlier passes.
-Review and stage only the authorized changes. After a push, verify the intended
-commits are on the requested remote branch. Recheck the worktree and account
-for any requested changes still local in the handoff.
+Review the full staged diff, including changes staged before the task. If the
+requested work covers whole paths, `git commit --only -- PATH ...` can keep
+unrelated paths staged. For files with mixed edits, isolate the requested
+hunks and verify the commit's patch.
+
+Before pushing, review the complete outgoing commit range against the current
+remote branch. After the push, verify the remote branch contains the intended
+commits. Recheck the worktree and account for any requested changes still local
+in the handoff.

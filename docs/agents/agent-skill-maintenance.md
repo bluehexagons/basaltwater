@@ -130,6 +130,20 @@ fixture revisions, and budget, changing only the skill version. Include a
 narrow request to see which guidance the agent loads. Inspect outputs against
 the same rubric without knowing which skill produced them when possible.
 
+For autonomous iteration, start from a fixture with an obvious first fix
+and a second material defect on a related workflow, such as recovering from
+a failed save. Ask the agent to iterate on the workflow and keep the seeded
+defects in the evaluator's rubric. Score the resulting behavior, verified
+coverage, and stopping condition. Include a separate case with a user-set
+stop so the comparison measures respect for that boundary as well.
+
+For publication, use a disposable repository and local bare remote. Seed
+an earlier unpushed commit, a finished unstaged edit in scope, and an
+unrelated staged change. Ask the agent to commit and push the completed work.
+Compare the remote commit range with the intended scope and confirm the
+unrelated staged bytes are preserved. Check the final account of local work
+against the index and worktree.
+
 For frontend guidance, use a new website, an existing app workflow with a
 recoverable error, and a Godot UI reached in normal play. Review captures at
 the intended display size and verify task outcomes through the actual controls.
