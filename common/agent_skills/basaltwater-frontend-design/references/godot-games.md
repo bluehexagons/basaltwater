@@ -7,10 +7,11 @@
   gameplay backgrounds. Use shape, icons, or wording alongside color and
   provide visual cues for essential information also delivered by sound.
 - Use the game's art direction, typography, input conventions, and UI scale.
-  Share styling through the project's `Theme` resources. Anchor top-level
-  `Control` regions and use `Container` sizing, margins, and minimum sizes for
-  content-driven layouts. For game-wide scale changes, inspect the project's
-  base resolution, stretch mode, aspect behavior, and pixel-art constraints.
+  Share styling through the project's `Theme` resources. Anchor screen-level
+  `Control` nodes to their parent and let `Container` nodes lay out their
+  children using size flags and minimum sizes. For game-wide scale changes,
+  inspect the project's base resolution, stretch mode, aspect behavior, and
+  pixel-art constraints. Consult the Godot docs for the project's version.
 - Define which control has focus on entry and where focus returns on Back.
   Set explicit neighbors where automatic navigation is ambiguous. Use the
   project's input actions and keep gameplay input from firing while a menu

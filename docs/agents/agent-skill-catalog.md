@@ -23,7 +23,7 @@ scope and reruns.
 | `basaltwater-cachyos-workspace` | User-owned repository workspaces and safe reruns |
 | `basaltwater-project-development` | Repo-agnostic workflow, local instructions, scoped changes, and useful independent review or delegation |
 | `basaltwater-project-adoption` | Incrementally convert an existing project while preserving useful conventions and native tooling |
-| `basaltwater-frontend-design` | New frontend screens, substantial UI redesigns, responsive behavior, and interaction design |
+| `basaltwater-frontend-design` | Design and review for websites, web and mobile apps, Godot games, and desktop software |
 | `basaltwater-subagents` | Bounded delegation, complete local worktree lifecycle, and cost-aware project model learning on either platform |
 | `basaltwater-cachyos-desktop` | Task-scoped KDE portal/AT-SPI control, native Blender and media workflows, reusable grants, and physical-key recovery |
 | `basaltwater-cachyos-t3code` | T3 desktop or managed web mode, switching, pairing, and T3 Connect |
@@ -43,7 +43,7 @@ receives these base skills:
 | --- | --- |
 | `basaltwater-project-development` | Repo-agnostic workflow, local instructions, scoped changes, and useful independent review or delegation |
 | `basaltwater-project-adoption` | Incrementally convert an existing project while preserving useful conventions and native tooling |
-| `basaltwater-frontend-design` | New frontend screens, substantial UI redesigns, responsive behavior, and interaction design |
+| `basaltwater-frontend-design` | Design and review for websites, web and mobile apps, Godot games, and desktop software |
 | `basaltwater-agent-operations` | Readiness checks, deliberate terminal-agent updates, maintenance holds, controller-side credential rotation, and unattended panel task guidance |
 | `basaltwater-agent-tasks` | Scheduling authorized follow-ups, recurring/event checks, bounded goals, and portable context handoffs from T3 or terminal agents |
 | `basaltwater-agent-workspace` | Managed VM worktrees, integration/cleanup, and selected durable project notes or todos |

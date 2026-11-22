@@ -1,6 +1,6 @@
 ---
 name: basaltwater-frontend-design
-description: Design, build, or review frontend screens and components for websites, web apps, games, and desktop software. Use for substantial UI work involving visual direction, layout, responsiveness, or interaction design.
+description: Design, build, or review interfaces for websites, web apps, mobile apps, games, and desktop software. Use for substantial changes or reviews involving visual direction, layout, responsiveness, or interaction design.
 metadata:
   managed-by: basaltwater
 ---
@@ -13,7 +13,8 @@ additional references when the task spans multiple surfaces.
 | Surface | Reference |
 | --- | --- |
 | Landing pages, portfolios, documentation, and other content-led sites | [Websites](references/websites.md) |
-| Dashboards, forms, portals, and browser-based tools | [Web applications](references/web-applications.md) |
+| Dashboards, forms, portals, and tools that run in a browser, including mobile browsers | [Web applications](references/web-applications.md) |
+| Installed phone and tablet apps, including native controls around web content | [Mobile applications](references/mobile-applications.md) |
 | Godot HUDs, menus, settings, and gameplay overlays | [Godot games](references/godot-games.md) |
 | Native windows, editors, utilities, and packaged desktop apps | [Desktop software](references/desktop-software.md) |
 
@@ -47,7 +48,11 @@ additional references when the task spans multiple surfaces.
   visual review workflow under the active session's tool policy. Inspect the
   rendered interface and exercise the main task, including relevant layout
   constraints, alternate states, and input methods. When comparing captures,
-  match the data, state, and dimensions so changes are attributable.
+  match the data, state, and dimensions so changes are attributable. If the
+  target runtime is unavailable, use existing captures, component previews,
+  or project tests and qualify conclusions to the checks they support.
+- For a critique, tie findings to an observable state or interaction,
+  explain the user impact, and prioritize changes that help the affected task.
 - When asked to iterate, rerun the main task on each revision. Check affected
   flows and shared components for the next material improvement. Continue
   through design, implementation, and verification while worthwhile work
