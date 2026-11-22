@@ -24,7 +24,7 @@ def _make_config(**kwargs) -> SetupConfig:
 
 
 def _make_setup_args() -> MagicMock:
-    """Create parsed-argument mocks with the real parser's SSH defaults."""
+    """Create parsed-argument mocks with the real parser's relevant defaults."""
     args = MagicMock()
     args.enable_webhook_builds = None
     args.enable_github_runner = None
@@ -36,6 +36,7 @@ def _make_setup_args() -> MagicMock:
     args.install_ssh = None
     args.ssh_password_auth = False
     args.ssh_password_window = None
+    args.update_nvm_npm = None
     args.build_host_enrollment = None
     args.disable_build_host = False
     args.build_host_policy = None
