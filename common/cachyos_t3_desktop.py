@@ -97,7 +97,6 @@ def queue_refresh(config: SetupConfig) -> None:
     queued_before_ns = time.clock_gettime_ns(time.CLOCK_BOOTTIME)
     run(["/usr/bin/systemd-run", "--user", "--collect", "--unit=" + unit,
          "--on-active=5s", "--timer-property=AccuracySec=1s",
-         "--timer-property=RemainAfterElapse=no",
          "--property=Type=exec", "--property=UMask=0077",
          "--property=StandardOutput=journal", "--property=StandardError=journal",
          "/usr/bin/python3", "-I", str(helper), str(queued_before_ns), mode,

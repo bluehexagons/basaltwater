@@ -116,6 +116,7 @@ def _exec_desktop(arguments: list[str], environment: dict[str, str]) -> None:
     except (OSError, ValueError, RuntimeError):
         # A bookkeeping failure after graceful shutdown must not leave T3 shut.
         print("T3 relaunch receipt unavailable; overlapping refresh requests may reload again", file=sys.stderr, flush=True)
+    print("Starting T3 desktop; verify the app and provider after launch.", flush=True)
     os.execve(APP_EXECUTABLE, [APP_EXECUTABLE, *arguments], environment)
 
 
@@ -255,6 +256,7 @@ def restart_running_desktop(queued_before_ns: int, home: Path | None = None) -> 
         return _start_stopped_desktop(home or Path.home())
     try:
         if not app.refresh_needed:
+            print("T3 desktop has already started since completion was queued.", flush=True)
             return False
         poller = select.poll()
         poller.register(app.descriptor, select.POLLIN)

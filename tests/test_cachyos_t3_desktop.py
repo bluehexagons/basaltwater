@@ -357,10 +357,12 @@ class DesktopRefreshTests(unittest.TestCase):
     def test_receipt_failure_does_not_leave_the_closed_app_stopped(self):
         self.runtime_mocks()
         self.record_relaunch.side_effect = OSError("private path must not appear in diagnostics")
-        with patch("sys.stderr", new_callable=io.StringIO) as output:
+        with patch("sys.stderr", new_callable=io.StringIO) as output, \
+                patch("sys.stdout", new_callable=io.StringIO) as journal:
             self.assertTrue(refresh.restart_running_desktop(self.QUEUED_BEFORE_NS))
         self.assertIn("overlapping refresh requests", output.getvalue())
         self.assertNotIn("private path", output.getvalue())
+        self.assertIn("Starting T3 desktop", journal.getvalue())
         self.execute.assert_called_once()
 
     def test_relaunch_restores_graphical_environment_when_electron_clears_proc_environ(self):
@@ -416,7 +418,9 @@ class DesktopRefreshTests(unittest.TestCase):
     def test_fresh_running_app_is_not_duplicated_or_restarted(self):
         app = self.runtime_mocks()
         app.refresh_needed = False
-        self.assertFalse(refresh.restart_running_desktop(self.QUEUED_BEFORE_NS, self.home))
+        with patch("sys.stdout", new_callable=io.StringIO) as journal:
+            self.assertFalse(refresh.restart_running_desktop(self.QUEUED_BEFORE_NS, self.home))
+        self.assertIn("already started since completion was queued", journal.getvalue())
         self.package.assert_not_called()
         self.execute.assert_not_called()
         self.terminate.assert_not_called()
@@ -478,7 +482,6 @@ class DesktopRefreshTests(unittest.TestCase):
             argv = run.call_args.args[0]
             self.assertEqual(argv[:3], ["/usr/bin/systemd-run", "--user", "--collect"])
             self.assertIn("--on-active=5s", argv)
-            self.assertIn("--timer-property=RemainAfterElapse=no", argv)
             unit = next(arg.removeprefix("--unit=") for arg in argv if arg.startswith("--unit="))
             self.assertIn(f"journalctl --user -u {unit}.service -n 30 --no-pager", output.getvalue())
             self.assertEqual(argv[-8:-6], ["/usr/bin/python3", "-I"])
