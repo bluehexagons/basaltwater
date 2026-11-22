@@ -6,6 +6,7 @@ import argparse
 import ipaddress
 import json
 import os
+import re
 import shlex
 import socket
 import stat
@@ -555,6 +556,7 @@ class SetupConfig:
     install_go: bool = False
     install_node: bool = False
     install_node_versions: bool = False
+    update_nvm_npm: MaybeStr = None
     install_game_dev: bool = False
     install_python: bool = False
     install_data_analysis_tools: bool = False
@@ -905,6 +907,19 @@ class SetupConfig:
 
         if self.system_type != "agent_cachyos" and self.install_node_versions:
             raise ValueError("--node-versions requires the agent_cachyos profile; Debian --node already prepares NVM")
+        if self.update_nvm_npm is not None:
+            if self.system_type != "agent_cachyos":
+                raise ValueError("--update-nvm-npm requires the agent_cachyos profile")
+            if self.update_nvm_npm == "off":
+                self.update_nvm_npm = None
+            else:
+                from lib.node_toolchain import SUPPORTED_NODE_RANGE, is_supported_node
+
+                if (not isinstance(self.update_nvm_npm, str)
+                        or not re.fullmatch(r"v?[1-9][0-9]{0,4}(?:\.(?:0|[1-9][0-9]{0,4})){2}", self.update_nvm_npm)
+                        or not is_supported_node(self.update_nvm_npm)):
+                    raise ValueError(f"--update-nvm-npm requires an exact Node version within {SUPPORTED_NODE_RANGE}, or off")
+                self.update_nvm_npm = self.update_nvm_npm.removeprefix("v")
         if self.install_game_dev and self.system_type in {"server_proxmox", "server_wsl", "custom_steps"}:
             raise ValueError("--game-dev requires a Debian workstation/server or agent_cachyos profile")
 
@@ -1585,6 +1600,8 @@ class SetupConfig:
             args.append("--node")
         if self.install_node_versions:
             args.append("--node-versions")
+        if self.update_nvm_npm:
+            args.extend(["--update-nvm-npm", self.update_nvm_npm])
         if self.install_game_dev:
             args.append("--game-dev")
         
@@ -2167,6 +2184,8 @@ class SetupConfig:
             cmd_parts.append("--node")
         if self.install_node_versions:
             cmd_parts.append("--node-versions")
+        if self.update_nvm_npm:
+            cmd_parts.append(f"--update-nvm-npm {self.update_nvm_npm}")
         if self.install_game_dev:
             cmd_parts.append("--game-dev")
         
@@ -3265,6 +3284,7 @@ class SetupConfig:
             install_go=getattr(args, 'install_go', False),
             install_node=getattr(args, 'install_node', False),
             install_node_versions=getattr(args, 'install_node_versions', False) is True,
+            update_nvm_npm=getattr(args, 'update_nvm_npm', None),
             install_game_dev=getattr(args, 'install_game_dev', False) is True,
             install_python=getattr(args, 'install_python', False),
             install_data_analysis_tools=getattr(

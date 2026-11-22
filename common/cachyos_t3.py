@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import contextmanager
 import fcntl
 import filecmp
@@ -531,8 +532,11 @@ def setup_completion_lock(config: SetupConfig) -> Iterator[int | None]:
         os.close(descriptor)
 
 
-def complete_setup(home: Path, mode: str, request: str) -> bool:
-    """Activate exactly the completed setup requested by the detached worker."""
+def complete_setup(
+    home: Path, mode: str, request: str, *,
+    restart_desktop: Callable[[Callable[[], None]], object] | None = None,
+) -> bool:
+    """Activate the matching request. The desktop handler calls finish just before exec."""
     prefix, unit = _check_managed_paths(home)
     _check_service_ownership(prefix, unit)
     with _setup_lock(prefix):
@@ -540,7 +544,10 @@ def complete_setup(home: Path, mode: str, request: str) -> bool:
         if record is None or record["request"] != request or record["mode"] != mode:
             print("T3 completion superseded; no service or desktop was changed", flush=True)
             return False
+        pending_path = prefix / "pending-completion.json"
         if mode == "desktop":
+            if restart_desktop is None:
+                raise ValueError("T3 desktop completion requires a relaunch handler")
             _recover_activation(prefix, unit, start_previous=False)
             if unit.exists():
                 run(["systemctl", "--user", "disable", "--now", T3_SERVICE])
@@ -551,6 +558,15 @@ def complete_setup(home: Path, mode: str, request: str) -> bool:
                 if enabled.returncode != 1 or enabled.stdout.strip() != "disabled":
                     raise RuntimeError("Managed T3 web service remains enabled; inspect user/global systemd enablement")
             _write_managed(prefix / "desktop-mode", _MARKER + "\n", mode=0o600)
+            # A successful exec never returns. Keep the record through shutdown
+            # and restore it if exec fails synchronously after removing it.
+            try:
+                restart_desktop(pending_path.unlink)
+            except BaseException:
+                if not pending_path.exists():
+                    write_json_atomic(str(pending_path), record)
+                raise
+            pending_path.unlink(missing_ok=True)
         else:
             candidate = Path(record["candidate"])
             validate_filesystem_path(str(candidate), must_exist=True)
@@ -569,7 +585,7 @@ def complete_setup(home: Path, mode: str, request: str) -> bool:
             if previous.is_relative_to(releases):
                 keep.add(releases / previous.relative_to(releases).parts[0])
             _prune_releases(releases, keep)
-        (prefix / "pending-completion.json").unlink()
+            pending_path.unlink()
     return True
 
 

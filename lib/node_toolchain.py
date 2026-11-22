@@ -18,7 +18,7 @@ import tempfile
 from lib.atomic_io import read_json_file
 from lib.agent_probe import run_probe
 from lib.node_install import node_install_guard
-from lib.node_runtime_ownership import mark_runtime, runtime_directory, runtime_owner
+from lib.node_runtime_ownership import mark_runtime, runtime_directory, runtime_lock, runtime_owner
 from lib.validation import validate_filesystem_path, validate_no_control_characters
 
 
@@ -343,6 +343,35 @@ def _probe_version(command: str, *, cwd: str, environment: dict[str, str]) -> st
         return None
 
 
+def upgrade_nvm_npm(runtime: Path, *, system_npm: str) -> tuple[str, bool]:
+    """Use a package-managed npm to upgrade one validated, locked Node prefix."""
+    from lib.remote_utils import run
+
+    node = str(runtime / "bin/node")
+    npm = str(runtime / "bin/npm")
+    with tempfile.TemporaryDirectory(prefix="basaltwater-nvm-npm-") as temporary:
+        environment = _probe_environment(temporary)
+        environment["PATH"] = str(runtime / "bin") + os.pathsep + os.defpath
+        version_options = dict(cwd=temporary, env=environment, capture_output=True, timeout=15)
+        expected_node = _version(runtime.name)
+        if _version(run([node, "--version"], **version_options).stdout) != expected_node:
+            raise ValueError("Installed NVM Node does not match its version directory")
+        # Running the distro npm with the target Node makes its engine checks
+        # apply to the runtime that will actually use the upgraded package.
+        available = _version(run([node, system_npm, "--version"], **version_options).stdout)
+        current = run([node, npm, "--version"], check=False, **version_options)
+        if current.returncode == 0 and (installed := _version(current.stdout)) >= available:
+            return ".".join(map(str, installed)), False
+        version = ".".join(map(str, available))
+        # A working system npm can also recover a partially installed NVM npm.
+        run([node, system_npm, "install", "--global", "--prefix", str(runtime),
+             "--engine-strict", "--ignore-scripts", "--no-audit", "--no-fund", f"npm@{version}"],
+            cwd=temporary, env=environment, timeout=300)
+        if _version(run([node, npm, "--version"], **version_options).stdout) != available:
+            raise RuntimeError(f"NVM npm did not activate the requested version {version}")
+        return version, True
+
+
 def _installed_nodes(nvm_root: Path):
     """Bound directory discovery as well as the version subprocesses."""
     try:
@@ -566,7 +595,7 @@ def run_node_command(args: argparse.Namespace) -> int:
                 npm = Path(selection.executable).with_name('npm')
                 # Avoid reading a project's npm configuration or Corepack
                 # package-manager policy during host tool installation.
-                with tempfile.TemporaryDirectory(prefix='basaltwater-node-tools-') as temporary:
+                with runtime_lock(nvm.parent), tempfile.TemporaryDirectory(prefix='basaltwater-node-tools-') as temporary:
                     probe = subprocess.run([str(npm), '--version'], cwd=temporary, env=environment,
                                            capture_output=True, text=True, timeout=10, check=True)
                     npm_version = _version(probe.stdout)

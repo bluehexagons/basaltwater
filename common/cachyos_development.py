@@ -9,6 +9,7 @@ import shutil
 import stat
 
 from lib.config import SetupConfig
+from lib.node_runtime_ownership import runtime_directory
 from lib.validation import validate_filesystem_path
 
 
@@ -44,7 +45,7 @@ def nvm_script(home: Path) -> Path:
     if configured:
         validate_filesystem_path(configured)
         if Path(configured).resolve() != root.resolve():
-            raise ValueError("--node-versions manages ~/.nvm; omit it to keep a custom NVM_DIR")
+            raise ValueError("Omit --node-versions and --update-nvm-npm to keep a custom NVM_DIR")
     validate_filesystem_path(str(root))
     for directory in (root, *root.parents):
         if directory.is_symlink() or (directory.exists() and not directory.is_dir()):
@@ -113,6 +114,41 @@ def prepare_project_node_versions() -> Path:
     print("Preparing user-local NVM for this project install")
     install_cachyos_node_versions(config)
     return nvm_script(Path(account.pw_dir))
+
+
+def nvm_npm_runtime(home: Path, version: str) -> Path:
+    """Resolve an existing default NVM runtime and check npm's managed paths."""
+    runtime = runtime_directory(nvm_script(home).parent, version)
+    bin_dir = runtime / "bin"
+    npm_dir = runtime / "lib/node_modules/npm"
+    for path in (bin_dir, runtime / "lib", npm_dir.parent, npm_dir, npm_dir / "bin"):
+        if path.is_symlink() or (path.exists() and not path.is_dir()):
+            raise ValueError(f"Unsafe npm directory in NVM Node {version}: {path}")
+    node = bin_dir / "node"
+    if node.is_symlink() or not node.is_file() or not os.access(node, os.X_OK):
+        raise ValueError(f"NVM Node {version} is not installed in ~/.nvm; use basaltw node install first")
+    for name, target in (("npm", "npm-cli.js"), ("npx", "npx-cli.js")):
+        executable = bin_dir / name
+        if os.path.lexists(executable) and executable.resolve() != npm_dir / "bin" / target:
+            raise ValueError(f"Unmanaged {name} entry in NVM Node {version}; inspect it before updating npm")
+    return runtime
+
+
+def update_cachyos_nvm_npm(config: SetupConfig) -> None:
+    from common.cachyos_steps import _home
+    from lib.node_runtime_ownership import runtime_lock
+    from lib.node_toolchain import upgrade_nvm_npm
+    from lib.remote_utils import is_dry_run
+
+    if config.dry_run or is_dry_run() or not config.update_nvm_npm:
+        return
+    home = _home(config)
+    root = nvm_script(home).parent
+    with runtime_lock(root):
+        runtime = nvm_npm_runtime(home, config.update_nvm_npm)
+        version, updated = upgrade_nvm_npm(runtime, system_npm="/usr/bin/npm")
+    action = "updated to" if updated else "already at"
+    print(f"  NVM Node {config.update_nvm_npm}: npm {action} {version}")
 
 
 def report_game_dev_readiness(config: SetupConfig) -> None:

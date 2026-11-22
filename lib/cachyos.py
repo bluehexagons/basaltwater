@@ -30,7 +30,7 @@ _OPTIONS = {
     "host", "username", "system_type", "dry_run", "machine_type",
     "agent_tools", "no_agent_tools", "install_node", "install_python",
     "install_go", "install_git_lfs", "install_av_tools", "install_gl_tools", "install_audio_tools",
-    "install_node_versions", "install_game_dev",
+    "install_node_versions", "update_nvm_npm", "install_game_dev",
     "install_godot", "install_sunshine", "install_moonlight", "install_gaming",
     "install_obs", "install_blender", "install_kdenlive", "install_krita",
     "install_inkscape", "install_scribus", "install_audacity", "install_ardour",
@@ -227,6 +227,10 @@ def preflight_cachyos(config: SetupConfig) -> None:
         from common.cachyos_development import nvm_script
 
         nvm_script(Path(account.pw_dir))
+    if config.update_nvm_npm:
+        from common.cachyos_development import nvm_npm_runtime
+
+        nvm_npm_runtime(Path(account.pw_dir), config.update_nvm_npm)
     if config.install_sunshine:
         from common.cachyos_sunshine import preflight as preflight_sunshine
 

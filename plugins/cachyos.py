@@ -51,7 +51,7 @@ def build_cachyos_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
     from lib.cachyos import validate_cachyos_config
     from common.cachyos_firewall import configure_firewall, firewall_requested
     from common.cachyos_software import install_software, selected_software
-    from common.cachyos_development import install_cachyos_node_versions
+    from common.cachyos_development import install_cachyos_node_versions, update_cachyos_nvm_npm
     from common.cachyos_sunshine import configure as configure_sunshine
     from common.cachyos_ssh import configure as configure_ssh
 
@@ -66,6 +66,8 @@ def build_cachyos_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
         steps.append(("Adding human desktop control to the application menu", configure_cachyos_desktop_control))
     if config.install_node_versions:
         steps.append(("Preparing user-local NVM for project Node versions", install_cachyos_node_versions))
+    if config.update_nvm_npm:
+        steps.append((f"Updating npm for NVM Node {config.update_nvm_npm}", update_cachyos_nvm_npm))
     if firewall_requested(config):
         steps.append(("Restricting workstation inbound access with UFW", configure_firewall))
     steps.extend([

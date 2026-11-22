@@ -223,7 +223,10 @@ def cachyos_packages(config: SetupConfig) -> list[str]:
     packages = ["ca-certificates", "curl", "git", "ripgrep", "base-devel", "pacman-contrib"]
     commands = [("gh", "github-cli")] if config.install_gh else []
     if config.install_node:
-        commands += [("node", "nodejs"), ("npm", "npm"), ("pnpm", "pnpm")]
+        commands += [("node", "nodejs"), ("pnpm", "pnpm")]
+    if config.install_node or config.update_nvm_npm:
+        # A user-local npm on PATH cannot satisfy the native package selection.
+        packages.append("npm")
     if config.install_python:
         commands += [("python", "python"), ("uv", "uv")]
     if config.install_go:

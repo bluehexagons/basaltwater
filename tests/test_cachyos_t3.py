@@ -54,7 +54,8 @@ class T3InstallTests(unittest.TestCase):
             stage(config)
             if not config.dry_run:
                 t3.complete_setup(self.home, "desktop" if config.t3code_desktop else "web",
-                                  config._cachyos_t3_completion_request)
+                                  config._cachyos_t3_completion_request,
+                                  restart_desktop=(lambda finish: None) if config.t3code_desktop else None)
 
         install = stack.enter_context(patch.object(t3, "install", side_effect=lambda config:
                                                   install_and_complete(config, self.stage_install)))
@@ -86,9 +87,37 @@ class T3InstallTests(unittest.TestCase):
         self.assertTrue(self.enabled)
         self.assertFalse((self.prefix / "desktop-mode").exists())
         self.assertFalse(any("stop" in cmd or "disable" in cmd for _, cmd in self.events))
-        t3.complete_setup(self.home, "desktop", config._cachyos_t3_completion_request)
+        t3.complete_setup(self.home, "desktop", config._cachyos_t3_completion_request,
+                          restart_desktop=lambda finish: None)
         self.assertFalse(self.active)
         self.assertFalse(self.enabled)
+        self.assertIsNone(t3.collect_completion_health(self.home))
+
+    def test_failed_desktop_relaunch_keeps_the_pending_record_for_a_retry(self):
+        config = self.desktop_config()
+        self.stage_desktop(config)
+        request = config._cachyos_t3_completion_request
+        path = self.prefix / "pending-completion.json"
+        record = path.read_bytes()
+
+        def fail_shutdown(finish):
+            self.assertEqual(t3.collect_completion_health(self.home)[0], "deferred")
+            raise RuntimeError("shutdown fixture failure")
+
+        def fail_exec(finish):
+            finish()
+            self.assertFalse(path.exists())
+            raise OSError("exec fixture failure")
+
+        for fail, error in ((fail_shutdown, RuntimeError), (fail_exec, OSError)):
+            with self.subTest(failure=fail.__name__), self.assertRaises(error):
+                t3.complete_setup(self.home, "desktop", request, restart_desktop=fail)
+            self.assertEqual(path.read_bytes(), record)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(t3.collect_completion_health(self.home)[0], "deferred")
+
+        self.assertTrue(t3.complete_setup(self.home, "desktop", request, restart_desktop=lambda finish: finish()))
+        self.assertIsNone(t3.collect_completion_health(self.home))
 
     def test_superseded_worker_cannot_activate_a_newer_unfinished_setup(self):
         target, content = self.legacy()

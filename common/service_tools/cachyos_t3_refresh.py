@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 import fcntl
+from functools import partial
 import math
 import os
 from pathlib import Path
@@ -110,13 +112,15 @@ def _record_relaunch() -> None:
     write_json_atomic(str(_relaunch_receipt_path()), data, mode=0o600)
 
 
-def _exec_desktop(arguments: list[str], environment: dict[str, str]) -> None:
+def _exec_desktop(arguments: list[str], environment: dict[str, str], finish: Callable[[], None] | None) -> None:
     try:
         _record_relaunch()
     except (OSError, ValueError, RuntimeError):
         # A bookkeeping failure after graceful shutdown must not leave T3 shut.
         print("T3 relaunch receipt unavailable; overlapping refresh requests may reload again", file=sys.stderr, flush=True)
     print("Starting T3 desktop; verify the app and provider after launch.", flush=True)
+    if finish is not None:
+        finish()
     os.execve(APP_EXECUTABLE, [APP_EXECUTABLE, *arguments], environment)
 
 
@@ -231,7 +235,7 @@ def _launch_environment(previous: dict[str, str] | None = None) -> dict[str, str
     return environment
 
 
-def _start_stopped_desktop(home: Path) -> bool:
+def _start_stopped_desktop(home: Path, finish: Callable[[], None] | None) -> bool:
     # Transient user services inherit the systemd user manager's environment,
     # rather than an SSH terminal's forwarded display or provider environment.
     graphical = subprocess.run(
@@ -245,15 +249,17 @@ def _start_stopped_desktop(home: Path) -> bool:
     validate_filesystem_path(str(home), must_exist=True)
     os.chdir(home)
     environment = _launch_environment()
-    _exec_desktop([], environment)
+    _exec_desktop([], environment, finish)
     return True
 
 
-def restart_running_desktop(queued_before_ns: int, home: Path | None = None) -> bool:
+def restart_running_desktop(
+    queued_before_ns: int, home: Path | None = None, finish: Callable[[], None] | None = None,
+) -> bool:
     """Start a stopped app or gracefully replace one that needs refreshed state."""
     app = _running_desktop(queued_before_ns)
     if app is None:
-        return _start_stopped_desktop(home or Path.home())
+        return _start_stopped_desktop(home or Path.home(), finish)
     try:
         if not app.refresh_needed:
             print("T3 desktop has already started since completion was queued.", flush=True)
@@ -261,6 +267,7 @@ def restart_running_desktop(queued_before_ns: int, home: Path | None = None) -> 
         poller = select.poll()
         poller.register(app.descriptor, select.POLLIN)
         if poller.poll(0):
+            print("T3 desktop closed before shutdown; KDE login startup remains enabled.", flush=True)
             return False
         _validate_executable()
         environment = _launch_environment(app.environment)
@@ -271,6 +278,7 @@ def restart_running_desktop(queued_before_ns: int, home: Path | None = None) -> 
         try:
             signal.pidfd_send_signal(app.descriptor, signal.SIGTERM)
         except ProcessLookupError:
+            print("T3 desktop closed before shutdown; KDE login startup remains enabled.", flush=True)
             return False
         # Electron's main process can exit before its embedded server releases
         # the T3 home ownership lock. Keep waiting on the captured child handles
@@ -293,7 +301,7 @@ def restart_running_desktop(queued_before_ns: int, home: Path | None = None) -> 
         # thread or repeat pairing; keep only the persistent launch arguments.
         arguments = [argument for argument in app.arguments[1:]
                      if not argument.lower().startswith("t3code:")]
-        _exec_desktop(arguments, environment)
+        _exec_desktop(arguments, environment, finish)
         return True  # Reached only by tests that mock execve.
     finally:
         for descriptor in [app.descriptor, *app.child_descriptors]:
@@ -320,11 +328,11 @@ def main(queued_before_ns: int, mode: str, home: Path, config_root: Path, reques
         if not home.is_absolute() or not config_root.is_absolute() or ".." in home.parts or ".." in config_root.parts:
             raise ValueError("T3 completion requires absolute home/configuration paths")
         os.environ["XDG_CONFIG_HOME"] = str(config_root)
-        if complete_setup(home, mode, request):
-            if mode == "desktop":
-                restart_running_desktop(queued_before_ns, home)
-            else:
-                print("T3 web activation completed and HTTP readiness passed.", flush=True)
+        if mode == "desktop":
+            restart = partial(restart_running_desktop, queued_before_ns, home)
+            complete_setup(home, mode, request, restart_desktop=restart)
+        elif complete_setup(home, mode, request):
+            print("T3 web activation completed and HTTP readiness passed.", flush=True)
         return 0
     finally:
         os.close(descriptor)

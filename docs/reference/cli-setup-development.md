@@ -6,8 +6,9 @@
 
 | Flag | Description |
 |------|-------------|
-| `--node` | Install nvm + Node.js + PNPM |
+| `--node` | Install Node.js, npm and pnpm using native packages on CachyOS or NVM on Debian |
 | `--node-versions` / `--no-node-versions` | CachyOS only: prepare user-local NVM without selecting a Node version; independent of native `--node`; use `basaltw node install` for each project pin |
+| `--update-nvm-npm NODE_VERSION\|off` | CachyOS only. Bring npm on one installed NVM runtime up to the Pacman npm version on setup and refresh. `off` clears the saved selection. See [CachyOS npm maintenance](../workstations/cachyos-refresh.md#npm-updates). |
 | `--game-dev` / `--no-game-dev` | Select native game build/debug tools and dependency headers on Debian or CachyOS; Debian leaves SDL versions to project bootstrap; see [Project tooling](../agents/project-tooling.md) and [CachyOS game development](../workstations/cachyos-game-development.md) |
 | `--go` | Install Go |
 | `--python` | Install Python aliases + uv |

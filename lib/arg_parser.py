@@ -832,12 +832,16 @@ def add_setup_arguments(
     parser.add_argument("--node", dest="install_node", 
                        action=argparse.BooleanOptionalAction if not for_remote else "store_true", 
                        default=None if not for_remote else False,
-                       help="Install nvm + latest Node.JS + PNPM + update NPM")
+                       help="Install Node.js, npm and pnpm (native packages on CachyOS, NVM on Debian)")
     parser.add_argument(
         "--node-versions", dest="install_node_versions",
         action=argparse.BooleanOptionalAction if not for_remote else "store_true",
         default=None if not for_remote else False,
         help="Prepare user-local NVM for explicit project Node installs without changing shell defaults (agent_cachyos)",
+    )
+    parser.add_argument(
+        "--update-nvm-npm", metavar="NODE_VERSION|off",
+        help="Bring npm on one installed NVM Node version up to the Pacman npm version, or stop updating it (agent_cachyos)",
     )
     parser.add_argument(
         "--game-dev", dest="install_game_dev",

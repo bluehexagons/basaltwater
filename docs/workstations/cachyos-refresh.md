@@ -4,6 +4,32 @@
 
 Use fish from the KDE session as the account that owns the installation.
 
+## npm updates
+
+Setup and refresh upgrade the system `npm` package through `pacman -Syu`.
+`--node` explicitly selects the native package even if a user-local npm comes
+first on `PATH`. Check the system version with `/usr/bin/npm --version` and a
+project's selected version with `basaltw node exec -- npm --version`.
+
+To also keep npm current for one installed Node version under `~/.nvm`, choose
+an exact version in your usual setup command or add it to the saved selection:
+
+```fish
+basaltw refresh --update-nvm-npm 26.12.1 --dry-run
+basaltw refresh --update-nvm-npm 26.12.1
+```
+
+Replace `26.12.1` with your installed Node version. Setup takes the same
+`--update-nvm-npm` option. The update installs the exact npm release supplied by
+the current Pacman package from the public npm registry, checks it against the
+selected Node interpreter, and leaves an equal or newer npm installed. Check
+the npm requirements of projects sharing that Node version before selecting it.
+The option updates npm and its bundled `npx` in the selected runtime. Node pins,
+NVM aliases, and other runtimes remain under project or user control.
+`basaltw refresh --update-nvm-npm off` clears the saved selection and keeps the
+installed npm. To install an exact project-specific npm version, see
+[project Node tooling](cachyos-game-development.md#select-each-projects-node-version).
+
 ## Codex updates
 
 For deliberate standalone updates outside setup:
@@ -104,26 +130,32 @@ upgrading, installing, or changing the saved selection.
 terminal for package-review and sudo prompts. Selected T3 startup, reload and
 mode changes run independently after every setup step, saved result and
 notification finishes. Use the printed journal command to check the worker's
-outcome after its transient units unload. In web mode, the journal reports
-successful activation and HTTP readiness. In desktop mode, the journal reports
-when the worker hands off to T3 or finds an app that has already reopened. The
-worker becomes the launched app and stays active for its lifetime. Verify an
-authenticated provider turn and terminal after activation. The final reload
-can disconnect the setup terminal, so save active work first. Concurrent setup
-or completion work is refused until the current operation finishes.
+outcome even after the transient units unload. In web mode, the journal reports
+successful activation and HTTP readiness. In desktop mode, the command reads
+from the start of the unit journal because application logs follow the handoff.
+The worker becomes the launched app and stays active for its lifetime. The
+one-shot timer can stay loaded while that service runs, with no next trigger.
+Verify an authenticated provider turn and terminal after activation. The final
+reload can disconnect the setup terminal, so save active work first. Concurrent
+setup or completion work is refused until the current operation finishes.
 
 If the terminal closes before you save the journal command, check local doctor
 and the recent completion units from the same account:
 
 ```fish
 basaltw local cachyos-doctor --attention
-journalctl --user -u 'basaltwater-t3-completion-*.service' -n 60 --no-pager
+journalctl --user -u 'basaltwater-t3-completion-*.service' \
+  --grep '^(Starting T3 desktop|T3 (desktop (has already|closed|launch deferred|refresh failed)|web activation completed|completion superseded))' \
+  -n 20 --no-pager
 ```
 
 A deferred `configuration.t3-completion` observation means the staged
-activation record is still present. Match the journal time to the setup run
-to distinguish work in progress from failure or interruption. A previous web
-runtime can remain active after rollback.
+activation record is still present. It covers desktop shutdown and synchronous
+launch errors as well as web activation. Match the journal time to the setup
+run to distinguish work in progress from failure or interruption. A previous
+web runtime can remain active after rollback. Desktop handoff records the
+attempt to launch the app. For a later app startup failure, use the latest
+entries for that specific service with `journalctl --user -u UNIT -n 30 --no-pager`.
 
 The private record is `~/.local/state/basaltwater/cachyos/last-setup.json`.
 The adjacent private `last-report.json` records completion time, source commit

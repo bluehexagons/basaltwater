@@ -1,6 +1,7 @@
 # CachyOS testing status
 
-**Evidence includes native Godot environment/menu checks on 2026-11-02,
+**Evidence includes a native workstation refresh with T3 desktop handoff on
+2026-11-22, native Godot environment/menu checks on 2026-11-02,
 native T3 and SDL/OpenGL checks, menu/workflow audits and automated validation
 on 2026-11-01, an owner report received that day, and native Godot playtesting
 on 2026-10-31.**
@@ -13,10 +14,10 @@ CachyOS VM/container provisioning are outside its scope. See the
 
 | Available feature | Status | Evidence | Next qualification boundary |
 | --- | --- | --- | --- |
-| Workstation setup and tool discovery | 🟡 **Partial** | Owner-reported partial local setup via `basaltw refresh`; native read-only doctor completed with 89 available, 15 deferred and no failed observations on 2026-11-01 | Fresh full setup, individual tool behavior, reboot and recovery; inventory is not application QA |
+| Workstation setup and tool discovery | 🟡 **Partial** | Refreshed setup at `4ec834cb` on 2026-11-22; the native doctor completed with 89 available, 16 deferred and no failed observations | Fresh full setup, individual tool behavior, reboot and recovery; inventory is not application QA |
 | T3 Code desktop setup | 🟡 **Partial** | Selected in the owner-reported refresh; installed `t3code-bin` 0.1.6-1 and running packaged desktop/backend observed natively | Fresh installation, actual AUR update, KDE login autostart and pairing |
 | T3 Code desktop session with Codex | 🟢 **Labbed** | Owner's manual reopen after waiting succeeded; subsequent live Codex conversation, shell-tool execution, repository edits, tests, commit and push worked through T3 | Other providers, T3's interactive terminal UI, pairing/Connect and broader GUI workflows |
-| T3 Code desktop refresh/relaunch | 🟡 **Partial** | Native logs confirmed the old backend still owned the T3 home during premature reopen. Fix `bf0eb670` passed automated shutdown/timeout regressions; read-only native discovery captured the live embedded server | Corrected worker has not been exercised through a live shutdown/relaunch; repeat refresh, slow-backend exit, timeout, reboot and interruption remain open |
+| T3 Code desktop refresh/relaunch | 🟡 **Partial** | After refresh at `4ec834cb`, the completion journal recorded handoff and the same unit was running the packaged desktop. A Codex turn and shell tool calls worked through T3. Earlier logs captured the premature-reopen failure | Repeat refresh, interactive terminal UI, slow-backend exit, timeout, reboot and interruption |
 | Graphics discovery and reference contexts | 🟡 **Partial** | Accelerated GLX and isolated llvmpipe contexts | Other devices/backends; these probes alone do not qualify application rendering |
 | Native Godot rendering and gameplay | 🟢 **Labbed** | Godot 4.7.2 on KDE Wayland with NVIDIA hardware: Vulkan Forward+, explicit OpenGL Compatibility and Vulkan Mobile source launches; extended menus, weather/time/idle, binding chords/mouse input, settings/audio controls and focused GPU regressions through 2026-11-02 | Other GPU vendors, HDR, performance acceptance, exported-game renderer restart and target devices; desktop Mobile does not qualify a mobile device |
 | Native SDL/OpenGL rendering and scripted UI | 🟢 **Labbed** | Antistatic on KDE Wayland with Mesa Intel Arc OpenGL 4.6: controls-menu scrolling, pause preference toggle, reviewed application/monitor captures and clean shutdown on 2026-11-01; four fixed-frame llvmpipe effect comparisons also matched | Physical controllers, audible output, HDR, display scaling/pacing, other devices and package qualification; software comparisons do not qualify hardware rendering |
@@ -32,7 +33,7 @@ CachyOS VM/container provisioning are outside its scope. See the
 | Manual native evidence records | 🟢 **Labbed** | Automatic task attachment, Git provenance, exit outcomes, private modes/paths, offline and repeated finalization verified. Extended audit reported its 500-event cap; shorter follow-ups retained complete events. A long-session task inventory reported truncation on 2026-11-02, with owned task completion separately verified | Interrupted writes/collection, unavailable task inventory, recovery at caps and other application identities |
 | Application audio routing observations | 🟡 **Partial** | Native Godot input changed saved bus gains, mute/reset and background attenuation; a read-only application observer sampled engine meters during gameplay on 2026-11-02 | Speaker/loopback output, loudness, clipping and transition quality; the desktop helper does not capture audio |
 | Godot export prerequisite diagnosis | 🟢 **Labbed** | `develop doctor --export-check` observed Godot 4.7.2 and correctly rejected installed 4.7.1 stable and 4.7 beta4 templates as mismatched on 2026-11-01 | Matching-template positive case, template contents/provenance and actual export remain unverified |
-| Optional Sunshine streaming | ⚪ **Untested** | No end-to-end stream pass recorded in these summaries | Service, pairing, video/audio/input and reconnect |
+| Optional Sunshine streaming | 🟡 **Partial** | After refresh at `4ec834cb`, the enabled service was active without restarts and its journal reported H.264 and HEVC NVENC detection | Moonlight pairing, video/audio/input and reconnect |
 | Creative/game tools and publishing | 🟡 **Partial** | Broad tool selections included in the owner-reported refresh; Godot application QA is recorded separately above | Other selected applications, project-specific build/export, input and publishing |
 | Desktop/browser CA enrollment | ⚪ **Untested** | Arch userland probes ran as container root, not on the CachyOS desktop | Full desktop and browser trust with the intended client |
 | Managed Playwright | ⚪ **Planning only** | Deferred | Implementation and native qualification |
@@ -65,9 +66,9 @@ environment before starting project-specific tests.
 
 ## Next checks
 
-1. Exercise the corrected T3 completion worker through a real shutdown/relaunch,
-   then verify a provider turn and the interactive terminal; preserve the
-   previous failure evidence and record the exact installed revision.
+1. Verify T3's interactive terminal UI after a repeat refresh. Record the
+   installed revision and worker journal, including any slow or interrupted
+   relaunch.
 2. On a suitable disposable or explicitly authorized workstation, exercise
    fresh full setup, repeat refresh, reboot and recovery with recorded tool and
    OS versions.

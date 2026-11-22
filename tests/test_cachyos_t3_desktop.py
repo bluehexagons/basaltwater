@@ -294,8 +294,8 @@ class DesktopRefreshTests(unittest.TestCase):
         self.poller.poll.side_effect = lambda timeout: [] if timeout == 0 else events.append("exited") or [(1100, 1)]
         self.execute.side_effect = lambda *args: events.append("launch")
         self.record_relaunch.side_effect = lambda: events.append("receipt")
-        self.assertTrue(refresh.restart_running_desktop(self.QUEUED_BEFORE_NS))
-        self.assertEqual(events, ["terminate", "exited", "receipt", "launch"])
+        self.assertTrue(refresh.restart_running_desktop(self.QUEUED_BEFORE_NS, finish=lambda: events.append("finish")))
+        self.assertEqual(events, ["terminate", "exited", "receipt", "finish", "launch"])
         self.terminate.assert_called_once_with(app.descriptor, signal.SIGTERM)
         self.execute.assert_called_once_with(refresh.APP_EXECUTABLE,
                                              [refresh.APP_EXECUTABLE,
@@ -483,11 +483,14 @@ class DesktopRefreshTests(unittest.TestCase):
             self.assertEqual(argv[:3], ["/usr/bin/systemd-run", "--user", "--collect"])
             self.assertIn("--on-active=5s", argv)
             unit = next(arg.removeprefix("--unit=") for arg in argv if arg.startswith("--unit="))
-            self.assertIn(f"journalctl --user -u {unit}.service -n 30 --no-pager", output.getvalue())
+            self.assertIn(f"journalctl --user -u {unit}.service --lines=+30 --no-pager", output.getvalue())
             self.assertEqual(argv[-8:-6], ["/usr/bin/python3", "-I"])
             self.assertTrue(argv[-6].endswith("/common/service_tools/cachyos_t3_refresh.py"))
             self.assertEqual(argv[-5:], [str(self.QUEUED_BEFORE_NS), "desktop", str(self.home),
                                         str(self.home / ".config"), "a" * 32])
+            config.t3code_desktop = False
+            desktop.queue_refresh(config)
+            self.assertIn(".service --lines=30 --no-pager", output.getvalue())
             config.dry_run = True
             run.reset_mock()
             desktop.queue_refresh(config)
@@ -529,11 +532,13 @@ class DesktopRefreshTests(unittest.TestCase):
             events = []
             lock.side_effect = lambda *args: events.append("lock")
             restart.side_effect = lambda *args: events.append("discover")
+            finish = lambda: None
+            complete.side_effect = lambda *args, restart_desktop: restart_desktop(finish)
             self.assertEqual(refresh.main(self.QUEUED_BEFORE_NS, "desktop", self.home,
                                           self.home / ".config", "a" * 32), 0)
             self.assertEqual(events, ["lock", "discover"])
-            complete.assert_called_once_with(self.home, "desktop", "a" * 32)
-            restart.assert_called_once_with(self.QUEUED_BEFORE_NS, self.home)
+            self.assertEqual(complete.call_args.args, (self.home, "desktop", "a" * 32))
+            restart.assert_called_once_with(self.QUEUED_BEFORE_NS, self.home, finish)
             self.assertTrue(open_lock.call_args.args[1] & os.O_CLOEXEC)
             self.close.assert_called_once_with(2000)
             for field, value in (("st_mode", stat.S_IFREG | 0o666), ("st_uid", 2000), ("st_nlink", 2)):
