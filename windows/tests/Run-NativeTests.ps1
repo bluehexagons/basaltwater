@@ -43,7 +43,8 @@ $originalLocalAppData = $env:LOCALAPPDATA
 New-Item -ItemType Directory -Path $temporary -Force | Out-Null
 
 try {
-    foreach ($file in @('install.ps1', 'windows\Invoke-BasaltwaterJob.ps1',
+    foreach ($file in @('install.ps1', 'windows\Bootstrap.Common.ps1', 'windows\tests\Run-WslTests.ps1',
+                        'windows\Invoke-BasaltwaterJob.ps1',
                         'windows\Manage-Wsl.ps1', 'windows\Save-BasaltwaterToken.ps1',
                         'windows\Start-WslWorker.ps1', 'windows\examples\Smoke-Artifact.ps1')) {
         $tokens = $null
@@ -57,6 +58,17 @@ try {
     New-Item -ItemType Directory -Path $env:LOCALAPPDATA -Force | Out-Null
 
     # Exercise bootstrap helpers without enabling WSL or changing a real distro.
+    . (Join-Path $repo 'windows\Bootstrap.Common.ps1')
+    $selection = [pscustomobject]@{ LinuxUser = 'agent'; Node = $true; Python = $true; Go = $true;
+        AgentTool = @('gh', 'codex') }
+    $setupArguments = @(Get-UbuntuSetupArguments $selection)
+    Assert-True (($setupArguments -join ' ') -ceq (
+        '--system-type server_wsl --username agent --machine wsl --refresh-packages ' +
+        '--node --python --go --agent-tool gh --agent-tool codex')) 'WSL setup lost saved selections'
+    $minimalSelection = [pscustomobject]@{ LinuxUser = 'agent'; Node = $false; Python = $false; Go = $false;
+        AgentTool = @() }
+    Assert-True (((Get-UbuntuSetupArguments $minimalSelection) -join ' ') -ceq
+        '--system-type server_wsl --username agent --machine wsl --refresh-packages') 'WSL setup added unselected tools'
     $tokens = $null
     $errors = $null
     $installerAst = [System.Management.Automation.Language.Parser]::ParseFile(
@@ -147,6 +159,7 @@ try {
             '--terminate' {
                 if ($script:RestartFailure) { throw 'simulated interrupted restart' }
                 Assert-True ($Arguments[1] -eq $state.Distro) 'Restart targeted another distro'
+                $script:PidOne = $script:PostRestartPidOne
                 return
             }
         }
@@ -200,10 +213,16 @@ try {
         Assert-True $state.RestartRequired 'Interrupted restart lost recovery intent'
         $script:RestartFailure = $false
         $script:ConfigureResult = 'UNCHANGED'
+        $script:PostRestartPidOne = 'init'
+        Assert-Throws { Ensure-UbuntuConfiguration '/source/wsl_prepare.py' } 'did not start with systemd'
+        $state = $script:SavedSetup | ConvertFrom-Json
+        Assert-True $state.RestartRequired 'Restart intent was cleared before systemd readiness'
+        $script:PostRestartPidOne = 'systemd'
         $script:PidOne = 'systemd'
         $script:RecoveryCalls = @()
         Ensure-UbuntuConfiguration '/source/wsl_prepare.py'
         Assert-True (@($script:RecoveryCalls | Where-Object { $_[0] -eq '--terminate' }).Count -eq 1) 'Resume skipped pending restart after UNCHANGED'
+        Assert-True ($script:RecoveryCalls[-1] -contains '/proc/1/comm') 'PID 1 was not checked after restart'
         Assert-True (-not $state.RestartRequired) 'Successful restart did not clear intent'
         $script:RecoveryCalls = @()
         Ensure-UbuntuConfiguration '/source/wsl_prepare.py'

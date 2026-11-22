@@ -63,6 +63,10 @@ Existing `wsl.conf` settings are retained, including files without a final newli
 Restart intent is saved before account/systemd preparation. After interruption,
 resume restarts only the selected distro even if its configuration is already
 unchanged; a live PID1 check also detects systemd settings not yet applied.
+Setup clears the restart marker and stages Ubuntu setup only after checking that
+systemd is PID 1 in the restarted distro. If that check fails, correct the WSL
+or Ubuntu configuration and use the saved installer's `-Resume` option.
+[Microsoft's WSL systemd guide](https://learn.microsoft.com/en-us/windows/wsl/systemd)
 New accounts have root-protected preparation markers under
 `/var/lib/basaltwater/wsl-accounts`. An interrupted password prompt is retried
 before adding sudo membership or completing preparation. Existing accounts
@@ -129,24 +133,20 @@ it does not establish WSL service readiness. Rerun installation from updated
 pinned source to refresh skills; `Manage-Wsl.ps1 refresh` retains the existing
 source revision. See [skill access](../agents/agent-skills.md#access-from-different-sessions).
 
-The shared T3 integration baseline is stable **0.1.7**. The existing
-project-development bundle now includes [client workflows](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-016-client-workflows)
-for side chats, project pin/archive, local commit review, and build-gated
-1Password sources, plus [0.1.7 workflows](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-017-client-workflows)
-for child approvals, thread links, usage filters and model history.
-Updating the Windows desktop alone does not update Ubuntu's
-skills or authenticate its providers. Use the source-refresh flow below for
-Ubuntu guidance and selected tools, then verify the desktop version in About
-and an authenticated provider turn/terminal on the intended Ubuntu connection.
+The [shared T3 integration baseline](../agents/t3-qualification.md#stable-feature-baseline)
+and [client workflows](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md)
+apply to compatible versions. Update Ubuntu's skills and selected tools using
+the source-refresh flow below. Check the Windows client version in About, then
+verify an authenticated provider turn and terminal on the intended Ubuntu
+connection. Record the installed versions when qualifying this workflow.
 Provider variables and secret references resolve in that environment; Windows
 `op` presence or login does not qualify Ubuntu access. This profile installs
 no T3 systemd service in Ubuntu, so Debian's `t3 service protect` flow is not
-a WSL refresh step. Native Windows/WSL 0.1.7 interaction remains unqualified
-until exercised on those platforms.
+a WSL refresh step.
 
 ## Managed Windows policy
 
-T3 0.1.7 disables desktop WSL environments when Windows managed policy is
+T3 disables desktop WSL environments when Windows managed policy is
 present, even if that policy otherwise allows providers and remote access.
 Invalid or unreadable policy also leaves WSL unavailable. Ubuntu preparation,
 provider installation and WSL discovery do not establish that T3 may connect.
@@ -157,7 +157,7 @@ An independently authorized T3 server inside Ubuntu reads that distro's
 `/etc/t3code/policy.json`, not Windows policy. Deploying Linux policy does not
 re-enable the desktop WSL path, and this profile does not provision such a
 service. See the [platform reference](../../common/agent_skills/basaltwater-project-development/references/t3-platforms.md#windows-policy-and-ubuntu-wsl)
-and [upstream policy guide](https://github.com/pingdotgg/t3code/blob/v0.1.7/docs/user/managed-policy.md#what-a-policy-does-not-cover).
+and [upstream policy guide](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/managed-policy.md#what-a-policy-does-not-cover).
 
 ## Run a native PowerShell job
 
@@ -282,10 +282,15 @@ real Windows/WSL interruption behavior.
 an isolated, already prepared Windows 11 x86-64 machine. Start the runner
 interactively as the same Windows account that owns the completed Ubuntu WSL
 setup; WSL distributions are account-scoped. The WSL job checks Windows 11,
-WSL, the Ubuntu distribution, systemd, the installer plan, the Ubuntu setup dry
-run, and focused Python tests. Its `distribution` input can name the selected
-distro explicitly; if omitted, the job uses the saved setup state. The job does
-not install, update, restart, or shut down WSL.
+WSL, the Ubuntu distribution, systemd, the installer plan, an Ubuntu setup dry
+run with the account's saved selection, and focused Python tests. Its
+`distribution` input can name the selected distro explicitly. If omitted, the
+job uses the saved setup state. The job does not install, update, restart, or
+shut down WSL. Run the same checks locally from a checkout on the prepared host:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\tests\Run-WslTests.ps1
+```
 
 The first release must be qualified on a Windows machine before declaring
 Windows support production ready. Exercise fresh install and restart, WinGet

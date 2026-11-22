@@ -1,4 +1,4 @@
-<# Shared Windows package bootstrap; no work is performed when dot-sourced. #>
+<# Shared Windows and WSL bootstrap helpers; no work is performed when dot-sourced. #>
 function Ensure-Winget {
     if (Get-Command winget.exe -ErrorAction SilentlyContinue) { return }
     try {
@@ -68,4 +68,19 @@ function Assert-WingetOperationSucceeded([int]$exitCode, [string]$label, [string
         throw $failure
     }
     throw "$label failed (exit code $exitCode)"
+}
+
+function Get-UbuntuInitProcess([string]$Distribution) {
+    $init = & wsl.exe --distribution $Distribution --user root --exec /usr/bin/cat /proc/1/comm
+    if ($LASTEXITCODE -ne 0) { throw 'Could not check Ubuntu systemd readiness' }
+    return ($init | Select-Object -Last 1)
+}
+
+function Get-UbuntuSetupArguments($Selection) {
+    $arguments = @('--system-type', 'server_wsl', '--username', $Selection.LinuxUser, '--machine', 'wsl', '--refresh-packages')
+    if ($Selection.Node) { $arguments += '--node' }
+    if ($Selection.Python) { $arguments += '--python' }
+    if ($Selection.Go) { $arguments += '--go' }
+    foreach ($tool in $Selection.AgentTool) { $arguments += @('--agent-tool', $tool) }
+    return $arguments
 }

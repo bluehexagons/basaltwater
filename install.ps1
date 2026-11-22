@@ -362,11 +362,13 @@ function Ensure-UbuntuConfiguration([string]$prepare) {
     Save-State $state
     $changed = & wsl.exe --distribution $state.Distro --user root --exec /usr/bin/python3 $prepare configure --user $state.LinuxUser
     if ($LASTEXITCODE -ne 0) { throw "Ubuntu user/systemd preparation failed" }
-    $pidOne = & wsl.exe --distribution $state.Distro --user root --exec /usr/bin/cat /proc/1/comm
-    if ($LASTEXITCODE -ne 0) { throw 'Could not check Ubuntu systemd readiness' }
+    $pidOne = Get-UbuntuInitProcess $state.Distro
     if ($pendingRestart -or ($changed | Select-Object -Last 1) -eq 'CHANGED' -or
-        ($pidOne | Select-Object -Last 1) -ne 'systemd') {
+        $pidOne -ne 'systemd') {
         Invoke-Checked "WSL distribution restart" { & wsl.exe --terminate $state.Distro }
+        if ((Get-UbuntuInitProcess $state.Distro) -ne 'systemd') {
+            throw 'Ubuntu did not start with systemd after the distro restart. Check /etc/wsl.conf and WSL, then rerun the saved installer with -Resume.'
+        }
     }
     $state.RestartRequired = $false
     Save-State $state
@@ -661,11 +663,7 @@ try {
         & wsl.exe --distribution $state.Distro --user root --exec /usr/bin/python3 $prepare stage --source $sourcePath --revision $state.Revision
     }
     $linuxSource = "/opt/basaltwater/releases/" + $state.Revision
-    $setupArgs = @("--system-type", "server_wsl", "--username", $state.LinuxUser, "--machine", "wsl", "--refresh-packages")
-    if ($state.Node) { $setupArgs += "--node" }
-    if ($state.Python) { $setupArgs += "--python" }
-    if ($state.Go) { $setupArgs += "--go" }
-    foreach ($tool in $state.AgentTool) { $setupArgs += @("--agent-tool", $tool) }
+    $setupArgs = @(Get-UbuntuSetupArguments $state)
     Invoke-Checked "Ubuntu WSL setup" {
         & wsl.exe --distribution $state.Distro --user root --exec /usr/bin/python3 ($linuxSource + "/remote_setup.py") @setupArgs
     }
