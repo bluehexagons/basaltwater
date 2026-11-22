@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import pwd
 import re
 import shlex
 import shutil
@@ -18,8 +19,9 @@ from lib.maintenance_systemd import configure_maintenance_timer
 from lib.kernel_restart import newer_installed_kernel
 from lib.node_toolchain import is_supported_node, resolve_node_release
 from lib.apt_sources import ensure_debian_package_sources
+from lib.setup_directories import directory_fd
 from lib.config import SetupConfig
-from lib.maintenance_defaults import APT_LOCK_OPTIONS, APT_UPDATE_OPTIONS
+from lib.maintenance_defaults import APT_LOCK_OPTIONS, APT_UPDATE_OPTIONS, APT_UPGRADE_SAFETY_OPTIONS
 from lib.machine_state import can_manage_time_sync, can_modify_kernel
 from lib.remote_utils import (
     DEFAULT_COMMAND_TIMEOUT_SECONDS,
@@ -66,6 +68,8 @@ _USER_TOOL_SHELL_ENV_RELATIVE_PATH = (
 )
 _USER_TOOL_SHELL_MARKER = "# basaltwater user tool environment"
 _PYTHON_ALIAS_PATH = "/usr/local/bin/python"
+_ROOT_SSH_DIRECTORY = "/root/.ssh"
+_AUTHORIZED_KEYS_LIMIT = 1024 * 1024
 # pnpm 12 replaces a shell fallback with its native executable during install.
 # npm 12 requires explicit approval of that package's lifecycle scripts.
 _PNPM_INSTALL_COMMAND = "npm install -g pnpm --ignore-scripts=false --allow-scripts=pnpm"
@@ -225,7 +229,8 @@ def update_and_upgrade_packages(config: SetupConfig) -> None:
         details = getattr(update_result, "stderr", "") or "check network connectivity and APT sources"
         raise RuntimeError(f"APT package list update failed: {str(details).strip()[:300]}")
     print("  Upgrading packages...")
-    run(f"{_APT_GET} upgrade -y -qq {_APT_DPKG_NONINTERACTIVE_OPTIONS}")
+    run(f"{_APT_GET} upgrade -y -q --with-new-pkgs {shlex.join(APT_UPGRADE_SAFETY_OPTIONS)} "
+        f"{_APT_DPKG_NONINTERACTIVE_OPTIONS}")
     run(f"{_APT_GET} autoremove -y -qq {_APT_DPKG_NONINTERACTIVE_OPTIONS}")
 
     try:
@@ -493,59 +498,105 @@ def generate_ssh_key(config: SetupConfig) -> None:
     print(f"  ✓ SSH key generated for {config.username} (~/.ssh/id_ed25519)")
 
 
+def _read_authorized_keys(ssh_fd: int, uid: int, *, root_login: bool = False) -> list[str]:
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    try:
+        descriptor = os.open("authorized_keys", flags, dir_fd=ssh_fd)
+    except FileNotFoundError:
+        raise
+    except OSError as exc:
+        raise RuntimeError("Could not open a regular authorized_keys file without following links") from exc
+    with os.fdopen(descriptor, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid not in {0, uid} or info.st_nlink != 1:
+            raise RuntimeError("Refusing unsafe authorized_keys file ownership or type")
+        content = stream.read(_AUTHORIZED_KEYS_LIMIT + 1)
+        if len(content) > _AUTHORIZED_KEYS_LIMIT:
+            raise RuntimeError("authorized_keys exceeds the setup size limit")
+        lines = content.decode("utf-8").splitlines()
+        if root_login:
+            os.fchmod(stream.fileno(), 0o600)
+            os.fchmod(ssh_fd, 0o700)
+        return lines
+
+
 def copy_ssh_keys_to_user(config: SetupConfig) -> None:
-    safe_username = shlex.quote(config.username)
-    user_home = get_user_home(config.username)
-    ssh_dir = f"{user_home}/.ssh"
-    authorized_keys = f"{ssh_dir}/authorized_keys"
-    
-    if not os.path.exists("/root/.ssh/authorized_keys"):
+    if is_dry_run():
+        print("  [DRY-RUN] Would merge root SSH keys into the user's authorized_keys")
+        return
+    if not validate_username(config.username):
+        raise ValueError("Invalid SSH key username")
+    account = pwd.getpwnam(config.username)
+    if account.pw_uid == 0 and config.username != "root":
+        raise ValueError("Refusing to copy SSH keys to a non-root account with UID 0")
+    root_login = account.pw_uid == 0
+    try:
+        with directory_fd(_ROOT_SSH_DIRECTORY) as root_ssh_fd:
+            root_info = os.fstat(root_ssh_fd)
+            if root_info.st_uid != 0 or root_info.st_mode & 0o022:
+                raise RuntimeError("Root SSH directory is not controlled by root")
+            root_lines = _read_authorized_keys(root_ssh_fd, 0, root_login=root_login)
+    except FileNotFoundError:
         print("  ℹ No SSH keys found in /root/.ssh/authorized_keys to copy")
         return
-    if os.path.islink("/root/.ssh/authorized_keys") or not os.path.isfile(
-        "/root/.ssh/authorized_keys"
-    ):
-        raise RuntimeError("Refusing non-regular root authorized_keys path")
-
-    if os.path.abspath(authorized_keys) == "/root/.ssh/authorized_keys":
-        run("chmod 700 /root/.ssh")
-        run("chmod 600 /root/.ssh/authorized_keys")
+    if root_login:
         print("  ✓ Root SSH keys already available")
         return
-    
-    if os.path.lexists(ssh_dir) and (
-        os.path.islink(ssh_dir) or not os.path.isdir(ssh_dir)
-    ):
-        raise RuntimeError(f"Refusing non-directory SSH path: {ssh_dir}")
-    if os.path.lexists(authorized_keys) and (
-        os.path.islink(authorized_keys) or not os.path.isfile(authorized_keys)
-    ):
-        raise RuntimeError(f"Refusing non-regular authorized_keys path: {authorized_keys}")
 
-    run(f"mkdir -p {shlex.quote(ssh_dir)}")
-    run(f"chmod 700 {shlex.quote(ssh_dir)}")
-
-    existing_lines: list[str] = []
-    if os.path.exists(authorized_keys):
-        with open(authorized_keys, "r", encoding="utf-8") as file_obj:
-            existing_lines = file_obj.read().splitlines()
-    with open("/root/.ssh/authorized_keys", "r", encoding="utf-8") as file_obj:
-        root_lines = file_obj.read().splitlines()
-
-    merged_lines: list[str] = []
-    seen: set[str] = set()
-    for line in existing_lines + root_lines:
-        if line in seen:
-            continue
-        seen.add(line)
-        merged_lines.append(line)
-    content = "\n".join(merged_lines)
-    if merged_lines:
-        content += "\n"
-    write_text_atomic(authorized_keys, content, mode=0o600)
-    run(f"chown -R {safe_username}:{safe_username} {shlex.quote(ssh_dir)}")
-    run(f"chmod 600 {shlex.quote(authorized_keys)}")
-    
+    with directory_fd(account.pw_dir) as home_fd:
+        home = os.fstat(home_fd)
+        if home.st_uid != account.pw_uid or home.st_mode & 0o022:
+            raise RuntimeError("User home must be owned by the login user and protected from other writers")
+        try:
+            os.mkdir(".ssh", mode=0o700, dir_fd=home_fd)
+        except FileExistsError:
+            pass
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        ssh_fd = os.open(".ssh", flags, dir_fd=home_fd)
+        try:
+            info = os.fstat(ssh_fd)
+            if info.st_uid not in {0, account.pw_uid} or info.st_mode & 0o022:
+                raise RuntimeError("User SSH directory has unsafe ownership or write permissions")
+            try:
+                user_lines = _read_authorized_keys(ssh_fd, account.pw_uid)
+            except FileNotFoundError:
+                user_lines = []
+            merged = dict.fromkeys([*user_lines, *root_lines])
+            temporary = f".authorized_keys-{os.urandom(16).hex()}"
+            flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW
+            descriptor = os.open(temporary, flags, 0o600, dir_fd=ssh_fd)
+            try:
+                with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                    stream.writelines(line + "\n" for line in merged)
+                    stream.flush()
+                    os.fchown(stream.fileno(), account.pw_uid, account.pw_gid)
+                    os.fchmod(stream.fileno(), 0o600)
+                    os.fsync(stream.fileno())
+                    published = os.fstat(stream.fileno())
+                os.replace(temporary, "authorized_keys", src_dir_fd=ssh_fd, dst_dir_fd=ssh_fd)
+            finally:
+                try:
+                    os.unlink(temporary, dir_fd=ssh_fd)
+                except FileNotFoundError:
+                    pass
+            os.fchown(ssh_fd, account.pw_uid, account.pw_gid)
+            os.fchmod(ssh_fd, 0o700)
+            os.fsync(ssh_fd)
+            os.fsync(home_fd)
+            with directory_fd(os.path.join(account.pw_dir, ".ssh")) as current_fd:
+                current = os.fstat(current_fd)
+                keys = os.stat("authorized_keys", dir_fd=current_fd, follow_symlinks=False)
+                if (
+                    (current.st_dev, current.st_ino) != (info.st_dev, info.st_ino)
+                    or (keys.st_dev, keys.st_ino) != (published.st_dev, published.st_ino)
+                    or (current.st_uid, current.st_gid) != (account.pw_uid, account.pw_gid)
+                    or (keys.st_uid, keys.st_gid) != (account.pw_uid, account.pw_gid)
+                    or stat.S_IMODE(current.st_mode) != 0o700 or stat.S_IMODE(keys.st_mode) != 0o600
+                    or keys.st_nlink != 1
+                ):
+                    raise RuntimeError("SSH directory or authorized_keys changed during setup")
+        finally:
+            os.close(ssh_fd)
     print(f"  ✓ SSH keys merged for {config.username}")
 
 
@@ -1018,6 +1069,7 @@ def install_node_for_user(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib", "node_install.py",
     ))
     install_binary = f"python3 -I {node_installer} {safe_nvm_dir}"
+    apt_env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
 
     _chown_existing_paths(username, _user_tool_paths(user_home))
     
@@ -1044,7 +1096,7 @@ def install_node_for_user(
 
             print("  Repairing Node.js LTS, npm, and pnpm baseline")
             target = resolve_node_release("lts/*")
-            run(f"{_APT_GET} install -y -qq libstdc++6 libatomic1")
+            run(f"{_APT_GET} install -y -qq libstdc++6 libatomic1", env=apt_env)
             nvm_target_env = f"{nvm_env} && nvm use {shlex.quote(target)}"
             _run_as_login_user(
                 username,
@@ -1068,7 +1120,7 @@ def install_node_for_user(
             return
         print("  Refreshing Node.js LTS, npm, and pnpm")
         target = resolve_node_release("lts/*")
-        run(f"{_APT_GET} install -y -qq libstdc++6 libatomic1")
+        run(f"{_APT_GET} install -y -qq libstdc++6 libatomic1", env=apt_env)
         nvm_target_env = f"{nvm_env} && nvm use {shlex.quote(target)}"
         _run_as_login_user(
             username,
@@ -1097,8 +1149,7 @@ def install_node_for_user(
         return
     
     target = resolve_node_release("lts/*")
-    os.environ["DEBIAN_FRONTEND"] = "noninteractive"
-    run(f"{_APT_GET} install -y -qq curl libstdc++6 libatomic1")
+    run(f"{_APT_GET} install -y -qq curl libstdc++6 libatomic1", env=apt_env)
 
     # Install nvm as the user, explicitly setting NVM_DIR to avoid picking up
     # any system-wide NVM_DIR (e.g. /opt/nvm) from the environment

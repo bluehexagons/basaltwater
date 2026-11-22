@@ -43,6 +43,13 @@ class AgentSkillContractTest(unittest.TestCase):
     def test_markdown_references_resolve_to_shipped_resources_or_repository_docs(self) -> None:
         repository = Path(__file__).resolve().parents[1]
         repo_url = "https://github.com/bluehexagons/basaltwater/blob/main/"
+        shared_bundles = {
+            "basaltwater-agent-tasks": "basaltwater-subagents",
+            "basaltwater-browser-testing": "basaltwater-project-development",
+            "basaltwater-cachyos-t3code": "basaltwater-project-development",
+            "basaltwater-t3-preview-testing": "basaltwater-project-development",
+            "basaltwater-t3code": "basaltwater-project-development",
+        }
         for path in sorted(Path(AGENT_SKILLS_ROOT).rglob("*.md")):
             for target in re.findall(r"\]\(([^)]+)\)", path.read_text(encoding="utf-8")):
                 if target.startswith(repo_url):
@@ -50,7 +57,10 @@ class AgentSkillContractTest(unittest.TestCase):
                 elif ":" not in target and target.split("#", 1)[0].endswith(".md"):
                     destination = path.parent / target.split("#", 1)[0]
                     skill_root = Path(AGENT_SKILLS_ROOT) / path.relative_to(AGENT_SKILLS_ROOT).parts[0]
-                    self.assertTrue(destination.resolve().is_relative_to(skill_root))
+                    allowed_roots = [skill_root]
+                    if skill_root.name in shared_bundles:
+                        allowed_roots.append(skill_root.with_name(shared_bundles[skill_root.name]) / "references")
+                    self.assertTrue(any(destination.resolve().is_relative_to(root) for root in allowed_roots))
                 else:
                     continue  # External references and illustrative evidence paths.
                 with self.subTest(path=path, target=target):

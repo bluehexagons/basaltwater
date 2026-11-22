@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional, Any
 
+from lib.notifications import normalize_notification_strict_https, notification_strict_https_from_state
+
 
 @dataclass
 class RuntimeConfig:
@@ -28,6 +30,7 @@ class RuntimeConfig:
         notification_level: Outbound notification threshold for this system
         notification_strict_https: Require certificate and hostname verification
             for HTTPS notification webhooks
+        notification_ca_file: Additional sender-local PEM bundle for HTTPS webhooks
         smb_mounts: List of SMB mount specifications [mountpoint, ip, creds, share, subdir]
     """
     username: str
@@ -38,8 +41,9 @@ class RuntimeConfig:
     friendly_name: Optional[str] = None
     smb_mounts: Optional[list[list[str]]] = None
     notification_level: Optional[str] = None
-    notification_strict_https: bool = False
+    notification_strict_https: bool | None = None
     storage_mounts: list[list[str]] = field(default_factory=list)
+    notification_ca_file: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "RuntimeConfig":
@@ -63,7 +67,10 @@ class RuntimeConfig:
             smb_mounts=data.get("smb_mounts"),
             storage_mounts=data.get("storage_mounts"),
             notification_level=data.get("notification_level"),
-            notification_strict_https=data.get("notification_strict_https") is True,
+            notification_strict_https=normalize_notification_strict_https(
+                notification_strict_https_from_state(data), data.get("notification_ca_file"),
+            ),
+            notification_ca_file=data.get("notification_ca_file"),
         )
         # Validate raw saved declarations before normalizing optional fields.
         # False/0/""/{} must never erase the mount guards for a standalone sync.
@@ -92,9 +99,10 @@ class RuntimeConfig:
             smb_mounts=config.smb_mounts,
             storage_mounts=getattr(config, "storage_mounts", None) or [],
             notification_level=getattr(config, 'notification_level', None),
-            notification_strict_https=(
-                getattr(config, 'notification_strict_https', None) is True
+            notification_strict_https=normalize_notification_strict_https(
+                getattr(config, "notification_strict_https", None), getattr(config, "notification_ca_file", None),
             ),
+            notification_ca_file=getattr(config, "notification_ca_file", None),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -114,6 +122,8 @@ class RuntimeConfig:
             "storage_mounts": self.storage_mounts,
             "notification_level": self.notification_level,
             "notification_strict_https": self.notification_strict_https,
+            "notification_allow_unverified_https": self.notification_strict_https is False,
+            "notification_ca_file": self.notification_ca_file,
         }
 
     def has_storage_ops(self) -> bool:

@@ -15,7 +15,7 @@ link; it does not copy or rename old state or operation markers.
 
 Use commit `97da1799615d5ad7e3d34c7c38a38ae41631e5fd` from this repository.
 It retains the complete one-time migration and recovery implementation.
-Its [archived migration guide](https://github.com/bluehexagons/basaltwater/blob/97da1799615d5ad7e3d34c7c38a38ae41631e5fd/docs/migration-guide.md)
+Its [archived migration guide](https://github.com/bluehexagons/basaltwater/blob/97da1799615d5ad7e3d34c7c38a38ae41631e5fd/docs/BASALTWATER_MIGRATION.md)
 documents starting layouts, conflicts, permissions, and recovery.
 This intermediate version supports recent development installations with
 `lib/installation_info.py` provenance, not historical releases such as

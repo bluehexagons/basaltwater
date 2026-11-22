@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 import errno
+import hashlib
 import os
 import shlex
-import grp
 import pwd
+import re
 import secrets
 import stat
 from typing import Any, Optional
 
 from lib.config import SetupConfig
 from lib.remote_utils import run
-from lib.unit_transaction import replace_units
+from lib.unit_transaction import replace_units, snapshot_unit_file
 from lib.validation import validate_smb_mount_specs
 from lib.validators import validate_username
 from lib.setup_directories import check_directory_path, directory_fd
@@ -59,13 +60,45 @@ def _write_credentials(directory: str, name: str, content: str) -> None:
                 file_obj.write(content)
                 file_obj.flush()
                 os.fsync(file_obj.fileno())
-            os.replace(temporary, name, src_dir_fd=parent, dst_dir_fd=parent)
+            # Publish without replacing an existing generation. The old unit
+            # and a retained recovery snapshot may still reference it.
+            os.link(temporary, name, src_dir_fd=parent, dst_dir_fd=parent, follow_symlinks=False)
             os.fsync(parent)
         finally:
             try:
                 os.unlink(temporary, dir_fd=parent)
             except FileNotFoundError:
                 pass
+
+
+def _current_credentials(unit_name: str, prefix: str, endpoint: str, content: str) -> str | None:
+    """Reuse an immutable generation only when the published bytes match."""
+    unit = snapshot_unit_file(os.path.join(SMB_UNIT_DIR, unit_name))
+    if unit is None or f"What={endpoint}" not in unit["content"].splitlines():
+        return None
+    directory = SMB_CREDENTIALS_DIR.replace("%", "%%")
+    match = re.search(
+        rf"^Options=credentials={re.escape(directory)}/({re.escape(prefix)}[0-9a-f]{{32}}),",
+        unit["content"], re.MULTILINE,
+    )
+    if match is None:
+        return None
+    try:
+        with directory_fd(SMB_CREDENTIALS_DIR) as parent:
+            directory_info = os.fstat(parent)
+            if directory_info.st_uid != 0 or stat.S_IMODE(directory_info.st_mode) != 0o700:
+                return None
+            descriptor = os.open(match[1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+            with os.fdopen(descriptor, "rb") as stream:
+                info = os.fstat(stream.fileno())
+                expected = content.encode("utf-8")
+                if (stat.S_ISREG(info.st_mode) and info.st_uid == 0 and info.st_nlink == 1
+                        and stat.S_IMODE(info.st_mode) == 0o600
+                        and stream.read(len(expected) + 1) == expected):
+                    return match[1]
+    except FileNotFoundError:
+        pass
+    return None
 
 
 def parse_smb_mount_spec(mount_spec: Optional[list[str]]) -> dict[str, Any]:
@@ -124,8 +157,8 @@ def configure_smb_mount(config: SetupConfig, mount_spec: Optional[list[str]] = N
         raise ValueError("Invalid SMB mount owner")
     _check_mountpoint_path(mountpoint)
     check_directory_path(SMB_CREDENTIALS_DIR)
-    uid = pwd.getpwnam(config.username).pw_uid
-    gid = grp.getgrnam(config.username).gr_gid
+    account = pwd.getpwnam(config.username)
+    uid, gid = account.pw_uid, account.pw_gid
     
     result = run(f"systemd-escape -p {shlex.quote(mountpoint)}", capture_output=True, text=True)
     escaped_mountpoint = result.stdout.strip()
@@ -137,34 +170,32 @@ def configure_smb_mount(config: SetupConfig, mount_spec: Optional[list[str]] = N
     unit_name = f"{escaped_mountpoint}.mount"
     automount_name = f"{escaped_mountpoint}.automount"
 
-    credentials_dir = SMB_CREDENTIALS_DIR
-
-    # Use the already collision-resistant systemd-escaped mount name. The old
-    # slash-to-underscore conversion made /mnt/a_b and /mnt/a/b share one
-    # credential file and could silently point a mount at the wrong server.
-    creds_file = f"{credentials_dir}/credentials-{escaped_mountpoint}"
-    
     creds_content = f"""username={username}
 password={password}
 """
-    
+    unc_path = f"//{ip}/{share}{subdir}"
+
+    def _escape_systemd_value(value: str) -> str:
+        """Preserve literal specifiers and backslashes in unit values."""
+        return value.replace("%", "%%").replace("\\", "\\\\")
+
+    escaped_endpoint = _escape_systemd_value(unc_path)
+    # Keep names bounded even for long escaped systemd names. The unpredictable
+    # suffix never encodes credential bytes in a world-readable unit.
+    prefix = "credentials-v2-" + hashlib.sha256(mountpoint.encode()).hexdigest() + "-"
+    current = _current_credentials(unit_name, prefix, escaped_endpoint, creds_content)
+    creds_name = current or prefix + secrets.token_hex(16)
+    creds_file = os.path.join(SMB_CREDENTIALS_DIR, creds_name)
+
     def prepare_mount() -> None:
         # The transaction has stopped both the activator and mount. Only now
         # open/chown the local directory, never the active remote CIFS root.
         with directory_fd(mountpoint, create=True) as descriptor:
             os.fchown(descriptor, uid, gid)
-        _write_credentials(credentials_dir, os.path.basename(creds_file), creds_content)
-    
-    unc_path = f"//{ip}/{share}{subdir}"
-    
-    def _escape_systemd_value(value: str) -> str:
-        """Preserve literal specifiers and backslashes in unit values."""
-        return value.replace("%", "%%").replace("\\", "\\\\")
+        if current is None:
+            _write_credentials(SMB_CREDENTIALS_DIR, creds_name, creds_content)
     
     escaped_desc = _escape_systemd_value(mountpoint).replace('"', "'")
-    # Mount.Options uses config_parse_unit_string_printf, which expands
-    # specifiers without unescaping backslashes. mount.cifs opens the supplied
-    # credentials filename verbatim, including systemd-escape's literal \\xNN.
     escaped_credentials = creds_file.replace("%", "%%")
     
     unit_content = f"""[Unit]
@@ -173,10 +204,10 @@ After=network-online.target
 Wants=network-online.target
 
 [Mount]
-What={_escape_systemd_value(unc_path)}
+What={escaped_endpoint}
 Where={_escape_systemd_value(mountpoint)}
 Type=cifs
-Options=credentials={escaped_credentials},uid={config.username},gid={config.username},file_mode=0644,dir_mode=0755,vers=3,seal,nofail
+Options=credentials={escaped_credentials},uid={uid},gid={gid},forceuid,forcegid,file_mode=0600,dir_mode=0700,nounix,perm,vers=3,seal,nofail
 """
 
     automount_content = f"""[Unit]

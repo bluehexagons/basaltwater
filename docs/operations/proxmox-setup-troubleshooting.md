@@ -5,6 +5,21 @@ Unix username and any supplied setup username are normalized to `root` before
 configuration defaults, password hashing, transport and saved configuration.
 This also applies when loading an older saved Proxmox setup.
 
+## Guest setup stops after credential staging
+
+Staging messages describe the controller's preparation for upload. They do
+not confirm that the guest applied credentials or started setup steps.
+If the target reports a busy setup or setup bootstrap lock, wait for the
+other setup or maintenance process to finish before rerunning saved setup.
+Use `sudo lslocks` on the guest to check for active lock holders, and leave
+the lock files in place.
+
+Older controllers can report only exit code `1` when the guest's setup
+lock is busy. Update the controller that runs `basaltw setup` for the
+explicit diagnostic. If the SSH setup command still exits without target
+output, check the guest's SSH journal around the attempt. For an unfinished
+setup operation, consult [transaction recovery](transaction-recovery.md).
+
 ## Management command
 
 Setup installs `/usr/local/bin/basaltw` and verifies that `basaltw --help` runs

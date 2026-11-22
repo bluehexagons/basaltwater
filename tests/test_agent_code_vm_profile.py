@@ -127,7 +127,11 @@ class AgentCodeVMProfileTests(unittest.TestCase):
              patch.object(setup_common, "run_streamed", return_value=0), redirect_stdout(io.StringIO()):
             self.assertEqual(setup_common.run_remote_setup(config), 0)
         command = ssh.call_args.kwargs["remote_command"]
-        self.assertIn("PYTHONDONTWRITEBYTECODE=1", command)
+        remote_shell = shlex.split(command)[-1]
+        self.assertIn("/usr/bin/python3 -I -c ", remote_shell)
+        self.assertIn('cd "$basaltwater_stage";', remote_shell)
+        self.assertIn("python3 -E -s -B -u -m lib.setup_upgrade ", remote_shell)
+        self.assertIn("cd /opt/basaltwater; python3 -E -s -B -u -m lib.setup_payloads ", remote_shell)
         self.assertNotIn(TOKEN, command)
         self.assertNotIn("test-only", command)
 

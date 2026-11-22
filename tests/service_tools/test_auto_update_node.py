@@ -148,6 +148,17 @@ stable -> 22.3 (-> v26.12.3) (default)
                 self.assertEqual(auto_update_node.get_current_version(), '')
 
     @patch("web.service_tools.auto_update_node.run_nvm_command")
+    def test_npm_updates_automatic_runtime_without_global_package_opt_in(self, run):
+        run.return_value = subprocess.CompletedProcess([], 0, "", "")
+        with patch.dict(os.environ, {ECOSYSTEM_AUTO_UPGRADE_ENV: "0", "BASALTWATER_NPM_AUTO_UPDATE": "1"}), \
+                patch.object(auto_update_node, "runtime_owner", return_value="automatic"):
+            self.assertEqual(auto_update_node.update_global_packages("v24.22.1"), (True, None))
+        command = run.call_args.args[0]
+        self.assertEqual(command[:7], ["nvm", "exec", "v24.22.1", "npm", "install", "-g", "npm@latest"])
+        self.assertIn("--engine-strict", command)
+        self.assertEqual(run.call_count, 1)
+
+    @patch("web.service_tools.auto_update_node.run_nvm_command")
     def test_global_package_updates_skip_by_default(self, mock_run_nvm):
         with patch.dict(os.environ, {}, clear=True):
             with self.assertLogs(auto_update_node.logger, level="INFO") as logs:
@@ -631,6 +642,40 @@ stable -> 22.3 (-> v26.12.3) (default)
             fetch.assert_called_once_with()
             install.assert_not_called()
             alias.assert_called_once_with('v26.12.2')
+
+    def test_older_installed_lts_gets_its_own_target_and_retains_project_pin(self):
+        for source in ("v24.22.0", "v24.22.1"):
+            with self.subTest(source=source), ExitStack() as stack:
+                directory = auto_update_node.runtime_directory(self.nvm, source)
+                (directory / "bin").mkdir(parents=True)
+                (directory / "bin/node").write_text("fixture")
+                mark_runtime(self.nvm, source, owner="project")
+                stack.enter_context(patch.object(auto_update_node, "fetch_node_releases", return_value=[
+                    {"version": "v26.12.2", "lts": "FutureLTS"},
+                    {"version": "v24.22.2", "lts": "Krypton"},
+                    {"version": "v24.22.3-rc.1", "lts": "Krypton"},
+                    {"version": "v22.23.2", "lts": "Legacy"},
+                ]))
+                stack.enter_context(patch.object(auto_update_node, "get_current_version", return_value="v26.12.2"))
+                stack.enter_context(patch.object(auto_update_node, "get_installed_versions", return_value=[
+                    source, "v26.12.2", "v22.23.1",
+                ]))
+                stack.enter_context(patch.object(auto_update_node, "load_notification_configs_from_state", return_value=[]))
+                stack.enter_context(patch.object(auto_update_node, "update_global_packages", return_value=(True, None)))
+                run = stack.enter_context(patch.object(
+                    auto_update_node, "run_nvm_command", return_value=subprocess.CompletedProcess([], 0, "{}", ""),
+                ))
+                self.assertEqual(auto_update_node.main(), 0)
+                commands = [call.args[0] for call in run.call_args_list]
+                self.assertEqual(commands[:2], [
+                    ["nvm", "alias", "default", "v26.12.2"],
+                    ["nvm", "install", "-b", "v24.22.2"],
+                ])
+                self.assertEqual(len(commands), 3 if source == "v24.22.1" else 2)
+                if source == "v24.22.1":
+                    self.assertEqual(commands[2][:4], ["nvm", "exec", source, "npm"])
+                self.assertEqual(runtime_owner(self.nvm, source), "project")
+                self.assertEqual(runtime_owner(self.nvm, "v24.22.2"), "automatic")
 
     def test_default_alias_requires_exact_policy_target(self):
         with patch.object(auto_update_node, "run_nvm_command", return_value=subprocess.CompletedProcess([], 0)) as run:

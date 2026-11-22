@@ -48,7 +48,8 @@ class NativeKeyboardTests(unittest.TestCase):
         self.assertIn("input_completed_at", result)
         state = observed[0]["input_state"]
         self.assertEqual(state, {"scope": "helper-injected", "physical_modifiers": "unavailable",
-                                 "keysym_presses": 0, "keycode_presses": 2, "modifiers": ["ctrl"]})
+                                 "keysym_presses": 0, "keycode_presses": 2, "touch_contacts": 0,
+                                 "modifiers": ["ctrl"]})
         self.assertTrue(observed[0]["control_active"])
         self.assertEqual(self.session.snapshot_status()["input_state"]["keycode_presses"], 0)
         self.assertFalse(self.session.input_active)

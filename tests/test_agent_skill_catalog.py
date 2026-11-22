@@ -87,6 +87,23 @@ class SkillCatalogTests(unittest.TestCase):
         (private / "SKILL.md").symlink_to("/unreadable")
         self.assertEqual([entry["skills"] for entry in catalog.inspect_skill_catalogs(str(self.home))["catalogs"]], [[], []])
 
+    def test_selected_names_compare_only_the_requested_managed_bundles(self) -> None:
+        self.install()
+        self.install(".claude")
+        other = self.sources / "basaltwater-other"
+        other.mkdir()
+        (other / "SKILL.md").write_text("managed-by: basaltwater\n")
+        with patch("lib.agent_skill_bundles.os.chown"):
+            install_skill_bundle(other, self.home / ".agents/skills" / other.name, os.getuid(), os.getgid())
+        (self.home / ".agents/skills" / "personal").mkdir()
+        full = catalog.inspect_skill_catalogs(str(self.home))
+        with patch.object(catalog, "_read", wraps=catalog._read) as read:
+            selected = catalog.inspect_skill_catalogs(str(self.home), names=(self.source.name, "personal"))
+        for actual, expected in zip(selected["catalogs"], full["catalogs"], strict=True):
+            self.assertEqual(actual["skills"], [entry for entry in expected["skills"] if entry["name"] == self.source.name])
+        self.assertTrue(read.called)
+        self.assertTrue(all(self.source.name in entry.args[0].parts for entry in read.call_args_list))
+
     def test_missing_resources_are_detected_even_without_a_legacy_inventory(self) -> None:
         destination = self.install()
         (destination / ".basaltwater-files.json").unlink()

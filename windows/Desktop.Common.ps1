@@ -78,6 +78,31 @@ function Assert-NativeDesktopPrivatePath([string]$Path) {
     }
 }
 
+function New-NativeDesktopPrivateFile([string]$Path, [byte[]]$Bytes) {
+    Assert-NativeDesktopPrivatePath (Split-Path -Parent $Path)
+    Assert-NativeDesktopPath $Path
+    $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+    $acl = [Security.AccessControl.FileSecurity]::new()
+    $acl.SetOwner($sid)
+    $acl.SetAccessRuleProtection($true, $false)
+    $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid, 'FullControl', 'Allow'))
+    $rights = [Security.AccessControl.FileSystemRights]::Write
+    if ($PSVersionTable.PSVersion.Major -le 5) {
+        $stream = [IO.FileStream]::new($Path, 'CreateNew', $rights, 'None', 4096, 'None', $acl)
+    } else {
+        $stream = [IO.FileSystemAclExtensions]::Create([IO.FileInfo]::new($Path), 'CreateNew', $rights, 'None', 4096, 'None', $acl)
+    }
+    try { $stream.Write($Bytes, 0, $Bytes.Length) } finally { $stream.Dispose() }
+}
+
+function Set-NativeDesktopMarker([string]$Path, [string]$Text) {
+    try { New-NativeDesktopPrivateFile $Path ([Text.Encoding]::ASCII.GetBytes($Text)) }
+    catch [IO.IOException] {
+        if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw }
+        Assert-NativeDesktopPrivatePath $Path
+    }
+}
+
 function Read-NativeDesktopState($Context) {
     $path = Get-NativeDesktopStatePath
     $state = @{ version = 1; owner = $Context.Sid; mode = 'enabled'; until = 0L; revision = [guid]::NewGuid().ToString('N');
@@ -138,7 +163,7 @@ function Write-NativeDesktopState($State, [switch]$KeepObservation) {
     if (Test-Path -LiteralPath $path) { Assert-NativeDesktopPrivatePath $path }
     $temporary = Join-Path $directory ([guid]::NewGuid().ToString('N') + '.tmp')
     try {
-        [IO.File]::WriteAllText($temporary, ($State | ConvertTo-Json -Depth 40 -Compress), (New-Object Text.UTF8Encoding($false)))
+        New-NativeDesktopPrivateFile $temporary ([Text.Encoding]::UTF8.GetBytes(($State | ConvertTo-Json -Depth 40 -Compress)))
         if ((Get-Item -LiteralPath $temporary).Length -gt 2097152) { throw 'Desktop inventory exceeds state budget' }
         if (Test-Path -LiteralPath $path) { [IO.File]::Replace($temporary, $path, [System.Management.Automation.Language.NullString]::Value) } else { [IO.File]::Move($temporary, $path) }
     } finally { if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary } }

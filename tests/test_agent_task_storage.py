@@ -312,10 +312,11 @@ class HostStorageTests(unittest.TestCase):
         self.npx = self.cache.parent / "_npx"
         self.npx.mkdir(mode=0o700)
         (self.npx / "tool").write_text("keep")
-        self.row = {"status": "measured", "issues": [], "other_owner_entries": 0,
+        self.row = {"status": "measured", "issues": [], "other_owner_entries": 0, "is_mountpoint": False,
                     "allocated_bytes": 4096, "apparent_bytes": 11, "files": 1}
         self.inventory = self.enterContext(patch.object(storage, "inspect_storage", return_value={
             "candidates": [self.row], "issues": []}))
+        self.mounts = self.enterContext(patch.object(storage, "_mounts", return_value={}))
         self.activity = self.enterContext(patch.object(storage, "_npm_activity", return_value=False))
 
     def test_npm_preview_preserves_content_apply_preserves_npx_and_configuration(self) -> None:
@@ -337,10 +338,24 @@ class HostStorageTests(unittest.TestCase):
             self.assertEqual(storage.npm_content_cache(self.home, apply=True)["status"], "failed")
             self.assertTrue(self.cache.exists())
         self.row["issues"] = []
+        self.row["is_mountpoint"] = True
+        self.assertEqual(storage.npm_content_cache(self.home, apply=True)["status"], "failed")
+        self.row["is_mountpoint"] = False
+        self.mounts.return_value = {str(self.cache.parent): "ext4"}
+        self.assertEqual(storage.npm_content_cache(self.home, apply=True)["status"], "failed")
+        self.mounts.return_value = {}
         self.cache.rename(self.cache.parent / "original")
         self.cache.symlink_to(self.npx, target_is_directory=True)
         self.assertEqual(storage.npm_content_cache(self.home, apply=True)["status"], "failed")
         self.assertTrue((self.npx / "tool").exists())
+
+    def test_npm_accepts_group_writable_cache_only_inside_a_private_home(self) -> None:
+        self.cache.parent.chmod(0o775)
+        self.cache.chmod(0o775)
+        self.assertEqual(storage.npm_content_cache(self.home)["status"], "preview")
+        Path(self.home).chmod(0o755)
+        self.assertEqual(storage.npm_content_cache(self.home, apply=True)["status"], "failed")
+        self.assertTrue(self.cache.exists())
 
     def test_npm_rechecks_activity_immediately_before_isolation(self) -> None:
         self.activity.side_effect = [False, True]

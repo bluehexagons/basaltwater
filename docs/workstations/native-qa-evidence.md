@@ -5,6 +5,49 @@ default devices, move application playback, start a portal, install packages,
 or establish physical audibility. Use the checkout's CLI until a refresh delivers
 it; inspect [source provenance](cachyos-provenance.md) when comparing runs.
 
+## Choose an evidence output directory
+
+Omit optional `--output` to create a private temporary bundle automatically. For
+an explicit path, the final directory must be new and its immediate parent must
+already exist, belong to the current account, and have no group or other access
+(normally mode 0700). Both must be outside Git worktrees and must not traverse
+symlinks. For example, create a dedicated parent first, then use a new child for
+each result:
+
+```sh
+mkdir -m 700 /absolute/private-qa
+basaltw desktop evidence crop /absolute/private/frame.png \
+  --rectangle 100 80 640 360 --caption 'Pause menu' \
+  --output /absolute/private-qa/new-crop --json
+```
+
+Substitute a writable location outside Git. The tool creates only `new-crop`;
+it does not create missing parents, change existing permissions, or overwrite a
+bundle. A typical mode-0755 project or temporary directory is not a private
+parent. Export requires an explicit output path; the other examples below can
+omit it and retain the returned bundle path.
+
+## Retain process identities
+
+Before a normal quit or controller context change, retain the selected live
+application's Linux PID/start identity in a private bundle:
+
+```sh
+basaltw desktop evidence process --pid 12345 \
+  --output /absolute/private/new-process --json
+```
+
+This local read needs no desktop helper or enabled input. It records the current
+account's non-zombie PID/start ticks, UTC/monotonic observation and boot ID; it
+reads no command line and starts or stops nothing. Select the actual game child
+as well as its launcher when both matter. Link each returned `process.json` in
+the run checkpoint before further work. A missing/foreign/zombie process fails
+rather than inventing an identity. Output requires a new private bundle and
+refuses overwrites. On the same boot, use the retained pair with
+`evidence closeout ... --process PID START_TICKS` after normal UI quit. Identity
+absence alone does not prove normal exit, and start ticks from another boot are
+not comparable. This cannot reconstruct identities lost in an earlier run.
+
 ## Application audio
 
 Run in the existing CachyOS KDE Wayland session as its ordinary user. Identify
@@ -108,6 +151,32 @@ excerpt media, regenerates Markdown from the bounded caption, and emits relative
 portable references with reviewer attribution. It neither publishes nor uploads
 anything. Application audio and accessibility records can contain private data;
 their raw bundles are not automatically included in a portable export.
+
+## Offline point previews
+
+```sh
+basaltw desktop --native evidence point-preview /absolute/private/frame.png \
+  --rectangle 100 80 640 360 --point 420 260 --caption 'Proposed pause control' \
+  --output /absolute/private/new-point-preview --json
+```
+
+This adds an annotated derivative to a normal literal-crop bundle. Each rectangle
+is at most 1024 by 1024 source pixels; the integer point must be inside it. The
+red cross marks that source-PNG pixel without modifying the source or `crop.png`.
+`point-preview.json` binds the source hash, source geometry, rectangle, point,
+literal manifest hash and annotated derivative hash. `point-preview.md` shows
+both versions. Files stay private and output requires a new bundle. If annotation
+fails, the literal prefix can remain; absence of `point-preview.json` means no
+successful preview was recorded. Inspect partial bundles before discarding them.
+
+The tool captures nothing, sends no input, reads no helper status and grants no
+freshness or input authority. It does not establish presentation dimensions or
+recognize a semantic target. Match its source hash to the capture receipt before
+using the separate [source-coordinate mapping](desktop-observations.md#explicit-source-png-points-and-offline-previews)
+route; mapping and subsequent input still validate the current observation.
+Historical previews never authorize input. Annotated point manifests are not
+supported by `evidence export`; only the separately reviewed literal manifest
+uses the existing portable crop export contract.
 
 ## One observation timeline
 

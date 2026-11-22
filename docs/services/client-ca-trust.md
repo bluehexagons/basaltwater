@@ -168,14 +168,11 @@ error. Fully restart the client after installation. Obtain first-enrollment
 instructions and the expected hash through a trusted channel; do not trust
 a script or checksum from a page opened past a certificate warning.
 
-Basaltwater webhook senders have a separate compatibility setting. They accept
-self-signed HTTPS receiver certificates by default, so a sender can notify a
-panel that uses this VM-local CA without installing that CA on the sender. Use
-`--notification-strict-https` on the sender setup or patch when certificate
-chain and hostname verification are required; then install this CA (after
-independent fingerprint verification) in the sender's normal trust store, or
-use a publicly trusted receiver certificate. This setting does not change
-browser trust or the trust used by other tools.
+Use `--notification-strict-https` to verify the certificate chain and hostname
+for webhook delivery. For a private CA, independently verify its fingerprint
+and install the CA in the sender's trust store, or pass its absolute PEM path
+with `--notification-ca-file` to enable verification with that additional CA
+for webhook delivery. [Notification delivery](notifications.md)
 
 Compare the downloaded file with the `SHA-256` value printed on the VM. On
 Linux:

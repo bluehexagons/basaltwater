@@ -506,6 +506,9 @@ def print_setup_summary(config: SetupConfig, description: Optional[str] = None) 
             )
         else:
             print("Web interface sources: loopback only")
+        if "t3code" in config.web_interfaces:
+            print("Warning: Direct T3 Code and device pairing HTTP can send credentials without encryption.")
+            print("  Use direct HTTP only over localhost or in a controlled test environment. Prefer the HTTPS gateway.")
     if config.device_pairing_providers:
         print(
             "Device pairing: "
@@ -521,6 +524,9 @@ def print_setup_summary(config: SetupConfig, description: Optional[str] = None) 
             f"Web panel: {scheme} on TCP {config.web_panel_port} "
             f"(Basic Auth user: {config.username})"
         )
+        if not config.enable_ssl and not config.disable_web_panel:
+            print("Warning: Web panel HTTP sends login credentials and any integrated approvals without encryption.")
+            print("  Use HTTP only over localhost or in a controlled test environment. Add --ssl for HTTPS.")
         if config.web_panel_auth_password is not None:
             print("Web panel auth: supplied for this setup")
     elif config.disable_web_panel:
@@ -584,13 +590,14 @@ def print_setup_summary(config: SetupConfig, description: Optional[str] = None) 
         config.notify_specs,
         notification_level=notification_level,
         strict_https=config.notification_strict_https,
+        ca_file=config.notification_ca_file,
     )
     if notification_configs:
-        tls_mode = (
-            "strict HTTPS"
-            if config.notification_strict_https is True
-            else "self-signed HTTPS accepted"
-        )
+        tls_mode = "strict HTTPS"
+        if not notification_configs[0].strict_https:
+            tls_mode = "unverified HTTPS allowed"
+        elif config.notification_ca_file:
+            tls_mode = "strict HTTPS with additional CA trust"
         print(
             f"Notifications: {len(notification_configs)} target(s) "
             f"(level: {notification_level}; {tls_mode})"
@@ -614,6 +621,9 @@ def print_setup_summary(config: SetupConfig, description: Optional[str] = None) 
 
     if config.gogs:
         print(f"Gogs: {' '.join(config.gogs)}")
+        if not (config.enable_ssl or config.enable_cloudflare):
+            print("  ⚠ Gogs HTTP sends login credentials and session cookies without encryption. "
+                  "Use only on localhost or a controlled test network.")
     if config.homebox:
         print(f"HomeBox: {' '.join(config.homebox)}")
         version = config.homebox_version or f"retain installed version; {HOMEBOX_DEFAULT_VERSION} on first setup"

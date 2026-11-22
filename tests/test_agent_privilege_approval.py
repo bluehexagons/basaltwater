@@ -505,4 +505,4 @@ class IntegratedApprovalTests(ApprovalTests):
         self.assertIn("View recovery activity and worker results", primary)
         self.assertNotIn("job_id", primary)
         self.assertIn("job_id", details)
-        self.assertNotIn('value="approve"', content)
+        self.assertIn('value="approve"', content)

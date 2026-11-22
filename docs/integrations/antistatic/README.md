@@ -15,7 +15,7 @@ access may be required; Basaltwater setup does not grant it.
 
 Start with the general [CachyOS game tooling](../../workstations/cachyos-game-development.md),
 [Windows game tooling](../../workstations/windows-game-development.md) or
-[Debian native tooling](../../agents/project-tooling.md#debian-native-game-development)
+[Debian native tooling](../../agents/project-native-builds.md#debian-native-game-development)
 for host preparation. Choose host roles for the current task; an example
 workflow does not describe the operator's deployed machines.
 

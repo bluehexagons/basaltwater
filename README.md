@@ -20,11 +20,11 @@ and Proxmox guests. Basaltwater applies repeatable, machine-aware configuration
 over SSH, stores redacted setup state in a workspace, and provides targeted
 operations for hosts that are already configured.
 
-This checkout is preparing the `v2.0.0` release-candidate series. Its current
-package version is `2.0.0rc1`; preview tags use `v2.0.0-rc.N` and publish as
-GitHub prereleases. Until a preview tag is published, the installer’s `dev`
-channel tracks `main`. Preview tags are opt-in; `stable` continues to select the
-latest final release until `v2.0.0` passes qualification and is published.
+This repository hosts the `v2.0.0` release-candidate series. Its current
+package version is `2.0.0rc3`. Preview tags use `v2.0.0-rc.N` and publish as
+GitHub prereleases. Select a preview by its exact tag. The installer’s `dev`
+channel tracks `main`, and `stable` selects the latest final release. See the
+[release qualification record](docs/release-qualification.md) for candidate status.
 
 Selected-builder deployment is available for the bounded Debian static/Go
 flow. Signed webhook builds share the managed worker; optional GitHub Actions
@@ -110,7 +110,7 @@ It preserves the human account and desktop, leaves OS updates to CachyOS/the
 user, and does not support CachyOS VM/container provisioning or server setup.
 
 For your first Codex setup with the native T3 Code desktop app, use the
-[complete CachyOS installer example](docs/workstations/cachyos.md#install-with-t3-code-desktop).
+[complete CachyOS installer example](docs/workstations/cachyos-install.md#install-with-t3-code-desktop).
 The guide uses fish, CachyOS's default shell, and walks through selecting tools,
 installing the launcher, provider login, and checking the first coding task.
 

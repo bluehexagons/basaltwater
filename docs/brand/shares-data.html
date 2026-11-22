@@ -308,6 +308,20 @@ meter::-moz-meter-bar { background: var(--accent); }
 .event-meta { margin: 3px 0 0; color: var(--muted); font-size: .82rem; }
 .event-detail { margin: 8px 0 0; }
 .event-values { margin: 8px 0 0; color: var(--muted); font-size: .85rem; }
+.event-timing { display: flex; flex-wrap: wrap; gap: 2px 16px; }
+.event-actions { margin: 8px 0 0; padding-left: 20px; }
+.event > details { margin-top: 0; }
+.event > details > pre { margin-top: 0; }
+.event-findings { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.event-findings > li { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
+.event-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 12px;
+  margin: 4px 0 0; font-size: .85rem; }
+.event-facts dt { color: var(--muted); }
+.event-facts dd { margin: 0; }
+@media (max-width: 460px) {
+  .event-facts { grid-template-columns: minmax(0, 1fr); }
+  .event-facts dd { margin-bottom: 4px; }
+}
 .badge {
   display: inline-block;
   padding: 2px 7px;
@@ -432,6 +446,7 @@ footer {
   button { width: 100%; }
   footer { flex-direction: column; }
 }
+.section-title { margin-bottom:12px; }
 .data-tabs { display:flex; flex-wrap:wrap; gap:8px; margin:16px 0; }
 .data-tabs a { display:inline-flex; align-items:center; min-height:44px; padding:8px 14px;
   border:1px solid var(--line); border-radius:8px; color:var(--accent); text-decoration:none; }
@@ -439,6 +454,15 @@ footer {
 .data-header-links { display:flex; flex-wrap:wrap; gap:8px 20px; align-items:center; }
 .data-activity { border:1px solid var(--line); border-radius:8px; padding:0 16px; margin:16px 0; }
 .data-activity > summary { width:100%; font-weight:700; }
+.data-activity > section { margin:16px 0; }
+.data-activity .event + .event { margin-top:12px; }
+.data-activity .event > :first-child { margin-top:0; }
+.data-activity .event > :last-child { margin-bottom:0; }
+.data-activity .job-facts > div, .data-list .job-facts > div { min-width:0; }
+.data-activity ol { padding-left:24px; }
+.data-activity li + li { margin-top:12px; }
+.data-activity li p { margin:6px 0 0; }
+.data-activity .event, .data-list .event { min-width:0; overflow-wrap:anywhere; }
 .data-list { display:grid; gap:10px; list-style:none; padding:0; }
 .data-list h3 { margin:0; font-size:1rem; }
 .data-list .job-facts { margin-bottom:0; }
@@ -457,6 +481,7 @@ footer {
 .share-users { min-width:0; max-height:18rem; overflow:auto; border:1px solid var(--line); border-radius:8px; padding:12px; }
 .share-users legend { max-width:100%; }
 .share-user { display:flex; gap:10px; align-items:center; min-height:44px; overflow-wrap:anywhere; }
+.share-user span { min-width:0; }
 .share-user input { width:20px; min-height:20px; margin:0; flex:none; }
 .share-comparison { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr)); gap:20px; }
 .share-comparison dd { margin:0 0 8px; overflow-wrap:anywhere; }

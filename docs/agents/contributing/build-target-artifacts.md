@@ -117,8 +117,10 @@ overwriting the retained file. An exact completed admission may replay its
 already staged artifact; a completed admission cannot start fresh staging.
 
 Each retained intent counts toward `max_records` and keeps its full reservation
-against `max_bytes`, including after a failed or partial upload. There is no
-garbage collection. A partial stream, failed archive verification, missing
+against `max_bytes`, including after a failed or partial upload. Local
+[role-aware maintenance](../../storage/host-maintenance.md#managed-build-payloads)
+can retire proven superseded completed bundles; current and uncertain releases
+remain protected. A partial stream, failed archive verification, missing
 ready marker, or uncertain post-rename directory sync leaves the intent and
 available evidence in place. That operation cannot be resumed or rebound. A
 published bundle without its ready marker is ambiguous and cannot be replayed.
@@ -129,6 +131,18 @@ reconciliation.
 The lock witness and directory scan also reject retained bytes whose intent or
 initialization evidence has been lost. Preserve all evidence for operator
 reconciliation; this store has no reset or repair API.
+
+`retire_bundle(operation_id, expected_revision=None)` is an internal local
+primitive. Its caller must hold storage/target maintenance and admission ownership,
+prove completed supersession from the installed registry, and exclude unfinished
+conversion/setup/activation. Preview verifies intent and bundle hash; apply
+requires its exact revision. A bound `.retiring` marker is durable before unlink,
+followed by directory sync and a bound `.retired` completion marker. Only completed
+retirement reduces logical charge to four conservative metadata blocks. Pending
+retirement keeps the original reservation; scheduled collection does not resume
+it. Exact local recovery repeats reference checks. Retired IDs remain counted
+and cannot recreate or open bundles. No typed SSH action exposes this primitive.
+Maintenance opens existing locks/witnesses without initializing missing evidence.
 
 The transport must bound stream read time. The store does not prove artifact
 provenance, authenticate a principal, authorize a target application, validate

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Iterable, Sequence
 import json
 import os
 import platform
@@ -218,13 +219,28 @@ def _required_tools(value: object) -> list[str]:
     return list(dict.fromkeys(value))
 
 
+def _version_check(value: object) -> dict[str, str]:
+    if not isinstance(value, dict) or set(value) != {"executable", "expected"}:
+        raise ValueError("Recipe version_check requires executable and expected")
+    executable = _text(value["executable"], "version check executable")
+    validate_filesystem_path(executable)
+    if "/" not in executable:
+        _required_tools([executable])
+    elif not os.path.isabs(executable) and (".." in Path(executable).parts or not Path(executable).parts):
+        raise ValueError("Relative version check executables must name a file below the recipe directory")
+    expected = _text(value["expected"], "expected version line")
+    if expected != expected.strip():
+        raise ValueError("Expected version line must have no leading or trailing whitespace")
+    return {"executable": executable, "expected": expected}
+
+
 def _recipes(value: object, repository: str) -> dict[str, object]:
     if not isinstance(value, dict) or len(value) > 100:
         raise ValueError("recipes must be an object of at most 100 named workflows")
     recipes = {}
     for name, recipe in value.items():
         _text(name, "recipe name")
-        if not isinstance(recipe, dict) or set(recipe) - {"description", "argv", "directory", "requires"}:
+        if not isinstance(recipe, dict) or set(recipe) - {"description", "argv", "directory", "requires", "version_check"}:
             raise ValueError(f"Invalid recipe: {name}")
         description = _text(recipe.get("description"), "recipe description")
         argv = recipe.get("argv")
@@ -246,6 +262,8 @@ def _recipes(value: object, repository: str) -> dict[str, object]:
             "description": description, "argv": argv, "directory": directory,
             "requires": _required_tools(recipe.get("requires", [])),
         }
+        if "version_check" in recipe:
+            recipes[name]["version_check"] = _version_check(recipe["version_check"])
     return recipes
 
 
@@ -311,7 +329,7 @@ def load_project_environment(repository: str) -> dict[str, object]:
     }
 
 
-def _native_development(repository: str) -> dict[str, object]:
+def _desktop_development(repository: str, *, native: bool) -> dict[str, object]:
     """Advertise project-specific tasks using the existing bounded metadata reader."""
     from desktop.development import project_info
     from desktop.development_workflows import package_info
@@ -322,7 +340,7 @@ def _native_development(repository: str) -> dict[str, object]:
     package = root / "package.json"
     if godot and (package.exists() or package.is_symlink()):
         project["node"] = package_info(root)
-    prefix = ["basaltw", "desktop", "--native", "develop"]
+    prefix = ["basaltw", "desktop", *(["--native"] if native else []), "develop"]
     target = ["--project", repository, "--json"]
     return {
         "role": {"godot": "remote-godot-development", "node": "node-development",
@@ -331,7 +349,8 @@ def _native_development(repository: str) -> dict[str, object]:
         "intended_use": "development-and-testing", "final_build_host": "debian",
         "secondary_workflows": ["electron", "native-applications", "native-games"],
         "readiness": "unverified",
-        "guide": "https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos-development.md",
+        "guide": "https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/"
+                 + ("cachyos-development.md" if native else "debian-development.md"),
         "doctor_argv": [*prefix, "doctor", *target],
         "godot_editor_argv": [*prefix, "editor", *target] if godot else None,
         "godot_run_argv": [*prefix, "run", *target] if godot else None,
@@ -339,44 +358,79 @@ def _native_development(repository: str) -> dict[str, object]:
         "node_script_prefix_argv": [*prefix, "node", *target] if "node" in project else None,
         "recipe_check_prefix_argv": [*prefix, "check", *target],
         "application_prefix_argv": [*prefix, "exec", "--project", repository, "--"],
-        "instructions": "Launch explicitly in the owned logged-in KDE session from T3 or SSH. "
+        "instructions": ("Launch explicitly in the owned logged-in KDE session from T3 or SSH. " if native else
+                         "Launch through the running shared XRDP supervisor; do not guess display/bus variables. "
+                         "The supervisor's PATH selects installed tools; use absolute executable paths when needed. ")
         + ("Import Godot assets before testing; bounded headless runs do not verify GPU/input. " if godot else "")
         + "Use node for a declared package script with the project's selected installed Node runtime, "
         "and check for a declared project recipe with private revision/settings evidence. "
-        "Tasks retain bounded logs and status after client disconnect. Capture/input still require "
-        "separate approved portal control. Follow persistent desktop control states; do not "
+        "Tasks retain bounded logs and status after client disconnect. "
+        + ("Capture/input still require separate approved portal control. " if native else
+           "Queued starts recheck the original desktop generation; started tasks have independent user-systemd ownership. ")
+        + "Follow persistent desktop control states; do not "
         "change state from a task request alone. Record actual playtest outcomes "
         "separately from prerequisites and process exit status.",
     }
 
 
+def _manifest_scopes(capabilities: Sequence[str]) -> set[str]:
+    scopes = set(capabilities)
+    if "web" in scopes:
+        scopes.update(("workspace", "browser", "development"))
+    return scopes
+
+
+def _scoped_tool_names(scopes: set[str], desktop_applications: Iterable[str],
+                       project_tools: Iterable[str]) -> set[str]:
+    names = set()
+    if "workspace" in scopes:
+        names.update(("git", "gh"))
+    if "browser" in scopes:
+        names.update(("basaltwater-playwright-mcp", "firefox", "firefox-esr", "node"))
+    if "desktop" in scopes:
+        names.update(desktop_applications)
+    if "development" in scopes:
+        names.update(("node", "npm", "yarn", "pnpm", "corepack", "python3", "uv", "go", "gcc", "g++",
+                      "make", "cmake", "godot", "godot-mono", "dotnet", *NATIVE_COMMANDS, "clang", "llvm-symbolizer"))
+        names.update(project_tools)
+    if "publishing" in scopes:
+        names.update(("butler", "steamcmd"))
+    if scopes & {"publishing", "web"}:
+        names.add("basaltwater-web")
+    return names
+
+
 def inspect_environment(repository: str, *, project_runtime: bool = False,
-                        installation_context: bool = False, managed_source: str | None = None) -> dict[str, object]:
+                        installation_context: bool = False, managed_source: str | None = None,
+                        capabilities: Sequence[str] = ()) -> dict[str, object]:
+    scopes = _manifest_scopes(capabilities)
+    include_workspace = not scopes or "workspace" in scopes
+    include_development = not scopes or "development" in scopes
+    include_desktop = not scopes or "desktop" in scopes
+    compare_installations = installation_context or managed_source is not None
+    report_skill_provenance = not scopes or bool(scopes & {"installation", "skills"}) or compare_installations
     root = agent_workspace._repository_root(repository)
-    home = agent_workspace._effective_home()
-    project = load_project_environment(root)
-    artifacts = [
-        {"path": path, "ignored": agent_workspace._git(
-            root, ["check-ignore", "-q", "--", path + "/"], check=False,
-        ).returncode == 0}
-        for path in project["artifact_directories"]
-    ]
+    project = load_project_environment(root) if include_workspace or include_development or "workstation" in scopes else {}
+    project_tools = project["required_tools"] if include_development else []
+    project_recipes = project["recipes"] if include_development else {}
+    recipe_tools = [name for recipe in project_recipes.values() for name in recipe["requires"]]
     # Resolve the active session PATH. Do not run package-manager shims, which
     # can download tools even for --version, or inspect authentication files.
-    declared_tools = dict.fromkeys([
-        *TOOLS, *project["required_tools"],
-        *(name for recipe in project["recipes"].values() for name in recipe["requires"]),
-    ])
-    tools = {name: shutil.which(name) for name in declared_tools}
+    tool_names = dict.fromkeys([*TOOLS, *project_tools, *recipe_tools])
+    selected_tools = _scoped_tool_names(scopes, DESKTOP_APPLICATIONS, [*project_tools, *recipe_tools])
+    if "musescore" in selected_tools:
+        selected_tools.update(MUSESCORE_EXECUTABLES)
+    tools = {name: shutil.which(name) for name in tool_names if not scopes or name in selected_tools}
     # Canonical project requirements resolve distro aliases without launching Qt.
-    tools["musescore"] = next((tools[name] for name in MUSESCORE_EXECUTABLES if tools[name]), None)
+    if "musescore" in tools:
+        tools["musescore"] = next((tools[name] for name in MUSESCORE_EXECUTABLES if tools[name]), None)
     requirements = {
         name: {"executable": tools[name], "status": "available" if tools[name] else "missing"}
-        for name in project["required_tools"]
+        for name in project_tools
     }
     recipes = {
         name: {**recipe, "missing_tools": [tool for tool in recipe["requires"] if not tools[tool]]}
-        for name, recipe in project["recipes"].items()
+        for name, recipe in project_recipes.items()
     }
     wsl = any(marker in platform.release().lower() for marker in ("microsoft", "wsl"))
     native_desktop = is_cachyos() and not wsl
@@ -389,9 +443,18 @@ def inspect_environment(repository: str, *, project_runtime: bool = False,
                "desktop_backend": "wslg-unverified" if wsl else "native-session" if native_desktop else "shared-xrdp",
                "automation_command": None if wsl else "basaltw desktop --native" if native_desktop else "basaltw desktop",
                "executable": tools[name], "readiness": "unverified", "guide": DESKTOP_GUIDE}
-        for name, guidance in DESKTOP_APPLICATIONS.items() if tools[name]
+        for name, guidance in DESKTOP_APPLICATIONS.items() if include_desktop and tools[name]
     }
-    skills = inspect_skill_catalogs(home)
+    include_skills = report_skill_provenance or ("desktop" in scopes and bool(desktop))
+    home = agent_workspace._effective_home() if include_skills or include_workspace else ""
+    desktop_names = (("basaltwater-wsl-workspace",) if wsl else
+                     ("basaltwater-cachyos-desktop", "basaltwater-cachyos-workstation")
+                     if native_desktop else ("basaltwater-desktop",))
+    skills = None
+    if report_skill_provenance:
+        skills = inspect_skill_catalogs(home)
+    elif include_skills:
+        skills = inspect_skill_catalogs(home, names=desktop_names)
     if wsl:
         for application in desktop.values():
             application["instructions"] = [
@@ -400,19 +463,34 @@ def inspect_environment(repository: str, *, project_runtime: bool = False,
                 "Use project scripts for isolated exports/tests and verify saved artifacts. "
                 "Linux GUI results do not qualify native Windows behavior or GPU performance.",
             ]
-    desktop_names = (("basaltwater-wsl-workspace",) if wsl else
-                     ("basaltwater-cachyos-desktop", "basaltwater-cachyos-workstation")
-                     if native_desktop else ("basaltwater-desktop",))
     desktop_skills = [
         entry["path"] for catalog in skills["catalogs"] for name in desktop_names
         for entry in catalog["skills"]
         if entry["name"] == name and entry["status"] not in {"unsafe", "incomplete"}
-    ]
-    state = agent_workspace._worktree_record(root)
-    mappings = project["deployments"]
+    ] if desktop and skills is not None else []
+    workspace = None
+    mappings = {}
+    if include_workspace:
+        state = agent_workspace._worktree_record(root)
+        mappings = project["deployments"]
+        workspace = {
+            "repository": root, "branch": state["branch"], "commit": state["head"],
+            "dirty": state["dirty"], "repository_root": os.path.join(home, "repos"),
+            "worktree_root": os.path.join(home, agent_workspace._DEFAULT_WORKTREE_RELATIVE),
+            "task_branch_pattern": "agent/TASK",
+            "feature_branch_option": "--branch feature/NAME",
+            "ownership": "explicit-private-record; adopt existing worktrees before cleanup",
+            "legacy_browser_artifacts": os.path.join(home, ".local/state/basaltwater/playwright-mcp"),
+            "artifact_directories": [
+                {"path": path, "ignored": agent_workspace._git(
+                    root, ["check-ignore", "-q", "--", path + "/"], check=False,
+                ).returncode == 0}
+                for path in project["artifact_directories"]
+            ],
+        }
     source_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     context = None
-    if installation_context or managed_source is not None:
+    if compare_installations:
         context = inspect_installation_context(source_root, managed_root=managed_source)
         installation = context["invoked"]
     else:
@@ -421,20 +499,23 @@ def inspect_environment(repository: str, *, project_runtime: bool = False,
         "source_revisions": context.get("source_revisions") if context else {
             "invoked": installation.get("commit"), "managed": None, "native_worker": None},
         "drift": context.get("drift") if context else None,
-        "skill_comparison_source": {key: installation.get(key) for key in ("commit", "dirty", "evidence_source")},
-        "delivered_skills": [
-            {"name": entry["name"], "providers": catalog["providers"], "status": entry["status"],
-             **entry.get("provenance", {})}
-            for catalog in skills["catalogs"] for entry in catalog["skills"]
-        ],
-        "session_loaded_skill_revision": None,
     }
+    if report_skill_provenance and skills is not None:
+        provenance.update({
+            "skill_comparison_source": {key: installation.get(key) for key in ("commit", "dirty", "evidence_source")},
+            "delivered_skills": [
+                {"name": entry["name"], "providers": catalog["providers"], "status": entry["status"],
+                 **entry.get("provenance", {})}
+                for catalog in skills["catalogs"] for entry in catalog["skills"]
+            ],
+            "session_loaded_skill_revision": None,
+        })
     runtime = None
     if project_runtime:
         from lib.node_toolchain import inspect_project_node_context
 
         runtime = inspect_project_node_context(root)
-    return {
+    result = {
         "schema_version": 1,
         "basaltwater": installation,
         "installation_context": context,
@@ -452,7 +533,7 @@ def inspect_environment(repository: str, *, project_runtime: bool = False,
                 "readiness": "unverified" if tools["basaltwater-playwright-mcp"] else "not-on-path",
             },
             "contexts": browser_context_inventory(root),
-        },
+        } if not scopes or "browser" in scopes else None,
         "publishing": {
             "tools": {name: tools[name] for name in ("butler", "steamcmd")},
             "readiness": "outside-host-role" if native_desktop or wsl else "unverified",
@@ -461,63 +542,57 @@ def inspect_environment(repository: str, *, project_runtime: bool = False,
             "instructions": ["WSL tool presence does not provision a publishing host. "
                              "Use the designated build/publishing environment and project release procedure."]
                             if wsl else _publishing_instructions(native_desktop),
-        },
+        } if not scopes or "publishing" in scopes else None,
         "desktop_applications": desktop,
-        "desktop_skills": desktop_skills if desktop else [],
-        "development": _native_development(root) if native_desktop else None,
+        "desktop_skills": desktop_skills,
+        "development": _desktop_development(root, native=native_desktop)
+        if not wsl and include_development else None,
         "project_runtime": runtime,
-        "workspace": {
-            "repository": root, "branch": state["branch"], "commit": state["head"],
-            "dirty": state["dirty"], "repository_root": os.path.join(home, "repos"),
-            "worktree_root": os.path.join(home, agent_workspace._DEFAULT_WORKTREE_RELATIVE),
-            "task_branch_pattern": "agent/TASK",
-            "feature_branch_option": "--branch feature/NAME",
-            "ownership": "explicit-private-record; adopt existing worktrees before cleanup",
-            "legacy_browser_artifacts": os.path.join(home, ".local/state/basaltwater/playwright-mcp"),
-            "artifact_directories": artifacts,
-        },
-        "project_source": project["source"],
+        "workspace": workspace,
+        "project_source": project.get("source"),
         "required_tools": requirements,
         "recipes": recipes,
         "deployments": mappings,
-        "current_deployment": mappings.get(state["branch"]),
+        "current_deployment": mappings.get(workspace["branch"]) if workspace else None,
         "undeclared_branches": [branch for branch in ("dev", "staging") if branch not in mappings],
         "health_command": None if wsl else "basaltw local cachyos-doctor --json" if native_desktop else "basaltw agent doctor --all-capabilities --json",
     }
+    if "workstation" in scopes:
+        from lib.workstation_report import inspect_workstation
+
+        workstation = inspect_workstation(root, project)
+        workstation["container_engines"] = _container_engine_inventory(root, project)
+        result["workstation"] = workstation
+    return result
 
 
 def scoped_environment(result: dict[str, object], capabilities: list[str]) -> dict[str, object]:
     """Keep runtime provenance in every scope and omit unrelated workflow prose."""
-    scopes = set(capabilities)
-    if "web" in scopes:
-        scopes.update(("workspace", "browser", "development"))
+    scopes = _manifest_scopes(capabilities)
     fields = {"schema_version", "host_profile", "basaltwater", "health_command", "project_runtime", "installation_context", "provenance"}
-    tools = set()
+    project_tools = []
     if "workspace" in scopes:
         fields.update(("workspace", "project_source", "deployments", "current_deployment", "undeclared_branches"))
-        tools.update(("git", "gh"))
     if "skills" in scopes:
         fields.add("skills")
     if "workstation" in scopes:
         fields.add("workstation")
     if "browser" in scopes:
         fields.add("browser")
-        tools.update(("basaltwater-playwright-mcp", "firefox", "firefox-esr", "node"))
     if "desktop" in scopes:
         fields.update(("desktop_applications", "desktop_skills"))
-        tools.update(result["desktop_applications"])
     if "development" in scopes:
         fields.update(("development", "required_tools", "recipes", "project_source"))
-        tools.update(("node", "npm", "yarn", "pnpm", "corepack", "python3", "uv", "go", "gcc", "g++", "make", "cmake", "godot", "godot-mono", "dotnet"))
-        tools.update((*NATIVE_COMMANDS, "clang", "llvm-symbolizer"))
-        tools.update(result["required_tools"])
-        tools.update(tool for recipe in result["recipes"].values() for tool in recipe["requires"])
+        project_tools.extend(result["required_tools"])
+        project_tools.extend(tool for recipe in result["recipes"].values() for tool in recipe["requires"])
     if "publishing" in scopes:
         fields.add("publishing")
-        tools.update(("butler", "steamcmd", "basaltwater-web"))
-    if "web" in scopes:
-        tools.add("basaltwater-web")
+    tools = _scoped_tool_names(scopes, result.get("desktop_applications", {}), project_tools)
     selected = {key: value for key, value in result.items() if key in fields}
+    if scopes and scopes.isdisjoint({"installation", "skills"}) and result.get("installation_context") is None:
+        if provenance := selected.get("provenance"):
+            selected["provenance"] = {key: provenance[key] for key in ("source_revisions", "drift")
+                                      if key in provenance}
     if tools:
         selected["tools"] = {name: path for name, path in result["tools"].items() if name in tools}
     return selected
@@ -525,28 +600,23 @@ def scoped_environment(result: dict[str, object], capabilities: list[str]) -> di
 
 def run_manifest_command(args: argparse.Namespace) -> int:
     capabilities = list(getattr(args, "capability", None) or [])
+    applications = getattr(args, "application", None)
+    if applications:
+        capabilities.append("desktop")
     try:
         result = inspect_environment(args.repository, project_runtime=getattr(args, "project_runtime", False),
                                      installation_context=getattr(args, "installation_context", False),
-                                     managed_source=getattr(args, "managed_source", None))
-        if "workstation" in capabilities:
-            from lib.workstation_report import inspect_workstation
-
-            repository = result["workspace"]["repository"]
-            project = load_project_environment(repository)
-            result["workstation"] = inspect_workstation(repository, project)
-            result["workstation"]["container_engines"] = _container_engine_inventory(repository, project)
+                                     managed_source=getattr(args, "managed_source", None),
+                                     capabilities=capabilities)
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
         if args.json:
             print(json.dumps({"ok": False, "error": str(exc)}))
         else:
             print(f"Error: {exc}")
         return 1
-    applications = getattr(args, "application", None)
     if applications:
         result["desktop_applications"] = {name: app for name, app in result["desktop_applications"].items()
                                           if name in applications}
-        capabilities.append("desktop")
     if capabilities:
         result = scoped_environment(result, capabilities)
         if set(capabilities) == {"workstation"} and not args.json:
@@ -602,6 +672,8 @@ def run_manifest_command(args: argparse.Namespace) -> int:
     for name, recipe in result["recipes"].items():
         print(f"Recipe: {name} — {recipe['description']}")
         print(f"  Directory: {recipe['directory']}; command: {shlex.join(recipe['argv'])}")
+        if version := recipe.get("version_check"):
+            print(f"  Declared version: {version['expected']} ({version['executable']}, unverified)")
         if recipe["missing_tools"]:
             print("  Missing tools: " + ", ".join(recipe["missing_tools"]))
     for name, application in result["desktop_applications"].items():

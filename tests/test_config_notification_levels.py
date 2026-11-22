@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import io
 import logging
+import shlex
 import unittest
 from contextlib import redirect_stderr
 from unittest.mock import patch
@@ -66,6 +67,37 @@ class TestNotificationLevelCli(unittest.TestCase):
 
 
 class TestNotificationLevelConfig(unittest.TestCase):
+    def test_ca_file_round_trips_across_patch_remote_setup_and_runtime(self) -> None:
+        ca_file = "/etc/basaltwater/private CA.pem"
+        config = _setup_config(notification_ca_file=ca_file)
+        parser = argparse.ArgumentParser()
+        add_setup_arguments(parser, for_remote=True)
+        parsed = parser.parse_args(shlex.split(" ".join(config.to_remote_args())))
+        self.assertEqual(parsed.notification_ca_file, ca_file)
+        self.assertIn(f"--notification-ca-file {shlex.quote(ca_file)}", config.to_setup_command())
+        saved = config.to_dict()
+        restored = SetupConfig.from_dict(config.host, config.system_type, saved)
+        self.assertEqual(restored.notification_ca_file, ca_file)
+        self.assertIsNone(restored.notification_strict_https)
+        self.assertEqual(RuntimeConfig.from_dict(saved).notification_ca_file, ca_file)
+        self.assertTrue(RuntimeConfig.from_dict(saved).notification_strict_https)
+        self.assertTrue(RuntimeConfig.from_setup_config(restored).notification_strict_https)
+        self.assertEqual(merge_setup_configs(restored, _setup_config()).notification_ca_file, ca_file)
+        cleared = merge_setup_configs(
+            restored, _setup_config(notification_ca_file="", notification_strict_https=False),
+        )
+        self.assertFalse(cleared.notification_strict_https)
+        self.assertFalse(RuntimeConfig.from_dict(cleared.to_dict()).notification_strict_https)
+        parsed = parser.parse_args(shlex.split(" ".join(cleared.to_remote_args())))
+        self.assertFalse(parsed.notification_strict_https)
+        self.assertEqual(parsed.notification_ca_file, "")
+
+    def test_ca_file_rejects_relative_paths_and_unverified_https(self) -> None:
+        with self.assertRaisesRegex(ValueError, "absolute path"):
+            _setup_config(notification_ca_file="relative.pem")
+        with self.assertRaisesRegex(ValueError, "require verified HTTPS"):
+            _setup_config(notification_ca_file="/fixture/ca.pem", notification_strict_https=False)
+
     def test_level_round_trips_through_setup_state_and_commands(self) -> None:
         config = _setup_config(
             notification_level="warning",
@@ -126,6 +158,15 @@ class TestNotificationLevelConfig(unittest.TestCase):
 
         self.assertTrue(runtime.notification_strict_https)
         self.assertTrue(runtime.to_dict()["notification_strict_https"])
+
+    def test_omitted_verification_setting_uses_default_after_state_round_trip(self) -> None:
+        config = _setup_config()
+        saved = config.to_dict()
+        restored = SetupConfig.from_dict(config.host, config.system_type, saved)
+        self.assertIsNone(restored.notification_strict_https)
+        self.assertNotIn("--notification-strict-https", restored.to_remote_args())
+        self.assertFalse(RuntimeConfig.from_dict(saved).notification_strict_https)
+        self.assertFalse(RuntimeConfig.from_setup_config(restored).notification_strict_https)
 
 
 class TestNotificationLevelDelivery(unittest.TestCase):

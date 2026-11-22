@@ -8,7 +8,7 @@ import os
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -194,6 +194,33 @@ class TestWorkspaceCli(unittest.TestCase):
         self.assertEqual(args.workspace, "/tmp/workspace")
         self.assertEqual(args.pattern, "prod")
 
+    def test_deploy_saved_setups_with_and_without_deployment_specs(self):
+        without_specs = SetupConfig("default.example.com", "testuser", "server_lite")
+        with_specs = SetupConfig(
+            "web.example.com", "testuser", "server_web",
+            deploy_specs=[["site.example.com", "https://github.com/example/site.git"]],
+        )
+        records = [
+            {"host": config.host, "system_type": config.system_type, "args": config.to_dict()}
+            for config in (without_specs, with_specs)
+        ]
+        self.assertIsNone(records[0]["args"]["deploy_specs"])
+        args = self.parser.parse_args(["deploy", "*.example.com", "--yes"])
+        output = io.StringIO()
+        with (
+            patch("basaltwater._available_configs", return_value=records),
+            patch("basaltwater._execute_patch_config", return_value=0) as execute,
+            redirect_stdout(output),
+        ):
+            self.assertEqual(basaltwater.run_deploy_command(args), 0)
+
+        self.assertIn("default.example.com (0 deployments)", output.getvalue())
+        self.assertIn("web.example.com (1 deployments)", output.getvalue())
+        self.assertEqual(
+            [call.args[0].deploy_specs for call in execute.call_args_list],
+            [None, with_specs.deploy_specs],
+        )
+
     def test_setup_parser_accepts_deploy_latest_pairs(self):
         args = self.parser.parse_args([
             "setup",
@@ -374,6 +401,8 @@ class TestWorkspaceCli(unittest.TestCase):
         args.credentials_command = "set"
         args.username = "operator"
         args.password = None
+        args.service = "gogs"
+        args.destination = "target.example.test"
         args.workspace = None
         parser.parse_args.return_value = args
 
@@ -385,7 +414,32 @@ class TestWorkspaceCli(unittest.TestCase):
 
         self.assertEqual(result, 0)
         mock_getpass.assert_called_once_with("Password for operator: ")
-        mock_set_credential.assert_called_once_with("operator", "secret")
+        mock_set_credential.assert_called_once_with(
+            "operator", "secret", service="gogs", destination="target.example.test",
+        )
+
+    def test_credentials_cli_migrates_lists_and_removes_one_scope(self):
+        with tempfile.TemporaryDirectory() as workspace, patch.dict(os.environ):
+            def run(*command):
+                output = io.StringIO()
+                argv = ["basaltw", "--workspace", workspace, "credentials", *command]
+                with patch.object(sys, "argv", argv), redirect_stdout(output):
+                    self.assertEqual(basaltwater.main(), 0, output.getvalue())
+                return output.getvalue()
+
+            run("set", "alice", "legacy-fixture")
+            scope = ("--service", "git", "--destination", "https://git.example.test")
+            run("migrate", "alice", *scope)
+            with patch("basaltwater.getpass.getpass", return_value="scoped-fixture"):
+                run("set", "alice", "--service", "gogs", "--destination", "target.example.test")
+            listing = run("list")
+            self.assertIn("git\thttps://git.example.test\talice", listing)
+            self.assertIn("gogs\ttarget.example.test\talice", listing)
+            self.assertIn("legacy\t(unbound)\talice", listing)
+            self.assertNotIn("fixture", listing)
+            run("remove", "alice", *scope)
+            self.assertNotIn("https://git.example.test", run("list"))
+            self.assertIn("legacy\t(unbound)\talice", run("list"))
 
     def test_unified_runtime_validation_rejects_antistatic_admin_without_tls(self):
         config = SetupConfig(

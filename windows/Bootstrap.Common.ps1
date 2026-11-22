@@ -1,4 +1,4 @@
-<# Shared Windows package bootstrap; no work is performed when dot-sourced. #>
+<# Shared Windows and WSL bootstrap helpers; no work is performed when dot-sourced. #>
 function Ensure-Winget {
     if (Get-Command winget.exe -ErrorAction SilentlyContinue) { return }
     try {
@@ -27,7 +27,23 @@ function ConvertTo-WingetOverride([string]$value) {
     return $value
 }
 
+function Update-WingetPackages {
+    Write-Host 'Upgrading installed packages from configured WinGet sources.'
+    # Let the explicit exit-code handling below work under PowerShell 7 too.
+    $PSNativeCommandUseErrorActionPreference = $false
+    & winget.exe upgrade --all --disable-interactivity --silent `
+        --accept-source-agreements --accept-package-agreements
+    $exitCode = $LASTEXITCODE
+    # An empty inventory or no applicable update is valid on fresh or current hosts.
+    if ($exitCode -in @(-1978335212, -1978335189)) { return }
+    if ($exitCode -eq -1978335188) {
+        throw "WinGet package upgrade completed with failures (exit code $exitCode). Inspect the per-package output above, resolve the reported errors or restart if requested, then rerun setup."
+    }
+    Assert-WingetOperationSucceeded $exitCode 'WinGet package upgrade' 'WinGet bulk upgrade'
+}
+
 function Ensure-WingetPackage([string]$packageId, [string]$label, [string]$Override = '') {
+    $PSNativeCommandUseErrorActionPreference = $false
     $arguments = @('install', '--id', $packageId, '--exact', '--source', 'winget',
                    '--accept-source-agreements', '--accept-package-agreements')
     if ($Override) { $arguments += @('--override', (ConvertTo-WingetOverride $Override)) }
@@ -39,12 +55,32 @@ function Ensure-WingetPackage([string]$packageId, [string]$label, [string]$Overr
         & winget.exe list --id $packageId --exact --source winget --accept-source-agreements | Out-Null
         if ($LASTEXITCODE -eq 0) { return }
     }
+    Assert-WingetOperationSucceeded $exitCode $label $packageId
+}
+
+function Assert-WingetOperationSucceeded([int]$exitCode, [string]$label, [string]$target) {
+    if ($exitCode -eq 0) { return }
     # Raw installer exits and WinGet's mapped reboot HRESULTs.
     if ($exitCode -in @(1641, 3010, -1978334967, -1978334966, -1978334965)) {
         $failure = New-Object InvalidOperationException("$label requires a Windows restart. Restart, then rerun the same setup command.")
         $failure.Data['Basaltwater.WindowsRestartRequired'] = $true
-        $failure.Data['Basaltwater.WindowsRestartReason'] = "$packageId (installer exit code $exitCode)"
+        $failure.Data['Basaltwater.WindowsRestartReason'] = "$target (installer exit code $exitCode)"
         throw $failure
     }
     throw "$label failed (exit code $exitCode)"
+}
+
+function Get-UbuntuInitProcess([string]$Distribution) {
+    $init = & wsl.exe --distribution $Distribution --user root --exec /usr/bin/cat /proc/1/comm
+    if ($LASTEXITCODE -ne 0) { throw 'Could not check Ubuntu systemd readiness' }
+    return ($init | Select-Object -Last 1)
+}
+
+function Get-UbuntuSetupArguments($Selection) {
+    $arguments = @('--system-type', 'server_wsl', '--username', $Selection.LinuxUser, '--machine', 'wsl', '--refresh-packages')
+    if ($Selection.Node) { $arguments += '--node' }
+    if ($Selection.Python) { $arguments += '--python' }
+    if ($Selection.Go) { $arguments += '--go' }
+    foreach ($tool in $Selection.AgentTool) { $arguments += @('--agent-tool', $tool) }
+    return $arguments
 }

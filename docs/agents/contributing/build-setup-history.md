@@ -4,6 +4,10 @@
 without deleting its sources, artifacts or receipts. This frees an active
 attempt slot under the 32-attempt limit; it does **not** free disk space or
 builder/target record slots. There is no automatic collection or remote action.
+The separate [completed payload collector](../../services/build-operations.md#collect-completed-controller-payloads)
+reclaims bulky proven-completed payloads using a revision and durable retirement
+marker while preserving metadata checked here. Archived payload paths remain
+historical identities and cannot be replayed automatically.
 
 After the final profile reports success, controller setup writes a private,
 durable `profile-success.json` in the attempt before clearing its setup guard.

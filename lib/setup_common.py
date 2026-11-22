@@ -9,6 +9,7 @@ import ipaddress
 import io
 import json
 import os
+from pathlib import Path
 import pwd
 import re
 import shlex
@@ -84,8 +85,10 @@ from lib.ssh_utils import (
     get_ssh_control_path,
     ssh_batch_mode,
     ssh_process_timeout,
+    workspace_pinned_ssh,
 )
 from lib.workspace import set_workspace_dir
+from lib.runtime_source import ensure_source_directory, require_runtime_source
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REMOTE_SCRIPT_PATH = os.path.join(SCRIPT_DIR, "..", "remote_setup.py")
 LIB_DIR = SCRIPT_DIR
@@ -94,7 +97,38 @@ SERVICE_TOOLS_DIR = os.path.join(SCRIPT_DIR, "..", "service_tools")
 REMOTE_INSTALL_DIR = "/opt/basaltwater"
 PERSISTENT_STATE_DIR = "/var/lib/basaltwater"
 GIT_CACHE_DIR = os.path.expanduser("~/.cache/basaltwater/git_repos")
+
+# Keep automatic maintenance inside the cache lock. The GC setting also covers
+# Git versions that predate maintenance.autoDetach.
+_GIT_FOREGROUND_OPTIONS = (
+    "-c", "maintenance.autoDetach=false", "-c", "gc.autoDetach=false",
+)
 REMOTE_ARGS_FILENAME = ".remote_setup_args.json"
+_TARGET_SETUP_LOCK_PATHS = (
+    "/run/lock/basaltwater-setup-bootstrap.lock",
+    "/run/lock/basaltwater-setup.lock",
+)
+# Run with isolated system Python before extracting or importing controller
+# code. Shared sticky /run/lock protects the verified root-owned lock entries.
+_REMOTE_STAGING_PREFLIGHT = """\
+from __future__ import annotations
+import os
+import stat
+import sys
+from pathlib import Path
+
+stage_parent = Path(sys.argv[1])
+for path in (stage_parent, *stage_parent.parents):
+    info = path.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+        sys.exit(f"Unsafe runtime staging directory: {path}")
+for path in sys.argv[2:]:
+    fd = os.open(path, os.O_NOFOLLOW | os.O_CREAT | os.O_RDONLY | os.O_NONBLOCK, 0o600)
+    info = os.fstat(fd)
+    os.close(fd)
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+        sys.exit(f"Unsafe setup lock: {path}")
+"""
 AGENT_PAYLOAD_DIRNAME = "agent_payload"
 DEVICE_PAIRING_PAYLOAD_DIRNAME = "device_pairing_payload"
 WEB_PANEL_PAYLOAD_DIRNAME = "web_panel_payload"
@@ -148,7 +182,7 @@ def _checkout_repository_ref(repo_path: str, ref: str, *, shallow: bool = False)
     """Fetch the exact requested namespace; never reuse a missing or stale ref."""
     depth = ["--depth", "1"] if shallow else []
     for command in (
-        ["git", "-C", repo_path, "fetch", *depth, "--no-tags", "origin", f"+{ref}:refs/basaltwater/deploy"],
+        ["git", *_GIT_FOREGROUND_OPTIONS, "-C", repo_path, "fetch", *depth, "--no-tags", "origin", f"+{ref}:refs/basaltwater/deploy"],
         ["git", "-C", repo_path, "reset", "--hard", "refs/basaltwater/deploy"],
         ["git", "-C", repo_path, "clean", "-fdx"],
     ):
@@ -183,7 +217,7 @@ def _refresh_repository_cache(git_url: str, cache_path: str, repo_name: str) -> 
     if ref:
         return _checkout_repository_ref(cache_path, ref)
     result = subprocess.run(
-        ["git", "-C", cache_path, "fetch", "--all"],
+        ["git", *_GIT_FOREGROUND_OPTIONS, "-C", cache_path, "fetch", "--all"],
         capture_output=True,
         text=True,
         timeout=300,
@@ -192,31 +226,20 @@ def _refresh_repository_cache(git_url: str, cache_path: str, repo_name: str) -> 
         print(f"  Error fetching updates: {result.stderr}")
         return False
 
+    # Fetch updates branch contents but leaves origin/HEAD pointing at the
+    # cached default. Ask the remote again rather than replaying that old ref.
     result = subprocess.run(
-        ["git", "-C", cache_path, "symbolic-ref", "refs/remotes/origin/HEAD", "--short"],
+        ["git", "-C", cache_path, "remote", "set-head", "origin", "--auto"],
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=300,
     )
-    if result.returncode == 0:
-        default_branch = result.stdout.strip()
-    else:
-        for branch in ["origin/main", "origin/master"]:
-            result = subprocess.run(
-                ["git", "-C", cache_path, "rev-parse", "--verify", branch],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if result.returncode == 0:
-                default_branch = branch
-                break
-        else:
-            print("  Error: Could not determine default branch")
-            return False
+    if result.returncode != 0:
+        print(f"  Error determining remote default branch: {result.stderr}")
+        return False
 
     for command, label in (
-        (["git", "-C", cache_path, "reset", "--hard", default_branch], "resetting"),
+        (["git", "-C", cache_path, "reset", "--hard", "refs/remotes/origin/HEAD"], "resetting"),
         (["git", "-C", cache_path, "clean", "-fdx"], "cleaning"),
     ):
         result = subprocess.run(
@@ -232,7 +255,18 @@ def _refresh_repository_cache(git_url: str, cache_path: str, repo_name: str) -> 
     return True
 
 
-def clone_repository(git_url: str, temp_dir: str, cache_dir: Optional[str] = None, dry_run: bool = False) -> Optional[tuple[str, Optional[str]]]:
+def _repository_checkout(repo_path: str) -> Optional[tuple[str, str]]:
+    """Require a checked-out commit before accepting deployment source."""
+    from lib.deploy_utils import get_git_commit_hash
+
+    commit_hash = get_git_commit_hash(repo_path)
+    if not commit_hash:
+        print("  Error: repository has no checked-out HEAD commit; refusing deployment")
+        return None
+    return repo_path, commit_hash
+
+
+def clone_repository(git_url: str, temp_dir: str, cache_dir: Optional[str] = None, dry_run: bool = False) -> Optional[tuple[str, str]]:
     from lib.deploy_utils import extract_repo_name, parse_repository_source, repository_stage_name
 
     try:
@@ -263,9 +297,7 @@ def clone_repository(git_url: str, temp_dir: str, cache_dir: Optional[str] = Non
                 return None
             if ref and not _checkout_repository_ref(clone_path, ref, shallow=True):
                 return None
-            from lib.deploy_utils import get_git_commit_hash
-
-            return (clone_path, get_git_commit_hash(clone_path))
+            return _repository_checkout(clone_path)
         except Exception as exc:
             print(f"  Error cloning repository for preflight: {exc}")
             return None
@@ -278,10 +310,22 @@ def clone_repository(git_url: str, temp_dir: str, cache_dir: Optional[str] = Non
                     return None
                 if os.path.exists(clone_path):
                     shutil.rmtree(clone_path)
-                shutil.copytree(cache_path, clone_path, symlinks=True)
-            print(f"  ✓ Copied to {clone_path}")
-            from lib.deploy_utils import get_git_commit_hash
-            return (clone_path, get_git_commit_hash(clone_path))
+                # Use Git's transfer protocol instead of walking .git/objects:
+                # existing maintenance can repack/delete files during a copy.
+                # --no-local also avoids hardlinks or an alternate object store,
+                # so the staged repository survives later cache maintenance.
+                for command, label in (
+                    (["git", *_GIT_FOREGROUND_OPTIONS, "clone", "--no-local", "--", cache_path, clone_path],
+                     "cloning cached repository"),
+                    (["git", "-C", clone_path, "remote", "set-url", "origin", repository_url],
+                     "restoring repository origin"),
+                ):
+                    result = subprocess.run(command, capture_output=True, text=True, timeout=300)
+                    if result.returncode != 0:
+                        print(f"  Error {label}: {result.stderr}")
+                        return None
+            print(f"  ✓ Staged to {clone_path}")
+            return _repository_checkout(clone_path)
         except Exception as exc:
             print(f"  Error preparing repository cache: {exc}")
             return None
@@ -301,10 +345,7 @@ def clone_repository(git_url: str, temp_dir: str, cache_dir: Optional[str] = Non
             if ref and not _checkout_repository_ref(clone_path, ref):
                 return None
             
-            from lib.deploy_utils import get_git_commit_hash
-            commit_hash = get_git_commit_hash(clone_path)
-            
-            return (clone_path, commit_hash)
+            return _repository_checkout(clone_path)
         except Exception as e:
             print(f"  Error cloning repository: {e}")
             return None
@@ -317,11 +358,17 @@ def copy_project_files(dest_dir: str) -> None:
     ignore_noise = shutil.ignore_patterns('__pycache__', '*.pyc', '.git')
 
     def reject_links(directory: str, names: list[str]) -> set[str]:
+        ignored = ignore_noise(directory, names)
         for name in names:
+            if name in ignored:
+                continue
             path = os.path.join(directory, name)
-            if os.path.islink(path):
+            mode = os.lstat(path).st_mode
+            if stat.S_ISLNK(mode):
                 raise ValueError(f"Refusing symlinked runtime source: {path}")
-        return ignore_noise(directory, names)
+            if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
+                raise ValueError(f"Runtime source must be a regular file or directory: {path}")
+        return ignored
 
     items_to_copy = [
         "basaltwater.py",
@@ -382,23 +429,23 @@ def _runtime_state_path() -> str:
     return os.path.join(REMOTE_INSTALL_DIR, "state")
 
 
-def _ensure_local_runtime_state() -> None:
+def _ensure_local_runtime_state(*, inspect_runtime: bool) -> None:
     """Prepare durable state, refusing retired runtime-relative directories."""
     runtime_state = _runtime_state_path()
-    if os.path.lexists(runtime_state) and not (
+    if inspect_runtime and os.path.lexists(runtime_state) and not (
         os.path.islink(runtime_state)
-        and os.path.realpath(runtime_state) == os.path.realpath(PERSISTENT_STATE_DIR)
+        and os.readlink(runtime_state) == PERSISTENT_STATE_DIR
     ):
         raise RuntimeError(
             f"Retired runtime-relative state at {runtime_state}; use the intermediate "
             "version in docs/migration-guide.md before replacing this installation"
         )
-    if os.path.islink(PERSISTENT_STATE_DIR):
-        raise RuntimeError(
-            f"Refusing symlinked basaltwater state directory: {PERSISTENT_STATE_DIR}"
-        )
-    os.makedirs(PERSISTENT_STATE_DIR, mode=0o700, exist_ok=True)
-    os.chmod(PERSISTENT_STATE_DIR, 0o700)
+    state = Path(PERSISTENT_STATE_DIR)
+    ensure_source_directory(state, mode=0o700)
+    # An execute-only ACL mask lets Syncthing traverse this otherwise private
+    # directory. Leave it in place even if source activation later fails.
+    if stat.S_IMODE(state.stat().st_mode) not in {0o700, 0o710}:
+        state.chmod(0o700)
 
 
 def _install_local_runtime_state_link() -> None:
@@ -407,8 +454,7 @@ def _install_local_runtime_state_link() -> None:
     if os.path.lexists(legacy_state_dir):
         if (
             os.path.islink(legacy_state_dir)
-            and os.path.realpath(legacy_state_dir)
-            == os.path.realpath(PERSISTENT_STATE_DIR)
+            and os.readlink(legacy_state_dir) == PERSISTENT_STATE_DIR
         ):
             return
         raise RuntimeError(f"Refusing unexpected runtime state path: {legacy_state_dir}")
@@ -424,21 +470,36 @@ def _activate_local_runtime(build_dir: str) -> None:
         )
     if os.path.islink(REMOTE_INSTALL_DIR):
         raise RuntimeError(f"Refusing symlinked runtime directory: {REMOTE_INSTALL_DIR}")
-    _ensure_local_runtime_state()
-    if not _is_managed_local_install(REMOTE_INSTALL_DIR):
+    runtime = Path(REMOTE_INSTALL_DIR)
+    ensure_source_directory(runtime.parent, mode=0o755)
+    trusted_previous = True
+    if runtime.exists():
+        try:
+            require_runtime_source(runtime)
+        except ValueError:
+            trusted_previous = False
+    _ensure_local_runtime_state(inspect_runtime=trusted_previous)
+    if not trusted_previous or not _is_managed_local_install(REMOTE_INSTALL_DIR):
         parent_dir = os.path.dirname(REMOTE_INSTALL_DIR)
-        os.makedirs(parent_dir, exist_ok=True)
         stage_dir = tempfile.mkdtemp(prefix=".basaltwater-stage-", dir=parent_dir)
         backup_dir: Optional[str] = None
+        quarantine_dir: Optional[str] = None
         activation_started = False
         try:
             shutil.copytree(build_dir, stage_dir, dirs_exist_ok=True, symlinks=True)
             os.chmod(stage_dir, 0o755)
+            require_runtime_source(Path(stage_dir))
             if os.path.lexists(REMOTE_INSTALL_DIR):
-                backup_dir = tempfile.mkdtemp(
-                    prefix=".basaltwater-previous-", dir=parent_dir,
-                )
-                os.rmdir(backup_dir)
+                if trusted_previous:
+                    backup_dir = tempfile.mkdtemp(
+                        prefix=".basaltwater-previous-", dir=parent_dir,
+                    )
+                    os.rmdir(backup_dir)
+                else:
+                    quarantine_dir = tempfile.mkdtemp(
+                        prefix=".basaltwater-quarantine-", dir=parent_dir,
+                    )
+                    backup_dir = os.path.join(quarantine_dir, "source")
             try:
                 if backup_dir:
                     os.rename(REMOTE_INSTALL_DIR, backup_dir)
@@ -450,7 +511,7 @@ def _activate_local_runtime(build_dir: str) -> None:
                 try:
                     if activation_started and os.path.lexists(REMOTE_INSTALL_DIR):
                         shutil.rmtree(REMOTE_INSTALL_DIR)
-                    if backup_dir and os.path.lexists(backup_dir):
+                    if trusted_previous and backup_dir and os.path.lexists(backup_dir):
                         os.rename(backup_dir, REMOTE_INSTALL_DIR)
                         backup_dir = None
                 except OSError as exc:
@@ -459,12 +520,20 @@ def _activate_local_runtime(build_dir: str) -> None:
                         f"recovery backup: {backup_dir or 'none (new installation)'}: {exc}"
                     ) from exc
                 raise
-            if backup_dir:
+            if backup_dir and trusted_previous:
                 try:
                     shutil.rmtree(backup_dir)
                 except OSError as exc:
                     print(f"  ⚠ Previous runtime cleanup failed at {backup_dir}: {exc}")
         finally:
+            if quarantine_dir:
+                if backup_dir and os.path.lexists(backup_dir):
+                    print(f"  ⚠ Writable legacy runtime quarantined at {backup_dir}")
+                else:
+                    try:
+                        os.rmdir(quarantine_dir)
+                    except OSError as exc:
+                        print(f"  ⚠ Empty quarantine cleanup failed at {quarantine_dir}: {exc}")
             if stage_dir and os.path.exists(stage_dir):
                 shutil.rmtree(stage_dir)
         return
@@ -1368,15 +1437,26 @@ def remove_replaced_setup_cache(previous_host: Optional[str], current_host: str)
         )
 
 
-def run_remote_setup(config: SetupConfig) -> int:
+def run_remote_setup(config: SetupConfig, *, after_setup: Callable[[SetupConfig], int] | None = None) -> int:
     """Run one setup while preventing overlapping mutation of the same target."""
     validate_kiosk_settings(config)
-    def execute() -> int:
+    def profile(config: SetupConfig) -> int:
         if config.build_on is not None:
             from lib.build_setup import run_build_setup
 
             return run_build_setup(config, apply_setup=_run_remote_setup_locked)
         return _run_remote_setup_locked(config)
+
+    def execute() -> int:
+        from lib.headscale_setup import automated_setup, run_setup
+
+        with workspace_pinned_ssh(config.host if config.hosted_node else None):
+            if automated_setup(config):
+                result = run_setup(config, apply_setup=_run_remote_setup_locked, apply_profile=profile)
+                if result == 0 and not config.dry_run and after_setup is not None:
+                    return after_setup(config)
+                return result
+            return profile(config)
 
     if config.dry_run:
         return execute()
@@ -1396,20 +1476,23 @@ def run_remote_setup(config: SetupConfig) -> int:
 @contextmanager
 def _target_setup_lock():
     """Share the target-side locks used by SSH-driven setup."""
-    with open("/run/lock/basaltwater-setup-bootstrap.lock", "a+", encoding="utf-8") as bootstrap, \
-         open("/run/lock/basaltwater-setup.lock", "a+", encoding="utf-8") as runtime:
-        fcntl.flock(bootstrap.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        try:
-            fcntl.flock(runtime.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            try:
-                yield
-            finally:
-                fcntl.flock(runtime.fileno(), fcntl.LOCK_UN)
-        finally:
-            fcntl.flock(bootstrap.fileno(), fcntl.LOCK_UN)
+    descriptors = []
+    try:
+        for path in _TARGET_SETUP_LOCK_PATHS:
+            fd = os.open(path, os.O_NOFOLLOW | os.O_CREAT | os.O_RDONLY | os.O_NONBLOCK, 0o600)
+            descriptors.append(fd)
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+                raise ValueError(f"Unsafe setup lock: {path}")
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield
+    finally:
+        for fd in reversed(descriptors):
+            os.close(fd)
 
 
-def _run_remote_setup_locked(config: SetupConfig, *, expected_releases: object = None) -> int:
+def _run_remote_setup_locked(config: SetupConfig, *, expected_releases: object = None,
+                             client_preparation: bool = False) -> int:
     expected_json = None
     if expected_releases is not None:
         from lib.build_protocol import encode_document
@@ -1429,6 +1512,12 @@ def _run_remote_setup_locked(config: SetupConfig, *, expected_releases: object =
     if is_local and not config.dry_run and os.geteuid() != 0:
         print("Error: Local setup requires root privileges. Please run with sudo.")
         return 1
+    if is_local and not config.dry_run:
+        try:
+            require_runtime_source(Path(SCRIPT_DIR).parent)
+        except (OSError, ValueError) as exc:
+            print(f"Error: {exc}. Use a root-owned system install for local setup.")
+            return 1
 
     remote_user = "root"
     control_path: Optional[str] = None
@@ -1453,7 +1542,11 @@ def _run_remote_setup_locked(config: SetupConfig, *, expected_releases: object =
         if config.deploy_specs and not config.artifact_deployments:
             deploy_dir = os.path.join(build_dir, "deployments")
             os.makedirs(deploy_dir, exist_ok=True)
-            prepare_deployments(config, deploy_dir)
+            try:
+                prepare_deployments(config, deploy_dir)
+            except (RuntimeError, ValueError, OSError) as exc:
+                print(f"Error preparing deployments: {exc}")
+                return 1
 
         if config.copy_agent_config or config.copy_agent_keys or config.has_agent_features():
             agent_payload_dir = os.path.join(build_dir, AGENT_PAYLOAD_DIRNAME)
@@ -1489,6 +1582,8 @@ def _run_remote_setup_locked(config: SetupConfig, *, expected_releases: object =
             config.ci_registration_payload = False
 
         remote_arg_tokens = _expand_remote_args(config.to_remote_args())
+        if client_preparation:
+            remote_arg_tokens.append("--prepare-tailscale-client")
         if expected_json is not None:
             remote_arg_tokens.extend(("--artifact-releases-json", expected_json))
         if config.agent_auth_source == "login" and config.install_codex:
@@ -1498,6 +1593,9 @@ def _run_remote_setup_locked(config: SetupConfig, *, expected_releases: object =
         remote_args_path = os.path.join(REMOTE_INSTALL_DIR, REMOTE_ARGS_FILENAME)
         command_tokens = [
             sys.executable,
+            "-I",
+            "-B",
+            "-u",
             os.path.join(REMOTE_INSTALL_DIR, "remote_setup.py"),
             "--args-file",
             remote_args_path,
@@ -1527,11 +1625,6 @@ def _run_remote_setup_locked(config: SetupConfig, *, expected_releases: object =
             
             env = os.environ.copy()
             env["LC_ALL"] = "C"
-            # The child writes through a pipe so setup progress is relayed by
-            # this process. Disable Python buffering to keep APT and setup
-            # status visible during long-running local installs.
-            env["PYTHONUNBUFFERED"] = "1"
-            env["PYTHONDONTWRITEBYTECODE"] = "1"
             env[PROMPT_RELAY_ENV] = "1" if relay_prompts else "0"
             
             try:
@@ -1561,32 +1654,32 @@ def _run_remote_setup_locked(config: SetupConfig, *, expected_releases: object =
             # Receive code into a private staging tree before touching either
             # installation. Only the bounded first archive is consumed here;
             # the private payload archive remains on stdin for setup_payloads.
+            stage_parent = os.path.dirname(REMOTE_INSTALL_DIR)
+            preflight = shlex.join([
+                "/usr/bin/python3", "-I", "-c", _REMOTE_STAGING_PREFLIGHT, stage_parent,
+                *_TARGET_SETUP_LOCK_PATHS,
+            ])
             remote_shell_cmd = (
                 'set -eu; '
-                f'basaltwater_stage=$(mktemp -d {shlex.quote(os.path.dirname(REMOTE_INSTALL_DIR))}/.basaltwater-stage.XXXXXX); '
+                'umask 022; '
+                'acquire_setup_lock() { '
+                'flock --exclusive --nonblock --conflict-exit-code 75 "$1" || { '
+                'status=$?; '
+                'if [ "$status" -eq 75 ]; then '
+                'printf "Error: target %s lock is busy. Wait for setup or maintenance to finish, then retry.\\n" "$2" >&2; '
+                'fi; exit "$status"; }; }; '
+                f'{preflight}; '
+                f'exec 8<{shlex.quote(_TARGET_SETUP_LOCK_PATHS[0])}; acquire_setup_lock 8 "setup bootstrap"; '
+                f'exec 9<{shlex.quote(_TARGET_SETUP_LOCK_PATHS[1])}; acquire_setup_lock 9 setup; '
+                f'basaltwater_stage=$(mktemp -d {shlex.quote(stage_parent)}/.basaltwater-stage.XXXXXX); '
                 "trap 'rm -rf \"$basaltwater_stage\"' EXIT; "
-                f'head -c {len(runtime_data)} | tar xzf - -C "$basaltwater_stage" --no-same-owner; '
+                f'head -c {len(runtime_data)} | tar xzf - -C "$basaltwater_stage" --no-same-owner --no-same-permissions; '
                 'cd "$basaltwater_stage"; '
-                'export PYTHONDONTWRITEBYTECODE=1; '
                 f'export {PROMPT_RELAY_ENV}={"1" if relay_prompts else "0"}; '
-                'exec 9>/run/lock/basaltwater-setup.lock; flock --exclusive --nonblock 9; '
-                f'python3 -u -m lib.setup_upgrade --username {shlex.quote(config.username)}'
+                f'python3 -E -s -B -u -m lib.setup_upgrade --username {shlex.quote(config.username)}'
                 + (' --bootstrap-build-target' if bootstrap_target else '') + '; '
                 f'cd {shlex.quote(REMOTE_INSTALL_DIR)}; '
-                f'python3 -u -m lib.setup_payloads --timeout {setup_timeout} --payload-bytes {len(private_data)}'
-            )
-            locked_remote_shell_cmd = shlex.join(
-                [
-                    "flock",
-                    "--exclusive",
-                    "--nonblock",
-                    "/run/lock/basaltwater-setup-bootstrap.lock",
-                    "/bin/bash",
-                    "-o",
-                    "pipefail",
-                    "-c",
-                    remote_shell_cmd,
-                ]
+                f'python3 -E -s -B -u -m lib.setup_payloads --timeout {setup_timeout} --payload-bytes {len(private_data)}'
             )
             batch_mode = ssh_batch_mode()
             ssh_cmd = build_ssh_command(
@@ -1595,7 +1688,7 @@ def _run_remote_setup_locked(config: SetupConfig, *, expected_releases: object =
                 config.ssh_key,
                 remote_command=shlex.join([
                     "timeout", "--signal=TERM", "--kill-after=10s", str(setup_timeout),
-                    "/bin/sh", "-c", locked_remote_shell_cmd,
+                    "/bin/bash", "-o", "pipefail", "-c", remote_shell_cmd,
                 ]),
                 batch_mode=batch_mode,
                 connect_timeout=30,
@@ -1606,16 +1699,28 @@ def _run_remote_setup_locked(config: SetupConfig, *, expected_releases: object =
             
             ssh_env = os.environ.copy()
             ssh_env["LC_ALL"] = "C"
-            
+
+            received_output = False
+
+            def relay_remote_output(line: str) -> None:
+                nonlocal received_output
+                received_output = received_output or bool(line.strip())
+                _relay_setup_output(line)
+
             try:
                 returncode = run_streamed(
                     ssh_cmd,
                     timeout=ssh_process_timeout(setup_timeout, batch_mode=batch_mode),
-                    on_output=_relay_setup_output,
+                    on_output=relay_remote_output,
                     input_data=tar_data, env=ssh_env,
                     interactive=not batch_mode,
                     **({"on_input_request": answer_setup_prompt} if relay_prompts else {}),
                 )
+                if returncode != 0 and not received_output:
+                    print(
+                        f"Error: SSH setup command exited with status {returncode} without target output. "
+                        "Check the target's SSH logs and setup lock holders before retrying."
+                    )
                 return finish_network_transition(config, returncode)
             except Exception as e:
                 print(f"Error running remote setup: {e}")
@@ -1668,8 +1773,29 @@ def setup_main(system_type: str, description: str, success_msg_fn: Callable[[Set
         )
         return 1
     
-    config = SetupConfig.from_args(args, system_type)
-    config.validate_agent_provider_selection()
+    from lib.headscale_setup import automated_setup, preflight_setup, print_setup_plan
+    from lib.headscale_selection import validate_final_selection
+
+    try:
+        from lib.headscale_selection import resolve_cli_selection
+        from lib.headscale_config import merge_headscale_settings
+        from lib.cache import load_setup_command
+
+        cached = load_setup_command(args.host)
+        if vars(args).get("tailscale_server") is not None:
+            resolve_cli_selection(args, cached)
+        config = SetupConfig.from_args(args, system_type)
+        config.validate_agent_provider_selection()
+        if cached is not None:
+            for name, value in merge_headscale_settings(cached, config).items():
+                setattr(config, name, value)
+        validate_final_selection(config, workspace=getattr(args, "workspace", None))
+        if automated_setup(config) and config.dry_run:
+            preflight_setup(config, workspace=getattr(args, "workspace", None))
+            return print_setup_plan(config)
+    except (ValueError, OSError) as exc:
+        print(f"Error: {exc}")
+        return 1
 
     if not validate_username(config.username):
         print(f"Error: Invalid username: {config.username}")
@@ -1690,6 +1816,10 @@ def setup_main(system_type: str, description: str, success_msg_fn: Callable[[Set
             config,
             getattr(args, "workspace", None),
         )
+        if automated_setup(runtime_config):
+            preflight_setup(runtime_config, workspace=getattr(args, "workspace", None))
+            config.headscale_registration_id = runtime_config.headscale_registration_id
+            config.headscale_registration_binding = runtime_config.headscale_registration_binding
     except ValueError as e:
         print(f"Error: {e}")
         return 1
@@ -1762,7 +1892,14 @@ def setup_main(system_type: str, description: str, success_msg_fn: Callable[[Set
                 runtime_config,
                 previous_host,
             )
+    except (ValueError, RuntimeError, OSError) as exc:
+        if not automated_setup(config):
+            raise
+        returncode = 1
+        print(f"Error: automated Headscale setup failed: {exc}")
     finally:
+        config.headscale_registration_id = runtime_config.headscale_registration_id
+        config.headscale_registration_binding = runtime_config.headscale_registration_binding
         end_time = time.time()
         success = (returncode == 0)
         if not config.dry_run:

@@ -131,7 +131,13 @@ literal subset of npm project policy:
 | --- | --- |
 | `ignore-scripts` | `true`, `false` |
 | `engine-strict` | `true`, `false` |
+| `allow-remote` | `all`, `none`, `root` |
 | `min-release-age` | Canonical decimal integer from 0 through 525600 (minutes) |
+
+The [`allow-remote` option](https://docs.npmjs.com/cli/using-npm/config/#allow-remote)
+controls URL dependency installation. `root` permits URLs declared by the root
+project while restricting transitive URL dependencies. Snapshot validation
+preserves this policy; the installed npm version determines its behavior.
 
 Blank lines and full-line `#`/`;` comments are accepted, as are spaces/tabs
 around keys and values and LF/CRLF endings. Files must contain ASCII text,

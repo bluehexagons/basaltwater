@@ -133,7 +133,7 @@ class Scenario:
         state = self.state
         self.replace(state, "features", return_value=self.features)
         self.replace(approval, "configured_panel_features", return_value=self.features)
-        self.replace(state, "system_overview", return_value=[
+        self.replace(panel, "collect_system_overview", return_value=[
             {"label": label, "value": value, "description": "Synthetic development data"}
             for label, value in (("Uptime", "2d 6h"), ("Memory", "94% used" if self.name == "degraded" else "24% used"),
                                  ("Swap", "8% used"), ("Root disk", "96% used" if self.name == "degraded" else "52% used"),
@@ -144,18 +144,19 @@ class Scenario:
             "issues": ["Synthetic audit collector unavailable"] if self.name == "degraded" else [],
         })
         self.replace(state, "notification_events", return_value=[])
-        self.replace(state, "service_health", return_value=[] if self.name == "empty" else [
+        self.replace(panel, "collect_service_health", return_value=[] if self.name == "empty" else [
             {"label": "Synthetic web service", "value": "failed" if self.name == "degraded" else "active",
              "description": "Simulated service; no host query"},
         ])
         self.replace(state, "diagnostic_sources", return_value={"nginx.service": "Synthetic web service"})
-        self.replace(panel, "discover_basaltwater_web_services", return_value=[])
+        self.replace(panel, "discover_basaltwater_web_services", return_value=[{
+            "label": "HTTPS service: t3code", "url": "https://coding.example.test:8445/",
+            "description": "Synthetic coding workspace", "application": "t3code",
+        }] if self.features.t3 else [])
         self.replace(panel, "discover_certificate_trust", return_value=None)
         if self.name == "proxmox":
             state.manifest.update(system_type="server_proxmox", title="Proxmox development cluster")
             self.replace(panel, "load_proxmox_snapshot", return_value=proxmox_snapshot())
-        self.replace(state, "t3_update_available", return_value=self.features.t3)
-        self.replace(state, "trigger_t3_update", side_effect=self.update)
         self.replace(jobs, "collect_jobs", return_value=jobs.JobSnapshot(
             [] if self.name == "empty" else job_rows(),
             ["Synthetic timer collection incomplete"] if self.name == "degraded" else [], absent=9,
@@ -177,6 +178,10 @@ class Scenario:
         self.replace(state.storage_diagnostics, "snapshot", side_effect=lambda: storage_snapshot(
             loaded=bool(self.data.get("storage_loaded")), degraded=self.name == "degraded",
             mode=self.data.get("storage_mode", "quick")))
+        self.replace(state.storage_diagnostics, "status_summary", side_effect=lambda: {
+            key: value for key, value in state.storage_diagnostics.snapshot().items()
+            if key in {"state", "scan_mode", "started_at", "finished_at"}
+        })
         self.replace(state.storage_diagnostics, "start", side_effect=self.collect_storage)
         self.replace(state.git_settings, "snapshot", side_effect=self.identity)
         self.replace(state.git_settings, "set_identity", side_effect=self.set_identity)
@@ -340,10 +345,14 @@ class Scenario:
                 return {"blocked": {}, "requests": [row for row in records if row.get("plan", {}).get("operation", "admin.run") == "admin.run"],
                         "privilege_requests": privilege, "restartable_services": ["example.service"], "unit_state": "inactive"}
             if message["action"] == "request":
-                if message["operation"] in {"service.restart", "command.run", "data.run", "data.routine", "samba.account", "samba.shares"}:
-                    request = privilege_request(message["operation"], message["parameters"],
-                        "failed" if self.name == "degraded" else "dispatched" if message["operation"] == "data.run" else
-                        "pending" if message["operation"] in {"data.routine", "samba.account", "samba.shares"} else "succeeded")
+                operation = message["operation"]
+                if operation in {"service.restart", "command.run", "data.run", "data.routine", "samba.account", "samba.shares"}:
+                    state = "pending" if operation in {"data.run", "data.routine", "samba.account", "samba.shares"} else "succeeded"
+                    request = privilege_request(operation, message["parameters"], state)
+                    if self.name == "degraded":
+                        request["state"] = "failed"
+                    elif operation == "data.run" and request["plan"]["mode"] == "allow":
+                        request["state"] = "dispatched"
                     request["review_url"] = "/requests/" + request["id"]
                     self.data["requests"].insert(0, request)
                     self.save()
@@ -421,10 +430,6 @@ class Scenario:
             "issues": [], "routines": [], "review": {"status": "skipped", "reason": "Synthetic development check"},
         }] if self.data["checked"] else []}
 
-    def update(self) -> bool:
-        self.state.action_status = "failed" if self.name == "degraded" else "complete"
-        self.state.action_message = "Synthetic update failed" if self.name == "degraded" else "Synthetic update completed"
-        return True
 
     def execute(self, task, home, cancel) -> dict:
         failed = self.name == "degraded"

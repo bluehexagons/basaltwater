@@ -74,18 +74,138 @@ class TriageTests(unittest.TestCase):
             validate_data_action(large)
 
     def test_stale_whole_preflight_has_no_effects(self):
+        self.value["action"] = "delete"
         self.paths[1].write_bytes(b"replacement")
         self.assertEqual(data_job.run_action(self.value), 1)
         self.assertTrue(all(path.exists() for path in self.paths))
         self.assertEqual([item["status"] for item in self.result()["items"]], ["skipped"] * 2)
+        self.assertEqual([item["failure"] for item in data_job._record()["items"]], ["batch_preflight", "file_changed"])
         self.assertFalse(self.report().data.get("dispositions"))
 
-    def test_verify_batch_rejects_changed_identity(self):
+    def test_preflight_retains_distinct_failures_without_processing_files(self):
+        def reject(path, *args):
+            raise OSError(errno.EROFS if path == str(self.paths[0]) else errno.EACCES, "private evidence")
+        with patch.object(data_job, "disposition_preflight", side_effect=reject), patch.object(data_job, "dispose") as dispose:
+            self.assertEqual(data_job.run_action(self.value), 1)
+            dispose.assert_not_called()
+        self.assertEqual([item["failure"] for item in data_job._record()["items"]], ["read_only", "permission_denied"])
+        self.assertNotIn("private evidence", self.state.read_text())
+
+    def test_quarantine_rechecks_inconclusive_finding_even_when_identity_matches(self):
+        report = self.report()
+        report.record("one", {"category": "missing_parity", "file_identity": findings.file_identity(str(self.paths[0]))})
+        self.value["items"][0]["finding"] = finding_revision(report.data["files"]["one"])
+        identity = findings.file_identity(str(self.paths[0]))
+        with patch.object(data_job, "examine", return_value={"category": "healthy", "file_identity": identity}) as examine:
+            self.assertEqual(data_job.run_action(self.value), 0)
+        examine.assert_called_once()
+        self.assertTrue(self.paths[0].exists())
+        self.assertFalse(self.report().active("one"))
+        self.assertEqual(self.result()["items"][0]["category"], "healthy")
+
+    def test_verify_batch_refreshes_changed_identity_before_quarantine(self):
         self.value["action"] = "verify"
         self.paths[1].write_bytes(b"replacement")
-        with patch.object(data_job, "examine") as examine:
+        def verify(path, directory, database, *, reviewed_identity):
+            self.assertEqual(reviewed_identity, findings.file_identity(path))
+            return {"category": "unrepairable", "file_identity": reviewed_identity}
+        with patch.object(data_job, "examine", side_effect=verify) as examine:
             self.assertEqual(data_job.run_action(self.value), 1)
-            examine.assert_not_called()
+            self.assertEqual(examine.call_count, 2)
+        self.assertEqual([item["status"] for item in self.result()["items"]], ["completed"] * 2)
+        self.assertEqual(self.report().data["files"]["two"]["file_identity"], findings.file_identity(str(self.paths[1])))
+        self.value.update(action="quarantine", job_id="b" * 32)
+        for item, path in zip(self.value["items"], self.paths):
+            item["finding"] = finding_revision(self.report().data["files"][path.name])
+        self.assertEqual(data_job.run_action(self.value), 0)
+        self.assertFalse(any(path.exists() for path in self.paths))
+
+    def test_verify_batch_refreshes_legacy_missing_identity(self):
+        report = self.report()
+        del report.data["files"]["one"]["file_identity"]
+        report.save()
+        self.value.update(action="verify", items=[{"file": str(self.paths[0]),
+                          "finding": finding_revision(report.data["files"]["one"])}])
+        with patch.object(data_job, "examine", return_value={"category": "healthy"}) as examine:
+            self.assertEqual(data_job.run_action(self.value), 0)
+        self.assertEqual(examine.call_args.kwargs["reviewed_identity"], findings.file_identity(str(self.paths[0])))
+
+    def test_quarantine_verifies_stale_file_and_uses_fresh_identity(self):
+        self.paths[0].write_bytes(b"new damaged content")
+        identity = findings.file_identity(str(self.paths[0]))
+        with patch.object(data_job, "examine", return_value={"category": "unrepairable", "file_identity": identity}) as examine:
+            self.assertEqual(data_job.run_action(self.value), 0)
+        examine.assert_called_once_with(str(self.paths[0]), str(self.source), str(self.database), reviewed_identity=identity)
+        self.assertEqual(Path(self.result()["items"][0]["destination"]).read_bytes(), b"new damaged content")
+        self.assertEqual(self.report().data["dispositions"]["one"]["file_identity"], identity)
+
+    def test_quarantine_healthy_or_inconclusive_file_stays_and_batch_continues(self):
+        categories = ("healthy", "missing_parity", "invalid_parity", "io_error", "tool_error", "changed_during_scan", "missing_file")
+        for index, category in enumerate(categories):
+            with self.subTest(category=category):
+                for path in self.paths:
+                    path.write_bytes(b"damaged bytes")
+                    self.report().record(path.name, {"category": "unrepairable", "file_identity": findings.file_identity(str(path))})
+                self.value.update(job_id=f"{index:032x}", items=[
+                    {"file": str(path), "finding": finding_revision(self.report().data["files"][path.name])}
+                    for path in self.paths])
+                self.paths[0].write_bytes(b"changed content")
+                identity = findings.file_identity(str(self.paths[0]))
+                with patch.object(data_job, "examine", return_value={"category": category, "file_identity": identity}):
+                    self.assertEqual(data_job.run_action(self.value), 0 if category == "healthy" else 1)
+                items = self.result()["items"]
+                self.assertEqual(items[0]["category"], category)
+                self.assertEqual(items[0]["status"], "completed" if category == "healthy" else "skipped")
+                self.assertEqual(items[0]["destination"], "")
+                self.assertTrue(self.paths[0].exists())
+                self.assertFalse(self.paths[1].exists())
+                self.assertEqual(items[1]["category"], "quarantine")
+                self.assertEqual(self.report().active("one"), category != "healthy")
+
+    def test_quarantine_legacy_identity_is_verified(self):
+        report = self.report()
+        del report.data["files"]["one"]["file_identity"]
+        report.save()
+        self.value["items"][0]["finding"] = finding_revision(report.data["files"]["one"])
+        identity = findings.file_identity(str(self.paths[0]))
+        with patch.object(data_job, "examine", return_value={"category": "repairable", "file_identity": identity}) as examine:
+            self.assertEqual(data_job.run_action(self.value), 0)
+        self.assertEqual(examine.call_count, 1)
+        self.assertFalse(self.paths[0].exists())
+
+    def test_quarantine_missing_file_is_skipped(self):
+        self.paths[0].unlink()
+        with patch.object(data_job, "examine", return_value={"category": "missing_file", "file_identity": None}):
+            self.assertEqual(data_job.run_action(self.value), 1)
+        self.assertEqual(self.result()["items"][0]["category"], "missing_file")
+        self.assertEqual(self.result()["items"][0]["status"], "skipped")
+        self.assertFalse(self.paths[1].exists())
+
+    def test_quarantine_file_changing_during_verification_is_never_moved(self):
+        self.paths[0].write_bytes(b"changed content")
+        def race(path, directory, database, *, reviewed_identity):
+            Path(path).write_bytes(b"changed again during verification")
+            return {"category": "unrepairable", "file_identity": reviewed_identity}
+        with patch.object(data_job, "examine", side_effect=race):
+            self.assertEqual(data_job.run_action(self.value), 1)
+        self.assertTrue(self.paths[0].exists())
+        self.assertEqual(self.result()["items"][0]["category"], "changed_during_scan")
+        self.assertNotIn("one", self.report().data["dispositions"])
+
+    def test_quarantine_file_changing_after_verification_is_never_moved(self):
+        self.paths[0].write_bytes(b"changed content")
+        identity = findings.file_identity(str(self.paths[0]))
+        dispose = data_job.dispose
+        def race(path, *args):
+            Path(path).write_bytes(b"changed again before move")
+            return dispose(path, *args)
+        self.value["items"] = self.value["items"][:1]
+        with patch.object(data_job, "examine", return_value={"category": "repairable", "file_identity": identity}), \
+             patch.object(data_job, "dispose", side_effect=race):
+            self.assertEqual(data_job.run_action(self.value), 1)
+        self.assertTrue(self.paths[0].exists())
+        self.assertEqual(self.result()["items"][0]["status"], "unresolved")
+        self.assertEqual(self.report().data["dispositions"]["one"]["state"], "intent")
 
     def test_changed_finding_rejects_entire_batch(self):
         self.report().record("two", {"category": "repairable"})

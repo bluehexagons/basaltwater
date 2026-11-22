@@ -83,7 +83,7 @@ class TestUpdateAndUpgradePackages(unittest.TestCase):
         self.assertEqual(
             order[1],
             "apt-get -o DPkg::Lock::Timeout=300 "
-            f"upgrade -y -qq {expected_dpkg_options}",
+            f"upgrade -y -q --with-new-pkgs --no-remove {expected_dpkg_options}",
         )
         self.assertEqual(
             order[2],

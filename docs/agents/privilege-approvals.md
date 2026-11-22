@@ -169,10 +169,9 @@ home directory. Rerun setup to publish missing selections on older installations
 
 The panel’s [Shares & Data page](../services/shares-data.md) also requests
 `data.run` operations for verification, quarantine, deletion, single-file
-repair, restoration and explicit acceptance. These are automatically authorized
-after review and confirmation in Shares & Data; no separate approval visit is
-needed. The configured requester can submit these bounded actions without
-decision-socket access. Review the exact file, configured
+repair, restoration and explicit acceptance. Verification can run after panel
+confirmation. Every action that changes source files or parity also needs a
+decision on the approval page for that specific request. Review the exact file, configured
 scrub root, parity directory and any independent copy. These run in a separate
 worker with a six-hour deadline and a storage lock. `dispatched` reports launch;
 the page shows the worker’s result separately. A changed finding or file requires

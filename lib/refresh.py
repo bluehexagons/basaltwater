@@ -31,10 +31,12 @@ from lib.machine_state import (
 from lib.maintenance_lock import maintenance_lock
 from lib.operation_state import OperationRecord, OperationStateStore
 from lib.remote_utils import read_os_release, run
+from lib.runtime_source import (
+    OFFICIAL_SOURCE_URL, RUNTIME_DATA_NAMES, SYSTEM_INSTALL_MARKER, require_runtime_source, trusted_git_command,
+)
 from lib.validation import validate_channel, validate_filesystem_path
 
 
-_SOURCE_URL = "https://github.com/bluehexagons/basaltwater.git"
 SOURCE_ACTIVATION_MARKER_FILENAME = ".basaltwater-source-refresh-operation.json"
 _SNAPSHOT_SOURCE_NAMES = {
     "basaltwater.py", "remote_setup.py", "pyproject.toml", "lib", "plugins", "game", "desktop",
@@ -167,18 +169,26 @@ def _upgrade_snapshot(repository: str, channel: str) -> dict[str, object]:
     operation_resolved = False
     try:
         staged = os.path.join(temporary, "source")
-        result = run([
-            "env", "GIT_TERMINAL_PROMPT=0", "git", "clone", "--", _SOURCE_URL, staged,
-        ], check=False, capture_output=True, timeout=300)
+        result = run(
+            trusted_git_command("clone", "--no-checkout", "--", OFFICIAL_SOURCE_URL, staged),
+            check=False, capture_output=True, timeout=300,
+        )
         if result.returncode:
             raise RuntimeError("Could not download Basaltwater source; installed snapshot is unchanged")
-        info = switch_channel(staged, channel)
-        write_text_atomic(os.path.join(staged, ".basaltwater", "managed-install"), "basaltwater-v1\n")
+        channel_state = Path(staged, ".basaltwater")
+        channel_state.mkdir(mode=0o755)
+        # The new channel must remain readable through the system launcher
+        # even when the refresh worker inherits a private umask.
+        channel_state.chmod(0o755)
+        write_text_atomic(os.path.join(staged, SYSTEM_INSTALL_MARKER), "basaltwater-system-v1\n")
+        info = switch_channel(staged, channel, fresh_clone=True)
+        write_text_atomic(str(channel_state / "managed-install"), "basaltwater-v1\n")
         with open(os.path.join(staged, ".git", "info", "exclude"), "a", encoding="utf-8") as exclusions:
-            exclusions.write("\n/deployments/\n/worktrees/\n/agent_payload/\n/device_pairing_payload/\n/web_panel_payload/\n/.remote_setup_args.json\n")
+            exclusions.write("\n" + "".join(f"/{name}\n" for name in sorted(RUNTIME_DATA_NAMES)))
         # Administrative jobs inherit a private umask. Normalize only the new
         # source, before retained state or deployment data enters the tree.
         _normalize_downloaded_source(staged)
+        require_runtime_source(Path(staged))
         # The controller stages just these source entries. Preserve all other
         # top-level runtime data without copying potentially large deployments.
         data_names = sorted(set(os.listdir(repository)) - _SNAPSHOT_SOURCE_NAMES)
@@ -201,30 +211,30 @@ def _upgrade_snapshot(repository: str, channel: str) -> dict[str, object]:
                 "runtime_data_names": data_names,
             },
         )
-        moved = []
-        renamed = False
         try:
             # The operation marker is durable before the installed source is
             # displaced. A hard kill at any later boundary leaves all planned
             # copy paths available for an administrator to inspect.
             os.rename(repository, backup)
-            renamed = True
             operation_record = operation_store.transition(operation_record.operation_id, "source_displaced")
             for name in data_names:
                 os.rename(os.path.join(backup, name), os.path.join(staged, name))
-                moved.append(name)
             operation_record = operation_store.transition(operation_record.operation_id, "runtime_data_moved")
             os.chmod(staged, 0o755)
             operation_record = operation_store.transition(operation_record.operation_id, "activating_staged_source")
             os.rename(staged, repository)
         except Exception as error:
-            # Asynchronous interruption can arrive after a rename took effect
-            # but before the bookkeeping above ran. Leave its durable marker
-            # and every copy intact instead of guessing which moves completed.
+            # Check the recorded paths because an error may be reported after
+            # a rename takes effect. Process loss still leaves the marker and
+            # every copy for explicit recovery.
             try:
-                for name in reversed(moved):
-                    os.rename(os.path.join(staged, name), os.path.join(backup, name))
-                if renamed:
+                if os.path.lexists(backup):
+                    if not os.path.lexists(staged):
+                        os.rename(repository, staged)
+                    for name in reversed(data_names):
+                        candidate = os.path.join(staged, name)
+                        if os.path.lexists(candidate):
+                            os.rename(candidate, os.path.join(backup, name))
                     os.rename(backup, repository)
             except OSError as recovery_error:
                 operation_store.transition(
@@ -303,7 +313,7 @@ def _apply_refresh(
             argument_file = Path(temporary) / "setup-args.json"
             write_json_atomic(str(argument_file), [*arguments, "--expected-setup-revision", expected_revision], mode=0o600)
             result = run([
-                sys.executable, str(Path(repository) / "remote_setup.py"),
+                sys.executable, "-I", "-B", str(Path(repository) / "remote_setup.py"),
                 "--args-file", str(argument_file),
             ], interactive=True, check=False, timeout=None, cwd=repository)
         return result.returncode
@@ -396,6 +406,7 @@ def run_refresh_command(args: argparse.Namespace) -> int:
         expected_revision = saved_setup_revision()
         config = _debian_setup()
         arguments = shlex.split(" ".join(config.to_remote_args()))
+        arguments.append("--refresh-packages")
         # A target refresh reuses local provider credentials instead of asking
         # for a fresh interactive Codex login.
         arguments.extend(["--agent-auth-mode", "none"])
@@ -407,6 +418,7 @@ def run_refresh_command(args: argparse.Namespace) -> int:
         parser = create_setup_argument_parser("Saved Debian setup", for_remote=True, allow_steps=True)
         config = config_from_remote_args(parser.parse_args(arguments), preserve_samba_accounts=True)
         repository = managed_repository_path()
+        _assert_no_source_activation(repository)
         info = get_channel_info(repository)
         channel = _refresh_channel(info)
         if args.dry_run:

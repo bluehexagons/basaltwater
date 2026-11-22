@@ -230,12 +230,14 @@ basaltw desktop input --generation GENERATION --geometry WIDTH HEIGHT \
 Non-ASCII text on Debian defaults to this per-character path with 10 ms pacing.
 A native Tk fixture exposed intermittent character loss from rapid Unicode
 keymap changes in an unpaced xdotool batch. This default avoids that batch;
-application text still requires verification. Paced text, including this Unicode
-default, cannot reuse a single-use `--observation` token on the Debian backend.
-It is refused before dispatch rather than silently falling back to fast input.
-Prefer accessible `element set-text` with read-back; otherwise capture and
-inspect the intended control, omit `--observation` for paced text, and verify
-the result before submitting it. Explicit `--delay-ms` remains available.
+application text still requires verification. Updated supervisors advertise
+`server-paced-text`: with `--observation`, the client sends the whole string in
+one request and the supervisor delivers individual characters. It consumes the
+token once and rechecks its original age, geometry, window placement and active
+state before every character. Unicode uses the same 10 ms default. Older
+supervisors refuse token-bound pacing before input; refresh and load a new
+supervisor at a safe normal logout checkpoint. Accessible `element set-text`
+with read-back remains preferable when available.
 
 The delay accepts 1–100 milliseconds. Paced input rechecks session generation,
 geometry, enabled state and the same human control revision on every request.
@@ -243,15 +245,58 @@ Human intervention invalidates the remaining characters. Text remains limited
 to 1024 characters; pacing has a 20-second budget including request overhead.
 Use shorter commands if it exceeds the budget. Sequence input actions accept
 `"delay_ms": 10` and share that budget across paced actions in the sequence.
-The Debian pacing path still opens a request for each character; these runtime
-safety checks do not establish a persistent input connection or release guarantee.
+Without a token, Debian retains its per-character request fallback. Token-bound
+server pacing retains the eight-second runtime budget, including probes and
+subprocess overhead; shorten text if interrupted. These checks do not establish
+a persistent X connection or release guarantee. Local approved control changes
+persist before querying the supervisor, so a pending text request can observe
+revocation between characters. The control window bounds status polling to
+half a second. Browser control requests still queue behind serialized work;
+live takeover and reconnect qualification remain open.
 
-`submitted_characters` counts acknowledged requests, not verified application
-text. Inspect the command before pressing Return, and verify its result afterward.
+`submitted_characters` counts acknowledged character injections, not verified
+application text. Server failures between characters report `partial` with that
+count; failure during a character reports `unknown` with only the earlier
+acknowledged prefix counted. A lost transport reply cannot establish a prefix.
+Inspect the command before pressing Return, and verify its result afterward.
 On failure, a prefix may have arrived, including the last unacknowledged character;
 inspect before retrying. Failed paced sequence actions stop subsequent actions.
 For longer trusted Blender operations, write a script file and type a short loader
 command rather than entering the entire script through the UI.
+
+## Map and record Debian observations
+
+Debian supports receipt-bound coordinate mapping without input:
+
+```bash
+basaltw desktop screenshot --output /tmp/desktop-check-1.png > /tmp/frame.json
+basaltw desktop map-point --capture /tmp/frame.json --image-coordinates --x 400 --y 300 --json
+```
+
+Inspect the image first. Mapping adds a window image's origin once and checks
+the current generation, control revision, observation identity, geometry and
+freshness. It neither consumes nor renews the token. Input still revalidates the
+window and token. For resized previews, use `--view-geometry WIDTH HEIGHT` with
+the actual displayed image dimensions; viewer margins require `--view-origin`.
+Arithmetic cannot establish the viewer's scale or that a semantic target stayed
+in place.
+
+`desktop evidence start --project /absolute/project` and `desktop evidence finish`
+now work with Debian's supervisor. Journals checkpoint input receipts, including
+acknowledged character counts and completion uncertainty, launch status and
+screenshot file hashes in private state. They omit typed text and
+command arguments, expose bounded capacity, and checkpoint on orderly helper
+shutdown. Lost transport replies and truncated history remain uncertain. A
+checkpoint failure adds `evidence_error` without turning completed input into a
+retryable failure. No capture is created automatically by recording.
+
+`desktop evidence verify ARTIFACT`, offline crop/point-preview/excerpt/export/
+timeline tools and `desktop audio analyze WAV` work without `--native` or a live
+helper. Finalization can inventory the configured Debian owner's development
+task records, including [supervised Debian jobs](debian-development.md). Legacy
+`desktop exec` still tracks only its immediate child; recording does not add
+process ownership. Live audio capture and conditional
+execution retain their native backend requirements.
 
 ## Small Geany check
 

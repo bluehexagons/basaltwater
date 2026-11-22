@@ -59,7 +59,7 @@ Set-Content -LiteralPath (Join-Path $evidence 'doctor-exit.txt') -Value $doctorE
 
 An installed current CLI also supports `basaltw doctor --json`. A healthy
 report establishes selected executable health and SDK/desktop discovery, not
-provider login or project correctness. See the [doctor scope](windows.md#verify-this-account).
+provider login or project correctness. See the [doctor scope](windows-first-checks.md#verify-this-account).
 
 Run the complete offline suite after Basaltwater setup/diagnostic changes.
 It uses temporary state and mocked installers and requires Python 3.11+:

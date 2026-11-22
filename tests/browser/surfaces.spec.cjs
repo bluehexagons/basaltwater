@@ -104,13 +104,14 @@ const test = base.extend({
       }
     }
   },
-  diagnostics: [async ({ page, context }, use, info) => {
+  diagnostics: [async ({ page, context, developmentServer }, use, info) => {
     const allowed = new Set();
     const expectedConsole = [];
     const errors = [];
     const failures = [];
     const downloads = new Set();
     const optional = [];
+    const cancelledStatus = [];
     const authChallenges = new Set();
     await context.route('**/*', route => {
       const url = new URL(route.request().url());
@@ -126,7 +127,7 @@ const test = base.extend({
           && !expectedConsole.some(prefix => message.text().includes(prefix))) errors.push(`Console: ${message.text()}`);
     });
     page.on('requestfailed', request => {
-      failures.push({ url: request.url(), error: request.failure()?.errorText });
+      failures.push({ url: request.url(), method: request.method(), error: request.failure()?.errorText });
     });
     page.on('download', download => downloads.add(download.url()));
     page.on('response', response => {
@@ -139,6 +140,16 @@ const test = base.extend({
     });
     await use({ allowed, expectedConsole });
     for (const failure of failures) {
+      // The status controller cancels passive reads on navigation, pause and
+      // hidden tabs. status.spec.cjs verifies cancellation and resumption.
+      const panelStatus = /^\/api\/panel\/v1\/(host|web|audit|proxmox|agents|storage|services)$/.test(new URL(failure.url).pathname);
+      // Navigation can also supersede the development-only reload script or its status read.
+      const developmentRefresh = developmentServer && ['/__dev__/status', '/__dev__/reload.js']
+        .some(route => failure.url === developmentServer.url + route);
+      if (failure.method === 'GET' && (panelStatus || developmentRefresh) && /ERR_ABORTED|NS_BINDING_ABORTED/.test(failure.error)) {
+        cancelledStatus.push(failure);
+        continue;
+      }
       // Browsers abort the document navigation when handing it to the
       // download manager. The download test independently verifies completion.
       if (new URL(failure.url).pathname === '/favicon.svg' && /ERR_ABORTED|NS_BINDING_ABORTED/.test(failure.error)) {
@@ -153,6 +164,7 @@ const test = base.extend({
       else errors.push(`Unresolved authentication challenge: ${url}`);
     }
     await info.attach('optional-favicon-diagnostics', { body: JSON.stringify(optional), contentType: 'application/json' });
+    await info.attach('cancelled-status-reads', { body: JSON.stringify(cancelledStatus), contentType: 'application/json' });
     await info.attach('required-request-and-console-errors', { body: JSON.stringify(errors), contentType: 'application/json' });
     expect(errors, 'No unexpected console errors or failed required requests').toEqual([]);
   }, { auto: true }],
@@ -231,13 +243,10 @@ test('certificate shortcuts open details, select browser scripts and focus outpu
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
 });
 
-test('panel forged CSRF rejection and CA download', async ({ page, diagnostics }, info) => {
+test('panel retired updater rejection and CA download', async ({ page, diagnostics }, info) => {
   await page.goto(urls.panel);
-  const before = await (await page.request.get(urls.panel + '/__fixture__/state')).json();
   diagnostics.allowed.add(urls.panel + '/actions/t3-update');
-  expect((await postForm(page, '/actions/t3-update', { csrf: 'forged' })).status).toBe(403);
-  const after = await (await page.request.get(urls.panel + '/__fixture__/state')).json();
-  expect(after.updates).toBe(before.updates);
+  expect((await postForm(page, '/actions/t3-update', { csrf: 'forged' })).status).toBe(404);
   await page.goto(urls.panel);
   await page.locator('.trust-disclosure > summary').click();
   const downloadEvent = page.waitForEvent('download');
@@ -411,15 +420,13 @@ test('panel development forms, scenarios, reload, reset and cleanup', async ({ p
     }).toBe(1);
     await sample.getByRole('link', { name: 'View latest result', exact: true }).click();
     await expect(page.locator('.agent-run[open]')).toContainText('Synthetic execution; no provider was contacted');
-    // The full development fixture exposes Agents and its real update form;
-    // the TLS fixture above intentionally has no installed agent features.
-    await page.goto(settings.url + '/agents?view=diagnostics');
-    const updated = page.waitForResponse(response => response.url() === settings.url + '/actions/t3-update'
-      && response.request().method() === 'POST');
-    await page.getByRole('button', { name: 'Update T3 Code', exact: true }).click();
-    expect((await updated).status()).toBe(303);
-    await expect(page).toHaveURL(settings.url + '/agents?view=diagnostics');
-    await expect(page.getByRole('region', { name: 'T3 Code maintenance', exact: true })).toContainText('Synthetic update completed');
+    await page.goto(settings.url + '/agents?view=t3');
+    const workspace = page.getByRole('link', { name: 'Open T3 Code ↗', exact: true });
+    await expect(workspace).toHaveAttribute('href', 'https://coding.example.test:8445/');
+    await expect(workspace).toHaveAttribute('rel', 'noopener noreferrer');
+    await expect(workspace).toHaveAttribute('target', '_blank');
+    await expect(page.getByText('Manage T3 updates in its environment settings.', { exact: false })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Update T3 Code', exact: true })).toHaveCount(0);
     for (const route of ['/agents', '/agents?view=tasks', '/agent-tools', '/agent-inbox', '/maintenance-agent', '/admin', '/publishing',
                          '/services?load=1', '/jobs?load=1', '/logs?load=1', '/credentials']) {
       const response = await page.goto(settings.url + route);
@@ -614,7 +621,8 @@ test.describe('agent task workflow', () => {
     await page.setViewportSize({ width: 320, height: 900 });
     const tabs = page.getByRole('navigation', { name: 'Agents', exact: true });
     for (const [label, route, heading] of [
-      ['Tasks', '/agents?view=tasks', 'Prompt tasks'],
+      ['T3 Code', '/agents?view=t3', 'T3 Code'],
+      ['Independent tasks', '/agents?view=tasks', 'Prompt tasks'],
       ['Run history', '/agents?view=history', 'Run history'],
       ['Agent tools', '/agent-tools', 'Agent tools'],
       ['Inbox', '/agent-inbox', 'Agent inbox'],
@@ -767,7 +775,7 @@ test.describe('agent task workflow', () => {
     test.setTimeout(90000);
     await page.goto(dev.url + '/agents');
     await expect(page.getByRole('heading', { name: 'Agents dashboard', exact: true })).toBeVisible();
-    await page.getByRole('navigation', { name: 'Agents', exact: true }).getByRole('link', { name: 'Tasks', exact: true }).click();
+    await page.getByRole('navigation', { name: 'Agents', exact: true }).getByRole('link', { name: 'Independent tasks', exact: true }).click();
     await expect(page).toHaveURL(dev.url + '/agents?view=tasks');
     const sample = page.getByRole('article', { name: 'Example inspection', exact: true });
     await expect(sample.getByRole('button', { name: 'Run once', exact: true })).toBeVisible();
@@ -847,11 +855,12 @@ test.describe('agent task workflow', () => {
     await expect(page).toHaveURL(selectedRun);
     await expect(page.locator('.agent-run[open]')).toContainText('Synthetic execution; no provider was contacted');
     await page.locator('header').getByRole('link', { name: 'Templates', exact: true }).click();
-    await page.getByText(/^Repository work · \d+ templates$/).click();
-    await page.getByRole('link', { name: /^Repair failing checks/ }).click();
-    await expect(page.getByLabel('Working directory', { exact: true })).toHaveValue('');
+    await expect(page.getByText(/^Repository work/)).toHaveCount(0);
+    await expect(page.getByRole('link', { name: /^Repair failing checks/ })).toHaveCount(0);
+    await page.getByRole('link', { name: /^Check backup health/ }).click();
+    await expect(page.getByLabel('Working directory', { exact: true })).toHaveValue(home);
     await expect(page.getByRole('combobox', { name: 'Execution mode', exact: true })).toHaveValue('workspace');
-    await expect(page.getByLabel('Allow temporary file writes', { exact: false })).toBeChecked();
+    await expect(page.getByLabel('Allow temporary file writes', { exact: false })).not.toBeChecked();
 
     for (const colorScheme of ['light', 'dark']) {
       await page.emulateMedia({ colorScheme });
@@ -1207,20 +1216,28 @@ test.describe('Shares & Data', () => {
     const review = page.locator('.data-review');
     await expect(review).toContainText('Only accept content you have independently confirmed is correct');
     await expect(review).toContainText('/srv/archive/photos/holiday.jpg');
+    const requestApproval = review.getByRole('button', { name: 'Request approval', exact: true });
     const recoveryTicket = await review.locator('input[name=ticket]').inputValue();
     await review.getByLabel('Type ACCEPT CURRENT CONTENT to confirm', { exact: true }).fill('wrong');
     diagnostics.allowed.add(dev.url + '/actions/data/submit');
     diagnostics.expectedConsole.push('the server responded with a status of 409');
     const refused = page.waitForResponse(response => response.url() === dev.url + '/actions/data/submit');
-    await review.getByRole('button', { name: 'Accept current content', exact: true }).click();
+    await requestApproval.click();
     expect((await refused).status()).toBe(409);
     await expect(page.getByRole('alert')).toContainText('could not be confirmed');
     await expect(review.locator('input[name=ticket]')).toHaveValue(recoveryTicket);
     await review.getByLabel('Type ACCEPT CURRENT CONTENT to confirm', { exact: true }).fill('ACCEPT CURRENT CONTENT');
     diagnostics.allowed.delete(dev.url + '/actions/data/submit');
-    await review.getByRole('button', { name: 'Accept current content', exact: true }).click();
-    await expect(page.getByRole('region', { name: 'Recovery activity', exact: true })).toContainText('dispatched');
-    await expect(page.getByRole('button', { name: 'Cancel recovery request', exact: true })).toHaveCount(0);
+    await requestApproval.click();
+    const activity = page.getByRole('region', { name: 'Recovery activity', exact: true });
+    const recovery = activity.getByRole('article').filter({
+      has: page.getByRole('heading', { name: 'Accept current content', exact: true }),
+    });
+    await expect(recovery.getByText('Dispatch:', { exact: false })).toContainText('pending');
+    await expect(recovery.getByRole('link', { name: 'Open recovery approval', exact: false })).toBeVisible();
+    await recovery.getByRole('button', { name: 'Cancel recovery request', exact: true }).click();
+    await expect(recovery.getByText('Dispatch:', { exact: false })).toContainText('cancelled');
+    await expect(recovery.getByRole('button', { name: 'Cancel recovery request', exact: true })).toHaveCount(0);
     const firstFinding = page.locator('.data-finding').first();
     await firstFinding.locator('summary').click();
     await firstFinding.getByLabel('Recovery action', { exact: true }).selectOption('verify');
@@ -1551,7 +1568,7 @@ test.describe('storage dashboard', () => {
   });
 });
 
-for (const surface of ['connect', 'pairing', 'approval', 'desktop', 'console']) {
+for (const surface of ['pairing', 'approval', 'desktop', 'console']) {
   const guacamole = ['desktop', 'console'].includes(surface);
   test.describe(`${surface} development`, () => {
     test.use({ developmentSurface: guacamole && !process.env.BASALTW_BROWSER_GUACAMOLE_ASSETS ? null : surface });
@@ -1560,17 +1577,20 @@ for (const surface of ['connect', 'pairing', 'approval', 'desktop', 'console']) 
       test.setTimeout(90000);
       const entry = dev.url + dev.entry;
       const toolbar = page.locator('#panel-development');
+      const waitForGeneration = async () => {
+        await expect(toolbar).toHaveAttribute('data-generation', dev.generation());
+        await page.waitForLoadState('load');
+      };
       const reload = async () => {
         await dev.restart(() => fs.writeFileSync(dev.watched, crypto.randomUUID()));
         await expect(page.locator('#panel-reload')).toBeVisible();
         await page.locator('#panel-reload').click();
-        await expect(toolbar).toHaveAttribute('data-generation', dev.generation());
+        await waitForGeneration();
       };
       const scenario = async name => {
         await toolbar.getByLabel('Scenario').selectOption(name);
         await dev.restart(() => toolbar.getByRole('button', { name: 'Switch scenario' }).click());
-        await page.waitForLoadState('load');
-        await page.goto(entry);
+        await waitForGeneration();
         await expect(toolbar.getByLabel('Scenario')).toHaveValue(name);
       };
       await page.goto(entry);
@@ -1578,46 +1598,14 @@ for (const surface of ['connect', 'pairing', 'approval', 'desktop', 'console']) 
       await page.setViewportSize({ width: 390, height: 900 });
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
       await page.setViewportSize({ width: 1440, height: 900 });
-      if (surface === 'connect') {
-        await page.getByLabel('Start Connect automatically').uncheck();
-        await page.getByRole('button', { name: 'Apply setting' }).click();
-        await expect(page.getByLabel('Start Connect automatically')).not.toBeChecked();
-        await page.getByRole('button', { name: 'Start authorization' }).click();
-        await expect(page.getByText('Authorization in progress', { exact: true })).toBeVisible();
-        const authorizationLink = page.locator('.output pre a');
-        await expect(authorizationLink).toHaveAttribute('href', dev.url + '/__dev__/authorize');
-        const contrast = await authorizationLink.evaluate(link => {
-          const luminance = color => {
-            const values = color.match(/[\d.]+/g).slice(0, 3).map(Number).map(value => {
-              const channel = value / 255;
-              return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
-            });
-            return values[0] * 0.2126 + values[1] * 0.7152 + values[2] * 0.0722;
-          };
-          const foreground = luminance(getComputedStyle(link).color);
-          const background = luminance(getComputedStyle(link.closest('pre')).backgroundColor);
-          return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
-        });
-        expect(contrast, 'Authorization URL has readable contrast').toBeGreaterThanOrEqual(4.5);
-        await authorizationLink.focus();
-        await page.keyboard.press('Tab');
-        await page.keyboard.press('Shift+Tab');
-        await expect(authorizationLink).toBeFocused();
-        expect(await authorizationLink.evaluate(link => getComputedStyle(link).outlineWidth)).toBe('3px');
-        await page.getByLabel('Response or authorization code').fill('unsaved-sample');
-        await dev.restart(() => fs.writeFileSync(dev.watched, 'authorization in progress'));
-        await expect(page.locator('#panel-reload')).toBeVisible();
-        await expect(page.getByLabel('Response or authorization code')).toHaveValue('unsaved-sample');
-        await page.locator('#panel-reload').click();
-        await expect(page.getByText('Authorization in progress', { exact: true })).toBeVisible();
-        await page.getByLabel('Response or authorization code').fill('sample-response');
-        await page.getByRole('button', { name: 'Send response' }).click();
-        await expect(page.getByText('Authorization completed', { exact: true })).toBeVisible();
-        // Automatic refresh after a successful POST must navigate with GET.
-        await dev.restart(() => fs.writeFileSync(dev.watched, 'completed'));
-        await expect.poll(() => toolbar.getAttribute('data-generation')).toBe(dev.generation());
-        await expect(page.getByText('Authorization completed', { exact: true })).toBeVisible();
-      } else if (surface === 'pairing') {
+      if (surface === 'pairing') {
+        const workspace = page.getByRole('link', { name: 'Open T3 Code ↗', exact: true });
+        await expect(workspace).toHaveAttribute('href', dev.url + '/');
+        await expect(workspace).toHaveAttribute('target', '_blank');
+        await expect(workspace).toHaveAttribute('rel', 'noopener noreferrer');
+        await expect(page.locator('pre')).toContainText('t3 connect link');
+        await expect(page.locator('pre')).toContainText('t3 service restart');
+        await expect(page.locator('form[action="/connect/t3code"]')).toHaveCount(0);
         await page.getByRole('button', { name: 'Pair another T3 Code client' }).click();
         await page.waitForLoadState('load');
         await expect(page.getByRole('heading', { name: 'Continue in T3 Code' })).toBeVisible();
@@ -1683,9 +1671,7 @@ for (const surface of ['connect', 'pairing', 'approval', 'desktop', 'console']) 
         await reload();
       }
       await dev.restart(() => toolbar.getByRole('button', { name: 'Reset sample data' }).click());
-      await page.waitForLoadState('load');
-      await page.goto(entry);
-      if (surface === 'connect') await expect(page.getByText('Authorization completed', { exact: true })).toHaveCount(0);
+      await waitForGeneration();
       if (surface === 'approval') {
         await page.getByRole('link', { name: 'development-only' }).first().click();
         await expect(page.getByRole('button', { name: 'Approve once', exact: true })).toBeVisible();
@@ -1696,10 +1682,7 @@ for (const surface of ['connect', 'pairing', 'approval', 'desktop', 'console']) 
       }
       if (surface === 'approval') diagnostics.allowed.add(entry);
       await scenario('degraded');
-      if (surface === 'connect') {
-        await page.getByRole('button', { name: 'Start authorization' }).click();
-        await expect(page.getByText('Authorization did not complete', { exact: true })).toBeVisible();
-      } else if (surface === 'pairing') {
+      if (surface === 'pairing') {
         diagnostics.allowed.add(dev.url + '/pair/t3code');
         await page.getByRole('button', { name: 'Pair another T3 Code client' }).click();
         await expect(page.getByRole('heading', { name: 'Could not create pairing link' })).toBeVisible();

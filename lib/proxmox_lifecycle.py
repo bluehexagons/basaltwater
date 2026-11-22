@@ -51,7 +51,7 @@ def guest_startup(config: SetupConfig) -> str | None:
     ) or None
 
 
-def _parse_startup(value: str) -> dict[str, str]:
+def parse_guest_startup(value: str) -> dict[str, str]:
     """Preserve existing members, including Proxmox's implicit order syntax."""
     settings: dict[str, str] = {}
     for item in value.split(",") if value else []:
@@ -109,13 +109,13 @@ def reconcile_guest_lifecycle(
     if current.get("lock"):
         raise ProvisionError(f"Guest {vmid} is locked: {current['lock']}")
     if startup is not None:
-        merged = _parse_startup(current.get("startup", ""))
-        merged.update(_parse_startup(startup))
+        merged = parse_guest_startup(current.get("startup", ""))
+        merged.update(parse_guest_startup(startup))
         options["startup"] = ",".join(f"{key}={value}" for key, value in merged.items())
 
     def matches(observed: dict[str, str], key: str, desired: str) -> bool:
         if key == "startup":
-            return _parse_startup(observed.get(key, "")) == _parse_startup(desired)
+            return parse_guest_startup(observed.get(key, "")) == parse_guest_startup(desired)
         return observed.get(key, "0") == desired
 
     changes = {key: value for key, value in options.items() if not matches(current, key, value)}

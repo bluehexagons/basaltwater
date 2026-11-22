@@ -60,7 +60,7 @@ basaltw agent update HOST USER --tool codex --dry-run
 ```
 
 Repeat without `--dry-run` to apply. This updates terminal-agent executables;
-T3 uses its [own updater](t3-code.md#service-and-update-model), and managed
+T3 uses its [own updater](t3-service.md#service-and-update-model), and managed
 skills refresh through saved setup. Maintenance holds protect active work from
 scheduled host maintenance; see [recurring maintenance](../operations/maintenance.md#agent-maintenance-holds).
 

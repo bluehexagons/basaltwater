@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+import io
+import json
 import os
 import shlex
 import tempfile
 import unittest
+from contextlib import redirect_stderr
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from common.git_credential_steps import (
+    _apply_git_configuration,
+    _main,
     _managed_git_config,
     configure_git_https_credentials,
 )
@@ -24,6 +30,7 @@ from lib.git_credentials import (
 )
 from lib.validation import validate_agent_git_settings
 from plugins.common import extend_agent_steps
+from web.service_storage import StorageBoundaryError
 
 
 ORIGIN = "https://192.168.0.51:3000"
@@ -159,7 +166,7 @@ class TestGitCredentialConfiguration(unittest.TestCase):
         reconstructed = "\n".join(config.to_setup_command())
         self.assertIn(f"--git-credential {ORIGIN} gitadmin", reconstructed)
         self.assertIn("--git-ca-certificate", reconstructed)
-        self.assertIn("--credential gitadmin [REDACTED]", reconstructed)
+        self.assertNotIn("--credential gitadmin", reconstructed)
         self.assertNotIn("super-secret-value", reconstructed)
 
     def test_runtime_resolution_uses_workspace_password_and_stages_ca(self) -> None:
@@ -168,7 +175,7 @@ class TestGitCredentialConfiguration(unittest.TestCase):
             with open(source, "w", encoding="utf-8") as file_obj:
                 file_obj.write("placeholder")
             os.chmod(source, 0o600)
-            set_workspace_credential("gitadmin", "chosen-password", workspace)
+            set_workspace_credential("gitadmin", "chosen-password", workspace, service="git", destination=ORIGIN)
             config = _config(
                 git_credentials=[[ORIGIN, "gitadmin"]],
                 git_ca_certificates=[[ORIGIN, source]],
@@ -184,8 +191,8 @@ class TestGitCredentialConfiguration(unittest.TestCase):
                 runtime = prepare_runtime_config(config, workspace)
 
         self.assertEqual(
-            runtime.share_credentials,
-            [["gitadmin", "chosen-password"]],
+            runtime.resolved_credentials,
+            [["git", ORIGIN, "gitadmin", "chosen-password"]],
         )
         self.assertIsNone(runtime.git_ca_certificates)
         self.assertEqual(runtime.git_ca_pems[0][0], ORIGIN)
@@ -205,8 +212,8 @@ class TestGitCredentialConfiguration(unittest.TestCase):
         self.assertEqual(parsed_remote.git_credentials, [[ORIGIN, "gitadmin"]])
         self.assertEqual(parsed_remote.git_ca_pems, runtime.git_ca_pems)
         self.assertEqual(
-            parsed_remote.share_credentials,
-            [["gitadmin", "chosen-password"]],
+            parsed_remote.resolved_credentials,
+            runtime.resolved_credentials,
         )
 
     def test_runtime_fetches_ca_over_host_key_verified_ssh(self) -> None:
@@ -264,6 +271,25 @@ class TestGitCredentialConfiguration(unittest.TestCase):
                     _config(git_credentials=[[ORIGIN, "gitadmin"]]),
                     workspace,
                 )
+
+    def test_target_git_validation_rejects_username_only_password(self) -> None:
+        config = _config(
+            git_credentials=[[ORIGIN, "gitadmin"]],
+            share_credentials=[["gitadmin", "unscoped-value"]],
+        )
+        with self.assertRaisesRegex(ValueError, "Missing resolved credential for Git user"):
+            validate_agent_git_settings(config)
+
+    def test_invalid_private_credential_argument_omits_secret_from_error(self) -> None:
+        parser = create_setup_argument_parser("remote", for_remote=True)
+        stderr = io.StringIO()
+        with redirect_stderr(stderr), self.assertRaises(SystemExit):
+            parser.parse_args([
+                "--resolved-credential",
+                '["git", "invalid-origin", "gitadmin", "private-fixture"]',
+            ])
+        self.assertIn("Invalid resolved credential", stderr.getvalue())
+        self.assertNotIn("private-fixture", stderr.getvalue())
 
     def test_validation_requires_git_policy_and_rejects_github_override(self) -> None:
         with self.assertRaisesRegex(ValueError, "--git-access"):
@@ -323,6 +349,53 @@ class TestGitCredentialConfiguration(unittest.TestCase):
 
 
 class TestTargetGitCredentialSetup(unittest.TestCase):
+    def _configure(self, home: str, config: SetupConfig) -> None:
+        account = SimpleNamespace(pw_dir=home, pw_uid=os.getuid())
+
+        def dispatch(command, *, input_data, cwd, display_cmd):
+            self.assertEqual(command[:4], ["/usr/sbin/runuser", "-u", config.username, "--"])
+            self.assertEqual(command[4:7], ["/usr/bin/python3", "-I", "-B"])
+            self.assertEqual(command[-1], config.username)
+            self.assertEqual(cwd, "/")
+            payload = json.loads(input_data)
+            for line in payload[2]:
+                self.assertNotIn(line, " ".join(command))
+                self.assertNotIn(line, display_cmd)
+            _apply_git_configuration(account, *payload)
+
+        with (
+            patch("common.git_credential_steps.run", side_effect=dispatch),
+            patch("common.git_credential_steps.is_dry_run", return_value=False),
+        ):
+            configure_git_https_credentials(config)
+
+    def test_worker_requires_selected_account(self) -> None:
+        with (
+            patch("common.git_credential_steps.pwd.getpwnam", return_value=SimpleNamespace(pw_uid=os.getuid() + 1)),
+            patch("common.git_credential_steps._apply_git_configuration") as apply,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "must run as the selected account"):
+                _main("agent")
+        apply.assert_not_called()
+
+    def test_nested_mount_stops_configuration_and_removal(self) -> None:
+        for clear in (False, True):
+            with self.subTest(clear=clear), tempfile.TemporaryDirectory() as home:
+                managed = Path(home) / ".config" / "basaltwater" / "git"
+                managed.mkdir(parents=True)
+                sentinel = managed / "credentials"
+                sentinel.write_text("existing", encoding="utf-8")
+                with (
+                    patch("common.git_credential_steps.reject_nested_mounts",
+                          side_effect=StorageBoundaryError("Nested mount")) as preflight,
+                    patch("common.git_credential_steps._run_git") as git,
+                ):
+                    with self.assertRaisesRegex(StorageBoundaryError, "Nested mount"):
+                        self._configure(home, _config(clear_git_credentials=clear))
+                    preflight.assert_called_once_with(managed, include_root=True)
+                    git.assert_not_called()
+                self.assertEqual(sentinel.read_text(encoding="utf-8"), "existing")
+
     def test_helper_argv_survives_config_and_shell_quoting(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             for home_name in ("agent home", "agent's home", 'agent "home" \\ $HOME'):
@@ -347,17 +420,10 @@ class TestTargetGitCredentialSetup(unittest.TestCase):
                     )
 
     def _clear(self, home: str, run=None) -> None:
-        account = SimpleNamespace(
-            pw_dir=home, pw_uid=os.getuid(), pw_gid=os.getgid()
-        )
-        with (
-            patch("common.git_credential_steps._target_account", return_value=account),
-            patch("common.git_credential_steps._run_as_login_user", side_effect=run) as command,
-            patch("common.git_credential_steps.is_dry_run", return_value=False),
-        ):
+        with patch("common.git_credential_steps._run_git", side_effect=run) as command:
             if run is None:
                 command.return_value = SimpleNamespace(returncode=5, stdout="", stderr="")
-            configure_git_https_credentials(_config(clear_git_credentials=True))
+            self._configure(home, _config(clear_git_credentials=True))
 
     def test_clear_absent_path_does_not_create_directories(self) -> None:
         with tempfile.TemporaryDirectory() as home:
@@ -471,12 +537,11 @@ class TestTargetGitCredentialSetup(unittest.TestCase):
             self.assertTrue(os.path.isdir(managed))
             self.assertEqual(os.listdir(managed + ".original"), [])
 
-    def _run_as_user(self, username, home, command, **_kwargs):
-        self.assertEqual(username, "agent")
-        self.assertEqual(home, self.home)
-        if "--get credential." in command:
+    def _run_as_user(self, account, *arguments):
+        self.assertEqual(account.pw_dir, self.home)
+        if "--get" in arguments and arguments[-1].startswith("credential."):
             return SimpleNamespace(returncode=0, stdout="gitadmin\n", stderr="")
-        if "--get http." in command:
+        if "--get" in arguments and arguments[-1].startswith("http."):
             from lib.git_credentials import git_ca_filename
 
             ca_path = os.path.join(
@@ -488,7 +553,7 @@ class TestTargetGitCredentialSetup(unittest.TestCase):
                 git_ca_filename(ORIGIN),
             )
             return SimpleNamespace(returncode=0, stdout=ca_path + "\n", stderr="")
-        if "--unset-all" in command:
+        if "--unset-all" in arguments:
             return SimpleNamespace(returncode=5, stdout="", stderr="")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
@@ -505,28 +570,24 @@ class TestTargetGitCredentialSetup(unittest.TestCase):
             stale_ca = os.path.join(stale_ca_dir, "stale.pem")
             with open(stale_ca, "w", encoding="utf-8") as file_obj:
                 file_obj.write("stale")
-            account = SimpleNamespace(
-                pw_dir=self.home,
-                pw_uid=os.getuid(),
-                pw_gid=os.getgid(),
-            )
+            second_origin = "https://git.example.test:8443"
             config = _config(
-                git_credentials=[[ORIGIN, "gitadmin"]],
+                git_credentials=[[ORIGIN, "gitadmin"], [second_origin, "gitadmin"]],
                 git_ca_pems=[[ORIGIN, "encoded"]],
-                share_credentials=[["gitadmin", "p@ss word"]],
+                resolved_credentials=[
+                    ["git", ORIGIN, "gitadmin", "p@ss word"],
+                    ["git", second_origin, "gitadmin", "second-password"],
+                ],
             )
             pem = (
                 "-----BEGIN CERTIFICATE-----\nQQ==\n"
                 "-----END CERTIFICATE-----\n"
             )
             with (
-                patch("common.git_credential_steps._target_account", return_value=account),
-                patch("common.git_credential_steps._run_as_login_user", side_effect=self._run_as_user),
+                patch("common.git_credential_steps._run_git", side_effect=self._run_as_user),
                 patch("common.git_credential_steps.decode_git_ca_pem", return_value=pem),
-                patch("common.git_credential_steps.os.chown"),
-                patch("common.git_credential_steps.is_dry_run", return_value=False),
             ):
-                configure_git_https_credentials(config)
+                self._configure(self.home, config)
 
             managed = os.path.join(self.home, ".config", "basaltwater", "git")
             credential_path = os.path.join(managed, "credentials")
@@ -537,6 +598,7 @@ class TestTargetGitCredentialSetup(unittest.TestCase):
                 include_content = file_obj.read()
 
             self.assertIn("gitadmin:p%40ss%20word@192.168.0.51:3000", credential_content)
+            self.assertIn("gitadmin:second-password@git.example.test:8443", credential_content)
             self.assertNotIn("p@ss word", include_content)
             self.assertIn(f'[credential "{ORIGIN}"]', include_content)
             self.assertIn("helper =", include_content)
@@ -554,19 +616,7 @@ class TestTargetGitCredentialSetup(unittest.TestCase):
             unrelated = os.path.join(self.home, "keep.txt")
             with open(unrelated, "w", encoding="utf-8") as file_obj:
                 file_obj.write("keep")
-            account = SimpleNamespace(
-                pw_dir=self.home,
-                pw_uid=os.getuid(),
-                pw_gid=os.getgid(),
-            )
-            with (
-                patch("common.git_credential_steps._target_account", return_value=account),
-                patch("common.git_credential_steps._run_as_login_user", side_effect=self._run_as_user),
-                patch("common.git_credential_steps.is_dry_run", return_value=False),
-            ):
-                configure_git_https_credentials(
-                    _config(clear_git_credentials=True)
-                )
+            self._clear(self.home)
 
             self.assertEqual(os.listdir(managed), [])
             self.assertTrue(os.path.isfile(unrelated))
@@ -576,24 +626,14 @@ class TestTargetGitCredentialSetup(unittest.TestCase):
             outside = os.path.join(self.home, "outside")
             os.mkdir(outside)
             os.symlink(outside, os.path.join(self.home, ".config"))
-            account = SimpleNamespace(
-                pw_dir=self.home,
-                pw_uid=os.getuid(),
-                pw_gid=os.getgid(),
-            )
-            with (
-                patch("common.git_credential_steps._target_account", return_value=account),
-                patch("common.git_credential_steps._run_as_login_user", side_effect=self._run_as_user),
-                patch("common.git_credential_steps.os.chown"),
-                patch("common.git_credential_steps.is_dry_run", return_value=False),
-            ):
-                with self.assertRaisesRegex(RuntimeError, "unsafe managed Git"):
-                    configure_git_https_credentials(
-                        _config(
-                            git_credentials=[[ORIGIN, "gitadmin"]],
-                            share_credentials=[["gitadmin", "password"]],
-                        )
+            with self.assertRaisesRegex(RuntimeError, "unsafe managed Git"):
+                self._configure(
+                    self.home,
+                    _config(
+                        git_credentials=[[ORIGIN, "gitadmin"]],
+                        resolved_credentials=[["git", ORIGIN, "gitadmin", "password"]],
                     )
+                )
 
 
 if __name__ == "__main__":

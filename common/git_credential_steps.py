@@ -4,14 +4,17 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
+import json
 import os
+from pathlib import Path
 import pwd
 import shlex
 import shutil
 import stat
+from subprocess import CompletedProcess
+import sys
 from urllib.parse import quote, urlsplit, urlunsplit
 
-from common.common_steps import _run_as_login_user
 from lib.atomic_io import write_text_atomic
 from lib.config import SetupConfig
 from lib.credentials import get_runtime_credential
@@ -20,8 +23,10 @@ from lib.git_credentials import (
     git_ca_filename,
     normalize_git_https_origin,
 )
-from lib.remote_utils import is_dry_run
+from lib.remote_utils import is_dry_run, run
 from lib.setup_directories import directory_fd
+from lib.validators import validate_username
+from web.service_storage import reject_nested_mounts
 
 
 _MANAGED_RELATIVE_DIR = os.path.join(".config", "basaltwater", "git")
@@ -34,44 +39,35 @@ def _git_config_quote(value: str) -> str:
     return f'"{escaped}"'
 
 
-def _target_account(config: SetupConfig) -> pwd.struct_passwd:
-    try:
-        return pwd.getpwnam(config.username)
-    except KeyError as exc:
-        raise RuntimeError(f"Target user does not exist: {config.username}") from exc
-
-
 def _ensure_user_owned_directory(
     path: str,
     account: pwd.struct_passwd,
     *,
     mode: int,
 ) -> None:
-    """Create one directory chain without following privileged symlinks."""
+    """Create one private directory chain as the target account."""
     home = os.path.abspath(account.pw_dir)
     target = os.path.abspath(path)
     if os.path.commonpath((home, target)) != home:
         raise RuntimeError(f"Managed Git credential path is outside user home: {path}")
-    if os.path.islink(home) or not os.path.isdir(home):
-        raise RuntimeError(f"Target user home is unsafe: {home}")
+    with directory_fd(home) as descriptor:
+        if os.fstat(descriptor).st_uid != account.pw_uid:
+            raise RuntimeError(f"Refusing managed Git home owned by another user: {home}")
 
     current = home
     relative = os.path.relpath(target, home)
     for component in relative.split(os.path.sep):
         current = os.path.join(current, component)
-        if os.path.lexists(current):
-            if os.path.islink(current) or not os.path.isdir(current):
-                raise RuntimeError(
-                    f"Refusing unsafe managed Git credential directory: {current}"
-                )
-            if os.stat(current).st_uid != account.pw_uid:
-                raise RuntimeError(
-                    f"Refusing managed Git credential directory owned by another user: {current}"
-                )
-        else:
-            os.mkdir(current, mode=mode)
-            os.chown(current, account.pw_uid, account.pw_gid)
-    os.chmod(target, mode)
+        try:
+            with directory_fd(current, create=True, mode=mode) as descriptor:
+                if os.fstat(descriptor).st_uid != account.pw_uid:
+                    raise RuntimeError(
+                        f"Refusing managed Git credential directory owned by another user: {current}"
+                    )
+                if current == target:
+                    os.fchmod(descriptor, mode)
+        except ValueError as exc:
+            raise RuntimeError(f"Refusing unsafe managed Git credential directory: {current}") from exc
 
 
 def _write_user_file(
@@ -81,51 +77,48 @@ def _write_user_file(
     *,
     mode: int,
 ) -> None:
-    if os.path.lexists(path):
-        if os.path.islink(path) or not os.path.isfile(path):
-            raise RuntimeError(f"Refusing unsafe managed Git credential file: {path}")
-        if os.stat(path).st_uid != account.pw_uid:
-            raise RuntimeError(
-                f"Refusing managed Git credential file owned by another user: {path}"
-            )
-    write_text_atomic(path, content, mode=mode)
-    os.chown(path, account.pw_uid, account.pw_gid)
+    with directory_fd(os.path.dirname(path)) as descriptor:
+        target = Path(f"/proc/self/fd/{descriptor}") / os.path.basename(path)
+        try:
+            info = target.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            if not stat.S_ISREG(info.st_mode):
+                raise RuntimeError(f"Refusing unsafe managed Git credential file: {path}")
+            if info.st_uid != account.pw_uid:
+                raise RuntimeError(f"Refusing managed Git credential file owned by another user: {path}")
+        write_text_atomic(str(target), content, mode=mode)
+
+
+def _run_git(account: pwd.struct_passwd, *arguments: str) -> CompletedProcess[str]:
+    return run(
+        ["/usr/bin/git", "config", *arguments],
+        cwd=account.pw_dir,
+        env={"HOME": account.pw_dir, "USER": account.pw_name, "PATH": "/usr/bin:/bin"},
+        check=False,
+        capture_output=True,
+        # Retain the worker's process group so setup can cancel both processes.
+        preserve_terminal=True,
+    )
 
 
 def _remove_managed_include(
-    config: SetupConfig,
     account: pwd.struct_passwd,
     include_path: str,
 ) -> None:
-    command = (
-        "git config --global --fixed-value --unset-all include.path "
-        f"{shlex.quote(include_path)}"
-    )
-    result = _run_as_login_user(
-        config.username,
-        account.pw_dir,
-        command,
-        check=False,
-        capture_output=True,
-    )
+    result = _run_git(account, "--global", "--fixed-value", "--unset-all", "include.path", include_path)
     if result.returncode not in {0, 1, 5}:
         detail = (result.stderr or result.stdout or "git config failed").strip()
         raise RuntimeError(f"Could not reconcile managed Git config include: {detail}")
 
 
 def _install_managed_include(
-    config: SetupConfig,
     account: pwd.struct_passwd,
     include_path: str,
 ) -> None:
-    _remove_managed_include(config, account, include_path)
-    result = _run_as_login_user(
-        config.username,
-        account.pw_dir,
-        f"git config --global --add include.path {shlex.quote(include_path)}",
-        check=False,
-        capture_output=True,
-    )
+    _remove_managed_include(account, include_path)
+    result = _run_git(account, "--global", "--add", "include.path", include_path)
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "git config failed").strip()
         raise RuntimeError(f"Could not install managed Git config include: {detail}")
@@ -227,24 +220,11 @@ def configure_git_https_credentials(config: SetupConfig) -> None:
         print(f"  [DRY-RUN] Would {action} managed Git HTTPS credentials")
         return
 
-    account = _target_account(config)
-    managed_dir = os.path.join(account.pw_dir, _MANAGED_RELATIVE_DIR)
-    include_path = os.path.join(managed_dir, _MANAGED_INCLUDE_NAME)
-    credential_path = os.path.join(managed_dir, _MANAGED_CREDENTIAL_NAME)
-
-    if config.clear_git_credentials:
-        with _managed_removal_directory(account) as opened:
-            _remove_managed_include(config, account, include_path)
-            if opened is not None:
-                _clear_opened_managed_directory(*opened)
-        print("  ✓ Removed managed Git HTTPS credentials")
-        return
-
     credential_specs: list[list[str]] = []
     credential_lines: list[str] = []
     for origin, username in config.git_credentials or []:
         normalized_origin = normalize_git_https_origin(origin)
-        password = get_runtime_credential(config, username)
+        password = get_runtime_credential(config, username, service="git", origin=normalized_origin)
         if password is None:
             raise RuntimeError(
                 f"Missing staged Git credential for {username} at {normalized_origin}"
@@ -258,6 +238,47 @@ def configure_git_https_credentials(config: SetupConfig) -> None:
     for origin, encoded_pem in config.git_ca_pems or []:
         normalized_origin = normalize_git_https_origin(origin)
         ca_content[normalized_origin] = decode_git_ca_pem(encoded_pem)
+
+    if not validate_username(config.username):
+        raise ValueError("Invalid target user for Git credentials")
+    source = str(Path(__file__).resolve().parents[1])
+    run(
+        ["/usr/sbin/runuser", "-u", config.username, "--", "/usr/bin/python3", "-I", "-B", "-c",
+         "import sys; sys.path.insert(0, sys.argv[1]); "
+         "from common.git_credential_steps import _main; _main(sys.argv[2])",
+         source, config.username],
+        input_data=json.dumps([config.clear_git_credentials, credential_specs, credential_lines, ca_content]),
+        cwd="/", display_cmd=f"Reconcile managed Git credentials as {config.username}",
+    )
+
+
+def _main(username: str) -> None:
+    account = pwd.getpwnam(username)
+    if os.getuid() != account.pw_uid or os.geteuid() != account.pw_uid:
+        raise RuntimeError("Git credential setup must run as the selected account")
+    os.umask(0o077)
+    clear, credential_specs, credential_lines, ca_content = json.load(sys.stdin)
+    _apply_git_configuration(account, clear, credential_specs, credential_lines, ca_content)
+
+
+def _apply_git_configuration(
+    account: pwd.struct_passwd,
+    clear: bool,
+    credential_specs: list[list[str]],
+    credential_lines: list[str],
+    ca_content: dict[str, str],
+) -> None:
+    managed_dir = os.path.join(account.pw_dir, _MANAGED_RELATIVE_DIR)
+    include_path = os.path.join(managed_dir, _MANAGED_INCLUDE_NAME)
+    credential_path = os.path.join(managed_dir, _MANAGED_CREDENTIAL_NAME)
+    reject_nested_mounts(Path(managed_dir), include_root=True)
+    if clear:
+        with _managed_removal_directory(account) as opened:
+            _remove_managed_include(account, include_path)
+            if opened is not None:
+                _clear_opened_managed_directory(*opened)
+        print("  ✓ Removed managed Git HTTPS credentials")
+        return
 
     _ensure_user_owned_directory(managed_dir, account, mode=0o700)
     ca_dir = os.path.join(managed_dir, "ca")
@@ -303,17 +324,10 @@ def configure_git_https_credentials(config: SetupConfig) -> None:
         credential_path,
     )
     _write_user_file(include_path, include_content, account, mode=0o600)
-    _install_managed_include(config, account, include_path)
+    _install_managed_include(account, include_path)
 
     for origin, username in credential_specs:
-        verification = _run_as_login_user(
-            config.username,
-            account.pw_dir,
-            "git config --includes --get "
-            + shlex.quote(f"credential.{origin}.username"),
-            check=False,
-            capture_output=True,
-        )
+        verification = _run_git(account, "--includes", "--get", f"credential.{origin}.username")
         if (
             verification.returncode != 0
             or (verification.stdout or "").strip() != username
@@ -323,14 +337,7 @@ def configure_git_https_credentials(config: SetupConfig) -> None:
             )
 
     for origin, ca_path in ca_paths.items():
-        verification = _run_as_login_user(
-            config.username,
-            account.pw_dir,
-            "git config --includes --get "
-            + shlex.quote(f"http.{origin}.sslCAInfo"),
-            check=False,
-            capture_output=True,
-        )
+        verification = _run_git(account, "--includes", "--get", f"http.{origin}.sslCAInfo")
         if (
             verification.returncode != 0
             or (verification.stdout or "").strip() != ca_path

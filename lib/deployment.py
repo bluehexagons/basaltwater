@@ -18,10 +18,12 @@ from pathlib import Path
 from typing import Any, IO, Iterable, Optional
 
 from lib.remote_utils import USER_SHELL_ENV_OPTIONS, run
+from lib.setup_directories import check_directory_path
 from lib.local_http import open_loopback
 from lib.operation_state import OperationRecord, OperationStateError, OperationStateStore
 from lib.atomic_io import ensure_directory_durable, fsync_tree, remove_file_durable, rename_path_durable, write_json_atomic, write_text_atomic
 from lib.state_read import StateReadError, read_state_object
+from lib.static_release import snapshot_static_release
 from lib.unit_transaction import UnitRecoveryError, inspect_unit_state, snapshot_unit_file
 from lib.deploy_utils import (
     create_safe_directory_name,
@@ -47,6 +49,8 @@ from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
 from lib.node_toolchain import is_supported_node
 from lib.project_build_tools import node_build_command, node_cli, source_has_marker
+from lib.managed_storage import guarded_deployment
+from lib.runtime_bindings import resolve_runtime_binding
 
 
 SYSTEMD_UNIT_DIR = "/etc/systemd/system"
@@ -209,6 +213,7 @@ class DeploymentOrchestrator:
             handle.close()
             raise
     
+    @guarded_deployment
     def deploy_from_archive(self, source_path: str, domain: Optional[str], path: str,
                            git_url: str, commit_hash: Optional[str],
                            full_deploy: bool = True, keep_source: bool = False) -> dict[str, Any]:
@@ -885,6 +890,7 @@ class DeploymentOrchestrator:
             remove_file_durable(old_backup)
         print(f"  ✓ Backed up SQLite database to {backup_path}")
 
+    @guarded_deployment
     def deploy_manifest(self, manifest: Manifest, source_path: str, domain: Optional[str],
                         path: str, git_url: str, commit_hash: Optional[str],
                         keep_source: bool = False) -> list[dict[str, Any]]:
@@ -901,6 +907,7 @@ class DeploymentOrchestrator:
             keep_source=keep_source,
         )
 
+    @guarded_deployment
     def deploy_prebuilt(
         self,
         manifest: Manifest,
@@ -1018,12 +1025,21 @@ class DeploymentOrchestrator:
         dest_path = self.get_deployment_path(domain, path, git_url)
         self._validate_release_source(source_path, dest_path)
         parent_dir = os.path.dirname(dest_path)
+        static_outputs = [
+            component.output or "." for component in manifest.components
+            if build_on_target and component.type == "static"
+        ]
+        if static_outputs:
+            check_directory_path(os.path.abspath(parent_dir))
+        self._check_manifest_runtime_bindings(manifest, dest_path)
         if parent_dir and not os.path.exists(parent_dir):
             os.makedirs(parent_dir, exist_ok=True)
 
         lock_handle = self._open_deployment_lock(dest_path)
         staging_path = ""
+        workspace_path = ""
         backup_path: Optional[str] = None
+        swap_started = False
         activated = False
         release_displaced = False
         stopped_units: list[str] = []
@@ -1070,6 +1086,11 @@ class DeploymentOrchestrator:
                 prefix=f".{os.path.basename(dest_path)}.build-",
                 dir=parent_dir or None,
             )
+            if static_outputs:
+                workspace_path = tempfile.mkdtemp(
+                    prefix=f".{os.path.basename(dest_path)}.work-", dir=parent_dir or None,
+                )
+            build_path = workspace_path or staging_path
             operation = operation_store.transition(
                 operation.operation_id,
                 "building" if build_on_target else "staging",
@@ -1077,31 +1098,52 @@ class DeploymentOrchestrator:
                     **operation.context,
                     "commit": commit_hash or "unknown",
                     "staging_path": staging_path,
+                    **({"workspace_path": workspace_path} if workspace_path else {}),
                     "unit_snapshot_path": os.path.join(os.path.dirname(operation_store.path), "manifest-units.previous.json"),
                     "previous_ports": previous_ports,
                 },
             )
-            self._copy_deployment_source(source_path, staging_path)
-            print(f"  ✓ Copied source to staging path {staging_path}")
+            self._copy_deployment_source(source_path, build_path)
+            print(f"  ✓ Copied source to {build_path}")
 
             if build_user is not None:
                 # Build as an application-specific non-root identity.
                 result = run(
-                    f"chown -R {shlex.quote(build_user)}:{shlex.quote(build_user)} {shlex.quote(staging_path)}",
+                    f"chown -R {shlex.quote(build_user)}:{shlex.quote(build_user)} {shlex.quote(build_path)}",
                     check=False,
                 )
                 if result.returncode != 0:
                     raise RuntimeError(f"Could not assign staging tree to build user {build_user}")
 
-                self._prepare_build_toolchain(staging_path, build_user, manifest.build_runtimes)
+                self._prepare_build_toolchain(build_path, build_user, manifest.build_runtimes)
 
                 # Build every component before touching the active release.
                 for component in manifest.components:
                     component_domain = self._component_domain(component, domain)
                     print(f"  Component '{component.name}' ({component.type}) → {component_domain}{component.path}")
-                    self._run_component_build(component, staging_path, build_user, manifest.build_runtimes)
+                    self._run_component_build(component, build_path, build_user, manifest.build_runtimes)
 
+            if workspace_path:
+                snapshot_static_release(workspace_path, staging_path, static_outputs)
             self._validate_manifest_artifacts(manifest, staging_path)
+            # Finish permissions on the candidate before publishing its Nginx
+            # paths. Services write their persistent state outside this tree.
+            result = run(
+                f"chown -R --no-dereference {shlex.quote(self.deploy_user)}:{shlex.quote(self.deploy_group)} "
+                f"{shlex.quote(staging_path)}", check=False,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"Could not set release ownership to {self.deploy_user}:{self.deploy_group}"
+                )
+            result = run(f"chmod -R u=rwX,go=rX {shlex.quote(staging_path)}", check=False)
+            if result.returncode != 0:
+                raise RuntimeError(f"Could not set release permissions for {dest_path}")
+
+            # Builds may take a long time. Refuse revoked bindings before
+            # stopping any old service or replacing the working release.
+            self._check_manifest_runtime_bindings(manifest, dest_path)
+            self._validate_release_destination(dest_path)
 
             if os.path.exists(dest_path):
                 backup_path = tempfile.mkdtemp(
@@ -1138,6 +1180,7 @@ class DeploymentOrchestrator:
                 if component.is_service:
                     self._backup_component_sqlite(component, dest_path, domain)
 
+            swap_started = True
             if os.path.exists(dest_path):
                 assert backup_path is not None
                 rename_path_durable(dest_path, backup_path)
@@ -1164,24 +1207,6 @@ class DeploymentOrchestrator:
                 for component in manifest.components
                 if component.is_static or component.reverse_proxy
             ]
-
-            # The release tree is deploy-owned and world-readable so nginx can
-            # serve static files and each service user can read and exec its
-            # binary. Service writable state lives outside the release.
-            result = run(
-                f"chown -R {shlex.quote(self.deploy_user)}:{shlex.quote(self.deploy_group)} {shlex.quote(dest_path)}",
-                check=False,
-            )
-            if result.returncode != 0:
-                raise RuntimeError(
-                    f"Could not set release ownership to {self.deploy_user}:{self.deploy_group}"
-                )
-            result = run(
-                f"chmod -R u=rwX,go=rX {shlex.quote(dest_path)}",
-                check=False,
-            )
-            if result.returncode != 0:
-                raise RuntimeError(f"Could not set release permissions for {dest_path}")
 
             # Start services after the release tree is readable so they can exec.
             for component in manifest.components:
@@ -1213,10 +1238,13 @@ class DeploymentOrchestrator:
         except Exception as deployment_error:
             if operation is None:
                 raise
-            if backup_path and os.path.exists(backup_path):
-                release_displaced = True
-            if staging_path and not os.path.exists(staging_path) and os.path.exists(dest_path):
-                activated = True
+            # A durable rename can fail after moving the tree. Only infer its
+            # effect during the swap, never from a staging or reservation error.
+            if swap_started:
+                if backup_path and os.path.exists(backup_path):
+                    release_displaced = True
+                if staging_path and not os.path.lexists(staging_path) and os.path.lexists(dest_path):
+                    activated = True
             rollback_errors: list[str] = []
             if isinstance(deployment_error, UnitRecoveryError):
                 rollback_errors.append(str(deployment_error))
@@ -1313,11 +1341,13 @@ class DeploymentOrchestrator:
             raise
         finally:
             try:
-                if operation is None and staging_path and os.path.exists(staging_path):
-                    try:
-                        shutil.rmtree(staging_path)
-                    except OSError as exc:
-                        print(f"  ⚠ Staging cleanup failed at {staging_path}: {exc}")
+                if operation is None:
+                    for directory in (staging_path, workspace_path):
+                        if directory and os.path.exists(directory):
+                            try:
+                                shutil.rmtree(directory)
+                            except OSError as exc:
+                                print(f"  ⚠ Staging cleanup failed at {directory}: {exc}")
             finally:
                 operation_store.close()
                 fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
@@ -1444,6 +1474,9 @@ class DeploymentOrchestrator:
         for component in manifest.components:
             if component.is_static:
                 output_path = os.path.join(staging_path, component.output or "")
+                if component.type == "static":
+                    # Match the normalized path used by the serving descriptor.
+                    output_path = os.path.normpath(output_path)
                 if not os.path.isdir(output_path):
                     raise RuntimeError(
                         f"Component '{component.name}': static output not found after build: "
@@ -1564,6 +1597,15 @@ class DeploymentOrchestrator:
             return working_dir
         return os.path.normpath(os.path.join(dest_path, working_dir))
 
+    @staticmethod
+    def _check_manifest_runtime_bindings(manifest: Manifest, dest_path: str) -> None:
+        for component in manifest.components:
+            if component.runtime_binding is not None:
+                if not component.is_service or component.env_file is not None:
+                    raise ValueError("Runtime bindings require a service without env_file")
+                resolve_runtime_binding(component.runtime_binding,
+                                        deployment_root=dest_path, component=component.name)
+
     def _install_service_component(self, component: Component, dest_path: str,
                                    deploy_domain: Optional[str] = None) -> None:
         context = self._service_context(component, dest_path, deploy_domain)
@@ -1625,6 +1667,12 @@ class DeploymentOrchestrator:
                     f"writable by service user {username}, and its directory must not "
                     f"be writable by that user: {env_file}"
                 )
+
+        if component.runtime_binding is not None:
+            if component.env_file is not None:
+                raise ValueError("runtime_binding and env_file are mutually exclusive")
+            env_file = resolve_runtime_binding(component.runtime_binding,
+                                               deployment_root=dest_path, component=component.name)
 
         exec_start = render_template(component.exec, context) if component.exec else context['binary']
         create_managed_service(

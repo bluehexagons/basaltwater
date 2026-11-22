@@ -22,13 +22,12 @@ The setup flow first:
 - creates `/etc/cloudflared/README.md`; and
 - installs `/usr/local/bin/setup-cloudflare-tunnel`.
 
-Direct HTTP and HTTPS stay open during preconfiguration. If existing tunnel
-state is present, setup refreshes the ingress configuration and verifies that
-`cloudflared` is active. Only after that verification does it enable UFW's
-default-deny incoming policy, configure SSH access, and remove public 80/tcp and
-443/tcp allowances unless unrestricted direct access is requested. Explicit or
-inferred access sources retain source-restricted direct web access. A missing
-tunnel, failed refresh, or inactive service cannot trigger the port closure.
+Early firewall setup leaves TCP 80 and 443 under the existing origin policy.
+A fresh tunnel-only setup adds no direct allowances for those ports. After
+`cloudflared` is verified active, setup reconciles the direct web policy and
+removes stale Basaltwater web rules. A failed or deferred tunnel activation
+retains the existing origin firewall policy, including during a saved rerun.
+An active UFW firewall must have a deny or reject incoming default.
 
 Because the Cloudflare edge provides public HTTPS, Nginx serves the tunnel
 origin over local HTTP without forcing an HTTP-to-HTTPS redirect. Nginx honors
@@ -93,7 +92,8 @@ route to select the intended site; the firewall option does not create hostname
 aliases or a trusted local TLS certificate.
 
 Setup and the tunnel helper save the policy for reruns. The helper can also
-change it locally without an initial authentication wizard:
+change it locally on a host with active UFW. These helper options affect TCP
+80 and 443. Manage SSH sources separately through Basaltwater setup.
 
 ```bash
 sudo setup-cloudflare-tunnel --non-interactive --allow-direct
@@ -101,13 +101,12 @@ sudo setup-cloudflare-tunnel --non-interactive --no-allow-direct --access-source
 sudo setup-cloudflare-tunnel --non-interactive --no-allow-direct --clear-access-sources
 ```
 
-An unchanged ingress and package do not restart the tunnel for a firewall-only
-change.
-Owned stale direct-access rules are removed when narrowing sources or returning
-to tunnel-only mode. Antistatic and manifest UDP allowances remain independent.
+An unchanged ingress and package leave the daemon running during a firewall-only
+change. Setup removes stale owned direct-access rules when narrowing sources or
+returning to tunnel-only mode. Antistatic and manifest UDP allowances remain independent.
 Setup inspects the remaining active UFW rules before reporting success. An
-unmanaged web allowance outside the requested sources, or a broad SSH allowance
-when management sources are configured, stops setup with the conflicting rule.
+unmanaged web allowance outside the requested sources stops setup with the
+conflicting rule.
 This includes IPv6 rules, port ranges, and application profiles such as
 `Nginx Full`. Review `sudo ufw status numbered` and narrow or remove the rule;
 setup preserves unrelated operator rules rather than deleting them silently.
@@ -115,24 +114,49 @@ setup preserves unrelated operator rules rather than deleting them silently.
 ## Create or update a tunnel
 
 The setup run starts the wizard automatically when no tunnel exists. First-time
-creation requires terminal input; an unattended run stops with an actionable
-error and leaves direct HTTP/HTTPS available. The helper remains available for
-manual recovery or configuration changes on the host:
+creation requires terminal input. An unattended run stops before tunnel
+activation and retains the existing origin firewall policy. Run the helper on the
+host for manual recovery or configuration changes.
 
 ```bash
 sudo setup-cloudflare-tunnel
 ```
 
 The helper installs or upgrades `cloudflared` from Cloudflare's signed APT
-repository on every run, runs Cloudflare authentication when creating a tunnel,
-creates or reuses a tunnel, discovers hostnames from enabled Nginx sites, writes
-`/etc/cloudflared/config.yml`, and can install and enable the `cloudflared`
-systemd service. After verifying the service is active, the helper applies the
+repository on every run. It authenticates with Cloudflare when creating a
+tunnel, writes `/etc/cloudflared/config.yml`, and can install and enable the
+`cloudflared` service. After verifying the service is active, it applies the
 saved direct-access policy. Tunnel credentials and state are stored under
 `/etc/cloudflared` with restrictive permissions.
-Discovery reads actual `server_name` directives, including quoted names, and
-ignores comments, log-format strings, wildcard/default names, and local IP or
-`localhost` server names. These local names do not become public tunnel routes.
+
+Setup selects hostnames from deployments completed by the current profile, its
+configured signed webhook domain, and its named Gogs and Antistatic services.
+Select artifact-target hostnames and manually configured Nginx origins with the
+helper. This keeps retained releases and unrelated virtual hosts out of the
+automatic selection.
+
+```bash
+sudo setup-cloudflare-tunnel --non-interactive \
+  --hostname api.example.com --hostname downloads.example.com
+```
+
+`--hostname` replaces the complete manual selection.
+`--clear-hostnames` removes all manually selected names. Setup owns its
+separate selection and preserves the manual list on reruns. On a fresh
+interactive run without a managed selection, the helper prompts for hostnames.
+Each selected name must be a literal DNS hostname on an enabled Nginx HTTP
+site for port 80. Administrative and unrelated virtual hosts require explicit
+operator selection. The helper removes routes whose HTTP origins are absent
+and a routine refresh uses the recorded selection.
+Each ingress entry sends its selected hostname to Nginx using Cloudflare's
+`httpHostHeader` origin setting. [Cloudflare origin parameters](https://developers.cloudflare.com/tunnel/reference/origin-parameters/#httphostheader)
+
+Older tunnel state contains only the last discovered routes. Rerun the saved
+Basaltwater setup to migrate to its configured hostnames, or invoke the helper
+with a reviewed `--hostname` list. A standalone unattended refresh of legacy
+state without a selection stops for review. Managed setup also stops for review
+when it has no hostname selection for a legacy tunnel. Review Cloudflare DNS and
+Access policies for any retired hostname after migration.
 
 Generated tunnel and Nginx configurations are validated before activation. A
 non-interactive refresh compares complete hostname/origin entries, repairs a
@@ -159,9 +183,9 @@ version, selected systemd properties, and the last 40 journal entries, omitting
 settings and redacting inline authentication secrets. Pending routes stay
 unapplied and setup leaves the firewall unchanged until activation succeeds.
 
-After adding or removing an Nginx site, rerun the helper to refresh ingress
-entries. A setup or patch run with `--cloudflare` also attempts a non-interactive
-refresh when an existing tunnel state file is present.
+Rerun setup to apply changes to its managed hostname selection. Use the helper's
+`--hostname` list to publish additional sites. Routine refresh keeps the saved
+selection, including when another Nginx virtual host appears.
 
 Verify the service and generated routes:
 
@@ -257,8 +281,8 @@ tunnel route and do not provide the Cloudflare edge certificate.
 ### Webhooks
 
 For signed build webhooks, use `--webhook-builds --webhook-domain DOMAIN`
-with `--cloudflare`. The shared tunnel setup discovers the HTTP Nginx origin
-and activates the route; no ACME origin certificate is requested. First-time
+with `--cloudflare`. The shared tunnel setup selects the configured webhook domain
+and activates the HTTP origin. First-time
 account authentication and public DNS configuration remain required.
 See [webhook configuration](webhook-builds.md).
 
@@ -267,7 +291,8 @@ See [webhook configuration](webhook-builds.md).
 The public hostname routes generated here do not proxy UDP. An Antistatic
 deployment therefore keeps its direct UDP 3478 STUN access (and any required
 direct TCP service port) even when `--cloudflare` is enabled; the public IP must
-remain reachable for those ports. See [Antistatic services](./antistatic.md).
+remain reachable for those ports. Use TCP ports other than 80 or 443 for hostless
+Antistatic services on a Cloudflare origin. [Antistatic services](./antistatic.md)
 Repository services can declare `public_udp` listeners in their manifest;
 setup opens those UFW rules before tunnel activation and retains them when
 closing public HTTP/HTTPS. Their optional hostnames describe DNS-only A/AAAA
@@ -276,15 +301,15 @@ routes. Provider firewall rules and DNS records still need configuration.
 
 ## Limitations and recovery
 
-- `--cloudflare` changes Nginx behavior immediately and firewall behavior only
-  after a tunnel becomes active. Ensure the SSH management route is ready.
-  SSH follows generic access sources, or is rate-limited with UFW when none are set;
-  add a management-network-specific rule separately if your policy needs one.
+- `--cloudflare` changes Nginx behavior during setup and reconciles the origin
+  firewall policy after the tunnel becomes active. The tunnel helper preserves
+  existing SSH rules and UFW defaults. Use `--ssh-access-source` in setup to
+  add a management network independently of direct web access.
 - Tunnel creation requires an interactive browser login and Cloudflare account
   access; unattended setup cannot create the initial tunnel.
-- If initial tunnel creation has not completed, direct port 80 remains
-  available for origin testing. If a previously verified tunnel later becomes
-  unavailable, inspect `cloudflared` and Nginx journals before reopening ports.
+- If initial tunnel creation stalls or a previously verified tunnel becomes
+  unavailable, inspect `cloudflared` and Nginx journals. An SSH port forward
+  can reach the local origin for testing.
 - To stop using the tunnel, restore the desired 80/443 firewall policy and
   remove or disable the Cloudflare-specific Nginx config after validating the
   replacement configuration.

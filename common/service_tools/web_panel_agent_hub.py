@@ -28,6 +28,8 @@ STYLE = """
 .agent-hub .agent-task { padding:12px 16px; }
 .agent-hub .agent-task-facts { margin:10px 0; gap:8px; }
 .agent-hub .agent-panel { padding:12px 16px; }
+.t3-workspace > .refresh-link { display:inline-flex; align-items:center; min-height:44px;
+  padding:9px 16px; margin-bottom:12px; border-radius:8px; }
 .agent-hub .agent-run > summary { padding:4px 0; }
 .agent-hub .agent-result-preview { margin-top:6px; line-height:1.4; }
 .agent-hub .agent-follow-up { margin:10px 0; }
@@ -55,10 +57,12 @@ STYLE = """
 
 
 def agent_tabs(state: Any, current: str) -> str:
-    available = state.features().pages
+    features = state.features()
+    available = features.pages | ({"t3code"} if features.t3 else set())
     choices = (
         ("dashboard", "/agents", "Dashboard", "agents"),
-        ("tasks", "/agents?view=tasks", "Tasks", "agent-tools"),
+        ("t3", "/agents?view=t3", "T3 Code", "t3code"),
+        ("tasks", "/agents?view=tasks", "Independent tasks", "agent-tools"),
         ("history", "/agents?view=history", "Run history", "agent-tools"),
         ("tools", "/agent-tools", "Agent tools", "agent-tools"),
         ("inbox", "/agent-inbox", "Inbox", "agent-inbox"),

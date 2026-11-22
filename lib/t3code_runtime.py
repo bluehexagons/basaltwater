@@ -9,14 +9,16 @@ import re
 from lib.validation import validate_filesystem_path
 
 
-# Protocols 2 and 3 have the activeVersion state field and runtime layouts
+# Protocols 2 through 4 have the activeVersion state field and runtime layouts
 # understood below. Later protocol numbers may keep those fields and layouts;
 # active runtime selection checks both before returning an executable.
 T3_MINIMUM_ACTIVE_SERVICE_PROTOCOL = 2
 
 # State-changing and destructive maintenance remains restricted to protocols
 # whose complete state semantics have been reviewed here.
-T3_KNOWN_SERVICE_PROTOCOLS = frozenset((2, 3))
+# Protocol 4 (T3 0.1.10) coordinates selection writes and unit reconciliation;
+# its durable activeVersion/update records retain protocol 3's semantics.
+T3_KNOWN_SERVICE_PROTOCOLS = frozenset((2, 3, 4))
 
 T3_VERSION_PATTERN = re.compile(
     r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
@@ -115,3 +117,28 @@ def t3_native_probe_command(binary: str | None, node: str | None) -> list[str] |
         "require(process.argv[1])",
         os.path.join(root, "node_modules", "node-pty"),
     ]
+
+
+def t3_service_environment_probe_command(
+    binary: str | None, node: str | None, base_dir: str, host: str, port: int | None,
+) -> list[str] | None:
+    """Check bind overrides with Node's dotenv parser, returning no file values."""
+    validate_filesystem_path(base_dir)
+    script = os.path.join(os.path.dirname(__file__), "t3code_service_env_probe.cjs")
+    validate_filesystem_path(script, must_exist=True)
+    environment = [
+        "/usr/bin/env",
+        f"BASALTW_T3_ENV_FILE={os.path.join(base_dir, 'service.env')}",
+        f"BASALTW_T3_EXPECTED_HOST={host}",
+        f"BASALTW_T3_EXPECTED_PORT={port}",
+    ]
+    if binary is not None and is_t3_standalone_binary(binary):
+        return [
+            *environment,
+            f"NODE_OPTIONS=--require={json.dumps(script, ensure_ascii=False)}",
+            binary,
+            "--version",
+        ]
+    if node is None or not os.path.isfile(node) or not os.access(node, os.X_OK):
+        return None
+    return [*environment, "NODE_OPTIONS=", node, script]

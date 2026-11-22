@@ -28,16 +28,20 @@ class WrapperTests(unittest.TestCase):
         for overrides, mode in (({}, "key"), ({"ssh_password_auth": True, "lan_access": True}, "password"),
                                 ({"install_ssh": False}, "off"), ({"install_ssh": None}, "leave")):
             with self.subTest(mode=mode), patch.object(wrapper, "run") as run, \
-                    patch.object(ssh, "inspect_setup") as inspect, \
+                    patch.object(ssh, "inspect_setup", return_value=({}, True, {}, True)) as inspect, \
+                    patch.object(wrapper, "_check_admin_installation") as check, \
                     patch.object(wrapper, "is_dry_run", return_value=False), \
                     patch.object(wrapper, "can_manage_system_services", return_value=True):
                 wrapper.configure(self.config(**overrides))
-                self.assertEqual(run.call_args_list[0].args[0], ["sudo", "-v"])
+                self.assertEqual(run.call_args_list[0].args[0], ["/usr/bin/sudo", "-v"])
                 command = run.call_args.args[0]
-                self.assertEqual(command[:4], ["sudo", "-n", "/usr/bin/python3", "-I"])
-                self.assertTrue(Path(command[4]).is_absolute())
+                self.assertEqual(command[:8], ["/usr/bin/sudo", "-n", "--", "/usr/bin/python3", "-I", "-S", "-B",
+                                              "/opt/basaltwater-cachyos-ssh/common/service_tools/cachyos_ssh.py"])
                 self.assertEqual(command[-3:], ["alice", mode, "0"])
+                self.assertEqual(run.call_args.kwargs["cwd"], "/")
+                self.assertEqual(run.call_args.kwargs["env"], {"PATH": "/usr/bin", "LC_ALL": "C"})
                 inspect.assert_called_once_with("alice", mode, 0, metadata_only=True)
+                check.assert_called_once_with()
 
     def test_preflight_refusal_precedes_sudo(self):
         with patch.object(wrapper, "run") as run, \
@@ -52,10 +56,39 @@ class WrapperTests(unittest.TestCase):
         with patch.object(wrapper, "run") as run, \
                 patch.object(wrapper, "is_dry_run", return_value=False), \
                 patch.object(wrapper, "can_manage_system_services", return_value=True), \
-                patch.object(ssh, "inspect_setup") as inspect:
-            wrapper.preflight(self.config(install_ssh=False))
+                patch.object(ssh, "inspect_setup", return_value=({}, False, {}, False)) as inspect, \
+                patch.object(wrapper, "_check_admin_installation") as check:
+            self.assertFalse(wrapper.preflight(self.config(install_ssh=False)))
             inspect.assert_called_once_with("alice", "off", 0, metadata_only=True)
+            check.assert_not_called()
             run.assert_not_called()
+
+    def test_enable_and_removal_refuse_unverified_installation_before_sudo(self):
+        for mode in (True, False):
+            with self.subTest(mode=mode), patch.object(wrapper, "run") as run, \
+                    patch.object(wrapper, "is_dry_run", return_value=False), \
+                    patch.object(wrapper, "can_manage_system_services", return_value=True), \
+                    patch.object(ssh, "inspect_setup", return_value=({}, True, {}, False)), \
+                    patch.object(wrapper, "require_runtime_source", side_effect=ValueError("unsafe import")) as verify:
+                with self.assertRaisesRegex(ValueError, "verified Basaltwater SSH helper"):
+                    wrapper.configure(self.config(install_ssh=mode))
+                verify.assert_called_once_with(wrapper.ADMIN_SOURCE, owner_uid=0)
+                run.assert_not_called()
+
+    def test_privileged_import_check_rejects_checkout_and_unsafe_dependencies(self):
+        with self.assertRaisesRegex(ValueError, "administrator-installed"):
+            ssh._admin_import_root(Path(ssh.__file__))
+        unsafe = wrapper.ADMIN_SOURCE / "lib/dependency.py"
+        for mode in (stat.S_IFREG | 0o666, stat.S_IFLNK | 0o777):
+            with self.subTest(mode=mode), \
+                    patch.object(Path, "iterdir", lambda path: iter({
+                        wrapper.ADMIN_SOURCE: (unsafe.parent,),
+                        unsafe.parent: (unsafe,),
+                    }.get(path, ()))), \
+                    patch.object(Path, "lstat", lambda path: SimpleNamespace(
+                        st_uid=0, st_mode=mode if path == unsafe else stat.S_IFDIR | 0o755)):
+                with self.assertRaisesRegex(ValueError, "Unsafe CachyOS SSH helper path"):
+                    ssh._admin_import_root(wrapper.ADMIN_HELPER)
 
     def test_dry_run_no_system_calls(self):
         with patch.object(wrapper, "run") as run, \

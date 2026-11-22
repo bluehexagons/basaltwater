@@ -167,6 +167,10 @@ def add_setup_arguments(
 ) -> None:
     """Add the shared setup/patch argument surface to an argparse parser."""
 
+    from lib.headscale_config import add_headscale_arguments
+
+    add_headscale_arguments(parser, for_remote=for_remote)
+
     if not for_remote:
         if include_system_type:
             parser.add_argument(
@@ -828,12 +832,16 @@ def add_setup_arguments(
     parser.add_argument("--node", dest="install_node", 
                        action=argparse.BooleanOptionalAction if not for_remote else "store_true", 
                        default=None if not for_remote else False,
-                       help="Install nvm + latest Node.JS + PNPM + update NPM")
+                       help="Install Node.js, npm and pnpm (native packages on CachyOS, NVM on Debian)")
     parser.add_argument(
         "--node-versions", dest="install_node_versions",
         action=argparse.BooleanOptionalAction if not for_remote else "store_true",
         default=None if not for_remote else False,
         help="Prepare user-local NVM for explicit project Node installs without changing shell defaults (agent_cachyos)",
+    )
+    parser.add_argument(
+        "--update-nvm-npm", metavar="NODE_VERSION|off",
+        help="Bring npm on one installed NVM Node version up to the Pacman npm version, or stop updating it (agent_cachyos)",
     )
     parser.add_argument(
         "--game-dev", dest="install_game_dev",
@@ -1256,6 +1264,13 @@ def add_setup_arguments(
             "matching workspace password; repeat for additional origins"
         ),
     )
+    if for_remote:
+        from lib.credentials import parse_resolved_credential
+
+        parser.add_argument(
+            "--resolved-credential", dest="resolved_credentials",
+            action="append", type=parse_resolved_credential, help=argparse.SUPPRESS,
+        )
     parser.add_argument("--git-name", dest="git_author_name", metavar="NAME",
                         help="Set the target user's global Git commit name; saved per VM")
     parser.add_argument("--git-email", dest="git_author_email", metavar="EMAIL",
@@ -1618,10 +1633,10 @@ def add_setup_arguments(
     parser.add_argument("--credential", dest="share_credentials",
                         action="append", nargs=2, metavar=("USERNAME", "PASSWORD"),
                         help=(
-                            "Save a workspace credential for a Gogs admin, Git HTTPS login, "
-                            "Samba share, or SMB mount. Passing PASSWORD may expose it in "
-                            "shell history and process arguments; use basaltw credentials "
-                            "set USERNAME for hidden entry. Repeat as needed"
+                            "Supply a password for exactly one declared consumer of USERNAME. "
+                            "Passing PASSWORD may expose it in shell history and process "
+                            "arguments. Use basaltw credentials set with a service and "
+                            "destination for hidden entry. Repeat as needed"
                         ))
     
     parser.add_argument("--smbclient", dest="enable_smbclient", 
@@ -1719,12 +1734,21 @@ def add_setup_arguments(
     )
     parser.add_argument(
         "--notification-strict-https",
-        action=argparse.BooleanOptionalAction if not for_remote else "store_true",
-        default=None if not for_remote else False,
-        help=(
-            "Require certificate and hostname verification for HTTPS notification "
-            "webhooks (default accepts self-signed certificates)"
-        ),
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Verify HTTPS webhook certificates and hostnames (default accepts self-signed certificates)",
+    )
+    parser.add_argument(
+        "--notification-allow-unverified-https",
+        dest="notification_strict_https",
+        action="store_false",
+        default=None,
+        help="Allow unverified HTTPS webhooks for compatibility",
+    )
+    parser.add_argument(
+        "--notification-ca-file",
+        metavar="PATH",
+        help="Enable webhook HTTPS verification with an additional sender-local PEM CA bundle; use an empty value to clear",
     )
     
     parser.add_argument("--antistatic-server", dest="antistatic_server",
@@ -1741,7 +1765,7 @@ def add_setup_arguments(
         dest="antistatic_admin",
         metavar="USERNAME",
         help="Enable the HTTPS-only antistatic-server admin interface. Resolve the password "
-             "from --credential USERNAME PASSWORD or the workspace credential store.",
+             "from --credential USERNAME PASSWORD or a workspace credential scoped to this target.",
     )
     antistatic_admin_group.add_argument(
         "--no-antistatic-admin",

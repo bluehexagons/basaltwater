@@ -294,8 +294,8 @@ class DesktopRefreshTests(unittest.TestCase):
         self.poller.poll.side_effect = lambda timeout: [] if timeout == 0 else events.append("exited") or [(1100, 1)]
         self.execute.side_effect = lambda *args: events.append("launch")
         self.record_relaunch.side_effect = lambda: events.append("receipt")
-        self.assertTrue(refresh.restart_running_desktop(self.QUEUED_BEFORE_NS))
-        self.assertEqual(events, ["terminate", "exited", "receipt", "launch"])
+        self.assertTrue(refresh.restart_running_desktop(self.QUEUED_BEFORE_NS, finish=lambda: events.append("finish")))
+        self.assertEqual(events, ["terminate", "exited", "receipt", "finish", "launch"])
         self.terminate.assert_called_once_with(app.descriptor, signal.SIGTERM)
         self.execute.assert_called_once_with(refresh.APP_EXECUTABLE,
                                              [refresh.APP_EXECUTABLE,
@@ -357,10 +357,12 @@ class DesktopRefreshTests(unittest.TestCase):
     def test_receipt_failure_does_not_leave_the_closed_app_stopped(self):
         self.runtime_mocks()
         self.record_relaunch.side_effect = OSError("private path must not appear in diagnostics")
-        with patch("sys.stderr", new_callable=io.StringIO) as output:
+        with patch("sys.stderr", new_callable=io.StringIO) as output, \
+                patch("sys.stdout", new_callable=io.StringIO) as journal:
             self.assertTrue(refresh.restart_running_desktop(self.QUEUED_BEFORE_NS))
         self.assertIn("overlapping refresh requests", output.getvalue())
         self.assertNotIn("private path", output.getvalue())
+        self.assertIn("Starting T3 desktop", journal.getvalue())
         self.execute.assert_called_once()
 
     def test_relaunch_restores_graphical_environment_when_electron_clears_proc_environ(self):
@@ -416,7 +418,9 @@ class DesktopRefreshTests(unittest.TestCase):
     def test_fresh_running_app_is_not_duplicated_or_restarted(self):
         app = self.runtime_mocks()
         app.refresh_needed = False
-        self.assertFalse(refresh.restart_running_desktop(self.QUEUED_BEFORE_NS, self.home))
+        with patch("sys.stdout", new_callable=io.StringIO) as journal:
+            self.assertFalse(refresh.restart_running_desktop(self.QUEUED_BEFORE_NS, self.home))
+        self.assertIn("already started since completion was queued", journal.getvalue())
         self.package.assert_not_called()
         self.execute.assert_not_called()
         self.terminate.assert_not_called()
@@ -472,19 +476,42 @@ class DesktopRefreshTests(unittest.TestCase):
                 patch.object(desktop.pwd, "getpwnam", return_value=SimpleNamespace(pw_uid=1000)), \
                 patch("common.cachyos_steps._home", return_value=self.home), \
                 patch.object(desktop.time, "clock_gettime_ns", return_value=self.QUEUED_BEFORE_NS), \
-                patch("lib.remote_utils.run") as run:
+                patch("lib.remote_utils.run") as run, \
+                patch("sys.stdout", new_callable=io.StringIO) as output:
             desktop.queue_refresh(config)
             argv = run.call_args.args[0]
             self.assertEqual(argv[:3], ["/usr/bin/systemd-run", "--user", "--collect"])
             self.assertIn("--on-active=5s", argv)
+            unit = next(arg.removeprefix("--unit=") for arg in argv if arg.startswith("--unit="))
+            self.assertIn(f"journalctl --user -u {unit}.service --lines=+30 --no-pager", output.getvalue())
             self.assertEqual(argv[-8:-6], ["/usr/bin/python3", "-I"])
             self.assertTrue(argv[-6].endswith("/common/service_tools/cachyos_t3_refresh.py"))
             self.assertEqual(argv[-5:], [str(self.QUEUED_BEFORE_NS), "desktop", str(self.home),
                                         str(self.home / ".config"), "a" * 32])
+            config.t3code_desktop = False
+            desktop.queue_refresh(config)
+            self.assertIn(".service --lines=30 --no-pager", output.getvalue())
             config.dry_run = True
             run.reset_mock()
             desktop.queue_refresh(config)
             run.assert_not_called()
+
+    def test_web_worker_reports_http_readiness_only_after_activation(self):
+        with patch.object(refresh.os, "getuid", return_value=1000), \
+                patch.object(refresh.os, "open", return_value=2000), \
+                patch.object(refresh.os, "fstat", return_value=SimpleNamespace(
+                    st_mode=stat.S_IFREG | 0o600, st_uid=1000, st_nlink=1)), \
+                patch.object(refresh.fcntl, "flock"), \
+                patch.object(refresh, "restart_running_desktop") as restart, \
+                patch("common.cachyos_t3.complete_setup") as complete, \
+                patch.dict(os.environ):
+            for activated in (True, False):
+                with self.subTest(activated=activated), patch("sys.stdout", new_callable=io.StringIO) as output:
+                    complete.return_value = activated
+                    self.assertEqual(refresh.main(self.QUEUED_BEFORE_NS, "web", self.home,
+                                                  self.home / ".config", "a" * 32), 0)
+                    self.assertEqual("HTTP readiness passed" in output.getvalue(), activated)
+            restart.assert_not_called()
 
     def test_worker_serializes_before_discovery_and_rejects_unsafe_locks(self):
         with patch.object(refresh, "_runtime_directory", self.runtime_directory), \
@@ -505,11 +532,13 @@ class DesktopRefreshTests(unittest.TestCase):
             events = []
             lock.side_effect = lambda *args: events.append("lock")
             restart.side_effect = lambda *args: events.append("discover")
+            finish = lambda: None
+            complete.side_effect = lambda *args, restart_desktop: restart_desktop(finish)
             self.assertEqual(refresh.main(self.QUEUED_BEFORE_NS, "desktop", self.home,
                                           self.home / ".config", "a" * 32), 0)
             self.assertEqual(events, ["lock", "discover"])
-            complete.assert_called_once_with(self.home, "desktop", "a" * 32)
-            restart.assert_called_once_with(self.QUEUED_BEFORE_NS, self.home)
+            self.assertEqual(complete.call_args.args, (self.home, "desktop", "a" * 32))
+            restart.assert_called_once_with(self.QUEUED_BEFORE_NS, self.home, finish)
             self.assertTrue(open_lock.call_args.args[1] & os.O_CLOEXEC)
             self.close.assert_called_once_with(2000)
             for field, value in (("st_mode", stat.S_IFREG | 0o666), ("st_uid", 2000), ("st_nlink", 2)):

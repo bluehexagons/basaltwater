@@ -266,7 +266,11 @@ function Invoke-NativeAgentSetup {
     if ($StorageRoot) { Set-NativeDevelopmentStorage $StorageRoot -Plan:$Plan }
     if ($GameDev) { $Python = $true; $Go = $true; $NodeVersions = $true }
     Write-Host 'Native Windows coding account (WSL is not required).'
-    if (-not $Plan) { Ensure-Winget; Update-NativePath }
+    if (-not $Plan) {
+        Ensure-Winget
+        Update-WingetPackages
+        Update-NativePath
+    }
     Ensure-NativeTool git Git.Git -Plan:$Plan
     Enable-NativeGitBash -Plan:$Plan
     Ensure-NativeGitSettings -Plan:$Plan

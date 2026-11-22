@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import io
+import json
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 import xml.etree.ElementTree as ET
@@ -12,6 +15,7 @@ from desktop.xfce_config import (
     LEGACY_DISPLAYS, LEGACY_PM_STUB, clean_legacy_xfwm,
     remove_legacy_override, remove_legacy_pm_stub, update_channel,
 )
+from desktop import home_setup
 
 
 class XfceConfigTests(unittest.TestCase):
@@ -97,8 +101,8 @@ class XfceConfigTests(unittest.TestCase):
         displays = config_dir / "displays.xml"
         displays.write_text('<channel name="displays"><property name="custom"/></channel>')
         config = SetupConfig(host="vm", username="agent", system_type="workstation_dev", desktop="xfce", dark_theme=True)
-        with (patch("desktop.desktop_environment_steps.get_user_home", return_value=str(home)),
-              patch("desktop.desktop_environment_steps.run"),
+        with (patch("desktop.desktop_environment_steps.apply_home_settings",
+                    side_effect=lambda username, edits: home_setup._apply(home, edits)),
               patch("desktop.desktop_environment_steps.glob.glob", return_value=[]),
               patch("desktop.desktop_environment_steps.remove_legacy_pm_stub")):
             for _ in range(2):
@@ -108,3 +112,64 @@ class XfceConfigTests(unittest.TestCase):
         self.assertIn('value="Adwaita-dark"', appearance.read_text())
         self.assertEqual(displays.read_text(), '<channel name="displays"><property name="custom"/></channel>')
         self.assertFalse((config_dir / "xfwm4.xml").exists())
+
+    def test_setup_invokes_helper_as_desktop_user(self):
+        edits = [("write", ".config/mimeapps.list", "browser settings")]
+        with (patch.object(home_setup.pwd, "getpwnam", return_value=SimpleNamespace(pw_uid=1000)),
+              patch.object(home_setup, "run") as run):
+            home_setup.apply_home_settings("alice", edits)
+        command = run.call_args.args[0]
+        self.assertEqual(command[:8], ["/usr/sbin/runuser", "-u", "alice", "--",
+                                       "/usr/bin/python3", "-I", "-B", "-c"])
+        self.assertEqual(command[-1], "alice")
+        self.assertEqual(json.loads(run.call_args.kwargs["input_data"]), [list(edits[0])])
+
+    def test_home_worker_requires_selected_uid_and_preserves_other_files(self):
+        home = self.path.parent
+        edits = [("write", ".config/mimeapps.list", "browser settings")]
+        account = SimpleNamespace(pw_uid=1000, pw_dir=str(home))
+        with (patch.object(home_setup.pwd, "getpwnam", return_value=account),
+              patch.object(home_setup.sys, "argv", ["-c", "source", "alice"]),
+              patch.object(home_setup.os, "umask"),
+              patch.object(home_setup.os, "getuid", return_value=1000),
+              patch.object(home_setup.os, "geteuid", return_value=0) as euid):
+            with self.assertRaisesRegex(ValueError, "selected non-root account"):
+                home_setup.main()
+            settings = home / ".config/mimeapps.list"
+            self.assertFalse(settings.exists())
+            euid.return_value = 1000
+            with patch.object(home_setup.sys, "stdin", io.StringIO(json.dumps(edits))):
+                home_setup.main()
+            self.assertEqual(settings.read_text(), "browser settings")
+            unrelated = settings.with_name("other")
+            unrelated.write_text("keep")
+            before = unrelated.stat()
+            with patch.object(home_setup.sys, "stdin", io.StringIO(json.dumps(edits))):
+                home_setup.main()
+            self.assertEqual(unrelated.read_text(), "keep")
+            self.assertEqual(unrelated.stat().st_uid, before.st_uid)
+            self.assertEqual(unrelated.stat().st_ino, before.st_ino)
+
+    def test_user_home_edits_preserve_linked_targets(self):
+        home = self.path.parent / "home"
+        home.mkdir()
+        outside = self.path.parent / "separate"
+        outside.mkdir()
+        linked = outside / "mimeapps.list"
+        linked.write_text("keep")
+        config = home / ".config"
+        config.symlink_to(outside, target_is_directory=True)
+        edits = [("write", ".config/mimeapps.list", "replace")]
+        with self.assertRaisesRegex(ValueError, "symlink"):
+            home_setup._apply(home, edits)
+        config.unlink()
+        config.mkdir()
+        (config / "mimeapps.list").symlink_to(linked)
+        with self.assertRaisesRegex(ValueError, "linked"):
+            home_setup._apply(home, edits)
+        self.assertEqual(linked.read_text(), "keep")
+        (config / "mimeapps.list").unlink()
+        (config / "mimeapps.list").hardlink_to(linked)
+        home_setup._apply(home, edits)
+        self.assertEqual((config / "mimeapps.list").read_text(), "replace")
+        self.assertEqual(linked.read_text(), "keep")

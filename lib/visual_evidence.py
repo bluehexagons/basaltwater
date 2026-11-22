@@ -13,6 +13,12 @@ from lib.atomic_io import read_json_file
 from lib.validation import validate_filesystem_path
 
 
+def validate_artifact_kind(value: object) -> str:
+    if not isinstance(value, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,63}", value):
+        raise ValueError("Artifact kind must be a short lowercase identifier")
+    return value
+
+
 def verify_receipt(path: str, repository: str, revision: str, settings: dict,
                    required_kinds: list[str]) -> dict:
     """Check a trusted harness's claims against requested values and current bytes.
@@ -39,9 +45,8 @@ def verify_receipt(path: str, repository: str, revision: str, settings: dict,
     for artifact in artifacts:
         if not isinstance(artifact, dict) or artifact.get("revision") != revision:
             raise ValueError("Artifact build revision differs from the intended revision")
-        name, kind, digest = artifact.get("path"), artifact.get("kind"), artifact.get("sha256")
-        if not isinstance(kind, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,63}", kind):
-            raise ValueError("Artifact kind must be a short lowercase identifier")
+        name, digest = artifact.get("path"), artifact.get("sha256")
+        kind = validate_artifact_kind(artifact.get("kind"))
         if not isinstance(name, str) or not name or Path(name).is_absolute() or ".." in Path(name).parts:
             raise ValueError("Artifact path must be repository-relative without parent traversal")
         validate_filesystem_path(name)

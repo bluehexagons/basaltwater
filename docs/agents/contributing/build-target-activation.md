@@ -16,7 +16,11 @@ Legacy service projections without `runtime` read implicit `PORT` and `HOST`
 values; `HOST` is `127.0.0.1`. An explicitly approved `runtime` mapping instead
 reconstructs the ordinary manifest's exact exec arguments, runtime environment,
 port, working directory, SQLite backup settings and UDP declarations. No implicit
-environment is added to that mapping. Secret bindings remain unsupported.
+environment is added to that mapping. A `runtime_binding` ID is reconstructed
+without its target-local path or values. Activation and retained refresh check
+the current root-owned registry and private file before release changes; the
+ordinary orchestrator rechecks before stopping services and installing the unit.
+See [runtime bindings](../../services/runtime-bindings.md) for scope and recovery.
 Service installation and backups use the existing orchestrator implementation.
 
 The administrator's deployment root is used exactly. Generated service users,
@@ -46,6 +50,24 @@ unrelated deployment sites. A durable operation marker precedes release changes;
 the registry is saved only after scoped Nginx publication succeeds. Returned
 receipts contain operation/application IDs, generation and artifact identity,
 without paths or build environment values.
+
+When a typed activation replaces an application with existing managed proxy
+routes, the target first serves HTTP 503 on that application's retained routes.
+It leaves other applications on shared domains available. The Nginx transaction
+snapshots the existing configuration, then waits up to 15 seconds for the
+previous worker generation to exit before touching the release. An unconfirmed
+reload or drain aborts the replacement. The manifest health probe uses the
+backend directly while the public routes are paused. After successful activation
+or confirmed manifest rollback, Nginx restores its original configuration.
+Successful activations then publish the resulting routes through the standard
+target publication step.
+
+If a rollout is interrupted or manifest recovery is unconfirmed, keep the
+paused sites and Nginx recovery record. Inspect the target activation,
+admission, manifest, and Nginx records. Verify the actual running release and
+health before reopening the routes. Direct backend connections and public UDP
+listeners are outside this Nginx pause. Trusted local replay continues to use its
+existing setup transaction.
 
 Release activation, Nginx reconciliation and registry persistence are separate
 durable boundaries. Failure or interruption retains the operation guard and

@@ -27,7 +27,7 @@ function Resolve-JobPath([string]$root, [string]$relative) {
         throw "Job path escapes source directory"
     }
     $cursor = $full
-    while ($cursor.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
+    while ($cursor -and ($cursor.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) -or $cursor -eq $root)) {
         if (Test-Path -LiteralPath $cursor) {
             $item = Get-Item -LiteralPath $cursor -Force
             if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
@@ -39,38 +39,96 @@ function Resolve-JobPath([string]$root, [string]$relative) {
     return $full
 }
 
+function New-JobSnapshot([string]$source, [string]$jobDirectory, [string]$revision, [string]$entry) {
+    $git = (Get-Command git.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+    $savedGitEnvironment = @(Get-ChildItem Env: | Where-Object Name -like 'GIT_*')
+    $repository = Join-Path $jobDirectory 'git'
+    $archive = Join-Path $jobDirectory 'source.zip'
+    $snapshot = Join-Path $jobDirectory 'source'
+    $emptyConfig = Join-Path $jobDirectory 'empty-git-config'
+    [IO.File]::WriteAllText($emptyConfig, '')
+    try {
+        foreach ($variable in $savedGitEnvironment) { Remove-Item -LiteralPath "Env:$($variable.Name)" }
+        $env:GIT_CONFIG_NOSYSTEM = '1'
+        $env:GIT_CONFIG_GLOBAL = $emptyConfig
+        $env:GIT_ATTR_NOSYSTEM = '1'
+        $env:GIT_NO_REPLACE_OBJECTS = '1'
+        $env:GIT_TERMINAL_PROMPT = '0'
+        $head = & $git -C $source rev-parse --verify HEAD
+        if ($LASTEXITCODE -ne 0 -or $head -ne $revision) { throw 'Source checkout does not match the requested revision' }
+
+        # Fetch objects, with no checkout, hooks, shared object store or local
+        # Git attributes. A later change to the source HEAD does not change
+        # the object ID fetched and exported.
+        & $git init --bare --quiet --template= $repository
+        if ($LASTEXITCODE -ne 0) { throw 'Could not initialize the private job repository' }
+        & $git -C $repository -c protocol.allow=never -c protocol.file.allow=always -c fetch.fsckObjects=true `
+            fetch --quiet --depth=1 --no-tags --no-write-fetch-head -- $source $revision
+        if ($LASTEXITCODE -ne 0) { throw 'Could not fetch the requested revision into the private job repository' }
+        $members = @(& $git -C $repository ls-tree -r $revision)
+        if ($LASTEXITCODE -ne 0 -or @($members | Where-Object { $_ -notmatch '^100(644|755) blob ' }).Count) {
+            throw 'The requested revision must contain only regular files; symlinks and submodules are unsupported'
+        }
+        $gitEntry = $entry.Replace('\', '/')
+        $trackedEntry = @(& $git -C $repository --literal-pathspecs ls-tree -r --name-only $revision -- $gitEntry)
+        if ($LASTEXITCODE -ne 0 -or $trackedEntry.Count -ne 1) {
+            throw 'Job script is not tracked by the requested revision'
+        }
+        # Export the tree without commit-based export substitutions. The tree's
+        # own export-ignore attributes can exclude files from the snapshot.
+        & $git -C $repository -c "core.attributesFile=$emptyConfig" archive --format=zip "--output=$archive" "${revision}^{tree}"
+        if ($LASTEXITCODE -ne 0) { throw 'Could not export the requested revision' }
+        Expand-Archive -LiteralPath $archive -DestinationPath $snapshot -ErrorAction Stop
+        $localScript = Resolve-JobPath $source $entry
+        $exportedScript = Resolve-JobPath $snapshot $entry
+        if (-not (Test-Path -LiteralPath $localScript -PathType Leaf)) { throw 'Job script is missing from the checkout' }
+        if (-not (Test-Path -LiteralPath $exportedScript -PathType Leaf)) { throw 'Job script is missing from the exported revision' }
+        # Compare file contents without the checkout's filters or diff drivers.
+        # Git for Windows can convert the committed line endings on checkout.
+        & $git -C $repository diff --no-index --no-ext-diff --no-textconv --ignore-cr-at-eol --quiet -- $exportedScript $localScript
+        if ($LASTEXITCODE -ne 0) { throw 'Job script differs from the requested revision' }
+        return (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+    } finally {
+        foreach ($name in @('GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_GLOBAL', 'GIT_ATTR_NOSYSTEM',
+                            'GIT_NO_REPLACE_OBJECTS', 'GIT_TERMINAL_PROMPT')) {
+            Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+        }
+        foreach ($variable in $savedGitEnvironment) { Set-Item -LiteralPath "Env:$($variable.Name)" -Value $variable.Value }
+        if (Test-Path -LiteralPath $repository) { Remove-Item -LiteralPath $repository -Recurse -Force }
+        if (Test-Path -LiteralPath $archive) { Remove-Item -LiteralPath $archive -Force }
+        Remove-Item -LiteralPath $emptyConfig -Force
+    }
+}
+
 if ($UploadUri.Scheme -ne "https") { throw "Artifact upload requires HTTPS" }
 if ($UploadUri.UserInfo) { throw "Artifact upload URL must not contain credentials" }
 $source = (Resolve-Path -LiteralPath $SourceDirectory).Path
 if ((Get-Item -LiteralPath $source).Attributes -band [IO.FileAttributes]::ReparsePoint) {
     throw "Source directory must not be a reparse point"
 }
-$scriptPath = Resolve-JobPath $source $Script
-$artifactPath = Resolve-JobPath $source $Artifact
-if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) { throw "Job script is missing" }
-if (Test-Path -LiteralPath $artifactPath) { throw "Artifact path must not exist before the job" }
 if (-not (Test-Path -LiteralPath $CredentialFile -PathType Leaf)) {
     throw "Create an upload credential with Save-BasaltwaterToken.ps1"
 }
 
-$git = Get-Command git.exe -ErrorAction Stop
-$actualRevision = (& $git.Source -C $source rev-parse HEAD | Select-Object -Last 1).Trim()
-if ($LASTEXITCODE -ne 0 -or $actualRevision -ne $Revision) {
-    throw "Source checkout does not match the requested revision"
-}
-$gitScript = $Script.Replace('\', '/')
-$trackedScript = @(& $git.Source -C $source --literal-pathspecs ls-files -- $gitScript)
-if ($LASTEXITCODE -ne 0 -or $trackedScript.Count -ne 1) {
-    throw "Job script is not tracked by the requested revision"
-}
-& $git.Source -C $source --literal-pathspecs diff --quiet HEAD -- $gitScript
-if ($LASTEXITCODE -ne 0) { throw "Job script differs from the requested revision" }
+$null = Resolve-JobPath $source $Script
+$null = Resolve-JobPath $source $Artifact
 $jobDirectory = Join-Path $env:LOCALAPPDATA ("Basaltwater\jobs\" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $jobDirectory -Force | Out-Null
+$snapshot = Join-Path $jobDirectory 'source'
+try {
+    $sourceHash = New-JobSnapshot $source $jobDirectory $Revision $Script
+    $scriptPath = Resolve-JobPath $snapshot $Script
+    $artifactPath = Resolve-JobPath $snapshot $Artifact
+    if (Test-Path -LiteralPath $artifactPath) { throw 'Artifact path must not exist in the exported revision' }
+} catch {
+    Remove-Item -LiteralPath $jobDirectory -Recurse -Force
+    throw
+}
 $stdout = Join-Path $jobDirectory "stdout.log"
 $stderr = Join-Path $jobDirectory "stderr.log"
 $receipt = Join-Path $jobDirectory "receipt.json"
 $result = [ordered]@{ Revision = $Revision; Script = $Script; Artifact = $Artifact;
+    SourceMode = 'git-tree-export'; SourceArchiveSha256 = $sourceHash;
     StartedUtc = [DateTime]::UtcNow.ToString('o'); CompletedUtc = $null;
     State = 'running'; Sha256 = $null }
 $process = $null
@@ -96,7 +154,7 @@ try {
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
     $startInfo.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ' + $encoded
-    $startInfo.WorkingDirectory = $source
+    $startInfo.WorkingDirectory = $snapshot
     $startInfo.UseShellExecute = $false
     $startInfo.EnvironmentVariables.Remove('PSModulePath')
     $startInfo.CreateNoWindow = $true
@@ -128,7 +186,7 @@ try {
     }
     # Complete redirected output before checking its final size and process status.
     $process.WaitForExit()
-    # A completed entry point cannot leave background workers modifying its checkout.
+    # A completed entry point cannot leave background workers modifying its snapshot.
     try { $processJob.TerminateAndWait(5000); $cleanupConfirmed = $true }
     catch { $cleanupFailure = $_; throw }
     if (-not $stdoutCopy.Wait(30000) -or -not $stderrCopy.Wait(30000)) {
@@ -146,7 +204,7 @@ try {
         throw "Native job exited with code $($process.ExitCode); logs: $jobDirectory"
     }
     # A job can create junctions after the initial preflight; recheck ancestors.
-    $artifactPath = Resolve-JobPath $source $Artifact
+    $artifactPath = Resolve-JobPath $snapshot $Artifact
     if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) { throw "Job produced no artifact" }
     $artifactItem = Get-Item -LiteralPath $artifactPath -Force
     if ($artifactItem.Attributes -band [IO.FileAttributes]::ReparsePoint -or $artifactItem.Length -gt 1GB) {

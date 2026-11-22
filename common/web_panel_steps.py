@@ -34,6 +34,7 @@ from lib.remote_utils import install_package, is_dry_run, is_service_active, run
 from lib.unit_transaction import UnitOwnership, replace_units, unit_ownership
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
+from lib.headscale_portal import managed_installed
 
 
 WEB_PANEL_SERVICE_NAME = "basaltwater-web-panel"
@@ -249,13 +250,12 @@ def build_web_panel_manifest(
         "access": access,
         "features": {
             "approvals": integrated_approvals(config),
+            "managed_headscale": managed_installed(),
             "agent_tools": config.selected_agent_tools(),
             "publishing_tools": sorted(publishing_tools),
             "git": bool(config.has_agent_features() or config.git_credentials
                         or config.git_ca_pems or config.clear_git_credentials),
-            "t3_update": "t3code" in (config.web_interfaces or []),
-            "t3_github_readiness": config.github_auth_payload,
-            "t3_git_identity_readiness": config.git_identity_payload,
+            "t3code": "t3code" in (config.web_interfaces or []),
             "notification_ingest": config.web_panel_notification_ingest is True,
             "guacamole": config.guacamole is True,
         },
@@ -335,6 +335,10 @@ server {{
     ingest_zone = (
         "limit_req_zone $binary_remote_addr "
         "zone=basaltwater_web_panel_ingest:10m rate=30r/m;\n"
+        "map $http_authorization $basaltwater_ingest_authorization {\n"
+        '    default "";\n'
+        '    "~^Bearer " $http_authorization;\n'
+        "}\n"
         if notification_ingest
         else ""
     )
@@ -349,6 +353,7 @@ server {{
         client_max_body_size 64k;
         proxy_pass http://unix:{WEB_PANEL_SOCKET}:{WEB_PANEL_NOTIFICATION_ENDPOINT};
         proxy_http_version 1.1;
+        proxy_set_header Authorization $basaltwater_ingest_authorization;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Real-IP $remote_addr;
@@ -455,6 +460,25 @@ server {{
 {approval_location}
 {ca_tls_location}
 
+    location = /actions/headscale {{
+        limit_except POST {{ deny all; }}
+        limit_req zone=basaltwater_web_panel_auth burst=1 nodelay;
+        limit_req_status 429;
+        client_max_body_size 16k;
+        client_body_buffer_size 16k;
+        client_body_in_file_only off;
+        proxy_request_buffering off;
+        proxy_pass http://unix:{WEB_PANEL_SOCKET}:/actions/headscale;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Basaltwater-User $remote_user;
+        proxy_set_header Authorization "";
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 10s;
+        proxy_send_timeout 10s;
+    }}
+
     location / {{
         limit_req zone=basaltwater_web_panel_auth burst=5 nodelay;
         limit_req_status 429;
@@ -463,6 +487,8 @@ server {{
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Basaltwater-User $remote_user;
+        proxy_set_header Authorization "";
         proxy_connect_timeout 5s;
         proxy_read_timeout 35s;
         proxy_send_timeout 35s;
@@ -1333,8 +1359,6 @@ def configure_web_panel(config: SetupConfig) -> None:
         "  ✓ Web panel: "
         + _http_url(host, config.web_panel_port, scheme)
     )
-    if not config.enable_ssl:
-        print("  ⚠ Web panel Basic Auth uses plaintext HTTP; add --ssl for encrypted login")
     if config.web_panel_notification_ingest is True:
         print(
             "  ✓ Notification ingest: "

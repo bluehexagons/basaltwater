@@ -30,7 +30,7 @@ from desktop.observations import (
     CaptureObservation, DEFAULT_CAPTURE_MAX_AGE_SECONDS, capture_freshness,
     validate_capture_max_age, validate_observation_option,
 )
-from desktop.receipts import DesktopRequestError, input_failure
+from desktop.receipts import DesktopRequestError, input_failure, input_snapshot
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
 
@@ -207,10 +207,16 @@ def status(*, include_control: bool = True, deadline: float | None = None) -> di
 
 def set_control(mode, *, seconds=control_state.DEFAULT_OVERRIDE_SECONDS, human_approved=False):
     configuration()
+    # Persist before contacting the serialized supervisor: an in-flight text
+    # request must see revocation between characters, not after it completes.
+    current = control_state.change(mode, seconds=seconds, human_approved=human_approved)
     try:
-        return request({"action": "control", "mode": mode, "seconds": seconds, "human_approved": human_approved})
+        return request({"action": "status"})
     except (FileNotFoundError, ConnectionRefusedError):
-        return {"state": "stopped", **control_state.change(mode, seconds=seconds, human_approved=human_approved)}
+        return {"state": "stopped", **current}
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        # Permission was saved even if the separate health observation failed.
+        return {"state": "unknown", **current, "detail": f"Control saved; backend status unavailable: {exc}"}
 
 
 def start() -> dict[str, Any]:
@@ -404,6 +410,10 @@ class DesktopSession:
         self.elements: dict[str, dict[str, Any]] = {}
         self.control_revision = control_state.status()["control_revision"]
         self.observation: CaptureObservation | None = None
+        self.evidence = None
+        self.last_evidence = None
+        self.evidence_error = None
+        self.last_input = None
 
     def sync_control(self):
         current = control_state.status()
@@ -434,10 +444,18 @@ class DesktopSession:
             "browser_pause": self.browser_pause,
             "pid": self.process.pid,
             "control_active": False,
-            "input_capabilities": ["observation-input"],
+            "input_capabilities": ["observation-input", "server-paced-text"],
+            "capabilities": ["supervised-development", "manual-evidence", "receipt-mapping"],
             "observation_id": self.observation.id if self.observation is not None and state == "running" else None,
             "capture_freshness": self.observation.freshness() if self.observation is not None and state == "running"
                                  else capture_freshness(),
+            "image_origin": self.observation.region[:2] if self.observation else None,
+            "image_geometry": self.observation.region[2:] if self.observation else None,
+            "coordinate_space": "desktop",
+            "evidence": str(self.evidence.path) if self.evidence else self.last_evidence,
+            "evidence_recording": self.evidence is not None,
+            "evidence_capacity": self.evidence.capacity() if self.evidence else None,
+            "evidence_error": self.evidence_error,
         }
         if detail:
             result["detail"] = detail
@@ -469,16 +487,59 @@ class DesktopSession:
         return {"logout_requested": True, "generation": self.generation}
 
     def handle(self, payload: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(payload)
+        if payload.get("action") == "screenshot":
+            payload["related_input_id"] = self.last_input.get("input_id") if self.last_input else None
+        try:
+            result = self.dispatch(payload)
+        except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as exc:
+            receipt = getattr(exc, "receipt", {"error": str(exc)})
+            if payload.get("action") == "input":
+                self.last_input = input_snapshot(receipt)
+            self.record_evidence(payload, receipt)
+            exc.receipt = receipt
+            raise
+        if payload.get("action") == "input":
+            self.last_input = input_snapshot(result)
+        self.record_evidence(payload, result)
+        return result
+
+    def record_evidence(self, payload: dict, result: dict) -> None:
+        if self.evidence:
+            try:
+                self.evidence.event(payload, result)
+            except (OSError, ValueError, RuntimeError):
+                self.evidence_error = "Evidence checkpoint failed; inspect its private artifact"
+            result["evidence_capacity"] = self.evidence.capacity()
+        if self.evidence_error:
+            result["evidence_error"] = self.evidence_error
+
+    def close(self) -> None:
+        if self.evidence:
+            try:
+                self.last_evidence = str(self.evidence.path)
+                self.evidence.finish(self.launches, reason="helper-stopped")
+            except (OSError, ValueError, RuntimeError):
+                self.evidence_error = "Evidence checkpoint failed; inspect its private artifact"
+            self.evidence = None
+
+    def dispatch(self, payload: dict[str, Any]) -> dict[str, Any]:
         if payload.get("action") != "input":
             return self._handle(payload)
         # Worker-owned identities/stages cannot be supplied by a caller.
         payload = {**payload, "input_id": secrets.token_hex(16), "_dispatch_stage": "before-input",
                    "_input_receipt": {"input_received_at": datetime.now(timezone.utc).isoformat(),
                                       "input_received_monotonic_ns": time.monotonic_ns()}}
+        payload.pop("_submitted_characters", None)
         try:
             return self._handle(payload)
         except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as exc:
             receipt = input_failure(exc, payload, stage=payload["_dispatch_stage"])
+            if "_submitted_characters" in payload:
+                submitted = payload["_submitted_characters"]
+                unknown = payload["_dispatch_stage"] == "input-dispatch"
+                receipt.update(submitted_characters=submitted, completion_unknown=unknown,
+                               input_delivery="unknown" if unknown else "partial" if submitted else "not-sent")
             receipt["error"] = "\n".join([str(exc), *getattr(exc, "__notes__", [])])
             exc.receipt = receipt
             raise
@@ -539,6 +600,35 @@ class DesktopSession:
             self.elements.clear()
             self.observation = None
             return self.logout()
+        if action == "evidence":
+            from desktop.evidence import Recorder
+            operation = payload.get("operation")
+            if operation == "start":
+                if self.evidence:
+                    raise DesktopRequestError({"error": "Evidence recording is already active; inspect or finish it first",
+                                               "reason": "recording-active", **self.evidence.capacity()})
+                self.evidence = Recorder(payload.get("project"), self.generation, launches=self.launches)
+                self.evidence_error = None
+                return {"artifact": str(self.evidence.path), "recording": True, "generation": self.generation}
+            if operation == "finish":
+                if not self.evidence:
+                    raise ValueError("No evidence recording is active")
+                result = self.evidence.finish(self.launches)
+                self.last_evidence = str(self.evidence.path)
+                self.evidence = None
+                return result
+            raise ValueError("Evidence operation must be start or finish")
+        if action == "development":
+            from desktop.debian_development import handle_task
+            options = payload.get("options", {})
+            preview = isinstance(options, dict) and options.get("dry_run") is True
+            if self.maintenance or self.snapshot_status()["state"] != "running":
+                raise RuntimeError("Desktop is not ready for development tasks")
+            if payload.get("operation") != "doctor" and not preview:
+                control_state.require_enabled(payload)
+                self.elements.clear()
+                self.observation = None
+            return handle_task(payload, self.generation)
         if action == "inspect":
             result = accessibility.worker_request({**payload, "operation": "inspect"})
             for row in result["elements"]:
@@ -610,8 +700,10 @@ class DesktopSession:
             try:
                 options = ["--window", window["id"]] if window else []
                 run_tool(["scrot", "--overwrite", *options, str(output)])
-                with output.open("rb") as captured:
+                from desktop.evidence import capture_digest
+                with os.fdopen(os.open(output, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as captured:
                     header = captured.read(24)
+                    artifact_digest = capture_digest(captured.fileno())
                 if len(header) != 24 or header[:8] != b"\x89PNG\r\n\x1a\n":
                     raise RuntimeError("Desktop capture did not produce a PNG")
                 captured_geometry = list(struct.unpack(">II", header[16:24]))
@@ -637,6 +729,7 @@ class DesktopSession:
                     "capture_freshness": self.observation.freshness(),
                     "coordinate_space": "desktop", "image_origin": window["origin"] if window else [0, 0],
                     "image_geometry": captured_geometry,
+                    "artifact_sha256": artifact_digest, "last_input": self.last_input,
                     "window": window, "output": str(output), "captured_at": datetime.now(timezone.utc).isoformat()}
         if action == "handoff":
             process = subprocess.Popen(
@@ -736,13 +829,28 @@ class DesktopSession:
             kind = payload.get("kind")
             if not isinstance(kind, str):
                 raise ValueError("Unknown desktop input kind")
+            from desktop.client import validate_text_delay
+            validate_text_delay(payload)
             if kind == "text":
                 text = payload.get("text")
                 if not isinstance(text, str) or len(text) > 1024 or "\0" in text:
                     raise ValueError("Text must contain at most 1024 characters")
                 # Do not clear/restore modifiers held by a human. xdotool has
                 # no per-request ownership receipt for restoration or cleanup.
-                inject(["xdotool", "type", "--delay", "1", "--", text])
+                delay = payload.get("delay_ms")
+                if delay is None:
+                    inject(["xdotool", "type", "--delay", "1", "--", text])
+                else:
+                    payload["_submitted_characters"] = 0
+                    for index, character in enumerate(text):
+                        if index:
+                            time.sleep(min(delay / 1000, remaining()))
+                        # Even without a token, recheck resize between characters.
+                        if payload.get("geometry") != geometry(timeout=remaining(3)):
+                            raise ValueError("Desktop geometry changed; capture and inspect again")
+                        inject(["xdotool", "type", "--delay", "1", "--", character])
+                        payload["_submitted_characters"] += 1
+                        payload["_dispatch_stage"] = "between-characters"
             elif kind == "key":
                 key = payload.get("key")
                 if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9_+]{1,100}", key):
@@ -776,6 +884,8 @@ class DesktopSession:
                     **payload["_input_receipt"],
                     "input_completed_at": datetime.now(timezone.utc).isoformat(),
                     "input_completed_monotonic_ns": time.monotonic_ns(),
+                    **({"submitted_characters": payload["_submitted_characters"]}
+                       if "_submitted_characters" in payload else {}),
                     **({"observation_id": observation.id} if observation is not None else {})}
         except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as exc:
             if attempted:
@@ -829,6 +939,7 @@ def serve() -> int:
             except KeyboardInterrupt:
                 pass
             finally:
+                session.close()
                 path.unlink(missing_ok=True)
                 with contextlib.suppress(ProcessLookupError):
                     os.killpg(process.pid, signal.SIGTERM)

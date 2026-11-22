@@ -50,10 +50,10 @@ class Portal:
             event.set()
         self.closed()
 
-    def call(self, interface, method, signature, values, *, path=OBJECT):
+    def call(self, interface, method, signature, values, *, path=OBJECT, timeout_ms=3000):
         return self.bus.call_sync(BUS_NAME, path, interface, method,
             self.GLib.Variant(signature, values), None,
-            self.Gio.DBusCallFlags.NO_AUTO_START, 3000, None)
+            self.Gio.DBusCallFlags.NO_AUTO_START, timeout_ms, None)
 
     def response(self, interface, method, signature, values, options):
         token = "bw" + secrets.token_hex(12)
@@ -96,8 +96,15 @@ class Portal:
                 except Exception:
                     pass
 
-    def start(self, *, remember=False, restore_token=None, save_token=None):
+    def start(self, *, remember=False, restore_token=None, save_token=None, touch=False):
         v = self.GLib.Variant
+        if type(touch) is not bool:
+            raise ValueError("Touch selection must be boolean")
+        if touch:
+            available = self.call("org.freedesktop.DBus.Properties", "Get", "(ss)",
+                                  (REMOTE, "AvailableDeviceTypes")).unpack()[0]
+            if type(available) is not int or available & 4 != 4:
+                raise RuntimeError("This portal does not offer touchscreen control; pointer input is a separate route")
         if remember:
             self.progress("RemoteDesktop.version", False)
             version = self.call("org.freedesktop.DBus.Properties", "Get", "(ss)", (REMOTE, "version")).unpack()[0]
@@ -108,7 +115,8 @@ class Portal:
         self.session = created["session_handle"]
         self.bus.signal_subscribe(BUS_NAME, "org.freedesktop.portal.Session", "Closed",
             self.session, None, self.Gio.DBusSignalFlags.NONE, lambda *_: self.disconnected())
-        options = {"types": v("u", 3), "persist_mode": v("u", 2 if remember else 0)}
+        required_devices = 7 if touch else 3
+        options = {"types": v("u", required_devices), "persist_mode": v("u", 2 if remember else 0)}
         if restore_token is not None:
             if not remember:
                 raise ValueError("Restoring a grant requires explicit persistent mode")
@@ -125,9 +133,10 @@ class Portal:
         # Retain the single-use replacement before validation/cleanup can fail.
         if self.restore_token and save_token:
             save_token(self.restore_token)
-        if started.get("devices", 0) & 3 != 3 or len(started.get("streams", [])) != 1:
+        if started.get("devices", 0) & required_devices != required_devices or len(started.get("streams", [])) != 1:
             self.revoke_token(self.restore_token)
-            raise RuntimeError("Select one monitor and grant keyboard and pointer access to use automation")
+            access = "keyboard, pointer and touchscreen" if touch else "keyboard and pointer"
+            raise RuntimeError(f"Select one monitor and grant {access} access to use automation")
         node, properties = started["streams"][0]
         size = properties.get("logical_size", properties.get("size"))
         if not isinstance(size, (tuple, list)) or len(size) != 2 or any(type(n) is not int or n <= 0 for n in size):
@@ -140,8 +149,9 @@ class Portal:
         self.fd = descriptors.get(reply.unpack()[0])
         return node, list(size)
 
-    def notify(self, method, signature, *values):
-        self.call(REMOTE, method, "(oa{sv}" + signature + ")", (self.session, {}, *values))
+    def notify(self, method, signature, *values, timeout_ms=3000):
+        self.call(REMOTE, method, "(oa{sv}" + signature + ")", (self.session, {}, *values),
+                  timeout_ms=timeout_ms)
 
     def revoke_token(self, token):
         """Delete only this grant's PermissionStore entry, never other applications."""

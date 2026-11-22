@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shlex
 import sys
+from collections.abc import Iterable
 
 from lib.atomic_io import write_text_atomic
 from lib.config import SetupConfig
@@ -12,7 +13,7 @@ from lib.machine_state import can_manage_firewall
 from lib.remote_utils import run
 from lib.setup_prompts import PROMPT_RELAY_ENV
 from lib.validation import validate_cloudflare_tunnel_name
-from web.cloudflare_firewall import normalize_access_sources, reconcile_tunnel_firewall
+from web.cloudflare_firewall import normalize_access_sources, reconcile_tunnel_firewall, validate_direct_service_port
 
 
 NGINX_CLOUDFLARE_CONF = "/etc/nginx/conf.d/cloudflare.conf"
@@ -33,6 +34,8 @@ def _allow_antistatic_direct_access_for_cloudflare(config: SetupConfig) -> bool:
     )
 
     domain, port = parse_antistatic_spec(config.antistatic_server)
+    if not domain:
+        validate_direct_service_port(port)
     rules = get_antistatic_public_firewall_rules(domain, port)
     allowed_ports = ", ".join(f"{rule_port}/{protocol}" for rule_port, protocol, _ in rules)
     for rule_port, protocol, comment in rules:
@@ -63,18 +66,11 @@ def configure_cloudflare_firewall(config: SetupConfig) -> None:
             "Refusing to close public HTTP/HTTPS ports before cloudflared is active"
         )
 
-    result = run("ufw status 2>/dev/null | grep -q 'Status: active'", check=False)
-    if result.returncode != 0:
-        os.environ["DEBIAN_FRONTEND"] = "noninteractive"
-        run("apt-get install -y -qq ufw")
-
-    run("ufw default deny incoming")
-    run("ufw default allow outgoing")
-    antistatic_direct_access = _allow_antistatic_direct_access_for_cloudflare(config)
     reconcile_tunnel_firewall(
         allow_direct=bool(config.cloudflare_allow_direct), sources=sources,
         command_runner=run,
     )
+    antistatic_direct_access = _allow_antistatic_direct_access_for_cloudflare(config)
 
     if antistatic_direct_access:
         print("  ✓ Firewall configured for Cloudflare tunnel with antistatic direct access")
@@ -164,7 +160,26 @@ def install_cloudflared_service_helper(config: SetupConfig) -> None:
     print(f"  ✓ Linked setup script: {helper_script}")
 
 
-def run_cloudflare_tunnel_setup(config: SetupConfig, *, allow_create: bool = False) -> bool:
+def _managed_hostnames(config: SetupConfig, deployed_hostnames: Iterable[str]) -> list[str]:
+    """Select public routes declared by this Cloudflare setup."""
+    from game.antistatic_steps import parse_antistatic_db_spec, parse_antistatic_spec
+    from web.gogs_steps import parse_gogs_spec
+
+    hostnames = set(deployed_hostnames)
+    if config.enable_webhook_builds and config.webhook_domain:
+        hostnames.add(config.webhook_domain)
+    if config.gogs:
+        hostnames.add(parse_gogs_spec(config.gogs[0], strict=True)[0])
+    if config.antistatic_server:
+        hostnames.add(parse_antistatic_spec(config.antistatic_server, strict=True)[0])
+    if config.antistatic_db:
+        hostnames.add(parse_antistatic_db_spec(config.antistatic_db)[0])
+    return sorted(hostnames - {""})
+
+
+def run_cloudflare_tunnel_setup(
+    config: SetupConfig, *, allow_create: bool = False, deployed_hostnames: Iterable[str] = (),
+) -> bool:
     """Refresh a tunnel, or walk through initial creation when setup permits it."""
     helper_script = CLOUDFLARE_SETUP_SOURCE
     sources = normalize_access_sources(config.effective_access_sources())
@@ -174,6 +189,13 @@ def run_cloudflare_tunnel_setup(config: SetupConfig, *, allow_create: bool = Fal
             policy_args.extend(['--access-source', source])
     else:
         policy_args.append('--clear-access-sources')
+    if allow_create:
+        selected = _managed_hostnames(config, deployed_hostnames)
+        if selected:
+            for hostname in selected:
+                policy_args.extend(["--managed-hostname", hostname])
+        else:
+            policy_args.append("--clear-managed-hostnames")
     
     if not os.path.exists(helper_script):
         raise RuntimeError(f"Cloudflare setup script not found: {helper_script}")
@@ -197,7 +219,7 @@ def run_cloudflare_tunnel_setup(config: SetupConfig, *, allow_create: bool = Fal
         print("  Starting the Cloudflare authentication and tunnel setup wizard...")
         result = run(command, check=False, interactive=True, timeout=None)
         if result.returncode != 0:
-            raise RuntimeError("Cloudflare tunnel creation or activation did not complete; direct HTTP/HTTPS access remains available")
+            raise RuntimeError("Cloudflare tunnel creation or activation did not complete")
         return True
     
     print("  Updating Cloudflare tunnel configuration...")

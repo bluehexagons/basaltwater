@@ -8,9 +8,12 @@ import json
 import os
 import socket
 import struct
+from typing import Literal
 
 
 MAX_RESPONSE_BYTES = 1024 * 1024
+CacheName = Literal["electron", "pip", "uv"]
+_CACHE_NAMES = ("electron", "pip", "uv")
 _observer: ContextVar[ProcessObserver | None] = ContextVar("cleanup_process_observer", default=None)
 
 
@@ -36,12 +39,12 @@ class ProcessObserver:
             self.socket.close()
             raise
 
-    def inspect(self) -> tuple[str, ...]:
+    def inspect(self, *, caches: bool = False) -> tuple[str, ...]:
         """Request a complete scan; malformed, oversized, or lost replies fail closed."""
         if self.failed:
             raise OSError("privileged process observation unavailable")
         try:
-            self.socket.sendall(b"inspect\n")
+            self.socket.sendall(b"caches\n" if caches else b"inspect\n")
             chunks = bytearray()
             while not chunks.endswith(b"\n"):
                 part = self.socket.recv(min(65536, MAX_RESPONSE_BYTES + 1 - len(chunks)))
@@ -51,15 +54,18 @@ class ProcessObserver:
                 if len(chunks) > MAX_RESPONSE_BYTES:
                     raise OSError("process observer response exceeded its limit")
             response = json.loads(chunks)
-            if not isinstance(response, dict) or set(response) != {"executables"}:
+            key = "active_caches" if caches else "executables"
+            if not isinstance(response, dict) or set(response) != {key}:
                 raise ValueError("incomplete process observation")
-            paths = response["executables"]
-            if not isinstance(paths, list) or any(
-                not isinstance(path, str) or not path.startswith("/") or "\0" in path
-                for path in paths
-            ):
+            values = response[key]
+            if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
                 raise ValueError("invalid process observation")
-            return tuple(paths)
+            if caches:
+                if any(name not in _CACHE_NAMES for name in values):
+                    raise ValueError("invalid cache observation")
+            elif any(not path.startswith("/") or "\0" in path for path in values):
+                raise ValueError("invalid executable observation")
+            return tuple(values)
         except (OSError, ValueError, RecursionError) as exc:
             # A delayed reply cannot establish freshness for another request.
             # Keep this failed client installed, so later policies also defer.
@@ -92,3 +98,11 @@ def observed_executables(uid: int) -> tuple[str, ...] | None:
     if uid != os.getuid():
         raise OSError("process observer account mismatch")
     return observer.inspect()
+
+
+def observed_cache_in_use(cache: CacheName) -> bool | None:
+    """Check a fixed cache scope for the current account, if managed."""
+    observer = _observer.get()
+    if observer is None:
+        return None
+    return cache in observer.inspect(caches=True)

@@ -55,15 +55,6 @@ def preflight_software(config: SetupConfig) -> None:
         helper = aur.install_command(home, packages[0])
         if Path(helper[0]).name == "shelly":
             aur.prepare_cache(home)
-    if config.install_steamcmd:
-        # These are in core on current Arch/CachyOS. Query enabled repositories
-        # rather than editing pacman.conf or assuming multilib is required.
-        for package in ("lib32-glibc", "lib32-gcc-libs"):
-            if aur.package_version(package) is None:
-                result = run(["pacman", "-Si", "--", package], capture_output=True, check=False, timeout=15)
-                if result.returncode:
-                    raise RuntimeError(f"SteamCMD requires {package} in the enabled repositories; "
-                                       "resolve repository/full-system update issues before setup")
 
 
 def install_software(config: SetupConfig) -> None:

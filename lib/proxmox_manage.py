@@ -30,10 +30,12 @@ from typing import Optional
 import urllib.parse
 
 from lib.proxmox_hosts import ProxmoxHost
-from lib.proxmox_guest import _proxmox_ssh_command, _ssh_opts, _ssh_run
+from lib.proxmox_guest import ProvisionError, _proxmox_ssh_command, _ssh_opts, _ssh_run
+from lib.proxmox_lifecycle import parse_guest_startup
 from lib.proxmox_tasks import ProxmoxTaskError, resize_vm_disk, vm_disk_resize_command
 from lib.types import StrList
-from lib.validation import validate_positive_integer
+from lib.validation import validate_network_ip, validate_no_control_characters, validate_positive_integer
+from lib.validators import validate_host, validate_ip_address
 
 
 class ProxmoxManageError(Exception):
@@ -130,7 +132,7 @@ class ProxmoxWebhookNotificationConfig:
 
 
 _GUEST_OPTION_RE = re.compile(r"^[a-z][a-z0-9-]*$")
-_SNAPSHOT_NAME_RE = re.compile(r"^[a-zA-Z0-9_]{1,40}$")
+_SNAPSHOT_NAME_RE = re.compile(r"[a-zA-Z][a-zA-Z0-9_-]{1,39}")
 _DISK_SIZE_RE = re.compile(r"[0-9]+[KkMmGgTt]")
 _MISSING_GUEST_PATTERNS = (
     "does not exist",
@@ -163,6 +165,7 @@ def _run_on_host(
     log_cmd: Optional[str] = None,
     timeout: int = 120,
     bounded: bool = False,
+    quiet: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     """Execute ``cmd`` on ``host`` over SSH, returning the completed process."""
     opts = _ssh_opts(host.ssh_key)
@@ -175,7 +178,7 @@ def _run_on_host(
         return subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=timeout)
     return _ssh_run(
         host.address, host.user, opts, cmd, dry_run=dry_run,
-        log_cmd=log_cmd, timeout=timeout,
+        log_cmd=log_cmd, timeout=timeout, quiet=quiet,
     )
 
 
@@ -406,7 +409,8 @@ def get_container_ip(
         match = _NET0_IP_RE.search(line)
         if not match:
             continue
-        return match.group(1).split("/", 1)[0].strip() or None
+        address = match.group(1).split("/", 1)[0].strip()
+        return address if validate_ip_address(address) else None
     return None
 
 
@@ -651,22 +655,16 @@ def get_container_config(
     return config
 
 
-def _parse_startup_config(value: str) -> dict[str, int]:
-    parsed: dict[str, int] = {}
-    for item in value.split(","):
-        key, separator, raw_value = item.strip().partition("=")
-        if separator and key in {"order", "up", "down"}:
-            try:
-                parsed[key] = max(0, int(raw_value))
-            except ValueError:
-                continue
-    return parsed
-
-
 def get_guest_autostart(host: ProxmoxHost, vmid: int) -> GuestAutostart:
     """Return typed guest start-at-boot and ordering settings."""
     config = get_container_config(host, vmid)
-    startup = _parse_startup_config(config.get("startup", ""))
+    try:
+        startup = {
+            key: int(value)
+            for key, value in parse_guest_startup(config.get("startup", "")).items()
+        }
+    except ProvisionError as exc:
+        raise ProxmoxManageError(f"Invalid startup settings for guest {vmid}: {exc}") from exc
     enabled = config.get("onboot", "0").strip().lower() in {
         "1",
         "on",
@@ -912,10 +910,10 @@ def unlock_guest(
 
 
 def _validate_snapshot_name(name: str) -> None:
-    if not _SNAPSHOT_NAME_RE.match(name):
+    if not _SNAPSHOT_NAME_RE.fullmatch(name):
         raise ValueError(
             f"Invalid snapshot name: {name!r}. "
-            "Use letters, digits, and underscores only (1–40 characters)."
+            "Use a letter followed by letters, digits, underscores, or hyphens (2–40 characters)."
         )
 
 
@@ -1076,11 +1074,20 @@ def install_webhook_notifications(
         )
     )
     for command, display in zip(commands, redacted):
-        result = _run_on_host(host, command, dry_run=dry_run, log_cmd=display)
+        if dry_run:
+            print(f"  [DRY-RUN] {display}")
+        try:
+            # Native diagnostics and transport exceptions can echo URL credentials.
+            result = _run_on_host(host, command, dry_run=dry_run, log_cmd=display, quiet=True)
+        except (OSError, subprocess.TimeoutExpired):
+            raise ProxmoxManageError(
+                f"Proxmox notification configuration could not be verified on {host.address}; "
+                "inspect the node's notification configuration before retrying"
+            ) from None
         if result.returncode != 0:
             raise ProxmoxManageError(
-                f"Proxmox notification command failed on {host.address}: "
-                f"{(result.stderr or result.stdout or '').strip() or 'unknown error'}"
+                f"Proxmox notification command failed on {host.address} "
+                f"(exit {result.returncode}); inspect the node's notification configuration"
             )
     if send_test:
         send_webhook_test_notification(
@@ -1102,11 +1109,17 @@ def send_webhook_test_notification(
     cmd = shlex.join([
         "pvesh", "create", f"/cluster/notifications/targets/{endpoint_name}/test",
     ])
-    result = _run_on_host(host, cmd, dry_run=dry_run)
+    try:
+        result = _run_on_host(host, cmd, dry_run=dry_run, quiet=True)
+    except (OSError, subprocess.TimeoutExpired):
+        raise ProxmoxManageError(
+            f"Proxmox test notification completion is uncertain on {host.address}; "
+            "inspect the receiver before retrying"
+        ) from None
     if result.returncode != 0:
         raise ProxmoxManageError(
-            f"Proxmox test notification failed on {host.address}: "
-            f"{(result.stderr or result.stdout or '').strip() or 'unknown error'}"
+            f"Proxmox test notification failed on {host.address} (exit {result.returncode}); "
+            "inspect the node's notification configuration and receiver"
         )
 
 
@@ -1121,9 +1134,18 @@ def _validate_webhook_config(
     _validate_notification_id(matcher_name, "matcher name")
     if endpoint_name == matcher_name:
         raise ValueError("Proxmox notification endpoint and matcher names must differ")
-    parsed = urllib.parse.urlparse(url)
-    if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        raise ValueError(f"Invalid webhook URL: {url}")
+    try:
+        validate_no_control_characters(url, "webhook URL")
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            raise ValueError("missing HTTP host")
+        if ":" in parsed.hostname:
+            validate_network_ip(parsed.hostname, "webhook host")
+        elif not validate_host(parsed.hostname):
+            raise ValueError("invalid HTTP host")
+        parsed.port  # Reject malformed ports before contacting the node.
+    except ValueError:
+        raise ValueError("Invalid webhook URL; use an HTTP(S) URL with a valid host and port") from None
 
     selected = severities or list(DEFAULT_NOTIFICATION_SEVERITIES)
     allowed = set(DEFAULT_NOTIFICATION_SEVERITIES)
@@ -1140,7 +1162,7 @@ def _validate_webhook_config(
 
 
 def _validate_notification_id(value: str, label: str) -> None:
-    if not _NOTIFICATION_ID_RE.match(value):
+    if not _NOTIFICATION_ID_RE.fullmatch(value):
         raise ValueError(
             f"Invalid Proxmox notification {label}: {value!r}. "
             "Use a letter followed by letters, numbers, '_' or '-' (max 63 chars)."
@@ -1222,16 +1244,7 @@ def _base64(value: str) -> str:
 
 def _redact_url(url: str) -> str:
     parsed = urllib.parse.urlparse(url)
-    if not parsed.netloc:
-        return "<redacted-url>"
-    return urllib.parse.urlunparse((
-        parsed.scheme,
-        parsed.netloc,
-        parsed.path,
-        "",
-        "<redacted-query>" if parsed.query else "",
-        "",
-    ))
+    return "<redacted-url>" + ("?<redacted-query>" if parsed.query else "")
 
 
 def health_check(
@@ -1248,6 +1261,7 @@ def health_check(
     Proxmox host occasionally lacks ``ping`` or the guest may be on an
     isolated bridge.
     """
+    timeout = validate_positive_integer(str(timeout), "health probe timeout")
     report = HealthReport(vmid=vmid, status="unknown")
     try:
         report.guest_type, report.status = _get_guest_status(host, vmid)
@@ -1258,7 +1272,9 @@ def health_check(
     ip = get_container_ip(host, vmid)
     report.ip = ip
     if not ip:
-        report.notes.append("No IPv4 address configured on net0")
+        report.notes.append(
+            "No IPv4 static address configured on net0/ipconfig0; DHCP addresses are not discovered"
+        )
         return report
 
     if report.status != "running":
@@ -1276,10 +1292,8 @@ def health_check(
         report.notes.append("ping probe could not be executed")
 
     if probe_ssh:
-        ssh_cmd = (
-            f"timeout {int(timeout)} bash -c "
-            f"'</dev/tcp/{shlex.quote(ip)}/22' && echo OK || echo FAIL"
-        )
+        probe = shlex.quote(f"</dev/tcp/{ip}/22")
+        ssh_cmd = f"timeout {timeout} bash -c {probe} && echo OK || echo FAIL"
         ssh_result = _run_on_host(host, ssh_cmd)
         if ssh_result.returncode == 0:
             report.ssh_open = "OK" in (ssh_result.stdout or "")

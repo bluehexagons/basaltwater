@@ -36,24 +36,32 @@ from lib.atomic_io import read_json_file, write_json_atomic
 from lib.validation import validate_filesystem_path, validate_network_port
 from scripts.panel_scenarios import SCENARIOS, Scenario
 
-SURFACES = ("panel", "pairing", "connect", "approval", "desktop", "console")
-ENTRY_PATHS = {"panel": "/", "pairing": "/devices", "connect": "/connect/t3code",
+SURFACES = ("panel", "pairing", "approval", "desktop", "console")
+ENTRY_PATHS = {"panel": "/", "pairing": "/devices",
                "approval": "/", "desktop": "/desktop/", "console": "/console/"}
 
 RELOAD_SCRIPT = """'use strict';
 const toolbar = document.getElementById('panel-development');
 let dirty = false;
+let readingStatus = false;
 document.addEventListener('input', event => { if (!toolbar.contains(event.target)) dirty = true; });
-setInterval(async () => {
+const refreshTimer = setInterval(async () => {
+  if (readingStatus) return;
+  readingStatus = true;
   try {
     const response = await fetch('/__dev__/status', {cache: 'no-store'});
     if (!response.ok) return;
     const status = await response.json();
     if (status.generation !== toolbar.dataset.generation) {
-      if (!dirty && !document.querySelector('#screen canvas')) location.replace(location.href);
-      else document.getElementById('panel-reload').hidden = false;
+      if (!dirty && !document.querySelector('#screen canvas')) {
+        clearInterval(refreshTimer);
+        location.replace(location.href);
+      } else {
+        document.getElementById('panel-reload').hidden = false;
+      }
     }
   } catch (_) { /* The worker is restarting; try again next interval. */ }
+  finally { readingStatus = false; }
 }, 1000);
 """
 
@@ -176,7 +184,9 @@ def development_handler(state: panel.WebPanelState, settings: dict, generation: 
 
         def send_header(self, keyword, value) -> None:
             if keyword.lower() == "content-security-policy":
-                value = value.replace("script-src ", "connect-src 'self'; script-src 'self' ")
+                value = value.replace("script-src ", "script-src 'self' ")
+                if "connect-src " not in value:
+                    value += "; connect-src 'self'"
             super().send_header(keyword, value)
 
         def proxy_approval(self) -> None:

@@ -4,17 +4,20 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import run_tests
-from scripts import check_development
+from scripts import check_development, check_package_metadata, run_debian_ci, test_inventory
 
 
 class TestDevelopmentChecks(unittest.TestCase):
@@ -65,6 +68,104 @@ class TestDevelopmentChecks(unittest.TestCase):
                     self.assertIn(".[dev,completion]", output.getvalue())
 
 
+class TestDebianCI(unittest.TestCase):
+    def setUp(self) -> None:
+        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.python = self.root / "python/bin/python3"
+        self.node = self.root / "node/bin/node"
+        for path in (self.python, self.node):
+            path.parent.mkdir(parents=True)
+            path.touch()
+        self.enterContext(patch.object(run_debian_ci, "run_probe", return_value=SimpleNamespace(issue=None, output="v24.22.1")))
+
+    def run_ci(self, **options):
+        return run_debian_ci.run_debian_ci(str(self.python), str(self.root), node=str(self.node), **options)
+
+    def test_modes_keep_measurements_and_full_suite_coverage_separate(self) -> None:
+        for options, expected in (({}, "make check TEST_ARGS="),
+                                  ({"coverage": True, "check_jobs": 2}, "make -j2 check-ci TIMINGS_JSON="),
+                                  ({"node_only": True}, "make test SUITE=node TEST_ARGS=")):
+            with self.subTest(options=options), patch.object(run_debian_ci.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as run:
+                self.assertEqual(self.run_ci(**options), 0)
+            launch = next(call for call in run.call_args_list if call.args[0][1] == "run")
+            script = launch.args[0][-1]
+            self.assertIn("ci_phase checks " + expected, script)
+            self.assertIn("artifacts/test-timings.json", script)
+            self.assertIn("mkdir -p artifacts", script)
+
+    def test_registry_fallback_never_repeats_a_failed_check(self) -> None:
+        pulls = 0
+        def execute(command, **kwargs):
+            nonlocal pulls
+            if command[1] == "pull":
+                pulls += 1
+                if pulls == 1:
+                    raise subprocess.TimeoutExpired(command, 120)
+                return SimpleNamespace(returncode=1 if pulls == 2 else 0)
+            return SimpleNamespace(returncode=7 if command[1] == "run" else 0)
+        with patch.object(run_debian_ci.subprocess, "run", side_effect=execute) as run:
+            self.assertEqual(self.run_ci(coverage=True), 7)
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertEqual([command[1] for command in commands], ["pull", "pull", "pull", "run", "rm"])
+        self.assertEqual(commands[-1][-1], commands[-2][commands[-2].index("--name") + 1])
+
+    def test_container_inherits_the_release_reference(self) -> None:
+        with patch.object(run_debian_ci.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as run:
+            self.assertEqual(self.run_ci(), 0)
+        launch = next(call.args[0] for call in run.call_args_list if call.args[0][1] == "run")
+        environment = {value for flag, value in zip(launch, launch[1:]) if flag == "--env"}
+        self.assertTrue({"GITHUB_REF_TYPE", "GITHUB_REF_NAME"} <= environment)
+
+    def test_all_registries_failing_does_not_start_checks(self) -> None:
+        with patch.object(run_debian_ci.subprocess, "run", return_value=SimpleNamespace(returncode=1)) as run:
+            with self.assertRaisesRegex(RuntimeError, "checks were not started"):
+                self.run_ci()
+        self.assertTrue(all(call.args[0][1] == "pull" for call in run.call_args_list))
+
+    def test_timeout_removes_only_the_owned_container(self) -> None:
+        def execute(command, **kwargs):
+            if command[1] == "run":
+                raise subprocess.TimeoutExpired(command, 900)
+            return SimpleNamespace(returncode=0)
+        with patch.object(run_debian_ci.subprocess, "run", side_effect=execute) as run:
+            with self.assertRaises(subprocess.TimeoutExpired):
+                self.run_ci()
+        launch, cleanup = run.call_args_list[-2:]
+        self.assertEqual(cleanup.args[0], ["docker", "rm", "--force", launch.args[0][launch.args[0].index("--name") + 1]])
+
+    def test_invalid_modes_or_allocations_fail_before_any_external_command(self) -> None:
+        for options in ({"coverage": True, "node_only": True}, {"check_jobs": True}, {"check_jobs": 3}):
+            with self.subTest(options=options), patch.object(run_debian_ci.subprocess, "run") as run:
+                with self.assertRaises(ValueError):
+                    self.run_ci(**options)
+                run.assert_not_called()
+
+
+class TestPackageMetadata(unittest.TestCase):
+    def test_development_versions_and_exact_release_tag(self) -> None:
+        with tempfile.TemporaryDirectory() as temp, contextlib.redirect_stdout(io.StringIO()):
+            root = Path(temp)
+            reference = root / "docs/reference/command-line.md"
+            reference.parent.mkdir(parents=True)
+            reference.write_text("basaltw setup\n")
+            with patch.object(check_package_metadata, "ROOT", root):
+                for version, ref_type, ref_name, expected in (
+                    ("3.4.5rc17", "branch", "main", 0),
+                    ("3.4.5rc0", "branch", "main", 1),
+                    ("3.4.5rc17", "tag", "v3.4.5-rc.17", 0),
+                    ("3.4.5rc17", "tag", "v3.4.5-rc.18", 1),
+                    ("3.4.5", "tag", "v3.4.5", 0),
+                    ("3.4.5", "tag", "v3.4.5-rc.0", 1),
+                ):
+                    with self.subTest(version=version, ref_type=ref_type, ref_name=ref_name):
+                        (root / "pyproject.toml").write_text(
+                            f'[project]\nname = "basaltwater"\nversion = "{version}"\n'
+                            '[project.scripts]\nbasaltw = "basaltwater:main"\n'
+                        )
+                        with patch.dict(os.environ, GITHUB_REF_TYPE=ref_type, GITHUB_REF_NAME=ref_name):
+                            self.assertEqual(check_package_metadata.main(), expected)
+
+
 class TestRunTestsSuites(unittest.TestCase):
     def test_build_named_suite(self) -> None:
         loader = unittest.TestLoader()
@@ -78,16 +179,26 @@ class TestRunTestsSuites(unittest.TestCase):
         self.assertEqual(len(test_ids), len(set(test_ids)))
 
     def test_domain_suites_cover_all_discovered_modules(self) -> None:
-        test_root = run_tests._REPO_ROOT / "tests"
-        discovered = {
-            ".".join(path.relative_to(run_tests._REPO_ROOT).with_suffix("").parts)
-            for path in test_root.rglob("test_*.py")
-            if path.is_file()
-        }
-        grouped = set().union(
-            *(run_tests.TEST_SUITES[name] for name in run_tests.TEST_SUITE_PATTERNS)
+        errors = test_inventory.selection_errors(
+            run_tests._REPO_ROOT, run_tests.TEST_SUITE_PATTERNS, run_tests.TEST_SUITES,
         )
-        self.assertEqual(discovered, grouped)
+        self.assertEqual(errors, [])
+
+    def test_inventory_reports_unowned_modules_and_stale_selections_without_imports(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "tests/nested").mkdir(parents=True)
+            (root / "tests/test_owned.py").write_text("raise RuntimeError('must not import')\ndef test_one(): pass\n")
+            (root / "tests/nested/test_new.py").write_text("async def test_two(): pass\n")
+            report = test_inventory.inventory(root, {"core": ("tests/test_owned.py", "tests/test_removed.py")},
+                                              {"core": ["tests.test_owned"], "integration": ["tests.test_removed"]})
+        self.assertEqual(report["modules"], 2)
+        self.assertEqual(report["definitions"], 2)
+        self.assertEqual(report["errors"], [
+            "Unowned test module: tests.nested.test_new",
+            "Stale selector in integration: tests.test_removed",
+            "Empty pattern in core: tests/test_removed.py",
+        ])
 
     def test_list_suites_output(self) -> None:
         stdout = io.StringIO()
@@ -133,6 +244,48 @@ class TestRunTestsExpensivePrereqs(unittest.TestCase):
 
 
 class TestRunTestsDurations(unittest.TestCase):
+    def test_suite_time_includes_class_fixtures_outside_test_case_timings(self) -> None:
+        result = run_tests.TimedTextTestResult(io.StringIO(), True, 0)
+        case = unittest.FunctionTestCase(lambda: None)
+        with patch.object(run_tests.time, "perf_counter", side_effect=[10, 12, 15, 18]):
+            result.startTestRun()
+            result.startTest(case)
+            result.stopTest(case)
+            result.stopTestRun()
+        self.assertEqual(result.total_duration, 8)
+        self.assertEqual(result.test_durations, [(3, case.id())])
+
+    def test_json_timings_include_results_even_on_failure_without_captured_secrets(self) -> None:
+        class Sample(unittest.TestCase):
+            def test_failure(self):
+                print("secret captured output")
+                self.fail("secret traceback")
+
+            @unittest.skip("private skip reason")
+            def test_skip(self):
+                pass
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "timings.json"
+            with (patch.object(run_tests, "_build_suite", return_value=unittest.defaultTestLoader.loadTestsFromTestCase(Sample)),
+                  contextlib.redirect_stdout(io.StringIO())):
+                self.assertEqual(run_tests.main(["--timings-json", str(path)]), 1)
+            report = json.loads(path.read_text())
+        self.assertEqual((report["tests_run"], report["skipped"], report["failures"]), (2, 1, 1))
+        self.assertFalse(report["successful"])
+        self.assertEqual(len(report["tests"]), 2)
+        self.assertGreaterEqual(report["suite_seconds"], report["test_case_seconds"])
+        self.assertNotIn("secret captured output", json.dumps(report))
+        self.assertNotIn("secret traceback", json.dumps(report))
+        self.assertNotIn("private skip reason", json.dumps(report))
+
+    def test_unwritable_report_path_is_rejected_before_tests_start(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            with (patch.object(run_tests, "_build_suite") as build,
+                  contextlib.redirect_stderr(io.StringIO())):
+                self.assertEqual(run_tests.main(["--timings-json", str(Path(temporary) / "missing/report.json")]), 2)
+            build.assert_not_called()
+
     def test_duration_output_can_be_requested(self) -> None:
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):

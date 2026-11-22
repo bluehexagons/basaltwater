@@ -34,9 +34,18 @@ except ImportError:
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from lib.arg_parser import add_setup_arguments
+from lib.batch import add_batch_subparser, run_batch_command, track_command
 from lib.agent_cli import add_agent_subparser, run_agent_command
 from lib.gogs_cli import add_gogs_subparser, run_gogs_command
 from lib.homebox_cli import add_homebox_subparser, run_homebox_command
+from lib.headscale_cli import add_headscale_parser, run_headscale_command
+from lib.headscale_selection import resolve_cli_selection, validate_final_selection
+from lib.headscale_admin_cli import add_headscale_admin_parser, run_headscale_admin_command
+from lib.headscale_client_cli import add_headscale_client_parser, run_headscale_client_command
+from lib.headscale_management_cli import add_headscale_management_parser, run_headscale_management_command
+from lib.headscale_dns_cli import add_headscale_dns_parser, run_headscale_dns_command
+from lib.headscale_maintenance_cli import add_headscale_maintenance_parser, run_headscale_maintenance_command
+from lib.concurrency import ResourceBusyError, ResourceLockSafetyError
 from lib.scrub_cli import add_scrub_subparser, run_scrub_command
 from lib.homebox_config import validate_homebox_settings
 from lib.kiosk_config import validate_kiosk_settings
@@ -57,7 +66,9 @@ from lib.completions import run_completion_setup
 from lib.config_cleanup import run_cleanup
 from lib.config import WEB_PANEL_DEFAULT_PORT_SENTINEL, SetupConfig
 from lib.credentials import (
+    CREDENTIAL_SERVICES,
     list_workspace_credentials,
+    migrate_workspace_credential,
     prepare_runtime_config,
     remove_workspace_credential,
     set_workspace_credential,
@@ -91,7 +102,7 @@ from lib.proxmox_lifecycle import LIFECYCLE_FIELD_FLAGS
 from lib.privilege_setup import resolve_approval_panel_args
 from lib.proxmox_cli import add_proxmox_subparser, run_proxmox_command
 from lib.vm_cli import add_vm_subparser, run_vm_command
-from lib.sysadmin_cli import add_sysadmin_subparsers, run_sysadmin_command
+from lib.sysadmin_cli import SysadminArgumentParser, add_sysadmin_subparsers, run_sysadmin_command
 from lib.python_setup import run_local_python_setup
 from lib.recall import run_recall_command
 from lib.reconstruct import run_reconstruct_command
@@ -106,6 +117,7 @@ from lib.setup_common import (
     run_remote_setup,
 )
 from lib.setup_reboot import restart_after_setup, shutdown_after_setup
+from lib.ssh_utils import workspace_pinned_ssh
 from lib.state_read import StateReadError
 from lib.interactive_setup import prompt_for_missing_passwords
 from lib.system_utils import get_current_username
@@ -169,12 +181,18 @@ def _build_basaltwater_epilog() -> str:
     manifest init|validate      Initialize or validate project build/deploy settings
     node status|env|exec|install Select a project-specific Node runtime
     publish status|prepare|upload Manage VM publishing and reviewed release writing
+    headscale add|list|show|rename|remove|onboarding Manage saved Headscale references
+    headscale-admin ...          Root local native Headscale administration
+    headscale-client ...         Root local native client enrollment and recovery
+    headscale-manage ...         Explicit SSH management and tagged enrollment
+    headscale-dns ...            Root local DNS publication and recovery
+    headscale-maintenance ...    Root local backup, restore and upgrade
 
 Sysadmin Shortcuts:
     mount <host:path> <local>   Mount a remote directory via sshfs
     umount <local|host>         Unmount an sshfs mount
     health <host>               Show uptime, disk, memory, failed units, pending upgrades
-    ssh <host> [-- cmd]         Open SSH session using saved config
+    ssh <host> [options] [-- cmd] Open SSH session using saved config
     push <local> <host:path>    Rsync a local path to a remote host
     pull <host:path> [local]    Rsync a remote path to local
     key push <host>             Install local public key on a remote host
@@ -261,7 +279,7 @@ def run_tool_upgrade_command(args: argparse.Namespace | None = None) -> int:
         return 1
 
 
-class _CommandArgumentParser(argparse.ArgumentParser):
+class _CommandArgumentParser(SysadminArgumentParser):
     """Keep an inherited workspace unless this command explicitly replaces it."""
 
     def add_argument(self, *args: str, **kwargs) -> argparse.Action:
@@ -413,7 +431,7 @@ def create_basaltwater_parser(*, _command: str | None = None) -> Tuple[argparse.
         help=(
             "Save or update a share credential. Passing PASSWORD may expose it "
             "in shell history and process arguments; use basaltw credentials "
-            "set USERNAME for hidden entry. Repeat as needed"
+            "set USERNAME --service samba --destination HOST for hidden entry. Repeat as needed"
         ),
     )
     shares_parser.add_argument("--dry-run", action="store_true")
@@ -657,12 +675,27 @@ def create_basaltwater_parser(*, _command: str | None = None) -> Tuple[argparse.
         help="Credential password (omit to enter it without exposing it in shell history or process arguments)",
     )
 
-    credentials_subparsers.add_parser("list", help="List saved credential usernames")
+    credentials_subparsers.add_parser("list", help="List saved credential scopes and usernames")
 
     credentials_remove_parser = credentials_subparsers.add_parser("remove", help="Remove a saved credential")
     credentials_remove_parser.add_argument("username", help="Credential username to remove")
+    credentials_migrate_parser = credentials_subparsers.add_parser(
+        "migrate", help="Copy a legacy credential to one verified service and destination"
+    )
+    credentials_migrate_parser.add_argument("username", help="Legacy credential username")
+    for credential_parser in (credentials_set_parser, credentials_remove_parser, credentials_migrate_parser):
+        migrating = credential_parser is credentials_migrate_parser
+        credential_parser.add_argument(
+            "--service", choices=CREDENTIAL_SERVICES if migrating else (*CREDENTIAL_SERVICES, "legacy"),
+            default="legacy", required=migrating, help="Credential service (legacy means unbound)",
+        )
+        credential_parser.add_argument(
+            "--destination", required=migrating,
+            help="HTTPS origin for Git, //HOST/SHARE for SMB, or setup target for other services",
+        )
 
     add_network_subparser(subparsers)
+    add_batch_subparser(subparsers)
     add_local_subparser(subparsers)
     add_desktop_subparser(subparsers)
     add_firmware_subparser(subparsers)
@@ -678,6 +711,19 @@ def create_basaltwater_parser(*, _command: str | None = None) -> Tuple[argparse.
     add_project_manifest_subparser(subparsers)
     add_node_subparser(subparsers)
     add_publishing_subparser(subparsers)
+    add_headscale_parser(subparsers)
+    add_headscale_admin_parser(subparsers)
+    add_headscale_client_parser(subparsers)
+    add_headscale_management_parser(subparsers)
+    add_headscale_dns_parser(subparsers)
+    add_headscale_maintenance_parser(subparsers)
+    if _command is None or _command in {"setup", "patch"}:
+        from lib.headscale_cli import _complete_server_names
+
+        for command_parser in (setup_parser, patch_parser):
+            for action in command_parser._actions:
+                if action.dest == "tailscale_server":
+                    action.completer = _complete_server_names
 
     shell_parser = subparsers.add_parser(
         "shell",
@@ -1084,7 +1130,7 @@ def _execute_patch_config(config: SetupConfig) -> int:
 
     try:
         runtime_config = _prepare_runtime_config_for_cli(config)
-    except ValueError as exc:
+    except (ValueError, ResourceBusyError, ResourceLockSafetyError) as exc:
         print(f"Error: {exc}")
         return 1
 
@@ -1102,6 +1148,9 @@ def _execute_patch_config(config: SetupConfig) -> int:
                 runtime_config,
                 previous_host,
             )
+    except (ResourceBusyError, ResourceLockSafetyError):
+        returncode = 1
+        print("Error: operation lock busy or unsafe; preserve state and reconcile before retry")
     finally:
         end_time = time.time()
         success = returncode == 0
@@ -1769,6 +1818,7 @@ def _is_cached_provisioned_guest_identity(
 def _refresh_existing_managed_guest_host_keys(
     config: SetupConfig,
     cached_config: Optional[SetupConfig],
+    vmid: int | None,
 ) -> None:
     """Refresh SSH trust only for an existing guest known in local metadata."""
     if not _is_cached_provisioned_guest_identity(config, cached_config):
@@ -1778,11 +1828,18 @@ def _refresh_existing_managed_guest_host_keys(
         cast(str, config.hosted_node),
         config.hosted_user,
         config.hosted_key,
+        tool="qm" if config.machine_type == "vm" else "pct",
+        vmid=vmid,
         dry_run=config.dry_run,
     )
 
 
 def _prepare_runtime_config_for_cli(config: SetupConfig) -> SetupConfig:
+    from lib.headscale_config import validate_headscale_settings
+    from common.headscale_preflight import validate_ingress
+
+    validate_headscale_settings(config, complete=True)
+    validate_ingress(config)
     validate_kiosk_settings(config)
     if config.privilege_broker_auth and config.privilege_broker_port is None:
         raise ValueError("--approval-panel-password requires a standalone --approval-panel")
@@ -1872,8 +1929,9 @@ def deploy_configurations(pattern: str, force: bool, deploy_latest: bool = False
     print(f"Found {len(configs)} configuration(s) to deploy:")
     for config in configs:
         host = config.get("host")
-        deploy_specs = cast(JSONList, cast(JSONDict, config.get("args", {})).get("deploy_specs", []))
-        print(f"  - {host} ({len(deploy_specs)} deployments)")
+        deploy_specs = cast(JSONDict, config.get("args", {})).get("deploy_specs")
+        deployment_count = len(deploy_specs) if isinstance(deploy_specs, list) else 0
+        print(f"  - {host} ({deployment_count} deployments)")
 
     if not force:
         response = input("\nAre you sure you want to deploy to these hosts? [y/N] ")
@@ -1954,20 +2012,36 @@ def run_setup_command(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        from lib.build_role_setup import BUILD_ROLE_PROFILES, setup_config_with_saved_build_roles
+        from lib.build_role_setup import setup_config_with_saved_build_roles
+        from lib.headscale_config import merge_headscale_settings
 
-        cached_build_roles = (
-            load_setup_command(_provisioning_cache_target(args.host))
-            if args.system_type in BUILD_ROLE_PROFILES else None
-        )
-        config = setup_config_with_saved_build_roles(args, cached_build_roles)
-    except ValueError as exc:
+        cached_config = load_setup_command(_provisioning_cache_target(args.host))
+        resolve_cli_selection(args, cached_config)
+        config = setup_config_with_saved_build_roles(args, cached_config)
+        if cached_config is not None:
+            for name, value in merge_headscale_settings(cached_config, config).items():
+                setattr(config, name, value)
+        validate_final_selection(config, workspace=getattr(args, "workspace", None))
+        from lib.headscale_setup import automated_setup, preflight_setup, print_setup_plan
+
+        # Pure admission applies equally to the offline automatic plan. Provider
+        # discovery, credential checks and target work still happen afterwards.
+        if getattr(args, "verify_provider", False) and not config.hosted_node:
+            raise ValueError("--verify-provider requires --provision-on")
+        if shutdown and (not config.hosted_node or config.machine_type != "vm"):
+            raise ValueError("--shutdown requires a provisioned QEMU VM (--provision-on)")
+        if not validate_username(config.username):
+            raise ValueError(f"Invalid username: {config.username}")
+        if not validate_host(config.host):
+            raise ValueError(f"Invalid IP address or hostname: {config.host}")
+        if config.hosted_node and config.activate_network is True:
+            raise ValueError("--activate-network is for patching an already saved Proxmox guest; provisioned guests boot directly on their requested address")
+        if config.dry_run and automated_setup(config):
+            preflight_setup(config, workspace=getattr(args, "workspace", None))
+            return print_setup_plan(config)
+    except (ValueError, OSError, ResourceBusyError, ResourceLockSafetyError) as exc:
         print(f"Error: {exc}")
         return 1
-    if getattr(args, "verify_provider", False) and not config.hosted_node:
-        print("Error: --verify-provider requires --provision-on")
-        return 1
-
     cached_provisioning = _load_cached_provisioning_metadata(config)
     provider_rebind = _provider_rebind_requested(
         config,
@@ -2025,35 +2099,25 @@ def run_setup_command(args: argparse.Namespace) -> int:
         )
         return 1
 
-    if not validate_username(config.username):
-        print(f"Error: Invalid username: {config.username}")
-        return 1
-
-    if config.hosted_node and config.activate_network is True:
-        print(
-            "Error: --activate-network is for patching an already saved Proxmox "
-            "guest; provisioned guests boot directly on their requested address"
-        )
-        return 1
-    
     try:
         from lib.build_enrollment_cli import prepare_cli_build_enrollments
 
+        validate_final_selection(config, workspace=getattr(args, "workspace", None))
         prepare_cli_build_enrollments(config, args)
         runtime_config = _prepare_runtime_config_for_cli(config)
-    except ValueError as e:
+    except (ValueError, ResourceBusyError, ResourceLockSafetyError) as e:
         print(f"Error: {e}")
         return 1
 
-    if shutdown and (not config.hosted_node or config.machine_type != "vm"):
-        print("Error: --shutdown requires a provisioned QEMU VM (--provision-on)")
-        return 1
-
-    if not validate_host(config.host):
-        print(f"Error: Invalid IP address or hostname: {config.host}")
-        return 1
-    
     description = f"{args.system_type.replace('_', ' ').title()} Setup"
+    try:
+        if automated_setup(runtime_config):
+            preflight_setup(runtime_config, workspace=getattr(args, "workspace", None))
+            config.headscale_registration_id = runtime_config.headscale_registration_id
+            config.headscale_registration_binding = runtime_config.headscale_registration_binding
+    except (ValueError, OSError) as exc:
+        print(f"Error: {exc}")
+        return 1
     print_setup_summary(config, description)
     if config.kiosk_destinations is not None:
         print(f"Kiosk destinations: {len(config.kiosk_destinations)}")
@@ -2063,14 +2127,15 @@ def run_setup_command(args: argparse.Namespace) -> int:
             if config.machine_type == "vm":
                 from lib.proxmox_vm import ensure_vm_running
 
-                ensure_vm_running(config)
+                vmid = ensure_vm_running(config)
             else:
                 from lib.proxmox_node import ensure_container_running
 
-                ensure_container_running(config)
+                vmid = ensure_container_running(config)
             _refresh_existing_managed_guest_host_keys(
                 config,
                 cached_provisioning,
+                vmid,
             )
         except (ProvisionError, ValueError, OSError, subprocess.SubprocessError) as exc:
             print(
@@ -2106,6 +2171,13 @@ def run_setup_command(args: argparse.Namespace) -> int:
                         cached_provisioning,
                     )
                 )
+                saved_name = None
+                if allow_existing_data_disks:
+                    assert cached_provisioning is not None
+                    saved_name = cached_provisioning.system_hostname or _build_guest_hostname(
+                        _provisioning_cache_target(cached_provisioning.host),
+                        cached_provisioning.friendly_name, default_prefix="vm",
+                    )
                 if provider_rebind:
                     provision_vm(
                         config,
@@ -2132,14 +2204,14 @@ def run_setup_command(args: argparse.Namespace) -> int:
                         image=config.vm_image,
                         allow_existing_data_disks=allow_existing_data_disks,
                         require_existing_vm=True,
+                        saved_existing_name=saved_name,
                         verify_existing_storage=True,
                         **storage_extension_options,
                     )
                 else:
                     existing_vm_options = (
-                        {"require_existing_vm": True}
-                        if allow_existing_data_disks
-                        else {}
+                        {"require_existing_vm": True, "saved_existing_name": saved_name}
+                        if allow_existing_data_disks else {}
                     )
                     provision_vm(
                         config,
@@ -2147,7 +2219,7 @@ def run_setup_command(args: argparse.Namespace) -> int:
                         allow_existing_data_disks=allow_existing_data_disks,
                         **existing_vm_options,
                     )
-            except VMAlreadyExists:
+            except VMAlreadyExists as existing:
                 from lib.swap_config import swap_device_disk_names
 
                 has_managed_data_disks = bool(
@@ -2169,6 +2241,7 @@ def run_setup_command(args: argparse.Namespace) -> int:
                     _refresh_existing_managed_guest_host_keys(
                         config,
                         cached_provisioning,
+                        existing.vmid,
                     )
                 except ProvisionError as exc:
                     print(
@@ -2188,11 +2261,12 @@ def run_setup_command(args: argparse.Namespace) -> int:
             print(f"{'='*60}")
             try:
                 provision_container(config)
-            except ContainerAlreadyExists:
+            except ContainerAlreadyExists as existing:
                 try:
                     _refresh_existing_managed_guest_host_keys(
                         config,
                         cached_provisioning,
+                        existing.vmid,
                     )
                 except ProvisionError as exc:
                     print(
@@ -2213,13 +2287,14 @@ def run_setup_command(args: argparse.Namespace) -> int:
 
     if config.hosted_node and config.static_ipv4 and config.network_gateway4:
         try:
-            ensure_guest_ipv4_route(
-                config.static_ipv4,
-                config.network_gateway4,
-                "root",
-                config.ssh_key,
-                dry_run=config.dry_run,
-            )
+            with workspace_pinned_ssh(_provisioning_cache_target(config.host)):
+                ensure_guest_ipv4_route(
+                    config.static_ipv4,
+                    config.network_gateway4,
+                    "root",
+                    config.ssh_key,
+                    dry_run=config.dry_run,
+                )
         except ProvisionError as exc:
             print(f"\n✗ Failed to prepare the provisioned guest network: {exc}")
             return 1
@@ -2237,15 +2312,37 @@ def run_setup_command(args: argparse.Namespace) -> int:
     replaced_cache_host: Optional[str] = None
     start_time = time.time()
     returncode = 1
+    def finish_automated_setup(verified: SetupConfig) -> int:
+        if shutdown:
+            return shutdown_after_setup(verified)
+        if restart_if_needed:
+            return restart_after_setup(verified, wait_for_restart=wait_for_restart)
+        return 0
+
     try:
-        returncode = run_remote_setup(runtime_config)
+        if automated_setup(config):
+            returncode = run_remote_setup(runtime_config, after_setup=finish_automated_setup)
+        else:
+            returncode = run_remote_setup(runtime_config)
         if returncode == 0:
             replaced_cache_host = adopt_verified_network_host(
                 config,
                 runtime_config,
                 previous_host,
             )
+    except (ResourceBusyError, ResourceLockSafetyError):
+        returncode = 1
+        print("Error: operation lock busy or unsafe; preserve state and reconcile before retry")
+    except (ValueError, RuntimeError, OSError) as exc:
+        returncode = 1
+        if not automated_setup(config):
+            raise
+        print(f"Error: automated Headscale setup failed: {exc}")
     finally:
+        if automated_setup(config) and runtime_config.host != previous_host:
+            replaced_cache_host = adopt_verified_network_host(config, runtime_config, previous_host)
+        config.headscale_registration_id = runtime_config.headscale_registration_id
+        config.headscale_registration_binding = runtime_config.headscale_registration_binding
         end_time = time.time()
         success = (returncode == 0)
         if (
@@ -2278,9 +2375,9 @@ def run_setup_command(args: argparse.Namespace) -> int:
     )
     print("=" * 60)
 
-    if shutdown:
+    if shutdown and not automated_setup(config):
         return shutdown_after_setup(config)
-    if restart_if_needed:
+    if restart_if_needed and not automated_setup(config):
         return restart_after_setup(config, wait_for_restart=wait_for_restart)
 
     return 0
@@ -2347,23 +2444,22 @@ def run_patch_command(args: argparse.Namespace) -> int:
 
     try:
         resolve_approval_panel_args(args, saved_port=cached_config.privilege_broker_port)
+        resolve_cli_selection(args, cached_config)
         new_config = SetupConfig.from_args(args, cached_config.system_type)
         merged_config = merge_setup_configs(
             cached_config,
             new_config,
             preserve_keys=_patch_preserve_keys(args),
         )
+        if getattr(args, "web_panel_port", None) is WEB_PANEL_DEFAULT_PORT_SENTINEL:
+            merged_config.web_panel_port = 443 if merged_config.enable_ssl else 80
         from lib.build_enrollment_cli import prepare_cli_build_enrollments
 
+        validate_final_selection(merged_config, workspace=getattr(args, "workspace", None))
         prepare_cli_build_enrollments(merged_config, args)
-    except ValueError as exc:
+    except (ValueError, OSError, ResourceBusyError, ResourceLockSafetyError) as exc:
         print(f"Error: {exc}")
         return 1
-    if (
-        getattr(args, "web_panel_port", None)
-        is WEB_PANEL_DEFAULT_PORT_SENTINEL
-    ):
-        merged_config.web_panel_port = 443 if merged_config.enable_ssl else 80
     return _execute_patch_config(merged_config)
 
 
@@ -2409,6 +2505,7 @@ def run_shares_command(args: argparse.Namespace) -> int:
             username=cached_config.username,
             system_type=cached_config.system_type,
             machine_type=cached_config.machine_type,
+            hosted_node=cached_config.hosted_node,
             ssh_key=cached_config.ssh_key,
             dry_run=cached_config.dry_run,
             enable_samba=True,
@@ -2430,7 +2527,7 @@ def run_shares_command(args: argparse.Namespace) -> int:
     runtime_config.custom_steps = "reconcile_samba_shares"
     start_time = time.time()
     if not cached_config.dry_run:
-        store_cli_credentials(cached_config)
+        store_cli_credentials(share_config)
     returncode = run_remote_setup(runtime_config)
     end_time = time.time()
 
@@ -2497,10 +2594,19 @@ def main() -> int:
             print(f"Error: {e}")
             return 1
         set_workspace_dir(args.workspace)
+
+    if args.command == "batch":
+        return run_batch_command(args)
     
     if not args.command:
         parser.print_help()
         return 0
+
+    return track_command(args, lambda: _dispatch_command(args, parser))
+
+
+def _dispatch_command(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    """Execute a parsed command inside the optional batch boundary."""
     
     if args.command in {"setup", "patch", "shares"} and _is_local_host(args.host):
         from lib.cachyos import is_cachyos
@@ -2516,7 +2622,11 @@ def main() -> int:
     if args.command == "setup":
         return run_setup_command(args)
     elif args.command == "patch":
-        return run_patch_command(args)
+        try:
+            return run_patch_command(args)
+        except StateReadError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
     elif args.command == "shares":
         return run_shares_command(args)
     elif args.command in {"list", "ls"}:
@@ -2621,6 +2731,22 @@ def main() -> int:
         return run_node_command(args)
     elif args.command == "publish":
         return run_publishing_command(args)
+    elif args.command == "headscale":
+        try:
+            return run_headscale_command(args)
+        except (ValueError, OSError, ResourceBusyError, ResourceLockSafetyError) as exc:
+            print(f"Error: {exc}")
+            return 1
+    elif args.command == "headscale-admin":
+        return run_headscale_admin_command(args)
+    elif args.command == "headscale-client":
+        return run_headscale_client_command(args)
+    elif args.command == "headscale-manage":
+        return run_headscale_management_command(args)
+    elif args.command == "headscale-dns":
+        return run_headscale_dns_command(args)
+    elif args.command == "headscale-maintenance":
+        return run_headscale_maintenance_command(args)
     elif args.command in {"mount", "umount", "health", "ssh", "push", "pull", "key", "ssh-key", "df", "fan", "svc", "logs", "upgrade", "reachable", "user"}:
         return run_sysadmin_command(args)
     elif args.command == "shell":
@@ -2631,28 +2757,39 @@ def main() -> int:
                 password = args.password
                 if password is None:
                     password = getpass.getpass(f"Password for {args.username}: ")
-                set_workspace_credential(args.username, password)
-                print(f"Saved credential for {args.username} in {get_workspace_dir()}")
+                set_workspace_credential(
+                    args.username, password, service=args.service, destination=args.destination,
+                )
+                if args.service == "legacy":
+                    print(f"Saved unbound legacy credential for {args.username} in {get_workspace_dir()}")
+                else:
+                    print(f"Saved {args.service} credential for {args.username} at {args.destination}")
                 return 0
             if args.credentials_command == "list":
-                usernames = list_workspace_credentials()
-                if not usernames:
+                identities = list_workspace_credentials()
+                if not identities:
                     print("No saved credentials.")
                     return 0
-                for username in usernames:
-                    print(username)
+                for service, destination, username in identities:
+                    print(f"{service}\t{destination or '(unbound)'}\t{username}")
                 return 0
             if args.credentials_command == "remove":
-                removed = remove_workspace_credential(args.username)
+                removed = remove_workspace_credential(
+                    args.username, service=args.service, destination=args.destination,
+                )
                 if removed:
                     print(f"Removed credential for {args.username}")
                 else:
                     print(f"No saved credential for {args.username}")
                 return 0
-        except ValueError as e:
+            if args.credentials_command == "migrate":
+                migrate_workspace_credential(args.username, args.service, args.destination)
+                print(f"Bound legacy credential for {args.username} to {args.service} at {args.destination}")
+                return 0
+        except (ValueError, OSError, ResourceBusyError, ResourceLockSafetyError) as e:
             print(f"Error: {e}")
             return 1
-        print("Error: credentials command required (set, list, remove)")
+        print("Error: credentials command required (set, list, remove, migrate)")
         return 1
     else:
         parser.print_help()

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Observe protected account executables while maintenance runs without privilege.
+"""Observe protected account processes while maintenance runs without privilege.
 
 This entrypoint imports only the standard library before permanently demoting
-the worker. The privileged parent accepts one fixed request on an inherited
+the worker. The privileged parent accepts fixed requests on an inherited
 socket; it never reads account configuration or invokes account tools.
 """
 
@@ -19,11 +19,16 @@ import stat
 import subprocess
 import sys
 import time
+from collections.abc import Callable
+from typing import TypeVar
 
 
 MAX_RESPONSE_BYTES = 1024 * 1024
 MAX_PROCESSES = 100000
 SCAN_SECONDS = 10
+MAX_FDS = 4096
+_CACHE_NAMES = ("electron", "pip", "uv")
+_Observation = TypeVar("_Observation")
 
 
 def _trusted_path(path: Path) -> None:
@@ -88,9 +93,9 @@ def _status(descriptor: int) -> tuple[tuple[int, ...], str]:
     return identities, state
 
 
-def _executables(uid: int) -> list[str]:
-    """Inspect only real /proc, returning raw executable links without resolving paths."""
-    targets: set[str] = set()
+def _process_observations(uid: int, read: Callable[[int, float], _Observation]) -> list[_Observation]:
+    """Run a bounded observation of live account processes through pinned PID directories."""
+    observations: list[_Observation] = []
     deadline = time.monotonic() + SCAN_SECONDS
     root = os.open("/proc", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
@@ -107,12 +112,12 @@ def _executables(uid: int) -> list[str]:
                     if uid not in before or state in {"Z", "X", "x"}:
                         continue
                     try:
-                        target = os.readlink("exe", dir_fd=descriptor)
+                        observation = read(descriptor, deadline)
                     except FileNotFoundError:
                         _ids, latest_state = _status(descriptor)
                         if latest_state in {"Z", "X", "x"}:
                             continue
-                        raise OSError("remaining account process has no verifiable executable") from None
+                        raise OSError("remaining account process could not be observed") from None
                     after, _state = _status(descriptor)
                     if before != after:
                         raise OSError("process account changed during observation")
@@ -120,9 +125,7 @@ def _executables(uid: int) -> list[str]:
                     pinned = os.fstat(descriptor)
                     if (current.st_dev, current.st_ino) != (pinned.st_dev, pinned.st_ino):
                         raise OSError("process identity changed during observation")
-                    if not target.startswith("/") or "\0" in target:
-                        raise ValueError("invalid executable link")
-                    targets.add(target)
+                    observations.append(observation)
                 except (FileNotFoundError, ProcessLookupError):
                     # A pinned proc directory never starts referring to a reused
                     # PID. Only ignore disappearance when its pathname is gone.
@@ -136,10 +139,54 @@ def _executables(uid: int) -> list[str]:
                         os.close(descriptor)
     finally:
         os.close(root)
-    return sorted(targets)
+    return observations
 
 
-def _serve(channel: socket.socket, worker: subprocess.Popen, uid: int) -> None:
+def _executables(uid: int) -> list[str]:
+    """Return raw account executable links without resolving paths."""
+    def read(descriptor: int, _deadline: float) -> str:
+        target = os.readlink("exe", dir_fd=descriptor)
+        if not target.startswith("/") or "\0" in target:
+            raise ValueError("invalid executable link")
+        return target
+
+    return sorted(set(_process_observations(uid, read)))
+
+
+def _active_caches(uid: int, home: str) -> list[str]:
+    """Return only fixed cache labels with known open files or process paths."""
+    roots = {name: os.path.join(home, ".cache", name) for name in _CACHE_NAMES}
+
+    def read(descriptor: int, deadline: float) -> set[str]:
+        active: set[str] = set()
+
+        def record(target: str) -> None:
+            target = target.removesuffix(" (deleted)")
+            for name, root in roots.items():
+                if target == root or target.startswith(root + "/"):
+                    active.add(name)
+
+        for link in ("cwd", "exe"):
+            record(os.readlink(link, dir_fd=descriptor))
+        fd = os.open("fd", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+        try:
+            with os.scandir(fd) as entries:
+                for count, entry in enumerate(entries, 1):
+                    if count > MAX_FDS or time.monotonic() >= deadline:
+                        raise OSError("process descriptor inventory limit exceeded")
+                    try:
+                        record(os.readlink(entry.name, dir_fd=fd))
+                    except FileNotFoundError:
+                        continue  # A descriptor closed since enumeration.
+        finally:
+            os.close(fd)
+        return active
+
+    active = {name for observed in _process_observations(uid, read) for name in observed}
+    return sorted(active)
+
+
+def _serve(channel: socket.socket, worker: subprocess.Popen, uid: int, home: str) -> None:
     """Bound requests and responses; no caller-selected paths, PIDs, or commands."""
     channel.settimeout(15)
     while worker.poll() is None:
@@ -153,10 +200,12 @@ def _serve(channel: socket.socket, worker: subprocess.Popen, uid: int) -> None:
             request.extend(part)
             if len(request) > 8:
                 raise ValueError("invalid process observer request")
-        if request != b"inspect\n":
+        if request not in (b"inspect\n", b"caches\n"):
             raise ValueError("invalid process observer request")
         try:
-            response = json.dumps({"executables": _executables(uid)}, ensure_ascii=True).encode() + b"\n"
+            observed = ({"executables": _executables(uid)} if request == b"inspect\n"
+                        else {"active_caches": _active_caches(uid, home)})
+            response = json.dumps(observed, ensure_ascii=True).encode() + b"\n"
             if len(response) > MAX_RESPONSE_BYTES:
                 raise ValueError("process observation limit exceeded")
         except (OSError, ValueError, KeyError, UnicodeError):
@@ -187,7 +236,7 @@ def launch(account, root: Path, *, dry_run: bool, agent_storage_only: bool) -> i
         worker = subprocess.Popen(command, env=environment, cwd=account.pw_dir,
                                   pass_fds=(child.fileno(),), close_fds=True, stdin=subprocess.DEVNULL)
         child.close()
-        _serve(parent, worker, account.pw_uid)
+        _serve(parent, worker, account.pw_uid, account.pw_dir)
         return worker.wait(timeout=5)
     finally:
         parent.close()

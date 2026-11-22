@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import os
 from pathlib import Path
+import stat
 import xml.etree.ElementTree as ET
 
 from lib.atomic_io import write_text_atomic
@@ -44,12 +46,23 @@ LEGACY_DISPLAYS = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
+def _read_settings(path: str) -> str | None:
+    validate_filesystem_path(path)
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return None
+    with os.fdopen(fd, encoding="utf-8") as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError(f"Refusing non-regular desktop settings: {path}")
+        return stream.read()
+
+
 def remove_legacy_override(path: str, expected: str) -> None:
     """Never delete user overrides based on their filename alone."""
-    validate_filesystem_path(path)
     target = Path(path)
-    if not target.is_symlink() and target.is_file() and target.read_text() == expected:
-        target.unlink()
+    if not target.is_symlink() and target.is_file() and _read_settings(path) == expected:
+        target.unlink(missing_ok=True)
 
 
 def remove_legacy_pm_stub(path: str = "/usr/local/bin/pm-is-supported") -> None:
@@ -63,11 +76,12 @@ def _load(path: str, channel: str) -> ET.Element:
     target = Path(path)
     if target.is_symlink():
         raise ValueError(f"Refusing symlinked XFCE settings: {path}")
-    if not target.exists():
+    content = _read_settings(path)
+    if content is None:
         return ET.Element("channel", name=channel, version="1.0")
     # Malformed settings must not be silently replaced with defaults.
     parser = ET.XMLParser(target=ET.TreeBuilder(insert_comments=True))
-    root = ET.fromstring(target.read_text(), parser=parser)
+    root = ET.fromstring(content, parser=parser)
     if root.tag != "channel" or root.get("name") != channel:
         raise ValueError(f"Unexpected XFCE channel in {path}")
     return root

@@ -7,11 +7,13 @@ import io
 import json
 from pathlib import Path
 import shlex
+import ssl
 import stat
 import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
+from urllib.error import HTTPError, URLError
 
 import basaltwater
 import remote_setup
@@ -77,7 +79,7 @@ class CachyOSNotificationTests(unittest.TestCase):
         return self.config("--notify", "webhook", TARGET, *options)
 
     def test_success_sends_shared_payload_after_private_selection_is_saved(self):
-        config = self.webhook_config("--notification-strict-https", "--node")
+        config = self.webhook_config("--notification-ca-file", "/fixture/private-ca.pem", "--node")
         response = self.request.return_value
 
         def open_request(request, **kwargs):
@@ -90,6 +92,7 @@ class CachyOSNotificationTests(unittest.TestCase):
         self.assertEqual(request.full_url, "https://panel.example/api/v1/notifications")
         self.assertEqual(request.get_header("Authorization"), "Bearer " + TOKEN)
         self.assertTrue(self.request.call_args.kwargs["strict_https"])
+        self.assertEqual(self.request.call_args.kwargs["ca_file"], "/fixture/private-ca.pem")
         payload = json.loads(request.data)
         self.assertEqual(payload["schema_version"], 2)
         self.assertEqual(payload["event"]["status"], "good")
@@ -97,7 +100,9 @@ class CachyOSNotificationTests(unittest.TestCase):
         self.assertEqual(payload["operator"]["system"], "workstation")
         self.assertIn("workstation", payload["operator"]["subject"])
         self.assertNotIn(TOKEN, request.data.decode())
-        self.assertEqual(refresh.load_saved_setup()[1].notify_specs, [["webhook", TARGET]])
+        restored = refresh.load_saved_setup()[1]
+        self.assertEqual(restored.notify_specs, [["webhook", TARGET]])
+        self.assertEqual(restored.notification_ca_file, "/fixture/private-ca.pem")
         self.assertEqual(stat.S_IMODE(self.record.stat().st_mode), 0o600)
         self.assertEqual(stat.S_IMODE(self.record.parent.stat().st_mode), 0o700)
         evidence = self.record.with_name("last-notification.json")
@@ -147,6 +152,47 @@ class CachyOSNotificationTests(unittest.TestCase):
                     self.assertIn("delivery was incomplete", output.getvalue())
                     self.assertNotIn(TOKEN, output.getvalue())
                     self.assertNotIn("secret transport", output.getvalue())
+
+    def test_doctor_reports_safe_categories_for_multiple_webhook_failures(self):
+        config = self.webhook_config("--notification-strict-https", "--notify", "webhook", "https://other.example/hook")
+        self.request.side_effect = [
+            URLError(ssl.SSLCertVerificationError(1, "secret certificate detail " + TARGET)),
+            HTTPError(TARGET, 403, "secret response", None, None),
+        ]
+
+        self.assertEqual(remote_setup.run_cachyos_setup(config), 0)
+        self.assertEqual(self.request.call_count, 2)
+        receipt = self.record.with_name("last-notification.json").read_text()
+        self.assertEqual(json.loads(receipt)["failure_categories"], ["certificate", "http"])
+        state, reason = notification_state.collect_notification_health(config)
+        self.assertEqual(state, "failed")
+        self.assertIn("HTTPS certificate verification failed", reason)
+        self.assertIn("--notification-ca-file", reason)
+        self.assertIn("unsuccessful HTTP status", reason)
+        for private in ("secret", "panel.example", "other.example", TOKEN):
+            self.assertNotIn(private, receipt + reason)
+
+    def test_saved_workstation_selection_preserves_default_and_strict_tls(self):
+        for flags, strict in (((), False), (("--notification-strict-https",), True)):
+            with self.subTest(flags=flags):
+                config = self.webhook_config(*flags)
+                refresh.save_successful_setup(config)
+                restored = refresh.load_saved_setup()[1]
+                self.assertEqual(remote_setup.run_cachyos_setup(restored), 0)
+                self.assertIs(self.request.call_args.kwargs["strict_https"], strict)
+
+    def test_legacy_failed_receipt_keeps_generic_guidance(self):
+        config = self.webhook_config()
+        remote_setup.run_cachyos_setup(config)
+        evidence = self.record.with_name("last-notification.json")
+        legacy = json.loads(evidence.read_text())
+        legacy.pop("failure_categories")
+        legacy.update(schema_version=1, delivery="failed")
+        evidence.write_text(json.dumps(legacy))
+
+        state, reason = notification_state.collect_notification_health(config)
+        self.assertEqual(state, "failed")
+        self.assertIn("Check receiver connectivity", reason)
 
     def test_dry_run_and_no_targets_send_nothing(self):
         self.assertEqual(remote_setup.run_cachyos_setup(self.webhook_config("--dry-run")), 0)
@@ -224,7 +270,8 @@ class CachyOSNotificationTests(unittest.TestCase):
         before = json.loads(evidence.read_text())
         for field, invalid in (("schema_version", True), ("delivery", "secret invalid"),
                                ("recorded_at", "secret invalid"), ("recorded_at", "2000-01-01T00:00:00"),
-                               ("target_count", True), ("configuration_digest", "secret invalid")):
+                               ("target_count", True), ("configuration_digest", "secret invalid"),
+                               ("failure_categories", ["secret invalid"]), ("failure_categories", {})):
             evidence.write_text(json.dumps({**before, field: invalid}))
             state, reason = notification_state.collect_notification_health(config)
             self.assertEqual(state, "failed")

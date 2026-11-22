@@ -16,9 +16,10 @@ import time
 from collections.abc import Iterator
 from typing import Any, Callable, Optional
 
+from lib.atomic_io import parse_json
 from lib.concurrency import ResourceBusyError, resource_lock
 from lib.proxmox_hosts import ProxmoxHost, ProxmoxHostFacts, ProxmoxStoragePool
-from lib.ssh_enrollment import is_host_key_enrolled, replace_scanned_host_keys
+from lib.ssh_enrollment import pin_verified_ed25519_key
 from lib.ssh_utils import (
     build_ssh_command,
     ensure_remote_sudo,
@@ -35,8 +36,12 @@ class ProvisionError(Exception):
     """Raised when guest provisioning fails."""
 
 
-class _GuestHostKeyScanError(ProvisionError):
-    """The authenticated node could not scan the guest's SSH host key."""
+class GuestAlreadyExists(Exception):
+    """An existing guest was identified by its Proxmox ID."""
+
+    def __init__(self, message: str = "", *, vmid: int | None = None) -> None:
+        super().__init__(message)
+        self.vmid = vmid
 
 
 @contextmanager
@@ -1181,58 +1186,44 @@ def enroll_provisioned_guest_host_keys(
     user: str,
     ssh_opts: StrList,
     *,
+    tool: str,
+    vmid: int | None,
     dry_run: bool = False,
 ) -> None:
-    """Enroll a provisioned guest's SSH key through its trusted Proxmox node.
-
-    Callers must first establish that the guest is either newly created or
-    matches saved basaltwater provisioning metadata. Scanning from the already
-    authenticated Proxmox node keeps the discovery on the guest's bridge and
-    lets strict host-key checking remain enabled for both basaltwater and the
-    invoking user's subsequent direct guest connections.
-    """
+    """Read and pin the host key of the guest selected on the trusted node."""
     if dry_run:
-        print(
-            f"  [DRY-RUN] Would enroll the guest SSH host key for {target_ip}"
-        )
+        print(f"  [DRY-RUN] Would verify the guest SSH host key for {target_ip}")
         return
+    if (tool not in {"qm", "pct"} or type(vmid) is not int
+            or not 100 <= vmid <= 999999999 or not validate_ip_address(target_ip)):
+        raise ProvisionError(f"Missing or invalid Proxmox guest identity for {target_ip}")
 
-    scan_result = _ssh_run(
-        node_ip,
-        user,
-        ssh_opts,
-        f"ssh-keyscan -T 10 -t ed25519 {shlex.quote(target_ip)}",
-        dry_run=False,
-        quiet=True,
-    )
-    scan = (scan_result.stdout or "").strip()
-    if scan_result.returncode != 0 or not scan:
-        detail = (scan_result.stderr or "").strip() or "no ED25519 key was returned"
-        raise _GuestHostKeyScanError(
-            f"Could not read the guest SSH host key for {target_ip}: {detail}"
-        )
-    workspace_known_hosts = get_workspace_known_hosts_path()
-    user_known_hosts = os.path.abspath(
-        os.path.expanduser("~/.ssh/known_hosts")
-    )
-    known_hosts_paths = list(
-        dict.fromkeys((workspace_known_hosts, user_known_hosts))
+    read_key = ["/bin/cat", "/etc/ssh/ssh_host_ed25519_key.pub"]
+    command = (
+        ["qm", "guest", "exec", str(vmid), "--timeout", "15", "--synchronous", "1", "--"]
+        if tool == "qm" else ["pct", "exec", str(vmid), "--"]
     )
     try:
-        for known_hosts in known_hosts_paths:
-            replace_scanned_host_keys(
-                target_ip,
-                scan,
-                known_hosts_path=known_hosts,
-            )
-    except (OSError, RuntimeError, ValueError) as exc:
+        result = _ssh_run(node_ip, user, ssh_opts, shlex.join(command + read_key), quiet=True)
+        if result.returncode != 0:
+            raise RuntimeError("Proxmox guest command failed")
+        public_key = result.stdout or ""
+        if tool == "qm":
+            status = parse_json(public_key)
+            if (not isinstance(status, dict) or status.get("exited") != 1
+                    or status.get("exitcode") != 0 or status.get("out-truncated")
+                    or not isinstance(status.get("out-data"), str)):
+                raise RuntimeError("QEMU guest agent returned no complete, successful key read")
+            public_key = status["out-data"]
+        known_hosts_paths = pin_verified_ed25519_key(
+            target_ip, public_key,
+            [get_workspace_known_hosts_path(), "~/.ssh/known_hosts"],
+        )
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
         raise ProvisionError(
-            f"Could not enroll the guest SSH host key for {target_ip}: {exc}"
+            f"Could not verify the guest SSH host key for {target_ip} via {tool} {vmid}: {exc}"
         ) from exc
-    print(
-        "  ✓ Enrolled guest SSH host key in "
-        + ", ".join(known_hosts_paths)
-    )
+    print("  ✓ Verified guest SSH host key in " + ", ".join(known_hosts_paths))
 
 
 def refresh_managed_guest_host_keys(
@@ -1241,6 +1232,8 @@ def refresh_managed_guest_host_keys(
     user: str,
     hosted_key: Optional[str],
     *,
+    tool: str,
+    vmid: int | None,
     dry_run: bool = False,
 ) -> None:
     """Refresh a saved guest's host key through its authenticated Proxmox node.
@@ -1249,21 +1242,10 @@ def refresh_managed_guest_host_keys(
     provisioning metadata before using this helper. Unsaved or adopted guests
     must continue through explicit operator-confirmed host-key enrollment.
     """
-    try:
-        enroll_provisioned_guest_host_keys(
-            target_ip,
-            node_ip,
-            user,
-            _ssh_opts(hosted_key),
-            dry_run=dry_run,
-        )
-    except _GuestHostKeyScanError:
-        if not is_host_key_enrolled(target_ip):
-            raise
-        print(
-            f"  ✓ Node could not rescan {target_ip}; retaining its enrolled "
-            "workspace SSH host key for strict verification"
-        )
+    enroll_provisioned_guest_host_keys(
+        target_ip, node_ip, user, _ssh_opts(hosted_key),
+        tool=tool, vmid=vmid, dry_run=dry_run,
+    )
 
 
 __all__ = [

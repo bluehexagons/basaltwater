@@ -18,15 +18,15 @@ from lib.setup_directories import directory_fd
 from lib.validation import validate_filesystem_path
 
 
-SERVICE_NODE_VERSION = "24.22.1"
+SERVICE_NODE_VERSION = "24.22.3"
 SERVICE_NODE_PARENT = "/opt/basaltwater-node"
 SERVICE_NODE_ROOT = f"{SERVICE_NODE_PARENT}/v{SERVICE_NODE_VERSION}"
 SERVICE_NODE = f"{SERVICE_NODE_ROOT}/bin/node"
 SERVICE_NPM_CLI = f"{SERVICE_NODE_ROOT}/lib/node_modules/npm/bin/npm-cli.js"
-# Official https://nodejs.org/dist/v24.22.1/SHASUMS256.txt.
+# Official https://nodejs.org/dist/v24.22.3/SHASUMS256.txt.
 NODE_ARCHIVES = {
-    "x86_64": ("x64", "6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6"),
-    "aarch64": ("arm64", "dbabf7a1cbf947e6059ffad2c27b80041db97dea1e553b62afdee7f13fca336e"),
+    "x86_64": ("x64", "4f2b175a6d53a5c617a80dba2676238a0688cef28c6da4eba35c7d844e66fcfb"),
+    "aarch64": ("arm64", "6e51a2ada00f0011cc266f65d98922b403d7ad88f809ca2aa615a5fe1ce6e86c"),
 }
 MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
 

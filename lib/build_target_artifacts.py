@@ -212,17 +212,18 @@ class BuildTargetArtifactStore:
             pass
 
     @contextmanager
-    def _locked(self) -> Iterator[int]:
+    def _locked(self, *, initialize: bool = True) -> Iterator[int]:
         """Hold the stable root lock and verify its durable initialization witness."""
         with _private_root(self.root) as root_fd:
             flags = os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0)
             try:
                 lock_fd = os.open(
-                    _LOCK_NAME, flags | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=root_fd,
+                    _LOCK_NAME, flags | (os.O_CREAT | os.O_EXCL if initialize else 0), 0o600, dir_fd=root_fd,
                 )
-                os.fchmod(lock_fd, 0o600)
-                os.fsync(lock_fd)
-                os.fsync(root_fd)
+                if initialize:
+                    os.fchmod(lock_fd, 0o600)
+                    os.fsync(lock_fd)
+                    os.fsync(root_fd)
             except FileExistsError:
                 lock_fd = os.open(_LOCK_NAME, flags, dir_fd=root_fd)
             try:
@@ -236,6 +237,10 @@ class BuildTargetArtifactStore:
                 _check_regular(named, "store lock", modes=frozenset({0o600}))
                 if _identity(named) != _identity(lock_info):
                     raise ValueError("Target artifact stable lock changed while opening")
+                if not initialize:
+                    # Missing witnesses are a refusal, never repaired by a
+                    # preview or collector. Normal staging owns initialization.
+                    self._read_fixed(root_fd, _INITIALIZED_NAME, "initialization witness", modes=frozenset({0o600}))
                 self._initialize_lock(root_fd, lock_fd)
                 yield root_fd
             finally:
@@ -417,7 +422,7 @@ class BuildTargetArtifactStore:
     def _scan(self, root_fd: int) -> tuple[dict[str, tuple[dict[str, Any], int, set[str]]], int, int]:
         names = set(os.listdir(root_fd))
         allowed = {_LOCK_NAME, _INITIALIZED_NAME}
-        suffixes = (".intent.json", ".part", ".bundle", ".ready", ".verify", ".uncertain")
+        suffixes = (".intent.json", ".part", ".bundle", ".ready", ".verify", ".uncertain", ".retiring", ".retired")
         entries: dict[str, set[str]] = {}
         for name in names:
             if name in allowed:
@@ -437,7 +442,12 @@ class BuildTargetArtifactStore:
                 raise ValueError("Target artifact data exists without its durable intent")
             if ".bundle" in suffix_set and ".part" in suffix_set:
                 raise ValueError("Target artifact has conflicting partial and published evidence")
-            if ".ready" in suffix_set and (".bundle" not in suffix_set
+            retiring = bool(suffix_set & {".retiring", ".retired"})
+            if retiring and (suffix_set & {".part", ".verify", ".uncertain"}
+                             or ".ready" not in suffix_set or ".retiring" not in suffix_set
+                             or ".retired" in suffix_set and ".bundle" in suffix_set):
+                raise ValueError("Target artifact retirement has conflicting evidence")
+            if ".ready" in suffix_set and (".bundle" not in suffix_set and not retiring
                                              or ".part" in suffix_set or ".verify" in suffix_set):
                 raise ValueError("Target artifact ready marker has ambiguous bundle evidence")
             for suffix in suffix_set - {".intent.json", ".verify"}:
@@ -465,6 +475,11 @@ class BuildTargetArtifactStore:
         for operation_id in sorted(entries):
             record, encoded_size = self._read_intent(root_fd, operation_id)
             suffix_set = entries[operation_id]
+            for suffix in suffix_set & {".retiring", ".retired"}:
+                marker = self._read_fixed(root_fd, self._entry_name(operation_id, suffix),
+                                          "retirement marker", modes=frozenset({0o600}))
+                if marker != self._readiness(record):
+                    raise ValueError("Target artifact retirement differs from its intent")
             if ".ready" in suffix_set:
                 marker = self._read_fixed(
                     root_fd, self._entry_name(operation_id, ".ready"), "ready marker",
@@ -490,13 +505,59 @@ class BuildTargetArtifactStore:
                     _check_regular(info, "partial bundle", modes=frozenset({0o400, 0o600}),
                                    max_size=record["artifact_size"])
             records[operation_id] = record, encoded_size, suffix_set
-            reserved += record["reservation_bytes"]
+            reserved += (4 * 4096 if ".retired" in suffix_set else record["reservation_bytes"])
             metadata_bytes += encoded_size
         if reserved > self.max_bytes:
             raise ValueError("Target artifact store exceeds its retained byte reservation")
         if metadata_bytes > min(MAX_RETAINED_METADATA_BYTES, self.max_records * MAX_INTENT_BYTES):
             raise ValueError("Target artifact store exceeds its retained metadata bound")
         return records, reserved, metadata_bytes
+
+    def retire_bundle(self, operation_id: str, *, expected_revision: str | None = None) -> dict:
+        """Inspect or relinquish one superseded bundle, retaining replay evidence.
+
+        Trusted local callers MUST own exclusive target maintenance and admission
+        state, prove this completed operation is superseded by an installed newer
+        release, and exclude activation/refresh/setup recovery. No transport
+        dispatcher exposes this primitive. Revision binds immutable intent;
+        exact retries finish only their recorded retirement.
+        """
+        operation_id = _hex(operation_id, "Operation ID")
+        if expected_revision is not None:
+            _hex(expected_revision, "Retirement revision", _SHA256)
+        with self._locked(initialize=False) as root_fd:
+            records, _, _ = self._scan(root_fd)
+            record, _, suffixes = records[operation_id]
+            revision = hashlib.sha256(encode_document(record)).hexdigest()
+            retired = ".retired" in suffixes
+            pending = ".retiring" in suffixes
+            if not retired and not pending and suffixes != {".intent.json", ".ready", ".bundle"}:
+                raise ValueError("Only complete published bundles can be retired")
+            report = dict(operation_id=operation_id, revision=revision,
+                          status="retired" if retired else "pending" if pending else "eligible",
+                          path=os.path.join(self.root, operation_id + ".bundle"),
+                          owner_uid=os.geteuid(), logical_bytes=record["artifact_size"],
+                          allocated_bytes=0)
+            if ".bundle" in suffixes:
+                identity = self._verify_file(root_fd, record, ".bundle")
+                info = os.stat(operation_id + ".bundle", dir_fd=root_fd, follow_symlinks=False)
+                report["allocated_bytes"] = info.st_blocks * 512
+            if expected_revision is None:
+                return report
+            if expected_revision != revision:
+                raise ValueError("Target retirement revision changed")
+            if not retired:
+                if not pending:
+                    self._create_file(root_fd, operation_id + ".retiring", self._readiness(record), "retirement intent")
+                if ".bundle" in suffixes:
+                    named = os.stat(operation_id + ".bundle", dir_fd=root_fd, follow_symlinks=False)
+                    if _identity(named) != identity:
+                        raise ValueError("Target bundle changed before retirement")
+                    os.unlink(operation_id + ".bundle", dir_fd=root_fd)
+                os.fsync(root_fd)
+                self._create_file(root_fd, operation_id + ".retired", self._readiness(record), "retirement completion")
+            os.fsync(root_fd)
+            return report | {"status": "retired"}
 
     def _create_file(self, root_fd: int, name: str, content: bytes, label: str) -> None:
         descriptor = os.open(

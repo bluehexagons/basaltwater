@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
@@ -16,8 +18,10 @@ from desktop.xrdp_steps import (
     _install_xrdp_packages,
     _remove_legacy_xrdp_socket_environment,
     _validate_xrdp_tls_certificate,
+    _verify_xrdp_listener,
     harden_xrdp,
     install_xrdp,
+    stop_unneeded_xrdp,
 )
 from desktop.desktop_environment_steps import configure_xfce_for_rdp, install_desktop
 from desktop.session_steps import install_session_runtime
@@ -114,13 +118,14 @@ class TestGenerateXrdpIni(unittest.TestCase):
         self.assertIn("xrdpvr=false", rendered)
         self.assertIn("certificate=/etc/xrdp/cert.pem", rendered)
         self.assertIn("key_file=/etc/xrdp/key.pem", rendered)
+        self.assertIn("runtime_user=xrdp\nruntime_group=xrdp\n", rendered)
         self.assertNotIn("channel_code", rendered)
         xorg_section = rendered.split("[Xorg]\n", 1)[1]
         self.assertNotIn("\nip=", xorg_section)
 
     def test_renders_listener_and_secure_coding_channel_defaults(self):
         template = (
-            "address={RDP_BIND_ADDRESS}\n"
+            "port={RDP_LISTENER}\n"
             "rdpdr={RDP_DRIVE_REDIRECTION}\n"
             "rdpsnd={RDP_AUDIO}\n"
             "cliprdr={RDP_CLIPBOARD}\n"
@@ -133,14 +138,14 @@ class TestGenerateXrdpIni(unittest.TestCase):
 
         rendered = _generate_xrdp_ini(config, template)
 
-        self.assertIn("address=127.0.0.1", rendered)
+        self.assertIn("port=tcp://127.0.0.1:3389", rendered)
         self.assertIn("rdpdr=false", rendered)
         self.assertIn("rdpsnd=false", rendered)
         self.assertIn("cliprdr=true", rendered)
 
     def test_renders_explicit_channel_policy(self):
         template = (
-            "address={RDP_BIND_ADDRESS}\n"
+            "port={RDP_LISTENER}\n"
             "rdpdr={RDP_DRIVE_REDIRECTION}\n"
             "rdpsnd={RDP_AUDIO}\n"
             "cliprdr={RDP_CLIPBOARD}\n"
@@ -158,10 +163,60 @@ class TestGenerateXrdpIni(unittest.TestCase):
 
         rendered = _generate_xrdp_ini(config, template)
 
-        self.assertIn("address=10.0.0.25", rendered)
+        self.assertIn("port=tcp://10.0.0.25:3389", rendered)
         self.assertIn("rdpdr=true", rendered)
         self.assertIn("rdpsnd=true", rendered)
         self.assertIn("cliprdr=false", rendered)
+
+    def test_renders_explicit_ipv6_listener(self):
+        config = SetupConfig(host="vm", username="agent", system_type="workstation_dev",
+                             enable_rdp=True, rdp_bind_address="2001:db8::10")
+        self.assertEqual(_generate_xrdp_ini(config, "port={RDP_LISTENER}"), "port=tcp6://{2001:db8::10}:3389")
+
+
+class TestXrdpListenerPolicy(unittest.TestCase):
+    def test_listener_requires_the_configured_address_and_service_identity(self):
+        config = SetupConfig(host="vm", username="agent", system_type="workstation_dev")
+        with patch("desktop.xrdp_steps.pwd.getpwnam", return_value=SimpleNamespace(pw_uid=100)), \
+             patch("desktop.xrdp_steps.grp.getgrnam", return_value=SimpleNamespace(gr_gid=101)), \
+             patch("desktop.xrdp_steps.time.monotonic", side_effect=[0, 5, 0, 5, 0]), \
+             patch("desktop.xrdp_steps.run") as run:
+            for bind, identity, should_pass in (
+                ("0.0.0.0", "Uid:\t100\t100\t100\t100\nGid:\t101\t101\t101\t101\n", False),
+                ("127.0.0.1", "Uid:\t0\t0\t0\t0\nGid:\t0\t0\t0\t0\n", False),
+                ("127.0.0.1", "Uid:\t100\t100\t100\t100\nGid:\t101\t101\t101\t101\n", True),
+            ):
+                with self.subTest(bind=bind, identity=identity):
+                    run.side_effect = [
+                        SimpleNamespace(stdout="42\n"),
+                        SimpleNamespace(stdout=f'LISTEN 0 50 {bind}:3389 0.0.0.0:* users:(("xrdp",pid=42,fd=9))\n'),
+                        SimpleNamespace(stdout=""),
+                        SimpleNamespace(stdout=identity),
+                    ]
+                    if should_pass:
+                        _verify_xrdp_listener(config)
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, "Could not verify unprivileged xRDP listener"):
+                            _verify_xrdp_listener(config)
+
+    def test_headless_setup_stops_only_a_managed_frontend(self):
+        config = SetupConfig(host="vm", username="admin", system_type="server_lite")
+        from plugins.server import build_server_steps
+
+        self.assertIn(stop_unneeded_xrdp, [step for _name, step in build_server_steps(config)])
+        with TemporaryDirectory() as directory, \
+             patch("desktop.xrdp_steps.can_manage_system_services", return_value=True), \
+             patch("desktop.xrdp_steps.is_package_installed", return_value=True), \
+             patch("desktop.xrdp_steps.is_dry_run", return_value=False), \
+             patch("desktop.xrdp_steps._XRDP_CONFIG", str(Path(directory) / "xrdp.ini")), \
+             patch("desktop.xrdp_steps._XRDP_SESMAN_CONFIG", str(Path(directory) / "sesman.ini")), \
+             patch("desktop.xrdp_steps.run") as run:
+            (Path(directory) / "xrdp.ini").write_text("[Globals]\nport=3389\n")
+            stop_unneeded_xrdp(config)
+            run.assert_not_called()
+            (Path(directory) / "sesman.ini").write_text("[Xorg]\nparam=/usr/local/libexec/basaltwater-xrdp-Xorg\n")
+            stop_unneeded_xrdp(config)
+            run.assert_called_once_with("systemctl disable --now xrdp")
 
 
 class TestEnsureUserInGroup(unittest.TestCase):
@@ -296,7 +351,8 @@ class TestInstallXrdp(unittest.TestCase):
     """Test XRDP installation and configuration."""
 
     def setUp(self):
-        for name in ("assert_desktop_idle", "install_session_runtime", "_require_peer_authenticated_sesrun"):
+        for name in ("assert_desktop_idle", "install_session_runtime", "_require_peer_authenticated_sesrun",
+                     "_verify_xrdp_listener"):
             runtime_patcher = patch(f"desktop.xrdp_steps.{name}")
             self.addCleanup(runtime_patcher.stop)
             runtime_patcher.start()
@@ -363,7 +419,7 @@ class TestInstallXrdp(unittest.TestCase):
 
             install_xrdp(config)
 
-        install_calls = [c for c in mock_run.call_args_list if 'apt-get install' in str(c)]
+        install_calls = [c for c in mock_run.call_args_list if 'apt-get ' in str(c) and ' install ' in str(c)]
         self.assertGreater(len(install_calls), 0)
         self.assertIn("--no-upgrade xserver-xorg-core", str(install_calls[0]))
         self.assertIn("xrdp", str(install_calls[1]))
@@ -512,7 +568,7 @@ class TestInstallXrdp(unittest.TestCase):
             "runuser -u testuser -- mkdir -p /home/testuser/.local/share/xorg",
             run_commands,
         )
-        self.assertIn("chmod 700 /home/testuser/.local/share/xorg", run_commands)
+        self.assertIn("runuser -u testuser -- chmod 700 /home/testuser/.local/share/xorg", run_commands)
 
     @patch('desktop.xrdp_steps.run')
     @patch('desktop.xrdp_steps.os.path.exists')
@@ -850,151 +906,41 @@ class TestHardenXrdp(unittest.TestCase):
 
 
 class TestConfigureXfceForRdp(unittest.TestCase):
-    """Test XFCE RDP compatibility configuration."""
-
     def setUp(self):
-        self.helpers = {}
-        for name in ("update_channel", "clean_legacy_xfwm", "remove_legacy_pm_stub", "remove_legacy_override"):
-            patcher = patch(f"desktop.desktop_environment_steps.{name}")
-            self.helpers[name] = patcher.start()
+        from desktop import desktop_environment_steps as steps
+
+        for name in ("apply_home_settings", "remove_legacy_pm_stub"):
+            patcher = patch.object(steps, name)
+            setattr(self, name, patcher.start())
             self.addCleanup(patcher.stop)
-        glob_patcher = patch("desktop.desktop_environment_steps.glob.glob", return_value=[])
-        self.glob = glob_patcher.start()
-        self.addCleanup(glob_patcher.stop)
-        home_patcher = patch(
-            "desktop.desktop_environment_steps.get_user_home",
-            return_value="/home/testuser",
-        )
-        self.addCleanup(home_patcher.stop)
-        home_patcher.start()
+        patcher = patch.object(steps.glob, "glob", side_effect=[
+            ["/usr/lib/aarch64-linux-gnu/xfce4/notifyd/xfce4-notifyd"], [],
+        ])
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
-    @patch('desktop.desktop_environment_steps.run')
-    @patch('desktop.desktop_environment_steps.os.makedirs')
-    @patch('desktop.desktop_environment_steps.os.path.exists', return_value=False)
-    @patch('builtins.open', new_callable=unittest.mock.mock_open)
-    def test_notifications_use_session_environment(self, opened, exists, makedirs, run):
-        self.glob.side_effect = [["/usr/lib/aarch64-linux-gnu/xfce4/notifyd/xfce4-notifyd"], []]
+    def test_applies_only_managed_rdp_preferences_as_desktop_owner(self):
         configure_xfce_for_rdp(SetupConfig(host="vm", username="testuser", system_type="agent_workstation"))
-        content = ''.join(call.args[0] for call in opened().write.call_args_list)
-        self.assertIn("Exec=/usr/lib/aarch64-linux-gnu/xfce4/notifyd/xfce4-notifyd", content)
-        self.assertNotIn("systemctl --user", content)
-    
-    @patch('desktop.desktop_environment_steps.run')
-    @patch('desktop.desktop_environment_steps.os.makedirs')
-    @patch('builtins.open', new_callable=unittest.mock.mock_open)
-    def test_skips_for_non_xfce_desktop(self, mock_open, mock_makedirs, mock_run):
-        """Should skip configuration for non-XFCE desktops."""
-        config = SetupConfig(
-            host="test.example.com",
-            username="testuser",
-            system_type="workstation_dev",
-            desktop="i3"  # Not XFCE
-        )
-        
-        configure_xfce_for_rdp(config)
-        
-        # Should not create any files
-        self.assertEqual(mock_open.call_count, 0)
-        
-    @patch('desktop.desktop_environment_steps.run')
-    @patch('desktop.desktop_environment_steps.os.makedirs')
-    @patch('desktop.desktop_environment_steps.os.path.exists')
-    @patch('desktop.desktop_environment_steps.os.remove')
-    @patch('builtins.open', new_callable=unittest.mock.mock_open)
-    def test_disables_light_locker(self, mock_open, mock_remove, mock_exists, mock_makedirs, mock_run):
-        """Should disable light-locker autostart."""
-        mock_exists.return_value = False
-        mock_run.return_value = Mock(returncode=0)
-        
-        config = SetupConfig(
-            host="test.example.com",
-            username="testuser",
-            system_type="workstation_dev",
-            desktop="xfce"
-        )
-        
-        configure_xfce_for_rdp(config)
-        
-        # Check that light-locker.desktop was written
-        write_calls = [c for c in mock_open().write.call_args_list]
-        combined_content = ''.join([str(c[0][0]) for c in write_calls if c[0]])
-        
-        self.assertIn("Light Locker", combined_content)
-        self.assertIn("Hidden=true", combined_content)
-        
-    @patch('desktop.desktop_environment_steps.run')
-    @patch('desktop.desktop_environment_steps.os.makedirs')
-    @patch('desktop.desktop_environment_steps.os.path.exists')
-    @patch('desktop.desktop_environment_steps.os.remove')
-    @patch('builtins.open', new_callable=unittest.mock.mock_open)
-    def test_disables_dpms(self, mock_open, mock_remove, mock_exists, mock_makedirs, mock_run):
-        """Should disable DPMS in power manager config."""
-        mock_exists.return_value = False
-        mock_run.return_value = Mock(returncode=0)
-        
-        config = SetupConfig(
-            host="test.example.com",
-            username="testuser",
-            system_type="workstation_dev",
-            desktop="xfce"
-        )
-        
-        configure_xfce_for_rdp(config)
-        
-        # The merge helper receives only the managed power settings.
-        settings = self.helpers["update_channel"].call_args.args[1]
-        self.assertIn("dpms-enabled", settings)
-        self.assertIn("false", settings)
+        username, edits = self.apply_home_settings.call_args.args
+        self.assertEqual(username, "testuser")
+        settings = {path: (action, content) for action, path, content in edits}
+        notify = settings[".config/autostart/xfce4-notifyd.desktop"][1]
+        self.assertIn("Exec=/usr/lib/aarch64-linux-gnu/xfce4/notifyd/xfce4-notifyd", notify)
+        self.assertNotIn("systemctl --user", notify)
+        self.assertIn("Hidden=true", settings[".config/autostart/light-locker.desktop"][1])
+        channels = ".config/xfce4/xfconf/xfce-perchannel-xml"
+        action, power = settings[f"{channels}/xfce4-power-manager.xml"]
+        self.assertEqual(action, "merge-xfce")
+        self.assertIn('name="dpms-enabled" type="bool" value="false"', power)
+        for path in (".config/autostart/xfsettingsd.desktop", f"{channels}/displays.xml"):
+            self.assertEqual(settings[path][0], "retire")
+        self.remove_legacy_pm_stub.assert_called_once_with()
 
-    @patch('desktop.desktop_environment_steps.run')
-    @patch('desktop.desktop_environment_steps.os.makedirs')
-    @patch('desktop.desktop_environment_steps.os.path.exists')
-    @patch('desktop.desktop_environment_steps.os.remove')
-    @patch('builtins.open', new_callable=unittest.mock.mock_open)
-    def test_removes_stale_display_workarounds(self, mock_open, mock_remove, mock_exists, mock_makedirs, mock_run):
-        """Should remove stale display profile and legacy xfsettingsd override."""
-        mock_exists.return_value = True
-        mock_run.return_value = Mock(returncode=0)
-
-        config = SetupConfig(
-            host="test.example.com",
-            username="testuser",
-            system_type="workstation_dev",
-            desktop="xfce"
-        )
-
-        configure_xfce_for_rdp(config)
-
-        removed_paths = [call.args[0] for call in self.helpers["remove_legacy_override"].call_args_list]
-        self.assertIn("/home/testuser/.config/autostart/xfsettingsd.desktop", removed_paths)
-        self.assertIn("/home/testuser/.config/xfce4/xfconf/xfce-perchannel-xml/displays.xml", removed_paths)
-        mock_remove.assert_not_called()
-        
-    @patch('desktop.desktop_environment_steps.run')
-    @patch('desktop.desktop_environment_steps.os.makedirs')
-    @patch('desktop.desktop_environment_steps.os.path.exists')
-    @patch('desktop.desktop_environment_steps.os.remove')
-    @patch('builtins.open', new_callable=unittest.mock.mock_open)
-    def test_retires_pm_stub(self, mock_open, mock_remove, mock_exists, mock_makedirs, mock_run):
-        """Delegate exact-match migration; never install a global stub."""
-        mock_exists.return_value = False
-        mock_run.return_value = Mock(returncode=0)
-        
-        config = SetupConfig(
-            host="test.example.com",
-            username="testuser",
-            system_type="workstation_dev",
-            desktop="xfce"
-        )
-        
-        configure_xfce_for_rdp(config)
-        
-        # No global stub is written; only known old content may be removed.
-        write_calls = [c for c in mock_open().write.call_args_list]
-        combined_content = ''.join([str(c[0][0]) for c in write_calls if c[0]])
-        
-        self.assertNotIn("pm-is-supported", combined_content)
-        self.helpers["remove_legacy_pm_stub"].assert_called_once_with()
+    def test_skips_non_xfce_desktop(self):
+        configure_xfce_for_rdp(SetupConfig(host="vm", username="testuser",
+                                          system_type="workstation_dev", desktop="i3"))
+        self.apply_home_settings.assert_not_called()
+        self.remove_legacy_pm_stub.assert_not_called()
 
 
 if __name__ == '__main__':

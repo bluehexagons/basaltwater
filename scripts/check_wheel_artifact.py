@@ -24,6 +24,7 @@ REQUIRED_WHEEL_PATHS = (
     "lib/agent_skill_catalog.py",
     "lib/agent_models.py",
     "lib/t3code_native_probe.cjs",
+    "lib/t3code_service_env_probe.cjs",
     "plugins/common.py",
     "common/agent_steps.py",
     "lib/admin_actions.py",
@@ -31,9 +32,17 @@ REQUIRED_WHEEL_PATHS = (
     "common/service_tools/web_panel_admin.py",
     "common/service_tools/web_panel_agent_tools.py",
     "common/agent_skills/basaltwater-project-development/SKILL.md",
+    "common/agent_skills/basaltwater-project-development/references/collaborative-preview.md",
     "common/agent_skills/basaltwater-project-development/references/t3-workflows.md",
+    "common/agent_skills/basaltwater-project-development/references/t3-client-feature-history.md",
+    "common/agent_skills/basaltwater-project-development/references/t3-visual-replies.md",
     "common/agent_skills/basaltwater-project-adoption/SKILL.md",
     "common/agent_skills/basaltwater-frontend-design/SKILL.md",
+    "common/agent_skills/basaltwater-frontend-design/references/desktop-software.md",
+    "common/agent_skills/basaltwater-frontend-design/references/godot-games.md",
+    "common/agent_skills/basaltwater-frontend-design/references/mobile-applications.md",
+    "common/agent_skills/basaltwater-frontend-design/references/web-applications.md",
+    "common/agent_skills/basaltwater-frontend-design/references/websites.md",
     "common/agent_skills/basaltwater-agent-operations/references/unattended-tasks.md",
     "common/agent_skills/basaltwater-subagents/SKILL.md",
     "common/agent_skills/basaltwater-subagents/references/lifecycle.md",
@@ -51,13 +60,17 @@ REQUIRED_WHEEL_PATHS = (
     "common/cachyos_steps.py",
     "common/agent_skills/basaltwater-cachyos-desktop/SKILL.md",
     "common/agent_skills/basaltwater-cachyos-desktop/references/native-control.md",
+    "common/agent_skills/basaltwater-cachyos-desktop/references/native-control-recipes.md",
     "common/agent_skills/basaltwater-cachyos-workstation/SKILL.md",
+    "common/agent_skills/basaltwater-cachyos-workstation/references/setup-and-diagnosis.md",
     "common/agent_skills/basaltwater-cachyos-workspace/SKILL.md",
     "common/agent_skills/basaltwater-cachyos-t3code/SKILL.md",
     "deploy/deploy_steps.py",
     "desktop/client.py",
     "desktop/coordinates.py",
     "desktop/evidence.py",
+    "desktop/gamepad_qa.py",
+    "desktop/pointer_gestures.py",
     "desktop/observations.py",
     "desktop/preflight.py",
     "desktop/qa_cli.py",
@@ -181,6 +194,16 @@ def _smoke_desktop_cli(launcher: Path, work_dir: Path, environment: dict[str, st
         if not isinstance(data, dict):
             raise RuntimeError("Installed desktop CLI did not return a JSON object")
         return data
+
+    observation = folder / "unused-capture.json"
+    observation.write_text("{}")
+    # The base wheel has no evdev dependency. Invalid inputs must still parse
+    # and fail locally, without creating a device or contacting either helper.
+    for selection in ((), ("--native",)):
+        refused = request("desktop", *selection, "gamepad", "press", "--observation", str(observation),
+                          "--button", "west", "--hold-ms", "5001", expected=1)
+        if "hold_ms" not in refused.get("error", ""):
+            raise RuntimeError("Installed gamepad CLI lost its local bounded-input admission")
 
     plan = folder / "conditional.json"
     plan.write_bytes((ROOT / "docs/examples/learning-records/conditional.json").read_bytes())
@@ -312,6 +335,10 @@ def _smoke_installed_wheel(
                 "import sync.service_tools.storage_ops; "
                 "import lib.build_webhook_service, lib.webhook_builds, lib.build_coordinator"
                 "; import lib.build_commands, lib.nginx_validation, web.webhook_build_steps"
+                "; from desktop.pointer_gestures import validate as validate_gesture, plan_summary"
+                "; gesture = dict(action='input', kind='touch', observation_id='0'*32, geometry=[640,480], "
+                "frames=[dict(at_ms=0,contacts=[dict(id=0,x=100,y=100),dict(id=1,x=200,y=100)]),dict(at_ms=20,contacts=[])])"
+                "; validate_gesture(gesture); assert plan_summary(gesture)['frames'] == 2"
                 "; import common.service_tools.admin_job"
                 "; import common.service_tools.web_panel_admin"
                 "; import common.service_tools.web_panel_agent_tools"

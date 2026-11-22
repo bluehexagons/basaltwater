@@ -14,6 +14,7 @@ from lib.config import SetupConfig
 from lib.machine_state import can_manage_firewall
 from lib.remote_utils import CommandExecutionError, is_dry_run, run
 from lib.streamed_process import run_streamed
+from lib.ufw_ingress import verify_live_ufw_ingress
 from lib.validation import validate_network_ip_or_cidr
 
 
@@ -199,6 +200,16 @@ def _configure_firewall(config: SetupConfig) -> None:
     ufw("--force", "enable")
     _sudo_capture(["sudo", "-n", "systemctl", "enable", "--now", "ufw.service"])
     verify_rule_order(ufw("status", "numbered").stdout, guarded)
+    policies = {}
+    for protocol, ports in guarded:
+        first, _, last = ports.partition(":")
+        for port in range(int(first), int(last or first) + 1):
+            policies[protocol, port] = []
+    for protocol, ports in allowed:
+        first, _, last = ports.partition(":")
+        for port in range(int(first), int(last or first) + 1):
+            policies[protocol, port] = sources
+    verify_live_ufw_ingress(policies, lambda command, **_: _sudo_capture(["sudo", "-n", *command]))
     print("  UFW restricts selected T3/Sunshine/SSH connections to: " + (", ".join(sources) or "local only"))
     print("  Sunshine administration and legacy RDP remain local; unrelated rules are retained. "
           "Review sudo ufw status verbose. Existing connections may remain established.")

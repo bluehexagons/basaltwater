@@ -75,6 +75,27 @@ installation. Refresh discovery in **Settings → Providers** and inspect the
 reported executable/version; a catalog entry alone does not establish readiness.
 See the [upstream mise fix](https://github.com/pingdotgg/t3code/pull/21524).
 
+## Additional providers
+
+T3's built-in Codex provider can use its managed ChatGPT connection or a CLI
+login on the selected host. Changing the CLI login leaves the managed connection
+in place. The managed ChatGPT connection offers Standard speed. Model and tool
+availability follow the selected instance's login, CLI version, and workspace
+settings. For multiple accounts, check the configured Codex home. A shadow home
+shares session history and configuration with the primary home while keeping its
+own login. Separate homes keep sessions isolated. For native image generation,
+check the selected instance's account, model, and client support. See the
+[tagged Codex provider guide](https://github.com/pingdotgg/t3code/blob/v0.1.10/docs/user/providers-codex.md).
+
+**Settings → Providers → Add provider → Show more** offers ACP Registry agents
+and local ACP commands. They run on the T3 environment host. Registry agents
+use their own authentication and sandbox controls. Local commands take an
+executable and literal arguments. T3 negotiates ACP v2 preview or v1 according
+to provider support, and model options and session import depend on capabilities
+the provider reports. Basaltwater's setup manages its selected CLI providers.
+Use the [tagged ACP guide](https://github.com/pingdotgg/t3code/blob/v0.1.10/docs/user/providers-acp.md)
+for deliberately adding or removing a T3-managed provider.
+
 ## 0.1.6 conversation, project, and credential workflows
 
 Use `/side` or `/btw` for an owner's side question, or **Side chat** in the right
@@ -137,6 +158,12 @@ Basic Auth credentials. It automatically issues a one-time browser credential
 and opens T3; `/devices` retains manual pairing and T3 Connect controls.
 Use the primary T3 URL afterwards to reuse the native session.
 
+With compatible 0.1.11 hosts and clients, directly paired device sessions
+can renew with their device key while in use. Re-pair if a session expires
+after inactivity or an older host cannot renew it. Check the active route's
+permissions when switching between direct pairing and Connect. See
+[direct pairing and routes](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/remote-access.md#pair-over-a-lan-or-private-network).
+
 If pairing returns to the key form, check hostname/scheme changes and cookie
 acceptance. Reopen the protected entry to recover a rejected session. Never
 print cookies or credentials. An unpaired browser may log WebSocket auth
@@ -154,6 +181,26 @@ HTTPS origins. Identify the failing origin and check native pairing separately;
 rejected cloud requests do not establish a gateway, TLS, or local pairing
 failure. Leave cloud sign-in unverified when it fails. Preserve managed
 TLS/authentication policy and upstream assets.
+
+## Connect device approval
+
+T3 0.1.11 requires `relay:configure` for initial Connect linking and relay
+configuration. Basaltwater-issued links carry the standard client grant,
+including `relay:write` for existing relay preferences and unlinking.
+For initial setup on managed Debian, run `t3 connect link --headless` as the
+service account and arrange the restart described in
+[Connect management](https://github.com/bluehexagons/basaltwater/blob/main/docs/services/device-pairing.md#t3-connect-management).
+
+In 0.1.10 the owner can enable **Require approval for new devices** in the
+host's **Settings → Sharing & access**. A new Connect device shows a code;
+approve only the initiated device with a matching code from an already
+connected device, or use the host's `t3 auth connect-device list` and
+`t3 auth connect-device approve CODE`. Update older clients first and review
+devices already trusted before enabling the setting. Revoke through the same
+settings or `t3 auth connect-device revoke CODE`; with approval disabled that
+device can connect again through the account. This is distinct from outside-agent
+OAuth grants, direct-LAN pairing, and Basaltwater's root-action broker. Setup
+does not change it. See [upstream device approval](https://github.com/pingdotgg/t3code/blob/v0.1.10/docs/user/remote-access.md#approve-new-devices).
 
 ## Outside agents
 
@@ -182,13 +229,25 @@ OAuth request further; it cannot expand the grant and is ignored for injected
 provider-session callers. See the
 [mode-limit contract](https://github.com/pingdotgg/t3code/blob/v0.1.4/apps/server/src/mcp/McpInvocationContext.ts).
 
-This is separate from T3's injected thread tools and Basaltwater's task MCP.
-Installation does not connect terminal/panel agents automatically. External
-access does not make them delegated children of this thread or transfer its
-browser attachment. Do not register an outside agent or enable public access as
-an incidental repair. Use the
-[0.1.9 outside-agent guide](https://github.com/pingdotgg/t3code/blob/v0.1.9/docs/user/outside-agents.md)
-when that integration is requested.
+Use **Read only** for project, thread, and model discovery. Supply an explicit
+`projectId` or `threadId` when a tool normally takes it from its caller, and use
+`allProjects: true` for an environment-wide thread list. With an authorized
+write grant, use `t3_thread_launch` and follow it with `t3_thread_wait` or
+`t3_thread_read`. Delegation, interactive preview, secret requests, and device
+tools require an agent running inside a T3 thread. Outside-agent OAuth is an
+opt-in connection with its own grant. The
+[tagged outside-agent guide](https://github.com/pingdotgg/t3code/blob/v0.1.10/docs/user/outside-agents.md)
+covers setup from standalone Codex, Claude Code, ChatGPT, and other OAuth MCP clients.
+
+## Guest links
+
+For a requested one-thread collaboration, the owner can enable the **Guest
+links** beta in **Settings → Labs** on the host connected to T3 Connect. The
+thread's **Share with guest** link works in one browser for 24 hours. It exposes
+recent messages, attachments, reasoning and command output. A guest's message
+and files wait for the owner to send or dismiss. Use **Stop sharing** to revoke
+the link. Review the thread before sharing it. See the
+[tagged guest guide](https://github.com/pingdotgg/t3code/blob/v0.1.10/docs/user/guest-links.md).
 
 ## Linked environments
 
@@ -207,12 +266,14 @@ links can change only threads they started and skip project setup scripts.
 Discovery, remote delegation, and workspace constraints are in the subagent
 skill's [T3 reference](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-subagents/references/t3-orchestration.md#linked-environments).
 
-Links last 30 days; renew by linking again. **Forget** removes the local link
-and credential, while revocation on the peer's **Settings → Sharing & access**
-ends its grant there. Turning the beta off pauses link use, including result
-delivery from that peer, without stopping work already running. Do not treat
+On 0.1.11, links between compatible environments renew while agents use them.
+After 30 days unused, or after 30 days with an older peer, link again using a
+new code. **Forget** removes the local link and credential. Revocation in
+the peer's **Settings → Sharing & access** ends its grant there. Turning the
+beta off pauses link use and result delivery from that peer while existing
+work continues. Do not treat
 a forgotten link or unavailable result as proof that remote edits stopped.
-See the [tagged link guide](https://github.com/pingdotgg/t3code/blob/v0.1.4/docs/user/remote-access.md#link-another-environment).
+See the [tagged link guide](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/remote-access.md#link-another-environment).
 
 ## Server-side Git
 

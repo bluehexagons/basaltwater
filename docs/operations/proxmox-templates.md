@@ -21,10 +21,10 @@ hardware. Debian's separate `nocloud` image does not provide cloud-init.
 See [Debian cloud image guidance](https://cloudfront.debian.net/cdimage/cloud/).
 
 Check the selected node, available VMIDs, bridge, storage capacity, and thin-pool
-data **and metadata** headroom before creating fixtures. The following native
-example uses the msatabox lab's storage names; choose unused IDs and suitable
-pools on another installation. Run these commands on the Proxmox node after
-verifying the locally staged image against the catalog checksum:
+data **and metadata** headroom before creating fixtures. The example uses
+`image-store` for staged files and `local-lvm` for guest disks. Substitute your
+storage names and unused IDs. Verify the locally staged image against the
+catalog checksum before running these commands on the Proxmox node.
 
 ```bash
 qm create 9000 --name debian13-20260803-template \
@@ -32,12 +32,12 @@ qm create 9000 --name debian13-20260803-template \
   --scsihw virtio-scsi-single --net0 virtio,bridge=vmbr0 \
   --serial0 socket --vga serial0 --agent enabled=1
 qm disk import 9000 \
-  /mnt/pve/lab-hdd/import/debian-13-genericcloud-amd64-20260803-2559.qcow2 \
-  lab-ssd --format raw
+  /mnt/pve/image-store/import/debian-13-genericcloud-amd64-20260803-2559.qcow2 \
+  local-lvm --format raw
 qm config 9000
 # Use the actual imported unused0 volume from the output above.
-qm set 9000 --scsi0 lab-ssd:vm-9000-disk-0,discard=on,ssd=1,iothread=1 \
-  --ide2 lab-ssd:cloudinit --boot order=scsi0
+qm set 9000 --scsi0 local-lvm:vm-9000-disk-0,discard=on,ssd=1,iothread=1 \
+  --ide2 local-lvm:cloudinit --boot order=scsi0
 qm resize 9000 scsi0 6G
 qm config 9000
 qm template 9000
@@ -50,19 +50,19 @@ snippet in the reusable template. Its Proxmox inventory name identifies the
 template version; each clone gets its own inventory name and guest settings.
 This follows the [Proxmox cloud-init workflow](https://github.com/proxmox/pve-docs/blob/master/qm-cloud-init.adoc).
 
-Use `cpu: host` for this single-node Ivy Bridge lab. Its CPU lacks AVX2;
-`x86-64-v3` and `v4` are unsuitable. A migration-capable deployment needs a CPU
-model supported by every destination. See [Proxmox CPU models](https://github.com/proxmox/pve-docs/blob/master/qm.adoc#qemu-cpu-types).
+The example uses `cpu: host` on a single node. For migration, select a CPU
+model supported by every destination. In particular, older nodes can lack
+instructions required by `x86-64-v3` or `v4`. See [Proxmox CPU models](https://github.com/proxmox/pve-docs/blob/master/qm.adoc#qemu-cpu-types).
 
 LVM-thin imports use native raw block volumes. Cloud-image staging and custom
-snippets still need file-capable storage, such as `lab-hdd` and `local` in this
-lab. See [LVM-thin storage](https://github.com/proxmox/pve-docs/blob/master/pve-storage-lvmthin.adoc).
+snippets still need file-capable storage with the corresponding content types
+enabled. See [LVM-thin storage](https://github.com/proxmox/pve-docs/blob/master/pve-storage-lvmthin.adoc).
 
 ## Clone and configure before first boot
 
 ```bash
 # Full clone, optionally onto another compatible storage pool.
-qm clone 9000 101 --full 1 --name new-guest-101 --storage lab-ssd
+qm clone 9000 101 --full 1 --name new-guest-101 --storage local-lvm
 # Linked clone on the template's pool, for a separate disposable guest.
 qm clone 9000 102 --full 0 --name new-guest-102
 ```
@@ -114,7 +114,7 @@ and the [clean command](https://docs.cloud-init.io/en/latest/reference/cli.html)
 
 ## Qualification and future Basaltwater support
 
-The msatabox PVE 9 qualification used a never-booted Debian 13 vendor template,
+The PVE 9 qualification used a never-booted Debian 13 vendor template,
 two full clones on separate thin pools, and a linked clone. Qualification
 checks include concurrent first boot, guest-agent and cloud-init completion,
 correct static networking, unique identities, independent writes, root growth,

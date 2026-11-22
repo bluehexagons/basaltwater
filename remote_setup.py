@@ -29,7 +29,7 @@ from lib.machine_state import (
     save_machine_state,
     save_setup_config,
 )
-from lib.notifications import send_setup_notification
+from lib.notifications import WebhookFailure, send_setup_notification
 from lib.operation_state import OperationRecord, OperationStateStore
 from lib.remote_utils import detect_os, is_dry_run, set_dry_run
 from lib.security_activity import record_setup_activity
@@ -56,6 +56,7 @@ from lib.system_types import get_steps_for_system_type
 from lib.deploy_utils import extract_repo_name, repository_stage_name
 from typing import Optional
 from lib.types import StepFunc
+from lib.managed_storage import guarded_setup
 
 
 REMOTE_AGENT_PAYLOAD_DIR = "/opt/basaltwater/agent_payload"
@@ -228,6 +229,8 @@ def _send_setup_notification(
     friendly_name: Optional[str] = None,
     notification_level: object = None,
     strict_https: object = None,
+    ca_file: object = None,
+    webhook_failures: set[WebhookFailure] | None = None,
 ) -> bool:
     """Send the setup result and make best-effort delivery failures visible."""
 
@@ -241,6 +244,8 @@ def _send_setup_notification(
             friendly_name=friendly_name,
             notification_level=notification_level,
             strict_https=strict_https,
+            ca_file=ca_file,
+            webhook_failures=webhook_failures,
         )
     except Exception:
         # Delivery must neither fail a completed setup nor mask its original
@@ -474,6 +479,7 @@ def _run_main() -> int:
     )
     parser.add_argument("--artifact-releases-json", help=argparse.SUPPRESS)
     parser.add_argument("--expected-setup-revision", help=argparse.SUPPRESS)
+    parser.add_argument("--prepare-tailscale-client", action="store_true", help=argparse.SUPPRESS)
     
     args = parser.parse_args(_resolve_cli_args(sys.argv[1:]))
     expected_json = getattr(args, "artifact_releases_json", None)
@@ -525,6 +531,15 @@ def _run_main() -> int:
         print(f"Error: Invalid username: {config.username}")
         return 1
 
+    if getattr(args, "prepare_tailscale_client", False):
+        from plugins.headscale import prepare_tailscale_client
+
+        if expected_json is not None or config.custom_steps:
+            raise ValueError("Client preparation cannot apply an artifact profile or custom steps")
+        with machine_type_context(config.machine_type):
+            prepare_tailscale_client(config)
+        return 0
+
     if config.custom_steps == "bootstrap_build_target":
         from common.build_target_bootstrap import bootstrap_build_target
 
@@ -543,10 +558,14 @@ def _run_main() -> int:
         if len(expected_json.encode("utf-8")) > 16 * 1024:
             raise ValueError("Expected artifact release input exceeds its bound")
         with expected_artifact_setup(config, parse_json(expected_json)):
-            return _run_configured_setup(config, args)
+            result = _run_configured_setup(config, args)
+            if result != 0:
+                raise RuntimeError("Final artifact profile did not complete successfully")
+            return result
     return _run_configured_setup(config, args)
 
 
+@guarded_setup
 def _run_configured_setup(config: SetupConfig, args: argparse.Namespace) -> int:
     """Exclude all build producers before any setup package or service change."""
     from lib.build_coordinator import LOCK, ensure_coordinator, maintenance
@@ -602,6 +621,26 @@ def _run_configured_setup_locked(config: SetupConfig, args: argparse.Namespace) 
     
     with machine_type_context(config.machine_type):
         steps = get_steps_for_system_type(config)
+    if config.device_pairing_providers:
+        from common.t3code_steps import (
+            DEVICE_PAIRING_AUTH_FILE,
+            DEVICE_PAIRING_PAYLOAD_FILE,
+            _validate_htpasswd_file,
+            install_t3code_web,
+        )
+
+        if any(step is install_t3code_web for _, step in steps):
+            auth_file = (DEVICE_PAIRING_PAYLOAD_FILE if os.path.lexists(DEVICE_PAIRING_PAYLOAD_FILE)
+                         else DEVICE_PAIRING_AUTH_FILE)
+            if not os.path.lexists(auth_file):
+                print("Error: Device pairing needs --device-pairing-auth-file on first setup "
+                      "or credentials entered through --interactive")
+                return 1
+            try:
+                _validate_htpasswd_file(auth_file)
+            except (OSError, RuntimeError) as exc:
+                print(f"Error: {exc}")
+                return 1
     from plugins.post_setup import build_post_setup_steps
 
     steps.extend(build_post_setup_steps(
@@ -673,6 +712,7 @@ def _run_configured_setup_locked(config: SetupConfig, args: argparse.Namespace) 
                     friendly_name=config.friendly_name,
                     notification_level=config.notification_level,
                     strict_https=config.notification_strict_https,
+                    ca_file=config.notification_ca_file,
                 )
             raise
         elapsed = time.monotonic() - step_started
@@ -686,6 +726,8 @@ def _run_configured_setup_locked(config: SetupConfig, args: argparse.Namespace) 
     print("\n" + "=" * 60)
     print("✓ Remote setup complete!")
     print("=" * 60)
+    if report is not None:
+        report.include_disk_usage(config.username)
     
     if config.notify_specs:
         _send_setup_notification(
@@ -696,6 +738,7 @@ def _run_configured_setup_locked(config: SetupConfig, args: argparse.Namespace) 
             friendly_name=config.friendly_name,
             notification_level=config.notification_level,
             strict_https=config.notification_strict_https,
+            ca_file=config.notification_ca_file,
         )
 
     from common.t3code_completion import queue_completion
@@ -710,16 +753,19 @@ def _send_cachyos_setup_notification(config: SetupConfig, *, success: bool, erro
         host = socket.gethostname()
     except OSError:
         host = config.host
+    webhook_failures: set[WebhookFailure] = set()
     delivered = _send_setup_notification(
         notify_specs=config.notify_specs, system_type=config.system_type,
         host=host, success=success, errors=errors,
         notification_level=config.notification_level,
         strict_https=config.notification_strict_https,
+        ca_file=config.notification_ca_file,
+        webhook_failures=webhook_failures,
     )
     try:
         from lib.cachyos_notification_state import record_notification_result
 
-        record_notification_result(config, success=success, delivered=delivered)
+        record_notification_result(config, success=success, delivered=delivered, failures=webhook_failures)
     except Exception:
         print("  ⚠ Could not record webhook delivery metadata; setup outcome retained.", file=sys.stderr)
 
@@ -774,6 +820,8 @@ def _run_cachyos_setup_locked(config: SetupConfig) -> int:
     report_reboot_notice(config)
     finalize_setup(config)
     print("\nCachyOS coding setup complete. Authenticate providers locally before starting work.")
+    if report := get_setup_report():
+        report.include_disk_usage(config.username)
     return 0
 
 

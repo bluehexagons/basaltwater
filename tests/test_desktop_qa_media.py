@@ -25,6 +25,40 @@ class QAMediaTests(unittest.TestCase):
         self.root = Path(temporary.name)
         self.root.chmod(0o700)
 
+    def test_process_snapshot_cli_retains_identity_without_contacting_desktop(self):
+        parser = argparse.ArgumentParser()
+        desktop_cli.add_desktop_subparser(parser.add_subparsers())
+        identity = {"pid": 12345, "start_ticks": "987654"}
+        with patch.object(qa_artifacts, "process_identity", return_value=identity) as observe, \
+                patch("desktop.session_runtime.status") as status, \
+                patch("desktop.session_runtime.request") as request, \
+                patch("sys.stdout", new_callable=io.StringIO) as out:
+            args = parser.parse_args(["desktop", "evidence", "process", "--pid", "12345",
+                                      "--output", str(self.root / "identity"), "--json"])
+            self.assertEqual(desktop_cli.run_desktop_command(args), 0)
+            result = json.loads(out.getvalue())
+            saved = Path(result["artifact"])
+            data = json.loads(saved.read_text())
+            self.assertEqual(data["process"], identity)
+            self.assertEqual(saved.stat().st_mode & 0o777, 0o600)
+            self.assertFalse(data["input_authority"])
+            self.assertEqual(data["normal_exit"], "unknown")
+            self.assertIn("boot_id", data["clock"])
+            observe.assert_called_once_with(12345)
+            status.assert_not_called()
+            request.assert_not_called()
+            before = saved.read_bytes()
+            self.assertEqual(desktop_cli.run_desktop_command(args), 1)
+            self.assertEqual(saved.read_bytes(), before)
+
+    def test_process_snapshot_refuses_unavailable_identity_without_output(self):
+        for failure in (FileNotFoundError(), ValueError("foreign account or zombie")):
+            with self.subTest(failure=failure), \
+                    patch.object(qa_artifacts, "process_identity", side_effect=failure), \
+                    self.assertRaises(type(failure)):
+                qa_artifacts.process_snapshot(12345, str(self.root / "unavailable"))
+            self.assertFalse((self.root / "unavailable").exists())
+
     def test_instruction_pages_reconstruct_unicode_and_refuse_changed_files(self):
         source = self.root / "instructions.md"
         text = "詳しい instructions\n" * 1000
@@ -51,6 +85,8 @@ class QAMediaTests(unittest.TestCase):
             path = started["artifact"]
             self.assertEqual(started["checkpoint_due_monotonic_ns"], 31 * 10**9)
             self.assertEqual(started["checkpoint_remaining_seconds"], 30)
+            self.assertEqual(started["checkpoint_history"]["reviewed"], 0)
+            self.assertIsNone(started["checkpoint_history"]["max_late_seconds"])
             stamp.return_value = at(41)
             paused = run_checkpoint.update(path, "suspend", note="Awaiting owner decision")
             self.assertEqual(paused["checkpoint_late_seconds"], 10)
@@ -70,6 +106,9 @@ class QAMediaTests(unittest.TestCase):
             reviewed = run_checkpoint.update(path, "checkpoint", phase="results", game_clock="05:17")
             self.assertEqual(reviewed["latest"]["checkpoint_late_seconds"], 230)
             self.assertEqual(reviewed["checkpoint_late_seconds"], 0)
+            self.assertEqual(reviewed["checkpoint_history"]["reviewed"], 1)
+            self.assertEqual(reviewed["checkpoint_history"]["late"], 1)
+            self.assertEqual(reviewed["checkpoint_history"]["max_late_seconds"], 230)
             stamp.return_value = at(301)
             finished = run_checkpoint.update(path, "finish")
             self.assertEqual(finished["wall_seconds"], 300)
@@ -79,6 +118,7 @@ class QAMediaTests(unittest.TestCase):
             self.assertIsNone(finished["model_reasoning_seconds"])
             self.assertIsNone(finished["observed_active_work_seconds"])
             self.assertFalse(finished["hard_limit_reached"])
+            self.assertEqual(finished["checkpoint_history"]["max_late_seconds"], 230)
             with self.assertRaisesRegex(ValueError, "finished"):
                 run_checkpoint.update(path, "context", context="another")
             before = Path(path).read_bytes()
@@ -87,6 +127,61 @@ class QAMediaTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "comparable boot clock"):
                     run_checkpoint.update(path, "checkpoint")
             self.assertEqual(Path(path).read_bytes(), before)
+
+    def test_saved_run_timing_metadata_must_match_clocks_without_rewriting(self):
+        domain = {"boot_id": "11111111-2222-3333-4444-555555555555", "monotonic_scope": "linux-boot"}
+        def at(seconds):
+            return {"at": f"2026-01-01T00:00:{seconds:02d}+00:00", "monotonic_ns": seconds * 10**9}
+        with patch.object(run_checkpoint, "clock", return_value=domain), patch.object(run_checkpoint, "stamp") as stamp:
+            stamp.return_value = at(1)
+            path = Path(run_checkpoint.start("run-a", "match-a", "setup", output=str(self.root / "metadata"),
+                                            review_seconds=10)["artifact"])
+            stamp.return_value = at(21)
+            run_checkpoint.update(str(path), "policy", review_seconds=30, note="Task brief changes play cadence")
+            stamp.return_value = at(22)
+            run_checkpoint.update(str(path), "checkpoint", phase="play")
+            stamp.return_value = at(55)
+            run_checkpoint.update(str(path), "checkpoint")
+            original = path.read_bytes()
+            rows = json.loads(original)
+            for key, values in (("previous_gap_seconds", [0, -1, None, True, float("nan"), float("inf")]),
+                                ("checkpoint_late_seconds", [0, -1, None, True, float("nan"), float("inf")])):
+                for value in values:
+                    changed = json.loads(original)
+                    changed["events"][-1][key] = value
+                    path.write_text(json.dumps(changed))
+                    before = path.read_bytes()
+                    for operation in ("show", "checkpoint", "finish"):
+                        with self.subTest(key=key, value=value, operation=operation), self.assertRaisesRegex(ValueError, f"{key}|non-finite") as refused:
+                            run_checkpoint.update(str(path), operation)
+                        if "non-finite" not in str(refused.exception):
+                            expected = 33.0 if key == "previous_gap_seconds" else 3.0
+                            self.assertIn(f"at events[3] (checkpoint); expected {expected!r}", str(refused.exception))
+                        self.assertEqual(path.read_bytes(), before)
+            # Multiple corrupt rows must identify the first contradiction, not
+            # the latest checkpoint or the operation the caller wanted to append.
+            changed = json.loads(original)
+            changed["events"][1]["checkpoint_late_seconds"] = 0
+            changed["events"][3]["checkpoint_late_seconds"] = 900
+            path.write_text(json.dumps(changed))
+            before = path.read_bytes()
+            for operation in ("show", "checkpoint", "finish"):
+                with self.subTest(operation=operation), self.assertRaisesRegex(
+                        ValueError, r"at events\[1\] \(policy\); expected 10\.0 from saved clocks/policy"):
+                    run_checkpoint.update(str(path), operation)
+                self.assertEqual(path.read_bytes(), before)
+            # Older records can omit derived fields. Recompute review history
+            # from their clocks/policy, without inventing or writing metadata.
+            for row in rows["events"]:
+                row.pop("previous_gap_seconds", None)
+                row.pop("checkpoint_late_seconds", None)
+            path.write_text(json.dumps(rows))
+            before = path.read_bytes()
+            shown = run_checkpoint.update(str(path))
+            self.assertEqual(shown["checkpoint_history"]["reviewed"], 2)
+            self.assertEqual(shown["checkpoint_history"]["late"], 1)
+            self.assertEqual(shown["checkpoint_history"]["max_late_seconds"], 3)
+            self.assertEqual(path.read_bytes(), before)
 
     def test_run_parser_records_one_bounded_event_without_contacting_desktop(self):
         parser = argparse.ArgumentParser()
@@ -300,6 +395,27 @@ class QAMediaTests(unittest.TestCase):
                 with self.subTest(rows=rows, operation=operation), self.assertRaises(ValueError):
                     run_checkpoint.update(str(path), operation)
                 self.assertEqual(path.read_bytes(), before)
+
+    def test_journal_retains_paced_input_prefix_and_development_uncertainty_without_content(self):
+        with patch.object(Path, "home", return_value=self.root), patch.object(evidence, "revision", return_value={}):
+            recorder = evidence.Recorder(str(self.root), "g")
+            recorder.event({"action": "input", "kind": "text", "text": "private-text"},
+                           {"error": "Interrupted character", "input_delivery": "unknown",
+                            "submitted_characters": 2, "completion_unknown": True})
+            recorder.event({"action": "development", "operation": "exec", "argv": ["private-command"]},
+                           {"error": "Launch reply unavailable"})
+            saved = recorder.path.read_text()
+            receipt = json.loads(saved)["events"][0]["result"]
+            self.assertEqual(receipt["submitted_characters"], 2)
+            self.assertIs(receipt["completion_unknown"], True)
+            self.assertNotIn("private-text", saved)
+            self.assertNotIn("private-command", saved)
+            before = recorder.path.read_bytes()
+            checked = evidence.verify(str(recorder.path))
+            self.assertEqual(checked["uncertain_events"], 2)
+            self.assertEqual(checked["uncertain_by_action"], {"input": 1, "development": 1})
+            self.assertFalse(checked["healthy"])
+            self.assertEqual(recorder.path.read_bytes(), before)
 
     def test_closeout_retains_failure_then_links_new_receipt_after_path_restoration(self):
         with patch.object(Path, "home", return_value=self.root), patch.object(evidence, "revision", return_value={}):

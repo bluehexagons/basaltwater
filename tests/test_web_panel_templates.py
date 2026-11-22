@@ -82,7 +82,7 @@ class WebPanelTemplateTest(unittest.TestCase):
         state.features.return_value = features.PanelFeatures(t3=True)
         tabs = ET.fromstring(agent_tabs(state, "diagnostics"))
         self.assertEqual({link.attrib["href"] for link in tabs.findall("a")},
-                         {"/agents", "/agents?view=diagnostics", "/agent-inbox"})
+                         {"/agents", "/agents?view=t3", "/agents?view=diagnostics", "/agent-inbox"})
 
     def test_document_has_one_shared_shell_and_escapes_title(self) -> None:
         document = render_document(
@@ -198,7 +198,7 @@ class PanelFeatureTest(unittest.TestCase):
         self.home = self.enterContext(tempfile.TemporaryDirectory())
         self.state = panel.WebPanelState({"host": "minimal.example.test", "username": "operator",
             "system_type": "server_web", "services": [], "access": [],
-            "features": {"t3_update": True, "agent_tools": ["codex", "claude", "opencode", "gh"], "git": True}},
+            "features": {"t3code": True, "agent_tools": ["codex", "claude", "opencode", "gh"], "git": True}},
             agent_home=self.home)
         self.tool = self.enterContext(patch.object(features, "_tool_path", return_value=None))
         self.units = self.enterContext(patch.object(features, "unit_installed", return_value=False))
@@ -238,35 +238,13 @@ class PanelFeatureTest(unittest.TestCase):
         self.assertIn('action="/actions/agent-diagnostics"', page)
         self.assertNotIn('class="agent-form"', page)
         self.assertNotIn('href="/agent-tools"', page)
-        with patch.object(self.state, "t3_update_available", return_value=True):
-            self.assertIn("Update T3 Code</button>", panel.render_agents(self.state, panel._PAGE_STYLE, {"view": "diagnostics"}))
+        self.assertIn("Manage T3 updates in its environment settings", page)
+        self.assertNotIn('action="/actions/t3-update"', page)
         self.units.side_effect = None
         self.tool.side_effect = lambda name, home: "/test/claude" if name == "claude" else None
         self.assertTrue(self.state.features().agents)
         self.assertFalse(self.state.features().prompts)
 
-    def test_t3_update_feedback_and_submission_stay_in_agents_readiness(self) -> None:
-        self.units.side_effect = lambda unit, home, **kwargs: unit == "t3code.service"
-        self.state.action_status = "running"
-        self.state.action_message = "Updating T3 Code…"
-        self.state.action_started_at = 100.0
-        self.state.action_output = "Result <details>"
-        with patch.object(self.state, "t3_update_available", return_value=True), patch("common.service_tools.web_panel_agents.time.monotonic", return_value=225.0):
-            page = panel.render_agents(self.state, panel._PAGE_STYLE, {"view": "diagnostics"})
-        for text in ("Update in progress…", "2m 05s elapsed", "Refresh status for progress", "Result &lt;details&gt;", "View command output"):
-            self.assertIn(text, page)
-        self.assertIn('<button disabled>', page)
-        self.assertNotIn('http-equiv="refresh"', page)
-        handler = object.__new__(panel.WebPanelHandler)
-        body = ("csrf=" + self.state.csrf_token + "&return=agents").encode()
-        handler.state, handler.path, handler.headers = self.state, "/actions/t3-update", {"Content-Length": str(len(body))}
-        handler.rfile = BytesIO(body)
-        handler.send_response, handler.send_header, handler.end_headers = Mock(), Mock(), Mock()
-        with patch.object(self.state, "t3_update_available", return_value=True), patch.object(self.state, "trigger_t3_update", return_value=True) as trigger:
-            handler.do_POST()
-        trigger.assert_called_once_with()
-        handler.send_response.assert_called_once_with(panel.HTTPStatus.SEE_OTHER)
-        handler.send_header.assert_any_call("Location", "/agents?view=diagnostics")
 
     def test_installed_desktop_has_its_own_navigation_destination(self) -> None:
         self.assertNotIn('href="/desktop/"', render_sidebar(self.state.navigation("dashboard")))

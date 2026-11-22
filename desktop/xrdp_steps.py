@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 import glob
+import grp
+import ipaddress
 import os
+import pwd
+import re
 import shlex
+import time
 
 from desktop.session_steps import STARTWM, assert_desktop_idle, install_session_runtime
 
 from lib.config import SetupConfig
 from lib.apt_sources import XRDP_SID_PREFERENCE, XRDP_SID_SOURCE
+from lib.machine_state import can_manage_system_services
+from lib.maintenance_defaults import APT_LOCK_OPTIONS, APT_UPDATE_OPTIONS
 from lib.remote_utils import (
     get_os_id,
     get_user_home,
@@ -25,6 +32,9 @@ from lib.xrdp_certificate import (
 )
 
 _XRDP_XORG_LAUNCHER = "/usr/local/libexec/basaltwater-xrdp-Xorg"
+_XRDP_CONFIG = "/etc/xrdp/xrdp.ini"
+_XRDP_SESMAN_CONFIG = "/etc/xrdp/sesman.ini"
+_XRDP_CONFIG_MARKER = "; Managed by Basaltwater"
 _XRDP_APPARMOR_LOCAL = "/etc/apparmor.d/local/Xorg"
 _XRDP_SID_SOURCES = "/etc/apt/sources.list.d/basaltwater-sid.sources"
 _XRDP_SID_PREFERENCES = "/etc/apt/preferences.d/basaltwater-sid.pref"
@@ -46,7 +56,7 @@ _XRDP_GLAMOR_DRIVERS = frozenset({"amdgpu", "i915", "xe", "msm", "radeon"})
 _XRDP_GLAMOR_DRIVER_LIST = "amdgpu i915 xe msm radeon"
 
 
-def _configure_xrdp_package_source(*, refresh_metadata: bool = True) -> str:
+def _configure_xrdp_package_source() -> str:
     """Configure the narrowly pinned Debian Sid source used for XRDP."""
     if get_os_id() != "debian":
         return ""
@@ -58,10 +68,9 @@ def _configure_xrdp_package_source(*, refresh_metadata: bool = True) -> str:
     with open(_XRDP_SID_PREFERENCES, "w", encoding="utf-8") as preference_file:
         preference_file.write(XRDP_SID_PREFERENCE)
 
-    if refresh_metadata:
-        update_result = run("apt-get update -qq", check=False)
-        if update_result.returncode != 0:
-            raise RuntimeError("could not refresh Debian Sid package metadata")
+    update_result = run(["apt-get", "update", "-qq", *APT_LOCK_OPTIONS, *APT_UPDATE_OPTIONS], check=False)
+    if update_result.returncode != 0:
+        raise RuntimeError("could not refresh Debian Sid package metadata")
     return "sid"
 
 
@@ -75,7 +84,7 @@ def _install_xrdp_packages(packages: tuple[str, ...]) -> None:
     package_list = " ".join(shlex.quote(
         f"{package}/{target_release}" if target_release and package in {"xrdp", "xorgxrdp"}
         else package) for package in packages)
-    apt_prefix = "apt-get install"
+    apt_prefix = f"apt-get {shlex.join(APT_LOCK_OPTIONS)} -o APT::Get::allow-downgrades=false install"
     simulation = run(
         f"{apt_prefix} --simulate {_XRDP_DPKG_OPTIONS}"
         f" --no-install-recommends --no-remove {package_list}",
@@ -289,16 +298,21 @@ EndSection
 '''.format(acceleration_options=acceleration_options)
 
 
-def _generate_xrdp_ini(config: SetupConfig, template: str) -> str:
-    """Render validated XRDP listener and channel policy into its template."""
+def _xrdp_bind_address(config: SetupConfig) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
     from lib.validation import validate_network_ip
 
-    bind_address = validate_network_ip(
+    return ipaddress.ip_address(validate_network_ip(
         config.rdp_bind_address if config.enable_rdp else "127.0.0.1",
         "RDP bind address",
-    )
+    ))
+
+
+def _generate_xrdp_ini(config: SetupConfig, template: str) -> str:
+    """Render validated XRDP listener and channel policy into its template."""
+    address = _xrdp_bind_address(config)
+    listener = f"tcp6://{{{address}}}:3389" if address.version == 6 else f"tcp://{address}:3389"
     replacements = {
-        "{RDP_BIND_ADDRESS}": bind_address,
+        "{RDP_LISTENER}": listener,
         "{RDP_CLIPBOARD}": str(config.rdp_clipboard).lower(),
         "{RDP_DRIVE_REDIRECTION}": str(config.rdp_drive_redirection).lower(),
         "{RDP_AUDIO}": str(config.rdp_audio).lower(),
@@ -409,6 +423,62 @@ def _require_peer_authenticated_sesrun() -> None:
     run(["test", "-x", "/usr/bin/xrdp-sesrun"])
 
 
+def _verify_xrdp_listener(config: SetupConfig) -> None:
+    """Check xRDP's bound endpoints and effective identity after activation."""
+    address = _xrdp_bind_address(config)
+    endpoint = f"[{address}]:3389" if address.version == 6 else f"{address}:3389"
+    # A Type=exec systemd service can report successful startup before bind.
+    expected_uid = pwd.getpwnam("xrdp").pw_uid
+    expected_gid = grp.getgrnam("xrdp").gr_gid
+    deadline = time.monotonic() + 5
+    while True:
+        process = run(["systemctl", "show", "--property=MainPID", "--value", "xrdp"], capture_output=True)
+        pid = process.stdout.strip()
+        if pid.isdecimal() and int(pid) > 0:
+            bound = set()
+            for family in (4, 6):
+                listeners = run(["ss", f"-{family}", "-Hltnp"], capture_output=True)
+                wildcard = "0.0.0.0" if family == 4 else "[::]"
+                for line in listeners.stdout.splitlines():
+                    fields = line.split()
+                    if len(fields) >= 5 and re.search(rf"\bpid={pid},", line):
+                        bound.add(fields[3].replace("*:", f"{wildcard}:", 1))
+            status = run(["cat", f"/proc/{pid}/status"], check=False, capture_output=True)
+            identities = {line.partition(":")[0]: line.partition(":")[2].split() for line in status.stdout.splitlines()}
+            if (
+                bound == {endpoint}
+                and expected_uid != 0 and identities.get("Uid") == [str(expected_uid)] * 4
+                and expected_gid != 0 and identities.get("Gid") == [str(expected_gid)] * 4
+            ):
+                return
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"Could not verify unprivileged xRDP listener on {endpoint}")
+        time.sleep(0.2)
+
+
+def stop_unneeded_xrdp(config: SetupConfig) -> None:
+    """Retire a previously managed frontend on a return to headless setup."""
+    if config.include_desktop or config.enable_rdp or not can_manage_system_services(config.machine_type):
+        return
+    if is_dry_run():
+        print("  [DRY-RUN] Would stop a previously managed xRDP frontend")
+        return
+    if not is_package_installed("xrdp"):
+        return
+    for path, marker in (
+        (_XRDP_CONFIG, _XRDP_CONFIG_MARKER),
+        (_XRDP_SESMAN_CONFIG, f"param={_XRDP_XORG_LAUNCHER}"),
+    ):
+        try:
+            with open(path, encoding="utf-8") as configuration:
+                if marker in configuration.read().splitlines():
+                    run("systemctl disable --now xrdp")
+                    print("  ✓ Managed xRDP frontend stopped and disabled")
+                    return
+        except FileNotFoundError:
+            continue
+
+
 def install_xrdp(config: SetupConfig) -> None:
     if is_dry_run():
         print("  [DRY-RUN] Would install and configure xRDP")
@@ -419,8 +489,8 @@ def install_xrdp(config: SetupConfig) -> None:
     safe_username = shlex.quote(config.username)
     user_home = get_user_home(config.username)
     xorg_log_dir = os.path.join(user_home, ".local", "share", "xorg")
-    sesman_config = "/etc/xrdp/sesman.ini"
-    xrdp_config = "/etc/xrdp/xrdp.ini"
+    sesman_config = _XRDP_SESMAN_CONFIG
+    xrdp_config = _XRDP_CONFIG
     
     os.environ["DEBIAN_FRONTEND"] = "noninteractive"
     # Minimal desktop installs omit the recommended X server. Install it from
@@ -455,9 +525,10 @@ def install_xrdp(config: SetupConfig) -> None:
             else tuple(missing_packages)
         )
         _install_xrdp_packages(packages_to_install)
+    elif get_os_id() == "debian":
+        _install_xrdp_packages(("xrdp", "xorgxrdp"))
     else:
-        _configure_xrdp_package_source(refresh_metadata=False)
-        print("  ✓ xRDP packages already installed; source reconciled without refreshing metadata")
+        print("  ✓ xRDP packages already installed")
 
     missing_packages = [
         package for package in required_packages if not is_package_installed(package)
@@ -479,7 +550,7 @@ def install_xrdp(config: SetupConfig) -> None:
     )
     if log_dir_result.returncode != 0:
         raise RuntimeError("could not create the per-user Xorg log directory")
-    run(f"chmod 700 {shlex.quote(xorg_log_dir)}")
+    run(f"runuser -u {safe_username} -- chmod 700 {shlex.quote(xorg_log_dir)}")
     _remove_legacy_xrdp_socket_environment()
     launcher_dir = os.path.dirname(_XRDP_XORG_LAUNCHER)
     os.makedirs(launcher_dir, exist_ok=True)
@@ -554,8 +625,13 @@ needs_root_rights=no
     print("  ✓ xorgxrdp configuration deployed")
     
     install_session_runtime(config)
+    try:
+        _refresh_services("xrdp-sesman", "xrdp")
+        _verify_xrdp_listener(config)
+    except Exception:
+        run("systemctl disable --now xrdp")
+        raise
     run("systemctl enable xrdp")
-    _refresh_services("xrdp-sesman", "xrdp")
 
     print("  ✓ xRDP configured")
 

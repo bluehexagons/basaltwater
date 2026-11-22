@@ -12,13 +12,17 @@ import secrets
 import shlex
 import socket
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from common.agent_steps import BASE_AGENT_SKILL_NAMES, install_managed_agent_skills
 from lib.atomic_io import write_text_atomic
 from lib.config import GODOT_WEB_HTTPS_PORT
 from lib.remote_utils import install_package, is_package_installed, is_service_active, run
-from lib.validation import validate_filesystem_path, validate_network_ip_or_cidr
+from lib.validation import (
+    validate_filesystem_path,
+    validate_network_ip_or_cidr,
+    validate_network_port,
+)
 from lib.validators import validate_host, validate_username
 
 
@@ -716,11 +720,14 @@ def _install_basaltwater_web_link() -> bool:
 def _configure_web_control_service() -> bool:
     """Run a local root helper for policy-checked, owner-scoped mutations."""
 
-    if not os.path.isfile(GODOT_WEB_CONTROL):
-        raise RuntimeError(f"HTTPS gateway control helper is missing: {GODOT_WEB_CONTROL}")
-    with open(GODOT_WEB_CONTROL, "rb") as helper_file:
-        control_revision = hashlib.sha256(helper_file.read()).hexdigest()
-    content = f"""# Gateway control revision {control_revision}
+    # The daemon uses the utility's policy loader in-process for each request.
+    revision = hashlib.sha256()
+    for path in (GODOT_WEB_CONTROL, GODOT_WEB_UTILITY):
+        if not os.path.isfile(path):
+            raise RuntimeError(f"HTTPS gateway control source is missing: {path}")
+        with open(path, "rb") as source:
+            revision.update(hashlib.file_digest(source, "sha256").digest())
+    content = f"""# Gateway control revision {revision.hexdigest()}
 [Unit]
 Description=Basaltwater local HTTPS gateway control
 After=network.target
@@ -762,14 +769,29 @@ def _configure_web_policy(
     local_ca: bool,
     users: list[str],
     access_sources: Sequence[str],
+    *,
+    route_access_sources: Mapping[str, Sequence[str]] | None = None,
+    upstream_access_sources: Mapping[int, Sequence[str]] | None = None,
 ) -> bool:
     sources = [
         validate_network_ip_or_cidr(source, "internal HTTPS access source")
         for source in access_sources
     ]
+    upstream_sources = {
+        str(validate_network_port(port, "Protected upstream port", minimum=1024)): [
+            validate_network_ip_or_cidr(source, "HTTPS upstream access source")
+            for source in allowed
+        ]
+        for port, allowed in (upstream_access_sources or {}).items()
+    }
     content = json.dumps(
         {
             "access_sources": list(dict.fromkeys(sources)),
+            **({"route_access_sources": {
+                name: [validate_network_ip_or_cidr(source, "HTTPS route access source") for source in allowed]
+                for name, allowed in route_access_sources.items()
+            }} if route_access_sources is not None else {}),
+            **({"upstream_access_sources": upstream_sources} if upstream_sources else {}),
             "base_url": base_url,
             "ca_certificate": GODOT_WEB_CA_DOWNLOAD if local_ca else None,
             "certificate": cert_path,
@@ -952,6 +974,8 @@ def configure_internal_web_host(
     *,
     configure_static_site: bool = False,
     install_utility: bool = False,
+    route_access_sources: Mapping[str, Sequence[str]] | None = None,
+    upstream_access_sources: Mapping[int, Sequence[str]] | None = None,
 ) -> tuple[str, bool, str, str, bool]:
     """Ensure the shared internal HTTPS origin and forwarding policy exist."""
 
@@ -998,6 +1022,8 @@ def configure_internal_web_host(
         local_ca,
         normalized_users,
         normalized_sources,
+        route_access_sources=route_access_sources,
+        upstream_access_sources=upstream_access_sources,
     )
     if install_utility:
         _configure_web_control_service()

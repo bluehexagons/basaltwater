@@ -178,7 +178,7 @@ function Start-NativeWarmWorker($Context,[int]$IdleSeconds=120,[int]$SessionSeco
 function Stop-NativeWarmWorker {
     $record=Get-NativeWarmRecord
     if(-not $record -or $record.cleanup_confirmed){return Get-NativeWarmStatus}
-    $stop=Join-Path $record.directory 'stop';Assert-NativeDesktopPath $stop;[IO.File]::WriteAllText($stop,'stop')
+    Set-NativeDesktopMarker (Join-Path $record.directory 'stop') 'stop'
     Send-NativeWarmSignal $record
     # A running held driver retains its independent watchdog and exact lease.
     $busy=Join-Path $record.directory 'busy.json'
@@ -232,7 +232,7 @@ function Invoke-NativeWarmRequest($Record,$Request,[int]$TimeoutSeconds) {
         while(-not(Test-Path -LiteralPath $path)){
             if($process.HasExited){throw 'Desktop worker exited; outcome unknown; observe before retrying'}
             if($clock.Elapsed.TotalSeconds -ge $TimeoutSeconds){
-                [IO.File]::WriteAllText((Join-Path $Record.directory 'stop'),'stop')
+                Set-NativeDesktopMarker (Join-Path $Record.directory 'stop') 'stop'
                 $process.Kill();$null=$process.WaitForExit(2000)
                 throw 'Desktop worker timed out and was stopped; outcome unknown; no replay'
             }

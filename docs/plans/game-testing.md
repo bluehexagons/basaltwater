@@ -21,7 +21,7 @@ gameplay automation, and a documented coach procedure is not a qualified live te
 | Long sessions | Journals are bounded at 500 events and 50 tasks. Use linked recording segments at safe checkpoints; any larger or streaming journal needs bounded storage, recovery and truncation acceptance before changing this contract. |
 | Specialist assistance | Immutable-packet and deadline procedures are documented. A concurrent controller/observer trial must demonstrate shared artifact access, stale-advice rejection, exclusive live control and measured overhead before claiming a reliable team condition. |
 | Model/resource comparisons | Actual model/effort, assistance, comparable settings, clocks and outcomes remain project-owned. Unknown usage/latency stays unknown; no automated model ranking is provided. |
-| Virtual gamepad | No native gamepad action or qualified adapter exists. Implement and qualify the bounded route below before gameplay use. |
+| Virtual gamepad | `desktop [--native] gamepad` implements the bounded Linux route. CachyOS source-device and public-CLI inspector checks passed; Debian routing has offline coverage. Qualify each target host/game and remaining failure paths with the [adapter guide](../workstations/gamepad-qa.md). |
 
 ## Desktop observation follow-up
 
@@ -75,6 +75,30 @@ failed harness attempts and captures remain private. This pass did not qualify
 RDP reconnect, display resize, human takeover, helper replacement during input,
 clipboard transfer or actual games.
 
+### Debian refreshed fixture follow-up, 2026-11-16
+
+A fresh XFCE supervisor on `a5d0b922` passed doctor and the Geany smoke check.
+The disposable text fixture passed token-bound multilingual pacing with exact
+UTF-8 application-state read-back, consumed-token refusal, receipt-bound window
+coordinate mapping, one counted click and normal close with an exited-zero
+launch. Manual recording finalized and verified all five referenced captures
+with zero uncertain events. These are instrumented fixture checks, not gameplay.
+
+The public development doctor/launch route exposed an over-strict session-bus
+check: `dbus-run-session` uses an owned socket under root-owned sticky `/tmp`,
+while the reused KDE check requires a private owned parent. The Debian fix
+accepts private or root-sticky parents only with an owned socket and matching
+connected peer UID. The user-manager bus retains its private-parent check.
+Mocked failures and a fresh process supplied by `desktop exec` qualified the
+corrected adapter against the actual session: logged success, nonzero failure,
+live running status, and stop of an owned descendant in a separate process
+session. Stop progressed from `stopping` to `stopped`; unrelated windows survived.
+
+That adapter check used the corrected source in a fresh process; it did not
+reload the original supervisor's cached module or qualify the corrected public
+launch route after restart. Retained raw evidence stays private. RDP reconnect,
+display resize, local/browser takeover and helper replacement remain open.
+
 ### Remaining platform acceptance
 
 Run the following against disposable fixtures on each platform, recording the
@@ -105,6 +129,21 @@ budget when comparing model workflows.
 
 Remaining implementation tasks, independently assignable after qualification:
 
+- [x] Add Debian receipt-bound coordinate mapping, manual evidence journals,
+  offline verification/analysis, and supervised development tasks. See
+  [desktop evidence](../workstations/desktop-automation.md#map-and-record-debian-observations)
+  and [Debian task ownership](../workstations/debian-development.md). Mocked
+  checks cover stale context, recorder failures, queued generation/control
+  changes and scoped cgroup cleanup. The refreshed fixture follow-up above
+  exercised task/descendant cleanup through the corrected adapter. Its public
+  launch route after restart, helper replacement and shared-session transitions
+  remain open.
+  Conditional execution and live audio retain separate backend requirements.
+- [ ] Prototype persistent X11 input with owned press/release accounting and an
+  independent worker-death watchdog before enabling drag, physical keycodes or
+  holds on Debian. Closing an X connection alone does not establish release of
+  injected state; do not extend the current subprocess adapter with long holds.
+
 - [ ] Apply the [reported Windows game-testing feedback](windows-game-testing.md#consuming-game-feedback-and-next-windows-pass):
   multi-key/timeline leases, wheel and mouse gestures, and specific target-stop
   diagnostics. Parent input help is fixed in source; native revalidation is open.
@@ -117,8 +156,13 @@ Remaining implementation tasks, independently assignable after qualification:
 - [x] Port post-input observation, compact capture receipts and explicit image
   mapping to Windows with completion-preserving failures. Windows mapping uses
   `--view-width`/`--view-height`, with image-relative coordinates.
-- [ ] Add one-request server-paced Debian text before supporting single-use tokens
-  with `--delay-ms`; per-character pacing cannot reuse a consumed token.
+- [x] Implement one-request server-paced Debian text for single-use tokens with
+  `--delay-ms`, including Unicode default pacing, per-character guards and
+  acknowledged-prefix/uncertain-character receipts. Offline regression checks
+  cover expiry, deadline, takeover, resize and active-window loss. See
+  [paced text](../workstations/desktop-automation.md#pace-text-for-custom-editors).
+  Refreshed-supervisor multilingual read-back passed in the 2026-11-16 fixture
+  above. Live UI takeover and reconnect qualification remain open.
 - [ ] Prototype guarded revalidation of a completed plan against a fresh
   observation. Bind the expected target and relevant scene conditions; start
   with conservative comparisons and measure false refusals from animation.
@@ -130,7 +174,7 @@ Remaining implementation tasks, independently assignable after qualification:
 
 ## Bounded Linux virtual-pad adapter
 
-Keep a prospective adapter in Basaltwater's desktop boundary, under the same
+The [implemented Linux adapter](../workstations/gamepad-qa.md) stays in Basaltwater's desktop boundary, under the same
 persistent human control policy and sole-controller discipline as native input.
 Do not introduce a free-running input script, global remapping or additional
 privileged daemon as a shortcut. Discover prerequisites read-only; any required
@@ -161,4 +205,5 @@ Qualification proceeds in bounded stages:
 Promote support only for the platform/device/mapping/game combinations exercised.
 Linux inspector success does not qualify another OS, browser gamepad behavior,
 or an arbitrary game. This plan starts no device, installs no driver and schedules
-no run; the adapter remains unimplemented.
+no run. Debian live device recognition, live takeover/supervisor loss and other
+platforms remain qualification work; implementation alone does not close them.

@@ -7,28 +7,14 @@ metadata:
 
 # VM-local browser testing
 
-Managed Playwright is provisioned; this skill does not imply a T3 preview.
-Choose the ready configured option that fits the task under its session policy.
+Use the active session's browser policy. Follow [Playwright readiness and origin](references/playwright.md)
+before acting. Managed Playwright requires healthy readiness and tools exposed
+to this session. If it is unavailable and policy permits fallback, use existing
+project tests or a ready configured desktop browser. Check its skill, readiness,
+and pause state before launch or input. Preserve the managed launcher, TLS,
+loopback binding, and unrelated desktop applications. Use existing dependencies
+and keep service restarts outside the fallback workflow.
 
-Read [readiness and origin](references/playwright.md) before using managed
-Playwright. Its doctor must be healthy and MCP tools must actually be exposed.
-Read [interaction and evidence](references/interaction.md) for canvas, held
-input, timing, screenshots, or asynchronous review.
-
-If tools are missing or unusable, continue automatically with existing project
-Playwright tests or a ready configured desktop browser when policy permits.
-Read its installed desktop skill and check status/doctor before launch/input.
-Do not wait for T3 to reopen, restart services, or install another browser stack
-to fill the gap. Honor human pause and preserve unrelated applications.
-
-Inspect state before repeating an uncertain submission. Profiles and logins are
-separate. Verify actual behavior and report browser, origin, and coverage;
-VM checks cannot prove connected-client routing or trust. Preserve TLS,
-loopback binding, private evidence, and the managed launcher.
-
-For projects created with Basaltwater, document supported engines and the local
-browser-test command in project agent/contributor guidance. Recommend intensive
-Chromium/Firefox tests on developer machines and fast unit/service/render CI
-checks unless the project explicitly chooses another policy. Use its locked
-dependencies. Distinguish Playwright Firefox, native ESR, and preview engine
-`unknown`; discovery or a launch smoke is not an application result.
+For canvas, held input, timing, or screenshots, open [interaction and evidence](references/interaction.md).
+Inspect state before repeating uncertain input. Report browser, origin, observed
+behavior, and coverage gaps. VM-local results establish the VM's route and trust.

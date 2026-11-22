@@ -87,6 +87,28 @@ class TestRdpDisplay(unittest.TestCase):
 
         self.assertIn("strict HTTPS", output.getvalue())
 
+    def test_setup_summary_warns_only_for_an_enabled_http_panel(self) -> None:
+        for port, tls, remove, warns in (
+            (80, False, False, True),
+            (443, True, False, False),
+            (80, False, True, False),
+            (None, False, False, False),
+        ):
+            with self.subTest(port=port, tls=tls, remove=remove):
+                config = SetupConfig(
+                    host="localhost", username="agent", system_type="server_dev",
+                    web_panel_port=port, enable_ssl=tls, disable_web_panel=remove,
+                    dry_run=True,
+                )
+                with redirect_stdout(io.StringIO()) as output:
+                    print_setup_summary(config)
+                rendered = output.getvalue()
+                self.assertEqual("Warning: Web panel HTTP" in rendered, warns)
+                if warns:
+                    self.assertIn("integrated approvals without encryption", rendered)
+                    self.assertIn("localhost or in a controlled test environment", rendered)
+                    self.assertIn("Add --ssl for HTTPS", rendered)
+
     def test_setup_summary_makes_global_exposure_visible(self) -> None:
         config = SetupConfig(
             host="agent-vm",

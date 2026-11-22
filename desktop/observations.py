@@ -69,6 +69,14 @@ class CaptureObservation:
                 if (type(x) is not int or type(y) is not int
                         or not left <= x < left + width or not top <= y < top + height):
                     raise ValueError("Pointer target lies outside the observed image")
+        elif payload.get("kind") == "touch":
+            from desktop.pointer_gestures import validate
+            validate(payload)
+            left, top, width, height = self.region
+            for frame in payload["frames"]:
+                for contact in frame["contacts"]:
+                    if not (left <= contact["x"] < left + width and top <= contact["y"] < top + height):
+                        raise ValueError("Touch target lies outside the observed image")
 
     def freshness(self) -> dict:
         return capture_freshness(self.started, self.max_age)

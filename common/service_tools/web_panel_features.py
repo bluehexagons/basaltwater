@@ -27,6 +27,7 @@ class PanelFeatures:
     console: bool = False
     github_runner: bool = False
     admin_page: bool = True
+    headscale: bool = False
 
     @property
     def prompts(self) -> bool:
@@ -57,6 +58,8 @@ class PanelFeatures:
             pages.add("console")
         if self.github_runner:
             pages.add("github-runner")
+        if self.headscale:
+            pages.add("headscale")
         return frozenset(pages)
 
 
@@ -74,6 +77,12 @@ def unit_installed(unit: str, home: str, *, user: bool = False) -> bool:
         if os.path.isfile(path):
             return True
     return False
+
+
+def t3_selected(configured: dict[str, object]) -> bool:
+    """Read the T3 selection, including manifests saved before updater removal."""
+
+    return configured.get("t3code", configured.get("t3_update")) is True
 
 
 def t3_installed(home: str) -> bool:
@@ -107,13 +116,14 @@ def discover_features(
 
     tools = frozenset(name for name in ("codex", "claude", "opencode", "git", "gh", "butler", "steamcmd")
                       if name in allowed and _tool_path(name, home))
-    t3 = configured.get("t3_update") is True and t3_installed(home)
+    t3 = t3_selected(configured) and t3_installed(home)
     agents = t3 or bool(tools & {"codex", "claude", "opencode"})
     return PanelFeatures(
         tools=tools,
         t3=t3,
         maintenance=agents and os.path.isfile(POLICY_FILE) and unit_installed(SERVICE_NAME + ".service", home),
         admin=admin,
+        headscale=configured.get("managed_headscale") is True and os.path.isfile("/usr/bin/headscale") and unit_installed("headscale.service", home),
         desktop=unit_installed(DESKTOP_SERVICE + ".service", home),
         console=unit_installed(SSH_SERVICE + ".socket", home),
         github_runner=os.path.isfile(RUNNER_POLICY) and unit_installed(RUNNER_SERVICE, home),

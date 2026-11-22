@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import grp
 import ipaddress
 import pwd
 import shlex
@@ -17,8 +18,11 @@ from lib.config import SetupConfig
 from lib.machine_state import can_manage_firewall
 from lib.mount_utils import is_path_under_mnt, get_mount_ancestor
 from lib.remote_utils import run, is_package_installed
+from lib.setup_directories import directory_fd
+from lib.ufw_ingress import verify_live_ufw_ingress
 from lib.validation import validate_samba_share_specs
 from lib.validators import validate_username
+from smb.unix_accounts import is_share_identity
 
 
 SMB_CONF_PATH = "/etc/samba/smb.conf"
@@ -28,6 +32,7 @@ SAMBA_FIREWALL_COMMENT_PREFIX = "basaltwater Samba 445/tcp source"
 SAMBA_FAIL2BAN_JAIL_PATH = "/etc/fail2ban/jail.d/samba-auth.local"
 SAMBA_FAIL2BAN_FILTER_PATH = "/etc/fail2ban/filter.d/samba-auth.conf"
 SAMBA_REMOVED_GLOBAL_SETTINGS = ("null passwords",)
+SAMBA_PASSWORD_SETTINGS = {"unix password sync": "no", "pam password change": "no"}
 
 
 def parse_share_credentials(
@@ -122,6 +127,7 @@ def _verify_samba_firewall(sources: list[str]) -> None:
             continue
         if not any(allowed.version == desired.version and allowed.subnet_of(desired) for desired in networks):
             raise RuntimeError(f"Samba firewall still permits an unrequested source: {line.strip()}")
+    verify_live_ufw_ingress({("tcp", 445): sources}, run)
 
 
 def configure_samba_firewall(config: SetupConfig) -> None:
@@ -252,9 +258,10 @@ def create_samba_user(username: str, password: str) -> None:
         raise ValueError("Invalid Samba username")
     safe_username = shlex.quote(username)
     
-    result = run(f"id {safe_username}", check=False)
-    if result.returncode != 0:
-        run(f"useradd -M -s /usr/sbin/nologin {safe_username}")
+    if _share_identity(username) is None:
+        run(f"useradd -M -s /usr/sbin/nologin -p '!' -K UID_MIN=1000 -K UID_MAX=65533 -- {safe_username}")
+        if _share_identity(username) is None:
+            raise RuntimeError(f"Could not verify new Samba Unix account: {username}")
         print(f"  Created system user: {username}")
     
     result = run(f"pdbedit -L {safe_username}", check=False)
@@ -272,6 +279,72 @@ def create_samba_user(username: str, password: str) -> None:
         print(f"  Updated Samba user password: {username}")
     
     run(f"smbpasswd -e {safe_username}")
+
+
+def _share_identity(username: str) -> pwd.struct_passwd | None:
+    try:
+        account = pwd.getpwnam(username)
+    except KeyError:
+        return None
+    if account.pw_name != username or not is_share_identity(account):
+        raise ValueError(f"Samba share user must be a regular, unprivileged Unix identity: {username}")
+    return account
+
+
+def _mount_id(descriptor: int) -> int:
+    with open(f"/proc/self/fdinfo/{descriptor}", encoding="ascii") as info:
+        for line in info:
+            if line.startswith("mnt_id:"):
+                return int(line.partition(":")[2])
+    raise RuntimeError("Cannot determine mount boundary for Samba permission reconciliation")
+
+
+def _reconcile_share_permissions(path: str, gid: int, *, writable: bool) -> None:
+    """Change only pinned files and directories on the share root's mount."""
+    skipped = 0
+
+    def walk(descriptor: int) -> None:
+        nonlocal skipped
+        info = os.fstat(descriptor)
+        if info.st_dev != root_device or _mount_id(descriptor) != root_mount:
+            skipped += 1
+            return
+        directory = stat.S_ISDIR(info.st_mode)
+        if not directory and not stat.S_ISREG(info.st_mode):
+            return
+        pinned = f"/proc/self/fd/{descriptor}"
+        mode = stat.S_IMODE(info.st_mode) | stat.S_IRGRP
+        if directory or mode & 0o111:
+            mode |= stat.S_IXGRP
+        if directory:
+            mode |= stat.S_ISGID
+        mode = mode | stat.S_IWGRP if writable else mode & ~stat.S_IWGRP
+        if info.st_gid != gid:
+            os.chown(pinned, -1, gid)
+            if not directory:
+                mode &= ~((stat.S_ISUID | stat.S_ISGID) & ~os.stat(pinned).st_mode)
+        # chown can clear set-ID bits even when the calculated mode matched.
+        if info.st_gid != gid or mode != stat.S_IMODE(info.st_mode):
+            os.chmod(pinned, mode)
+        if directory:
+            with os.scandir(pinned) as entries:
+                for entry in entries:
+                    try:
+                        child = os.open(entry.name, os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC,
+                                        dir_fd=descriptor)
+                    except FileNotFoundError:
+                        continue
+                    try:
+                        walk(child)
+                    finally:
+                        os.close(child)
+
+    with directory_fd(path, create=True) as root:
+        root_device = os.fstat(root).st_dev
+        root_mount = _mount_id(root)
+        walk(root)
+    if skipped:
+        print(f"  Skipped {skipped} nested mount point(s) below {path}")
 
 
 def _get_veto_dirs_for_share(share_path: str, config: SetupConfig) -> list[str]:
@@ -342,9 +415,6 @@ def _prepare_samba_share(
                 f"Share path {primary_path} is under /mnt but no mounted filesystem found. "
                 f"Is the drive mounted?"
             )
-    os.makedirs(primary_path, exist_ok=True)
-    print(f"  Ensured path exists: {primary_path}")
-
     group_name = f"smb_{share_name}_{access_type}"
     safe_group = shlex.quote(group_name)
 
@@ -361,17 +431,7 @@ def _prepare_samba_share(
     run(f"gpasswd -M {shlex.quote(member_list)} {safe_group}")
     print(f"  Reconciled {len(users)} member(s) in group {group_name}")
 
-    safe_primary_path = shlex.quote(primary_path)
-    run(f"chgrp -R --preserve-root {safe_group} {safe_primary_path}")
-
-    if access_type == "write":
-        run(f"chmod -R --preserve-root g+rwX {safe_primary_path}")
-    else:
-        run(f"chmod -R --preserve-root g+rX,g-w {safe_primary_path}")
-    run(
-        f"find {safe_primary_path} -xdev -type d "
-        "-exec chmod g+s -- {} +"
-    )
+    _reconcile_share_permissions(primary_path, grp.getgrnam(group_name).gr_gid, writable=access_type == "write")
 
     print(f"  Set {'write' if access_type == 'write' else 'read-only'} permissions on {primary_path}")
 
@@ -467,10 +527,9 @@ def _require_existing_samba_users(share_configs: list[dict[str, Any]]) -> None:
     """Check every account before an access-only edit changes any share."""
     usernames = sorted({user["username"] for share in share_configs for user in share["users"]})
     for username in usernames:
-        try:
-            account = pwd.getpwnam(username)
-        except KeyError as exc:
-            raise ValueError(f"Share user has no Unix account: {username}") from exc
+        account = _share_identity(username)
+        if account is None:
+            raise ValueError(f"Share user has no Unix account: {username}")
         result = run(
             f"pdbedit -L -u {shlex.quote(username)}", check=False, capture_output=True,
             env={**os.environ, "LC_ALL": "C"},
@@ -512,6 +571,9 @@ def preflight_samba_shares(
                 raise RuntimeError(f"No mounted filesystem found for Samba share: {share_path}")
     if preserve_accounts:
         _require_existing_samba_users(share_configs)
+    else:
+        for username in sorted({user["username"] for share in share_configs for user in share["users"]}):
+            _share_identity(username)
     return share_configs
 
 
@@ -609,8 +671,7 @@ SAMBA_GLOBAL_HARDENED_SETTINGS: dict[str, str] = {
     "guest account": "nobody",
     "restrict anonymous": "2",
     "obey pam restrictions": "yes",
-    "unix password sync": "yes",
-    "pam password change": "yes",
+    **SAMBA_PASSWORD_SETTINGS,
     # This cache contains disposable Samba TDB metadata, not share contents.
     # Keep an explicit default so clearing a custom SSD-backed path reliably
     # reconciles the service back to the distro location.
@@ -656,6 +717,8 @@ def _validated_smb_config(
     smb_conf: str,
     previous_content: str,
     desired_content: str,
+    *,
+    verify_password_policy: bool = False,
 ) -> Iterator[bool]:
     """Validate off-line, publish atomically, and restore on activation failure.
 
@@ -664,6 +727,8 @@ def _validated_smb_config(
     Accounts, share permissions and the systemd drop-in are outside rollback.
     """
     if desired_content == previous_content:
+        if verify_password_policy:
+            _verify_password_policy(smb_conf)
         yield False
         return
 
@@ -683,6 +748,8 @@ def _validated_smb_config(
             if result.stderr:
                 print(f"  Error: {result.stderr[:200]}")
             raise RuntimeError("Samba configuration validation failed")
+        if verify_password_policy:
+            _verify_password_policy(candidate.name)
 
     attributes = dict(mode=stat.S_IMODE(metadata.st_mode), uid=metadata.st_uid, gid=metadata.st_gid)
     try:
@@ -722,12 +789,40 @@ def _render_hardened_global_settings(
     # guest = Never`, so remove the obsolete option from managed globals.
     for key in (*desired_settings, *SAMBA_REMOVED_GLOBAL_SETTINGS):
         setting_pattern = re.compile(
-            r"(?im)^[ \t]*" + re.escape(key) + r"[ \t]*=[^\r\n]*(?:\r?\n|$)"
+            r"(?im)^[ \t]*" + r"[ \t]+".join(map(re.escape, key.split()))
+            + r"[ \t]*=[^\r\n]*(?:\r?\n|$)"
         )
         body = setting_pattern.sub("", body)
 
     desired_section = match.group("header") + "\n" + hardened_lines + body
     return content[:match.start()] + desired_section + content[match.end():]
+
+
+def _verify_password_policy(path: str) -> None:
+    for key in SAMBA_PASSWORD_SETTINGS:
+        result = run(
+            f"testparm --suppress-prompt --parameter-name={shlex.quote(key)} {shlex.quote(path)}",
+            check=False, capture_output=True, env={**os.environ, "LC_ALL": "C"},
+        )
+        if result.returncode != 0 or str(result.stdout).strip().lower() != "no":
+            raise RuntimeError(f"Samba must have effective '{key} = no'; check local overrides")
+
+
+def _activate_password_policy(previous: str, desired: str, *, full_setup: bool) -> None:
+    with _validated_smb_config(SMB_CONF_PATH, previous, desired, verify_password_policy=True):
+        if full_setup:
+            run("systemctl disable --now nmbd")
+        # An interrupted publication can leave the file hardened while the
+        # running daemon still uses the old policy, including existing sessions.
+        run("systemctl restart smbd")
+
+
+def harden_samba_password_policy() -> None:
+    """Bring share-only updates to the same password policy as full setup."""
+    with open(SMB_CONF_PATH, encoding="utf-8") as stream:
+        previous = stream.read()
+    desired = _render_hardened_global_settings(previous, SAMBA_PASSWORD_SETTINGS)
+    _activate_password_policy(previous, desired, full_setup=False)
 
 
 def configure_samba_global_settings(config: SetupConfig) -> None:
@@ -749,14 +844,7 @@ def configure_samba_global_settings(config: SetupConfig) -> None:
         content = f.read()
     
     desired_content = _render_hardened_global_settings(content, settings)
-    if desired_content == content:
-        run("systemctl disable --now nmbd")
-        print("  ✓ Global Samba configuration already up to date")
-        return
-
-    with _validated_smb_config(smb_conf, content, desired_content):
-        run("systemctl disable --now nmbd")
-        run("systemctl restart smbd")
+    _activate_password_policy(content, desired_content, full_setup=True)
     print("  ✓ Updated global Samba configuration with security hardening")
 
 

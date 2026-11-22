@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -13,7 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from lib.maintenance_systemd import configure_maintenance_timer
 from lib.config import SetupConfig
 from lib import user_rename
-from common import common_steps
+from common import common_steps, storage_maintenance_steps
 from security import security_steps
 
 
@@ -225,6 +226,29 @@ class TestConfigureMaintenanceTimer(unittest.TestCase):
                 content = stream.read()
         self.assertIn('"--user" "newuser"', content)
         self.assertNotIn("olduser", content)
+
+    def test_account_rename_updates_generated_storage_maintenance_account(self):
+        config = SetupConfig("example.test", "olduser", "server_lite")
+        with patch("lib.maintenance_systemd.replace_units") as replace:
+            storage_maintenance_steps.configure_storage_maintenance(config)
+        units = replace.call_args.args[0]
+
+        with tempfile.TemporaryDirectory() as unit_dir:
+            for name, content in units.items():
+                (Path(unit_dir) / name).write_text(content, encoding="utf-8")
+            with patch.object(user_rename, "SYSTEMD_DIR", unit_dir), patch.object(user_rename.os, "chown"):
+                managed, unmanaged = user_rename._managed_unit_files("olduser", "/home/olduser")
+                self.assertEqual(unmanaged, [])
+                self.assertEqual({Path(path).name for path in managed}, set(units))
+                manifest = {"old_username": "olduser", "new_username": "newuser",
+                            "managed_units": [{"path": path} for path in managed]}
+                user_rename._rewrite_managed_units(manifest, "/home/olduser", "/home/newuser")
+            service = (Path(unit_dir) / "basaltwater-storage.service").read_text(encoding="utf-8")
+            timer = (Path(unit_dir) / "basaltwater-storage.timer").read_text(encoding="utf-8")
+
+        self.assertIn('"--account" "newuser"', service)
+        self.assertNotIn("olduser", service)
+        self.assertEqual(timer, units["basaltwater-storage.timer"])
 
 
 class TestMaintenanceTimerCallers(unittest.TestCase):

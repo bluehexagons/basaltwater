@@ -118,7 +118,8 @@ class ConsoleTests(unittest.IsolatedAsyncioTestCase):
     async def test_native_tunnel_input_resize_forbidden_transfers_and_disconnect(self):
         attachment = (await (await self.connect()).json())["attachment"]
         reader = asyncio.StreamReader()
-        writer = MagicMock(drain=AsyncMock(), is_closing=MagicMock(return_value=False))
+        processed = asyncio.Event()
+        writer = MagicMock(drain=AsyncMock(side_effect=processed.set), is_closing=MagicMock(return_value=False))
         self.stack.enter_context(patch.object(console.asyncio, "open_connection", new=AsyncMock(return_value=(reader, writer))))
         native = self.stack.enter_context(patch.object(console, "handshake", new=AsyncMock(return_value="$console")))
         ws = await self.client.ws_connect("/console/ws?attachment=" + attachment, headers=self.headers, protocols=("guacamole",))
@@ -135,7 +136,7 @@ class ConsoleTests(unittest.IsolatedAsyncioTestCase):
         await ws.receive()
         self.assertTrue(session.controlled)
         await ws.send_str(instruction("key", "65", "1") + instruction("size", "390", "420"))
-        await asyncio.sleep(.03)
+        await asyncio.wait_for(processed.wait(), 2)
         writes = [call.args[0] for call in writer.write.call_args_list]
         self.assertIn(instruction("key", "65", "1").encode(), writes)
         self.assertIn(instruction("size", "390", "420").encode(), writes)

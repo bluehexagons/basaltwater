@@ -3,11 +3,11 @@
 The options in [issue #106](https://github.com/bluehexagons/basaltwater/issues/106)
 use the existing desktop account on the latest fully updated CachyOS KDE
 workstation. Package mappings and dependencies were reviewed against the enabled
-CachyOS/Arch repositories and AUR recipes on 2026-09-27. Versions below are not
-pinned: full distro updates remain the owner's responsibility.
+CachyOS/Arch repositories and AUR recipes on 2026-09-27. Package versions
+follow the enabled repositories and the selected AUR recipes.
 
 Choose your software before the first setup. Add these flags after
-`--local-setup agent_cachyos` in the [fish installer](cachyos.md#quick-start),
+`--local-setup agent_cachyos` in the [fish installer](cachyos-install.md#quick-start),
 or preview the complete selection if you installed only the launcher:
 
 ```fish
@@ -40,16 +40,15 @@ in the attached KDE terminal as your desktop account.
 | SteamCMD | `--steamcmd` | AUR `steamcmd`, with repository `lib32-glibc` and `lib32-gcc-libs`; independent of `--gaming` |
 
 Native dependencies follow the enabled repositories' priority, including CachyOS
-optimized builds. For the software selections on this page, setup installs
-missing packages only, never runs `pacman -Sy`, and does not upgrade the OS or
-installed AUR packages. The separate [T3 desktop selection](cachyos-maintenance.md#t3-desktop-updates)
-also checks for T3 updates through your AUR helper. Missing-package
-errors require resolving the mirror/repository problem or completing a normal
-full-system update, then rerunning setup. Omitted or `--no-*` software flags stop
+optimized builds. Setup upgrades repository packages with `pacman -Syu` before
+installing missing selections. Installed AUR software on this page stays with
+its AUR helper. The separate [T3 desktop selection](cachyos-t3-maintenance.md#t3-desktop-updates)
+checks for T3 updates through your AUR helper. Resolve reported mirror or
+repository errors before retrying setup. Omitted or `--no-*` software flags stop
 managing that selection; they do not uninstall packages or remove user data.
 Successful selections are saved for `basaltw refresh`, and the doctor/receipt
 records selected software metadata without launching a GUI or publisher.
-For later software additions, see [saved setup maintenance](cachyos-maintenance.md#upgrade-and-repeat-your-last-setup).
+For later software additions, see [saved setup maintenance](cachyos-refresh.md#upgrade-and-repeat-your-last-setup).
 
 Desktop application selections also install Python GObject, AT-SPI,
 GStreamer/base/PipeWire and GTK3 prerequisites for task-scoped automation,
@@ -72,7 +71,7 @@ or approve a package build for you. Review the PKGBUILD and dependencies. Instal
 packages are retained without requiring an AUR helper. If an unmanaged executable
 already exists but no supported package owns the installation, setup stops rather
 than replacing it: omit the flag to retain its original manager, or migrate it
-deliberately. [AUR troubleshooting](cachyos-maintenance.md#aur-download-failures) also applies.
+deliberately. [AUR troubleshooting](cachyos-diagnostics.md#aur-download-failures) also applies.
 Already installed packages must also have a working executable path owned by
 that package; missing commands and personal PATH shadows stop preflight.
 
@@ -108,7 +107,7 @@ it does not need an AUR build or an unmanaged AppImage download.
   with VA-API while Sunshine is stopped, preserving explicit settings.
   Set credentials locally, pair Moonlight,
   and test video, audio, and input. If a sleeping display prevents connection,
-  [wake it before connecting](cachyos-maintenance.md#sleeping-monitors-and-moonlight).
+  [wake it before connecting](cachyos-streaming.md#sleeping-monitors-and-moonlight).
   Package-provided udev access rules are retained;
   Basaltwater does not add the user to `input`, apply capabilities, select GPU
   drivers, or grant capture permissions. See the
@@ -124,9 +123,9 @@ it does not need an AUR build or an unmanaged AppImage download.
   and downloads Valve updates. Run it as the desktop user, complete Steam Guard
   locally, and use the publisher account's own app/depot configuration. No login,
   EULA acceptance, credentials, upload, or Steam library modification is performed
-  by Basaltwater. Its 32-bit runtime libraries are checked in enabled repositories;
-  current Arch/CachyOS provides them in core, so setup does not enable multilib
-  merely by assumption.
+  by Basaltwater. Setup resolves its 32-bit runtime libraries from the enabled
+  repositories after the package upgrade. Current Arch/CachyOS provides them in
+  core.
 
 Setup readiness does not qualify live AUR builds, desktop rendering,
 removable-media flashing, or authenticated publishing. Verify those workflows

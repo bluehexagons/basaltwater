@@ -136,10 +136,12 @@ def _local(path: str, mounts: dict[str, str]) -> bool:
 
 def _open_directory(path: str) -> int:
     """Walk every component with no-follow descriptors, including ancestors."""
-    descriptor = os.open("/", _OPEN_DIRECTORY)
+    parts = Path(path).parts[1:]
+    traverse = os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    descriptor = os.open("/", traverse if parts else _OPEN_DIRECTORY)
     try:
-        for part in Path(path).parts[1:]:
-            child = os.open(part, _OPEN_DIRECTORY, dir_fd=descriptor)
+        for index, part in enumerate(parts):
+            child = os.open(part, _OPEN_DIRECTORY if index == len(parts) - 1 else traverse, dir_fd=descriptor)
             os.close(descriptor)
             descriptor = child
         return descriptor

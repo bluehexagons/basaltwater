@@ -179,9 +179,9 @@ class ManagedAgentSkillTests(unittest.TestCase):
                     present = {name for name in BROWSER_AGENT_SKILL_NAMES if (root / name / "SKILL.md").exists()}
                     self.assertEqual(present, expected)
                     if expected:
-                        source = Path(AGENT_SKILLS_ROOT) / preview / "references/collaborative-preview.md"
-                        self.assertEqual((root / preview / "references/collaborative-preview.md").read_bytes(),
-                                         source.read_bytes())
+                        shared = "basaltwater-project-development/references/collaborative-preview.md"
+                        self.assertIn(f"](../{shared})", (root / preview / "SKILL.md").read_text())
+                        self.assertEqual((root / shared).read_bytes(), (Path(AGENT_SKILLS_ROOT) / shared).read_bytes())
 
     def test_wsl_delivers_complete_bundles_to_each_selected_linux_user_catalog(self) -> None:
         for tools, catalogs in ((["codex"], (".agents",)), (["opencode"], (".agents",)),

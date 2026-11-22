@@ -18,6 +18,7 @@ import unittest
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INSTALL_SCRIPT = os.path.join(PROJECT_ROOT, "install.sh")
+CACHYOS_INSTALL_DOC = "docs/workstations/cachyos-install.md"
 
 
 class TestInstallScript(unittest.TestCase):
@@ -25,6 +26,12 @@ class TestInstallScript(unittest.TestCase):
         os.makedirs(os.path.join(install_dir, '.basaltwater'), exist_ok=True)
         with open(os.path.join(install_dir, '.basaltwater', 'managed-install'), 'w') as stream:
             stream.write('basaltwater-v1\n')
+
+    def _system_checkout(self, environment: dict[str, str]) -> list[str]:
+        environment["BASALTWATER_TEST_ROOT"] = "1"
+        source = environment.pop("BASALTWATER_REPOSITORY_URL")
+        commit = subprocess.check_output(["git", "-C", source, "rev-parse", "HEAD"], text=True).strip()
+        return ["--source-commit", commit]
 
     def test_interruptions_restore_old_install_at_rename_boundaries(self):
         for boundary in ('before-backup', 'after-backup', 'after-activation'):
@@ -129,7 +136,7 @@ class TestInstallScript(unittest.TestCase):
                 if len(sys.argv) > 1 and sys.argv[1] == "bootstrap":
                     if os.environ.get("BASALTWATER_TEST_BOOTSTRAP_FAIL") == "1":
                         raise SystemExit(7)
-                    launcher_dir = os.path.join(os.environ["HOME"], ".local", "bin")
+                    launcher_dir = os.path.join(os.environ["BASALTWATER_TEST_HOME"], ".local", "bin")
                     os.makedirs(launcher_dir, exist_ok=True)
                     launcher = os.path.join(launcher_dir, "basaltw")
                     with open(launcher, "w", encoding="utf-8") as output:
@@ -195,6 +202,7 @@ class TestInstallScript(unittest.TestCase):
                 "    esac\n"
                 "    exit 0\n"
                 "fi\n"
+                'if [ "$1" = -u ]; then printf "1000\\n"; exit 0; fi\n'
                 'exec /usr/bin/id "$@"\n'
             )
         os.chmod(id_path, 0o755)
@@ -240,7 +248,20 @@ class TestInstallScript(unittest.TestCase):
                 file_obj.write("#!/bin/sh\nexit 0\n")
             os.chmod(command_path, 0o755)
         os.symlink(sys.executable, os.path.join(command_bin, "python3"))
-        os.symlink(shutil.which("git"), os.path.join(command_bin, "git"))
+        git = Path(command_bin, "git")
+        git.write_text(textwrap.dedent(f"""\
+            #!{sys.executable}
+            import os
+            import sys
+
+            arguments = [
+                {source_root!r} if arg == "https://github.com/bluehexagons/basaltwater.git" else arg
+                for arg in sys.argv[1:]
+            ]
+            executable = {shutil.which("git")!r}
+            os.execv(executable, [executable, "-c", "protocol.file.allow=always", *arguments])
+            """))
+        git.chmod(0o755)
 
         environment = os.environ.copy()
         for name in (
@@ -255,6 +276,7 @@ class TestInstallScript(unittest.TestCase):
         ))
         environment["BASALTWATER_REPOSITORY_URL"] = source_root
         environment["BASALTWATER_TEST_LOG"] = log_path
+        environment["BASALTWATER_TEST_HOME"] = fake_home
         return fake_home, log_path, environment
 
     def test_installs_and_forwards_optional_setup_arguments(self):
@@ -309,9 +331,9 @@ class TestInstallScript(unittest.TestCase):
                 f"#!{sys.executable}\n"
                 "from __future__ import annotations\n"
                 "import os\nimport sys\n"
-                "if sys.argv[1:2] == ['-c']:\n"
+                "if sys.argv[1:3] == ['-I', '-c']:\n"
                 "    sys.version_info = (3, 10, 0)\n"
-                "    exec(sys.argv[2])\n"
+                "    exec(sys.argv[3])\n"
                 "else:\n"
                 "    os.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n",
                 encoding="utf-8",
@@ -511,14 +533,15 @@ class TestInstallScript(unittest.TestCase):
     def test_root_install_uses_target_home_for_launcher(self):
         with tempfile.TemporaryDirectory() as directory:
             fake_home, _log_path, environment = self._create_fixture(directory)
-            environment["BASALTWATER_TEST_ROOT"] = "1"
-            install_dir = os.path.join(directory, "installed")
+            pin = self._system_checkout(environment)
+            install_dir = os.path.join(directory, "new-parent", "installed")
             result = subprocess.run(
-                ["sh", INSTALL_SCRIPT, "--install-dir", install_dir],
+                ["sh", INSTALL_SCRIPT, "--install-dir", install_dir, "--channel", "stable", *pin],
                 check=False,
                 capture_output=True,
                 text=True,
                 env=environment,
+                umask=0o002,
             )
 
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -526,11 +549,63 @@ class TestInstallScript(unittest.TestCase):
                 os.path.join(fake_home, ".local", "bin", "basaltw"),
                 os.X_OK,
             ))
+            self.assertEqual(Path(install_dir).stat().st_uid, os.geteuid())
+            self.assertEqual(Path(install_dir).stat().st_mode & 0o022, 0)
+            self.assertEqual(Path(install_dir).parent.stat().st_mode & 0o777, 0o755)
+            self.assertTrue(Path(install_dir, ".basaltwater/system-install").is_file())
+            channel = json.loads(Path(install_dir, ".basaltwater/channel.json").read_text())
+            self.assertEqual((channel["channel"], channel["commit"]), ("stable", pin[-1]))
+
+    def test_system_source_rejects_unapproved_origin_and_mismatched_commit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _home, log, environment = self._create_fixture(directory)
+            environment["BASALTWATER_TEST_ROOT"] = "1"
+            install_dir = Path(directory, "installed")
+            command = ["sh", INSTALL_SCRIPT, "--install-dir", str(install_dir)]
+            refused = subprocess.run(command, env=environment, text=True, capture_output=True, timeout=20)
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn("system installations require", refused.stderr)
+            environment.pop("BASALTWATER_REPOSITORY_URL")
+            refused = subprocess.run(command, env=environment, text=True, capture_output=True, timeout=20)
+            self.assertIn("requires --source-commit or a full commit channel", refused.stderr)
+            refused = subprocess.run(
+                [*command, "--source-commit", "0" * 40],
+                env=environment, text=True, capture_output=True, timeout=20,
+            )
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn("does not match expected", refused.stderr)
+            self.assertFalse(install_dir.exists())
+            self.assertFalse(Path(log).exists())
+
+    def test_writable_checkout_cannot_be_restored_after_bootstrap_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _home, _log, environment = self._create_fixture(directory)
+            environment["BASALTWATER_TEST_BOOTSTRAP_FAIL"] = "1"
+            pin = self._system_checkout(environment)
+            install_dir = Path(directory, "installed")
+            self._mark_managed(str(install_dir))
+            (install_dir / ".git").mkdir()
+            (install_dir / "basaltwater.py").write_text("previous source")
+            install_dir.chmod(0o775)
+            command = ["sh", INSTALL_SCRIPT, "--install-dir", str(install_dir)]
+            refused = subprocess.run(command, env=environment, text=True, capture_output=True, timeout=20)
+            self.assertIn("select --channel explicitly", refused.stderr)
+            failed = subprocess.run(
+                [*command, "--channel", "dev", *pin], env=environment, text=True,
+                capture_output=True, timeout=20,
+            )
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertIn("Writable legacy source quarantined", failed.stderr)
+            quarantine, = Path(directory).glob(".basaltwater-quarantine.*")
+            self.assertEqual(quarantine.stat().st_mode & 0o777, 0o700)
+            self.assertEqual((quarantine / "source/basaltwater.py").read_text(), "previous source")
+            self.assertNotEqual((install_dir / "basaltwater.py").read_text(), "previous source")
+            self.assertEqual(install_dir.stat().st_mode & 0o022, 0)
 
     def test_unsupported_host_prompts_and_skips_system_package_installation(self):
         with tempfile.TemporaryDirectory() as directory:
             fake_home, log_path, environment = self._create_fixture(directory)
-            environment["BASALTWATER_TEST_ROOT"] = "1"
+            pin = self._system_checkout(environment)
             environment["BASALTWATER_TEST_OS_ID"] = "fedora"
             install_dir = os.path.join(directory, "installed")
             result = subprocess.run(
@@ -539,6 +614,7 @@ class TestInstallScript(unittest.TestCase):
                     INSTALL_SCRIPT,
                     "--install-dir",
                     install_dir,
+                    *pin,
                 ],
                 check=False,
                 capture_output=True,
@@ -557,6 +633,7 @@ class TestInstallScript(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             _fake_home, _log_path, environment = self._create_fixture(directory)
             environment["BASALTWATER_TEST_ROOT"] = "1"
+            environment.pop("BASALTWATER_REPOSITORY_URL")
             environment["BASALTWATER_TEST_OS_ID"] = "fedora"
             minimal_bin = os.path.join(directory, "minimal-bin")
             os.makedirs(minimal_bin)
@@ -649,7 +726,7 @@ class TestInstallScript(unittest.TestCase):
     def test_qemu_guest_agent_flag_is_forwarded_to_bootstrap(self):
         with tempfile.TemporaryDirectory() as directory:
             _fake_home, log_path, environment = self._create_fixture(directory)
-            environment["BASALTWATER_TEST_ROOT"] = "1"
+            pin = self._system_checkout(environment)
             install_dir = os.path.join(directory, "installed")
             result = subprocess.run(
                 [
@@ -657,6 +734,7 @@ class TestInstallScript(unittest.TestCase):
                     INSTALL_SCRIPT,
                     "--install-dir",
                     install_dir,
+                    *pin,
                     "--qemu-guest-agent",
                 ],
                 check=False,
@@ -670,7 +748,7 @@ class TestInstallScript(unittest.TestCase):
                 calls = [json.loads(line) for line in file_obj]
             self.assertEqual(calls[0][-1], "--qemu-guest-agent")
 
-    def test_local_setup_elevates_and_defaults_to_install_user(self):
+    def test_local_dry_run_stays_unprivileged_and_defaults_to_install_user(self):
         with tempfile.TemporaryDirectory() as directory:
             fake_home, log_path, environment = self._create_fixture(directory)
             environment["BASALTWATER_TEST_NON_ROOT"] = "1"
@@ -727,10 +805,7 @@ class TestInstallScript(unittest.TestCase):
                     "--dry-run",
                 ],
             )
-            with open(sudo_log_path, encoding="utf-8") as file_obj:
-                sudo_call = file_obj.read()
-            self.assertIn("python3", sudo_call)
-            self.assertIn("setup server_lite localhost testuser", sudo_call)
+            self.assertFalse(os.path.exists(sudo_log_path))
 
     def test_local_setup_option_supplies_localhost_and_user(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1102,7 +1177,7 @@ class TestInstallScript(unittest.TestCase):
             self.assertIn("    agent_cachyos\n    cachyos.example\n    testuser", result.stdout)
 
     def _documented_installer_examples(self):
-        for filename in ("README.md", "docs/getting-started/installation.md", "docs/workstations/cachyos.md"):
+        for filename in ("README.md", "docs/getting-started/installation-paths.md", CACHYOS_INSTALL_DOC):
             document = Path(PROJECT_ROOT, filename).read_text()
             for index, example in enumerate(re.findall(r"```(?:sh|bash|fish)\n(.*?)```", document, re.S)):
                 if "installer=$(mktemp)" not in example:
@@ -1120,9 +1195,15 @@ class TestInstallScript(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
 
     @unittest.skipUnless(shutil.which("fish"), "fish required for CachyOS shell checks")
-    def test_cachyos_docs_and_skills_have_valid_fish_syntax(self):
+    def test_cachyos_setup_docs_and_skills_have_valid_fish_syntax(self):
         root = Path(PROJECT_ROOT)
-        documents = sorted((root / "docs/workstations").glob("CACHYOS*.md"))
+        documents = [
+            root / CACHYOS_INSTALL_DOC,
+            root / "docs/workstations/cachyos-install-options.md",
+            root / "docs/workstations/cachyos-install-ssh.md",
+            root / "docs/workstations/cachyos-t3-code.md",
+            root / "docs/workstations/cachyos-profile-reference.md",
+        ]
         documents.extend(sorted((root / "common/agent_skills").glob("basaltwater-cachyos-*/**/*.md")))
         for document in documents:
             for language, example in re.findall(r"```(sh|bash|fish)\n(.*?)```", document.read_text(), re.S):
@@ -1142,7 +1223,7 @@ class TestInstallScript(unittest.TestCase):
     @unittest.skipUnless(shutil.which("fish"), "fish required for CachyOS shell checks")
     def test_cachyos_quick_starts_install_and_select_fish_without_elevation(self):
         examples = [(label, example) for label, example in self._documented_installer_examples()
-                    if label.startswith("docs/workstations/cachyos.md")]
+                    if label.startswith(f"{CACHYOS_INSTALL_DOC}:")]
         self.assertEqual(len(examples), 2)
         for label, example in examples:
             with self.subTest(example=label), tempfile.TemporaryDirectory() as directory:
@@ -1215,7 +1296,7 @@ class TestInstallScript(unittest.TestCase):
                     self.assertEqual(list(temporary.iterdir()), [])
                     ran = temporary_status == download_status == 0
                     self.assertEqual((root / "ran").exists(), ran)
-                    if ran and label.startswith("docs/workstations/cachyos.md"):
+                    if ran and label.startswith(f"{CACHYOS_INSTALL_DOC}:"):
                         expected = ["--local-setup", "agent_cachyos", "--codex"]
                         if "--t3code-desktop" in example:
                             expected.append("--t3code-desktop")

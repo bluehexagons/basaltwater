@@ -117,6 +117,8 @@ class WebPanelNotificationIdempotencyTest(unittest.TestCase):
     def test_dashboard_summary_is_escaped_and_history_remains_available(self) -> None:
         record = self._record()
         record["notification"]["operator"]["subject"] = "Backup <script>"
+        record["notification"]["operator"]["suggested_actions"] = ["Check <service>"]
+        record["notification"]["operator"]["details"] = "Exit status <1>"
         state = Mock()
         state.notification_events.return_value = [record, record]
         state.notification_ingest_url.return_value = None
@@ -125,7 +127,40 @@ class WebPanelNotificationIdempotencyTest(unittest.TestCase):
         self.assertIn("2 reports", page)
         self.assertIn("Backup &lt;script&gt;", page)
         self.assertNotIn("<script>", page)
+        alerts = page.split("Notification history", 1)[0]
+        self.assertIn("Check &lt;service&gt;", alerts)
+        self.assertIn("Exit status &lt;1&gt;", alerts)
         self.assertIn("Notification history (2 received)", page)
+
+    def test_existing_security_reports_display_structured_evidence(self) -> None:
+        record = self._record(type="security.source_health")
+        notification = record["notification"]
+        notification["operator"].update(
+            job="security_monitor",
+            what_happened="Security monitor found activity or source coverage to review.",
+        )
+        notification["data"] = {
+            "schema_version": 2,
+            "events": [
+                {"type": "source_retention_gap", "severity": "error", "source": "ssh_journal",
+                 "since": "2026-09-03T05:00:00", "until": "2026-09-03T05:15:00"},
+                {"type": "auditd", "severity": "warning", "key": "modules",
+                 "meaning": "kernel module activity", "paths": ["<module>"],
+                 "operations": ["finit_module"], "executables": ["/usr/bin/kmod"],
+                 "actors": ["unset", "root"]},
+            ],
+        }
+        state = Mock()
+        state.notification_events.return_value = [record]
+        state.notification_ingest_url.return_value = None
+        alerts = _render_notification_section(state).split("Notification history", 1)[0]
+        self.assertIn("SSH system journal coverage gap", alerts)
+        self.assertIn("Until (exclusive)</dt><dd>2026-09-03T05:15:00", alerts)
+        self.assertIn("Reported modules or paths</dt><dd>&lt;module&gt;", alerts)
+        self.assertIn("Operations</dt><dd>finit_module", alerts)
+        self.assertIn("Executables</dt><dd>/usr/bin/kmod", alerts)
+        self.assertIn("Automatic module loading can produce audit records", alerts)
+        self.assertNotIn("Security monitor found activity or source coverage", alerts)
 
     def test_duplicate_event_id_is_retained_only_once(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -239,15 +274,20 @@ class WebPanelNotificationIdempotencyTest(unittest.TestCase):
                     "common.service_tools.web_panel_service.discover_certificate_trust",
                     return_value=None,
                 ),
-                patch.object(state, "system_overview", return_value=[]),
+                patch(
+                    "common.service_tools.web_panel_service.collect_system_overview",
+                    return_value=[],
+                ),
             ):
                 rendered = render_page(state)
 
         self.assertIn(
-            "reported occurrence 2026-09-03T10:00:00+00:00",
+            'Reported occurrence <time data-local-time datetime="2026-09-03T10:00:00+00:00" '
+            'title="2026-09-03T10:00:00+00:00">',
             rendered,
         )
-        self.assertIn("received ", rendered)
+        self.assertIn("Received <time data-local-time", rendered)
+        self.assertIn('src="/assets/panel-refresh.js" integrity=', rendered)
         self.assertIn("from 192.0.2.45", rendered)
 
 

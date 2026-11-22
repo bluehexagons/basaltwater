@@ -71,7 +71,7 @@ class TestOfflineLXCSetup(unittest.TestCase):
         return subprocess.CompletedProcess(command, 0, output, "")
 
     def test_stopped_container_starts_before_waiting_for_ssh(self) -> None:
-        ensure_container_running(_config())
+        self.assertEqual(ensure_container_running(_config()), 112)
 
         self.assertLess(self.events.index("pct start 112"), self.events.index("wait"))
         self.wait.assert_called_once_with(
@@ -88,9 +88,10 @@ class TestOfflineLXCSetup(unittest.TestCase):
 
     def test_uncached_provisioning_recovers_before_reporting_existing(self) -> None:
         with patch("lib.proxmox_node.auto_detect_bridge", return_value="vmbr0"):
-            with self.assertRaises(ContainerAlreadyExists):
+            with self.assertRaises(ContainerAlreadyExists) as existing:
                 _provision_container_locked(_config())
 
+        self.assertEqual(existing.exception.vmid, 112)
         self.assertLess(self.events.index("pct start 112"), self.events.index("wait"))
         self.assertFalse(any("create" in event for event in self.events))
 
@@ -155,6 +156,11 @@ class TestCachedLXCDispatch(unittest.TestCase):
                     events.append("start")
                     if error:
                         raise error
+                    return 112
+
+                def refresh(_address, _node, _user, _key, *, tool, vmid, dry_run):
+                    self.assertEqual((tool, vmid, dry_run), ("pct", 112, False))
+                    events.append("trust")
 
                 with (
                     patch("basaltwater.prompt_for_missing_passwords"),
@@ -164,7 +170,7 @@ class TestCachedLXCDispatch(unittest.TestCase):
                     patch("basaltwater.print_setup_summary"),
                     patch("lib.proxmox_node.ensure_container_running", side_effect=start),
                     patch("lib.proxmox_node.provision_container") as provision,
-                    patch("basaltwater.refresh_managed_guest_host_keys", side_effect=lambda *a, **kw: events.append("trust")),
+                    patch("basaltwater.refresh_managed_guest_host_keys", side_effect=refresh),
                     patch("basaltwater.ensure_guest_ipv4_route"),
                     patch("basaltwater.store_cli_credentials"),
                     patch("basaltwater.save_setup_command"),

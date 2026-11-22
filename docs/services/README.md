@@ -18,6 +18,15 @@ see [Storage](../storage/README.md).
 | [Multi-repository builds](github-runner-repositories.md) | Choose runner registrations and dependency checkouts |
 | [GitHub runner improvements](github-runner-improvements.md) | Implemented registration/scope changes and remaining qualification |
 | [Cloudflare tunnels](cloudflare.md) | Public ingress, tunnel setup, firewall policy, and webhooks |
+| [Headscale and Unbound VMs](headscale-vms.md) | Provision separate control, DNS and application VMs; enroll, publish DNS and operate the group |
+| [Native network setup](headscale-setup.md) | Compose optional hosting, clients and Unbound in the required order |
+| [Headscale hosting](headscale-hosting.md) | Native control server, relay, TLS and managed adoption |
+| [Headscale management](headscale-management.md) | Bind explicit SSH authority and enroll tagged service machines |
+| [Headscale onboarding](headscale-onboarding.md) | Static HTTPS instructions and personal-device registration |
+| [Headscale administration](headscale-administration.md) | Reviewed user and node administration and SSH recovery |
+| [Headscale DNS publication](headscale-dns.md) | Verify an independent peer before publishing, replacing or withdrawing a resolver |
+| [Unbound](unbound.md) | Overlay-only recursive DNS, DNSSEC and reviewed local records |
+| [Network recovery](headscale-recovery.md) | Private backups, stopped-service restore and guarded recovery |
 | [Gogs](gogs.md) | Self-hosted Git, SSH access, storage, and updates |
 | [HomeBox](homebox.md) | Inventory setup, onboarding, updates, health, and backup/restore |
 | [Antistatic integration](../integrations/antistatic/README.md) | Optional lobby server, reports, STUN, database and development workflows |

@@ -100,6 +100,7 @@ _SERVICE_FIELDS = {
     "artifacts",
     "port",
     "env_file",
+    "runtime_binding",
     "runtime_env",
     "reverse_proxy",
     "health",
@@ -146,6 +147,7 @@ class Component:
     spa: bool = False
     # prebuilt packaging/export selection; appended to preserve positional callers
     artifacts: Optional[StrList] = None
+    runtime_binding: Optional[str] = None
 
     @property
     def is_static(self) -> bool:
@@ -492,6 +494,13 @@ def _parse_service(entry: dict, where: str, common: dict) -> Component:
                 f"{{{{...}}}} placeholders"
             )
 
+    runtime_binding = entry.get("runtime_binding")
+    if "runtime_binding" in entry:
+        from lib.runtime_bindings import validate_runtime_binding
+        runtime_binding = validate_runtime_binding(runtime_binding)
+        if env_file is not None:
+            raise ValueError(f"{where}: runtime_binding and env_file are mutually exclusive")
+
     runtime_env = _parse_env(
         entry.get("runtime_env"), where, field="runtime_env", validate_templates=True
     )
@@ -538,6 +547,7 @@ def _parse_service(entry: dict, where: str, common: dict) -> Component:
         exec=exec_cmd,
         port=port,
         env_file=env_file,
+        runtime_binding=runtime_binding,
         runtime_env=runtime_env,
         reverse_proxy=reverse_proxy,
         health=health,

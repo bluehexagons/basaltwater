@@ -1,8 +1,4 @@
-"""User-scoped coding tools for an existing CachyOS desktop.
-
-Only missing system packages are installed. No repository synchronization,
-system upgrades, account policy, desktop configuration, or update timers.
-"""
+"""Package and coding-tool setup for an existing CachyOS desktop."""
 
 from __future__ import annotations
 
@@ -13,6 +9,7 @@ import shlex
 import shutil
 import stat
 from subprocess import CompletedProcess
+import sys
 from typing import Any
 
 from common.agent_steps import (
@@ -217,8 +214,7 @@ def install_missing_packages(packages: list[str]) -> None:
             "check DNS and access to the configured mirror (for example, with "
             "`getent hosts archlinux.cachyos.org`). Resolve the pacman error, "
             "update CachyOS through its normal full-system update workflow if needed, "
-            "then rerun setup. basaltwater does not change DNS, refresh repositories, "
-            "or upgrade the OS."
+            "then rerun setup. Basaltwater uses the configured DNS and mirrors."
         )
 
 
@@ -227,7 +223,10 @@ def cachyos_packages(config: SetupConfig) -> list[str]:
     packages = ["ca-certificates", "curl", "git", "ripgrep", "base-devel", "pacman-contrib"]
     commands = [("gh", "github-cli")] if config.install_gh else []
     if config.install_node:
-        commands += [("node", "nodejs"), ("npm", "npm"), ("pnpm", "pnpm")]
+        commands += [("node", "nodejs"), ("pnpm", "pnpm")]
+    if config.install_node or config.update_nvm_npm:
+        # A user-local npm on PATH cannot satisfy the native package selection.
+        packages.append("npm")
     if config.install_python:
         commands += [("python", "python"), ("uv", "uv")]
     if config.install_go:
@@ -262,6 +261,7 @@ def cachyos_packages(config: SetupConfig) -> list[str]:
     if config.install_blender:
         packages.append("libdecor")  # Native Wayland window decorations.
     if config.install_steamcmd:
+        # Resolve these during package installation, after the full repo upgrade.
         packages.extend(("lib32-glibc", "lib32-gcc-libs"))
     if config.install_sysadmin_tools:
         packages.extend(package for _command, package in CACHYOS_SYSADMIN_PACKAGES)
@@ -280,6 +280,31 @@ def report_cachyos_host_health(config: SetupConfig) -> None:
 
     for name, state, reason in collect_host_health(_probe, os.getuid(), home=_home(config)):
         print(f"  {name}: {state} — {reason}")
+
+
+def upgrade_cachyos_packages(config: SetupConfig) -> None:
+    from lib.remote_utils import is_dry_run
+
+    if config.dry_run or is_dry_run():
+        return
+    result = run(["sudo", "pacman", "-Syu", "--noconfirm"], interactive=True, check=False)
+    if result.returncode:
+        raise RuntimeError(
+            "CachyOS system upgrade failed. Resolve the pacman error above and rerun setup."
+        )
+
+    # A rolling upgrade can remove the standard library of the running Python.
+    # Stop before later setup steps import modules from a replaced runtime.
+    restart_message = "CachyOS packages were upgraded. Rerun setup with the updated Python interpreter."
+    try:
+        version = run(
+            [sys.executable, "-I", "-S", "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
+            capture_output=True, check=False, timeout=15,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError(restart_message) from exc
+    if version.returncode or version.stdout.strip() != f"{sys.version_info.major}.{sys.version_info.minor}":
+        raise RuntimeError(restart_message)
 
 
 def install_cachyos_packages(config: SetupConfig) -> None:

@@ -57,6 +57,7 @@ class BuildSetupTests(unittest.TestCase):
         stack.enter_context(patch.object(build_setup, "resolve_saved_builder", return_value=selected))
         stack.enter_context(patch.object(build_setup, "resolve_target_endpoint", return_value=self.endpoint))
         self.probe = stack.enter_context(patch.object(build_setup, "_preflight_target"))
+        self.storage_probe = stack.enter_context(patch.object(build_setup, "preflight_delivery_storage", return_value={}))
         stack.enter_context(patch.object(build_setup, "get_workspace_dir", return_value=str(self.root)))
         self.source = stack.enter_context(patch.object(build_setup, "_prepare_sources", side_effect=self.sources))
         self.capacity = stack.enter_context(patch.object(build_setup, "_check_workspace_capacity"))
@@ -117,6 +118,8 @@ class BuildSetupTests(unittest.TestCase):
         result = json.loads(next(self.root.glob("build-setups/*/setup.json.last.json")).read_text())
         self.assertEqual(result["outcome"], "succeeded")
         completion = next(self.root.glob("build-setups/*/*/profile-success.json"))
+        inventory = json.loads((completion.parent / "conversion.json").read_bytes())
+        self.assertEqual(inventory["applications"][0]["deployment_root"], "/srv/apps/administrator-owned")
         self.assertEqual(completion.stat().st_mode & 0o777, 0o600)
         self.assertEqual(json.loads(completion.read_bytes()), {"schema": 1, "operation": result["operation"]})
 
@@ -175,6 +178,23 @@ class BuildSetupTests(unittest.TestCase):
         marker = OperationStateStore(caught.exception.journal_path).load()
         self.assertEqual(marker.context["delivery_receipt"], "/retained/delivery/receipt.json")
         self.assertEqual(marker.context["expected_releases"][0]["operation_id"], "d" * 32)
+
+    def test_storage_refusal_precedes_bootstrap_and_failure_codes_do_not_copy_output(self):
+        self.storage_probe.side_effect = ValueError("target mount headroom shortfall")
+        with self.assertRaisesRegex(ValueError, "headroom"):
+            build_setup.run_build_setup(self.config, apply_setup=self.apply)
+        self.apply.assert_not_called()
+        self.deliver.assert_not_called()
+        self.assertEqual(list(self.root.glob("build-setups/*/*/sources")), [])
+        self.storage_probe.side_effect = None
+        self.apply.side_effect = OSError(28, "sensitive command output")
+        with self.assertRaises(build_setup.BuildSetupRecoveryRequired) as caught:
+            build_setup.run_build_setup(self.config, apply_setup=self.apply)
+        marker = OperationStateStore(caught.exception.journal_path).load()
+        failure = Path(marker.context["attempt"]) / "failure.json"
+        self.assertEqual(json.loads(failure.read_bytes()), dict(schema=1, phase="bootstrapping", failure="storage_exhausted"))
+        self.assertNotIn("sensitive", str(caught.exception))
+        self.assertEqual(failure.stat().st_mode & 0o777, 0o600)
 
     def test_bootstrap_failure_never_submits_and_retains_guard(self):
         self.apply.side_effect = [1]
@@ -357,7 +377,7 @@ class BuildSetupTests(unittest.TestCase):
 
     def test_real_probe_uses_pinned_identity_no_agent_and_rejects_bad_state(self):
         value = {"uid": 0, "os": "debian", "version": "13", "architecture": "x86_64",
-                 "setup_pending": False, "legacy_ssh": False, "enrollment_schema": None,
+                 "setup_pending": False, "conversion_pending": False, "legacy_ssh": False, "enrollment_schema": None,
                  "ssh_peer": ["192.0.2.10"]}
         # Use the actual function rather than the orchestration fixture's mock.
         with patch.object(build_setup.subprocess, "run", return_value=SimpleNamespace(
@@ -368,7 +388,7 @@ class BuildSetupTests(unittest.TestCase):
             self.assertIn("StrictHostKeyChecking=yes", argv)
             self.assertIn("/private/known_hosts", " ".join(argv))
             self.assertEqual(run.call_args.kwargs["stdin"], subprocess.DEVNULL)
-            for key, wrong in (("setup_pending", True), ("legacy_ssh", True),
+            for key, wrong in (("setup_pending", True), ("conversion_pending", True), ("legacy_ssh", True),
                                ("enrollment_schema", 1), ("version", "12"), ("uid", 1000),
                                ("ssh_peer", []), ("ssh_peer", ["198.51.100.2"]),
                                ("ssh_peer", ["invalid"]), ("ssh_peer", "192.0.2.10")):
@@ -488,6 +508,8 @@ class BuildSetupControllerCrashTests(BuildDeliveryFixture, unittest.TestCase):
             stack.enter_context(patch.object(build_setup, "resolve_saved_builder", return_value=selected))
             stack.enter_context(patch.object(build_setup, "resolve_target_endpoint", return_value=endpoint))
             probe = stack.enter_context(patch.object(build_setup, "_preflight_target"))
+            stack.enter_context(patch.object(build_setup, "preflight_delivery_storage", return_value={}))
+            stack.enter_context(patch.object(build_setup, "_conversion_inventory", return_value={}))
             stack.enter_context(patch.object(build_setup, "get_workspace_dir", return_value=str(workspace)))
             prepare = stack.enter_context(patch.object(build_setup, "_plans", return_value=self.plans))
             builder_client = stack.enter_context(patch.object(build_setup, "BuildHostClient"))

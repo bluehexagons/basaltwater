@@ -75,6 +75,7 @@ NAVIGATION_ICONS = {
     "Maintenance agent": "maintenance", "Agent inbox": "notifications",
     "Certificate trust": "certificate", "Maintenance": "maintenance",
     "GitHub runner": "jobs",
+    "Headscale": "security",
     "Local service status": "service-status", "Scheduled jobs": "jobs",
     "Service diagnostics": "diagnostics", "Storage": "storage",
 }
@@ -90,6 +91,7 @@ PAGE_ICONS = {
     "credentials": "access", "storage": "storage", "shares-data": "storage",
     "publishing": "export",
     "github-runner": "jobs",
+    "headscale": "security",
     "desktop": "web-services", "console": "diagnostics",
     "maintenance-agent": "maintenance", "agent-inbox": "notifications",
 }
@@ -294,6 +296,7 @@ def panel_navigation(
         ("/credentials", "Git & credentials", "credentials"),
         ("/publishing", "Publishing", "publishing"),
         ("/admin", "Admin controls", "admin"),
+        ("/headscale", "Headscale", "headscale"),
         ("/shares-data", "Shares & Data", "shares-data"),
     ]
     items.extend(
@@ -369,6 +372,11 @@ def render_document(
     header = header.replace('<p class="eyebrow">', '<p class="eyebrow">' + render_icon(icon), 1)
     header = header.replace("</header>", render_texture(PAGE_TEXTURES.get(current, "basalt"), pattern_id="brand-header") + "</header>", 1)
     footer = footer.replace("</footer>", render_texture("water", pattern_id="brand-footer") + "</footer>", 1)
+    enhancement = ""
+    if 'data-panel-resource=' in content:
+        from common.service_tools.web_panel_refresh import SCRIPT_TAG, STYLE
+        style += STYLE
+        enhancement = SCRIPT_TAG
     return f'''<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -377,4 +385,4 @@ def render_document(
 <title>{html.escape(title)} · Basaltwater</title><style>{style}{brand_styles()}</style></head><body class="tone-{tone}">
 <a class="skip-link" href="#main">Skip to content</a>
 {render_sidebar(navigation)}
-<main id="main" tabindex="-1">{header}{content}{footer}</main></body></html>'''
+<main id="main" tabindex="-1">{header}{content}{footer}</main>{enhancement}</body></html>'''

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 import json
 import os
 from pathlib import Path
@@ -21,6 +22,32 @@ from lib.validation import validate_filesystem_path
 
 
 SOURCE_ROOT = Path(__file__).resolve().parents[1] / "common/agent_skills"
+
+
+def _source_skills() -> dict[str, Path]:
+    return {path.name: path for path in sorted(SOURCE_ROOT.iterdir()) if path.is_dir()}
+
+
+def installed_skill_names(home: str) -> list[str]:
+    """Find present, safely owned entrypoints without reading bundle contents."""
+    validate_filesystem_path(home, must_exist=True)
+    root = Path(home)
+    uid = root.stat().st_uid
+    names = []
+    for name in _source_skills():
+        for catalog, _providers in SKILL_CATALOG_PROVIDERS:
+            path = root / catalog / "skills" / name / "SKILL.md"
+            if not os.path.lexists(path):
+                continue
+            try:
+                check_skill_path(path, uid)
+                info = path.stat()
+            except (OSError, ValueError, RuntimeError):
+                continue
+            if stat.S_ISREG(info.st_mode) and info.st_uid == uid and not info.st_mode & 0o022:
+                names.append(name)
+                break
+    return names
 
 
 def _measurement(status: str = "unmeasured") -> dict[str, object]:
@@ -76,11 +103,13 @@ def _bundle_digest(files: dict[str, tuple[bytes, int]]) -> str:
     ], separators=(",", ":")).encode("utf-8"))
 
 
-def inspect_skill_catalogs(home: str) -> dict[str, object]:
-    """Compare known skill bundles with this CLI's source; never inspect auth/config."""
+def inspect_skill_catalogs(home: str, *, names: Collection[str] | None = None) -> dict[str, object]:
+    """Compare known skill bundles, optionally restricted to selected names."""
     validate_filesystem_path(home, must_exist=True)
     uid = Path(home).stat().st_uid
-    sources = {path.name: path for path in sorted(SOURCE_ROOT.iterdir()) if path.is_dir()}
+    sources = _source_skills()
+    if names is not None:
+        sources = {name: source for name, source in sources.items() if name in names}
     catalogs = []
     for directory, providers in SKILL_CATALOG_PROVIDERS:
         root = Path(home) / directory / "skills"

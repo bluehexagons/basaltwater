@@ -5,6 +5,104 @@ Run controller commands from the same Basaltwater workspace that holds those
 saved setups, SSH identities and verified host pins. Builder maintenance runs
 through a separate root or sudo administration session.
 
+## Switch an existing source-built target
+
+Use a separate enrolled builder; do not add the build-server role to a small
+web target. Both hosts must be Debian 13 x86_64 VMs or physical machines with
+working administrative SSH. These commands operate from the controller's
+original workspace, where the target setup and verified SSH host keys are saved.
+Replace the example hosts, user, key and controller source before running them.
+
+If the builder is not enrolled yet, configure an already reachable host:
+
+```bash
+basaltw setup server_lite build.example.com deploy --machine vm \
+  --key /home/controller/.ssh/id_ed25519 \
+  --ssh-access-source 192.0.2.5/32 --build-server --dry-run
+```
+
+Review and repeat without `--dry-run`. This enrolls wildcard project authority
+for that controller key and installs the managed toolchains. See
+[builder enrollment](build-systems.md#start-with-a-selected-builder) for
+restrictive per-project grants and fresh VM provisioning.
+
+Before converting the target:
+
+- Check every saved site's committed root `basaltwater.json`. Node static
+  builds and self-contained Go services are supported; a running Node service
+  cannot use this delivery flow. Inferred ordinary deployments need explicit
+  manifests first. Preserve destination paths and component names, and compare
+  generated deployment roots with the installed roots before applying.
+- Back up persistent data, saved setup state and serving configuration. Keep
+  other setup/deployment controllers idle. Activation restarts affected services;
+  the complete multi-application switch is not atomic.
+- Schedule a maintenance window for separate applications sharing a domain.
+  Each activation publishes the routes currently in the artifact registry.
+  During conversion, an ordinary sibling absent from that registry can lose
+  its route until its own activation succeeds. A later failure can leave that
+  route absent. Including all siblings in the command does not make publication
+  atomic; do not assume mixed source/artifact routes on one domain are preserved.
+- Check physical bytes and inodes on the controller, builder and target. The
+  target retains bundles and also needs extraction/staging space beside the
+  live release. Its default 8 GiB retained-storage ceiling is a logical bound,
+  not allocated disk space or a promise that a small disk can accommodate it.
+  Selected-builder preflight observes bytes and inodes on all three hosts,
+  grouping overlapping allocations by filesystem, including temporary mounts
+  and installed custom role roots. It budgets the complete stage-all cohort
+  using declared ceilings. These observations are not reservations and do not
+  qualify a live conversion. See [capacity limits](#choose-maintenance-by-the-exhausted-resource).
+
+Use `patch` to retain the saved target profile and its complete deployment set:
+
+```bash
+basaltw patch web.example.com deploy --machine vm \
+  --build-on build.example.com --no-node --no-go \
+  --ssh-access-source 192.0.2.5/32 --dry-run
+```
+
+The explicit negative toolchain flags clear previously saved installation
+requests; they do not uninstall runtimes. Use the target's existing setup user
+explicitly; an omitted user defaults to the controller's current username.
+Repeat `--ssh-access-source` for all
+administration sources that must retain access: an explicit list replaces the
+saved SSH source list. The selected target key must also authorize root setup.
+Omitted deployment destinations remain selected, and the command rebuilds
+**every saved site**. If a repository URL or selector changes, append its
+`--deploy DOMAIN[/PATH] HTTPS_URL` pair; this replaces that destination's saved
+source. Initial target grants are generated automatically. An already enrolled
+target needing changed grants additionally requires `--build-target-auto`.
+
+After reviewing preflight and the backups, repeat the target patch without
+`--dry-run`. Verify all routes, service health and persistent data before
+considering old build caches or installed toolchains separately. Existing
+runtimes and build accounts are retained; this switch alone does not reclaim
+their disk space. Later saved deployments use:
+
+```bash
+basaltw deploy web.example.com --yes
+```
+
+Before first enrollment, the target saves private, bounded evidence at
+`/var/lib/basaltwater/build-conversion.json`: enrolled roots/routes, existing
+persistent-directory device/inode/UID/GID identities, Nginx site configuration
+and relevant service unit files. Symlink destinations are retained without
+reading their external targets. Limits are 256 files and 4 MiB of file contents;
+oversized or unsafe configuration refuses before enrollment. This is
+configuration evidence, not a database backup or executable rollback.
+The final profile rechecks expected completed releases, captured route bindings
+and existing data-directory identities under target maintenance before marking
+the snapshot complete. A pending snapshot blocks another bootstrap and target
+payload cleanup; preserve it for reconciliation. A completed snapshot remains
+the original one-time conversion evidence, rather than being replaced by later
+deployments. Database contents and arbitrary unmanaged routes still require
+operator verification.
+
+On failure, preserve the printed attempt/journal and inspect the actual target
+state using the [recovery procedure](#diagnose-a-refusal). Do not retry blindly,
+delete guards or use `--no-build-on` as a rollback. Native qualification covers
+selected fresh-target and retained-refresh flows; it does not establish a
+populated source-built target conversion or a crash-safe multi-site switch.
+
 ## Add a site or change its grants
 
 An ordinary source revision update needs no new policy when its complete
@@ -168,7 +266,8 @@ quota or record capacity, and reclaiming logical charges does not erase history.
 | --- | --- | --- |
 | Builder logical bytes | Builder input reservations and retained payloads | Inspect capacity and the exact terminal request; [settle unused charges](build-systems.md#inspect-capacity-and-retain-evidence). Optional pruning or bundle release has separate destructive effects. |
 | Builder input or job/history records | Builder stores | Settlement, pruning and bundle release retain these identities. No remote history retirement command exists. Plan larger supported enrollment limits before exhaustion; independent history bounds still apply. |
-| Target retained bytes or records | Target staging/admission/release stores | No general target collection command exists. Preserve installed releases and replay evidence; reconcile capacity with an administrator before another delivery. |
+| Target retained bytes | Target staging store | Preview/apply [role-aware payload collection](../storage/host-maintenance.md#managed-build-payloads); current bundles and uncertain operations remain pinned. |
+| Target records | Target staging/admission/release stores | Payload retirement retains identities. Reconcile record capacity administratively; there is no replay-safe record retirement command. |
 | Controller active attempts | Controller `build-setups/HOST-HASH` | Explicitly archive a proven completed attempt as shown below. Failed or unproven attempts need reconciliation. |
 | Physical bytes or inodes | Each host's filesystem | Inspect that filesystem and retain required evidence. Logical settlement and controller archival do not promise physical reclamation. |
 
@@ -209,6 +308,36 @@ Older attempts qualify only when their retained evidence proves final setup
 success. No files or guards are deleted. See the [archival contract](../agents/contributing/build-setup-history.md)
 for exact proof, locking and interruption rules.
 
+## Collect completed controller payloads
+
+Run as the workspace owner using the original journal and attempt ID, before
+or after archival:
+
+```bash
+python3 -B -m lib.build_controller_storage \
+  --journal /absolute/workspace/build-setups/HOST-HASH/setup.json \
+  --attempt ATTEMPT_ID
+python3 -B -m lib.build_controller_storage \
+  --journal /absolute/workspace/build-setups/HOST-HASH/setup.json \
+  --attempt ATTEMPT_ID --apply --expected-revision SHA256
+```
+
+Review exact paths, owner, allocated bytes and revision before apply. Only a
+proven successful completed attempt qualifies. The collector removes its
+`sources` tree and exact delivered bundle/verified-extraction paths derived
+from validated receipts. Prepared metadata, completion proof, receipts and all
+recovery IDs remain. Metadata payload paths become historical and are never
+automatically replayed. Archive separately to free the active attempt slot.
+Neither action frees builder/target record slots.
+
+Apply rechecks the revision under controller resource, setup and delivery locks,
+persists private `payload-retirement.json` before unlink, and syncs deletion.
+Interrupted apply can resume only with the original revision. Mounted trees,
+symlinks, hardlinks, foreign ownership, changed files or unfinished operations
+refuse. Automatic sweeping of arbitrary old or failed attempts is unsupported.
+Ordinary preparation failures before remote mutation now remove their own
+temporary attempt; uncertain source-process cleanup retains it for inspection.
+
 ## Diagnose a refusal
 
 | Symptom | Next check |
@@ -232,5 +361,9 @@ python3 -B -m lib.build_setup_recovery \
 The inspector contacts no host and reports remote state as `unobserved` and
 payload contents as `unverified`. It does not resume, reset, cancel or clear
 anything. Neither a new deployment ID nor `--no-build-on` is a recovery action.
+Handled controller failures retain private `failure.json` with a phase and fixed
+failure category alongside preflight `storage.json` observations. Raw exception
+or command output is excluded. Missing diagnostics never negate an unfinished
+guard; preflight observations do not prove current free space.
 The [coverage map](../plans/testing-coverage.md) distinguishes live qualification,
 automated checks and remaining public Tunnel/ACME, crash and power-loss gaps.

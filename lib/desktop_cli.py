@@ -46,7 +46,9 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     instructions.add_argument("--json", action="store_true")
     from desktop.development import add_development_parser
     add_development_parser(commands)
-    evidence = commands.add_parser("evidence", help="Native: record manual launches, inputs and captures with project/task provenance")
+    from desktop.gamepad_qa import add_gamepad_parser
+    add_gamepad_parser(commands)
+    evidence = commands.add_parser("evidence", help="Record manual launches, inputs and captures with project/task provenance")
     evidence_commands = evidence.add_subparsers(dest="evidence_command", required=True)
     from desktop.qa_cli import add_qa_parser
     add_qa_parser(commands, evidence_commands)
@@ -54,7 +56,10 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     add_recording_parser(commands)
     recording = evidence_commands.add_parser("start")
     recording.add_argument("--project", required=True)
-    finishing = evidence_commands.add_parser("finish")
+    finishing = evidence_commands.add_parser("finish", help="Stop and finalize recording; does not close the application",
+        description="Stop and finalize recording. This does not close applications or prove their exit. "
+                    "When recording cleanup, quit the owned application normally and verify its window and launch status first. "
+                    "Leave the shared desktop session running.")
     finalizing = evidence_commands.add_parser("finalize", help="Finalize a saved recording after helper exit or interrupted collection")
     finalizing.add_argument("artifact")
     verifying = evidence_commands.add_parser("verify", help="Check recorded capture files without contacting the desktop or modifying evidence")
@@ -84,6 +89,7 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     starting = commands.add_parser("start")
     starting.add_argument("--json", action="store_true")
     starting.add_argument("--remember", action="store_true", help="Native opt-in to a reusable KDE grant; initial approval remains required")
+    starting.add_argument("--touch", action="store_true", help="Native: explicitly request touchscreen consent for bounded multitouch gestures")
     starting.add_argument("--session-seconds", type=int, default=0, help="Optional native lifetime, 60–28800 seconds; 0 (default) is unlimited")
     renewal = commands.add_parser("renew", help="Change an optional native backend lifetime without changing agent permission")
     renewal.add_argument("--generation", required=True)
@@ -102,17 +108,20 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     target = screenshot.add_mutually_exclusive_group()
     target.add_argument("--window", help="Capture a window ID from 'desktop windows'")
     target.add_argument("--active-window", action="store_true", help="Capture the active application without changing focus")
-    mapping = commands.add_parser("map-point", help="Native: convert presented-image points to monitor pixels without sending input")
+    mapping = commands.add_parser("map-point", help="Convert source-PNG or presented-view points to desktop/monitor pixels without input")
     mapping.add_argument("--geometry", nargs=2, type=int, metavar=("WIDTH", "HEIGHT"),
                          help="Full-monitor geometry from the screenshot metadata")
-    mapping.add_argument("--view-geometry", required=True, nargs=2, type=int, metavar=("WIDTH", "HEIGHT"),
-                         help="Dimensions of the entire PNG as presented, excluding viewer margins")
+    point_space = mapping.add_mutually_exclusive_group(required=True)
+    point_space.add_argument("--view-geometry", nargs=2, type=int, metavar=("WIDTH", "HEIGHT"),
+                             help="Dimensions of the entire PNG as presented, excluding viewer margins")
+    point_space.add_argument("--image-coordinates", action="store_true",
+                             help="Points are pixels in the source PNG, e.g. a verified crop center; no viewer transform is claimed")
     mapping.add_argument("--crop", nargs=4, type=int, metavar=("X", "Y", "WIDTH", "HEIGHT"),
                          help="Same monitor-pixel crop used for the screenshot; omit for a full capture")
-    mapping.add_argument("--x", required=True, type=int, help="Image-local x in the presented view")
-    mapping.add_argument("--y", required=True, type=int, help="Image-local y in the presented view")
-    mapping.add_argument("--to-x", type=int, help="Optional drag endpoint x in the same view")
-    mapping.add_argument("--to-y", type=int, help="Optional drag endpoint y in the same view")
+    mapping.add_argument("--x", required=True, type=int, help="Local x in the selected source-image or presented-view space")
+    mapping.add_argument("--y", required=True, type=int, help="Local y in the selected source-image or presented-view space")
+    mapping.add_argument("--to-x", type=int, help="Optional drag endpoint x in the same coordinate space")
+    mapping.add_argument("--to-y", type=int, help="Optional drag endpoint y in the same coordinate space")
     mapping.add_argument("--json", action="store_true")
     mapping.add_argument("--capture", help="Saved screenshot or input --observe JSON receipt; checks the fresh frame against status without capturing")
     mapping.add_argument("--view-origin", nargs=2, type=int, metavar=("LEFT", "TOP"),
@@ -126,7 +135,9 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     opening.add_argument("--reveal", action="store_true", help="Open its parent directory")
     opening.add_argument("--wait-window")
     opening.add_argument("--timeout", type=float, default=15)
-    window = commands.add_parser("window", help="Request a normal window-manager action")
+    window = commands.add_parser("window", help="Request a normal window-manager action",
+        description="Request a window-manager action, then verify its result. Close can be blocked by an application dialog. "
+                    "Use wait --condition absent and check the owned launch status; a close request alone does not prove exit.")
     window.add_argument("operation", choices=("focus", "move", "resize", "maximize", "minimize", "restore", "close"))
     window.add_argument("--window", required=True)
     window.add_argument("--identity", required=True, help="Window identity from 'desktop windows'")
@@ -188,7 +199,7 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     action.add_argument("--generation", required=True)
     action.add_argument("--observation", help="Bind input to the latest screenshot's single-use observation_id")
     action.add_argument("--geometry", required=True, nargs=2, type=int, metavar=("WIDTH", "HEIGHT"))
-    action.add_argument("kind", choices=("key", "keycode", "text", "click", "move", "drag"))
+    action.add_argument("kind", choices=("key", "keycode", "text", "click", "move", "drag", "relative", "scroll", "touch"))
     action.add_argument("--key")
     action.add_argument("--codes", nargs="+", type=int, help="Native physical chord: 1–8 distinct Linux evdev keyboard codes (1–255), e.g. 29 30 for Ctrl+A; no XKB +8 offset")
     action.add_argument("--text")
@@ -196,12 +207,16 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     action.add_argument("--hold-ms", type=int, help="Native key/button press duration, 0–5000 ms; e.g. 120 for game buttons")
     action.add_argument("--x", type=int)
     action.add_argument("--y", type=int)
+    action.add_argument("--dx", type=int, help="Native relative logical units (-4096..4096) or discrete scroll steps (-100..100)")
+    action.add_argument("--dy", type=int, help="Native relative logical units or scroll steps; negative scroll is up/left")
+    action.add_argument("--frames", metavar="FILE", help="Native touch: path to a JSON file containing 2–128 complete contact frames within 5000 ms, final contacts empty")
     action.add_argument("--to-x", type=int, help="Native drag endpoint in full-monitor capture pixels")
     action.add_argument("--to-y", type=int)
     action.add_argument("--duration-ms", type=int, help="Native drag duration, 1–5000 ms (default: 300)")
-    action.add_argument("--button", type=int, choices=range(1, 8), default=1,
-                        help="Integer: 1 left, 2 middle, 3 right, 4/5 vertical wheel, 6/7 horizontal wheel; drag uses 1–3")
+    action.add_argument("--button", type=int, choices=range(1, 10), default=1,
+                        help="1 left, 2 middle, 3 right, 4/5 vertical wheel, 6/7 horizontal wheel; native 8 side/9 extra; drag uses 1–3")
     action.add_argument("--observe", action="store_true", help="After completed input, settle and capture again; native skips the initial sample; never replay on capture failure")
+    action.add_argument("--observe-window", help="Debian: capture only this window ID after input (requires --observe); never falls back to the desktop")
     action.add_argument("--settle-ms", type=int, default=120, help="Settling delay for --observe, 0–5000 ms (default: 120)")
     action.add_argument("--output", help="New PNG path for --observe; defaults to private artifact storage")
 
@@ -217,27 +232,28 @@ def run_desktop_command(args: argparse.Namespace) -> int:
     try:
         command = args.desktop_command
         control_command = "basaltw desktop --native" if backend is not runtime else "basaltw desktop"
-        if command == "preflight":
+        if command == "gamepad":
+            from desktop.gamepad_qa import run_command
+            result = run_command(args, native=backend is not runtime)
+        elif command == "preflight":
             from desktop.preflight import preflight
             result = preflight(args.repository, backend=backend, native=backend is not runtime,
                                managed_source=args.managed_source, instructions=args.instruction, output=args.output)
         elif command == "instructions":
             from desktop.preflight import instruction_page
             result = instruction_page(args.path, start=args.start, characters=args.characters, sha256=args.sha256)
-        elif command == "evidence" and args.evidence_command in ("run", "closeout", "records", "corpus", "perception", "conditional"):
+        elif command == "evidence" and args.evidence_command in ("run", "process", "closeout", "records", "corpus", "perception", "conditional"):
             from desktop.qa_cli import run_qa_command
             result = run_qa_command(args, backend=backend)
         elif command == "accessibility-record":
             from desktop.accessibility_recording import run_recording_command
             result = run_recording_command(args)
-        elif command == "audio" or (command == "evidence" and args.evidence_command in ("crop", "excerpt", "export", "timeline")):
-            if backend is runtime:
+        elif command == "audio" or (command == "evidence" and args.evidence_command in ("crop", "point-preview", "excerpt", "export", "timeline")):
+            if backend is runtime and command == "audio" and args.audio_command != "analyze":
                 raise ValueError("Native QA tools require --native")
             from desktop.qa_cli import run_qa_command
             result = run_qa_command(args)
         elif command == "map-point":
-            if backend is runtime:
-                raise ValueError("Selected-monitor coordinate mapping requires --native")
             from desktop.coordinates import map_capture_points, map_observation_points
             if args.capture:
                 if args.geometry is not None or args.crop is not None:
@@ -253,15 +269,15 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                 if not isinstance(capture, dict):
                     raise ValueError("Expected a screenshot JSON receipt")
                 result = map_observation_points(capture, backend.status(), args.view_geometry, args.x, args.y,
-                    view_origin=args.view_origin, to_x=args.to_x, to_y=args.to_y)
+                    view_origin=args.view_origin, to_x=args.to_x, to_y=args.to_y,
+                    image_coordinates=args.image_coordinates)
             else:
                 if args.view_origin is not None:
                     raise ValueError("--view-origin requires --capture")
                 result = map_capture_points(args.geometry, args.view_geometry, args.x, args.y,
-                                            crop=args.crop, to_x=args.to_x, to_y=args.to_y)
+                                            crop=args.crop, to_x=args.to_x, to_y=args.to_y,
+                                            image_coordinates=args.image_coordinates)
         elif command == "evidence":
-            if backend is runtime:
-                raise ValueError("Manual desktop evidence requires --native")
             from desktop.evidence import finalize, verify
             operation = args.evidence_command
             if operation == "verify":
@@ -297,11 +313,12 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                       "ownership_transferred": False, "permission_changed": False, "desktop_preserved": True}
         elif command == "start":
             if backend is runtime:
-                if args.remember or args.session_seconds != 0:
-                    raise ValueError("Persistent grants and session lifetime require --native")
+                if args.remember or args.touch or args.session_seconds != 0:
+                    raise ValueError("Persistent grants, touchscreen consent and session lifetime require --native")
                 result = backend.start()
             else:
-                result = backend.start(remember=args.remember, session_seconds=args.session_seconds)
+                result = backend.start(remember=args.remember, session_seconds=args.session_seconds,
+                                       **({"touch": True} if args.touch else {}))
         elif command == "revoke":
             if backend is runtime:
                 raise ValueError("Portal grant revocation requires --native")
@@ -432,13 +449,23 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                         payload["observation_id"] = args.observation
                     if not 0 <= args.settle_ms <= 5000:
                         raise ValueError("Observation settling delay must be 0–5000 ms")
-                    if not args.observe and (args.output is not None or args.settle_ms != 120):
-                        raise ValueError("Observation output and settling delay require --observe")
+                    if not args.observe and (args.output is not None or args.settle_ms != 120 or args.observe_window is not None):
+                        raise ValueError("Observation output, window and settling delay require --observe")
+                    observation_window = client.validate_followup_window(args.observe_window, backend=backend)
                     observation_output = None
                     if args.observe:
                         observation_output = str(Path(args.output).absolute()) if args.output else client.artifact_path()
                         client.validate_capture_output(observation_output, backend=backend)
                     payload.update({name: getattr(args, name) for name in ("generation", "geometry", "kind", "key", "text", "x", "y", "button")})
+                    if args.dx is not None:
+                        payload["dx"] = args.dx
+                    if args.dy is not None:
+                        payload["dy"] = args.dy
+                    if args.frames is not None:
+                        from desktop.pointer_gestures import MAX_PLAN_BYTES
+                        from lib.atomic_io import read_json_file
+                        validate_filesystem_path(args.frames, must_exist=True)
+                        payload["frames"] = read_json_file(args.frames, max_bytes=MAX_PLAN_BYTES)
                     payload["codes"] = getattr(args, "codes", None)
                     client.validate_keycodes(payload)
                     payload["delay_ms"] = (10 if backend is not runtime and args.kind == "text" and args.delay_ms is None else args.delay_ms)
@@ -453,7 +480,7 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                 result = client.send_action(payload, backend=backend)
                 if command == "input" and args.observe and "error" not in result:
                     result = client.observe_after_input(result, payload, observation_output,
-                                                        settle_ms=args.settle_ms, backend=backend)
+                                                        settle_ms=args.settle_ms, backend=backend, window=observation_window)
                 if wait_title:
                     result["window_baseline"] = baseline
                     try:
@@ -468,7 +495,7 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                                       existing_window_ids=([item["id"] for item in observed["windows"] if item["id"] in previous]
                                                            if previous is not None else None),
                                       window_association="title substring; inspect PID/class before acting")
-        exit_code = int("error" in result or result.get("healthy") is False or result.get("state") == "failed"
+        exit_code = int("error" in result or result.get("ok") is False or result.get("healthy") is False or result.get("state") == "failed"
                         or (result.get("state") == "stopped" and bool(result.get("last_failure"))))
         if getattr(args, "save_output", False):
             from desktop.observations import save_observation

@@ -24,7 +24,7 @@ DATA_ACTIONS = {
     "repair": ("Repair file", "Reconstruct one staged file using existing parity, verify it, retain originals and publish the verified candidate."),
     "restore": ("Restore file", "Stage the selected independent copy, verify it against existing parity, retain originals and publish only a verified candidate."),
     "accept": ("Accept current content", "Establish this file's current content as the new parity baseline. Existing parity will no longer identify earlier damage. Only accept content you have independently confirmed is correct; originals and parity are retained."),
-    "quarantine": ("Quarantine corrupt files", "Move the reviewed files into private quarantine; retain parity and protect mirror copies."),
+    "quarantine": ("Quarantine corrupt files", "Move the reviewed files into private quarantine; retain parity and protect mirror copies. Files with changed or missing recorded metadata or inconclusive findings are verified first: healthy files stay in place, confirmed damaged files are quarantined, and inconclusive checks are skipped."),
     "delete": ("Permanently delete files", "Permanently remove the reviewed source bytes; retain parity, disposition history and mirror protection."),
 }
 

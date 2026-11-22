@@ -7,6 +7,7 @@ import json
 import os
 import shlex
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -14,14 +15,15 @@ from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import mock_open, patch
+from unittest.mock import MagicMock, mock_open, patch
+from urllib.parse import parse_qs
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import common.common_steps as common_steps
 from lib.config import SetupConfig
 from lib.arg_parser import add_setup_arguments
-from web import gogs_steps
+from web import gogs_steps, service_storage
 
 
 class TestParseGogsSpec(unittest.TestCase):
@@ -589,39 +591,71 @@ class TestInstallGogsRelease(unittest.TestCase):
 
 
 class TestGenerateGogsConfig(unittest.TestCase):
-    @patch("web.gogs_steps.run")
-    @patch("web.gogs_steps._reject_symlinked_gogs_path")
-    def test_data_directory_setup_prepares_all_writable_runtime_paths(
-        self,
-        _reject_symlinks,
-        mock_run,
-    ):
-        config_path = gogs_steps._ensure_gogs_data_dirs("/srv/gogs")
+    def test_data_directory_setup_prepares_all_writable_runtime_paths(self):
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(gogs_steps, "_gogs_identity", return_value=SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid())):
+            data = Path(directory) / "gogs"
+            config_path = gogs_steps._ensure_gogs_data_dirs(str(data), directory, "/home/git")
+            self.assertEqual(config_path, str(data / "custom/conf/app.ini"))
+            for path in ("data/tmp/uploads", "data/attachments", "data/avatars", "data/repo-avatars", "data/sessions"):
+                self.assertTrue((data / path).is_dir())
 
-        self.assertEqual(config_path, "/srv/gogs/custom/conf/app.ini")
-        commands = [call.args[0] for call in mock_run.call_args_list]
-        for path in (
-            "/srv/gogs/data/tmp/uploads",
-            "/srv/gogs/data/attachments",
-            "/srv/gogs/data/avatars",
-            "/srv/gogs/data/repo-avatars",
-            "/srv/gogs/data/sessions",
-        ):
-            self.assertIn(f"mkdir -p {path}", commands)
-
-    @patch("web.gogs_steps.run")
-    def test_data_directory_setup_rejects_symlinked_subpath(self, mock_run):
+    def test_data_directory_setup_rejects_symlinked_subpath(self):
         with tempfile.TemporaryDirectory() as directory:
             outside = os.path.join(directory, "outside")
             os.mkdir(outside)
             os.symlink(outside, os.path.join(directory, "custom"))
 
             with self.assertRaisesRegex(RuntimeError, "symlinked Gogs data path"):
-                gogs_steps._ensure_gogs_data_dirs(directory)
+                gogs_steps._ensure_gogs_data_dirs(directory, directory, "/home/git")
+            self.assertFalse(Path(directory, "data").exists())
 
-        self.assertFalse(
-            any("custom" in call.args[0] for call in mock_run.call_args_list)
-        )
+    def test_setup_refuses_nested_filesystem_and_bind_before_mutating(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data = root / "gogs"
+            mount = data / "repositories" / "nested"
+            mount.mkdir(parents=True)
+            protected = mount / "project"
+            protected.write_text("independent repository")
+            saved = protected.stat()
+            config = SetupConfig(host="host", username="gitadmin", system_type="server_web", gogs=[":3000", str(data)])
+            for device, source_root in (("8:2", "/"), ("8:1", "/bind-source")):
+                table = f"1 0 8:1 / / rw - ext4 /dev/fixture rw\n2 1 {device} {source_root} {mount} rw - ext4 /dev/fixture rw\n"
+                with self.subTest(device=device), \
+                     patch.object(service_storage, "open", mock_open(read_data=table), create=True), \
+                     patch.object(gogs_steps, "run") as run, patch.object(gogs_steps.os, "chown") as chown:
+                    with self.assertRaisesRegex(service_storage.StorageBoundaryError, "Nested mount"):
+                        gogs_steps.setup_gogs(config)
+                    run.assert_not_called()
+                    chown.assert_not_called()
+                self.assertEqual(protected.read_text(), "independent repository")
+                self.assertEqual((protected.stat().st_uid, protected.stat().st_gid), (saved.st_uid, saved.st_gid))
+
+    def test_ownership_walk_checks_mount_id_after_preflight(self):
+        with tempfile.TemporaryDirectory() as directory:
+            data = Path(directory) / "gogs"
+            entry = data / "foreign-file"
+            data.mkdir()
+            entry.write_text("independent data")
+            visits = 0
+            changed = []
+
+            def mount_id(fd):
+                nonlocal visits
+                if os.readlink(f"/proc/self/fd/{fd}") == str(entry):
+                    visits += 1
+                    if visits > 1:  # The first pass inspects existing entries.
+                        return 2
+                return 1
+
+            with patch.object(service_storage, "mount_id", side_effect=mount_id), \
+                 patch.object(gogs_steps, "_gogs_identity", return_value=SimpleNamespace(pw_uid=1234, pw_gid=1234)), \
+                 patch.object(gogs_steps.os, "chown", side_effect=lambda path, *_: changed.append(os.readlink(path))):
+                with self.assertRaisesRegex(service_storage.StorageBoundaryError, "Mount boundary crossed"):
+                    gogs_steps._ensure_gogs_data_dirs(str(data), directory, "/home/git")
+                self.assertNotIn(str(entry), changed)
+            self.assertEqual(entry.read_text(), "independent data")
 
     def test_generate_app_ini_enables_external_ssh(self):
         config = SetupConfig(
@@ -854,15 +888,6 @@ class TestGenerateGogsConfig(unittest.TestCase):
         )
         self.assertNotIn("$http_cf_connecting_ip", content)
 
-    def test_redacted_admin_create_user_command_hides_password(self):
-        command = gogs_steps._redacted_admin_create_user_command(
-            "/srv/gogs/custom/conf/app.ini",
-            "admin",
-            "admin@localhost",
-        )
-        self.assertIn("[REDACTED]", command)
-        self.assertNotIn("supersecret", command)
-
     @patch("web.gogs_steps._get_git_home", return_value="/home/git")
     def test_admin_command_places_config_after_subcommand(self, _git_home):
         command = gogs_steps.build_gogs_admin_command(
@@ -1020,13 +1045,14 @@ class TestGogsHostlessFirewall(unittest.TestCase):
         )
         with patch(
             "web.gogs_steps.run",
-            side_effect=[active, initial, active, updated, active, active],
+            side_effect=[active, initial, active, updated, active, active,
+                         SimpleNamespace(returncode=0, stdout=":INPUT DROP [0:0]\n")],
         ) as runner:
             gogs_steps._reconcile_gogs_direct_firewall(config, 3000)
 
         commands = [call.args[0] for call in runner.call_args_list]
         self.assertIn("ufw allow from 192.168.0.0/24", commands[2])
-        self.assertEqual(commands[-2:], ["ufw --force delete 2", "ufw --force delete 1"])
+        self.assertEqual(commands[-3:], ["ufw --force delete 2", "ufw --force delete 1", ["iptables-save", "-t", "filter"]])
 
     def test_hostname_transition_removes_old_direct_and_web_rules(self):
         config = SetupConfig(
@@ -1083,6 +1109,21 @@ class TestGogsHostlessFirewall(unittest.TestCase):
 
 
 class TestGogsGitUser(unittest.TestCase):
+    def test_existing_service_identity_must_be_unprivileged_before_account_mutations(self):
+        with tempfile.TemporaryDirectory() as home:
+            for uid, gid, primary in ((0, 1234, 1234), (1234, 0, 0), (1234, 1234, 4321)):
+                account = SimpleNamespace(pw_name="git", pw_uid=uid, pw_gid=primary, pw_dir=home)
+                group = SimpleNamespace(gr_name="git", gr_gid=gid)
+                with self.subTest(uid=uid, gid=gid, primary=primary), \
+                     patch.object(gogs_steps, "_get_git_home", return_value=home), \
+                     patch.object(gogs_steps, "user_exists", return_value=True), \
+                     patch.object(gogs_steps.pwd, "getpwnam", return_value=account), \
+                     patch.object(gogs_steps.grp, "getgrnam", return_value=group), \
+                     patch.object(gogs_steps, "run") as run:
+                    with self.assertRaisesRegex(RuntimeError, "incompatible Gogs git user or group"):
+                        gogs_steps._ensure_git_user()
+                    run.assert_not_called()
+
     def test_account_system_or_shared_home_is_rejected_before_mutations(self):
         for path in ("/", "/home", "/etc/git", "//etc/git", "/root", "/opt/gogs", "/var/lib/basaltwater"):
             with (
@@ -1098,19 +1139,17 @@ class TestGogsGitUser(unittest.TestCase):
 
     def test_git_setup_does_not_recursively_reassign_unrelated_home_contents(self):
         with tempfile.TemporaryDirectory() as directory:
-            home = os.path.join(directory, 'git home "quoted" %n $HOME')
-            for existing in (False, True):
-                with (
-                    self.subTest(existing=existing),
-                    patch.object(gogs_steps, "_get_git_home", return_value=home),
-                    patch.object(gogs_steps, "user_exists", return_value=existing),
-                    patch.object(gogs_steps, "run") as run,
-                ):
-                    self.assertEqual(gogs_steps._ensure_git_user(), home)
-                    commands = [call.args[0] for call in run.call_args_list]
-                    self.assertIn(f"chown git:git {shlex.quote(home)}", commands)
-                    self.assertIn(f"chown -R git:git {shlex.quote(home + '/.ssh')}", commands)
-                    self.assertNotIn(f"chown -R git:git {shlex.quote(home)}", commands)
+            home = Path(directory) / 'git home "quoted" %n $HOME'
+            home.mkdir()
+            (home / ".ssh").mkdir()
+            (home / "unrelated").touch()
+            (home / ".ssh/other-key").touch()
+            account = SimpleNamespace(pw_uid=1234, pw_gid=1234)
+            changed = []
+            with patch.object(gogs_steps.os, "chown", side_effect=lambda path, *_: changed.append(os.readlink(path))), \
+                 patch.object(gogs_steps.os, "fchown", side_effect=lambda fd, *_: changed.append(os.readlink(f"/proc/self/fd/{fd}"))):
+                gogs_steps._ensure_git_ssh_files(str(home), account)
+            self.assertEqual(changed, [str(home / ".ssh/authorized_keys"), str(home / ".ssh"), str(home)])
 
     def test_gogs_dispatch_shell_and_existing_ssh_group_on_create_and_rerun(self):
         with tempfile.TemporaryDirectory() as home:
@@ -1119,6 +1158,8 @@ class TestGogsGitUser(unittest.TestCase):
                     self.subTest(existing=existing, group_exists=group_exists),
                     patch.object(gogs_steps, "_get_git_home", return_value=home),
                     patch.object(gogs_steps, "user_exists", return_value=existing),
+                    patch.object(gogs_steps, "_gogs_identity"),
+                    patch.object(gogs_steps, "_ensure_git_ssh_files"),
                     patch.object(gogs_steps, "run", return_value=SimpleNamespace(
                         returncode=0 if group_exists else 2,
                     )) as runner,
@@ -1245,7 +1286,6 @@ class TestGogsNginx(unittest.TestCase):
             patch.object(gogs_steps, "obtain_letsencrypt_certificate", side_effect=AssertionError("No origin ACME behind Cloudflare")) as acme,
             patch.object(gogs_steps, "setup_certificate_renewal") as renewal,
             patch.object(gogs_steps, "configure_nginx_auth_failure_ban"),
-            patch.object(gogs_steps, "run_cloudflare_tunnel_setup", return_value=True) as tunnel,
             patch.object(gogs_steps, "open", create=True) as files,
         ):
             gogs_steps._write_gogs_nginx_config(config, "git.example.test", 443, 13000)
@@ -1253,7 +1293,6 @@ class TestGogsNginx(unittest.TestCase):
         acme.assert_not_called()
         renewal.assert_not_called()
         local_tls.assert_called_once_with("git.example.test", [])
-        tunnel.assert_called_once_with(config)
         content = files.return_value.__enter__.return_value.write.call_args.args[0]
         self.assertIn("listen 80;", content)
         self.assertIn("listen 443 ssl;", content)
@@ -1320,77 +1359,76 @@ class TestGogsNginx(unittest.TestCase):
 
 
 class TestGogsRequiredSetupSteps(unittest.TestCase):
-    @patch("web.gogs_steps._write_admin_credentials")
-    @patch("web.gogs_steps.generate_password")
-    @patch("web.gogs_steps._gogs_admin_user_exists", return_value=False)
-    @patch("web.gogs_steps.run")
-    def test_initial_admin_uses_matching_runtime_credential(
-        self,
-        mock_run,
-        _user_exists,
-        mock_generate_password,
-        mock_write_credentials,
-    ):
-        mock_run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
-        config = SetupConfig(
-            host="host",
-            username="gitadmin",
-            system_type="server_web",
-            gogs=[":3000", "/srv/gogs"],
-            share_credentials=[["gitadmin", "chosen-password"]],
-        )
+    def test_initial_admin_sends_both_password_sources_only_in_form_body(self):
+        chosen = "chosen password&=+é"
+        generated = "generated-password"
+        for source in (chosen, None):
+            for fail in (False, True):
+                with self.subTest(source=source, fail=fail), tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary)
+                    credentials = root / "password.json"
+                    account = SimpleNamespace(pw_uid=1234, pw_gid=1234, pw_dir="/home/git")
+                    installer = MagicMock()
+                    process = MagicMock()
+                    process.__enter__.return_value = installer
+                    temp_factory = tempfile.TemporaryDirectory
+                    config = SetupConfig(host="host", username="gitadmin", system_type="server_web",
+                                         resolved_credentials=[["gogs", "", "gitadmin", source]] if source else None)
 
-        gogs_steps._ensure_gogs_admin_account(
-            config,
-            "/srv/gogs/custom/conf/app.ini",
-            "/srv/gogs",
-        )
+                    def perform(command, **kwargs):
+                        self.assertIn("--unix-socket", command)
+                        self.assertIn("http://localhost/install", command)
+                        self.assertEqual(kwargs["stderr"], subprocess.DEVNULL)
+                        selected = source or generated
+                        self.assertNotIn(selected, str(command))
+                        sock = Path(command[command.index("--unix-socket") + 1])
+                        self.assertEqual(sock.parent.stat().st_mode & 0o777, 0o700)
+                        ini = (sock.parent / "app.ini").read_text()
+                        self.assertIn("PROTOCOL = unix\n", ini)
+                        self.assertIn("UNIX_SOCKET_PERMISSION = 600\n", ini)
+                        self.assertIn("INSTALL_LOCK = false\n", ini)
+                        self.assertNotIn(selected, ini)
+                        if "input_data" in kwargs:
+                            self.assertIn("@-", command)
+                            form = parse_qs(kwargs["input_data"])
+                            self.assertEqual(form["admin_passwd"], [selected])
+                            self.assertEqual(form["admin_confirm_passwd"], [selected])
+                            self.assertEqual(form["admin_name"], ["gitadmin"])
+                            self.assertEqual(json.loads(credentials.read_text())["password"], selected)
+                            self.assertEqual(credentials.stat().st_mode & 0o777, 0o600)
+                            if fail:
+                                raise subprocess.TimeoutExpired([selected], 1, stderr=selected)
+                        return SimpleNamespace(returncode=0)
 
-        mock_generate_password.assert_not_called()
-        command = mock_run.call_args.args[0]
-        display_command = mock_run.call_args.kwargs["display_cmd"]
-        self.assertIn("--password chosen-password", command)
-        self.assertNotIn("chosen-password", display_command)
-        mock_write_credentials.assert_called_once_with("gitadmin", "chosen-password")
+                    with (
+                        patch.object(gogs_steps.tempfile, "TemporaryDirectory", side_effect=lambda **_: temp_factory(dir=root)),
+                        patch.object(gogs_steps.os, "chown"),
+                        patch.object(gogs_steps.os, "fchown"),
+                        patch.object(gogs_steps.subprocess, "Popen", return_value=process) as popen,
+                        patch.object(gogs_steps, "run", side_effect=perform) as run,
+                        patch.object(gogs_steps, "_gogs_identity", return_value=account),
+                        patch.object(gogs_steps, "_gogs_admin_state", side_effect=[(0, 0), (1, 1)]) as state,
+                        patch.object(gogs_steps, "is_service_active", return_value=False),
+                        patch.object(gogs_steps, "generate_password", return_value=generated) as generate,
+                        patch.object(gogs_steps, "GOGS_ADMIN_CREDENTIALS_FILE", str(credentials)),
+                    ):
+                        if fail:
+                            with self.assertRaisesRegex(RuntimeError, "submission did not complete") as error:
+                                gogs_steps._ensure_gogs_admin_account(config, str(root), account.pw_dir)
+                            self.assertNotIn(source or generated, str(error.exception))
+                            self.assertTrue(error.exception.__suppress_context__)
+                        else:
+                            gogs_steps._ensure_gogs_admin_account(config, str(root), account.pw_dir)
+                        self.assertEqual(state.call_count, 1 if fail else 2)
+                        self.assertEqual(generate.call_count, 0 if source else 1)
+                        self.assertEqual(run.call_count, 2)
+                        self.assertNotIn(source or generated, repr(popen.call_args))
+                        self.assertEqual(popen.call_args.kwargs["user"], account.pw_uid)
+                        self.assertEqual(popen.call_args.kwargs["umask"], 0o077)
+                        installer.kill.assert_called_once()
+                    self.assertEqual(list(root.iterdir()), [credentials])
 
-    @patch("web.gogs_steps._write_admin_credentials")
-    @patch("web.gogs_steps.generate_password", return_value="generated-password")
-    @patch("web.gogs_steps._gogs_admin_user_exists", return_value=False)
-    @patch("web.gogs_steps.run")
-    def test_initial_admin_generates_password_without_matching_credential(
-        self,
-        mock_run,
-        _user_exists,
-        mock_generate_password,
-        mock_write_credentials,
-    ):
-        mock_run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
-        config = SetupConfig(
-            host="host",
-            username="gitadmin",
-            system_type="server_web",
-            gogs=[":3000", "/srv/gogs"],
-        )
-
-        gogs_steps._ensure_gogs_admin_account(
-            config,
-            "/srv/gogs/custom/conf/app.ini",
-            "/srv/gogs",
-        )
-
-        mock_generate_password.assert_called_once_with(24)
-        self.assertIn("--password generated-password", mock_run.call_args.args[0])
-        mock_write_credentials.assert_called_once_with("gitadmin", "generated-password")
-
-    @patch("web.gogs_steps._write_admin_credentials")
-    @patch("web.gogs_steps.run")
-    @patch("web.gogs_steps._gogs_admin_user_exists", return_value=True)
-    def test_existing_admin_password_is_preserved(
-        self,
-        _user_exists,
-        mock_run,
-        mock_write_credentials,
-    ):
+    def test_existing_admin_password_is_preserved(self):
         config = SetupConfig(
             host="host",
             username="gitadmin",
@@ -1399,14 +1437,49 @@ class TestGogsRequiredSetupSteps(unittest.TestCase):
             share_credentials=[["gitadmin", "replacement-password"]],
         )
 
-        gogs_steps._ensure_gogs_admin_account(
-            config,
-            "/srv/gogs/custom/conf/app.ini",
-            "/srv/gogs",
-        )
+        with patch.object(gogs_steps, "_gogs_identity"), \
+             patch.object(gogs_steps, "_gogs_admin_state", return_value=(2, 1)), \
+             patch.object(gogs_steps, "_install_gogs_admin") as install, \
+             patch.object(gogs_steps, "_write_admin_credentials") as write:
+            gogs_steps._ensure_gogs_admin_account(config, "/srv/gogs", "/home/git")
+        install.assert_not_called()
+        write.assert_not_called()
 
-        mock_run.assert_not_called()
-        mock_write_credentials.assert_not_called()
+    def test_existing_users_and_active_service_block_private_installer(self):
+        config = SetupConfig(host="host", username="gitadmin", system_type="server_web")
+        for state, active, message in (((1, 0), False, "already has users"), ((0, 0), True, "Stop Gogs")):
+            with self.subTest(state=state), \
+                 patch.object(gogs_steps, "_gogs_identity"), \
+                 patch.object(gogs_steps, "_gogs_admin_state", return_value=state), \
+                 patch.object(gogs_steps, "is_service_active", return_value=active), \
+                 patch.object(gogs_steps, "_install_gogs_admin") as install:
+                with self.assertRaisesRegex(RuntimeError, message):
+                    gogs_steps._ensure_gogs_admin_account(config, "/srv/gogs", "/home/git")
+                install.assert_not_called()
+
+    def test_admin_state_checks_role_and_probes_as_git(self):
+        account = SimpleNamespace(pw_uid=1234, pw_gid=2345)
+        with tempfile.TemporaryDirectory() as temporary:
+            data = Path(temporary) / "data"
+            data.mkdir()
+            path = data / "gogs.db"
+            with closing(sqlite3.connect(path)) as database:
+                database.execute("CREATE TABLE user (lower_name, type, is_admin, is_active, prohibit_login)")
+
+                def sqlite_process(command, **kwargs):
+                    self.assertIn("-readonly", command)
+                    self.assertEqual(kwargs["user"], account.pw_uid)
+                    self.assertEqual(kwargs["group"], account.pw_gid)
+                    self.assertEqual(command[-2], str(path))
+                    row = database.execute(command[-1]).fetchone()
+                    return SimpleNamespace(stdout="|".join(map(str, row)))
+
+                with patch.object(gogs_steps.subprocess, "run", side_effect=sqlite_process):
+                    self.assertEqual(gogs_steps._gogs_admin_state("gitadmin", temporary, account), (0, 0))
+                    database.execute("INSERT INTO user VALUES ('gitadmin', 0, 1, 1, 1)")
+                    self.assertEqual(gogs_steps._gogs_admin_state("gitadmin", temporary, account), (1, -1))
+                    database.execute("UPDATE user SET prohibit_login = 0")
+                    self.assertEqual(gogs_steps._gogs_admin_state("gitadmin", temporary, account), (1, 1))
 
     def test_ssh_reload_failure_is_fatal(self):
         failed = SimpleNamespace(returncode=1, stdout="", stderr="failed")
@@ -1489,8 +1562,9 @@ class TestGogsStorageHealth(unittest.TestCase):
                 patch.object(gogs_steps, "generate_gogs_service", return_value="unit"),
                 patch.object(gogs_steps, "replace_units"),
                 patch.object(gogs_steps, "is_service_active", return_value=True),
-                patch.object(gogs_steps, "_wait_for_gogs_ready", side_effect=lambda port: self.assertFalse(database_path.exists())),
+                patch.object(gogs_steps, "_wait_for_gogs_ready", side_effect=lambda port: self.assertTrue(database_path.exists())),
                 patch.object(gogs_steps, "_ensure_gogs_admin_account", side_effect=initialize),
+                patch.object(gogs_steps, "_gogs_identity", return_value=SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid())),
                 patch.object(gogs_steps, "_run_gogs_post_setup_commands"),
                 patch.object(gogs_steps, "_gogs_backing_filesystem", return_value=("/dev/test", "ext4", data_path)),
                 patch.object(gogs_steps, "_gogs_directory_usage", return_value=0),
@@ -1500,6 +1574,7 @@ class TestGogsStorageHealth(unittest.TestCase):
                 gogs_steps._complete_gogs_setup(
                     config, domain="", port=3000, backend_port=3000, data_path=data_path,
                     git_home="/home/git", config_path=os.path.join(data_path, "app.ini"),
+                    mount_target=data_path,
                     tag_name="v1.2.4", archive_sha256="a" * 64,
                 )
             self.assertTrue(any(call.args[0].startswith("sqlite3 -readonly ") for call in runner.call_args_list))
@@ -1518,7 +1593,9 @@ class TestGogsStorageHealth(unittest.TestCase):
 
             def result_for(command: str, **_kwargs):
                 if command.startswith("findmnt "):
-                    stdout = "/dev/vdb1 ext4 /srv/gogs\n"
+                    stdout = json.dumps({"filesystems": [
+                        {"source": "/dev/vdb1", "fstype": "ext4", "target": "/srv/gogs data"},
+                    ]})
                 elif command.startswith("sqlite3 "):
                     tokens = shlex.split(command)
                     self.assertEqual(tokens[1], "-readonly")
@@ -1541,6 +1618,7 @@ class TestGogsStorageHealth(unittest.TestCase):
             commands = [call.args[0] for call in mock_run.call_args_list]
 
         self.assertEqual(health["filesystem"], "ext4")
+        self.assertEqual(health["mount_target"], "/srv/gogs data")
         self.assertEqual(health["free_bytes"], 1048576)
         self.assertEqual(health["usage"]["lfs_objects"], 4096)
         self.assertFalse(
@@ -1612,7 +1690,7 @@ class TestGogsStorageHealth(unittest.TestCase):
     def test_rejects_cifs_live_data(self):
         result = SimpleNamespace(
             returncode=0,
-            stdout="//server/share cifs /srv/gogs\n",
+            stdout='{"filesystems": [{"source": "//server/share", "fstype": "cifs", "target": "/srv/gogs"}]}',
             stderr="",
         )
         with patch("web.gogs_steps.run", return_value=result):
@@ -1749,7 +1827,9 @@ class TestGogsSetupRollback(unittest.TestCase):
             with (
                 self.subTest(failure=failure_type, recovery=recovery_type),
                 patch("common.storage_steps.assert_declared_storage_mount"),
-                patch.object(gogs_steps, "_gogs_backing_filesystem"),
+                patch.object(gogs_steps, "_gogs_backing_filesystem", return_value=("/dev/test", "ext4", "/srv")),
+                patch.object(gogs_steps, "_check_git_home"),
+                patch.object(gogs_steps, "_get_git_home", return_value="/home/git"),
                 patch.object(gogs_steps, "_reconcile_gogs_direct_firewall"),
                 patch.object(gogs_steps, "_ensure_gogs_dependencies"),
                 patch.object(gogs_steps, "_ensure_git_user", return_value="/home/git"),

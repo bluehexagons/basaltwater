@@ -15,8 +15,10 @@ if __name__ == "__main__":
     try:
         if len(sys.argv) != 4:
             raise ValueError("Invalid completion arguments")
-        complete(sys.argv[1], int(sys.argv[2]), sys.argv[3])
+        outcome = complete(sys.argv[1], int(sys.argv[2]), sys.argv[3])
     except Exception as exc:
         issue = exc.issue if isinstance(exc, CompletionError) else "completion_failed"
         print(f"T3 completion failed ({issue}); inspect the private receipt and managed user service.", file=sys.stderr)
         sys.exit(1)
+    else:
+        print(f"T3 completion {outcome}.", file=sys.stderr)

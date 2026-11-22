@@ -195,6 +195,19 @@ try {
         Ensure-WingetPackage Microsoft.VisualStudio.2022.BuildTools 'Compiler install' -Override $override
         $forwarded = $script:WingetCalls[-1]
         Assert-True ($forwarded[-2] -eq '--override' -and $forwarded[-1] -eq (ConvertTo-WingetOverride $override)) 'Vendor overrides were split or dropped'
+        $script:WingetCalls = @()
+        foreach ($exitCode in @(0, -1978335212, -1978335189)) {
+            $script:InstallExit = $exitCode
+            Update-WingetPackages
+        }
+        Assert-True ($script:WingetCalls.Count -eq 3) 'Bulk upgrades queried individual packages on a no-op'
+        Assert-True (($script:WingetCalls[-1] -join ' ') -eq 'upgrade --all --disable-interactivity --silent --accept-source-agreements --accept-package-agreements') 'Bulk upgrade used unexpected options'
+        $script:InstallExit = -1978335188
+        Assert-Throws { Update-WingetPackages } 'completed with failures \(exit code -1978335188\).*per-package output'
+        $script:InstallExit = 3010
+        $rebootFailure = $null
+        try { Update-WingetPackages } catch { $rebootFailure = $_ }
+        Assert-True ([bool]$rebootFailure.Exception.Data['Basaltwater.WindowsRestartRequired']) 'Bulk upgrade lost its restart signal'
     } finally { Remove-Item Function:\winget.exe }
 
     # Source staging and resume use the saved native selection, never WSL.
@@ -237,7 +250,10 @@ try {
     $global:AgentInstallerTestShellOptions = $null
     try {
         Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -Plan } 'requires -AgentTool'
+        $wslPlan = & (Join-Path $repo 'install.ps1') -Profile server_wsl -Plan 6>&1 | Out-String
+        Assert-True ($wslPlan -match 'winget upgrade --all\.') 'WSL plan omitted Windows package upgrades'
         $splitPlan = & (Join-Path $repo 'install.ps1') -Profile agent_windows -AgentTool codex -StorageDrive f: -Plan 6>&1 | Out-String
+        Assert-True ($splitPlan -match 'winget upgrade --all\.') 'Native plan omitted Windows package upgrades'
         Assert-True ($splitPlan -match 'F:\\Basaltwater\\cache\\npm') 'Checkout setup did not resolve the drive-based layout'
         Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -StorageDrive F -StorageRoot 'F:\custom' -Plan } 'Choose StorageDrive or StorageRoot'
         foreach ($revision in @(('a' * 40), ('b' * 40), ('c' * 40), ('d' * 40))) {
@@ -509,6 +525,39 @@ function Invoke-NativeAgentSetup {
         Assert-Throws { & (Join-Path $repo 'install.ps1') -Godot -Plan } 'requires agent_windows'
         Assert-Throws { & (Join-Path $repo 'install.ps1') -Sunshine -Plan } 'requires agent_windows'
         Assert-Throws { & (Join-Path $repo 'install.ps1') -StorageDrive F -Plan } 'requires agent_windows'
+
+        & {
+            $source = Join-Path $temporary 'pinned WSL source'
+            New-Item -ItemType Directory -Path (Join-Path $source 'windows') -Force | Out-Null
+            Copy-Item -LiteralPath (Join-Path $repo 'install.ps1') -Destination $source
+            Copy-Item -LiteralPath (Join-Path $repo 'windows\Bootstrap.Common.ps1') -Destination (Join-Path $source 'windows')
+            New-Item -ItemType File -Path (Join-Path $source 'windows\wsl_prepare.py') | Out-Null
+            $wslStatePath = Join-Path $env:LOCALAPPDATA 'Basaltwater\wsl-setup.json'
+            $wslState = @{ Version = 1; Profile = 'server_wsl'; OwnerSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value;
+                Revision = 'e' * 40; Source = $source; Phase = 'complete'; Distro = 'Ubuntu-24.04'; DistroSelection = 'explicit' }
+            $wslInstaller = Join-Path $source 'install.ps1'
+            function wsl.exe {
+                Assert-True (($args -join ' ') -eq '--status') 'Ubuntu preparation ran after a failed Windows upgrade'
+                $global:LASTEXITCODE = 0
+            }
+            function winget.exe {
+                Assert-True ($args[0] -eq 'upgrade' -and $args -contains '--all') 'WSL setup skipped the bulk upgrade'
+                $global:LASTEXITCODE = $wslUpgradeExit
+            }
+            foreach ($case in @(@{ Code = -1978335188; Phase = 'applying'; Error = 'completed with failures' },
+                                @{ Code = 3010; Phase = 'restart-required'; Error = 'requires a Windows restart' })) {
+                $wslState | ConvertTo-Json | Set-Content -LiteralPath $wslStatePath -Encoding UTF8
+                $wslUpgradeExit = $case.Code
+                $setupOutput = [Collections.Generic.List[string]]::new()
+                Assert-Throws {
+                    & $wslInstaller -Profile server_wsl -Resume 6>&1 | ForEach-Object { $setupOutput.Add([string]$_) }
+                } $case.Error
+                $phase = (Get-Content -LiteralPath $wslStatePath -Raw | ConvertFrom-Json).Phase
+                Assert-True ($phase -eq $case.Phase) "WSL setup recorded $phase after WinGet exit $($case.Code)"
+                $resumeCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File '$wslInstaller' -Resume"
+                Assert-True (($resumeCommand -in $setupOutput) -eq ($case.Phase -eq 'restart-required')) 'WSL setup did not report the matching restart instructions'
+            }
+        }
     } finally {
         foreach ($name in @('Get-CimInstance', 'Get-PSDrive', 'Get-Volume', 'Join-Path', 'Invoke-RestMethod', 'Invoke-WebRequest', 'wsl.exe', 'Read-Host')) {
             Remove-Item "Function:\$name"
@@ -571,6 +620,10 @@ function Invoke-NativeAgentSetup {
 
     # Exercise the complete tool workflow without invoking any actual installer/provider.
     function Ensure-Winget { $script:EnsureCalls++ }
+    function Update-WingetPackages {
+        Assert-True ($script:EnsureCalls -eq ($script:UpgradeCalls + 1)) 'Bulk upgrade ran before WinGet was available'
+        $script:UpgradeCalls++
+    }
     function Install-NativeShellIntegration($Source, $StorageRoot, [switch]$Plan) { }
     function Update-NativePath { }
     function Add-NativeUserPath([string]$directory) { $script:AddedPaths += $directory }
@@ -581,6 +634,7 @@ function Invoke-NativeAgentSetup {
     function Get-NativeT3Desktop { if ($script:Desktop) { return 'C:\apps\T3 Code.exe' }; return $null }
     function Get-NativeGitBash { return 'C:\Git\bin\bash.exe' }
     function Ensure-WingetPackage([string]$packageId, [string]$label) {
+        Assert-True ($script:UpgradeCalls -eq $script:EnsureCalls -and $script:UpgradeCalls -gt 0) 'Selected tool install ran before the bulk upgrade'
         $script:Packages += $packageId
         if ($script:FailPackage) { throw 'simulated package failure' }
         switch ($packageId) {
@@ -613,7 +667,7 @@ function Invoke-NativeAgentSetup {
         }
         if ($args.Count -ge 2 -and $args[1] -eq 'dir') { return (Join-Path $env:USERPROFILE '.local\bin') }
     }
-    $script:EnsureCalls = 0; $script:Packages = @(); $script:Tools = @{}; $script:Desktop = $false
+    $script:EnsureCalls = 0; $script:UpgradeCalls = 0; $script:Packages = @(); $script:Tools = @{}; $script:Desktop = $false
     $script:AddedPaths = @(); $script:NpmCalls = @(); $script:NpmExit = 0
     $script:VersionExit = 0; $script:FailPackage = $false
     $script:UvCalls = @(); $script:UvExit = 0
@@ -621,12 +675,13 @@ function Invoke-NativeAgentSetup {
     Invoke-NativeAgentSetup -Source $repo -AgentTool claude -Plan
     Assert-True ($script:NpmCalls.Count -eq 0) 'Claude-only plan selected npm providers'
     Invoke-NativeAgentSetup -Source $repo -AgentTool 'gh,codex,claude,opencode' -Node -Python -Go -NodeVersions -T3CodeDesktop -Sunshine -Plan
-    Assert-True ($script:EnsureCalls -eq 0 -and $script:Packages.Count -eq 0) 'Plan invoked a package manager'
+    Assert-True ($script:EnsureCalls -eq 0 -and $script:UpgradeCalls -eq 0 -and $script:Packages.Count -eq 0) 'Plan invoked a package manager'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.claude'))) 'Plan changed the fake home'
     Invoke-NativeAgentSetup -Source $repo -AgentTool 'gh,codex,claude,opencode' -Node -Python -Go -NodeVersions -T3CodeDesktop
     Assert-True ($script:Packages.Count -eq 8) 'Fresh setup missed a selected native package'
     Assert-True ($script:NpmCalls.Count -eq 2) 'Fresh setup missed npm providers'
     Invoke-NativeAgentSetup -Source $repo -AgentTool claude
+    Assert-True ($script:UpgradeCalls -eq 2) 'Setup rerun skipped the bulk upgrade'
     Assert-True ($script:NpmCalls.Count -eq 2) 'Claude-only setup installed Codex or OpenCode'
     Assert-True ($script:NpmCalls[0] -contains '--prefix') 'npm install was not scoped to the user prefix'
     Assert-True (Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.claude\skills\basaltwater-subagents\references\t3-orchestration.md')) 'Claude supporting resources were not copied'

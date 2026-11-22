@@ -1,0 +1,98 @@
+"""Controller authority and tagged enrollment commands, with private transport."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+
+
+def add_headscale_management_parser(subparsers) -> argparse.ArgumentParser:
+    parser = subparsers.add_parser("headscale-manage", help="Manage saved networks, machine enrollment and DNS hookup")
+    commands = parser.add_subparsers(dest="headscale_management_action", required=True)
+    for action, help_text in (
+        ("bind", "Bind a saved network to a verified root SSH connection"),
+        ("show", "Show the saved management connection"),
+        ("remove", "Remove the local management connection"),
+        ("enroll", "Enroll a prepared machine with approved service tags"),
+        ("inspect", "Inspect retained enrollment and optional native metadata"),
+        ("reconcile", "Recover an uncertain machine enrollment"),
+        ("dns-publish", "Verify and publish an Unbound resolver using saved VM names"),
+        ("dns-withdraw", "Verify withdrawal before retiring the DNS VM"),
+        ("dns-inspect", "Show DNS publication and retained transaction state"),
+        ("dns-reconcile", "Complete an exactly reviewed uncertain DNS attempt"),
+    ):
+        command = commands.add_parser(action, help=help_text, description=help_text)
+        command.add_argument("reference", help="Saved server name or stable ID")
+        command.add_argument("--workspace")
+        command.add_argument("--dry-run", action="store_true", help="Validate local inputs without connecting or changing state")
+        if action == "dns-reconcile":
+            command.add_argument("--expected-attempt", required=True, help="Absolute private JSON containing the exact inspected controller attempt")
+        if action in {"dns-publish", "dns-withdraw"}:
+            command.add_argument("--resolver", required=True, help="Exact saved resolver host or name")
+            command.add_argument("--peer", required=True, help="Exact saved independent peer host or name")
+        if action in {"bind", "enroll"}:
+            prefix = "ssh" if action == "bind" else "target"
+            command.add_argument("--" + prefix + "-host", required=True)
+            command.add_argument("--" + prefix + "-key", required=True, help="Absolute private identity file path")
+            command.add_argument("--" + prefix + "-known-hosts", required=True, help="Absolute existing pinned host-key file")
+            command.add_argument("--" + prefix + "-port", type=int, default=22)
+        if action == "enroll":
+            command.add_argument("--tag", action="append", required=True, help="Explicit approved service tag; repeat")
+        if action == "inspect":
+            command.add_argument("--remote", action="store_true", help="Inspect safe native key/node metadata over authorized SSH")
+        if action == "reconcile":
+            command.add_argument("--expected-key-id", action="append", default=[])
+            command.add_argument("--expected-node-id", action="append", default=[])
+    return parser
+
+
+def run_headscale_management_command(args: argparse.Namespace) -> int:
+    from lib import headscale_management as management
+    from lib.headscale_transport import SSHBinding
+
+    try:
+        action = args.headscale_management_action
+        keywords = {"workspace": args.workspace}
+        if action == "dns-reconcile":
+            import os
+            from lib.headscale_private import read_private
+            from lib.headscale_dns_orchestration import reconcile_dns_attempt
+
+            if not os.path.isabs(args.expected_attempt):
+                raise ValueError("Absolute private attempt review required")
+            result = reconcile_dns_attempt(args.reference, expected=read_private(args.expected_attempt),
+                                           dry_run=args.dry_run, **keywords)
+        elif action.startswith("dns-"):
+            from lib.headscale_dns_orchestration import DNSPublicationExists, manage_dns
+            try:
+                result = manage_dns(args.reference, action=action.removeprefix("dns-"),
+                                    resolver=getattr(args, "resolver", None), peer=getattr(args, "peer", None),
+                                    dry_run=args.dry_run, **keywords)
+            except DNSPublicationExists:
+                print("DNS publication refused: an existing publication will not be reactivated; use dns-inspect and explicit headscale-dns inspect/reconcile", file=sys.stderr)
+                return 1
+        elif action == "bind":
+            ssh = SSHBinding(args.ssh_host, args.ssh_key, args.ssh_known_hosts, args.ssh_port)
+            result = management.bind_management(args.reference, ssh, dry_run=args.dry_run, **keywords).to_dict()
+        elif action == "show":
+            result = management.resolve_management(args.reference, **keywords).to_dict()
+        elif action == "remove":
+            management.remove_management(args.reference, dry_run=args.dry_run, **keywords)
+            result = {"removed": not args.dry_run, "dry_run": args.dry_run}
+        elif action == "enroll":
+            target = SSHBinding(args.target_host, args.target_key, args.target_known_hosts, args.target_port)
+            result = management.enroll_machine(args.reference, target, args.tag, dry_run=args.dry_run, **keywords)
+        elif action == "inspect":
+            management.resolve_management(args.reference, **keywords)
+            result = {"enrollment": management.inspect_enrollment(**keywords)}
+            if args.remote and not args.dry_run:
+                result["native"] = management.inspect_management(args.reference, **keywords)
+        else:
+            result = management.reconcile_enrollment(args.reference, args.expected_key_id, args.expected_node_id,
+                                                     dry_run=args.dry_run, **keywords)
+        print(json.dumps(result))
+        return 0
+    except (OSError, ValueError, RuntimeError, TypeError, KeyError):
+        print("Headscale management unavailable or unconfirmed; inspect retained state and use explicit DNS inspect/reconcile or enrollment recovery before retry", file=sys.stderr)
+        return 1

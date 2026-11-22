@@ -246,7 +246,6 @@ class TestSyncRsyncLogging(unittest.TestCase):
         self.assertIn("Rsync error output | stderr='rsync exploded'", output)
 
     @patch("lib.notifications.send_notification_safe", side_effect=RuntimeError("notify boom"))
-    @patch("lib.notifications.parse_notification_args", return_value=["cfg"])
     @patch("lib.machine_state.load_setup_config", return_value={"notify_specs": [["mailbox", "ops@example.com"]]})
     @patch("sync.service_tools.sync_rsync.datetime")
     @patch("sync.service_tools.sync_rsync.subprocess.Popen")
@@ -257,7 +256,6 @@ class TestSyncRsyncLogging(unittest.TestCase):
         mock_popen,
         mock_datetime,
         _load_setup,
-        _parse_notify,
         _send_notification,
     ):
         mock_get_logger.return_value = self.logger
@@ -484,9 +482,14 @@ class TestMountNamespace(unittest.TestCase):
 
     def test_standalone_worker_precautions_reach_warning_notification(self):
         self.config = {'storage_mounts': [['data', str(self.source / 'offline')]],
-                       'notify_specs': [['mailbox', 'ops@example.com']]}
-        with patch('lib.notifications.parse_notification_args', return_value=['cfg']), patch('lib.notifications.send_notification_safe') as notify:
+                       'notify_specs': [['webhook', 'https://panel.example/hook']],
+                       'notification_strict_https': False,
+                       'notification_ca_file': '/fixture/private-ca.pem'}
+        with patch('lib.notifications.send_notification_safe') as notify:
             self.assertEqual(sync_rsync.run_rsync_with_notifications(str(self.source), str(self.destination)), 0)
+        target, = notify.call_args.args[0]
+        self.assertTrue(target.strict_https)
+        self.assertEqual(target.ca_file, '/fixture/private-ca.pem')
         self.assertEqual(notify.call_args.kwargs['status'], 'warning')
         self.assertEqual(notify.call_args.kwargs['state'], 'firing')
         self.assertIn('offline', notify.call_args.kwargs['details'])

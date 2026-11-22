@@ -42,6 +42,7 @@ class LauncherTests(unittest.TestCase):
         self.assertTrue(spawn.call_args.kwargs["close_fds"])
         self.assertEqual(spawn.call_args.kwargs["stdin"], subprocess.DEVNULL)
         self.assertEqual(serve.call_args.args[2], 1000)
+        self.assertEqual(serve.call_args.args[3], account.pw_dir)
         self.assertEqual(code, 7)
 
     def test_drop_failure_preserves_exit_and_observer_failure_reaps_worker(self):
@@ -122,13 +123,23 @@ class LauncherTests(unittest.TestCase):
                 worker.poll.side_effect = [None, 0]
                 with patch.object(launcher, "_executables", return_value=["/usr/lib/systemd/systemd"]) as scan:
                     if valid:
-                        launcher._serve(parent, worker, 1000)
+                        launcher._serve(parent, worker, 1000, "/home/agent")
                         self.assertEqual(json.loads(child.recv(4096)), {"executables": ["/usr/lib/systemd/systemd"]})
                         scan.assert_called_once_with(1000)
                     else:
                         with self.assertRaises(ValueError):
-                            launcher._serve(parent, worker, 1000)
+                            launcher._serve(parent, worker, 1000, "/home/agent")
                         scan.assert_not_called()
+
+    def test_cache_protocol_reports_only_fixed_cache_labels(self):
+        with self._channels() as (parent, child):
+            child.sendall(b"caches\n")
+            worker = Mock()
+            worker.poll.side_effect = [None, 0]
+            with patch.object(launcher, "_active_caches", return_value=["electron"]) as scan:
+                launcher._serve(parent, worker, 1000, "/home/agent")
+            scan.assert_called_once_with(1000, "/home/agent")
+            self.assertEqual(json.loads(child.recv(4096)), {"active_caches": ["electron"]})
 
     @staticmethod
     @contextmanager
@@ -147,7 +158,7 @@ class LauncherTests(unittest.TestCase):
                 worker = Mock()
                 worker.poll.side_effect = [None, 0]
                 with patch.object(launcher, "_executables", side_effect=failure):
-                    launcher._serve(parent, worker, 1000)
+                    launcher._serve(parent, worker, 1000, "/home/agent")
                 self.assertEqual(json.loads(child.recv(4096)), {"error": "process inventory unavailable"})
 
 
@@ -187,6 +198,21 @@ class ProcessInspectionTests(unittest.TestCase):
         (process / "status").write_text("Uid:\t1000\nState:\tS\n")
         with self.assertRaises(ValueError):
             launcher._executables(1000)
+
+    def test_cache_scan_matches_open_paths_of_live_account_only(self):
+        account = self.process(800, target="/usr/bin/unzip")
+        other = self.process(801, uid=2000, target="/usr/bin/uv")
+        self.process(802, state="Z", target=None)
+        for proc in (account, other):
+            (proc / "cwd").symlink_to("/home/agent")
+            (proc / "fd").mkdir()
+        (account / "fd/3").symlink_to("/home/agent/.cache/electron/hash/download.zip (deleted)")
+        (account / "fd/4").symlink_to("/home/agent/.cache/pip-other/download")
+        (other / "fd/3").symlink_to("/home/agent/.cache/uv/wheel")
+        self.assertEqual(launcher._active_caches(1000, "/home/agent"), ["electron"])
+        with patch.object(launcher, "MAX_FDS", 1):
+            with self.assertRaisesRegex(OSError, "descriptor inventory limit"):
+                launcher._active_caches(1000, "/home/agent")
 
     def test_process_exit_during_read_is_ignored_only_when_directory_is_gone(self):
         process = self.process(800)
@@ -260,6 +286,17 @@ class ObserverClientTests(unittest.TestCase):
                 with client.use_process_observer(12):
                     with self.assertRaisesRegex(OSError, "observation unavailable"):
                         client.observed_executables(1000)
+
+    def test_cache_observations_are_fresh_and_refuse_unrecognized_labels(self):
+        channel = self.transport()
+        channel.recv.side_effect = [b'{"active_caches":["electron"]}\n', b'{"active_caches":[]}\n',
+                                    b'{"active_caches":["/home/agent/.cache/electron"]}\n']
+        with client.use_process_observer(12):
+            self.assertTrue(client.observed_cache_in_use("electron"))
+            self.assertFalse(client.observed_cache_in_use("electron"))
+            with self.assertRaises(OSError):
+                client.observed_cache_in_use("electron")
+        self.assertTrue(all(call.args == (b"caches\n",) for call in channel.sendall.call_args_list))
 
     def test_timeout_permanently_invalidates_channel_before_late_reply(self):
         channel = self.transport()

@@ -30,7 +30,7 @@ _OPTIONS = {
     "host", "username", "system_type", "dry_run", "machine_type",
     "agent_tools", "no_agent_tools", "install_node", "install_python",
     "install_go", "install_git_lfs", "install_av_tools", "install_gl_tools", "install_audio_tools",
-    "install_node_versions", "install_game_dev",
+    "install_node_versions", "update_nvm_npm", "install_game_dev",
     "install_godot", "install_sunshine", "install_moonlight", "install_gaming",
     "install_obs", "install_blender", "install_kdenlive", "install_krita",
     "install_inkscape", "install_scribus", "install_audacity", "install_ardour",
@@ -42,7 +42,7 @@ _OPTIONS = {
     "web_interface_host", "web_interface_port", "t3code_desktop",
     "lan_access", "access_sources", "clear_access_sources",
     "install_ssh", "ssh_password_auth", "ssh_password_window",
-    "notify_specs", "notification_level", "notification_strict_https",
+    "notify_specs", "notification_level", "notification_strict_https", "notification_ca_file",
 }
 _CONTROLLER_OPTIONS = {"restart_if_needed", "wait_for_restart"}
 _CONFIG_OPTIONS = (_OPTIONS - {"no_agent_tools"}) | {
@@ -127,7 +127,7 @@ def validate_cachyos_config(config: SetupConfig) -> None:
     if not validate_username(config.username) or config.username == "root":
         raise ValueError("Run agent_cachyos as your existing non-root desktop user")
     from lib.notifications import (
-        normalize_notification_level, normalize_notification_strict_https,
+        normalize_notification_ca_file, normalize_notification_level, normalize_notification_strict_https,
         validate_notification_args,
     )
 
@@ -135,7 +135,10 @@ def validate_cachyos_config(config: SetupConfig) -> None:
     if any(kind != "webhook" for kind, _ in config.notify_specs or []):
         raise ValueError("agent_cachyos supports webhook notifications only; mailbox is unsupported")
     normalize_notification_level(config.notification_level)
-    normalize_notification_strict_https(config.notification_strict_https)
+    normalize_notification_ca_file(
+        config.notification_ca_file,
+        normalize_notification_strict_https(config.notification_strict_https, config.notification_ca_file),
+    )
     if config.web_interfaces:
         host = config.web_interface_host if config.web_interface_host is not None else "127.0.0.1"
         if not isinstance(host, str) or not host:
@@ -224,6 +227,10 @@ def preflight_cachyos(config: SetupConfig) -> None:
         from common.cachyos_development import nvm_script
 
         nvm_script(Path(account.pw_dir))
+    if config.update_nvm_npm:
+        from common.cachyos_development import nvm_npm_runtime
+
+        nvm_npm_runtime(Path(account.pw_dir), config.update_nvm_npm)
     if config.install_sunshine:
         from common.cachyos_sunshine import preflight as preflight_sunshine
 

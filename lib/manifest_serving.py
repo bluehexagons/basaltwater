@@ -122,9 +122,9 @@ def parse_runtime(value: object) -> dict:
     from lib.project_manifest import parse_manifest
 
     allowed = {"exec", "port", "runtime_env", "working_dir", "sqlite_backup",
-               "backup_retention", "public_udp"}
+               "backup_retention", "public_udp", "runtime_binding"}
     if not isinstance(value, Mapping) or not set(value) <= allowed:
-        raise ValueError("Runtime contains unsupported fields (including secret/env_file bindings)")
+        raise ValueError("Runtime contains unsupported fields (including literal env_file paths)")
     raw = dict(value)
     encode_document(raw, maximum=64 * 1024)
     if "runtime_env" in raw and not isinstance(raw["runtime_env"], dict):
@@ -160,6 +160,8 @@ def parse_runtime(value: object) -> dict:
     }
     if command is not None:
         result["exec"] = command
+    if component.runtime_binding is not None:
+        result["runtime_binding"] = component.runtime_binding
     encode_document(result, maximum=64 * 1024)
     return result
 
@@ -177,8 +179,11 @@ def runtime_from_component(component: Component) -> dict | None:
     }
     if component.exec is not None:
         raw["exec"] = component.exec
+    if component.runtime_binding is not None:
+        raw["runtime_binding"] = component.runtime_binding
     if (component.exec is None and component.port is None and not component.runtime_env
             and component.working_dir is None and component.sqlite_backup is None
-            and component.backup_retention == 10 and not component.public_udp):
+            and component.backup_retention == 10 and not component.public_udp
+            and component.runtime_binding is None):
         return None
     return parse_runtime(raw)

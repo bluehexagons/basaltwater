@@ -1,4 +1,4 @@
-"""Engine-specific checks using an existing managed or project Playwright runtime."""
+"""Readiness checks for T3 preview and existing Playwright runtimes."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from lib.browser_registration import browser_registrations, register_browser_age
 from lib.remote_utils import CommandTimeoutError, run as run_command
 from lib.node_toolchain import select_node
 from lib.service_node import SERVICE_NODE, verify_service_node
+from lib.t3_preview import add_t3_preview_arguments, run_t3_preview_command
 from lib.validation import validate_filesystem_path
 
 
@@ -222,8 +223,10 @@ def check_browser(engine: str, context: str, project: str | None, *, install: bo
 
 
 def add_browser_parser(commands: argparse._SubParsersAction) -> None:
-    parser = commands.add_parser("browser", help="Check or install a selected existing Playwright engine")
+    parser = commands.add_parser("browser", help="Check native T3 preview or manage a Playwright engine")
     actions = parser.add_subparsers(dest="browser_command", required=True)
+    preview = actions.add_parser("resolve-preview", help="Check a loopback service for native T3 preview")
+    add_t3_preview_arguments(preview)
     for name in ("doctor", "install", "register"):
         action = actions.add_parser(name)
         action.add_argument("--engine", choices=("chromium", "firefox"), default="chromium")
@@ -235,6 +238,8 @@ def add_browser_parser(commands: argparse._SubParsersAction) -> None:
 
 
 def run_browser_command(args: argparse.Namespace) -> int:
+    if args.browser_command == "resolve-preview":
+        return run_t3_preview_command(args)
     result = None
     try:
         context = args.context

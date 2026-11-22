@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import basaltwater
 from lib.config import SetupConfig
-from lib.proxmox_vm import ProvisionError, ensure_vm_running
+from lib.proxmox_vm import ProvisionError, _reconcile_existing_vm, ensure_vm_running
 from lib.proxmox_vm_restart import request_vm_shutdown
 from lib.setup_reboot import shutdown_after_setup
 
@@ -76,7 +76,7 @@ class TestOfflineVMSetup(unittest.TestCase):
         return subprocess.CompletedProcess(command, 0, output, "")
 
     def test_stopped_vm_checks_capacity_then_starts_and_waits(self) -> None:
-        ensure_vm_running(_config())
+        self.assertEqual(ensure_vm_running(_config()), 112)
 
         self.assertLess(self.events.index("capacity"), self.events.index("qm start 112"))
         self.assertLess(self.events.index("qm start 112"), self.events.index("wait"))
@@ -173,6 +173,15 @@ class TestOfflineVMSetup(unittest.TestCase):
             ensure_vm_running(_config())
 
         self.assertEqual(self.events, ["qm list"])
+
+    def test_reconciliation_refuses_an_unexpected_vm_at_the_saved_address(self) -> None:
+        self.name = "other-vm"
+        with self.assertRaisesRegex(ProvisionError, "expected saved name 'offline-vm'"):
+            _reconcile_existing_vm(
+                "10.0.0.10", self.address, "renamed-vm", "root", [],
+                require_existing=True, saved_existing_name="offline-vm", start_existing=True,
+            )
+        self.assertEqual(self.events, ["qm list", "qm config 112"])
 
     def test_unknown_state_is_not_started(self) -> None:
         self.status = "unknown"

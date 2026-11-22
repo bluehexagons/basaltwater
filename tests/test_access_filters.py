@@ -19,9 +19,11 @@ from lib.config import SetupConfig
 from lib.cache import load_setup_command, merge_setup_configs, save_setup_command
 from lib.validation import validate_samba_settings, validate_web_interface_settings
 from plugins.proxmox import build_server_proxmox_steps
+from plugins.server import build_server_steps
 from security.security_steps import (
     configure_firewall,
     configure_firewall_web,
+    configure_firewall_ssh_only,
     configure_proxmox_management_firewall,
 )
 from smb.samba_steps import configure_samba_firewall
@@ -29,6 +31,19 @@ from web.gogs_steps import generate_gogs_app_ini
 
 
 class TestAccessSourceConfig(unittest.TestCase):
+    def test_server_lite_applies_ssh_only_selection_and_clearing(self) -> None:
+        for settings in ({"ssh_access_sources": ["192.0.2.12"]}, {"clear_ssh_access_sources": True}):
+            with self.subTest(settings=settings):
+                config = SetupConfig(host="host.example.test", username="admin", system_type="server_lite", **settings)
+                self.assertIn(configure_firewall_ssh_only, [step for _name, step in build_server_steps(config)])
+
+    def test_unsupported_profiles_refuse_ssh_only_source_options(self) -> None:
+        for profile in ("server_proxmox", "server_wsl"):
+            for settings in ({"ssh_access_sources": ["192.0.2.12"]}, {"clear_ssh_access_sources": True}):
+                with self.subTest(profile=profile, settings=settings):
+                    with self.assertRaisesRegex(ValueError, "does not support --ssh-access-source"):
+                        SetupConfig(host="localhost", username="admin", system_type=profile, **settings)
+
     def test_ssh_sources_cli_saved_remote_and_command_round_trips(self) -> None:
         parser = create_setup_argument_parser("test")
         config = SetupConfig.from_args(parser.parse_args([
@@ -369,6 +384,21 @@ class TestAccessSourceConfig(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Invalid access source"):
             validate_web_interface_settings(config)
 
+    def test_clearing_final_web_sources_rebinds_saved_wildcard_to_loopback(self) -> None:
+        for wildcard, loopback in (("0.0.0.0", "127.0.0.1"), ("::", "::1")):
+            with self.subTest(wildcard=wildcard):
+                old = SetupConfig(
+                    host="host.example.test", username="admin", system_type="agent_vm",
+                    web_interfaces=["t3code"], install_codex=True, web_interface_host=wildcard,
+                    web_interface_sources=["192.168.1.0/24"],
+                )
+                model = old.to_dict()
+                model["clear_web_interface_sources"] = True
+                cleared = SetupConfig.from_dict(old.host, old.system_type, model)
+                validate_web_interface_settings(cleared)
+                self.assertEqual(cleared.effective_web_interface_sources(), [])
+                self.assertEqual(cleared.web_interface_host, loopback)
+
     def test_no_lan_access_round_trips_as_explicit_reconciliation(self) -> None:
         parser = create_setup_argument_parser("test")
         args = parser.parse_args(["host.example.test", "--no-lan-access"])
@@ -383,6 +413,10 @@ class TestAccessSourceConfig(unittest.TestCase):
 class TestGenericUfwFiltering(unittest.TestCase):
     def setUp(self) -> None:
         self.enterContext(patch("lib.machine_state.detect_machine_type", return_value="vm"))
+        self.enterContext(patch("security.security_steps.verify_live_ufw_ingress"))
+        self.enterContext(patch("smb.samba_steps.verify_live_ufw_ingress"))
+        # Individual peer-policy tests supply their own connection context.
+        self.enterContext(patch.dict(os.environ, {"SSH_CONNECTION": ""}))
 
     @patch.dict(os.environ, {"SSH_CONNECTION": "2001:db8::5 12345 2001:db8::10 22"})
     @patch("security.security_steps.run")
@@ -650,6 +684,8 @@ class TestProxmoxManagementFilter(unittest.TestCase):
             stdout = ""
             if command == "pvesh get /cluster/firewall/options --output-format json":
                 stdout = json.dumps(cluster)
+            elif command == "pvesh get /nodes --output-format json":
+                stdout = '[{"node":"pve"}]'
             elif "/options --output-format" in command:
                 stdout = "{}"
             elif command.startswith("pvesh get /cluster/firewall/ipset/management"):

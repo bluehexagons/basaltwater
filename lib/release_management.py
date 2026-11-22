@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import shlex
+import stat
 import tempfile
 from collections.abc import Callable, Mapping
 from typing import Any
 from urllib.parse import urlsplit
 
-from lib.atomic_io import read_json_file, write_json_atomic
+from lib.atomic_io import read_json_file, rename_path_durable, write_json_atomic
 from lib.remote_utils import run
 from lib.state_read import StateReadError
 from lib.update_policy import order_preferred_github_releases
@@ -93,91 +95,6 @@ def fetch_github_releases(repo: str, *, per_page: int = 20) -> list[Mapping[str,
     return payload
 
 
-def select_preferred_github_release_asset(
-    releases: list[Mapping[str, Any]],
-    *,
-    asset_matches: Callable[[str, str], bool],
-    missing_asset_description: str,
-) -> tuple[str, str]:
-    """Return the preferred release tag and asset URL matching the selector."""
-    return _select_github_release_asset(
-        order_preferred_github_releases(releases),
-        asset_matches=asset_matches,
-        missing_asset_description=missing_asset_description,
-    )
-
-
-def select_latest_github_release_asset(
-    releases: list[Mapping[str, Any]],
-    *,
-    asset_matches: Callable[[str, str], bool],
-    missing_asset_description: str,
-) -> tuple[str, str]:
-    """Return the latest stable release tag and asset URL matching the selector."""
-    stable_releases = [
-        release
-        for release in releases
-        if not bool(release.get("draft")) and not bool(release.get("prerelease"))
-    ]
-    return _select_github_release_asset(
-        stable_releases,
-        asset_matches=asset_matches,
-        missing_asset_description=missing_asset_description,
-    )
-
-
-def _select_github_release_asset(
-    releases: list[Mapping[str, Any]],
-    *,
-    asset_matches: Callable[[str, str], bool],
-    missing_asset_description: str,
-) -> tuple[str, str]:
-    """Return the first matching release asset from an ordered release list."""
-    if not releases:
-        raise RuntimeError(missing_asset_description)
-    for release in releases:
-        tag_name = release.get("tag_name")
-        if not isinstance(tag_name, str) or not tag_name:
-            continue
-        assets = release.get("assets")
-        if not isinstance(assets, list):
-            continue
-        for asset in assets:
-            if not isinstance(asset, dict):
-                continue
-            asset_name = asset.get("name")
-            download_url = asset.get("browser_download_url")
-            if (
-                isinstance(asset_name, str)
-                and isinstance(download_url, str)
-                and asset_matches(tag_name, asset_name)
-            ):
-                try:
-                    return (
-                        validate_release_tag(tag_name),
-                        validate_release_download_url(download_url),
-                    )
-                except ValueError:
-                    continue
-    raise RuntimeError(missing_asset_description)
-
-
-def fetch_preferred_github_release_asset(
-    repo: str,
-    *,
-    asset_matches: Callable[[str, str], bool],
-    missing_asset_description: str,
-    per_page: int = 20,
-) -> tuple[str, str]:
-    """Fetch and select the preferred GitHub release asset for a repository."""
-    releases = fetch_github_releases(repo, per_page=per_page)
-    return select_preferred_github_release_asset(
-        releases,
-        asset_matches=asset_matches,
-        missing_asset_description=missing_asset_description,
-    )
-
-
 def fetch_preferred_verified_github_release_asset(
     repo: str,
     *,
@@ -240,41 +157,18 @@ def fetch_latest_verified_github_release_asset(
             if not isinstance(asset, dict):
                 continue
             asset_name = asset.get("name")
-            download_url = asset.get("browser_download_url")
-            digest = asset.get("digest")
-            if not (
-                isinstance(asset_name, str)
-                and isinstance(download_url, str)
-                and isinstance(digest, str)
-                and asset_matches(tag_name, asset_name)
-            ):
+            if not isinstance(asset_name, str) or not asset_matches(tag_name, asset_name):
                 continue
             try:
                 return (
                     validate_release_tag(tag_name),
-                    validate_release_download_url(download_url),
-                    validate_release_sha256_digest(digest),
+                    validate_release_download_url(asset.get("browser_download_url")),
+                    validate_release_sha256_digest(asset.get("digest")),
                 )
-            except ValueError:
-                continue
+            except ValueError as exc:
+                raise RuntimeError(f"Invalid release asset metadata for {asset_name}: {exc}") from exc
     raise RuntimeError(
         f"{missing_asset_description}; a publisher-provided SHA-256 is required"
-    )
-
-
-def fetch_latest_github_release_asset(
-    repo: str,
-    *,
-    asset_matches: Callable[[str, str], bool],
-    missing_asset_description: str,
-    per_page: int = 20,
-) -> tuple[str, str]:
-    """Fetch and select the latest stable GitHub release asset for a repository."""
-    releases = fetch_github_releases(repo, per_page=per_page)
-    return select_latest_github_release_asset(
-        releases,
-        asset_matches=asset_matches,
-        missing_asset_description=missing_asset_description,
     )
 
 
@@ -307,10 +201,10 @@ def install_binary_release(
     binary_path: str,
     tag_name: str,
     download_url: str,
-    installed_tag: str | None,
-    persist_installed_tag: Callable[[str], None],
+    sha256: str,
+    state_path: str,
 ) -> str:
-    """Download and replace a release-managed binary when the tag changes."""
+    """Verify the release bytes on install and reuse, including legacy tag-only state."""
     validate_no_control_characters(binary_name, "release binary name")
     if (
         not binary_name
@@ -319,16 +213,38 @@ def install_binary_release(
     ):
         raise ValueError(f"Invalid release binary name: {binary_name}")
     validate_filesystem_path(binary_path, must_exist=False)
+    validate_filesystem_path(state_path, must_exist=False)
     tag_name = validate_release_tag(tag_name)
     download_url = validate_release_download_url(download_url)
-
-    if installed_tag == tag_name and os.path.exists(binary_path):
-        print(f"  ✓ {os.path.basename(binary_path)} already up to date ({tag_name})")
-        return tag_name
+    sha256 = validate_release_sha256_digest(f"sha256:{sha256}")
+    state = load_json_state(state_path, read_error_label="release metadata",
+                            invalid_state_message="Invalid release metadata")
+    receipt = {"tag_name": tag_name, "sha256": sha256}
+    if state:
+        recorded_sha256 = None
+        try:
+            installed_tag = validate_release_tag(state.get("tag_name"))
+            if "sha256" in state:
+                if not isinstance(state["sha256"], str):
+                    raise ValueError("Invalid stored SHA-256")
+                recorded_sha256 = validate_release_sha256_digest("sha256:" + state["sha256"])
+        except ValueError as exc:
+            raise StateReadError(state_path, "invalid installed release metadata") from exc
+        if installed_tag == tag_name:
+            if recorded_sha256 is not None and recorded_sha256 != sha256:
+                raise RuntimeError(f"Publisher SHA-256 changed for {binary_name} {tag_name}")
+            try:
+                _verify_binary(binary_path, sha256)
+            except FileNotFoundError:
+                pass  # Reinstall missing bytes after checking the recorded digest.
+            else:
+                if state != receipt:
+                    write_json_state(state_path, receipt)
+                print(f"  ✓ Verified {binary_name} ({tag_name})")
+                return tag_name
 
     print(f"  Downloading {binary_name} ({tag_name})...")
-    # Keep download staging on the destination filesystem so mv publishes
-    # atomically instead of falling back to a copy over the active binary.
+    # Staging on the destination filesystem permits atomic replacement.
     with tempfile.TemporaryDirectory(
         prefix=".basaltwater-release-", dir=os.path.dirname(binary_path),
     ) as temporary_dir:
@@ -344,15 +260,23 @@ def install_binary_release(
         )
         if download_result.returncode != 0:
             raise RuntimeError(f"Failed to download {binary_name} {tag_name}")
-        chmod_result = run(f"chmod +x {shlex.quote(tmp_path)}", check=True)
-        if chmod_result.returncode != 0:
-            raise RuntimeError(f"Failed to make {binary_name} {tag_name} executable")
-        install_result = run(
-            f"mv -T -- {shlex.quote(tmp_path)} {shlex.quote(binary_path)}",
-            check=True,
-        )
-        if install_result.returncode != 0:
-            raise RuntimeError(f"Failed to install {binary_name} {tag_name}")
-    persist_installed_tag(tag_name)
+        _verify_binary(tmp_path, sha256, prepare_install=True)
+        rename_path_durable(tmp_path, binary_path)
+    write_json_state(state_path, receipt)
     print(f"  ✓ Installed {binary_path} ({tag_name})")
     return tag_name
+
+
+def _verify_binary(path: str, sha256: str, *, prepare_install: bool = False) -> None:
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise RuntimeError("Release binary must be a regular file")
+        with os.fdopen(fd, "rb", closefd=False) as stream:
+            if hashlib.file_digest(stream, "sha256").hexdigest() != sha256:
+                raise RuntimeError(f"SHA-256 mismatch for {os.path.basename(path)}")
+        if prepare_install:
+            os.fchmod(fd, 0o755)
+            os.fsync(fd)
+    finally:
+        os.close(fd)

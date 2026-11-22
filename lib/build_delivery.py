@@ -171,10 +171,13 @@ def _check_workspace_capacity(root: int, plans: Sequence[DeliveryPlan]) -> None:
     headroom = max(MIN_WORKSPACE_HEADROOM_BYTES, (retained + 9) // 10)
     required = retained + headroom
     available = capacity.f_bavail * capacity.f_frsize
-    if available < required:
+    required_inodes = 10000 + sum(plan.request["limits"]["artifact_entries"] + 8 for plan in plans)
+    available_inodes = capacity.f_favail
+    if available < required or capacity.f_files and available_inodes < required_inodes:
         raise ValueError(
             f"Insufficient delivery workspace capacity: need {required} available bytes "
-            f"including headroom, have {available}; lower request ceilings or provision more space"
+            f"and {required_inodes} inodes including headroom, have {available} bytes "
+            f"and {available_inodes} inodes; lower request ceilings or provision more space"
         )
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -50,11 +51,35 @@ class WslStepTests(unittest.TestCase):
 
     def test_base_package_actions_are_bounded_to_apt(self):
         with patch.object(wsl_steps, "is_dry_run", return_value=False), \
-             patch.object(wsl_steps, "run") as run:
+             patch.object(wsl_steps, "run") as run, \
+             patch.dict(os.environ, {"DEBIAN_FRONTEND": "dialog"}):
             wsl_steps.install_wsl_base(self._config())
-        self.assertEqual(run.call_args_list[0].args[0][:2], ["apt-get", "update"])
-        self.assertEqual(run.call_args_list[1].args[0][:2], ["apt-get", "upgrade"])
-        self.assertIn("sudo", run.call_args_list[2].args[0])
+            self.assertEqual(os.environ["DEBIAN_FRONTEND"], "dialog")
+        commands = [invocation.args[0] for invocation in run.call_args_list]
+        self.assertEqual([command[:2] for command in commands],
+                         [["apt-get", verb] for verb in ("update", "upgrade", "install", "autoclean")])
+        self.assertIn("APT::Update::Error-Mode=any", commands[0])
+        self.assertIn("--with-new-pkgs", commands[1])
+        for command in commands[1:3]:
+            self.assertIn("--no-remove", command)
+            self.assertIn("Dpkg::Options::=--force-confold", command)
+        for command in commands[1:]:
+            self.assertIn("DPkg::Lock::Timeout=300", command)
+        self.assertIn("sudo", commands[2])
+        for invocation in run.call_args_list:
+            self.assertEqual(invocation.kwargs["env"]["DEBIAN_FRONTEND"], "noninteractive")
+
+    def test_readiness_reports_pending_distro_restart(self):
+        for pending in (False, True):
+            with self.subTest(pending=pending), patch.object(wsl_steps, "is_dry_run", return_value=False), \
+                 patch.object(wsl_steps.shutil, "which", return_value="/usr/bin/tool"), \
+                 patch.object(wsl_steps, "Path") as path, patch("builtins.print") as output:
+                path.return_value.is_file.return_value = pending
+                wsl_steps.report_wsl_readiness(self._config())
+                path.assert_called_once_with("/run/reboot-required")
+                self.assertEqual(any("requires a distribution restart" in message.args[0]
+                                     for message in output.call_args_list), pending)
+                self.assertEqual(output.call_args.args[0], "  Ubuntu WSL tools ready for agent")
 
     def test_agents_receive_helpers_after_tools_and_before_readiness(self):
         for tools in (["codex"], ["claude"], ["opencode"], ["codex", "claude"], ["gh"], []):

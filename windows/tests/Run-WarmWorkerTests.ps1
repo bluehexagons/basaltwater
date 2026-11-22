@@ -80,6 +80,7 @@ function Invoke-NativeDesktopWorkerBody(`$Request) {
     $first=Invoke-NativeWarmRequest $worker @{command='ready';text='first'} 8
     $second=Invoke-NativeWarmRequest $worker @{command='ready';text='second'} 8
     Assert-Warm ($first.worker_pid -eq $second.worker_pid -and $second.echo -eq 'second') 'Warm requests did not reuse the same helper'
+    Assert-Warm (-not $first.PSObject.Properties['worker_cleanup'] -and -not $second.PSObject.Properties['worker_cleanup']) 'Completed requests left unretired mailboxes'
     Assert-Warm ([IO.File]::ReadAllText((Join-Path $temporary 'compilations')) -eq '1') 'Native types compiled for every request'
     $original=[IO.File]::ReadAllText((Join-Path $source 'Desktop.Hold.cs'))
     [IO.File]::AppendAllText((Join-Path $source 'Desktop.Hold.cs'),"`n// changed fixture source")

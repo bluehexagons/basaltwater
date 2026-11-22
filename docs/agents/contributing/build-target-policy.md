@@ -81,7 +81,12 @@ same release-root executable as `binary`. Commands and environment values reject
 systemd expansion. Working directories may be canonical release-relative paths
 (including `.`), or use exact `{{release_dir}}`,
 `{{shared_dir}}` or `{{data_dir}}` roots with literal safe suffixes; SQLite paths
-must use `{{data_dir}}`. Secret bindings and `env_file` remain unsupported.
+must use `{{data_dir}}`. `runtime_binding` accepts one literal binding ID and
+participates in exact runtime authorization and the admission digest. Literal
+`env_file` paths remain unsupported. The target-local root-owned registry supplies
+file paths and exact release-root/component scope; see
+[runtime bindings](../../services/runtime-bindings.md). Pure policy parsing does
+not load that registry; target admission and activation revalidate it locally.
 Each runtime mapping is bounded to 64 KiB. Duplicate UDP listeners and fixed
 service ports are rejected across policy applications, and activation checks
 retained applications before changing releases. Runtime values enter canonical

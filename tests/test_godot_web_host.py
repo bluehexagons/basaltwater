@@ -77,7 +77,7 @@ class TestGodotWebHost(unittest.TestCase):
             with open(ca, "w", encoding="utf-8") as file_obj:
                 file_obj.write("existing public CA\n")
 
-            def reconcile_policy(*_args: object) -> bool:
+            def reconcile_policy(*_args: object, **_kwargs: object) -> bool:
                 # The readable copy must exist before publishing its path.
                 with open(download, encoding="utf-8") as file_obj:
                     self.assertEqual(file_obj.read(), "existing public CA\n")
@@ -251,21 +251,26 @@ class TestGodotWebHost(unittest.TestCase):
                     True,
                     ["agent"],
                     ["192.0.2.0/24"],
+                    upstream_access_sources={3773: ["2001:db8:1::7/48"], 3774: []},
                 )
 
             self.assertTrue(changed)
             with open(policy_file, encoding="utf-8") as file_obj:
                 policy = json.load(file_obj)
             self.assertEqual(policy["ca_certificate"], ca_download)
+            self.assertEqual(policy["upstream_access_sources"], {"3773": ["2001:db8:1::/48"], "3774": []})
 
     def test_control_service_is_installed_for_owner_scoped_gateway_commands(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             helper = os.path.join(directory, "basaltwater_web_control.py")
+            utility = os.path.join(directory, "basaltwater_web.py")
             unit = os.path.join(directory, "basaltwater-web-control.service")
-            with open(helper, "w", encoding="utf-8") as file_obj:
-                file_obj.write("# managed helper\n")
+            for path in (helper, utility):
+                with open(path, "w", encoding="utf-8") as file_obj:
+                    file_obj.write("# original source\n")
             with (
                 patch.object(godot_web_steps, "GODOT_WEB_CONTROL", helper),
+                patch.object(godot_web_steps, "GODOT_WEB_UTILITY", utility),
                 patch.object(godot_web_steps, "GODOT_WEB_CONTROL_UNIT", unit),
                 patch.object(godot_web_steps, "run") as run,
                 patch.object(godot_web_steps, "is_service_active", return_value=True),
@@ -283,10 +288,13 @@ class TestGodotWebHost(unittest.TestCase):
     def test_unchanged_inactive_control_service_is_started(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             helper = os.path.join(directory, "control.py")
-            with open(helper, "w", encoding="utf-8") as file_obj:
-                file_obj.write("# managed helper\n")
+            utility = os.path.join(directory, "web.py")
+            for path in (helper, utility):
+                with open(path, "w", encoding="utf-8") as file_obj:
+                    file_obj.write("# original source\n")
             with (
                 patch.object(godot_web_steps, "GODOT_WEB_CONTROL", helper),
+                patch.object(godot_web_steps, "GODOT_WEB_UTILITY", utility),
                 patch.object(godot_web_steps, "_write_if_changed", return_value=False),
                 patch.object(godot_web_steps, "is_service_active", side_effect=[False, True]),
                 patch.object(godot_web_steps, "run") as run,
@@ -296,24 +304,32 @@ class TestGodotWebHost(unittest.TestCase):
         self.assertIn("systemctl start basaltwater-web-control.service", commands)
         self.assertNotIn("systemctl restart basaltwater-web-control.service", commands)
 
-    def test_control_helper_update_restarts_service_even_with_same_unit_settings(self) -> None:
+    def test_control_source_updates_each_restart_service_with_same_unit_settings(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             helper = os.path.join(directory, "control.py")
+            utility = os.path.join(directory, "web.py")
             unit = os.path.join(directory, "control.service")
-            with open(helper, "w", encoding="utf-8") as file_obj:
-                file_obj.write("# first revision\n")
+            for path in (helper, utility):
+                with open(path, "w", encoding="utf-8") as file_obj:
+                    file_obj.write("# first revision\n")
             with (
                 patch.object(godot_web_steps, "GODOT_WEB_CONTROL", helper),
+                patch.object(godot_web_steps, "GODOT_WEB_UTILITY", utility),
                 patch.object(godot_web_steps, "GODOT_WEB_CONTROL_UNIT", unit),
                 patch.object(godot_web_steps, "is_service_active", return_value=True),
                 patch.object(godot_web_steps, "run") as run,
             ):
                 self.assertTrue(godot_web_steps._configure_web_control_service())
-                with open(helper, "w", encoding="utf-8") as file_obj:
-                    file_obj.write("# second revision\n")
-                self.assertTrue(godot_web_steps._configure_web_control_service())
-            commands = [call.args[0] for call in run.call_args_list]
-            self.assertEqual(commands.count("systemctl restart basaltwater-web-control.service"), 2)
+                for path in (helper, utility):
+                    with self.subTest(source=os.path.basename(path)):
+                        run.reset_mock()
+                        with open(path, "w", encoding="utf-8") as file_obj:
+                            file_obj.write("# second revision\n")
+                        self.assertTrue(godot_web_steps._configure_web_control_service())
+                        self.assertFalse(godot_web_steps._configure_web_control_service())
+                        commands = [call.args[0] for call in run.call_args_list]
+                        self.assertEqual(commands.count("systemctl daemon-reload"), 1)
+                        self.assertEqual(commands.count("systemctl restart basaltwater-web-control.service"), 1)
 
     def test_policy_reconciliation_failure_preserves_live_policy_and_cleans_staging(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -339,11 +355,16 @@ class TestGodotWebHost(unittest.TestCase):
         from common import t3code_steps
         from lib.config import SetupConfig
 
-        config = SetupConfig(system_type="agent_code_vm", host="192.0.2.10", username="agent")
+        config = SetupConfig(
+            system_type="agent_code_vm", host="192.0.2.10", username="agent",
+            lan_access=False, access_sources=["192.0.2.0/24"],
+            web_interface_sources=["2001:db8::/32"],
+        )
+        sources = ["192.0.2.0/24", "2001:db8::/32"]
         with (
             patch.object(t3code_steps.os, "geteuid", return_value=0),
             patch.object(t3code_steps.os.path, "isfile", return_value=True),
-            patch.object(godot_web_steps, "configure_internal_web_host"),
+            patch.object(godot_web_steps, "configure_internal_web_host") as configure,
             patch.object(t3code_steps, "run", side_effect=[
                 SimpleNamespace(returncode=0, stdout='{"url":"https://192.0.2.10:8444/","listen":8444}'),
                 SimpleNamespace(returncode=0, stdout='{"url":"https://192.0.2.10:8445/","listen":8445}'),
@@ -351,6 +372,11 @@ class TestGodotWebHost(unittest.TestCase):
         ):
             endpoints = t3code_steps._configure_t3_https(config, 3773, 3774)
         self.assertEqual(set(endpoints), {"t3code", "t3code-pairing"})
+        self.assertEqual(configure.call_args.kwargs["upstream_access_sources"], {3773: sources, 3774: sources})
+        self.assertEqual(configure.call_args.kwargs["route_access_sources"], {
+            "t3code": sources, "t3code-pairing": sources,
+        })
+        self.assertEqual(configure.call_args.args[2], ["192.0.2.0/24"])
         for call in run.call_args_list:
             argv = godot_web_steps.shlex.split(call.args[0])
             self.assertEqual(argv[argv.index("--lock-timeout") + 1], "300")

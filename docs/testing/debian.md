@@ -1,6 +1,7 @@
 # Debian and Proxmox testing status
 
-**Evidence reconciled through 2026-11-08 UTC.** Selected live workflows cover Debian
+**Runtime binding evidence updated 2026-11-17 UTC; other rows retain their dates.**
+Selected live workflows cover Debian
 12/13 guests and a physical Proxmox host; they do not establish a pass on every
 machine type. Status applies only to the workflow described in each row; see
 the [legend](README.md#status-legend).
@@ -48,9 +49,10 @@ from test status.
 | HomeBox | 🟢 **Labbed** | Loopback API, upgrade, restore, reboot and re-enable | Browser, public TLS, replacement host and rollback |
 | Web deployment | 🟢 **Labbed** | Selected Go, Node and SPA/API workflows, rollback and same-host recovery | Public tunnel/ACME, off-host restore and power loss |
 | Selected builder | 🟢 **Labbed** | Enrollment, delivery, refresh and multi-application workflows | Public ingress, more failure boundaries and unsupported interpreter services |
+| Runtime secret bindings | 🟢 **Labbed** | Native components at `94477d18`: real systemd delivery, build/account isolation, manual rotation/rollback, retained refresh, verified loopback HTTPS and reboot. At `eacbfd23`, managed target enrollment, actual controller-client SSH delivery, forced-command shell refusal and post-reboot status pass; see [scope](runtime-bindings.md) | Full selected-build controller setup with a remote worker, public ingress, interrupted activation, concurrent administrator edits and power loss |
 | Builder retention/recovery | 🟡 **Partial** | Component and automated settlement, pruning and lost-acknowledgement guards | Further crash/power-loss boundaries; no automatic collection |
-| GitHub runner | 🟢 **Labbed** | Earlier tokenless checks; actual CLI registration, allowed dispatch, denied rerun/drain, nested build/cancellation and registered reboot at `550e8f7f`. Selected guardian/managed-worker SIGKILL recovery and a later real workflow pass; see [dated evidence](evidence.md#shared-host-crash-and-scratch-follow-up) | Organization/group, registered multi-repository execution, push/PR events, expired-token/panel enrollment and other process-loss/acknowledgement timings remain open |
-| Combined build/CI host | 🟢 **Labbed** | Registered-runner conversion, mixed capacity, exact nested scheduling, drain, saved rerun and reboot; selected SIGKILL cases retain capacity until verified recovery, and bounded scratch ENOSPC fails cleanly. Post-fault nested artifacts and webhook probes pass; [scope](evidence.md#shared-host-crash-and-scratch-follow-up) | Fresh provider bootstrap failed before role setup; public ingress, further crash/acknowledgement timings, retained-store/physical host exhaustion and power loss remain unqualified |
+| GitHub runner | 🟢 **Labbed** | CLI registration, allowed dispatch, denied rerun/drain, nested build/cancellation and registered reboot at `550e8f7f`; selected guardian/managed-worker SIGKILL recovery. On 2026-11-03, real allowed pushes and same-repository PR opening/synchronization/reopening at `08c41ccb` complete nested builds; unsupported closure runs zero steps. See [event scope](evidence.md#real-github-event-follow-up) | Organization/group, registered multi-repository execution, fork/bot and additional actor/author cases, expired-token/panel enrollment and other process-loss/acknowledgement timings remain open |
+| Combined build/CI host | 🟢 **Labbed** | Registered-runner conversion, mixed capacity, nested scheduling, drain, selected SIGKILL recovery and bounded scratch ENOSPC. The 2026-11-03 fresh-provider follow-up at `08c41ccb` qualifies normal provisioning, saved-role rerun/reboot and nested/SSH/webhook artifacts; see [scope and corrected earlier failure](evidence.md#fresh-provider-bootstrap-and-shared-host) | Other image/account configurations, public ingress, further crash/acknowledgement timings, retained-store/physical host exhaustion and power loss remain unqualified |
 | Web panels | 🟢 **Labbed** | Selected setup/auth and component lifecycle/recovery; browser fixtures | Full removal/interruption, additional browsers and native console |
 | Managed user rename | 🟢 **Labbed** | Selected identity, home and recovery cases | More interruption points and application-specific migration |
 | Resource-constrained development | 🟢 **Labbed** | Selected 1 vCPU / 1 GiB Debian workload | Full suite, browser and other platforms at that floor |
@@ -106,8 +108,8 @@ not qualified. See [input limits](../workstations/desktop-automation.md#pace-tex
   repeat relevant cases on the exact release candidate.
 - Extend the selected shared-host checks to broader GitHub events/scopes,
   other process-loss/acknowledgement timings and retained-store/host exhaustion;
-  selected SIGKILL and bounded scratch ENOSPC checks pass. Investigate
-  the separately retained fresh provider-bootstrap failure.
+  selected SIGKILL and bounded scratch ENOSPC checks pass. Extend the successful
+  fresh-provider follow-up to additional image/account configurations.
 - Complete public tunnel/certificate issuance and native browser cases; keep
   live provider credentials and raw evidence private.
 - Investigate the failed LXC suspend and run the separate Proxmox cluster and

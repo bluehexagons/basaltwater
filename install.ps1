@@ -275,6 +275,12 @@ function Ensure-Wsl {
     return $false
 }
 
+function Write-WslWindowsRestartInstructions([string]$Source) {
+    $installer = (Join-Path $Source 'install.ps1').Replace("'", "''")
+    Write-Host 'Restart Windows, log back into this account, then run in PowerShell.'
+    Write-Host "powershell.exe -NoProfile -ExecutionPolicy Bypass -File '$installer' -Resume"
+}
+
 function Ensure-UbuntuPython {
     $pythonCheck = @('/usr/bin/python3', '-c', 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 2)')
     & wsl.exe --distribution $state.Distro --user root --exec @pythonCheck 2>$null | Out-Null
@@ -283,11 +289,13 @@ function Ensure-UbuntuPython {
         throw "Ubuntu system Python 3.11 or newer is required; select a supported Ubuntu distro. Setup does not upgrade the Ubuntu release."
     }
     Invoke-Checked "Ubuntu Python prerequisite package index" {
-        & wsl.exe --distribution $state.Distro --user root --exec /usr/bin/apt-get update -qq
+        & wsl.exe --distribution $state.Distro --user root --exec /usr/bin/apt-get update -qq `
+            '-o' 'APT::Update::Error-Mode=any'
     }
     Invoke-Checked "Ubuntu Python prerequisite" {
         & wsl.exe --distribution $state.Distro --user root --exec /usr/bin/env `
-            DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install -y -qq python3
+            DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install -y -qq --no-remove `
+            '-o' 'DPkg::Lock::Timeout=300' '-o' 'Dpkg::Options::=--force-confdef' '-o' 'Dpkg::Options::=--force-confold' python3
     }
     Invoke-Checked "Ubuntu Python 3.11+ prerequisite verification" {
         & wsl.exe --distribution $state.Distro --user root --exec @pythonCheck
@@ -355,11 +363,13 @@ function Ensure-UbuntuConfiguration([string]$prepare) {
     Save-State $state
     $changed = & wsl.exe --distribution $state.Distro --user root --exec /usr/bin/python3 $prepare configure --user $state.LinuxUser
     if ($LASTEXITCODE -ne 0) { throw "Ubuntu user/systemd preparation failed" }
-    $pidOne = & wsl.exe --distribution $state.Distro --user root --exec /usr/bin/cat /proc/1/comm
-    if ($LASTEXITCODE -ne 0) { throw 'Could not check Ubuntu systemd readiness' }
+    $pidOne = Get-UbuntuInitProcess $state.Distro
     if ($pendingRestart -or ($changed | Select-Object -Last 1) -eq 'CHANGED' -or
-        ($pidOne | Select-Object -Last 1) -ne 'systemd') {
+        $pidOne -ne 'systemd') {
         Invoke-Checked "WSL distribution restart" { & wsl.exe --terminate $state.Distro }
+        if ((Get-UbuntuInitProcess $state.Distro) -ne 'systemd') {
+            throw 'Ubuntu did not start with systemd after the distro restart. Check /etc/wsl.conf and WSL, then rerun the saved installer with -Resume.'
+        }
     }
     $state.RestartRequired = $false
     Save-State $state
@@ -455,6 +465,7 @@ try {
         }
     }
     if ($Plan) {
+        Write-Host 'Plan: upgrade installed Windows packages with winget upgrade --all.'
         if ($Profile -eq 'agent_windows') {
             Write-Host 'Plan: install stable PowerShell 7 if missing, then run native setup in PowerShell 7.'
             if ($updateSourceSelected) { Write-Host 'Plan: resolve current Basaltwater source when applying; preview uses local source without downloads.' }
@@ -488,6 +499,7 @@ try {
             return
         }
         Write-Host "Plan: install WinGet/WSL and stable Ubuntu, configure $Profile, selected runtimes/agents, and optional T3 desktop/worker."
+        Write-Host 'Plan: refresh Ubuntu packages and selected runtimes, and prune obsolete APT downloads.'
         Write-Host "A reboot and interactive Ubuntu/provider login may be required."
         if ($runnerConfig) { Write-Host 'GitHub Actions: native Windows login tasks with WSL access; registration may be completed later.' }
         return
@@ -630,12 +642,13 @@ try {
     if (-not (Ensure-Wsl)) {
         $state.Phase = "restart-required"
         Save-State $state
-        Write-Host "Restart Windows, log back into this account, then run:"
-        Write-Host ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' +
-            (Join-Path $state.Source "install.ps1") + '" -Resume')
+        Write-WslWindowsRestartInstructions $state.Source
         return
     }
+    $state.Phase = 'applying'
+    Save-State $state
     Ensure-Winget
+    Update-WingetPackages
     Invoke-Checked "WSL update" { & wsl.exe --update }
     Select-Distro
     Ensure-Distro
@@ -652,11 +665,7 @@ try {
         & wsl.exe --distribution $state.Distro --user root --exec /usr/bin/python3 $prepare stage --source $sourcePath --revision $state.Revision
     }
     $linuxSource = "/opt/basaltwater/releases/" + $state.Revision
-    $setupArgs = @("--system-type", "server_wsl", "--username", $state.LinuxUser, "--machine", "wsl")
-    if ($state.Node) { $setupArgs += "--node" }
-    if ($state.Python) { $setupArgs += "--python" }
-    if ($state.Go) { $setupArgs += "--go" }
-    foreach ($tool in $state.AgentTool) { $setupArgs += @("--agent-tool", $tool) }
+    $setupArgs = @(Get-UbuntuSetupArguments $state)
     Invoke-Checked "Ubuntu WSL setup" {
         & wsl.exe --distribution $state.Distro --user root --exec /usr/bin/python3 ($linuxSource + "/remote_setup.py") @setupArgs
     }
@@ -695,12 +704,15 @@ try {
     Invoke-NativeSetupCompletion -Source $state.Source -T3CodeDesktop:$state.T3CodeDesktop -NoRestartT3:$NoRestartT3
 } catch {
     $setupError = $_
-    if ($Profile -eq 'agent_windows' -and $setupLock -and
-        $setupError.Exception.Data['Basaltwater.WindowsRestartRequired']) {
+    if ($setupLock -and $setupError.Exception.Data['Basaltwater.WindowsRestartRequired']) {
         $state.Phase = 'restart-required'
         Save-State $state
-        $installerReason = [string]$setupError.Exception.Data['Basaltwater.WindowsRestartReason']
-        if (Invoke-NativeWindowsRestart -State $state -Required -InstallerReason $installerReason -NoReboot:$NoReboot -NoRestartT3:$NoRestartT3) { return }
+        if ($Profile -eq 'agent_windows') {
+            $installerReason = [string]$setupError.Exception.Data['Basaltwater.WindowsRestartReason']
+            if (Invoke-NativeWindowsRestart -State $state -Required -InstallerReason $installerReason -NoReboot:$NoReboot -NoRestartT3:$NoRestartT3) { return }
+        } else {
+            Write-WslWindowsRestartInstructions $state.Source
+        }
     }
     Write-Error $setupError
     exit 1

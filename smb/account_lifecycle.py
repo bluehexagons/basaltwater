@@ -14,6 +14,7 @@ from lib.privilege_execution import ENVIRONMENT
 from lib.samba_accounts import MAX_ACCOUNTS, validate_lifecycle_snapshot
 from lib.validators import validate_username
 from smb.account_management import SMB_CONF, _accounts, _stamp, password_binding
+from smb.unix_accounts import is_share_identity
 
 PASSWD_FILE = "/etc/passwd"
 NORMAL_ACCOUNT = 0x10  # Samba ACB_NORMAL; newly created records start disabled.
@@ -41,6 +42,8 @@ def _local_accounts() -> list[dict]:
         identity = pwd.getpwnam(name)
         if identity.pw_name != name or identity.pw_uid != uid or identity.pw_gid != gid:
             raise ValueError("Local Unix identity differs from name service lookup")
+        if not is_share_identity(identity):
+            continue
         rows.append({"username": name, "uid": uid})
     return sorted(rows, key=lambda row: row["username"])
 
@@ -143,7 +146,7 @@ def change_lifecycle(value: dict, store, saved: dict, rows: list[dict]) -> None:
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 env=ENVIRONMENT, timeout=15, check=True)
             identity = _identity(username)
-            if (identity is None or not 1000 <= identity.pw_uid < 65534 or identity.pw_shell != "/usr/sbin/nologin"
+            if (identity is None or not is_share_identity(identity) or identity.pw_shell != "/usr/sbin/nologin"
                     or identity.pw_passwd != "x"):
                 raise ValueError("New Unix identity could not be verified")
             record = store.transition(record.operation_id, "changing_samba",

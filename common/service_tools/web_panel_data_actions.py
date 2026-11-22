@@ -15,6 +15,7 @@ from lib.data_actions import BATCH_LIMIT, DATA_ACTIONS, HEX_ID, validate_data_ac
 from lib.privilege_client import exchange
 
 FAILURE_LABELS = {
+    "batch_preflight": "This file passed preflight. No files were processed because another selected file failed its checks. Review the reported failures before selecting a new batch.",
     "read_only": "The filesystem or snapshot is read-only. Recovery needs write access to the source or parity storage. Use a writable copy or manage the snapshot through the administrator tools.",
     "permission_denied": "The filesystem refused access. Check its permissions and mount restrictions before reviewing the action again.",
     "no_space": "The filesystem has no space or quota available for recovery data or results. Free space before reviewing the action again.",
@@ -22,7 +23,7 @@ FAILURE_LABELS = {
     "storage_busy": "Another storage operation held the lock. No recovery was started.",
     "setup_recovery_required": "An unfinished setup operation needs administrator recovery before file recovery can continue.",
     "finding_changed": "The finding changed after review. Refresh the findings before reviewing it again.",
-    "file_changed": "The file changed after its recorded check. Verify it again before recovery.",
+    "file_changed": "File metadata changed before recovery. Stop writers and review again. Quarantine verifies changed files automatically; other recovery actions require fresh verification first.",
     "identity_unavailable": "This older finding has no file identity. Verify it again before recovery.",
     "overlapping_scrubs": "Another scrub task covers this file. Quarantine and deletion require one protecting task; verification remains available. Coordinate recovery across the reports through the administrator command line.",
     "reserved_path": "The file is inside a configured parity database and cannot be quarantined or deleted as source data.",
@@ -206,6 +207,12 @@ def render_saved_review(ticket: str, parameters: dict, csrf: str) -> str:
     label, effect = DATA_ACTIONS[action]
     if "items" in parameters and action == "verify":
         label = "Verify selected files"
+    if action == "verify":
+        next_step = "Confirm to start verification."
+        button = label
+    else:
+        next_step = "Confirm to request approval. Open the pending request in Activity &amp; approvals to review the exact files and authorize the worker."
+        button = "Request approval"
     required = confirmation_phrase(parameters)
     confirmation = (f'<label for="recovery-confirm">Type <code>{required}</code> to confirm</label><input id="recovery-confirm" name="confirmation" required autocomplete="off">'
                     if required else '<input type="hidden" name="confirmation" value="">')
@@ -215,9 +222,9 @@ def render_saved_review(ticket: str, parameters: dict, csrf: str) -> str:
     targets = _targets(parameters) if "items" in parameters else ""
     return f'''<section class="event data-review" aria-labelledby="recovery-review">{render_heading("Review: " + label, "security", heading_id="recovery-review")}
 <p>{html.escape(effect)}</p>{targets}<dl class="job-facts">{facts}</dl>
-<p>Confirm to start this action. No separate approval is needed. The worker checks that the finding and file still match this review and runs independently for up to six hours.</p>
+<p>{next_step} The worker checks the reviewed finding and file metadata, verifies changed files before quarantine, and runs independently for up to six hours.</p>
 <p>Batches report each file separately. Interrupted or uncertain work is never replayed automatically. Inspect outcomes and individually review remaining files before retrying.</p>
-<form method="post" action="/actions/data/submit" class="data-recovery-form">{csrf}<input type="hidden" name="ticket" value="{html.escape(ticket, quote=True)}">{confirmation}<button>{html.escape(label)}</button></form>
+<form method="post" action="/actions/data/submit" class="data-recovery-form">{csrf}<input type="hidden" name="ticket" value="{html.escape(ticket, quote=True)}">{confirmation}<button>{html.escape(button)}</button></form>
 <a href="{html.escape(_findings_url(parameters), quote=True)}">Cancel review</a></section>'''
 
 
@@ -235,7 +242,9 @@ def render_status(status: dict, csrf: str) -> str:
         parameters = latest.get("parameters", {})
         label = DATA_ACTIONS.get(parameters.get("action"), ("Recovery job", ""))[0]
         result = latest.get("status", "unavailable")
-        body += f'<article class="event"><h3>{escape(label)}</h3><p><span class="badge">{escape(result)}</span></p>' + _task_context(parameters)
+        tone = {"succeeded": "success", "findings": "warning", "failed": "error", "interrupted": "error"}.get(result, "")
+        badge_class = "badge" + (" " + tone if tone else "")
+        body += f'<article class="event"><h3>{escape(label)}</h3><p><span class="{badge_class}">{escape(result)}</span></p>' + _task_context(parameters)
         if "items" in parameters:
             outcomes = {item["index"]: item for item in latest.get("items", []) if type(item.get("index")) is int}
             states = ("pending", "running", "completed", "skipped", "failed", "unresolved")
@@ -246,6 +255,8 @@ def render_status(status: dict, csrf: str) -> str:
             summary = ' · '.join(f'{counts[state]} {state}' for state in states if counts[state])
             body += f'<p><strong>{len(parameters["items"])} reviewed files</strong>: {summary}.</p>'
             body += '<p>Completed means the action finished; verification can still report damage. Unresolved means the result needs inspection.</p>'
+            if parameters.get("action") == "quarantine":
+                body += '<p>Healthy files remain in place. Changed files are verified before quarantine; inconclusive checks are skipped and show their latest classification.</p>'
             body += '<ol aria-label="Per-file outcomes">'
             for index, item in enumerate(parameters["items"]):
                 outcome = outcomes.get(index, {})
@@ -255,6 +266,11 @@ def render_status(status: dict, csrf: str) -> str:
                 body += f'<li><strong>{escape(item["file"])}</strong>: {escape(state)}'
                 if category := outcome.get("category"):
                     body += ' · ' + escape(category.replace("_", " "))
+                    if parameters.get("action") == "quarantine" and state == "completed":
+                        if category == "healthy":
+                            body += '<p>Verified healthy; kept in place.</p>'
+                        elif category == "quarantine":
+                            body += '<p>Moved into private quarantine; parity and mirror protection retained.</p>'
                 if failure := outcome.get("failure"):
                     body += '<p>' + escape(FAILURE_LABELS.get(failure, "Inspect before retrying.")) + '</p>'
                 body += '</li>'

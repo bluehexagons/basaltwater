@@ -58,7 +58,7 @@ To give each VM its own classic or fine-grained access token, save it with a
 hidden prompt and select the named credential:
 
 ```bash
-basaltw credentials set agent-1-github
+basaltw credentials set agent-1-github --service github --destination 10.23.0.50
 
 basaltw setup agent_vm 10.23.0.50 agent --codex \
   --git-access read --git-auth-credential agent-1-github \
@@ -128,7 +128,7 @@ Save the password in the workspace store, then bind its username to one exact
 HTTPS origin:
 
 ```bash
-basaltw credentials set agent-git
+basaltw credentials set agent-git --service git --destination https://10.23.0.40:3000
 
 basaltw setup agent_vm 10.23.0.50 agent --codex \
   --git-access read-write \
@@ -161,6 +161,11 @@ helper intact. Standard HTTPS and Git LFS use the same origin credential.
 The store contains plaintext passwords or tokens; the hardened Codex policy
 denies reads of `~/.config/basaltwater/git/credentials`. Helper filenames are
 shell-quoted before Git config escaping, including for homes containing spaces.
+
+Setup writes and removes this configuration as the selected target account,
+using system Git and the account's standard global configuration. It refuses
+mounts at or below the managed Git directory before changing files or the
+Git include.
 
 Updating the workspace password and rerunning setup rotates the managed
 origin. Remove every Basaltwater-managed Git credential and private CA setting

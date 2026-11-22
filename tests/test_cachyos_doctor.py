@@ -283,10 +283,8 @@ class DoctorTests(unittest.TestCase):
         self.uid = stack.enter_context(patch.object(doctor.os, "getuid", return_value=1000))
         stack.enter_context(patch.object(doctor.os, "geteuid", return_value=1000))
         self.home = stack.enter_context(tempfile.TemporaryDirectory())
-        original_stat = Path.stat
 
-        def desktop_owned_stat(path, *args, **kwargs):
-            observed = original_stat(path, *args, **kwargs)
+        def desktop_owned(path, observed):
             if path.is_relative_to(self.home):
                 # CI creates fixtures as root; model the mocked desktop user's
                 # ownership while retaining real file types and permissions.
@@ -295,8 +293,16 @@ class DoctorTests(unittest.TestCase):
                 return os.stat_result(fields)
             return observed
 
-        stack.enter_context(patch.object(Path, "stat", autospec=True,
-                                        side_effect=desktop_owned_stat))
+        original_stat = Path.stat
+        original_lstat = Path.lstat
+        stack.enter_context(patch.object(
+            Path, "stat", autospec=True,
+            side_effect=lambda path, *args, **kwargs: desktop_owned(path, original_stat(path, *args, **kwargs)),
+        ))
+        stack.enter_context(patch.object(
+            Path, "lstat", autospec=True,
+            side_effect=lambda path: desktop_owned(path, original_lstat(path)),
+        ))
         stack.enter_context(patch.object(doctor.pwd, "getpwuid", return_value=SimpleNamespace(pw_name="alice", pw_dir=self.home)))
         self.supported = stack.enter_context(patch.object(doctor, "is_cachyos", return_value=True))
         stack.enter_context(patch.object(doctor.platform, "machine", return_value="x86_64"))
@@ -727,6 +733,40 @@ class DoctorTests(unittest.TestCase):
                 records = {item["name"]: item for item in doctor.collect_cachyos_doctor(config=config)["capabilities"]}
                 self.assertEqual(records["service.t3code-upstream"]["state"], "failed")
                 self.assertIn("original installer", records["service.t3code-upstream"]["reason"])
+
+    def test_pending_t3_activation_is_reported_even_with_active_web_service(self):
+        from common.cachyos_steps import _MARKER
+        from lib.config import SetupConfig
+
+        self.saved_selection.return_value = SetupConfig(
+            host="localhost", username="alice", system_type="agent_cachyos",
+            agent_tools=["codex"], web_interfaces=["t3code"],
+        )
+        path = Path(self.home) / ".local/share/basaltwater/cachyos-t3/pending-completion.json"
+        path.parent.mkdir(parents=True)
+        record = {"owner": _MARKER, "request": "a" * 32, "mode": "web",
+                  "candidate": "private-candidate", "content": "private-unit", "url": "private-url"}
+        path.write_text(json.dumps(record))
+        path.chmod(0o600)
+        for mode, expected in (("web", "deferred"), (["web"], "failed")):
+            with self.subTest(mode=mode), patch.object(doctor.shutil, "which", return_value=None):
+                contents = json.dumps({**record, "mode": mode})
+                path.write_text(contents)
+                report = doctor.collect_cachyos_doctor()
+                records = {item["name"]: item for item in report["capabilities"]}
+                self.assertEqual(records["service.t3code"]["state"], "available")
+                self.assertEqual(records["configuration.t3-completion"]["state"], expected)
+                self.assertTrue(records["configuration.t3-completion"]["selected"])
+                self.assertNotIn("private-", json.dumps(report))
+                self.assertEqual(path.read_text(), contents)
+        with patch.object(doctor.shutil, "which", return_value=None), \
+                patch("common.cachyos_t3.read_json_file", side_effect=FileNotFoundError):
+            report = doctor.collect_cachyos_doctor()
+        self.assertNotIn("configuration.t3-completion", {item["name"] for item in report["capabilities"]})
+        path.unlink()
+        with patch.object(doctor.shutil, "which", return_value=None):
+            report = doctor.collect_cachyos_doctor()
+        self.assertNotIn("configuration.t3-completion", {item["name"] for item in report["capabilities"]})
 
     def test_selected_sunshine_includes_service_and_encoding_observations(self):
         from lib.config import SetupConfig

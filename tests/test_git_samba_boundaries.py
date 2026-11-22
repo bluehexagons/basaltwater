@@ -6,7 +6,8 @@ import os
 import stat
 import tempfile
 import unittest
-from unittest.mock import mock_open, patch
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from lib.config import SetupConfig
 from lib.validation import validate_gogs_settings
@@ -66,7 +67,9 @@ class TestGogsConfigPermissions(unittest.TestCase):
     def test_generated_app_config_is_owner_only(self) -> None:
         config = _config()
         with tempfile.TemporaryDirectory() as directory:
-            config_path = os.path.join(directory, "app.ini")
+            data_path = os.path.join(directory, "gogs")
+            config_path = os.path.join(data_path, "custom", "conf", "app.ini")
+            os.makedirs(os.path.dirname(config_path))
             with (
                 patch.object(gogs_steps, "write_gogs_state"),
                 patch.object(gogs_steps, "_configure_git_ssh_access"),
@@ -78,7 +81,10 @@ class TestGogsConfigPermissions(unittest.TestCase):
                 patch.object(gogs_steps, "check_gogs_storage_health"),
                 patch.object(gogs_steps, "_maybe_configure_firewall"),
                 patch.object(gogs_steps, "run"),
-                patch.object(gogs_steps, "open", mock_open(), create=True),
+                patch.object(gogs_steps, "_remove_stale_gogs_nginx_sites", return_value=False),
+                patch.object(gogs_steps, "_gogs_identity", return_value=SimpleNamespace(
+                    pw_uid=os.getuid(), pw_gid=os.getgid(),
+                )),
                 patch.object(
                     gogs_steps,
                     "generate_gogs_app_ini",
@@ -90,7 +96,8 @@ class TestGogsConfigPermissions(unittest.TestCase):
                     domain="",
                     port=3000,
                     backend_port=3000,
-                    data_path="/srv/data/gogs",
+                    data_path=data_path,
+                    mount_target=directory,
                     git_home="/home/git",
                     config_path=config_path,
                     tag_name="v1.0.0",

@@ -17,13 +17,13 @@ sudo setup-cloudflare-tunnel
 
 It installs or upgrades `cloudflared` from Cloudflare's signed APT repository
 on every run, authenticates with Cloudflare when creating a tunnel, creates
-or reuses a tunnel, discovers enabled Nginx sites, writes the tunnel
-configuration, and can install and enable the systemd service. Direct public
-HTTP/HTTPS remains open until the helper verifies that service is active; only
-then does it apply the saved direct web access policy with UFW. By default it
-closes unrestricted ports 80 and 443. Setup's `--lan-access` / `--access-source`
+or reuses a tunnel, writes the tunnel configuration, and can install and enable
+the systemd service. Early setup preserves the existing TCP 80/443 policy and
+adds no origin allowances. The helper applies a new direct web policy after
+verifying that the service is active. Setup's `--lan-access` / `--access-source`
 retain direct access from their networks; `--cloudflare-allow-direct` allows
 unrestricted direct HTTP/HTTPS alongside the tunnel.
+The helper requires active UFW and preserves the existing SSH rules and defaults.
 
 For local changes after setup, run one of:
 
@@ -38,10 +38,18 @@ entries mapping deployed hostnames to the VM and browse their HTTP URLs. This
 is direct origin access alongside the tunnel; a bare IP URL does not select a
 particular hostname-based Nginx site.
 
-The helper stores configuration and tunnel credentials under
-`/etc/cloudflared`. Its state file is
-`/etc/cloudflared/tunnel-state.json`; rerun the helper after adding or removing
-an Nginx site to refresh ingress rules.
+Setup selects the deployed sites and named webhook, Gogs, and Antistatic origins
+configured for Cloudflare. For another enabled Nginx HTTP origin, set the
+complete manual list with repeatable `--hostname` flags:
+
+```bash
+sudo setup-cloudflare-tunnel --non-interactive --hostname api.example.com
+```
+
+The helper stores the hostname selection and credentials under
+`/etc/cloudflared`. Subsequent refreshes use that selection. Use
+`--clear-hostnames` to withdraw all manual names. For older state created by
+Nginx discovery, rerun managed setup or supply a reviewed `--hostname` list.
 
 Each refresh also repairs Cloudflare's signing key and APT source so older
 standalone package installations can receive updates. On security-enabled

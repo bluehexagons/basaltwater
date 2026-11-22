@@ -40,6 +40,7 @@ python3 --version
 ci_phase python-runtime-smoke python3 -c 'import sqlite3, ssl, termios'
 node --version
 ci_phase python-dependencies python3 -m pip install '.[dev,completion]'
+mkdir -p artifacts
 """
 
 
@@ -84,8 +85,9 @@ def run_debian_ci(
     if image is None:
         raise RuntimeError("All Debian image registries failed; checks were not started")
     name = f"basaltwater-ci-{os.getpid()}"
-    command = "make test SUITE=node TEST_ARGS='--durations 10'" if node_only else (
-        "make check-ci" if coverage else "make check"
+    command = "make test SUITE=node TEST_ARGS='--durations 10 --timings-json artifacts/test-timings.json'" if node_only else (
+        "make check-ci TIMINGS_JSON=artifacts/test-timings.json" if coverage else
+        "make check TEST_ARGS='--durations 10 --timings-json artifacts/test-timings.json'"
     )
     if check_jobs == 2:
         command = command.replace("make ", "make -j2 ", 1)
@@ -98,6 +100,7 @@ def run_debian_ci(
             "--env", f"BASALTWATER_CI_PYTHON={executable}",
             "--env", f"BASALTWATER_CI_NODE_DIR={node_executable.parent}",
             "--env", f"LD_LIBRARY_PATH={executable.parent.parent / 'lib'}",
+            "--env", "GITHUB_REF_TYPE", "--env", "GITHUB_REF_NAME",
             "--workdir", "/workspace", image, "bash", "-euc", script,
         ], check=False, timeout=900)
         return result.returncode

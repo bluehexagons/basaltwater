@@ -104,6 +104,24 @@ frame requires another capture and inspection, never replay of the completed inp
 Omit `--output` on screenshots and `input --observe` to generate a unique private
 PNG path. Retain the returned path rather than reusing a round-based filename.
 
+On Debian, keep unrelated desktop content out of the follow-up image by selecting
+the application's window explicitly:
+
+```bash
+basaltw desktop screenshot --window WINDOW --compact
+basaltw desktop input --generation GENERATION --geometry WIDTH HEIGHT \
+  --observation OBSERVATION_ID click --x X --y Y --observe --observe-window WINDOW
+```
+
+Use the window ID from `desktop windows` and the input coordinates from the
+inspected capture, including its `image_origin`. `--observe-window` selects only
+the subsequent capture; it does not focus the window or change the input target.
+The follow-up retains full-desktop `geometry`, window `image_origin` and a new
+observation ID. A closed, hidden or otherwise uncapturable window fails that
+observation, preserving completed input without a full-desktop fallback. Inspect
+dialogs separately when they are outside the selected window. This option requires
+`--observe`; native monitor capture rejects it before sending input.
+
 `--view-geometry` is the presented image content size; `--view-origin` is its
 top-left offset inside the viewer (default zero). Points include that offset.
 Both drag endpoints use the same transform. The read-only status comparison
@@ -131,10 +149,62 @@ returned context and point arguments into the input command described above.
 Both drag endpoints must fit inside this same crop.
 
 The PNG dimensions and an image API's original-detail option do not establish
-the outer viewer's presentation size. If that transform is unknown, obtain a
-view whose dimensions can be established before input. A crop-width limit alone
-does not establish it either. Record the actual content dimensions, margins,
-receipt origin/image dimensions, selected point and mapped point privately.
+the outer viewer's presentation size. If that transform is unknown, either obtain
+a view whose dimensions can be established or explicitly choose source-PNG pixels
+as described below. A crop-width limit alone does not establish a view transform.
+Record the chosen basis, receipt origin/image dimensions, selected point and mapped
+point privately; presented-view mapping also needs content dimensions and margins.
+
+### Explicit source-PNG points and offline previews
+
+`--image-coordinates` is an alternative to `--view-geometry`. Points are integer
+pixels in the exact capture PNG, independent of its display size. For a 400 by
+300 native crop, its arithmetic center is `(200, 150)`; the example receipt above
+adds origin `(1000, 600)` once to produce monitor point `(1200, 750)`:
+
+```bash
+basaltw desktop --native map-point --capture /absolute/private/control.json \
+  --image-coordinates --x 200 --y 150
+```
+
+This selects a coordinate basis, not a target. Do not relabel positions estimated
+from an unknown-size viewer as source pixels. Inspect a marked derivative first
+when the source point is uncertain:
+
+```bash
+basaltw desktop --native evidence point-preview /absolute/private/control.png \
+  --rectangle 0 0 400 300 --point 200 150 --caption 'Proposed control center' \
+  --output /absolute/private/new-point-preview --json
+```
+
+Open `point-preview.png` and the unchanged `crop.png`; verify the red cross lies
+inside the intended control. The preview's source hash must match the exact PNG
+in the saved capture receipt. Rectangles and points refer to that PNG, so an
+already cropped capture uses local coordinates. A full-frame PNG uses full-frame
+coordinates even if the preview shows only a small region. Do not add the preview
+rectangle origin to a point already expressed in source-PNG pixels.
+
+Before accepting a point, describe the visible label or object under the cross,
+then compare it with the intended action. A preview caption records caller intent;
+it is not recognition or confirmation. For example, `intended: Continue;
+observed: Help; decision: reject` requires a corrected target, even when the point
+is in bounds and the token is fresh. A newer capture with the same misplaced point
+does not correct that mismatch. Keep this acknowledgment short and retain it with
+the action receipt; the CLI does not validate its meaning.
+
+For an unlabeled or drag-dependent destination, record what is actually visible
+and the evidence supporting the gesture. An empty region alone cannot confirm a
+drop target; absence of a target before dragging does not prove it is invalid.
+Use the task's bounded qualification/failure policy and verify the returned effect.
+
+Image mode rejects view geometry and viewer margins. Both drag endpoints use
+the same source basis and must remain inside the capture. Receipt-bound mapping
+still checks current status, crop, token, revision and age; a preview or mapping
+never reserves or renews freshness. If preparation expires the capture, inspect
+a fresh one and re-establish its target. Offline `--geometry ... --crop ...`
+image-mode arithmetic has no live checks. Neither mode recognizes controls or
+proves focus, intent or application effect. See the
+[preview artifact contract](native-qa-evidence.md#offline-point-previews).
 
 For a synthetic 2400 by 1600 full frame displayed at 1200 by 800, presented
 point `(600, 400)` maps to `(1200, 800)`. Claiming the view is 2400 by 1600
@@ -172,6 +242,15 @@ Helper-owned input IDs and receive/first-dispatch UTC and monotonic timestamps
 survive structured failures. Completion adds its own timestamps only after all
 input calls return. These times describe helper operations, not game effect or
 model inference; compare monotonic clocks only on the same boot.
+
+Linux captures expose `last_input`, a content-free summary of the latest
+worker-received input outcome, including a refusal or interrupted dispatch.
+The journal's `related_input_id` links to that attempt rather than an earlier
+success. Check `input_delivery` and `dispatch_stage`; completion timestamps
+exist only for completed input. A client-side refusal or transport failure
+that never reached the worker cannot update this summary. Older helpers
+reported only the last successful input, so inspect their original journals
+before attributing a post-failure image.
 
 Linux clients also retain these receipts for action sequences and paced typing.
 A sequence reports earlier completed results, a zero-based `failed_action_index`
@@ -217,6 +296,8 @@ captures again. It checks the output path before input, refusing existing files,
 dangling symlinks and invalid/unwritable parent directories. The precheck does
 not reserve a path; a later filesystem change can still cause post-input capture
 failure, which retains completed input and never replays it.
+Without `--observe-window`, Debian captures the desktop and CachyOS captures the
+selected monitor, regardless of the scope of the preceding screenshot.
 Completion receipts retain the geometry admitted for input;
 take a new capture to observe current dimensions. Debian records completion
 without a final geometry query that could obscure successfully submitted input.

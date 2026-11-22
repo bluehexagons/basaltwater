@@ -398,7 +398,7 @@ class TestNotificationSender(unittest.TestCase):
         self.assertNotIn(token, request.full_url)
 
     @patch('lib.notifications._open_webhook_request')
-    def test_webhook_defaults_to_self_signed_compatible_tls(self, mock_open):
+    def test_webhook_defaults_to_accepting_unverified_tls(self, mock_open):
         response = unittest.mock.MagicMock()
         response.__enter__.return_value.status = 202
         response.__exit__.return_value = False
@@ -416,7 +416,7 @@ class TestNotificationSender(unittest.TestCase):
         self.assertFalse(mock_open.call_args.kwargs['strict_https'])
 
     @patch('lib.notifications._open_webhook_request')
-    def test_webhook_strict_tls_is_forwarded_to_request(self, mock_open):
+    def test_webhook_private_ca_is_forwarded_to_request(self, mock_open):
         response = unittest.mock.MagicMock()
         response.__enter__.return_value.status = 202
         response.__exit__.return_value = False
@@ -427,6 +427,7 @@ class TestNotificationSender(unittest.TestCase):
                     type='webhook',
                     target='https://panel.example/hook',
                     strict_https=True,
+                    ca_file="/fixture/private-ca.pem",
                 )
             ]
         )
@@ -438,6 +439,7 @@ class TestNotificationSender(unittest.TestCase):
         )
 
         self.assertTrue(mock_open.call_args.kwargs['strict_https'])
+        self.assertEqual(mock_open.call_args.kwargs['ca_file'], "/fixture/private-ca.pem")
 
     @patch('lib.notifications.time.sleep')
     @patch('lib.notifications._open_webhook_request')
@@ -549,21 +551,21 @@ class TestNotificationSender(unittest.TestCase):
             method='POST',
         )
 
-        self.assertIs(_open_webhook_request(request), response)
+        self.assertIs(_open_webhook_request(request, strict_https=True), response)
 
         handler = mock_build.call_args.args[0]
         self.assertIsInstance(handler, _RejectWebhookRedirects)
         https_handler = mock_build.call_args.args[1]
         self.assertIsInstance(https_handler, urllib.request.HTTPSHandler)
-        self.assertEqual(https_handler._context.verify_mode, ssl.CERT_NONE)
-        self.assertFalse(https_handler._context.check_hostname)
+        self.assertEqual(https_handler._context.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(https_handler._context.check_hostname)
         mock_build.return_value.open.assert_called_once_with(
             request,
             timeout=30,
         )
 
     @patch('urllib.request.build_opener')
-    def test_webhook_requests_can_install_strict_tls_handler(self, mock_build):
+    def test_webhook_requests_install_unverified_tls_handler_by_default(self, mock_build):
         response = unittest.mock.MagicMock()
         mock_build.return_value.open.return_value = response
         request = urllib.request.Request(
@@ -572,24 +574,34 @@ class TestNotificationSender(unittest.TestCase):
             method='POST',
         )
 
-        self.assertIs(_open_webhook_request(request, strict_https=True), response)
+        self.assertIs(_open_webhook_request(request), response)
 
         https_handler = mock_build.call_args.args[1]
         self.assertIsInstance(https_handler, urllib.request.HTTPSHandler)
-        self.assertEqual(https_handler._context.verify_mode, ssl.CERT_REQUIRED)
-        self.assertTrue(https_handler._context.check_hostname)
+        self.assertEqual(https_handler._context.verify_mode, ssl.CERT_NONE)
+        self.assertFalse(https_handler._context.check_hostname)
 
-    def test_webhook_tls_context_defaults_to_allowing_self_signed_certificates(self):
+    def test_webhook_tls_context_allows_unverified_certificates_on_opt_out(self):
         context = _webhook_ssl_context(False)
 
         self.assertEqual(context.verify_mode, ssl.CERT_NONE)
         self.assertFalse(context.check_hostname)
 
-    def test_webhook_tls_context_can_require_normal_certificate_checks(self):
+    def test_webhook_tls_context_requires_normal_certificate_checks_in_strict_mode(self):
         context = _webhook_ssl_context(True)
 
         self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
         self.assertTrue(context.check_hostname)
+
+    @patch("lib.notifications.ssl.create_default_context")
+    def test_private_ca_augments_default_context_and_load_failure_stops_delivery(self, create_context):
+        context = create_context.return_value
+        self.assertIs(_webhook_ssl_context(ca_file="/fixture/private-ca.pem"), context)
+        create_context.assert_called_once_with()
+        context.load_verify_locations.assert_called_once_with(cafile="/fixture/private-ca.pem")
+        context.load_verify_locations.side_effect = OSError("private path")
+        with self.assertRaisesRegex(RuntimeError, "Could not load the notification CA file"):
+            _webhook_ssl_context(ca_file="/fixture/missing-ca.pem")
 
 
 class TestParseNotificationArgs(unittest.TestCase):
@@ -926,6 +938,23 @@ class TestSendNotificationSafe(unittest.TestCase):
 
 
 class TestLoadNotificationConfigsFromState(unittest.TestCase):
+    def test_saved_verification_policy_keeps_strict_settings_and_accepts_legacy_defaults(self):
+        saved = {
+            "notify_specs": [["webhook", "https://panel.example/hook"]],
+            "notification_strict_https": False,
+        }
+        for extra, strict in (
+            ({}, False),
+            ({"notification_strict_https": None}, False),
+            ({"notification_strict_https": True}, True),
+            ({"notification_allow_unverified_https": True}, False),
+            ({"notification_ca_file": "/fixture/private-ca.pem"}, True),
+        ):
+            with self.subTest(extra=extra), patch("lib.machine_state.load_notification_state", return_value=saved | extra):
+                config, = load_notification_configs_from_state()
+                self.assertEqual(config.strict_https, strict)
+                self.assertEqual(config.ca_file, extra.get("notification_ca_file"))
+
     @patch(
         'lib.machine_state.load_notification_state',
         return_value={

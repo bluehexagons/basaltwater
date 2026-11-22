@@ -11,6 +11,7 @@ import ipaddress
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import tempfile
 from typing import Any
@@ -23,6 +24,7 @@ from lib.build_protocol import encode_document
 from lib.build_selection import SSHEndpoint, resolve_saved_builder, resolve_target_endpoint
 from lib.build_setup_plan import prepare_delivery_plan
 from lib.build_setup_history import count_retained_attempts, record_setup_success
+from lib.build_storage_preflight import preflight_delivery_storage
 from lib.build_target_client import BuildTargetClient
 from lib.config import SetupConfig
 from lib.operation_state import OperationStateStore
@@ -38,10 +40,12 @@ MAX_PREPARED_BYTES = 32 * 1024**2
 class BuildSetupRecoveryRequired(RuntimeError):
     """An unfinished controller setup must be inspected before another attempt."""
 
-    def __init__(self, journal_path: str) -> None:
+    def __init__(self, journal_path: str, *, phase: str | None = None, failure: str | None = None) -> None:
         self.journal_path = journal_path
+        self.phase, self.failure = phase, failure
         super().__init__(
-            f"Remote-build setup needs reconciliation; preserve {journal_path} and its "
+            f"Remote-build setup needs reconciliation (phase={phase or 'retained'}, "
+            f"failure={failure or 'unfinished_operation'}); preserve {journal_path} and its "
             "attempt directory, pinned sources, prepared inputs and delivery receipts. "
             "Inspect the recorded request/operation IDs and target setup/enrollment "
             "markers before explicit recovery. Do not retry with replacement IDs."
@@ -111,8 +115,10 @@ def _preflight_target(config: SetupConfig, endpoint: SSHEndpoint) -> None:
         "import json,os,platform; "
         "v=platform.freedesktop_os_release(); "
         "m='/etc/basaltwater/build-target/.managed.json'; "
+        "p='/var/lib/basaltwater/build-conversion.json'; "
         "print(json.dumps({'uid':os.geteuid(),'os':v.get('ID'),'version':v.get('VERSION_ID'),"
         "'architecture':platform.machine(),'ssh_peer':os.environ.get('SSH_CONNECTION','').split()[:1],"
+        "'conversion_pending':json.load(open(p)).get('state')!='completed' if os.path.lexists(p) else False,"
         "'setup_pending':os.path.lexists("
         "'/var/lib/basaltwater/setup-operation.json'),'legacy_ssh':os.path.lexists("
         "'/var/lib/basaltwater/build-target-ssh'),'enrollment_schema':"
@@ -135,6 +141,7 @@ def _preflight_target(config: SetupConfig, endpoint: SSHEndpoint) -> None:
     if (not isinstance(value, dict) or value.get("uid") != 0 or value.get("os") != "debian"
             or value.get("version") != "13" or value.get("architecture") != "x86_64"
             or value.get("setup_pending") is not False or value.get("legacy_ssh") is not False
+            or value.get("conversion_pending") is not False
             or value.get("enrollment_schema") not in {None, 2}):
         raise ValueError("Target must be Debian 13 x86-64 with no unfinished setup or legacy enrollment")
     sources = config.effective_ssh_sources()
@@ -193,6 +200,63 @@ def _profile_config(config: SetupConfig) -> SetupConfig:
     return profile
 
 
+def _conversion_inventory(config: SetupConfig, plans: list[Any]) -> dict[str, Any]:
+    applications = []
+    for plan in plans:
+        application = plan.deployment["application"]
+        root = config.build_target_enrollment["policy"]["applications"][application]["deployment_root"]
+        applications.append(dict(application=application, deployment_root=root,
+            revision=plan.request["source"]["revision"], request_id=plan.request["request_id"],
+            required_tools=list(plan.required_tools), components=[
+                {key: item[key] for key in ("name", "type", "domain", "path", "health") if key in item}
+                for item in plan.deployment["components"]]))
+    result = dict(schema=1, applications=applications, installed_state="captured_on_target_before_enrollment")
+    print("  Conversion inventory: " + json.dumps(result))
+    return result
+
+
+def _prepare_attempt(config: SetupConfig, attempt: str, capabilities: object,
+                     selected: Any, endpoint: SSHEndpoint) -> tuple[list[Any], dict[str, Any]]:
+    """Dispose only preparation known to precede any mutating remote intent."""
+    from lib.agent_storage_inventory import _mounts
+    from lib.build_setup_sources import SourceCleanupUncertain
+
+    try:
+        source_root = os.path.join(attempt, "sources")
+        _private_directory(source_root)
+        plans = _plans(config, source_root, capabilities, endpoint.principal)
+        inventory = _conversion_inventory(config, plans)
+        descriptor = _open_private_directory(attempt)
+        try:
+            _check_workspace_capacity(descriptor, plans)
+        finally:
+            os.close(descriptor)
+        storage = preflight_delivery_storage(config, selected, endpoint, plans)
+        write_json_atomic(os.path.join(attempt, "storage.json"), storage, mode=0o600)
+        write_json_atomic(os.path.join(attempt, "conversion.json"), inventory, mode=0o600)
+        prepared = {"schema": 1, "plans": [asdict(plan) for plan in plans]}
+        encode_document(prepared, maximum=MAX_PREPARED_BYTES)
+        write_json_atomic(os.path.join(attempt, "prepared.json"), prepared, mode=0o600)
+        return plans, prepared
+    except SourceCleanupUncertain:
+        # A source process group may still own files. Never infer safety from
+        # age, process snapshots, or the absence of a remote setup guard.
+        raise
+    except BaseException:
+        try:
+            if any(mount == attempt or mount.startswith(attempt + "/") for mount in _mounts()):
+                raise ValueError("Mounted preparation requires manual reconciliation")
+            shutil.rmtree(attempt)
+            descriptor = _open_private_directory(os.path.dirname(attempt))
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+        except (OSError, ValueError):
+            print("  Unsubmitted controller preparation retained; local cleanup could not be verified")
+        raise
+
+
 def run_build_setup(config: SetupConfig, *, apply_setup: Callable[..., int]) -> int:
     """Run under the caller's setup-target lock; selected builders never fall back.
 
@@ -212,11 +276,13 @@ def run_build_setup(config: SetupConfig, *, apply_setup: Callable[..., int]) -> 
         if config.dry_run:
             with tempfile.TemporaryDirectory(prefix="basaltwater-build-preflight-", dir=workspace) as temporary:
                 plans = _plans(config, temporary, capabilities, endpoint.principal)
+                _conversion_inventory(config, plans)
                 descriptor = _open_private_directory(temporary)
                 try:
                     _check_workspace_capacity(descriptor, plans)
                 finally:
                     os.close(descriptor)
+                preflight_delivery_storage(config, selected, endpoint, plans)
                 for plan in plans:
                     print(f"  [DRY-RUN] Build {plan.request['source']['revision']} on {selected.config.host} "
                           f"and deliver {plan.deployment['application']} to {config.host}")
@@ -240,17 +306,7 @@ def run_build_setup(config: SetupConfig, *, apply_setup: Callable[..., int]) -> 
                 )
             attempt = os.path.join(host_root, uuid.uuid4().hex)
             _private_directory(attempt)
-            source_root = os.path.join(attempt, "sources")
-            _private_directory(source_root)
-            plans = _plans(config, source_root, capabilities, endpoint.principal)
-            descriptor = _open_private_directory(attempt)
-            try:
-                _check_workspace_capacity(descriptor, plans)
-            finally:
-                os.close(descriptor)
-            prepared = {"schema": 1, "plans": [asdict(plan) for plan in plans]}
-            encode_document(prepared, maximum=MAX_PREPARED_BYTES)
-            write_json_atomic(os.path.join(attempt, "prepared.json"), prepared, mode=0o600)
+            plans, prepared = _prepare_attempt(config, attempt, capabilities, selected, endpoint)
             context: dict[str, Any] = {
                 "schema": 1, "attempt": attempt, "host": config.host,
                 "builder": selected.config.host,
@@ -260,6 +316,7 @@ def run_build_setup(config: SetupConfig, *, apply_setup: Callable[..., int]) -> 
                 "prepared_sha256": hashlib.sha256(encode_document(prepared, maximum=MAX_PREPARED_BYTES)).hexdigest(),
             }
             operation = store.begin("build_setup", config.host, "bootstrapping", context=context)
+            phase = "bootstrapping"
             try:
                 with strict_ssh_transport(
                     endpoint.host, identity_file=endpoint.identity_file,
@@ -269,6 +326,7 @@ def run_build_setup(config: SetupConfig, *, apply_setup: Callable[..., int]) -> 
                 if bootstrap_result != 0:
                     raise RuntimeError("Target enrollment bootstrap did not finish")
                 store.transition(operation.operation_id, "delivering")
+                phase = "delivering"
                 delivery_root = os.path.join(attempt, "delivery")
                 _private_directory(delivery_root)
                 delivery = BuildDeliveryController(builder=builder, target=target, workspace=delivery_root).deliver(plans)
@@ -277,6 +335,7 @@ def run_build_setup(config: SetupConfig, *, apply_setup: Callable[..., int]) -> 
                 )} for item in delivery.applications]
                 context.update(delivery_receipt=delivery.receipt_path, expected_releases=expected)
                 profile_operation = store.transition(operation.operation_id, "profile_applying", context=context)
+                phase = "profile_applying"
                 with strict_ssh_transport(
                     endpoint.host, identity_file=endpoint.identity_file,
                     known_hosts_path=endpoint.known_hosts_file, port=endpoint.port,
@@ -288,9 +347,19 @@ def run_build_setup(config: SetupConfig, *, apply_setup: Callable[..., int]) -> 
                 store.complete(operation.operation_id)
                 print(f"  Remote-build setup complete; retained evidence: {attempt}")
                 return 0
-            except BaseException:
+            except BaseException as error:
+                # Never copy exception text: it can include credentials, source
+                # commands or remote output. Preserve a bounded diagnostic code.
+                failure = ("storage_exhausted" if isinstance(error, OSError) and error.errno == 28
+                           else "interrupted" if isinstance(error, (KeyboardInterrupt, SystemExit))
+                           else "operation_failed")
+                try:
+                    write_json_atomic(os.path.join(attempt, "failure.json"),
+                                      {"schema": 1, "phase": phase, "failure": failure}, mode=0o600)
+                except OSError:
+                    pass
                 try:
                     store.transition(operation.operation_id, "recovery_required", status="recovery_required", context=context)
                 except BaseException:
                     pass
-                raise BuildSetupRecoveryRequired(journal) from None
+                raise BuildSetupRecoveryRequired(journal, phase=phase, failure=failure) from None

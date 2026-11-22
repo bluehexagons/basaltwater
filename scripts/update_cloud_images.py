@@ -14,7 +14,6 @@ Usage::
 
     python3 scripts/update_cloud_images.py            # update + report
     python3 scripts/update_cloud_images.py --dry-run  # report only
-    python3 scripts/update_cloud_images.py --pin-snapshot  # pin to latest snapshot id
 """
 
 from __future__ import annotations
@@ -22,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import stat
 import sys
 import urllib.error
 import urllib.request
@@ -34,9 +34,16 @@ CATALOG_FILE = REPO_ROOT / "lib" / "cloud_images.py"
 BEGIN_MARKER = "# BEGIN CLOUD_IMAGES"
 END_MARKER = "# END CLOUD_IMAGES"
 
-DEBIAN_CLOUD_BASE = "https://cloud.debian.org/images/cloud"
-
-_SNAPSHOT_RE = re.compile(r"^\d{8}-\d{3,4}/?$")
+sys.path.insert(0, str(REPO_ROOT))
+from lib.atomic_io import write_text_atomic
+from lib.cloud_images import (
+    CLOUD_IMAGES,
+    DEBIAN_CLOUD_BASE,
+    SNAPSHOT_PATTERN,
+    debian_image_location,
+    is_sha512_digest,
+    validate_cloud_catalog,
+)
 
 
 class _DirIndexParser(HTMLParser):
@@ -57,11 +64,15 @@ class _DirIndexParser(HTMLParser):
 def _http_get(url: str, *, timeout: int = 30) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": "basaltwater-cloud-images/1.0"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
+        if not resp.geturl().startswith(f"{DEBIAN_CLOUD_BASE}/"):
+            raise ValueError("Debian cloud-image metadata redirected outside its HTTPS origin")
         return resp.read()
 
 
 def fetch_latest_snapshot(codename: str) -> str:
     """Return the most recent snapshot directory for ``codename``."""
+    if not re.fullmatch(r"[a-z]+", codename):
+        raise ValueError("Invalid Debian codename")
     index_url = f"{DEBIAN_CLOUD_BASE}/{codename}/"
     try:
         body = _http_get(index_url).decode("utf-8", errors="replace")
@@ -69,41 +80,22 @@ def fetch_latest_snapshot(codename: str) -> str:
         raise SystemExit(f"Failed to fetch {index_url}: {exc}")
     parser = _DirIndexParser()
     parser.feed(body)
-    snapshots = sorted(
-        {h.rstrip("/") for h in parser.hrefs if _SNAPSHOT_RE.match(h)}
-    )
+    snapshots = [h.removesuffix("/") for h in parser.hrefs]
+    snapshots = [snapshot for snapshot in snapshots if SNAPSHOT_PATTERN.fullmatch(snapshot)]
     if not snapshots:
         raise SystemExit(f"No snapshot directories found at {index_url}")
-    return snapshots[-1]
+    return max(snapshots, key=lambda snapshot: tuple(map(int, snapshot.split("-"))))
 
 
 def fetch_sha512(codename: str, snapshot: str, filename: str) -> str:
     """Return the SHA-512 hex for ``filename`` from the snapshot's SHA512SUMS."""
     sums_url = f"{DEBIAN_CLOUD_BASE}/{codename}/{snapshot}/SHA512SUMS"
     body = _http_get(sums_url).decode("utf-8", errors="replace")
-    for line in body.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        parts = line.split()
-        if len(parts) < 2:
-            continue
-        digest, name = parts[0], parts[-1]
-        if name == filename or name == f"./{filename}":
-            return digest.lower()
-    raise SystemExit(
-        f"Could not find SHA512 for {filename!r} in {sums_url}"
-    )
-
-
-def _read_catalog_entries() -> dict[str, dict[str, str]]:
-    """Load the existing CLOUD_IMAGES dict from the catalog module."""
-    sys.path.insert(0, str(REPO_ROOT))
-    try:
-        from lib import cloud_images  # noqa: WPS433
-    finally:
-        sys.path.pop(0)
-    return {key: dict(value) for key, value in cloud_images.CLOUD_IMAGES.items()}
+    entry = re.compile(rf"(\S+)[ \t]+\*?(?:\./)?{re.escape(filename)}[ \t]*")
+    digests = [match[1] for line in body.splitlines() if (match := entry.fullmatch(line))]
+    if len(digests) != 1 or not is_sha512_digest(digests[0]):
+        raise ValueError(f"Expected one valid SHA-512 for {filename!r} in {sums_url}")
+    return digests[0].lower()
 
 
 def _format_entry(key: str, entry: dict[str, str]) -> str:
@@ -137,31 +129,31 @@ def _rewrite_catalog(entries: dict[str, dict[str, str]]) -> None:
         )
     end += len(END_MARKER)
     new_text = text[:start] + _render_catalog_block(entries) + text[end:]
-    CATALOG_FILE.write_text(new_text)
+    write_text_atomic(str(CATALOG_FILE), new_text, mode=stat.S_IMODE(CATALOG_FILE.stat().st_mode))
 
 
-def update_catalog(*, pin_snapshot: bool, dry_run: bool) -> dict[str, dict[str, str]]:
-    entries = _read_catalog_entries()
+def update_catalog(*, dry_run: bool) -> dict[str, dict[str, str]]:
+    entries: dict[str, dict[str, str]] = {}
     snapshot_cache: dict[str, str] = {}
-    for key, entry in entries.items():
+    digest_cache: dict[str, str] = {}
+    for key, entry in CLOUD_IMAGES.items():
         codename = entry["codename"]
         version = entry["version"]
-        if pin_snapshot:
-            snapshot = snapshot_cache.get(codename) or fetch_latest_snapshot(codename)
-            snapshot_cache[codename] = snapshot
-            filename = f"debian-{version}-genericcloud-amd64-{snapshot}.qcow2"
-            url = f"{DEBIAN_CLOUD_BASE}/{codename}/{snapshot}/{filename}"
-            sha512 = fetch_sha512(codename, snapshot, filename)
-        else:
-            snapshot = "latest"
-            filename = f"debian-{version}-genericcloud-amd64.qcow2"
-            url = f"{DEBIAN_CLOUD_BASE}/{codename}/latest/{filename}"
-            sha512 = ""
-        entry["snapshot"] = snapshot
-        entry["filename"] = filename
-        entry["url"] = url
-        entry["sha512"] = sha512
+        if codename not in snapshot_cache:
+            snapshot_cache[codename] = fetch_latest_snapshot(codename)
+        snapshot = snapshot_cache[codename]
+        filename, url = debian_image_location(codename, version, snapshot)
+        if url not in digest_cache:
+            digest_cache[url] = fetch_sha512(codename, snapshot, filename)
+        sha512 = digest_cache[url]
+        if not is_sha512_digest(sha512):
+            raise ValueError(f"Invalid SHA-512 for {url}")
+        if (snapshot == entry["snapshot"] and is_sha512_digest(entry.get("sha512"))
+                and sha512.lower() != entry["sha512"].lower()):
+            raise ValueError(f"SHA-512 changed for existing snapshot {codename}/{snapshot}")
+        entries[key] = dict(entry, snapshot=snapshot, filename=filename, url=url, sha512=sha512)
         print(f"  {key}: {codename}/{snapshot} -> {filename}")
+    validate_cloud_catalog(entries)
     if not dry_run:
         _rewrite_catalog(entries)
         print(f"Wrote {CATALOG_FILE.relative_to(REPO_ROOT)}")
@@ -217,11 +209,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--dry-run", action="store_true",
                         help="Show what would change without rewriting the catalog")
     parser.add_argument("--pin-snapshot", action="store_true",
-                        help="Pin entries to the latest snapshot directory and record SHA512")
+                        help="Pin snapshots and record SHA-512 (also the default)")
     args = parser.parse_args(argv)
 
     print("Updating Debian cloud-image catalog...")
-    update_catalog(pin_snapshot=args.pin_snapshot, dry_run=args.dry_run)
+    try:
+        update_catalog(dry_run=args.dry_run)
+    except (ValueError, OSError) as exc:
+        parser.exit(1, f"Catalog refresh failed: {exc}\n")
     print()
     report_pinned_urls(scan_pinned_urls())
     return 0

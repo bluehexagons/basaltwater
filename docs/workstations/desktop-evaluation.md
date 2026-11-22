@@ -73,6 +73,36 @@ reset or align a run. A finished run cannot be continued.
 Reads validate saved transitions, UTC timestamps and event details as well as
 monotonic ordering. Impossible histories, such as duplicate suspensions or an
 event after finish, fail without rewriting the original file.
+When saved `previous_gap_seconds` or `checkpoint_late_seconds` fields are present,
+reads also recompute them from preceding event clocks and effective review policy.
+Contradictory values are refused without changing the record, including on
+`checkpoint` and `finish`. Preserve rejected files and inspect a retained receipt;
+do not remove the fields to make history load. Older records without these fields
+remain readable, with their missing metadata left untouched.
+
+Timing-metadata refusals identify the first contradictory zero-based
+`events[index]`, its event kind and the value recomputed from saved clocks/policy.
+That expected value is a diagnostic, not an instruction to replace a field.
+Preserve the rejected artifact and command receipt. Keep subsequent observations
+in a separate companion note, or a linked new segment with an explicit timing
+gap and the original match identity/limits; never insert missing events into the
+rejected history. A validation error alone cannot establish which writer caused
+it. Audit retained execution receipts before attributing it to the CLI.
+
+Structural validation does not authenticate who wrote earlier events. A later
+successful `show` or `finish` cannot establish that every checkpoint came through
+the CLI. Keep returned receipts and record execution provenance separately from
+arithmetic validity. Never append events with a script or edit saved lateness to
+make the record appear complete. If direct writes are discovered, retain the
+original file and report the affected timing as unqualified; do not silently
+repair history. Independent capture/input timestamps can still support their own
+observations. This distinction does not grant an extra application Start.
+
+When a phase needs a different soft review interval, record a sourced
+`run policy --review-seconds SECONDS --note TEXT` event at its boundary.
+Changing `--phase` on a checkpoint alone retains the preceding review interval.
+Soft review timing and a project's independently observed match-Start anchor are
+separate; retain any difference instead of rewriting timestamps or lateness.
 
 `wall_seconds` is elapsed monotonic time, including explicitly suspended owner
 waits. `declared_active_wall_seconds` excludes only recorded owner waits; it still
@@ -89,6 +119,11 @@ Check `show` within the controller's normal work loop. Checkpoint events retain
 actual previous gaps and lateness before restarting the chosen soft review
 cadence. `checkpoint_due_monotonic_ns`, `checkpoint_remaining_seconds` and
 `checkpoint_late_seconds` expose the current review deadline and actual timing.
+`checkpoint_history` separately reports the number of completed checkpoints with
+a prior review deadline, how many were late, and maximum lateness. It recomputes
+from clocks/policy before each checkpoint resets the deadline; a currently
+on-time status does not erase earlier late reviews. No qualifying checkpoints
+means a zero count and null maximum. These checks do not authenticate authorship.
 Policy changes require a source/authorization note and record a timing change;
 hard seconds always refer to the ORIGINAL start. Recording an override
 does not authenticate its author or grant permission. These commands neither
@@ -241,7 +276,7 @@ audio and video qualification remains separate.
 
 ## Refresh and freeze a comparison condition
 
-After saving active work, follow the existing [CachyOS refresh procedure](cachyos-maintenance.md#upgrade-and-repeat-your-last-setup).
+After saving active work, follow the existing [CachyOS refresh procedure](cachyos-refresh.md#upgrade-and-repeat-your-last-setup).
 `basaltw refresh --dry-run` previews the saved selection; `basaltw refresh` applies
 it and can reload T3 after setup. A development channel follows `main`; a pinned
 channel remains pinned. The unchanged `2.0.0rc1` version string cannot identify

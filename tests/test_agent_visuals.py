@@ -161,7 +161,10 @@ class TestAgentVisuals(unittest.TestCase):
 
     def test_strict_capture_requires_receipt_before_second_capture(self) -> None:
         _, create, execute = self.mock_capture_system()
-        result = agent_visuals.capture_revisions(self.capture_args("--verify-evidence"))
+        args = self.capture_args("--require-artifact-kind", "shader-bundle")
+        self.assertEqual(args.require_artifact_kind, ["shader-bundle"])
+        self.assertFalse(args.verify_evidence)
+        result = agent_visuals.capture_revisions(args)
         self.assertEqual(execute.call_args.kwargs["env"]["BASALTWATER_VISUAL_VERIFY"], "1")
         self.assertFalse(result["ok"])
         self.assertEqual(create.call_count, 1)
@@ -179,7 +182,7 @@ class TestAgentVisuals(unittest.TestCase):
         self.assertEqual(result["status"], "verified")
         for settings, revision, kinds, message in (({"quality": True}, "a" * 40, [], "did not take effect"),
                                                   ({}, "b" * 40, [], "revision"),
-                                                  ({}, "a" * 40, ["asset"], "Missing required")):
+                                                  ({}, "a" * 40, ["shader-bundle"], "Missing required artifact kinds: shader-bundle")):
             with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
                 verify_receipt(str(path), str(self.root), revision, settings, kinds)
         artifact.write_bytes(b"concurrent font build")

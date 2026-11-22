@@ -45,7 +45,8 @@ class DataActionContractTests(unittest.TestCase):
     def test_reviewed_plan_is_typed_and_dispatched_with_a_deadline(self):
         value = parameters()
         plan = operation_plan(policy(), 1000, "data.run", value)
-        self.assertEqual(plan["mode"], "allow")
+        self.assertEqual(plan["mode"], "approve")
+        self.assertEqual(operation_plan(policy(), 1000, "data.run", {**value, "action": "verify"})["mode"], "allow")
         self.assertIn(f"--property=RuntimeMaxSec={DATA_TIMEOUT}", plan["argv"])
         self.assertIn(DATA_HELPER, plan["argv"])
         self.assertEqual(plan["argv"][-1], value["job_id"])
@@ -64,14 +65,17 @@ class DataActionContractTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_data_action({**value, "action": "restore"})
 
-    def test_confirmed_recovery_is_queued_without_separate_approval_and_status_is_owned(self):
+    def test_confirmed_recovery_waits_for_decision_and_status_is_owned(self):
         with tempfile.TemporaryDirectory() as directory:
             runner = Mock(return_value=ExecutionResult("dispatched", exit_code=0))
             broker = privilege_broker.Broker(str(Path(directory) / "requests.db"), policy_loader=policy, runner=runner)
             self.addCleanup(broker.db.close)
             request = broker.request(1000, "data.run", parameters(), "Repair reviewed file")
-            self.assertEqual(request["state"], "approved")
-            self.assertEqual(request["actor"], "administrator-policy")
+            self.assertEqual(request["state"], "pending")
+            with self.assertRaises(PermissionError):
+                broker.dispatch({"action": "decide", "id": request["id"], "digest": request["digest"],
+                                 "approve": True, "actor": "operator"}, 1000)
+            self.assertFalse(broker.execute_next())
             with self.assertRaises(ValueError):
                 broker.request(1000, "data.run", {**parameters(), "job_id": "c" * 32}, "Second repair")
             with patch.object(privilege_broker, "data_job_status", return_value=status()), patch.object(privilege_broker, "routine_job_status", return_value=status()):
@@ -80,10 +84,27 @@ class DataActionContractTests(unittest.TestCase):
                 with self.assertRaises(PermissionError):
                     broker.dispatch({"action": "data-status"}, 1001)
             with self.assertRaises(ValueError):
+                broker.decide(request["id"], "0" * 64, True, "operator")
+            self.assertFalse(broker.execute_next())
+            broker.decide(request["id"], request["digest"], True, "operator")
+            with self.assertRaises(ValueError):
                 broker.decide(request["id"], request["digest"], True, "operator")
             self.assertTrue(broker.execute_next())
             self.assertFalse(broker.execute_next())
             runner.assert_called_once_with(request["plan"])
+
+    def test_pre_upgrade_policy_approval_cannot_dispatch_recovery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = Mock()
+            broker = privilege_broker.Broker(str(Path(directory) / "requests.db"), policy_loader=policy, runner=runner)
+            self.addCleanup(broker.db.close)
+            old_plan = {**operation_plan(policy(), 1000, "data.run", parameters()), "mode": "allow"}
+            with patch.object(privilege_broker, "operation_plan", return_value=old_plan):
+                request = broker.request(1000, "data.run", parameters(), "Queued under previous policy")
+            self.assertEqual(request["state"], "approved")
+            self.assertTrue(broker.execute_next())
+            self.assertEqual(broker.status(request["id"])["state"], "invalidated")
+            runner.assert_not_called()
 
     def test_setup_recovery_blocks_dispatch_before_staging_or_launch(self):
         plan = operation_plan(policy(), 1000, "data.run", parameters())
@@ -107,7 +128,8 @@ class DataActionContractTests(unittest.TestCase):
             runner = Mock(return_value=ExecutionResult("dispatched", exit_code=0))
             broker = privilege_broker.Broker(str(Path(directory) / "requests.db"), policy_loader=policy, runner=runner)
             self.addCleanup(broker.db.close)
-            broker.request(1000, "data.run", value, "First reviewed batch")
+            first = broker.request(1000, "data.run", value, "First reviewed batch")
+            broker.decide(first["id"], first["digest"], True, "operator")
             self.assertTrue(broker.execute_next())
             newest = broker.request(1000, "data.run", {**value, "job_id": "b" * 32}, "Next reviewed batch")
             latest = {"parameters": value, "status": "findings", "started": 1, "finished": 2,

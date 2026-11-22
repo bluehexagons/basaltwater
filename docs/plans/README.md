@@ -5,9 +5,9 @@ behavior; plans describe remaining work and acceptance. The
 [coverage map](testing-coverage.md) records selected checks and gaps, while the
 [release matrix](../release-qualification.md) gates an exact release candidate.
 
-The package is `2.0.0rc1`; no preview tag is published. Stable v2.0.0 remains
-qualification-gated. Completed namespace migration is documented in the
-[migration guide](../migration-guide.md).
+The release matrix records the current preview candidate and the evidence
+required for stable v2.0.0. See the
+[migration guide](../migration-guide.md) for the completed namespace migration.
 
 ## Active priorities
 
@@ -16,6 +16,7 @@ qualification-gated. Completed namespace migration is documented in the
 | Shared Debian build/CI host | All three roles compose and share capacity; selected native conversion, mixed work, nested cancellation, drain, saved rerun and reboot pass. | Extend remaining crash, storage, provider-bootstrap and GitHub event/scope qualification. Publishing is later scope. See the [build-host plan](cicd-manifest-reuse.md), [runner plan](github-runner-support.md) and [dated evidence](../testing/evidence.md#shared-debian-build-and-ci-host). |
 | Resource-aware optimization | Serial startup, output, artifact I/O, source scanning and CI preparation are improved; the pinned basic-development workload has selected native 1 vCPU / 1 GiB Debian qualification. | Measure further coupled changes before introducing worker ownership, shared budgets or caches. See the [optimization plan](resource-aware-optimization.md) and [coverage limits](testing-coverage.md). |
 | Release qualification | Repository checks and selected live workflows exist; they do not qualify the complete candidate. | Run the remaining exact-candidate [release cases](../release-qualification.md#stable-qualification-matrix), including user rename, privilege execution, desktop/browser and supported application paths. |
+| Security configuration | All fourteen findings from the November repository review have fixes on main. The [remediation record](../security-review.md#remediation-record) gives rollout steps and verification by finding. | Qualify managed guest enrollment on Proxmox, workstation privilege changes on their supported hosts and the remaining [deployment checks](security-configuration.md#verification-and-release-qualification). |
 | Setup reliability | Firewall entrypoints respect machine capabilities. XRDP jails follow desktop setup and pass configuration validation before restart; resume changes retain pending initramfs rebuild intent. Clean Debian XFCE/RDP installation, selected simultaneous human/peer starts, keyboard/clipboard and frontend/tunnel disconnect recovery pass alongside native service probes. | Qualify further race timing, remaining clients, desktop crashes and setup interruption boundaries; selected workflows do not pass the exact-candidate release matrix. See [authentication hardening](../services/authentication-hardening.md) and [transaction recovery](../operations/transaction-recovery.md). |
 | Read-only planning and drift | Domain-specific observations exist, but no general desired-versus-observed plan command. Security collection reports leading retention gaps, preserves unknown intervals and reads packaged numeric/gzip Fail2ban rotations. | Define a stable observation/result contract; qualify remaining security-log continuity and daemon boundaries. See [authentication hardening](../services/authentication-hardening.md). |
 
@@ -25,19 +26,22 @@ These areas are not prerequisites for the shared Debian build/CI host.
 
 | Area | Next boundary and owner |
 | --- | --- |
-| Build retention and recovery | Preserve explicit settlement/pruning/bundle release and stop-and-inspect recovery. Automatic retention, replay-history retirement and further interruption checks need separate acceptance in the [build plan](cicd-manifest-reuse.md). |
-| Deployment secrets | Add administrator-owned runtime binding IDs before a broader secret store; selected-builder deployment currently rejects runtime environment and `env_file`. See [secret references](deploy-secrets.md). |
-| Headscale private networking | Add independent Headscale hosting and Tailscale client enrollment, explicit service access, and backup/restore qualification under the [Headscale plan](headscale.md). |
+| Build retention and recovery | Preserve explicit settlement/pruning/bundle release and stop-and-inspect recovery. Plan populated target conversion, per-owner cleanup and replay-safe record retirement under the [conversion and storage lifecycle plan](build-conversion-storage.md), alongside the [build plan](cicd-manifest-reuse.md). |
+| Deployment secrets | Target-owned runtime binding IDs are implemented for ordinary and selected-builder services. Qualify native delivery and manual rotation/recovery before consumer inventory or a broader secret store. Literal `env_file` remains outside selected-builder scope. See [secret references](deploy-secrets.md). |
+| Headscale private networking | Hosting, client enrollment, owned relays, the Web Portal, and managed Unbound are implemented. Use the [setup guide](../services/headscale-setup.md) for operation. Public ACME, additional platforms, and broader recovery remain open in [qualification](../testing/headscale.md#outstanding-acceptance). |
 | Proxmox, storage and Gogs | Extend selected same-host recovery to off-host restore; coordinate guest filesystem growth separately from provider disk resize. See [VM/storage work](vm-management-and-lightweight-git-hosting.md). |
 | Git and SMB enrollment | Plan independent, repeatable client enrollment by saved server name, optional usernames and server-owned credentials that work across controllers. See the [design and decisions](storage-enrollment.md) and [delivery/acceptance plan](storage-enrollment-delivery.md); the proposed flags are not implemented. |
 | Storage scrub triage | Extend the existing single-file panel recovery with bounded batch verify, quarantine and deletion, preserving parity and mirror safeguards. See the [scrub triage plan](scrub-triage.md). |
+| Web panel UX and live status | Bounded passive updates are delivered for supported views. See [panel operation](../services/web-panel-overview.md#automatic-status-updates) and the [completion record](web-panel-overhaul.md#completion-and-qualification-record). |
 | Agent, T3 Code and desktop | Follow the [T3 Code](../agents/t3-code.md), [browser](../agents/browser-testing.md) and [XRDP](../workstations/xrdp.md) guides. Use the [coverage map](testing-coverage.md) for selected qualified workflows; additional profiles, enrollment, race timing and crash/recovery cases stay open. Claude Code execution follows the terms gate and test plan in [Claude Code integration](claude-code-integration.md). |
 | Ubuntu WSL and Windows | Finish [WSL qualification](ubuntu-wsl-support.md); native [Windows build hosts](windows-support.md) remain planned and outside the current stable-release gate. |
+| Windows security | Add bounded read-only checks and a few opt-in native fixes under the [Windows Security Plan](windows-security.md); keep policy management and a Windows privilege broker out of the workstation layer. |
 | Basaltide operating system | Plan a completely free and open-source Debian-based developer and agent workstation bundling Basaltwater and selected customizations. Choose the desktop, image recipe, freely licensed components and package/update ownership under the [Basaltide plan](basaltide.md). |
 | CachyOS and mobile | Use the existing [CachyOS profile](../workstations/cachyos.md). Further workstation enhancements and the [mobile proposal](mobile-agent-support.md) are deferred. |
 | Audio and video | Develop portable file analysis, bounded Debian production and CachyOS desktop/GPU workflows under the [audio and video plan](audio-video-support.md); Windows is scoped to simple debugging analysis. |
 | Games and publishing | Keep [Godot/release bundle scope](game-publishing.md) bounded. Live provider behavior, rendering and automatic public posts remain gated in the [communications plan](game-release-communications.md). |
-| Agent-assisted game testing | Use the [capability plan](game-testing.md), [learning/execution milestones](game-testing-learning.md), [bounded implementation handoffs](game-testing-handoffs/README.md) and [next-cycle improvement project](game-testing-next-cycle.md). Qualify current observation recipes, targeting and recovery before fresh runs; per-game strategy and outcomes remain project-owned. |
+| Agent-assisted game testing | Start with the [next-cycle plan](game-testing-next-cycle.md) for the current delivery sequence and restart gate. [Capability evidence](game-testing.md), [learning milestones](game-testing-learning.md), and [implementation handoffs](game-testing-handoffs/README.md) support specific tasks. |
+| Visual review and tool preflight | Run the Antistatic pilot, repeat on a second renderer and verify two native Blender selections on CachyOS. Gallery and version preflight have portable checks and a Debian Blender smoke. See [visual review recipes](visual-review-recipes.md). |
 | Broader recovery | Test restore on another physical host and remaining storage/network failures; use the [roadmap](roadmap.md) and [transaction recovery guide](../operations/transaction-recovery.md). |
 
 ## Backlog references

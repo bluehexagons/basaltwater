@@ -18,6 +18,7 @@ import remote_setup
 from common import cachyos_development as development, cachyos_steps as steps
 from lib.arg_parser import create_setup_argument_parser
 from lib.cachyos import cachyos_config_from_args
+from lib import cachyos_refresh
 from lib.config import SetupConfig
 from lib.system_types import get_steps_for_system_type
 
@@ -49,12 +50,13 @@ class CachyOSDevelopmentTests(unittest.TestCase):
         return script
 
     def test_options_roundtrip_without_selecting_a_runtime_or_release_tools(self):
-        original = self.config("--game-dev", "--node-versions")
+        original = self.config("--game-dev", "--node-versions", "--update-nvm-npm", "v26.12.1")
         self.assertFalse(original.install_node)
         self.assertIsNone(original.apt_packages)
         restored = SetupConfig.from_dict("localhost", "agent_cachyos", original.to_dict())
         self.assertTrue(restored.install_game_dev)
         self.assertTrue(restored.install_node_versions)
+        self.assertEqual(restored.update_nvm_npm, "26.12.1")
         replay = self.parser.parse_args(shlex.split(" ".join(original.to_setup_command()))[1:])
         self.assertEqual(cachyos_config_from_args(replay), original)
         parser = create_setup_argument_parser("remote", for_remote=True)
@@ -65,6 +67,8 @@ class CachyOSDevelopmentTests(unittest.TestCase):
             self.assertFalse(getattr(self.config(flag), "install_" + flag[5:].replace("-", "_")))
         with self.assertRaisesRegex(ValueError, "requires the agent_cachyos"):
             SetupConfig(host="example.com", username="human", system_type="agent_code_vm", install_node_versions=True)
+        with self.assertRaisesRegex(ValueError, "requires the agent_cachyos"):
+            SetupConfig(host="example.com", username="human", system_type="agent_code_vm", update_nvm_npm="26.12.1")
         with self.assertRaisesRegex(ValueError, "Debian workstation/server"):
             SetupConfig(host="example.com", username="human", system_type="server_wsl", install_game_dev=True)
 
@@ -128,6 +132,60 @@ class CachyOSDevelopmentTests(unittest.TestCase):
             development.install_cachyos_node_versions(self.config("--node-versions"))
         install.assert_not_called()
         self.assertEqual(script.read_text(), "# fixture\n")
+
+    def test_nvm_npm_selection_is_replayed_and_can_be_cleared(self):
+        for invalid in ("node", "26", "26.11.0", "26.012.1", "../v26.12.1"):
+            with self.subTest(version=invalid), self.assertRaisesRegex(ValueError, "requires an exact Node version"):
+                self.config("--update-nvm-npm", invalid)
+        config = self.config("--node", "--update-nvm-npm", "26.12.1")
+        saved = cachyos_refresh._replay_arguments(config)
+        with patch.object(cachyos_refresh, "_account", return_value=SimpleNamespace(pw_name="human")):
+            self.assertEqual(cachyos_refresh._parse_saved_arguments(saved).update_nvm_npm, "26.12.1")
+            override = self.parser.parse_args(["refresh", "--update-nvm-npm", "off"]).setup_overrides
+            replay, merged = cachyos_refresh._merge_overrides(saved, override)
+        self.assertNotIn("--update-nvm-npm", replay)
+        self.assertIsNone(merged.update_nvm_npm)
+        self.assertTrue(merged.install_node)
+
+    def test_native_npm_is_selected_even_when_a_user_copy_is_on_path(self):
+        with patch.object(steps.shutil, "which", return_value="/home/fixture/.local/bin/npm"):
+            self.assertIn("npm", steps.cachyos_packages(self.config("--node")))
+            self.assertIn("npm", steps.cachyos_packages(self.config("--update-nvm-npm", "26.12.1")))
+            self.assertNotIn("npm", steps.cachyos_packages(self.config()))
+
+    def test_nvm_npm_upgrade_uses_the_selected_node_and_native_npm_only(self):
+        script = self.make_nvm()
+        runtime = script.parent / "versions/node/v26.12.1"
+        binary = runtime / "bin/node"
+        binary.parent.mkdir(parents=True)
+        binary.touch(mode=0o700)
+        npm = runtime / "bin/npm"
+        npm.symlink_to("../lib/node_modules/npm/bin/npm-cli.js")
+        config = self.config("--node", "--update-nvm-npm", "26.12.1")
+        plan = [function for _, function in get_steps_for_system_type(config)]
+        self.assertLess(plan.index(steps.install_cachyos_packages), plan.index(development.update_cachyos_nvm_npm))
+        outputs = [subprocess.CompletedProcess([], 0, v) for v in ("v26.12.1", "12.2.3", "11.20.0", "", "12.2.3")]
+        with patch("lib.remote_utils.run", side_effect=outputs) as run:
+            development.update_cachyos_nvm_npm(config)
+        calls = run.call_args_list
+        self.assertEqual([call.args[0] for call in calls[:3]], [
+            [str(binary), "--version"], [str(binary), "/usr/bin/npm", "--version"], [str(binary), str(npm), "--version"],
+        ])
+        self.assertEqual(calls[3].args[0], [str(binary), "/usr/bin/npm", "install", "--global", "--prefix", str(runtime),
+                                           "--engine-strict", "--ignore-scripts", "--no-audit", "--no-fund", "npm@12.2.3"])
+        self.assertEqual(calls[4].args[0], [str(binary), str(npm), "--version"])
+        self.assertTrue(all(call.kwargs["env"]["PATH"].split(os.pathsep)[0] == str(runtime / "bin") for call in calls))
+        for current in ("12.2.3", "12.3.0"):
+            with self.subTest(current=current), patch("lib.remote_utils.run", side_effect=[
+                subprocess.CompletedProcess([], 0, version) for version in ("v26.12.1", "12.2.3", current)
+            ]) as run:
+                development.update_cachyos_nvm_npm(config)
+                self.assertEqual(run.call_count, 3)
+        npm.unlink()
+        npm.symlink_to("/usr/bin/npm")
+        with patch("lib.remote_utils.run") as run, self.assertRaisesRegex(ValueError, "Unmanaged npm"):
+            development.update_cachyos_nvm_npm(config)
+        run.assert_not_called()
 
     def test_project_preparation_uses_the_existing_installer_without_replaying_setup(self):
         account = SimpleNamespace(pw_name='human', pw_dir=str(self.home))

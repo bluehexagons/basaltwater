@@ -15,7 +15,9 @@ import unittest
 from unittest.mock import patch
 
 from lib import agent_cli, agent_environment, agent_visual_check
+from lib.agent_probe import ProbeResult
 from lib.remote_utils import CommandTimeoutError
+from tests.test_agent_visuals import png_bytes
 
 
 class TestAgentVisualCheck(unittest.TestCase):
@@ -55,6 +57,8 @@ class TestAgentVisualCheck(unittest.TestCase):
         self.assertEqual(result["verification_scope"], "project-recipe-exit-status")
         self.assertEqual(result["gpu_readiness"], "unverified")
         self.assertEqual(result["ui_readiness"], "unverified")
+        self.assertNotIn("review", result)
+        self.assertNotIn("tool_version", result)
         call = self.execute.call_args
         self.assertEqual(call.args[0], self.manifest["recipes"]["graphics"]["argv"])
         self.assertEqual(call.kwargs["cwd"], str(self.project / "."))
@@ -85,6 +89,64 @@ class TestAgentVisualCheck(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertIn("renderer could not initialize", (self.output / "check.log").read_text())
         self.assertTrue((self.output / "environment.json").is_file())
+
+    def test_pinned_executable_reaches_the_recipe_after_a_bounded_probe(self) -> None:
+        version = {"executable": "blender", "expected": "Blender 4.5.2"}
+        self.manifest["recipes"]["graphics"]["version_check"] = version
+        tool = self.project / "tools" / "blender"
+
+        def probe_version(argv, **kwargs):
+            self.assertNotIn("BASALTWATER_VISUAL_TOOL", kwargs["env"])
+            return ProbeResult("Blender 4.5.2\nBuild details\n")
+
+        with (
+            patch.dict(os.environ, {"PATH": "tools:/usr/bin", "BASALTWATER_VISUAL_TOOL": "/other"}),
+            patch.object(agent_visual_check.shutil, "which", return_value=str(tool)) as locate,
+            patch.object(agent_visual_check, "run_probe", side_effect=probe_version) as probe,
+        ):
+            result = agent_visual_check.check_recipe(self.args())
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["tool_version"], {**version, "path": str(tool), "observed": version["expected"], "status": "verified"})
+        locate.assert_called_once_with("blender", path=f"{tool.parent}:/usr/bin")
+        self.assertEqual(probe.call_args.args[0], [str(tool), "--version"])
+        self.assertEqual(probe.call_args.kwargs["cwd"], str(self.project))
+        self.assertEqual(probe.call_args.kwargs["timeout"], 5)
+        self.assertEqual(probe.call_args.kwargs["max_bytes"], 4096)
+        self.assertEqual(self.execute.call_args.kwargs["env"]["BASALTWATER_VISUAL_TOOL"], str(tool))
+        self.assertEqual(self.execute.call_args.kwargs["env"]["PATH"], "tools:/usr/bin")
+
+    def test_preflight_failures_distinguish_missing_mismatch_and_failed_probes(self) -> None:
+        from lib import agent_performance
+
+        selection = {"executable": "./tools/blender", "expected": "Blender 4.5.2"}
+        self.manifest["recipes"]["graphics"]["version_check"] = selection
+        tool = str(self.project / "tools" / "blender")
+        variants = (
+            (None, None, "missing", None, None),
+            (tool, ProbeResult("Blender 4.3.2\n"), "unexpected-version", "Blender 4.3.2", None),
+            (tool, ProbeResult(issue="probe_timeout"), "probe-failed", None, "probe_timeout"),
+            (tool, ProbeResult(issue="probe_output_limit"), "probe-failed", None, "probe_output_limit"),
+            (tool, ProbeResult("\x1b[34mBlender 4.5.2\n"), "probe-failed", None, "invalid_version_line"),
+        )
+        for index, (path, response, status, observed, issue) in enumerate(variants):
+            with (
+                self.subTest(status=status, issue=issue),
+                patch.object(agent_visual_check.shutil, "which", return_value=path) as locate,
+                patch.object(agent_visual_check, "run_probe", return_value=response) as probe,
+                patch.object(agent_performance, "performance_snapshot") as snapshot,
+            ):
+                self.output = self.root / f"preflight-{index}"
+                result = agent_visual_check.check_recipe(self.args("--performance-session"))
+                self.assertFalse(result["ok"])
+                self.assertIsNone(result["returncode"])
+                version = result["tool_version"]
+                self.assertEqual((version["status"], version["observed"], version.get("issue")), (status, observed, issue))
+                self.assertEqual(json.loads((self.output / "check.json").read_text()), result)
+                self.assertTrue((self.output / "environment.json").is_file())
+                locate.assert_called_once_with(str(self.project / "./tools/blender"))
+                self.assertEqual(probe.call_count, int(path is not None))
+                snapshot.assert_not_called()
+        self.execute.assert_not_called()
 
     def test_strict_check_verifies_runtime_and_build_evidence(self) -> None:
         artifact = self.project / "asset.bin"
@@ -288,6 +350,121 @@ class TestAgentVisualCheck(unittest.TestCase):
         result = json.loads(output.getvalue())
         self.assertFalse(result["ok"])
         self.assertEqual(result["returncode"], 3)
+
+    def write_review_fixture(self) -> Path:
+        manifest_path = self.output / "captures" / "review.json"
+        manifest_path.parent.mkdir()
+        (self.output / "before.png").write_bytes(png_bytes(4, 4))
+        (self.output / "after.png").write_bytes(png_bytes(4, 4, (255, 0, 0, 255)))
+        pairs = [
+            {"id": f"frame-{frame}", "category": "pause",
+             "before": {"image": "../before.png", "settings": {"frame": frame}},
+             "after": {"image": "../after.png", "settings": {"frame": frame}}}
+            for frame in (4, 8)
+        ]
+        manifest_path.write_text(json.dumps({
+            "version": 1, "sequence": {"fps": 12}, "compare_keys": ["frame"],
+            "expected_categories": ["pause", "settings"], "pairs": pairs,
+        }))
+        return manifest_path
+
+    def test_check_links_gallery_from_one_completed_recipe(self) -> None:
+        def completed(argv, **kwargs):
+            self.assertEqual(kwargs["env"]["BASALTWATER_VISUAL_EVIDENCE"], str(self.output))
+            self.write_review_fixture()
+            return 0
+
+        self.execute.side_effect = completed
+        with redirect_stdout(output := StringIO()):
+            self.assertEqual(agent_cli.run_agent_command(self.args("--review-manifest", "captures/review.json", "--json")), 0)
+        self.execute.assert_called_once()
+        result = json.loads(output.getvalue())
+        self.assertEqual(json.loads((self.output / "check.json").read_text()), result)
+        review = result["review"]
+        self.assertEqual(Path(review["manifest"]), self.output / "captures/review.json")
+        self.assertEqual(Path(review["viewer"]), self.output / "review-gallery/index.html")
+        self.assertIn(review["batch_id"], Path(review["viewer"]).read_text())
+        batch = json.loads(Path(review["batch_report"]).read_text())
+        self.assertEqual([pair["id"] for pair in batch["pairs"]], ["frame-4", "frame-8"])
+        self.assertEqual(batch["sequence"], {"fps": 12})
+        self.assertEqual(batch["missing_categories"], ["settings"])
+        self.assertEqual(batch["visual_correctness"], "unverified")
+
+    def test_check_builds_gallery_after_performance_observations(self) -> None:
+        from lib import agent_performance
+
+        def snapshot():
+            self.assertFalse((self.output / "review-gallery").exists())
+            return {"power_profile": None}
+
+        def completed(argv, **kwargs):
+            self.write_review_fixture()
+            (self.output / "performance-active.json").write_text('{"schema_version":1}')
+            return 0
+
+        self.execute.side_effect = completed
+        with patch.object(agent_performance, "performance_snapshot", side_effect=snapshot) as observe:
+            result = agent_visual_check.check_recipe(self.args("--performance-session", "--review-manifest", "captures/review.json"))
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(observe.call_count, 2)
+        self.assertTrue(Path(result["review"]["viewer"]).is_file())
+
+    def test_review_manifest_argument_rejects_nonlocal_names_before_recipe(self) -> None:
+        for path in ("/tmp/review.json", "../review.json", "a/../review.json", ".", ""):
+            with self.subTest(path=path), self.assertRaisesRegex(ValueError, "relative to|non-empty"):
+                agent_visual_check.check_recipe(self.args("--review-manifest", path))
+        self.execute.assert_not_called()
+        self.assertFalse(self.output.exists())
+
+    def test_failed_review_retains_recipe_exit_status_and_evidence(self) -> None:
+        variants = {
+            "missing-manifest": "Path does not exist",
+            "missing-frame": "Path does not exist",
+            "wrong-frame": "Different observed setting: frame",
+            "malformed": "Expecting value",
+            "parent-escape": "inside the recipe evidence directory",
+            "linked-image": "inside the recipe evidence directory",
+            "linked-manifest": "inside the recipe evidence directory",
+        }
+        for variant, error in variants.items():
+            self.output = self.root / variant
+            with self.subTest(variant=variant):
+                def completed(argv, **kwargs):
+                    kwargs["on_output"]("recipe rendered\n")
+                    if variant == "missing-manifest":
+                        return 0
+                    path = self.write_review_fixture()
+                    manifest = json.loads(path.read_text())
+                    frame = manifest["pairs"][-1]["after"]
+                    outside = self.root / "extra"
+                    outside.mkdir(exist_ok=True)
+                    (outside / "outside.png").write_bytes(png_bytes(4, 4))
+                    if variant == "missing-frame":
+                        frame["image"] = "missing.png"
+                    elif variant == "wrong-frame":
+                        frame["settings"]["frame"] = 7
+                    elif variant == "parent-escape":
+                        frame["image"] = "../../extra/outside.png"
+                    elif variant == "linked-image":
+                        (path.parent / "linked").symlink_to(outside, target_is_directory=True)
+                        frame["image"] = "linked/outside.png"
+                    elif variant == "linked-manifest":
+                        path.rename(outside / "outside.json")
+                        path.symlink_to(outside / "outside.json")
+                        return 0
+                    path.write_text("[" if variant == "malformed" else json.dumps(manifest))
+                    return 0
+
+                self.execute.side_effect = completed
+                result = agent_visual_check.check_recipe(self.args("--review-manifest", "captures/review.json"))
+                self.assertFalse(result["ok"])
+                self.assertEqual(result["returncode"], 0)
+                self.assertIn("Review gallery failed", result["error"])
+                self.assertIn(error, result["error"])
+                self.assertNotIn("viewer", result["review"])
+                self.assertEqual(json.loads((self.output / "check.json").read_text()), result)
+                self.assertEqual((self.output / "check.log").read_text(), "recipe rendered\n")
+                self.assertFalse((self.output / "review-gallery").exists())
 
 
 class TestVisualHostContext(unittest.TestCase):

@@ -1,31 +1,18 @@
-# Contributor and coding-agent guide
+# Contributor guide
 
-Use this guide when changing the Basaltwater repository. For operating a
-managed coding VM or workstation, use the sibling
-[agent-systems guide](../README.md) instead.
+Read [AGENTS.md](../../../AGENTS.md) for repository rules. For operating a managed
+machine, start with the [agent systems index](../README.md).
 
-## Start here
-
-| Need | Guide |
+| Task | Open |
 | --- | --- |
-| Repository-specific rules | [`AGENTS.md`](../../../AGENTS.md) |
-| General project workflow and delegation | [Basaltwater project development skill](../../../common/agent_skills/basaltwater-project-development/SKILL.md) |
-| Basaltwater subagent workflows | [Subagent guidance](../agent-subagents.md) |
-| Types, validators, capability helpers, setup composition, and command contracts | [Quick reference](quick-reference.md) |
-| Common failures and debugging | [Troubleshooting](troubleshooting.md) |
-| Shared build request and artifact interfaces | [Build contracts](build-contracts.md) |
-| Target deployment reservations and replay safety | [Build admission](build-admission.md) |
-| Debian build process and resource supervision | [Build execution](build-execution.md) |
-| Pinned build inputs and bounded workspace | [Source snapshots](build-source.md), [scratch storage](build-scratch.md) |
-| Durable builder jobs and composition | [Job store](build-jobs.md), [worker](build-worker.md) |
-| Explicit terminal builder quota maintenance | [Settlement, source/log pruning and bundle release](build-retention.md), [capacity inspection](build-host-entrypoint.md#read-only-local-capacity-inspection) |
-| Authenticated builder transport and admission | [Process entrypoint](build-host-entrypoint.md), [dispatcher](build-host-service.md), [project policy](build-host-policy.md), [source admission](build-inputs.md) |
-| Managed builder enrollment and controller transport | [Setup configuration](build-host-config.md), [installer](build-host-setup.md), [SSH client](build-client.md) |
-| Public selected-builder setup and recovery | [Controller setup](build-setup.md), [saved selection](build-selection.md), [selection configuration](build-selection-config.md), [pinned sources](build-setup-sources.md), [delivery planning](build-setup-plan.md) |
-| Completed controller history maintenance | [Explicit archival](build-setup-history.md) |
-| Operator build walkthrough and sample projects | [Build systems](../../services/build-systems.md), [examples and enrollment templates](../../examples/builds/README.md) |
-| Prebuilt service compatibility | [Runtime validation](build-runtime.md) |
-| Authenticated prebuilt target deployment | [Target policy](build-target-policy.md), [staging](build-target-artifacts.md), [dispatcher](build-target-service.md), [activation](build-target-activation.md), [process entrypoint](build-target-entrypoint.md), [SSH client](build-target-client.md) |
+| Locate helpers, validators, and setup composition | [Contributor quick reference](quick-reference.md) |
+| Debug a failed setup or check | [Troubleshooting](troubleshooting.md) |
+| Change builder admission, delivery, or target activation | [Build implementation map](build-architecture.md) |
+| Change persistent state or managed systemd units | [Transaction safety](transaction-safety.md) |
+| Add or maintain tests | [Test design and fixtures](test-design.md) |
+| Diagnose CI, package checks, or runner compatibility | [CI and packaging](ci.md) |
+| Measure development resource use | [Resource benchmarks](benchmarks.md) |
+| Delegate or choose a model | [Subagent workflows](../agent-subagents.md) |
 
 ## Core architecture
 
@@ -44,294 +31,23 @@ When adding a setup feature, implement it in its owning package, wire it into
 the relevant plugin builder or extension, add focused tests, and update the
 operator documentation.
 
-For `--build-on`, the public remote-setup hook holds the controller setup-target
-lock across preflight, minimal target enrollment, artifact delivery and guarded
-final profile application. Minimal enrollment preserves the saved profile; final
-setup carries transient expected release identities and omits reenrollment.
-Keep builder selection and credentials on the controller. Targets retain artifact
-mode and installed releases for local reconciliation without source fetches or
-build commands. Preserve guards, retained inputs and exact IDs on uncertain
-responses; do not add retries or replacement identities. See
-[controller setup](build-setup.md) for the bounded scope and recovery contract.
-Selected native public-flow coverage includes a fresh Debian target with Node-built
-static sites and Go services, guarded final setup, retained reconciliation and idle reboot
-without target compilers. See the [coverage map](../../plans/testing-coverage.md)
-for remaining boundaries; mocked checks and dry runs do not establish live coverage.
+Routine setup guides should use a few `setup` commands that describe the desired
+machines and automate prerequisite ordering. Do not recommend `patch` as part of
+routine setup. Keep detailed inspection and recovery procedures in the owning
+service documentation, linked from the normal workflow.
 
 ## Standard checks
 
-Install the development extra in an isolated environment before running the CI
-checks; it includes wheel building and coverage:
+Use an isolated Python environment with the project's development extras.
 
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install '.[dev,completion]'
-source .venv/bin/activate  # In fish: source .venv/bin/activate.fish
-make dev-check
+source .venv/bin/activate
 make check-fast
 ```
 
-Use `make check-fast` for the edit/test loop: it runs syntax, documentation and
-package metadata checks plus the smoke suite. Select relevant tests with
-`make check-fast SUITE=web`, `make test SUITE="web network"`, or
-`make test TEST=tests.test_gogs_steps.TestGogsNginx`. `TEST_ARGS="--durations 20"`
-reports slow tests. Suite and explicit test selections combine without repeats.
-Quiet runs discard test stdout/stderr by default. `TEST_ARGS="--show-output"`
-retains the last 256 Ki characters and prints that tail on failure, with an
-omission notice when truncated. Failure tracebacks are still reported normally;
-use `make test-verbose` for live, complete test output.
-The fast target omits the generated brand export and wheel build/install checks;
-run affected checks before committing and let GitHub CI perform full validation.
-`make artifact-check` suppresses successful build/install chatter and reports
-the wheel smoke result. Failed build/install commands replay their full output
-and remain failures. Its Linux installed-CLI check also exercises offline desktop
-instruction paging, coordinate mapping and durable run continuation/refusal in
-private temporary files, without contacting or starting a desktop helper.
-Use `python3 run_tests.py --list-suites` to see concise suite names and sizes.
-Choose all affected domains; shared configuration, validators, plugin composition,
-test infrastructure, or uncertain dependencies warrant a full local run.
-Use `make check-ci` for that broad validation or when CI is unavailable.
-
-Use the project's environment rather than installing development dependencies
-into CachyOS's or Debian's system Python.
-
-`make dev-check` reports the selected Python executable and missing development
-modules before tests start. Fast checks, test targets and coverage run it
-automatically. It checks module discoverability, not installed version ranges;
-install the declared extras to resolve those ranges. It never installs packages.
-Standalone compilation and documentation checks still need only the standard
-library; direct `run_tests.py` selections remain available for such focused checks.
-
-`make compile` excludes managed `cachyos-t3` application payloads, `node_modules`,
-build/output/cache trees, egg metadata and virtual environments (including custom
-names containing `pyvenv.cfg`). It skips symlinks instead of compiling external
-trees. Syntax errors in maintained source still fail the command. No Git metadata
-is required, so the same boundary works in a source archive.
-
-The Python documentation checks also run on native Windows with Python 3.11+
-from the repository root (use `python3` instead of `python` where appropriate):
-
-```text
-python scripts/check_cli_docs.py
-python scripts/check_doc_links.py
-python run_tests.py tests.test_cli_docs
-```
-
-These offline checks need only the standard library. The CLI checker reads actual
-root parser registrations without importing the Linux controller. It follows
-imported builders and local helper functions, includes literal names and aliases,
-and ignores nested commands. Nonliteral names/aliases, conditional registration,
-loops or other unsupported uses of root subparsers fail with a source location;
-extend the checker when introducing a new registration pattern. Existing alias
-exemptions remain explicit in the checker. POSIX tests also compare the static
-result with the runtime parser. These commands do not establish native Windows
-support for the Linux controller, full test suite or Make targets; full checks
-still require the documented Debian environment.
-
-CI installs the same `dev` and `completion` extras from `pyproject.toml`, so new
-test dependencies such as Guacamole's aiohttp are included automatically.
-
-Python 3.11 is the minimum supported interpreter; release CI also checks Python
-3.15. Keep this range aligned with `pyproject.toml` and the installer checks.
-The build backend requires setuptools 84.2.1 or newer, and the development
-extra requires aiohttp 3.14.5 or newer, excluding versions affected by the
-[setuptools path traversal advisory](https://github.com/pypa/setuptools/security/advisories/GHSA-5rjg-fvgr-3xxf)
-and [aiohttp security fixes](https://github.com/aio-libs/aiohttp/releases/tag/v3.14.4).
-Target services use distribution-managed packages and their security updates.
-
-Routine CI uses Python 3.13 in Debian Trixie. Branch and release test jobs run
-[`scripts/run_debian_ci.py`](../../../scripts/run_debian_ci.py) on an
-`ubuntu-24.04` hosted runner. The Python and Node tool-cache binaries run inside
-Trixie, so keep their runtime ABI compatible with its glibc; the wrapper checks
-Python's `sqlite3`, `ssl` and `termios` imports before installing dependencies.
-Ubuntu 26.04's tool-cache Python can require glibc 2.42 (including its
-`termios` extension), which Trixie does not provide. Keep the Debian test host
-on 24.04 until compatible Python builds are available or interpreter provisioning
-is moved inside Debian. Branch CI separately builds, installs and smoke-tests
-the wheel natively on Ubuntu 26.04 with Python 3.15, so current platform
-packaging stays covered without mixing runtime ABIs. Release wheel packaging
-uses `ubuntu-latest`; Debian release tests retain the compatible host.
-Requalify the runtime imports inside Debian before changing that host image.
-The wrapper tries
-Docker's official Debian image from
-[public ECR](https://gallery.ecr.aws/docker/library/debian), Google's
-[Docker Hub cache](https://docs.cloud.google.com/artifact-registry/docs/pull-cached-dockerhub-images),
-then Docker Hub, with a two-minute bound per pull. This keeps registry fallback
-inside a runnable step; job-container initialization would fail before fallback.
-The selected `actions/setup-python` interpreter and supported `actions/setup-node`
-runtime are mounted read-only from the runner tool cache. Python creates a private
-container venv; checks still run in Debian. Branch CI covers Node 24.22.1 and
-26.12.1. Only image pulls fall back:
-failed package installation, checks and coverage are never replayed. Cleanup
-removes only that invocation's named container. An all-registry failure means
-checks did not start. Inspect the failed step before changing application code.
-The wrapper reports elapsed seconds and exit status for APT update/install,
-venv creation, Python dependencies and checks. It uses the selected interpreter's
-bundled pip and disables pip update notifications, avoiding a separate pip
-upgrade/download before installing the declared dependencies. These timings
-separate environment preparation from validation before considering caches.
-`make check-ci` runs all static, brand and wheel checks and executes the full
-suite once with branch coverage, matching branch CI. Do not also run
-`make check` and `make coverage` for the same unchanged source: that repeats
-the full suite. `make check` remains available for full verification without
-coverage, and `make coverage` produces a standalone full-suite report. Fast
-selections do not narrow `check-ci` or `coverage`.
-On a larger allocation, `make -j2 check-ci` overlaps independent static/artifact
-checks with the single serial coverage run. Plain `make check-ci` stays serial.
-The Debian wrapper exposes `--check-jobs 1|2` (default `1`); hosted full and
-release checks select `2`, while Node compatibility stays at `1`. This is a
-native Make job limit within one invocation, not automatic test workers or
-shared admission across invocations. The operator/outer runner owns the
-allocation and concurrent runs. Use serial checks on constrained machines;
-full validation is separate from the 1 GiB basic-development workload.
-Wheel snapshots exclude live coverage databases and their SQLite side files,
-but retain `.coveragerc`, so concurrent coverage cannot race their source copy.
-Branch CI runs the complete covered suite and all static/artifact checks once
-on Node 24. The Node 26 job runs only `make test SUITE=node`: generated OpenCode
-hooks, Guacamole browser behavior, and the certificate-install UI. Keep this
-selection in `run_tests.py` current when adding tests that execute JavaScript.
-Both jobs retain the Debian environment and registry fallback. Release CI still
-runs full checks at both supported Python version endpoints.
-
-CI replaces obsolete runs when a newer revision is pushed to the same branch
-or pull request. The coverage run reports the ten slowest modules and tests;
-module totals reveal accumulated fixture cost that individual timings can hide.
-
-```bash
-python3 -m py_compile file.py
-basaltw setup server_web test.com --dry-run
-python3 -m unittest discover -s tests
-git diff --check
-```
-
-Tests run on Debian and must not modify the local system. Use `--dry-run` for
-setup-plan validation; never run a test against a real target.
-Debian CI runs as root inside its container. When a fixture mocks a desktop
-user's UID, model ownership of its temporary files consistently while retaining
-the permission and file-type checks being tested.
-Mock user-runtime locks in setup/refresh tests that do not exercise locking;
-use a temporary file descriptor when refresh needs an exec handoff.
-Set required fixture directory modes explicitly rather than relying on the
-runner's umask. An unsafe ancestor can otherwise prevent a negative test from
-reaching the file or failure it intends to exercise.
-`Path.mkdir(parents=True, mode=...)` applies the requested mode only to the
-leaf; set required ancestor modes explicitly too, and use `chmod` when a
-restrictive umask would remove required access.
-When running those tests from a CachyOS workstation, fixtures must mock the
-target distribution, package-manager discovery, and account privileges. A
-Debian test must not accidentally enter the local CachyOS setup path or inspect
-and remove files from the developer's host.
-When mocking `sys.flags`, preserve the interpreter's other flags and override
-only the flag under test; standard libraries such as Python 3.14's argparse
-also consult that global object. Mock `Path.lstat` directly when testing its
-callers rather than relying on which OS function a Python version uses beneath
-it. Executable-search fixtures must provide their own required tools and an
-isolated PATH: an invalid fixture executable can otherwise fall through to a
-real workstation installation.
-Register new test modules in the appropriate `TEST_SUITE_PATTERNS` entry in
-`run_tests.py`; the default suite checks that every discovered module belongs
-to a domain suite.
-Generated OpenCode context hooks also have offline behavioral tests using
-Node.js. Keep a supported Node.js available when running those tests locally;
-the Debian CI container uses the explicitly selected runner runtime so this
-coverage is exercised there.
-
-First-party Chromium/Firefox application checks are a separate developer-machine
-command: `make browser-test`. They are never dependencies of `check-ci` and do
-not install browser payloads. Follow [browser qualification](../browser-testing.md)
-for prerequisites, private evidence, the disposable Guacamole boundary, and the
-separate native Firefox ESR release check. Keep fast unit/service/render checks
-in CI. When creating project instructions, document browser targets and the
-local intensive test command in its agent/contributor guidance; projects can
-explicitly choose another CI policy when their needs justify it.
-
-For interactive panel edits, run `make panel-dev` in the activated environment.
-It serves the production handlers on loopback with sample scenarios, simulated
-host actions, private temporary state and automatic source/browser reload.
-Use `PANEL_ARGS="--scenario degraded"` for failure states or `PANEL_ARGS="--https"`
-for transport-sensitive forms. `PANEL_ARGS="--surface connect"` opens T3 Connect;
-`pairing`, `approval`, `desktop`, and `console` select the other specialized
-panels with the same reset/reload workflow. Desktop and Console require reviewed
-Guacamole assets and enable HTTPS automatically.
-See the [local panel workflow](../browser-testing.md#develop-the-web-panel-locally)
-for scenario/reset controls, supported simulated actions and certificate trust.
-For a focused browser check use
-`make browser-test BROWSER_ARGS="--engine chromium --grep 'panel development'"`;
-filtered results do not count as full application qualification.
-
-## Resource benchmarks
-
-Use `python3 scripts/benchmark_development.py --output /private/new-evidence.json`
-for serial offline CLI/help, smoke and representative validation/network/atomic
-test measurements. The output parent must exist; the command creates a new
-mode-`0600` file and refuses overwrites. Select `--workload help` (repeatable),
-`--samples 20` for short-operation tail latency, or `--cli /absolute/basaltw`
-to measure an installed launcher. Tests always use the checkout. This command
-does not install dependencies, build wheels or configure services.
-Use `--checkout /absolute/other-checkout` to compare revisions with the same
-benchmark implementation; both source and benchmark revisions are recorded.
-
-Defaults are three samples, a 60-second trial deadline and a 300-second total
-workload budget. Counts/deadlines and captured output are bounded; a failed
-workload stops the benchmark and remains a failure. Each trial runs in a fresh
-worker, records elapsed/child CPU and explicitly scoped RSS plus before/after
-resource observations. Largest-child RSS is not aggregate workload or guest
-memory, and shared cgroup/pressure observations are not exclusive job evidence.
-Fewer than 20 samples do not produce a p95 claim. Cache labels describe the
-state you prepared; the tool does not clear caches. Raw JSON can contain bounded
-failure diagnostics; sanitize it before sharing. Bash completion, editor
-responsiveness and whole-guest peak/headroom still require separate native
-qualification under the [optimization plan](../../plans/resource-aware-optimization.md).
-
-## Maintaining tests
-
-The shell-safety scan checks normalized keyword spelling before parsing source;
-unrelated Unicode text does not require an AST walk. Keep its positive Unicode
-keyword and negative comment/string cases when changing that prefilter.
-
-Keep tests that exercise an observable contract: parsed arguments, generated
-configuration, state changes, failure propagation, permissions, rollback, or
-credential handling. A regression's age alone is not a reason to remove it.
-
-Before adding a regression, check the owning domain suite for an existing case
-that can cover it. Remove settled feature-presence checks, import/re-export
-identity assertions, and catalog snapshots when behavior tests already cover
-the contract. Test ordering with small fixtures rather than copying the entire
-built-in catalog. Tests must call Basaltwater code; recomputing the same expected
-value with a standard-library function does not verify the application.
-
-When pruning, name the retained coverage in the commit description and preserve
-distinct failure inputs, even if their assertion bodies match. Use `subTest`
-for a shared behavioral contract when it improves clarity. Sweep independent
-options separately and keep representative interaction cases; avoid Cartesian
-products unless the options interact. Reuse parsers and immutable fixtures
-within the owning test class. Generated HTML and
-service configuration assertions remain useful when they verify access,
-escaping, activation, or other behavior. Run the affected selection and review
-coverage when pruning execution paths; a broad cleanup warrants `make check-ci`.
-
-Keep related variants in the owning module: optional development bundles share
-`test_development_tool_bundles.py`, disk-space calculations belong in
-`test_disk_utils.py`, and mount boundaries belong in `test_mount_utils.py`.
-Prefer one fixture per contract over rerendering identical configuration for
-each directive. Mock host observations such as disk usage and assert exact
-values and threshold boundaries. Coverage overlap helps locate candidates;
-it does not establish that their assertions or failure inputs are redundant.
-For storage limits, lower the fixture's limit instead of generating large
-volumes of data. For timeout logic, advance fixture timestamps and control the
-owning module's timer; retain real transport tests for connection lifecycle.
-Synchronize concurrent tests on events instead of fixed sleeps, and keep mocks
-local so they do not change the event loop's clock or unrelated tasks.
-
-## Repository maps
-
-| Topic | Location |
-| --- | --- |
-| Configuration and serialization | `lib/config.py`, `lib/runtime_config.py` |
-| Common types | `lib/types.py` |
-| Machine capability checks | `lib/machine_state.py` |
-| Structured and identity validation | `lib/validation.py`, `lib/validators.py` |
-| Remote commands | `lib/remote_utils.py` |
-| User-facing command parsing | `lib/arg_parser.py` |
-| Setup composition | `plugins/` |
-| Operator behavior | [Documentation index](../../README.md) |
+Use `make docs-check` for documentation, `make check-fast SUITE=web` for a
+focused implementation check, and `make check-ci` for broad shared changes
+or local CI-equivalent validation. See [local checks](checks.md) for test
+selection, native Windows documentation checks, and browser development.

@@ -26,7 +26,7 @@ Interactive desktop behavior still needs a separate shared-session check.
 
 Basaltwater's Debian `--game-dev` bundle includes Xvfb, xauth, Mesa diagnostics
 and Electron runtime libraries; see
-[Debian native tooling](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/project-tooling.md#debian-native-game-development).
+[Debian native tooling](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/project-native-builds.md#debian-native-game-development).
 Without Basaltwater, install `xvfb`, `xauth`, `mesa-utils` and the runtime
 libraries required by the project's pinned Electron version through Debian's
 package manager. Keep the project's lockfile, Node/Electron pins and install

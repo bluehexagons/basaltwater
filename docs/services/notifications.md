@@ -26,15 +26,21 @@ commands replace webhook URLs with `https://REPLACE_WITH_WEBHOOK_URL`; insert
 the real target before replaying a command. The saved target remains available
 to scheduled notification jobs.
 
-HTTPS webhook delivery accepts self-signed certificates by default so a sender
-can notify a Basaltwater panel that uses its VM-local CA. This keeps the
-connection encrypted but does not authenticate the receiver's certificate or
-hostname. Add `--notification-strict-https` to require the sender's normal CA
-bundle and hostname checks; use `--no-notification-strict-https` on a patch to
-return to the default compatibility mode. The setting applies to setup,
-scheduled jobs, and other outbound notifications saved on that system.
-Use strict mode when the network is not already trusted or the receiver's
-identity must be authenticated.
+HTTPS webhook delivery accepts self-signed certificates by default and skips
+certificate and hostname verification. Use `--notification-strict-https` to
+verify both, especially for senders that transmit bearer tokens. Previously
+saved strict settings remain in effect. For a private CA, either install the
+verified public certificate in the sender's trust store and enable strict
+checking, or pass `--notification-ca-file /etc/basaltwater/receiver-ca.pem` to
+enable verification with an additional CA bundle on the sending machine.
+Keep the file and its directory under the control of the account that manages
+sender trust. The bundle adds trust for notification webhooks alongside the
+system CAs. Use `--notification-ca-file ''` to clear the saved bundle path.
+
+Use `--notification-allow-unverified-https` (or
+`--no-notification-strict-https`) to override a saved strict setting. Clear any
+saved CA bundle in the same command. The policy applies to setup and scheduled
+notifications. Tokenless HTTP targets remain available on trusted networks.
 
 ## CachyOS workstation webhooks
 
@@ -55,7 +61,7 @@ failing phase and exception type, retaining detailed output locally.
 Successful setup stores webhook URLs and policy in the private user-owned
 local selection and receipt; displayed refresh commands redact URLs. Use
 `refresh`, rather than generic remote-host `patch`, `info`, or `cmd`, to retain
-or change that selection. See [CachyOS notification maintenance](../workstations/cachyos-maintenance.md#webhook-notifications)
+or change that selection. See [CachyOS notification maintenance](../workstations/cachyos-refresh.md#webhook-notifications)
 for adding targets to an existing setup, disabling delivery, and replacing targets.
 
 ## Send notifications to a Basaltwater web panel
@@ -99,6 +105,7 @@ by the panel):
 
 ```bash
 basaltw patch sender.example agent \
+  --notification-strict-https \
   --notify webhook \
   'https://panel.example/api/v1/notifications#TOKEN_FROM_PANEL_HOST'
 ```
@@ -107,18 +114,22 @@ Basaltwater removes the fragment from the URL and sends it in the
 `Authorization: Bearer ...` header. The token does not enter the HTTP request
 path or Nginx access log.
 
-The sender accepts the panel's self-signed certificate by default. To require
-the panel certificate to chain to a trusted public or locally installed CA,
-append `--notification-strict-https` to that setup or patch command.
+For a panel using a VM-local CA, install that CA on the sender or pass its
+absolute PEM path using `--notification-ca-file`. Use the hostname or IP
+covered by the panel certificate in the webhook URL. [VM CA trust](client-ca-trust.md)
 
 ### 3. Verify delivery
 
 Open the panel and check **Notifications** after the sender's setup finishes.
 The setup result uses the newly saved target. Repeated delivery attempts with
-the same event ID appear only once.
+the same event ID appear only once. Active alerts and history show suggested
+actions alongside the report. Expand **Security findings** for the scan window
+and structured evidence. The panel displays timestamps with timezone offsets
+in your browser's local time. Hover over a time to see the sender's original
+value. Older evidence without an offset remains in the sender's local time.
 
 For enablement, disablement, rotation, retention, and API limits, see
-[Web panel notification ingest](web-panel-reference.md#notification-ingest).
+[Web panel notification ingest](web-panel-events-reference.md#notification-ingest).
 
 > Treat the full fragment-bearing URL as a credential. Do not paste it into
 > tickets, logs, or shared terminal output. It remains in the sender's saved
@@ -179,15 +190,24 @@ not a second notification based on pre-setup state.
 | Event | Meaning | Suggested response |
 | --- | --- | --- |
 | Protected-file audit finding | Evidence names the affected control, path, actor, operation, and executable when available; it is not proof of compromise | Compare the evidence with approved work |
+| Kernel module activity | Auditd recorded module operations, including failed attempts. The report includes names, results, executables, and audit login identities when recorded | Compare the timing with boot, service startup, and maintenance logs. An unset login identity can occur during automatic loading |
 | SSH failures or account lockout | Failures are grouped by source, user, and method; lockouts are warnings | Check the source and affected account |
 | fail2ban ban | A source address was banned by a named jail | Investigate repeated or unexpected sources |
 | Monitoring source unavailable | auditd, fail2ban, or the SSH journal could not be read | Restore the named source; recovery is sent once |
+| Source retention gap | The cursor predates the oldest retained entry in the named log. The report shows the affected interval and the oldest entry observed | Check archived logs for the uncovered interval and review retention |
 
 Routine sudo audit hits, fail2ban ban expirations, and missing optional security
 components do not notify by themselves. Audit events recorded during a
 Basaltwater setup window are treated as expected maintenance; the setup result
 records that work. The monitor holds its cursor while a required source is
 unavailable so events are not silently skipped.
+
+During catch-up, the monitor reports each newly uncovered source and includes
+the interval through its observed retention boundary. It logs every affected
+scan window locally. Extensions of the same continuous gap are combined into
+at most one update every 24 hours per source. Failed attempts follow the same
+interval because a report can reach some targets before another target fails.
+Separate gaps and findings from retained logs still notify promptly.
 
 ## Webhook API
 

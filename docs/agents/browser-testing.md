@@ -83,19 +83,18 @@ ends. The same TLS option is available for pairing and approval development.
 Select a first-party surface with the same command:
 
 ```bash
-make panel-dev PANEL_ARGS="--surface connect"
 make panel-dev PANEL_ARGS="--surface pairing --https"
 make panel-dev PANEL_ARGS="--surface approval"
 make panel-dev PANEL_ARGS="--surface desktop"
 make panel-dev PANEL_ARGS="--surface console --port 8766"
 ```
 
-The printed URL opens the selected page. Pairing and Connect share the production
-portal: `/devices` shows enrollment and relay controls, `/connect/t3code` shows
-Connect, and `/` exercises automatic browser enrollment. Links end at a synthetic
-local destination. Start authorization, enter any sample response, refresh status,
-and toggle startup through the real nonce-protected forms. No relay is installed,
-account authorized, or service restarted. Sample responses are discarded.
+The printed URL opens the selected page. Pairing uses the production portal:
+`/devices` shows enrollment and a native T3 handoff; `/` exercises automatic
+browser enrollment. Pairing links end at a synthetic local destination.
+The handoff checks its origin and displays native host commands; no relay is
+installed, account authorized, or service restarted. The former `connect`
+development surface and portal authorization forms have been removed.
 
 Approval runs the production approval handler against a simulated broker. `full`
 includes pending, approved, denied and expired requests; `minimal` includes one
@@ -114,10 +113,9 @@ installed pinned release, or supplied with `--guacamole-assets /absolute/share/a
 The checksum must match the reviewed client; this command installs nothing.
 
 All surfaces share scenario/reset controls, stable URLs and credentials, source
-watching and browser refresh. `full` starts Connect linked and the synthetic desktop
-running; `minimal` and `empty` start Connect disabled, and `empty` leaves the
-desktop stopped until Connect to desktop is selected. `degraded` simulates provider,
-relay, broker and desktop failures. Saved Connect state and approval decisions
+watching and browser refresh. `full` starts the synthetic desktop running;
+`empty` leaves it stopped until Connect to desktop is selected. `degraded`
+simulates provider, broker and desktop failures. Saved approval decisions
 survive source reloads and clear on reset/scenario changes. Nonces, approval CSRF
 tokens, and desktop/console sessions are renewed on source reload; an active
 display or unsaved form offers a reload link instead of an automatic refresh.
@@ -128,7 +126,7 @@ Run the matching focused browser checks while editing, then the full suite:
 
 ```bash
 make browser-test BROWSER_ARGS="--grep 'specialized development' --require-guacamole"
-make browser-test BROWSER_ARGS="--grep 'specialized development connect'"
+make browser-test BROWSER_ARGS="--grep 'specialized development pairing'"
 ```
 
 The local suite launches each specialized development command and checks real
@@ -148,7 +146,7 @@ records from `scripts/panel_samples.py`; interactive changes never alter exports
 ## Run the local suite
 
 Use a development machine with the Python development extra installed, Node.js
-24.22.1+ (24 LTS) or 26.12.1+ (26 Current), OpenSSL, NSS `certutil`
+24.22.1+ (24 LTS) or 26.12.1+ (26 LTS), OpenSSL, NSS `certutil`
 (Debian's `libnss3-tools`), and the selected browsers'
 existing OS dependencies. The command never installs packages or downloads
 browser payloads. On a managed development VM with the pinned runtime:
@@ -163,7 +161,8 @@ make browser-test
 `managed` uses stable Playwright 1.64.1 under
 `/opt/basaltwater-playwright-stable`. MCP's separate alpha dependency is never
 used by this application suite. Both managed contexts use the checksum-pinned,
-root-owned Node 24.22.1 interpreter under `/opt/basaltwater-node`.
+root-owned [service Node interpreter](browser-automation.md#installed-components-and-agent-configuration)
+under `/opt/basaltwater-node`.
 
 If Firefox's matching payload is absent, explicitly provision it first with
 `basaltw agent browser install --engine firefox --context managed --json`.
@@ -236,8 +235,8 @@ light/dark themes, desktop/narrow layout, enlarged text, meters, actual form
 submissions and redirects, authentication challenges, Secure/HttpOnly/SameSite
 pairing cookies, nonce replay, forged CSRF, approval origin and replay rejection,
 denial and expiry of a previously rendered approval form, safe status recovery
-after a rejected decision, long approval values at narrow widths, readable Connect
-authorization links and keyboard focus, on-demand jobs and diagnostics loading,
+after a rejected decision, long approval values at narrow widths, native T3
+handoff links and host-command guidance, on-demand jobs and diagnostics loading,
 job failure and inactive-timer details, log-filter handoff and broader searches,
 empty and incomplete collection notices, and completed CA downloads checked
 against the displayed fingerprint. Jobs and diagnostics scenarios use synthetic
@@ -255,6 +254,43 @@ check the form at a 320px viewport with 200% text. The development adapter
 currently records Admin submissions immediately as `succeeded` (or `failed` in
 `degraded`), so pending-action gating and request cancellation require separate
 deployment checks.
+
+### Headscale portal and static onboarding boundary
+
+Run the bounded Headscale checks in both installed managed engines:
+
+```bash
+python3 scripts/run_browser_tests.py --grep Headscale --trace
+python3 -m unittest tests.test_headscale_browser_fixture tests.test_web_browser_support
+```
+
+`tests/browser/headscale.spec.cjs` uses separate fixture frontends, the production
+Headscale renderer and POST handler, and a synthetic broker with fixed inventory
+and pending review records. It covers escaped inventory, create/delete person,
+exact password Auth ID plus required verification checkbox, separate pending
+review, node expiry/revocation forms, rejected CSRF/duplicate fields/unknown
+actions, secret-free review metadata and rendered outcomes, desktop/320px layout,
+200% text and keyboard focus. Review is opened but never approved or executed.
+The broker has no executor; no native/admin commands or key issuance occur.
+
+The test handler explicitly simulates trusted admission behind authenticated
+fixture TLS. Its negative controls check missing identity and insecure forwarded
+transport within that simulation. This does **not** qualify production
+`_headscale_authorized`: AF_UNIX `www-data` peer credentials, authenticated
+Nginx headers and HTTPS enforcement require separate deployment qualification.
+Production guards are unchanged. Existing panel scenarios use their original
+frontend and state.
+
+Static onboarding uses the production HTML/CSS renderers through fixture TLS.
+Checks inspect official links and all five platform instructions without
+following external links or downloading clients. Only local CSS and a fixed PNG
+are loaded. Fixture metadata declares the PNG's intended payload to be the exact
+onboarding page URL, separate from the control URL; this is not a decoded QR or
+`qrencode` qualification. Native QR generation remains covered by unit tests.
+The ephemeral TLS CA exists solely for browser trust; no service certificates or
+enrollment keys are issued. Evidence stays in the private runner directory.
+Filtered results qualify only the selected checks; native ESR, real broker
+execution, client revocation and live proxy/auth remain separate checks.
 
 ### Guacamole boundary
 
@@ -311,11 +347,13 @@ use its documented session launcher and preserve unrelated applications.
 2. Obtain `ca.crt` from the local fixture directory. Compare its SHA-256 through
    the independent local terminal. For a disposable remote VM, transfer only
    its public CA through trusted SSH and follow [client CA trust](../services/client-ca-trust.md).
-3. In this disposable Firefox profile only, import the verified CA under
-   Settings → Privacy & Security → Certificates → View Certificates →
-   Authorities, enabling website trust. Restart the profile if needed, then
-   reload the valid HTTPS URLs. Never disable certificate checks or enroll the
-   fixture CA globally.
+3. In this disposable Firefox profile only, open the certificate manager from
+   Privacy and security in Settings. In the redesigned Settings, open
+   **Connection and software security → Advanced settings → Manage certificates**.
+   In the older layout, choose **Certificates → View Certificates**. Open
+   **Authorities**, import the verified CA and enable website trust. Restart
+   the profile if needed, then reload the valid HTTPS URLs. Keep certificate
+   checks enabled and restrict enrollment to the disposable profile.
 4. Check panel navigation, keyboard focus, disclosures, meters, light/dark
    appearance, 100%/200% browser zoom, and desktop/narrow widths. Download the
    public CA and compare its SHA-256 with the independent local value.
@@ -343,6 +381,6 @@ This native ESR/deployment record remains a manual release requirement; the
 automated local suite never marks it complete.
 
 For projects created with Basaltwater, follow the
-[project browser policy](project-tooling.md#project-browser-tests). Agent runtime
+[project browser policy](project-manifests.md#project-browser-tests). Agent runtime
 selection and opt-in Firefox MCP registration are described in
 [browser automation](browser-automation.md#verification).

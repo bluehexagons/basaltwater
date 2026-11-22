@@ -6,6 +6,7 @@ import argparse
 import ipaddress
 import json
 import os
+import re
 import shlex
 import socket
 import stat
@@ -506,6 +507,23 @@ class SetupConfig:
     network_gateway6: MaybeStr = None
     network_dns: Optional[StrList] = None
     network_interface: MaybeStr = None
+    headscale: bool | None = None
+    headscale_name: MaybeStr = None
+    headscale_registration_id: MaybeStr = None
+    headscale_registration_binding: dict | None = None
+    tailscale_tags: Optional[StrList] = None
+    tailscale: bool | None = None
+    unbound: bool | None = None
+    headscale_domain: MaybeStr = None
+    headscale_base_domain: MaybeStr = None
+    headscale_onboarding_domain: MaybeStr = None
+    headscale_onboarding_control_url: MaybeStr = None  # Static page metadata; no client intent
+    headscale_public_ipv4: MaybeStr = None
+    headscale_public_ipv6: MaybeStr = None
+    headscale_resolvers: Optional[StrList] = None  # Candidates only; never DNS publication
+    tailscale_server: MaybeStr = None  # Controller-local friendly selector
+    tailscale_server_id: MaybeStr = None  # Stable controller registry identity
+    tailscale_login_server: MaybeStr = None  # Resolved endpoint, never credentials
     activate_network: bool = False
     friendly_name: MaybeStr = None
     tags: Optional[StrList] = None
@@ -538,6 +556,7 @@ class SetupConfig:
     install_go: bool = False
     install_node: bool = False
     install_node_versions: bool = False
+    update_nvm_npm: MaybeStr = None
     install_game_dev: bool = False
     install_python: bool = False
     install_data_analysis_tools: bool = False
@@ -687,6 +706,7 @@ class SetupConfig:
     clear_samba_metadata_cache: bool = False
     samba_shares: Optional[NestedStrList] = None
     share_credentials: Optional[NestedStrList] = None
+    resolved_credentials: Optional[NestedStrList] = field(default=None, repr=False)
     enable_smbclient: bool = False
     smb_mounts: Optional[NestedStrList] = None
     enable_syncthing: bool = False
@@ -699,6 +719,7 @@ class SetupConfig:
     notify_specs: Optional[NestedStrList] = None
     notification_level: MaybeStr = None
     notification_strict_https: Optional[bool] = None
+    notification_ca_file: MaybeStr = None
     antistatic_server: MaybeStr = None  # "DOMAIN[:port]" spec
     antistatic_admin: MaybeStr = None  # Username; password stays in the credential store
     antistatic_db: MaybeStr = None  # "DOMAIN[:port]" spec
@@ -766,6 +787,9 @@ class SetupConfig:
     _loading_saved_config: InitVar[bool] = field(default=False, kw_only=True)
 
     def __post_init__(self, _loading_saved_config: bool = False) -> None:
+        from lib.headscale_config import validate_headscale_settings
+
+        validate_headscale_settings(self)
         if self.install_audio_tools is not None and type(self.install_audio_tools) is not bool:
             raise ValueError("install_audio_tools must be a boolean")
         if self.system_type != "agent_cachyos":
@@ -883,6 +907,19 @@ class SetupConfig:
 
         if self.system_type != "agent_cachyos" and self.install_node_versions:
             raise ValueError("--node-versions requires the agent_cachyos profile; Debian --node already prepares NVM")
+        if self.update_nvm_npm is not None:
+            if self.system_type != "agent_cachyos":
+                raise ValueError("--update-nvm-npm requires the agent_cachyos profile")
+            if self.update_nvm_npm == "off":
+                self.update_nvm_npm = None
+            else:
+                from lib.node_toolchain import SUPPORTED_NODE_RANGE, is_supported_node
+
+                if (not isinstance(self.update_nvm_npm, str)
+                        or not re.fullmatch(r"v?[1-9][0-9]{0,4}(?:\.(?:0|[1-9][0-9]{0,4})){2}", self.update_nvm_npm)
+                        or not is_supported_node(self.update_nvm_npm)):
+                    raise ValueError(f"--update-nvm-npm requires an exact Node version within {SUPPORTED_NODE_RANGE}, or off")
+                self.update_nvm_npm = self.update_nvm_npm.removeprefix("v")
         if self.install_game_dev and self.system_type in {"server_proxmox", "server_wsl", "custom_steps"}:
             raise ValueError("--game-dev requires a Debian workstation/server or agent_cachyos profile")
 
@@ -957,10 +994,12 @@ class SetupConfig:
         validate_godot_bundle_settings(self)
         validate_guest_lifecycle_settings(self, require_provisioning=False)
         validate_notification_level(self.notification_level)
-        if self.notification_strict_https is not None and not isinstance(
-            self.notification_strict_https, bool
-        ):
-            raise ValueError("notification_strict_https must be boolean")
+        from lib.notifications import normalize_notification_ca_file, normalize_notification_strict_https
+
+        normalize_notification_ca_file(
+            self.notification_ca_file,
+            normalize_notification_strict_https(self.notification_strict_https, self.notification_ca_file),
+        )
         validate_syncthing_settings(self, loading_saved_config=_loading_saved_config)
         selected_godot_bundles = list(dict.fromkeys(self.godot_bundles or []))
         from lib.publishing_config import validate_publishing_tools
@@ -1037,6 +1076,12 @@ class SetupConfig:
         self.web_interfaces = web_interfaces or None
         if self.clear_access_sources:
             self.access_sources = None
+        if (
+            not _loading_saved_config
+            and self.system_type in {"server_proxmox", "server_wsl"}
+            and (self.ssh_access_sources or self.clear_ssh_access_sources)
+        ):
+            raise ValueError(f"{self.system_type} does not support --ssh-access-source or --no-ssh-access-source")
         if self.clear_ssh_access_sources:
             self.ssh_access_sources = None
         if self.ssh_access_sources is not None:
@@ -1103,12 +1148,12 @@ class SetupConfig:
                     "--codex, --claude, or --opencode"
                 )
         if self.web_interfaces:
+            web_sources = self.effective_web_interface_sources()
             if self.web_interface_host is None:
-                self.web_interface_host = (
-                    "0.0.0.0"
-                    if self.effective_web_interface_sources()
-                    else "127.0.0.1"
-                )
+                self.web_interface_host = "0.0.0.0" if web_sources else "127.0.0.1"
+            elif (not web_sources and self.web_interface_host in {"0.0.0.0", "::"}
+                  and (self.clear_web_interface_sources or self.clear_access_sources or self.clear_lan_access)):
+                self.web_interface_host = "::1" if self.web_interface_host == "::" else "127.0.0.1"
             if not 1 <= self.web_interface_port <= 65535:
                 raise ValueError("web_interface_port must be between 1 and 65535")
             # T3 Code's headless server requires the Node runtime even when
@@ -1373,6 +1418,9 @@ class SetupConfig:
 
         validate_kiosk_settings(self)
         args: StrList = []
+        from lib.headscale_config import headscale_args
+
+        args.extend(headscale_args(self, for_remote=True))
         if self.gogs:
             target_host = (
                 self.target_host
@@ -1552,6 +1600,8 @@ class SetupConfig:
             args.append("--node")
         if self.install_node_versions:
             args.append("--node-versions")
+        if self.update_nvm_npm:
+            args.extend(["--update-nvm-npm", self.update_nvm_npm])
         if self.install_game_dev:
             args.append("--game-dev")
         
@@ -1687,6 +1737,8 @@ class SetupConfig:
                 "--git-credential "
                 f"{shlex.quote(origin)} {shlex.quote(username)}"
             )
+        for record in self.resolved_credentials or []:
+            args.append(f"--resolved-credential {shlex.quote(json.dumps(record))}")
         for origin, encoded_pem in self.git_ca_pems or []:
             args.append(
                 "--git-ca-pem "
@@ -1833,6 +1885,10 @@ class SetupConfig:
             )
         if self.notification_strict_https is True:
             args.append("--notification-strict-https")
+        elif self.notification_strict_https is False:
+            args.append("--notification-allow-unverified-https")
+        if self.notification_ca_file is not None:
+            args.append(f"--notification-ca-file {shlex.quote(self.notification_ca_file)}")
         
         if self.antistatic_server:
             args.append(f"--antistatic-server {shlex.quote(self.antistatic_server)}")
@@ -1890,6 +1946,9 @@ class SetupConfig:
         # Keep all positionals before options for Python 3.11 argparse.
         if include_username:
             cmd_parts.append(self.username)
+        from lib.headscale_config import headscale_args
+
+        cmd_parts.extend(headscale_args(self))
         if self.t3code_ready:
             cmd_parts.append("--t3code-ready")
         if self.t3code_desktop:
@@ -2125,6 +2184,8 @@ class SetupConfig:
             cmd_parts.append("--node")
         if self.install_node_versions:
             cmd_parts.append("--node-versions")
+        if self.update_nvm_npm:
+            cmd_parts.append(f"--update-nvm-npm {self.update_nvm_npm}")
         if self.install_game_dev:
             cmd_parts.append("--game-dev")
         
@@ -2392,10 +2453,6 @@ class SetupConfig:
         MIN_SHARE_FIELDS = SHARE_USERS_INDEX + 1
         required_share_credentials: StrList = []
         seen_share_credentials: set[str] = set()
-        for _origin, username in self.git_credentials or []:
-            if username not in seen_share_credentials:
-                required_share_credentials.append(username)
-                seen_share_credentials.add(username)
         if self.antistatic_admin:
             if self.antistatic_admin not in seen_share_credentials:
                 required_share_credentials.append(self.antistatic_admin)
@@ -2490,6 +2547,10 @@ class SetupConfig:
             )
         if self.notification_strict_https is True:
             cmd_parts.append("--notification-strict-https")
+        elif self.notification_strict_https is False:
+            cmd_parts.append("--notification-allow-unverified-https")
+        if self.notification_ca_file is not None:
+            cmd_parts.append(f"--notification-ca-file {shlex.quote(self.notification_ca_file)}")
         
         # Antistatic lobby server
         if self.antistatic_server:
@@ -2582,6 +2643,7 @@ class SetupConfig:
         data.pop('system_type', None)
         data.pop('password', None)
         data.pop('share_credentials', None)
+        data.pop('resolved_credentials', None)
         data.pop('deploy_latest', None)
         for transient_field in (
             'refresh_packages',
@@ -2667,7 +2729,7 @@ class SetupConfig:
             self.web_panel_notification_ingest
         )
         data['guacamole'] = bool(self.guacamole)
-        data['notification_strict_https'] = bool(self.notification_strict_https)
+        data['notification_allow_unverified_https'] = self.notification_strict_https is False
         data['cloudflare_allow_direct'] = bool(self.cloudflare_allow_direct)
         if self.enable_syncthing and not self.syncthing_root:
             data['syncthing_root'] = DEFAULT_SYNCTHING_ROOT
@@ -2686,6 +2748,12 @@ class SetupConfig:
         """Decode saved settings, deferring only the reserved Syncthing tree policy."""
         validate_current_setup_fields(data)
         data = dict(data)
+        data.pop('share_credentials', None)
+        data.pop('resolved_credentials', None)
+        from lib.notifications import notification_strict_https_from_state
+
+        data["notification_strict_https"] = notification_strict_https_from_state(data)
+        data.pop("notification_allow_unverified_https", None)
         for retired in ("enable_cicd", "is_app_server", "deploy_targets"):
             if data.get(retired):
                 raise RetiredSetupConfigError(
@@ -2784,6 +2852,7 @@ class SetupConfig:
     
     @classmethod
     def from_args(cls, args: argparse.Namespace, system_type: str) -> 'SetupConfig':
+        from lib.headscale_config import headscale_from_args
         from lib.system_utils import get_current_username, get_local_timezone
         from lib.privilege_auth import auth_from_args
 
@@ -3160,6 +3229,7 @@ class SetupConfig:
         
         return cls(
             host=args.host,
+            **headscale_from_args(args),
             target_host=_optional_str_arg(args, 'target_host'),
             username=username,
             system_type=system_type,
@@ -3214,6 +3284,7 @@ class SetupConfig:
             install_go=getattr(args, 'install_go', False),
             install_node=getattr(args, 'install_node', False),
             install_node_versions=getattr(args, 'install_node_versions', False) is True,
+            update_nvm_npm=getattr(args, 'update_nvm_npm', None),
             install_game_dev=getattr(args, 'install_game_dev', False) is True,
             install_python=getattr(args, 'install_python', False),
             install_data_analysis_tools=getattr(
@@ -3406,6 +3477,7 @@ class SetupConfig:
             clear_samba_metadata_cache=clear_samba_metadata_cache,
             samba_shares=getattr(args, 'samba_shares', None),
             share_credentials=getattr(args, 'share_credentials', None),
+            resolved_credentials=getattr(args, 'resolved_credentials', None),
             enable_smbclient=enable_smbclient,
             smb_mounts=smb_mounts,
             enable_syncthing=enable_syncthing,
@@ -3420,6 +3492,7 @@ class SetupConfig:
             notification_strict_https=_optional_bool_arg(
                 args, 'notification_strict_https'
             ),
+            notification_ca_file=_optional_str_arg(args, 'notification_ca_file'),
             antistatic_server=getattr(args, 'antistatic_server', None),
             antistatic_admin=getattr(args, 'antistatic_admin', None),
             antistatic_db=getattr(args, 'antistatic_db', None),

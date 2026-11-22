@@ -41,7 +41,7 @@ def build_wsl_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
 
     steps: list[tuple[str, StepFunc]] = [
         ("Checking Ubuntu WSL environment", preflight_wsl),
-        ("Installing Ubuntu build prerequisites", install_wsl_base),
+        ("Updating Ubuntu packages, installing build prerequisites, and pruning obsolete APT downloads", install_wsl_base),
     ]
     for selected, title, function in (
         (config.install_go, "Installing Go", install_go),

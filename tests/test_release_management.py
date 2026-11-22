@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import shlex
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from lib.release_management import (
     fetch_latest_verified_github_release_asset,
@@ -62,33 +65,53 @@ class TestReleaseValidation(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             path = Path(root, 'release.json')
             for constant, install, fetch in cases:
-                for state in ({'tag_name': ''}, {'other': 'value'}, {'tag_name': '../escape'}):
+                for state in ({'tag_name': ''}, {'other': 'value'}, {'tag_name': '../escape'},
+                              {'tag_name': 'v0.10.0', 'sha256': 'invalid'}):
                     content = json.dumps(state)
                     path.write_text(content)
                     with (self.subTest(constant=constant, state=state),
                           patch.object(antistatic_steps, constant, str(path)),
                           patch.object(antistatic_steps, fetch, return_value=(
-                              'v0.10.0', 'https://example.test/release')),
-                          patch.object(antistatic_steps, 'install_binary_release') as replace):
+                              'v0.10.0', 'https://example.test/release', 'a' * 64)),
+                          patch('lib.release_management.run') as download):
                         with self.assertRaises(StateReadError):
                             install('amd64')
-                        replace.assert_not_called()
+                        download.assert_not_called()
                         self.assertEqual(path.read_text(), content)
 
-    @patch('lib.release_management.run')
-    def test_binary_staging_shares_destination_filesystem(self, mock_run):
-        mock_run.return_value.returncode = 0
+    def test_download_failure_and_digest_mismatch_preserve_active_release(self):
         with tempfile.TemporaryDirectory() as root:
-            persist = MagicMock()
-            install_binary_release(
-                binary_name='example', binary_path=os.path.join(root, 'example'),
-                tag_name='v1.0.0', download_url='https://example.test/release',
-                installed_tag=None, persist_installed_tag=persist,
-            )
-            download = mock_run.call_args_list[0].args[0]
-            self.assertIn(os.path.join(root, '.basaltwater-release-'), download)
-            self.assertTrue(mock_run.call_args_list[-1].args[0].startswith('mv -T -- '))
-            persist.assert_called_once_with('v1.0.0')
+            binary, state = Path(root, 'example'), Path(root, 'release.json')
+            binary.write_bytes(b'old')
+            previous = json.dumps({'tag_name': 'v1', 'sha256': hashlib.sha256(b'old').hexdigest()})
+            state.write_text(previous)
+            for returncode in (0, 1):
+                def download(command, **kwargs):
+                    argv = shlex.split(command)
+                    Path(argv[argv.index('-o') + 1]).write_bytes(b'unexpected')
+                    return SimpleNamespace(returncode=returncode)
+                with self.subTest(returncode=returncode), patch('lib.release_management.run', side_effect=download):
+                    with self.assertRaisesRegex(RuntimeError, 'Failed to download|SHA-256 mismatch'):
+                        install_binary_release(binary_name='example', binary_path=str(binary), state_path=str(state),
+                                               tag_name='v2', download_url='https://example.test/v2', sha256='a' * 64)
+                self.assertEqual(binary.read_bytes(), b'old')
+                self.assertEqual(state.read_text(), previous)
+                self.assertEqual(set(Path(root).iterdir()), {state, binary})
+
+    def test_same_tag_rejects_changed_local_or_publisher_bytes(self):
+        with tempfile.TemporaryDirectory() as root, patch('lib.release_management.run') as download:
+            binary, state = Path(root, 'example'), Path(root, 'release.json')
+            trusted = hashlib.sha256(b'original').hexdigest()
+            receipt = json.dumps({'tag_name': 'v1', 'sha256': trusted})
+            state.write_text(receipt)
+            binary.write_bytes(b'changed')
+            for digest, error in ((trusted, 'SHA-256 mismatch'), ('b' * 64, 'Publisher SHA-256 changed')):
+                with self.subTest(digest=digest), self.assertRaisesRegex(RuntimeError, error):
+                    install_binary_release(binary_name='example', binary_path=str(binary), state_path=str(state),
+                                           tag_name='v1', download_url='https://example.test/v1', sha256=digest)
+                self.assertEqual(state.read_text(), receipt)
+                self.assertEqual(binary.read_bytes(), b'changed')
+            download.assert_not_called()
 
     @patch("lib.release_management.fetch_github_releases")
     def test_latest_verified_asset_skips_prereleases_and_requires_digest(self, mock_fetch):
@@ -157,8 +180,8 @@ class TestReleaseValidation(unittest.TestCase):
                 binary_path="/usr/local/bin/example",
                 tag_name="v1.0.0",
                 download_url="https://example.test/release",
-                installed_tag=None,
-                persist_installed_tag=MagicMock(),
+                sha256="a" * 64,
+                state_path="/tmp/unused",
             )
 
         mock_run.assert_not_called()

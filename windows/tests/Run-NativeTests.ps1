@@ -18,7 +18,10 @@ function Assert-Throws([scriptblock]$action, [string]$pattern) {
 function Get-Receipts {
     $directory = Join-Path $env:LOCALAPPDATA 'Basaltwater\jobs'
     if (Test-Path -LiteralPath $directory) {
-        Get-ChildItem -LiteralPath $directory -Filter receipt.json -Recurse
+        foreach ($job in Get-ChildItem -LiteralPath $directory -Directory) {
+            $receipt = Join-Path $job.FullName 'receipt.json'
+            if (Test-Path -LiteralPath $receipt -PathType Leaf) { Get-Item -LiteralPath $receipt }
+        }
     }
 }
 
@@ -40,7 +43,8 @@ $originalLocalAppData = $env:LOCALAPPDATA
 New-Item -ItemType Directory -Path $temporary -Force | Out-Null
 
 try {
-    foreach ($file in @('install.ps1', 'windows\Invoke-BasaltwaterJob.ps1',
+    foreach ($file in @('install.ps1', 'windows\Bootstrap.Common.ps1', 'windows\tests\Run-WslTests.ps1',
+                        'windows\Invoke-BasaltwaterJob.ps1',
                         'windows\Manage-Wsl.ps1', 'windows\Save-BasaltwaterToken.ps1',
                         'windows\Start-WslWorker.ps1', 'windows\examples\Smoke-Artifact.ps1')) {
         $tokens = $null
@@ -54,6 +58,17 @@ try {
     New-Item -ItemType Directory -Path $env:LOCALAPPDATA -Force | Out-Null
 
     # Exercise bootstrap helpers without enabling WSL or changing a real distro.
+    . (Join-Path $repo 'windows\Bootstrap.Common.ps1')
+    $selection = [pscustomobject]@{ LinuxUser = 'agent'; Node = $true; Python = $true; Go = $true;
+        AgentTool = @('gh', 'codex') }
+    $setupArguments = @(Get-UbuntuSetupArguments $selection)
+    Assert-True (($setupArguments -join ' ') -ceq (
+        '--system-type server_wsl --username agent --machine wsl --refresh-packages ' +
+        '--node --python --go --agent-tool gh --agent-tool codex')) 'WSL setup lost saved selections'
+    $minimalSelection = [pscustomobject]@{ LinuxUser = 'agent'; Node = $false; Python = $false; Go = $false;
+        AgentTool = @() }
+    Assert-True (((Get-UbuntuSetupArguments $minimalSelection) -join ' ') -ceq
+        '--system-type server_wsl --username agent --machine wsl --refresh-packages') 'WSL setup added unselected tools'
     $tokens = $null
     $errors = $null
     $installerAst = [System.Management.Automation.Language.Parser]::ParseFile(
@@ -97,6 +112,10 @@ try {
         Ensure-UbuntuPython
         Assert-True ($global:BootstrapPythonInstalled) 'Fresh bootstrap did not install missing Python'
         Assert-True ($global:BootstrapCalls.Count -eq 4) 'Missing Python should trigger probe, apt update/install, and verification'
+        Assert-True ($global:BootstrapCalls[1] -contains 'APT::Update::Error-Mode=any') 'Bootstrap could accept a partial package index update'
+        Assert-True ($global:BootstrapCalls[2] -contains '--no-remove' -and
+            $global:BootstrapCalls[2] -contains 'DPkg::Lock::Timeout=300' -and
+            $global:BootstrapCalls[2] -contains 'Dpkg::Options::=--force-confold') 'Bootstrap lacked normal Ubuntu package safeguards'
         $global:BootstrapCalls = @()
         Ensure-UbuntuPython
         Assert-True ($global:BootstrapCalls.Count -eq 1) 'Existing Python should skip apt bootstrap'
@@ -107,7 +126,9 @@ try {
         $global:BootstrapOldPython = $false
         $global:BootstrapPythonInstalled = $false
         $global:BootstrapPackageFailure = $true
+        $global:BootstrapCalls = @()
         Assert-Throws { Ensure-UbuntuPython } 'package index failed'
+        Assert-True ($global:BootstrapCalls.Count -eq 2) 'Bootstrap used stale package indexes after an update failure'
     } finally {
         Remove-Item Function:\wsl.exe
         Remove-Item Function:\Save-State
@@ -138,6 +159,7 @@ try {
             '--terminate' {
                 if ($script:RestartFailure) { throw 'simulated interrupted restart' }
                 Assert-True ($Arguments[1] -eq $state.Distro) 'Restart targeted another distro'
+                $script:PidOne = $script:PostRestartPidOne
                 return
             }
         }
@@ -191,10 +213,16 @@ try {
         Assert-True $state.RestartRequired 'Interrupted restart lost recovery intent'
         $script:RestartFailure = $false
         $script:ConfigureResult = 'UNCHANGED'
+        $script:PostRestartPidOne = 'init'
+        Assert-Throws { Ensure-UbuntuConfiguration '/source/wsl_prepare.py' } 'did not start with systemd'
+        $state = $script:SavedSetup | ConvertFrom-Json
+        Assert-True $state.RestartRequired 'Restart intent was cleared before systemd readiness'
+        $script:PostRestartPidOne = 'systemd'
         $script:PidOne = 'systemd'
         $script:RecoveryCalls = @()
         Ensure-UbuntuConfiguration '/source/wsl_prepare.py'
         Assert-True (@($script:RecoveryCalls | Where-Object { $_[0] -eq '--terminate' }).Count -eq 1) 'Resume skipped pending restart after UNCHANGED'
+        Assert-True ($script:RecoveryCalls[-1] -contains '/proc/1/comm') 'PID 1 was not checked after restart'
         Assert-True (-not $state.RestartRequired) 'Successful restart did not clear intent'
         $script:RecoveryCalls = @()
         Ensure-UbuntuConfiguration '/source/wsl_prepare.py'
@@ -219,9 +247,29 @@ try {
         param([string]$Name)
         return [pscustomobject]@{ Free = 100GB }
     }
+    function global:wsl.exe {
+        param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Arguments)
+        $global:LASTEXITCODE = 0
+        if ($Arguments[0] -eq '--version') { return }
+        Assert-True ($Arguments[0] -eq '--distribution' -and $Arguments[1] -eq 'Ubuntu-26.04') 'Qualification targeted the wrong distro'
+        if ($Arguments -contains 'uname') { return '6.6.87-microsoft-standard-WSL2' }
+        if ($Arguments -contains '/etc/os-release') { return 'ID=ubuntu' }
+        if ($Arguments -contains '/proc/1/comm') { return 'systemd' }
+        if ($Arguments -contains 'wslpath') { return '/mnt/c/checkout with spaces' }
+        if ($Arguments -contains '--dry-run') { return }
+        if ($Arguments -contains '/bin/bash') {
+            Assert-True (($Arguments -join ' ') -match '--user agent --exec /bin/bash -lc') 'Version checks must run as the saved non-root user in a login shell'
+            $global:BasaltwaterWslVersionChecks = $Arguments[-1]
+            if ($global:BasaltwaterWslToolBroken) { $global:LASTEXITCODE = 127 }
+            return
+        }
+        if ($Arguments -contains 'unittest') { return }
+        throw "Unexpected WSL qualification operation: $Arguments"
+    }
     try {
         $plan = & (Join-Path $repo 'install.ps1') -Plan -BuildServer -AgentTool gh,codex 6>&1 | Out-String
         Assert-True ($plan -match 'Plan: install WinGet/WSL') 'Installer plan did not complete'
+        Assert-True ($plan -match 'prune obsolete APT downloads') 'The WSL plan did not show Ubuntu package maintenance'
         Assert-Throws {
             & (Join-Path $repo 'install.ps1') -Plan -DistroName Debian
         } 'official stable Ubuntu WSL name'
@@ -239,25 +287,57 @@ try {
         Assert-Throws {
             & (Join-Path $repo 'install.ps1') -Plan -UpdateSource
         } 'UpdateSource requires Resume'
+
+        $setupDirectory = Join-Path $env:LOCALAPPDATA 'Basaltwater'
+        New-Item -ItemType Directory -Path $setupDirectory -Force | Out-Null
+        $qualificationState = [pscustomobject]@{
+            OwnerSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+            Phase = 'complete'; Distro = 'Ubuntu-26.04'; LinuxUser = 'agent'
+            Node = $true; Python = $true; Go = $true; AgentTool = @('gh', 'codex')
+        }
+        $qualificationState | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $setupDirectory 'wsl-setup.json') -Encoding UTF8
+        $wslTests = Join-Path $PSScriptRoot 'Run-WslTests.ps1'
+        $global:BasaltwaterWslToolBroken = $false
+        $global:BasaltwaterWslVersionChecks = ''
+        & $wslTests | Out-Null
+        foreach ($tool in @('git-lfs', 'cc', 'make', 'python3', 'node', 'npm', 'pnpm', 'python', 'uv', 'gh', 'codex')) {
+            Assert-True ($global:BasaltwaterWslVersionChecks.Contains(" $tool --version")) "Qualification did not run $tool"
+        }
+        Assert-True ($global:BasaltwaterWslVersionChecks.Contains(' go version')) 'Qualification did not run Go'
+        Assert-True (-not $global:BasaltwaterWslVersionChecks.Contains(' claude --version')) 'Qualification ran an unselected provider'
+        $global:BasaltwaterWslToolBroken = $true
+        Assert-Throws { & $wslTests } 'Installed Ubuntu WSL tool version check failed'
     } finally {
+        Remove-Item Function:\wsl.exe
         Remove-Item Function:\Get-CimInstance
         Remove-Item Function:\Get-PSDrive
+        Remove-Variable BasaltwaterWslVersionChecks, BasaltwaterWslToolBroken -Scope Global -ErrorAction SilentlyContinue
     }
 
-    & git.exe clone --quiet --no-local $repo $checkout
-    Assert-True ($LASTEXITCODE -eq 0) 'Could not create the temporary Git checkout'
+    # Each job exports this entire fixture. Include the shipping smoke script
+    # and the project inputs used by the native tests.
+    & git.exe init --quiet $checkout
+    Assert-True ($LASTEXITCODE -eq 0) 'Could not initialize the temporary Git checkout'
+    $examples = Join-Path $checkout 'windows\examples'
+    New-Item -ItemType Directory -Path $examples -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $repo 'windows\examples\Smoke-Artifact.ps1') -Destination $examples
     New-Item -ItemType Directory -Path (Join-Path $checkout 'ci') -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $checkout 'ci\fail.ps1') -Value 'exit 23'
     Set-Content -LiteralPath (Join-Path $checkout 'ci\missing.ps1') -Value 'Write-Output no-artifact'
     Set-Content -LiteralPath (Join-Path $checkout 'ci\slow.ps1') -Value 'Start-Sleep -Seconds 6'
     Set-Content -LiteralPath (Join-Path $checkout 'ci\large-log.ps1') -Value "[Console]::Out.Write('x' * (50MB + 1))"
+    Set-Content -LiteralPath (Join-Path $checkout 'ci\input.txt') -Value 'committed input'
+    Set-Content -LiteralPath (Join-Path $checkout 'ci\snapshot.ps1') -Value @'
+if (Test-Path -LiteralPath 'ci\untracked-input.txt') { throw 'Untracked input reached snapshot' }
+Copy-Item -LiteralPath 'ci\input.txt' -Destination 'snapshot.txt'
+'@
     Set-Content -LiteralPath (Join-Path $checkout 'ci\junction.ps1') -Value @'
 $target = Join-Path (Split-Path -Parent $PSScriptRoot) '..\external artifact'
 New-Item -ItemType Directory -Path $target -Force | Out-Null
 Set-Content -LiteralPath (Join-Path $target 'artifact.txt') -Value 'outside checkout'
 New-Item -ItemType Junction -Path (Join-Path (Split-Path -Parent $PSScriptRoot) 'redirect') -Target $target | Out-Null
 '@
-    & git.exe -C $checkout add -- ci
+    & git.exe -C $checkout add -- ci windows/examples/Smoke-Artifact.ps1
     Assert-True ($LASTEXITCODE -eq 0) 'Could not stage native job fixtures'
     & git.exe -C $checkout -c user.name=BasaltwaterCI -c user.email=ci@example.invalid `
         commit --quiet -m 'Add native job fixtures'
@@ -271,6 +351,7 @@ New-Item -ItemType Junction -Path (Join-Path (Split-Path -Parent $PSScriptRoot) 
     $global:BasaltwaterUploadCount = 0
     $global:BasaltwaterBadDigest = $false
     $global:BasaltwaterUploadStatus = 200
+    $global:BasaltwaterUploadedText = ''
     function global:Invoke-WebRequest {
         param([switch]$UseBasicParsing, [string]$Method, [uri]$Uri,
               [string]$InFile, [string]$ContentType, [hashtable]$Headers,
@@ -283,6 +364,7 @@ New-Item -ItemType Junction -Path (Join-Path (Split-Path -Parent $PSScriptRoot) 
         $hash = (Get-FileHash -LiteralPath $InFile -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($Headers['X-Artifact-SHA256'] -ne $hash) { throw 'Upload digest did not match artifact' }
         $global:BasaltwaterUploadCount++
+        $global:BasaltwaterUploadedText = (Get-Content -LiteralPath $InFile -Raw).Trim()
         $acknowledged = if ($global:BasaltwaterBadDigest) { '0' * 64 } else { $hash }
         return [pscustomobject]@{ StatusCode = $global:BasaltwaterUploadStatus;
             Headers = @{ 'X-Artifact-SHA256' = $acknowledged } }
@@ -292,21 +374,35 @@ New-Item -ItemType Junction -Path (Join-Path (Split-Path -Parent $PSScriptRoot) 
         & $runner -SourceDirectory $checkout -Revision $revision `
             -Script 'windows\examples\Smoke-Artifact.ps1' -Artifact 'out\wsl-smoke.txt' `
             -UploadUri $uri -CredentialFile $credential | Out-Null
-        Assert-NewReceipt $before 'uploaded' | Out-Null
+        $record = Assert-NewReceipt $before 'uploaded'
+        Assert-True ($record.Revision -eq $revision -and $record.SourceArchiveSha256 -match '^[0-9a-f]{64}$') 'Missing revision or snapshot identity'
         Assert-True ($global:BasaltwaterUploadCount -eq 1) 'Successful job did not upload'
-        Remove-Item -LiteralPath (Join-Path $checkout 'out\wsl-smoke.txt')
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $checkout 'out\wsl-smoke.txt'))) 'Job wrote an artifact to the live checkout'
+
+        Set-Content -LiteralPath (Join-Path $checkout 'ci\input.txt') -Value 'dirty second input'
+        Set-Content -LiteralPath (Join-Path $checkout 'ci\untracked-input.txt') -Value 'untracked input'
+        Set-Content -LiteralPath (Join-Path $checkout '.git\info\attributes') -Value 'ci/input.txt export-ignore'
+        $before = @(Get-Receipts).Count
+        $snapshotOptions = @{ SourceDirectory = $checkout; Revision = $revision; Script = 'ci\snapshot.ps1';
+            Artifact = 'snapshot.txt'; UploadUri = $uri; CredentialFile = $credential }
+        & $runner @snapshotOptions | Out-Null
+        Assert-NewReceipt $before 'uploaded' | Out-Null
+        Assert-True ($global:BasaltwaterUploadedText -eq 'committed input') 'Artifact incorporated live checkout input'
+        Assert-True ($global:BasaltwaterUploadCount -eq 2) 'Snapshot job did not upload'
 
         $before = @(Get-Receipts).Count
-        $junction = Join-Path $checkout 'redirect'
         try {
             Assert-Throws {
                 & $runner -SourceDirectory $checkout -Revision $revision -Script 'ci\junction.ps1' `
                     -Artifact 'redirect\artifact.txt' -UploadUri $uri -CredentialFile $credential
             } 'contains a reparse point'
             Assert-NewReceipt $before 'failed' | Out-Null
-            Assert-True ($global:BasaltwaterUploadCount -eq 1) 'Job-created artifact junction attempted upload'
+            Assert-True ($global:BasaltwaterUploadCount -eq 2) 'Job-created artifact junction attempted upload'
         } finally {
-            if (Test-Path -LiteralPath $junction) { [IO.Directory]::Delete($junction) }
+            foreach ($receipt in Get-Receipts) {
+                $junction = Join-Path $receipt.DirectoryName 'source\redirect'
+                if (Test-Path -LiteralPath $junction) { [IO.Directory]::Delete($junction) }
+            }
         }
 
         Set-Content -LiteralPath (Join-Path $checkout 'ci\untracked.ps1') -Value 'exit 0'
@@ -333,7 +429,7 @@ New-Item -ItemType Junction -Path (Join-Path (Split-Path -Parent $PSScriptRoot) 
                 -Artifact 'out\failed.txt' -UploadUri $uri -CredentialFile $credential
         } 'exited with code 23'
         Assert-NewReceipt $before 'failed' | Out-Null
-        Assert-True ($global:BasaltwaterUploadCount -eq 1) 'Failed job attempted upload'
+        Assert-True ($global:BasaltwaterUploadCount -eq 2) 'Failed job attempted upload'
 
         $before = @(Get-Receipts).Count
         Assert-Throws {
@@ -341,7 +437,7 @@ New-Item -ItemType Junction -Path (Join-Path (Split-Path -Parent $PSScriptRoot) 
                 -Artifact 'out\missing.txt' -UploadUri $uri -CredentialFile $credential
         } 'produced no artifact'
         Assert-NewReceipt $before 'failed' | Out-Null
-        Assert-True ($global:BasaltwaterUploadCount -eq 1) 'Missing artifact attempted upload'
+        Assert-True ($global:BasaltwaterUploadCount -eq 2) 'Missing artifact attempted upload'
 
         $global:BasaltwaterBadDigest = $true
         $before = @(Get-Receipts).Count
@@ -352,7 +448,6 @@ New-Item -ItemType Junction -Path (Join-Path (Split-Path -Parent $PSScriptRoot) 
         } 'did not confirm the artifact SHA-256'
         Assert-NewReceipt $before 'failed' | Out-Null
         $global:BasaltwaterBadDigest = $false
-        Remove-Item -LiteralPath (Join-Path $checkout 'out\wsl-smoke.txt')
 
         $global:BasaltwaterUploadStatus = 302
         $before = @(Get-Receipts).Count
@@ -363,7 +458,6 @@ New-Item -ItemType Junction -Path (Join-Path (Split-Path -Parent $PSScriptRoot) 
         } 'non-success status'
         Assert-NewReceipt $before 'failed' | Out-Null
         $global:BasaltwaterUploadStatus = 200
-        Remove-Item -LiteralPath (Join-Path $checkout 'out\wsl-smoke.txt')
 
         $before = @(Get-Receipts).Count
         Assert-Throws {
@@ -387,7 +481,7 @@ New-Item -ItemType Junction -Path (Join-Path (Split-Path -Parent $PSScriptRoot) 
                 -TimeoutSeconds 1
         } 'exceeded 1 seconds'
         Assert-NewReceipt $before 'timed-out' | Out-Null
-        Assert-True ($global:BasaltwaterUploadCount -eq 3) 'Timeout attempted upload'
+        Assert-True ($global:BasaltwaterUploadCount -eq 4) 'Timeout attempted upload'
 
         $before = @(Get-Receipts).Count
         Assert-Throws {
@@ -395,10 +489,10 @@ New-Item -ItemType Junction -Path (Join-Path (Split-Path -Parent $PSScriptRoot) 
                 -Artifact 'out\large-log.txt' -UploadUri $uri -CredentialFile $credential
         } 'exceeded 50 MiB of logs'
         Assert-NewReceipt $before 'failed' | Out-Null
-        Assert-True ($global:BasaltwaterUploadCount -eq 3) 'Oversized log attempted upload'
+        Assert-True ($global:BasaltwaterUploadCount -eq 4) 'Oversized log attempted upload'
     } finally {
         Remove-Item Function:\Invoke-WebRequest
-        Remove-Variable BasaltwaterUploadCount, BasaltwaterBadDigest, BasaltwaterUploadStatus -Scope Global -ErrorAction SilentlyContinue
+        Remove-Variable BasaltwaterUploadCount, BasaltwaterBadDigest, BasaltwaterUploadStatus, BasaltwaterUploadedText -Scope Global -ErrorAction SilentlyContinue
     }
 
     $python = Get-Command python.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -419,6 +513,8 @@ New-Item -ItemType Junction -Path (Join-Path (Split-Path -Parent $PSScriptRoot) 
     if (-not $?) { throw 'Native development process-tree tests failed' }
     & (Join-Path $PSScriptRoot 'Run-AgentWorkstationTests.ps1')
     if (-not $?) { throw 'Native agent workstation tests failed' }
+    & (Join-Path $PSScriptRoot 'Run-StorageTests.ps1')
+    if (-not $?) { throw 'Native storage cleanup tests failed' }
     & (Join-Path $PSScriptRoot 'Run-GitHubRunnerTests.ps1')
     if (-not $?) { throw 'GitHub runner offline qualification failed' }
     Write-Host 'Native Windows qualification passed.'

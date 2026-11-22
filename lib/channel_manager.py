@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 import re
 import subprocess
 import time
@@ -11,8 +12,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from lib.atomic_io import write_json_atomic
-from lib.installation_info import read_installation_metadata
+from lib.installation_info import installation_version, read_installation_metadata
 from lib.remote_utils import CommandTimeoutError, run
+from lib.runtime_source import (
+    OFFICIAL_SOURCE_URL, SOURCE_RESERVED_NAMES, SYSTEM_INSTALL_MARKER,
+    require_runtime_source, trusted_git_command,
+)
 from lib.types import JSONDict
 from lib.validation import validate_channel, validate_filesystem_path
 
@@ -34,7 +39,6 @@ class ChannelTarget:
     """A validated channel and the Git ref it currently resolves to."""
 
     channel: str
-    ref: str
     commit: str
 
 
@@ -43,6 +47,7 @@ def managed_repository_path(script_path: str | None = None) -> str:
 
     candidate = os.path.dirname(os.path.abspath(script_path or os.path.join(os.path.dirname(__file__), "..", "basaltwater.py")))
     validate_filesystem_path(candidate, must_exist=True)
+    _require_system_source(candidate)
     result = _run_git(candidate, ["rev-parse", "--show-toplevel"])
     if result.returncode != 0:
         if read_installation_metadata(candidate) is not None:
@@ -63,6 +68,7 @@ def channel_state_path(repo_path: str) -> str:
 def get_channel_info(repo_path: str) -> JSONDict:
     """Return the selected channel and current worktree commit."""
 
+    _require_system_source(repo_path)
     snapshot = _setup_snapshot(repo_path)
     if snapshot is not None:
         commit = snapshot.get("commit")
@@ -90,24 +96,27 @@ def get_channel_info(repo_path: str) -> JSONDict:
 
     state["commit"] = commit
     state["branch"] = _current_branch(repo_path)
+    state["version"] = installation_version(repo_path)
     state["managed"] = True
     return state
 
 
-def switch_channel(repo_path: str, channel: str) -> JSONDict:
+def switch_channel(repo_path: str, channel: str, *, fresh_clone: bool = False) -> JSONDict:
     """Fetch and switch a managed worktree to ``channel``."""
 
     validate_channel(channel)
+    _require_system_source(repo_path, mutation=True)
     if _setup_snapshot(repo_path) is not None:
         raise ChannelError(
             "Setup snapshots cannot switch channels; rerun setup from the "
             "controller source you want to deploy."
         )
     repo_path = _validate_repository(repo_path)
-    _require_clean_worktree(repo_path)
+    if not fresh_clone:
+        _require_clean_worktree(repo_path)
     _fetch_origin(repo_path)
     target = _resolve_channel(repo_path, channel)
-    _checkout(repo_path, target.ref)
+    _checkout(repo_path, target.commit)
     state = _save_state(repo_path, target)
     state.update(branch=None, managed=True)
     return state
@@ -116,6 +125,7 @@ def switch_channel(repo_path: str, channel: str) -> JSONDict:
 def upgrade_channel(repo_path: str) -> JSONDict:
     """Install the newest commit currently available on the selected channel."""
 
+    _require_system_source(repo_path, mutation=True)
     if _setup_snapshot(repo_path) is not None:
         raise ChannelError(
             "Setup snapshots are upgraded by rerunning setup from the controller."
@@ -135,7 +145,7 @@ def upgrade_channel(repo_path: str) -> JSONDict:
     target = _resolve_channel(repo_path, channel)
     current_commit = _current_commit(repo_path)
     if current_commit != target.commit:
-        _checkout(repo_path, target.ref)
+        _checkout(repo_path, target.commit)
         branch = None
     else:
         branch = _current_branch(repo_path)
@@ -165,9 +175,12 @@ def _setup_snapshot(repo_path: str) -> JSONDict | None:
 
 
 def _run_git(repo_path: str, arguments: list[str]) -> subprocess.CompletedProcess[str]:
+    command = ["env", "GIT_TERMINAL_PROMPT=0", "git", *arguments]
+    if _system_source(repo_path):
+        command = trusted_git_command("-c", f"safe.directory={os.path.abspath(repo_path)}", *arguments)
     try:
         return run(
-            ['env', 'GIT_TERMINAL_PROMPT=0', 'git', *arguments],
+            command,
             cwd=repo_path, capture_output=True, text=True, check=False, timeout=300,
         )
     except CommandTimeoutError as exc:
@@ -186,6 +199,8 @@ def _fetch_origin(repo_path: str) -> None:
     remote = _run_git(repo_path, ["remote", "get-url", "origin"])
     if remote.returncode != 0:
         raise ChannelError("Managed repository has no origin remote")
+    if _system_source(repo_path) and remote.stdout.strip() != OFFICIAL_SOURCE_URL:
+        raise ChannelError(f"System channel updates require {OFFICIAL_SOURCE_URL}")
     result = _run_git(repo_path, ["fetch", "--prune", "--tags", "origin"])
     if result.returncode != 0:
         raise _git_failure("fetch", result)
@@ -212,7 +227,7 @@ def _resolve_channel(repo_path: str, channel: str) -> ChannelTarget:
                 raise _git_failure("fetch commit", fetch_result)
 
     commit = _commit_for_ref(repo_path, ref)
-    return ChannelTarget(channel=channel, ref=ref, commit=commit)
+    return ChannelTarget(channel=channel, commit=commit)
 
 
 def _latest_stable_tag(repo_path: str) -> str:
@@ -257,6 +272,19 @@ def _checkout(repo_path: str, ref: str) -> None:
     entry = _run_git(repo_path, ["cat-file", "-e", f"{ref}:basaltwater.py"])
     if entry.returncode != 0:
         raise ChannelError("Selected source predates Basaltwater; historical releases are unsupported")
+    if _system_source(repo_path):
+        tree = _run_git(repo_path, ["ls-tree", "-rz", ref])
+        if tree.returncode != 0:
+            raise _git_failure("inspect source tree", tree)
+        for node in filter(None, tree.stdout.split("\0")):
+            metadata, _, path = node.partition("\t")
+            top, _, _ = path.partition("/")
+            if (
+                metadata.split(" ", 1)[0] not in {"100644", "100755"}
+                or top in SOURCE_RESERVED_NAMES
+                or (top == ".basaltwater" and path != ".basaltwater/cleanup.json")
+            ):
+                raise ChannelError(f"Unsafe or reserved source entry: {path!r}")
     result = _run_git(repo_path, ["checkout", "--detach", ref])
     if result.returncode != 0:
         raise _git_failure("checkout", result)
@@ -304,5 +332,27 @@ def _save_state(repo_path: str, target: ChannelTarget) -> JSONDict:
         "commit": target.commit,
         "updated_at": int(time.time()),
     }
-    write_json_atomic(channel_state_path(repo_path), state, mode=0o600, sort_keys=True)
+    write_json_atomic(
+        channel_state_path(repo_path), state,
+        mode=0o644 if _system_source(repo_path) else 0o600, sort_keys=True,
+    )
     return state
+
+
+def _system_source(repo_path: str) -> bool:
+    return os.path.abspath(repo_path) == "/opt/basaltwater" or os.path.lexists(
+        os.path.join(repo_path, SYSTEM_INSTALL_MARKER)
+    )
+
+
+def _require_system_source(repo_path: str, *, mutation: bool = False) -> None:
+    if not _system_source(repo_path):
+        return
+    if mutation and os.geteuid() != 0:
+        raise ChannelError("Changing a system channel requires root. Use the system basaltw launcher with sudo.")
+    try:
+        require_runtime_source(Path(repo_path), owner_uid=0)
+    except (OSError, ValueError) as exc:
+        raise ChannelError(
+            "Unsafe system checkout. Reinstall from a reviewed installer or rerun setup from a trusted controller."
+        ) from exc

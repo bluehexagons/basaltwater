@@ -148,6 +148,9 @@ class _Storage:
                     size += max(info.st_size, info.st_blocks * 512)
                     if size > self.maximum or count > self.entries:
                         raise ValueError("Aggregate setup source storage exceeds its limit")
+                capacity = os.fstatvfs(descriptor)
+                if capacity.f_files and capacity.f_favail < 10000:
+                    raise ValueError("Insufficient controller inodes during setup source preparation; need 10000 reserve")
             if size + headroom > self.maximum:
                 raise ValueError("Aggregate setup source storage has insufficient headroom")
             if shutil.disk_usage(self.root).free < headroom + self.reserve:

@@ -24,6 +24,9 @@ class BuildSshFirewallTests(unittest.TestCase):
         run.reset_mock()
 
         def command(value: str, **_kwargs: object) -> SimpleNamespace:
+            if isinstance(value, list):
+                rule = "-A INPUT -s 192.0.2.5/32 -p tcp --dport 22 -j ACCEPT\n"
+                return SimpleNamespace(returncode=0, stdout=":INPUT DROP [0:0]\n" + (rule if value[0] == "iptables-save" else ""))
             output = "Status: active\n"
             if value == "ufw status verbose":
                 output += ("Default: deny (incoming)\n80/tcp ALLOW IN Anywhere\n"
@@ -32,7 +35,7 @@ class BuildSshFirewallTests(unittest.TestCase):
 
         run.side_effect = command
         configure_firewall_ssh_only(config, active_only=True)
-        commands = [call.args[0] for call in run.call_args_list]
+        commands = [call.args[0] for call in run.call_args_list if isinstance(call.args[0], str)]
         self.assertIn("ufw delete limit ssh", commands)
         self.assertTrue(any(value.startswith("ufw allow from 192.0.2.5 ") for value in commands))
         self.assertFalse(any("apt-get" in value or "ufw default" in value or "ufw --force enable" in value

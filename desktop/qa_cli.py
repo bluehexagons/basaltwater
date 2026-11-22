@@ -4,8 +4,15 @@ from __future__ import annotations
 
 import argparse
 
+_BUNDLE_OUTPUT_HELP = "New directory beneath an existing parent owned by you with mode 0700, outside Git"
+_OPTIONAL_BUNDLE_OUTPUT_HELP = _BUNDLE_OUTPUT_HELP + "; omit for a private temporary bundle"
+
 
 def add_qa_parser(commands: argparse._SubParsersAction, evidence: argparse._SubParsersAction) -> None:
+    process = evidence.add_parser("process", help="Retain one selected current-account Linux PID/start identity; no desktop input or process control")
+    process.add_argument("--pid", type=int, required=True)
+    process.add_argument("--output", help=_OPTIONAL_BUNDLE_OUTPUT_HELP)
+    process.add_argument("--json", action="store_true")
     conditional = evidence.add_parser("conditional", help="Validate offline plans or explicitly run bounded native observe/act/verify")
     conditional_ops = conditional.add_subparsers(dest="conditional_command", required=True)
     check_plan = conditional_ops.add_parser("validate", help="Offline schema validation; grants no input authority")
@@ -16,7 +23,7 @@ def add_qa_parser(commands: argparse._SubParsersAction, evidence: argparse._SubP
         operation.add_argument("plan")
         operation.add_argument("--profile", required=True)
         operation.add_argument("--template", nargs=2, action="append", default=[], metavar=("TEMPLATE_ID", "PNG"))
-        operation.add_argument("--output", help="New private directory outside Git")
+        operation.add_argument("--output", help=_OPTIONAL_BUNDLE_OUTPUT_HELP)
         operation.add_argument("--json", action="store_true")
     perception = evidence.add_parser("perception", help="Offline fixed-region recognition and frozen held-out evaluation")
     perception_ops = perception.add_subparsers(dest="perception_command", required=True)
@@ -30,19 +37,19 @@ def add_qa_parser(commands: argparse._SubParsersAction, evidence: argparse._SubP
     for operation in (recognize, evaluate):
         operation.add_argument("--profile", required=True)
         operation.add_argument("--template", nargs=2, action="append", default=[], metavar=("TEMPLATE_ID", "PNG"))
-        operation.add_argument("--output", help="New private directory outside Git")
+        operation.add_argument("--output", help=_OPTIONAL_BUNDLE_OUTPUT_HELP)
         operation.add_argument("--json", action="store_true")
     corpus = evidence.add_parser("corpus", help="Offline closed-corpus validation and condition-aware summaries")
     corpus.add_argument("source", help="Version-1 corpus manifest JSON")
     corpus.add_argument("--source", dest="sources", nargs=2, action="append", default=[], metavar=("SOURCE_ID", "RECORDS_JSON"))
-    corpus.add_argument("--output", help="New private directory outside Git")
+    corpus.add_argument("--output", help=_OPTIONAL_BUNDLE_OUTPUT_HELP)
     corpus.add_argument("--json", action="store_true")
     records = evidence.add_parser("records", help="Offline immutable observation/decision/coach bundles; no input authority")
     record_ops = records.add_subparsers(dest="records_command", required=True)
     create = record_ops.add_parser("create")
     create.add_argument("source", help="Version-1 closed record graph JSON")
     create.add_argument("--media", nargs=2, action="append", default=[], metavar=("FRAME_ID", "PNG"))
-    create.add_argument("--output", help="New private bundle outside Git")
+    create.add_argument("--output", help=_OPTIONAL_BUNDLE_OUTPUT_HELP)
     validate = record_ops.add_parser("validate")
     validate.add_argument("artifact", help="Private manifest.json returned by create")
     validate.add_argument("--current-state", help="Explicit current revision, or unknown")
@@ -55,7 +62,7 @@ def add_qa_parser(commands: argparse._SubParsersAction, evidence: argparse._SubP
     start.add_argument("--run-id", required=True)
     start.add_argument("--match-id", required=True)
     start.add_argument("--phase", required=True)
-    start.add_argument("--output")
+    start.add_argument("--output", help=_OPTIONAL_BUNDLE_OUTPUT_HELP)
     for name in ("show", "checkpoint", "suspend", "resume", "context", "policy", "finish"):
         operation = operations.add_parser(name)
         operation.add_argument("artifact", help="Private run.json returned by start; continue the same match")
@@ -85,7 +92,7 @@ def add_qa_parser(commands: argparse._SubParsersAction, evidence: argparse._SubP
     closeout.add_argument("--previous", help="Prior closeout.json for the SAME recording; different recording segments belong in evidence run checkpoint --artifact")
     closeout.add_argument("--process", nargs=2, action="append", default=[], metavar=("PID", "START_TICKS"),
                           help="Read-only exact process identity check; never claims normal exit or stops an active match")
-    closeout.add_argument("--output")
+    closeout.add_argument("--output", help=_OPTIONAL_BUNDLE_OUTPUT_HELP)
     closeout.add_argument("--json", action="store_true")
     audio = commands.add_parser("audio", help="Application-only PipeWire capture and offline WAV analysis")
     operations = audio.add_subparsers(dest="audio_command", required=True)
@@ -102,6 +109,11 @@ def add_qa_parser(commands: argparse._SubParsersAction, evidence: argparse._SubP
     crop.add_argument("path")
     crop.add_argument("--rectangle", nargs=4, type=int, required=True, metavar=("X", "Y", "WIDTH", "HEIGHT"))
     crop.add_argument("--caption", required=True)
+    point_preview = evidence.add_parser("point-preview", help="Offline annotated source-pixel target preview; no capture, input or freshness renewal")
+    point_preview.add_argument("path", help="Exact source PNG; points and rectangle are local to this PNG")
+    point_preview.add_argument("--rectangle", nargs=4, type=int, required=True, metavar=("X", "Y", "WIDTH", "HEIGHT"))
+    point_preview.add_argument("--point", nargs=2, type=int, required=True, metavar=("X", "Y"))
+    point_preview.add_argument("--caption", required=True)
     excerpt = evidence.add_parser("excerpt", help="Create a WAV excerpt of at most ten seconds with interval provenance")
     excerpt.add_argument("path")
     excerpt.add_argument("--start", type=float, required=True)
@@ -109,16 +121,19 @@ def add_qa_parser(commands: argparse._SubParsersAction, evidence: argparse._SubP
     export = evidence.add_parser("export", help="Copy a reviewed derivative bundle with portable references")
     export.add_argument("path", help="Derivative manifest.json")
     export.add_argument("--reviewed-by", required=True, help="Affirm pixels/audio, caption and privacy have been reviewed")
-    export.add_argument("--output", required=True, help="New directory beneath an existing private parent outside Git")
+    export.add_argument("--output", required=True, help=_BUNDLE_OUTPUT_HELP)
     timeline = evidence.add_parser("timeline", help="Join action, accessibility and audio receipts from the same Linux boot")
     timeline.add_argument("--artifact", action="append", required=True)
-    for operation in (capture, analysis, crop, excerpt, timeline):
-        operation.add_argument("--output", help="New private directory outside Git; default creates a private temporary bundle")
-    for operation in (sources, capture, analysis, crop, excerpt, export, timeline):
+    for operation in (capture, analysis, crop, point_preview, excerpt, timeline):
+        operation.add_argument("--output", help=_OPTIONAL_BUNDLE_OUTPUT_HELP)
+    for operation in (sources, capture, analysis, crop, point_preview, excerpt, export, timeline):
         operation.add_argument("--json", action="store_true")
 
 
 def run_qa_command(args: argparse.Namespace, *, backend=None) -> dict:
+    if args.desktop_command == "evidence" and args.evidence_command == "process":
+        from desktop.qa_artifacts import process_snapshot
+        return process_snapshot(args.pid, args.output)
     if args.desktop_command == "evidence" and args.evidence_command == "conditional":
         from desktop import conditional, conditional_contract, conditional_native, perception
         from desktop.record_bundles import _read
@@ -198,6 +213,9 @@ def run_qa_command(args: argparse.Namespace, *, backend=None) -> dict:
     from desktop import evidence_media, qa_timeline
     if args.evidence_command == "crop":
         return evidence_media.crop(args.path, args.rectangle, args.caption, args.output)
+    if args.evidence_command == "point-preview":
+        from desktop.point_preview import point_preview
+        return point_preview(args.path, args.rectangle, args.point, args.caption, args.output)
     if args.evidence_command == "excerpt":
         return evidence_media.excerpt(args.path, args.start, args.seconds, args.output)
     if args.evidence_command == "export":

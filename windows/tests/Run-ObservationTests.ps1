@@ -64,6 +64,13 @@ function Invoke-ObservationInput($Capture, [string[]]$Extra=@()) {
 }
 New-NativeDesktopPrivateDirectory $script:ObservationRoot
 try {
+    $privateFile = Join-Path $script:ObservationRoot 'owner-check.bin'
+    New-NativeDesktopPrivateFile $privateFile ([byte[]]@(1))
+    Assert-NativeDesktopPrivatePath $privateFile
+    $existingFileRejected = $false
+    try { New-NativeDesktopPrivateFile $privateFile ([byte[]]@(2)) }
+    catch [IO.IOException] { $existingFileRejected = $true }
+    Assert-Observation ($existingFileRejected -and [IO.File]::ReadAllBytes($privateFile)[0] -eq 1) 'Private creation overwrote an existing file'
     Initialize-NativeDesktopTypes
     $expiredGuard = [Basaltwater.Desktop.Native]::ObservationGuard($null, 0L)
     Assert-Observation ($expiredGuard.Invoke() -match 'observation expired') 'Cold/warm capture guard accepted expired input'
@@ -128,7 +135,7 @@ try {
     $leaseId=[guid]::NewGuid().ToString('N')
     $leaseRoot=Get-NativeHeldRoot; New-NativeDesktopPrivateDirectory $leaseRoot
     $leaseDirectory=Join-Path $leaseRoot $leaseId; New-NativeDesktopPrivateDirectory $leaseDirectory
-    [IO.File]::WriteAllBytes((Join-Path $leaseDirectory 'ownership.bin'),(New-Object byte[] 64))
+    New-NativeHeldOwnership $leaseDirectory
     Write-NativeHeldJson (Join-Path $leaseDirectory 'request.json') @{version=1;id=$leaseId;directory=$leaseDirectory;task=('Basaltwater-Hold-'+$leaseId);name=('Local\Basaltwater.Hold.'+$leaseId)}
     Write-NativeHeldJson (Join-Path $leaseRoot 'active.json') @{id=$leaseId}
     $duringLease=New-ObservationCapture

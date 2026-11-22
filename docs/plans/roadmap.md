@@ -7,7 +7,7 @@ a recovery path. The [plan index](README.md) maps related work; the
 
 ## Current baseline
 
-- The package is `2.0.0rc1`; the preview tag is not published.
+- The release matrix records the current preview candidate.
 - Managed operations have durable guards, state validation, unit/Nginx recovery
   and deployment rollback. They do not reverse arbitrary scripts, packages,
   database migrations or application data.
@@ -61,7 +61,7 @@ deployment, GitHub status checks and release publishing are later scope.
 | Security monitoring | Audit/journal and Fail2ban leading gaps are reported with durable history; unknown retention evidence retains the cursor. Packaged numeric/gzip Fail2ban rotation is collected with bounded retries. Qualify continuous logging, native daemon and power-loss boundaries. See [authentication hardening](../services/authentication-hardening.md). |
 | Recovery | Extend tested same-host backup/restore to off-host recovery; cover remaining worker, storage and interrupted-operation boundaries without automatic replay of uncertain work. |
 | Network changes | Extend verified address handoff to reviewed Proxmox firewall changes, with saved artifacts, timed rollback and connectivity confirmation. |
-| Deployment secrets | Add target-owned runtime bindings under the [secret-reference plan](deploy-secrets.md); retain secret-free artifact builds as the current default. |
+| Deployment secrets | Target-owned runtime binding IDs are implemented with shared ordinary/prebuilt validation. Qualify real systemd delivery, rotation/rollback and reboot before broader value providers or consumer inventory; see the [secret-reference plan](deploy-secrets.md). |
 
 Retention currently reclaims bytes through explicit local actions while keeping
 input slots and replay history. Automatic bundle collection or history retirement

@@ -108,6 +108,8 @@ def queue_refresh(config: SetupConfig) -> None:
         print("  Without a graphical session, desktop launch waits until KDE login")
     else:
         print("  Web runtime activation and HTTP readiness run in the queued worker")
-    print(f"  Refresh status: systemctl --user status {unit}.service; journalctl --user -u {unit}.service")
+    # In desktop mode the journal stream continues after the worker execs T3.
+    lines = "+30" if mode == "desktop" else "30"
+    print(f"  Completion journal: journalctl --user -u {unit}.service --lines={lines} --no-pager")
     print("  Saved threads resume on the next message; automatic turn continuation follows T3 settings")
     print("  Verify an authenticated provider thread and terminal after the app reopens")

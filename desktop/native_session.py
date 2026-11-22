@@ -24,7 +24,7 @@ from desktop.observations import (
 )
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.validation import validate_filesystem_path
-from desktop.receipts import DesktopRequestError, input_failure
+from desktop.receipts import DesktopRequestError, input_failure, input_snapshot
 
 MAX_MESSAGE = 65536
 SESSION_SECONDS = 0
@@ -175,9 +175,13 @@ def wake():
             "detail": "Display power-on requested; wait briefly and take a fresh screenshot to verify readiness"}
 
 
-def start(*, remember=False, session_seconds=SESSION_SECONDS):
+def start(*, remember=False, session_seconds=SESSION_SECONDS, touch=False):
     validate_session_seconds(session_seconds)
+    if type(touch) is not bool:
+        raise ValueError("Touch selection must be boolean")
     current = status()
+    if current["state"] != "stopped" and touch and "touchscreen" not in current.get("input_capabilities", []):
+        raise ValueError("Native session lacks touchscreen consent; finish active work, then stop/start --touch")
     if current["state"] != "stopped":
         if (remember and not current.get("remember_requested")
                 or session_seconds != SESSION_SECONDS and session_seconds != current.get("session_seconds")):
@@ -190,6 +194,8 @@ def start(*, remember=False, session_seconds=SESSION_SECONDS):
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         current = status()
         if current["state"] != "stopped":
+            if touch and "touchscreen" not in current.get("input_capabilities", []):
+                raise ValueError("Native session lacks touchscreen consent; finish active work, then stop/start --touch")
             return current
         helper_fd = os.open(folder / "session.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
         try:
@@ -210,6 +216,8 @@ def start(*, remember=False, session_seconds=SESSION_SECONDS):
             # Keep the owner's opt-in and saved pause until explicit revocation.
             if remember or native_grants.metadata()["remember_requested"]:
                 argv.append("--remember")
+            if touch:
+                argv.append("--touch")
             process = subprocess.Popen(argv,
                 cwd=str(Path(__file__).resolve().parents[1]), env=env, stdin=subprocess.DEVNULL,
                 stdout=log, stderr=log, start_new_session=True)
@@ -338,8 +346,11 @@ class NativeSession:
         self.last_failure = None
         self.receipt = receipt
         self.input_active = False
+        self.pending_input_receipts = 0
         self.injected_keysyms = set()
         self.injected_keycodes = set()
+        self.injected_touches = set()
+        self.touchscreen_granted = False
         self.input_released = threading.Event()
         self.input_released.set()
         self.initialization_done = threading.Event()
@@ -390,10 +401,13 @@ class NativeSession:
                 "interactive_required": False if self.state == "running" else (None if self.restore_attempted or self.state == "initializing" else True),
                 "expires_in": (None if not self.session_seconds else max(0, int(self.until - time.monotonic()))) if self.state == "running" else 0,
                 "control_active": self.input_active,
-                "input_capabilities": ["keysym", "keycode", "server-paced-text", "observation-input"],
+                "input_capabilities": ["keysym", "keycode", "server-paced-text", "observation-input",
+                                       "relative-pointer", "discrete-scroll", "extra-pointer-buttons"]
+                                      + (["touchscreen"] if self.touchscreen_granted else []),
                 "input_state": {"scope": "helper-injected", "physical_modifiers": "unavailable",
                                 "keysym_presses": len(self.injected_keysyms),
                                 "keycode_presses": len(self.injected_keycodes),
+                                "touch_contacts": len(self.injected_touches),
                                 "modifiers": sorted({KEYSYM_MODIFIERS[key] for key in self.injected_keysyms if key in KEYSYM_MODIFIERS}
                                                     | {KEYCODE_MODIFIERS[key] for key in self.injected_keycodes if key in KEYCODE_MODIFIERS})},
                 "detail": self.detail}
@@ -442,7 +456,8 @@ class NativeSession:
             self.elements.clear()
             self.observation = None
             self.stopping.set()
-            if self.evidence:
+            # The in-flight input must journal its release/failure before finish.
+            if self.evidence and not self.pending_input_receipts:
                 try:
                     self.last_evidence = str(self.evidence.path)
                     self.evidence.finish(self.launches, reason="helper-stopped")
@@ -475,6 +490,20 @@ class NativeSession:
             self.observation.validate(payload)
 
     def handle(self, payload):
+        is_input = payload.get("action") == "input"
+        if is_input:
+            with self.lock:
+                self.pending_input_receipts += 1
+        try:
+            return self.handle_recorded(payload)
+        finally:
+            if is_input:
+                with self.lock:
+                    self.pending_input_receipts -= 1
+                    if self.stopping.is_set() and not self.pending_input_receipts:
+                        self.close()
+
+    def handle_recorded(self, payload):
         if payload.get("action") == "input":
             payload["input_id"] = secrets.token_hex(16)
             payload["_dispatch_stage"] = "before-input"
@@ -487,6 +516,7 @@ class NativeSession:
         except Exception as exc:
             if payload.get("action") == "input":
                 result = input_failure(exc, payload, stage=payload.get("_dispatch_stage", "before-input"))
+                self.remember_input(result)
                 self.record_evidence(payload, result)
                 raise DesktopRequestError(result) from exc
             result = dict(getattr(exc, "receipt", {"error": str(exc), "reason": "request-failed"}))
@@ -747,6 +777,7 @@ class NativeSession:
                 self.captured = started
                 self.capture_max_age = max_age
                 self.observation = CaptureObservation(started, max_age, geometry, region=expected)
+                payload["related_input_id"] = self.last_input.get("input_id") if self.last_input else None
                 return {**self.snapshot_status(), "output": output, "image_geometry": image_geometry, "image_origin": origin,
                     "coordinate_space": "monitor",
                     "captured_at": datetime.now(timezone.utc).isoformat(), "changed": changed,
@@ -784,11 +815,21 @@ class NativeSession:
                 input_dispatch_at=datetime.now(timezone.utc).isoformat(),
                 input_dispatch_monotonic_ns=time.monotonic_ns())
 
+    def remember_input(self, result):
+        with self.lock:
+            # Holds/capture yield the lock. An older result must not replace a
+            # newer refusal admitted while that request was still in flight.
+            if (self.last_input is None or result["input_received_monotonic_ns"] >=
+                    self.last_input.get("input_received_monotonic_ns", 0)):
+                self.last_input = input_snapshot(result)
+
     def input(self, payload):
         client.validate_text_delay(payload)
         codes = client.validate_keycodes(payload)
         hold_ms = client.validate_hold(payload)
         drag_ms = client.validate_drag(payload)
+        from desktop import pointer_gestures
+        pointer_gestures.validate(payload)
         freshness = capture_freshness(self.captured or None, self.capture_max_age)
         if self.geometry is None or payload.get("geometry") != self.geometry or not freshness["fresh"]:
             age = freshness["age_seconds"]
@@ -800,24 +841,39 @@ class NativeSession:
                                        f"({detail}). Recapture and re-plan before retrying", "reason": reason,
                                        "capture_freshness": freshness})
         kind = payload.get("kind")
-        if kind in ("click", "move", "drag"):
+        if kind == "touch":
+            if not self.touchscreen_granted:
+                raise ValueError("Touchscreen consent is required; start a new native session with --touch at a safe checkpoint")
+            pointer_gestures.execute_touch(self, payload)
+        elif kind in ("relative", "scroll"):
+            self.guard(payload)
+            self.mark_input_dispatch(payload)
+            dx, dy = payload.get("dx", 0), payload.get("dy", 0)
+            if kind == "relative":
+                self.portal.notify("NotifyPointerMotion", "dd", float(dx), float(dy))
+            else:
+                for axis, steps in ((0, dy), (1, dx)):
+                    if steps:
+                        self.guard(payload)
+                        self.portal.notify("NotifyPointerAxisDiscrete", "ui", axis, steps)
+        elif kind in ("click", "move", "drag"):
             x, y = payload.get("x"), payload.get("y")
             if type(x) is not int or type(y) is not int or not (0 <= x < self.geometry[0] and 0 <= y < self.geometry[1]):
                 raise ValueError("Pointer coordinates are outside the selected monitor")
             button = payload.get("button", 1)
-            if kind == "click" and (type(button) is not int or button not in range(1, 8)):
-                raise ValueError("Button must be 1 through 7")
+            if kind == "click" and (type(button) is not int or button not in range(1, 10)):
+                raise ValueError("Button must be 1 through 9")
             self.guard(payload)
             self.mark_input_dispatch(payload)
             self.portal.notify("NotifyPointerMotionAbsolute", "udd", self.node,
                 x * self.logical_size[0] / self.geometry[0], y * self.logical_size[1] / self.geometry[1])
             self.guard(payload)
             if kind in ("click", "drag"):
-                if button >= 4:
+                if 4 <= button <= 7:
                     axis, steps = {4:(0,-1), 5:(0,1), 6:(1,-1), 7:(1,1)}[button]
                     self.portal.notify("NotifyPointerAxisDiscrete", "ui", axis, steps)
                 else:
-                    code = {1:272, 2:274, 3:273}[button]
+                    code = {1:272, 2:274, 3:273, 8:275, 9:276}[button]
                     try:
                         self.portal.notify("NotifyPointerButton", "iu", code, 1)
                         if kind == "drag":
@@ -880,17 +936,18 @@ class NativeSession:
                         raise RuntimeError("Key release failed; native control stopped") from release_error
         else:
             raise ValueError("Unknown native input kind")
-        self.last_input = {"input_id": payload.get("input_id"),
-                           **payload.get("_input_receipt", {}),
-                           "input_completed_at": datetime.now(timezone.utc).isoformat(),
-                           "input_completed_monotonic_ns": time.monotonic_ns()}
-        return {"generation": self.generation, "geometry": self.geometry, **self.last_input,
+        result = {"generation": self.generation, "geometry": self.geometry,
+                **payload.get("_input_receipt", {}),
+                "input_completed_at": datetime.now(timezone.utc).isoformat(),
+                "input_completed_monotonic_ns": time.monotonic_ns(),
                 "input_id": payload.get("input_id"), "dispatch_stage": "input-completed", "input_delivery": "completed",
                 **({"observation_id": payload["observation_id"]} if payload.get("observation_id") is not None else {}),
                 **({"submitted_characters": len(keys)} if kind == "text" else {})}
+        self.remember_input(result)
+        return result
 
 
-def serve(*, remember=False, session_seconds=SESSION_SECONDS):
+def serve(*, remember=False, session_seconds=SESSION_SECONDS, touch=False):
     check_session()
     folder = runtime_directory(create=True)
     lock_fd = os.open(folder / "session.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
@@ -932,11 +989,13 @@ def serve(*, remember=False, session_seconds=SESSION_SECONDS):
                     portal.revoke_token(previous["consumed"])
             token = native_grants.consume() if remember else None
             session.restore_attempted = token is not None
-            node, size = portal.start(remember=remember, restore_token=token, save_token=session.save_restore_token)
+            node, size = portal.start(remember=remember, restore_token=token, save_token=session.save_restore_token,
+                                      **({"touch": True} if touch else {}))
             with session.lock:
                 if session.stopping.is_set():
                     return
                 session.node, session.logical_size = node, size
+                session.touchscreen_granted = touch
                 session.until = time.monotonic() + session_seconds if session_seconds else float("inf")
                 session.state, session.detail = "running", "User-approved selected-monitor capture and input"
                 session.portal_stage = "ready"
@@ -1043,6 +1102,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--serve", action="store_true", required=True)
     parser.add_argument("--remember", action="store_true")
+    parser.add_argument("--touch", action="store_true")
     parser.add_argument("--session-seconds", type=int, default=SESSION_SECONDS)
     options = parser.parse_args()
-    raise SystemExit(serve(remember=options.remember, session_seconds=options.session_seconds))
+    raise SystemExit(serve(remember=options.remember, session_seconds=options.session_seconds, touch=options.touch))

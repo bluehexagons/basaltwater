@@ -1,5 +1,31 @@
 # Agent environment manifest
 
+Use `basaltw agent context` when you need a general Basaltwater host inventory
+or help finding a capability. It works outside Git and reports observed PATH
+tools, present Basaltwater skill entrypoints, and a few CLI help routes.
+The asset list reuses the manifest's desktop application catalog,
+including versioned MuseScore executable aliases, without launching GUI tools.
+Text mode checks entrypoint presence without opening skill files. Use
+`basaltw agent context --json` for bundle comparison, individual paths and
+statuses, and the full set of help routes. In that report, `different` may
+indicate an older bundle or local edits. Inspect before refreshing and preserve
+personal changes. Unsafe or incomplete bundles are omitted and counted.
+Both modes restrict discovery to known skill names and leave installed tools
+unexecuted.
+Like the manifest, it inventories the effective account's home directory rather
+than an overridden `HOME` value. Run it as the intended agent account.
+CLI routes describe available command surfaces, not installed services.
+CachyOS routes use native desktop tools and its own doctor; Debian routes use
+the managed desktop and agent doctor. Other distributions and WSL retain the
+general feature routes without assuming Debian service management.
+
+For a known capability, start with the scoped manifest or doctor in the
+execution environment. For ordinary repository work, start with the project's
+instructions and tools. The context report is live and can be rerun when a
+host or PATH change affects the task. Keep saved output private. The report
+does not inspect credentials, project declarations, browser tabs, or desktop
+contents, and does not verify service readiness or session-loaded skills.
+
 Run `basaltw agent manifest` in a project checkout for a concise discovery
 summary, or `basaltw agent manifest /path/to/repo --json` for structured output.
 It reports executables on the active session PATH, the current branch/commit
@@ -19,7 +45,17 @@ for additional applications. This implies the desktop scope and limits the
 application/tool inventory to those names. Combine it with
 `--capability development` when project recipes are also needed. An application
 missing from PATH is omitted; an empty inventory does not establish readiness.
-Unrelated application and publishing prose is omitted.
+Unrelated application and publishing prose is omitted. Scoped reports skip
+browser and desktop-development probes unless their capability is selected and
+limit PATH lookups to tools associated with the requested capabilities.
+The full manifest and the `workspace`, `development`, `workstation` and
+`web` scopes read and validate `basaltwater-agent.json` when present.
+Only the full manifest and `workspace` or `web` scopes check the project's
+branch, commit, dirty state and artifact ignore rules.
+Desktop discovery checks only the relevant desktop skill bundles when resolving
+their paths. For delivered bundle identities and skill comparison details, request
+`skills`, `installation`, or explicit installation context. Other scopes
+retain source provenance and omit the per-skill summary.
 
 For a short workstation capability report, use
 `basaltw agent manifest . --capability workstation` (add `--json` for individual
@@ -237,6 +273,11 @@ identifies absent prerequisites. Commands are displayed with shell quoting,
 never executed by the manifest. Arguments do not expand environment variables,
 substitutions, or globs. Choose whether to run a recipe according to the user's
 task and review project commands before execution.
+
+Optional `version_check` declares a project-selected executable and
+expected version line for a visual recipe. Discovery reports the declaration
+as unverified. See [recipe version preflight](../workstations/visual-comparison-capture.md#check-a-recipe-tool-version)
+for selection, execution and result fields.
 
 `basaltw agent visuals check RECIPE --repository PATH --json` explicitly runs
 one declared recipe and retains its output, settings and environment evidence.

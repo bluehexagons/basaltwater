@@ -4,6 +4,7 @@
 SUITE ?=
 TEST ?=
 TEST_ARGS ?=
+TIMINGS_JSON ?=
 BROWSER_ARGS ?=
 PANEL_ARGS ?=
 TEST_SELECTION = $(foreach suite,$(SUITE),--suite $(suite)) $(TEST)
@@ -40,7 +41,7 @@ help:
 	@echo "  make test TEST=test_scrub_par2"
 	@echo "  make test TEST=service_tools/test_storage_ops"
 	@echo '  make test SUITE="web network" TEST_ARGS="--durations 20"'
-	@echo '  make panel-dev PANEL_ARGS="--surface connect"'
+	@echo '  make panel-dev PANEL_ARGS="--surface pairing"'
 	@echo "  make coverage          Run the default suite with branch coverage"
 
 # Full verification with or without coverage. CI does not repeat the suite.
@@ -81,7 +82,7 @@ panel-dev:
 # optional dev dependency is intentionally separate from the normal check.
 coverage: dev-check
 	python3 -m coverage erase
-	python3 -m coverage run --branch --source=. --omit='tests/*,build/*,dist/*,.venv/*,*/__pycache__/*' run_tests.py --durations 10
+	python3 -m coverage run --branch --source=. --omit='tests/*,build/*,dist/*,.venv/*,*/__pycache__/*' run_tests.py --durations 10 $(if $(TIMINGS_JSON),--timings-json "$(TIMINGS_JSON)")
 	python3 -m coverage report --show-missing
 
 # Run all tests with verbose output

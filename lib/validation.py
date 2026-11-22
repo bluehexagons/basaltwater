@@ -658,6 +658,7 @@ def validate_antistatic_settings(config: "SetupConfig") -> None:
         return
 
     from game.antistatic_steps import parse_antistatic_spec
+    from lib.credentials import get_runtime_credential
     from lib.validators import validate_host
 
     domain, _port = parse_antistatic_spec(config.antistatic_server, strict=True)
@@ -677,11 +678,7 @@ def validate_antistatic_settings(config: "SetupConfig") -> None:
     if any(ord(char) < 32 or ord(char) == 127 for char in username):
         raise ValueError("Antistatic admin username must not contain control characters")
 
-    password = None
-    for credential in config.share_credentials or []:
-        if len(credential) == 2 and credential[0] == username:
-            password = credential[1]
-            break
+    password = get_runtime_credential(config, username, service="antistatic")
     if password is None:
         raise ValueError(f"Missing credential for Antistatic admin: {username}")
     if any(ord(char) < 32 or ord(char) == 127 for char in password):
@@ -1638,7 +1635,7 @@ def validate_agent_git_settings(config: Any) -> None:
         if origin in seen_credential_origins:
             raise ValueError(f"Duplicate --git-credential origin: {origin}")
         seen_credential_origins.add(origin)
-        if get_runtime_credential(config, username) is None:
+        if get_runtime_credential(config, username, service="git", origin=origin) is None:
             raise ValueError(
                 f"Missing resolved credential for Git user {username} at {origin}"
             )

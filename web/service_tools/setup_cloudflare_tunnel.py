@@ -12,8 +12,7 @@ import os
 import sys
 import json
 import subprocess
-import glob
-import ipaddress
+from pathlib import Path
 import re
 import shlex
 import shutil
@@ -27,7 +26,7 @@ from lib.atomic_io import write_json_atomic, write_text_atomic
 from lib.machine_state import can_manage_firewall
 from lib.maintenance_defaults import APT_LOCK_OPTIONS, APT_UPDATE_OPTIONS
 from lib.remote_utils import CommandTimeoutError, run as run_bounded_command
-from lib.validators import validate_host
+from lib.validators import validate_host, validate_ip_address
 from lib.validation import validate_cloudflare_tunnel_name
 from lib.setup_prompts import setup_input
 from web.cloudflare_firewall import normalize_access_sources, reconcile_tunnel_firewall
@@ -51,6 +50,7 @@ SERVICE_STARTUP_CONTENT = (
     "TimeoutStartSec=120s\n"
 )
 SERVICE_COMMAND_TIMEOUT = 240
+ORIGIN_SERVICE = "http://localhost:80"
 
 
 def run_command(
@@ -203,73 +203,74 @@ def create_tunnel(tunnel_name: str) -> dict[str, Any]:
     }
 
 
-def _nginx_hostnames(content: str) -> list[str]:
-    """Read server_name directives while respecting Nginx comments and quotes."""
+def normalize_hostname(hostname: str) -> str:
+    """Require a literal, qualified DNS hostname for public ingress."""
+    if not validate_host(hostname):
+        raise ValueError(f"Invalid tunnel hostname: {hostname!r}")
+    normalized = hostname.lower().removesuffix(".")
+    if "." not in normalized or validate_ip_address(normalized):
+        raise ValueError(f"Invalid tunnel hostname: {hostname!r}")
+    return normalized
+
+
+def _normalize_hostnames(hostnames: list[str]) -> list[str]:
+    if not isinstance(hostnames, list):
+        raise ValueError("Tunnel hostname selection must be a list")
+    return sorted({normalize_hostname(hostname) for hostname in hostnames})
+
+
+def _nginx_http_hostnames(content: str) -> set[str]:
+    """Read exact names from HTTP vhosts that can serve the loopback origin."""
     lexer = shlex.shlex(content, posix=True, punctuation_chars=";{}")
     lexer.whitespace_split = True
     directive: list[str] = []
-    hostnames: list[str] = []
+    hostnames: set[str] = set()
+    names: list[str] = []
+    listeners: list[list[str]] = []
+    blocks: list[str] = []
     for token in lexer:
-        if all(char in ";{}" for char in token):
-            for separator in token:
-                if separator == ";" and directive[:1] == ["server_name"]:
-                    hostnames.extend(directive[1:])
-                directive.clear()
-        else:
+        if not all(char in ";{}" for char in token):
             directive.append(token)
+            continue
+        for separator in token:
+            if separator == "{":
+                blocks.append(directive[0] if directive else "")
+            elif blocks == ["server"]:
+                if separator == "}":
+                    if not listeners or any(
+                        listen[0] in {"80", "*:80", "0.0.0.0:80", "[::]:80", "127.0.0.1:80", "[::1]:80"}
+                        and not {"ssl", "quic", "proxy_protocol"}.intersection(listen[1:])
+                        for listen in listeners
+                    ):
+                        for name in names:
+                            try:
+                                hostnames.add(normalize_hostname(name))
+                            except ValueError:
+                                continue
+                    names.clear()
+                    listeners.clear()
+                elif directive[:1] == ["server_name"]:
+                    names.extend(directive[1:])
+                elif directive[:1] == ["listen"] and len(directive) > 1:
+                    listeners.append(directive[1:])
+            if separator == "}":
+                if not blocks:
+                    raise ValueError("Unmatched Nginx configuration block")
+                blocks.pop()
+            directive.clear()
     return hostnames
 
 
-def discover_nginx_sites() -> list[StrDict]:
-    """Discover sites from nginx configuration."""
-    sites: list[StrDict] = []
-    seen: set[tuple[str, str]] = set()
-    
-    if not os.path.exists(NGINX_SITES_DIR):
-        print(f"  ⚠ Nginx sites directory not found: {NGINX_SITES_DIR}")
-        return sites
-    
-    for config_file in glob.glob(f"{NGINX_SITES_DIR}/*"):
-        if os.path.islink(config_file):
-            target = os.readlink(config_file)
-            if not os.path.isabs(target):
-                target = os.path.join(os.path.dirname(config_file), target)
-        else:
-            target = config_file
-        
-        if not os.path.exists(target):
-            continue
-        
-        try:
-            with open(target, 'r') as f:
-                content = f.read()
-            
-            for domain in _nginx_hostnames(content):
-                if not domain or domain == '_' or domain.startswith('*'):
-                    continue
-                if not validate_host(domain):
-                    print(f"  ⚠ Skipping invalid Nginx hostname: {domain}")
-                    continue
-                if domain.lower() == "localhost":
-                    continue
-                try:
-                    ipaddress.ip_address(domain)
-                except ValueError:
-                    pass
-                else:
-                    continue
-                site = {
-                    'hostname': domain,
-                    'service': 'http://localhost:80'
-                }
-                site_key = (domain.lower(), site['service'])
-                if site_key not in seen:
-                    sites.append(site)
-                    seen.add(site_key)
-        except Exception as e:
-            print(f"  ⚠ Error reading {target}: {e}")
-    
-    return sites
+def enabled_nginx_hostnames() -> set[str]:
+    """Inspect enabled sites only to check an independently selected hostname."""
+    names: set[str] = set()
+    for config_file in Path(NGINX_SITES_DIR).glob("*"):
+        if config_file.is_file():
+            try:
+                names.update(_nginx_http_hostnames(config_file.read_text(encoding="utf-8")))
+            except (OSError, ValueError) as exc:
+                raise ValueError(f"Could not inspect Nginx site {config_file}: {exc}") from exc
+    return names
 
 
 def generate_config_yml(tunnel: JSONDict, sites: list[StrDict]) -> str:
@@ -291,12 +292,13 @@ def generate_config_yml(tunnel: JSONDict, sites: list[StrDict]) -> str:
     for site in sites:
         hostname = site.get('hostname')
         service = site.get('service')
-        if not isinstance(hostname, str) or not validate_host(hostname):
-            raise ValueError(f"Invalid tunnel hostname: {hostname!r}")
-        if service != 'http://localhost:80':
+        hostname = normalize_hostname(hostname)
+        if service != ORIGIN_SERVICE:
             raise ValueError(f"Unsupported tunnel origin service: {service!r}")
         config_lines.append(f"  - hostname: {json.dumps(hostname)}")
         config_lines.append(f"    service: {json.dumps(service)}")
+        config_lines.append("    originRequest:")
+        config_lines.append(f"      httpHostHeader: {json.dumps(hostname)}")
     
     config_lines.append("  - service: http_status:404")
     config_lines.append("")
@@ -307,6 +309,7 @@ def generate_config_yml(tunnel: JSONDict, sites: list[StrDict]) -> str:
 def save_state(
     tunnel: JSONDict, sites: list[StrDict], *, pending_activation: bool = False,
     allow_direct: bool = False, access_sources: list[str] | None = None,
+    managed_hostnames: list[str] | None = None, hostnames: list[str] | None = None,
 ):
     """Save tunnel state for future runs."""
     if not isinstance(allow_direct, bool):
@@ -319,6 +322,9 @@ def save_state(
     }
     if pending_activation:
         state['pending_activation'] = True
+    if managed_hostnames is not None or hostnames is not None:
+        state['managed_hostnames'] = [] if managed_hostnames is None else _normalize_hostnames(managed_hostnames)
+        state['hostnames'] = [] if hostnames is None else _normalize_hostnames(hostnames)
     
     os.makedirs(CONFIG_DIR, mode=0o755, exist_ok=True)
     
@@ -362,8 +368,11 @@ def load_state() -> Optional[dict[str, Any]]:
             raise ValueError("Cloudflare tunnel state contains an invalid site")
         if not isinstance(site.get('hostname'), str) or not validate_host(site['hostname']):
             raise ValueError("Cloudflare tunnel state contains an invalid hostname")
-        if site.get('service') != 'http://localhost:80':
+        if site.get('service') != ORIGIN_SERVICE:
             raise ValueError("Cloudflare tunnel state contains an unsupported origin")
+    if 'managed_hostnames' in state or 'hostnames' in state:
+        for key in ('managed_hostnames', 'hostnames'):
+            state[key] = _normalize_hostnames(state.get(key))
     return state
 
 
@@ -395,9 +404,12 @@ def _write_config_file(config_file: str, content: str) -> None:
             os.unlink(temporary_path)
 
 
-def _config_is_valid(config_file: str) -> bool:
-    """Return whether an existing config still passes cloudflared validation."""
-    if not os.path.isfile(config_file):
+def _config_is_current(config_file: str, expected: str) -> bool:
+    """Require the exact selected ingress even when another config is valid."""
+    try:
+        if Path(config_file).read_text(encoding="utf-8") != expected:
+            return False
+    except FileNotFoundError:
         return False
     result = run_command(
         ['cloudflared', 'tunnel', '--config', config_file, 'ingress', 'validate'],
@@ -497,16 +509,9 @@ def _ensure_service_running(*, restart: bool = False) -> bool:
 
 def _configure_firewall(*, allow_direct: bool, access_sources: list[str]) -> None:
     """Apply the requested direct web policy after verified tunnel activation."""
-    access_sources = normalize_access_sources(access_sources)
     if not can_manage_firewall():
         print("  ✓ Skipping Cloudflare firewall policy (machine cannot manage UFW)")
         return
-    if not shutil.which("ufw"):
-        run_command(["apt-get", "update"])
-        run_command(["apt-get", "install", "-y", "ufw"])
-
-    run_command(["ufw", "default", "deny", "incoming"])
-    run_command(["ufw", "default", "allow", "outgoing"])
     reconcile_tunnel_firewall(
         allow_direct=allow_direct, sources=access_sources, command_runner=run_command,
     )
@@ -581,118 +586,91 @@ def show_tunnel_info(tunnel: JSONDict, sites: list[StrDict]):
     print()
 
 
+def _prompt_hostnames() -> list[str]:
+    """Ask the operator to name the entire manually selected hostname set."""
+    while True:
+        value = setup_input("Public HTTP hostnames to publish (comma-separated, blank for none): ")
+        try:
+            return _normalize_hostnames([name.strip() for name in value.split(",")] if value.strip() else [])
+        except ValueError as exc:
+            print(f"✗ {exc}")
+
+
 def main(
     interactive: bool = True, auto_update: bool = False, tunnel_name: Optional[str] = None,
     *, allow_direct: bool | None = None, access_sources: list[str] | None = None,
-):
-    """
-    Main setup workflow.
-    
-    Args:
-        interactive: If False, runs in non-interactive mode (auto-update only)
-        auto_update: If True, automatically updates existing tunnel config
-    """
-    if interactive:
-        print("=" * 50)
-        print("Cloudflare Tunnel Setup")
-        print("=" * 50)
-        print()
-    
+    managed_hostnames: list[str] | None = None, hostnames: list[str] | None = None,
+) -> bool:
+    """Create or refresh a tunnel using only operator-selected origin hostnames."""
     check_root()
-
     state = load_state()
+    if not state and not interactive:
+        return False
+
+    old_policy = {
+        "allow_direct": state.get("allow_direct", False) if state else False,
+        "access_sources": state.get("access_sources", []) if state else [],
+    }
     if allow_direct is None:
-        allow_direct = state.get('allow_direct', False) if state else False
+        allow_direct = old_policy["allow_direct"]
     if not isinstance(allow_direct, bool):
         raise ValueError("Cloudflare direct access must be a boolean")
     if access_sources is None:
-        access_sources = state.get('access_sources', []) if state else []
-    access_sources = normalize_access_sources(access_sources)
-    policy = {'allow_direct': allow_direct, 'access_sources': access_sources}
-    if not interactive:
-        if not state:
-            return False
+        access_sources = old_policy["access_sources"]
+    policy = {"allow_direct": allow_direct, "access_sources": normalize_access_sources(access_sources)}
 
-    install_cloudflared()
-
-    if not interactive:
-        tunnel = state['tunnel']
-        sites = discover_nginx_sites()
-        if not sites:
-            return False
-        if not os.path.isfile(tunnel['credentials_file']):
-            raise ValueError(f"Tunnel credentials are missing: {tunnel['credentials_file']}")
-
-        old_sites = state.get('sites', [])
-        old_site_keys = {
-            (site['hostname'].lower(), site['service'])
-            for site in old_sites
-        }
-        new_site_keys = {
-            (site['hostname'].lower(), site['service'])
-            for site in sites
-        }
-        config_file = f"{CONFIG_DIR}/config.yml"
-        config_needs_update = (
-            state.get('pending_activation', False)
-            or old_site_keys != new_site_keys
-            or not _config_is_valid(config_file)
-        )
-
-        if config_needs_update:
-            # A config repair can require activation even when its route set
-            # is unchanged. Persist that obligation before replacing the file.
-            save_state(tunnel, old_sites, pending_activation=True, **policy)
-            config_content = generate_config_yml(tunnel, sites)
-            _write_config_file(config_file, config_content)
-        # Commit discovered routes only after the daemon has loaded them. If
-        # restart fails, pending_activation makes the next refresh retry it.
-        if not install_and_start_service(restart=config_needs_update):
-            return False
-        _configure_firewall(**policy)
-        if config_needs_update or any(state.get(key, default) != value for key, default, value in (
-            ('allow_direct', False, allow_direct), ('access_sources', [], access_sources),
-        )):
-            save_state(tunnel, sites, **policy)
-        return True
-    
-    # Interactive mode falls through to show configuration and return True on success
-    if state:
-        print("\n✓ Found existing tunnel configuration")
-        tunnel = state['tunnel']
-        
-        print(f"  Tunnel: {tunnel['name']} (ID: {tunnel['id']})")
-        
-        if auto_update:
-            choice = '1'
-        else:
-            print("\nOptions:")
-            print("  1. Update tunnel configuration (discover new sites)")
-            print("  2. Create a new tunnel")
-            print("  3. Exit")
-            
-            while True:
-                choice = setup_input("\nEnter choice (1-3): ").strip().lower()
-                
-                if choice in ['3', 'exit', 'quit', 'q']:
-                    print("Exiting...")
-                    return False
-                elif choice in ['2', 'new']:
-                    state = None
-                    break
-                elif choice in ['1', 'update']:
-                    break
-                else:
-                    print("✗ Invalid choice. Please enter 1, 2, or 3.")
-        
-        if choice in ['1', 'update']:
-            pass  # Continue with tunnel from state
-        else:
+    if state and interactive and not auto_update:
+        print(f"\nExisting tunnel: {state['tunnel']['name']}")
+        while True:
+            choice = setup_input("1. Update selected routes  2. Create a new tunnel  3. Exit: ").strip()
+            if choice == "3":
+                return False
+            if choice in ("1", "2"):
+                break
+        if choice == "2":
+            # Retain the approved selection when replacing the tunnel identity.
+            if managed_hostnames is None:
+                managed_hostnames = state.get("managed_hostnames")
+            if hostnames is None:
+                hostnames = state.get("hostnames")
             state = None
-    
-    if not state:
+
+    if hostnames is None and (
+        (state is None and not managed_hostnames)
+        or (state is not None and "hostnames" not in state and not managed_hostnames)
+    ):
+        if not interactive or auto_update:
+            raise ValueError(
+                "Review the legacy tunnel routes and select its public hostnames with "
+                "setup-cloudflare-tunnel --non-interactive --hostname DOMAIN, or rerun managed setup"
+            )
+        hostnames = _prompt_hostnames()
+
+    managed = _normalize_hostnames(
+        managed_hostnames if managed_hostnames is not None else (state or {}).get("managed_hostnames", [])
+    )
+    explicit = _normalize_hostnames(hostnames if hostnames is not None else (state or {}).get("hostnames", []))
+    requested = set(managed) | set(explicit)
+    enabled = enabled_nginx_hostnames() if requested else set()
+    if hostnames is not None and (missing := set(explicit) - enabled):
+        raise ValueError("No enabled Nginx HTTP origin for: " + ", ".join(sorted(missing)))
+    if missing := requested - enabled:
+        print("  ⚠ Omitting hostnames without an enabled Nginx HTTP origin: " + ", ".join(sorted(missing)))
+    selection = {
+        "managed_hostnames": sorted(set(managed) & enabled),
+        "hostnames": sorted(set(explicit) & enabled),
+    }
+    sites = [{"hostname": hostname, "service": ORIGIN_SERVICE} for hostname in sorted(requested & enabled)]
+    if not state and not sites:
+        raise ValueError("Select at least one enabled Nginx HTTP hostname to create a tunnel")
+
+    if state and not os.path.isfile(state["tunnel"]["credentials_file"]):
+        raise ValueError(f"Tunnel credentials are missing: {state['tunnel']['credentials_file']}")
+    install_cloudflared()
+    if state:
+        tunnel = state["tunnel"]
+    else:
         authenticate_cloudflare()
-        
         while True:
             default = f" [{tunnel_name}]" if tunnel_name else ""
             chosen_name = setup_input(f"\nEnter tunnel name{default}: ").strip() or tunnel_name
@@ -701,96 +679,41 @@ def main(
             except ValueError as exc:
                 print(f"✗ {exc}")
                 continue
-            
             break
-        
         tunnel = create_tunnel(chosen_name)
-        # Preserve a newly created tunnel even if service installation is
-        # deferred or fails. Empty applied routes force the next refresh to
-        # restart with the generated ingress rather than trusting stale state.
-        save_state(tunnel, [], pending_activation=True, **policy)
-    else:
-        tunnel = state['tunnel']
-        print(f"\n✓ Using existing tunnel: {tunnel['name']}")
-    
-    print("\nDiscovering configured sites from nginx...")
-    sites = discover_nginx_sites()
-    
-    if not sites:
-        print("  ⚠ No sites discovered from nginx configuration")
-        print("\nYou can manually add sites to the configuration.")
-        
-        manual = setup_input("Add a site manually? (y/n): ").strip().lower()
-        if manual == 'y':
-            while True:
-                hostname = setup_input("Enter hostname (e.g., example.com): ").strip()
-                if not hostname:
-                    break
-                if validate_host(hostname):
-                    sites.append({
-                        'hostname': hostname,
-                        'service': 'http://localhost:80'
-                    })
-                    break
-                print("✗ Invalid hostname; enter a DNS hostname such as example.com")
-    
-    if not sites:
-        print("\n✗ No sites configured. Exiting.")
-        sys.exit(1)
-    
-    print(f"\n✓ Found {len(sites)} site(s) to configure")
-    
-    config_content = generate_config_yml(tunnel, sites)
+        # A failed first run must be able to resume the already created tunnel.
+        save_state(tunnel, [], pending_activation=True, **selection, **policy)
+
+    if interactive and not auto_update:
+        show_tunnel_info(tunnel, sites)
+        if setup_input("Apply these routes and start the tunnel service? (y/n): ").strip().lower() != "y":
+            return False
+
     config_file = f"{CONFIG_DIR}/config.yml"
-    
-    print(f"\nWriting configuration to {config_file}...")
-    if state:
-        save_state(tunnel, state['sites'], pending_activation=True, **policy)
-    _write_config_file(config_file, config_content)
-    print("✓ Configuration file created")
-    
-    show_tunnel_info(tunnel, sites)
-    
-    proceed = setup_input("Install and start the tunnel service? (y/n): ").strip().lower()
-    
-    if proceed == 'y':
-        if not install_and_start_service(restart=True):
-            raise RuntimeError(
-                "cloudflared did not become active; direct HTTP/HTTPS ports remain open"
-            )
-        _configure_firewall(**policy)
-        save_state(tunnel, sites, **policy)
-        
-        print("\n" + "=" * 50)
-        print("Setup Complete!")
-        print("=" * 50)
-        print("\nNext steps:")
-        print("1. Go to Cloudflare Zero Trust dashboard")
-        print("2. Configure DNS for your domains to point to the tunnel")
-        print("3. Monitor tunnel status: systemctl status cloudflared")
-        print()
-        return True
-    else:
-        print("\n✓ Configuration saved")
-        print(f"  Config file: {config_file}")
-        print("\nTo start the tunnel later, run:")
-        print("  cloudflared service install")
-        print("  systemctl start cloudflared")
-        print("  systemctl enable cloudflared")
+    config_content = generate_config_yml(tunnel, sites)
+    old_sites = state["sites"] if state else []
+    config_needs_update = (
+        not state or state.get("pending_activation", False)
+        or old_sites != sites or not _config_is_current(config_file, config_content)
+    )
+    if config_needs_update:
+        if state:
+            # Record the route activation obligation with the last applied
+            # firewall policy. New firewall settings commit only after activation.
+            save_state(tunnel, old_sites, pending_activation=True, **selection, **old_policy)
+        _write_config_file(config_file, config_content)
+    if not install_and_start_service(restart=config_needs_update):
+        if interactive:
+            raise RuntimeError("cloudflared did not become active; the origin firewall policy was retained")
         return False
-
-
-def run_non_interactive_update() -> bool:
-    """
-    Run tunnel configuration update in non-interactive mode.
-    Only updates existing tunnel configurations with newly discovered sites.
-    Returns True if successful, False otherwise.
-    """
-    try:
-        result = main(interactive=False)
-        return bool(result)
-    except Exception:
-        return False
+    _configure_firewall(**policy)
+    if config_needs_update or any(
+        state.get(key) != value for key, value in (selection | policy).items()
+    ):
+        save_state(tunnel, sites, **selection, **policy)
+    if interactive:
+        print("\nTunnel active. Configure DNS in Cloudflare for the selected hostnames.")
+    return True
 
 
 if __name__ == "__main__":
@@ -807,22 +730,37 @@ if __name__ == "__main__":
                         help='Allow unrestricted direct HTTP/HTTPS alongside the tunnel; otherwise preserve saved policy')
     source_group = parser.add_mutually_exclusive_group()
     source_group.add_argument('--access-source', dest='access_sources', action='append',
-                              help='Allow this direct-access IP/CIDR; repeat as needed, otherwise preserve saved sources')
+                              help='Allow direct HTTP/HTTPS from this IP/CIDR; repeat to replace saved web sources')
     source_group.add_argument('--clear-access-sources', dest='access_sources', action='store_const', const=[],
                               help='Clear saved direct-access sources')
+    hostname_group = parser.add_mutually_exclusive_group()
+    hostname_group.add_argument('--hostname', dest='hostnames', action='append', type=normalize_hostname,
+                                help='Select a public HTTP hostname; repeat for the complete manual list')
+    hostname_group.add_argument('--clear-hostnames', dest='hostnames', action='store_const', const=[],
+                                help='Remove all manually selected public hostnames')
+    managed_group = parser.add_mutually_exclusive_group()
+    managed_group.add_argument('--managed-hostname', dest='managed_hostnames', action='append', help=argparse.SUPPRESS)
+    managed_group.add_argument('--clear-managed-hostnames', dest='managed_hostnames', action='store_const',
+                               const=[], help=argparse.SUPPRESS)
     
     args = parser.parse_args()
     
     try:
-        if args.non_interactive:
-            success = main(interactive=False, allow_direct=args.allow_direct, access_sources=args.access_sources)
-            sys.exit(0 if success else 1)
-        else:
+        from fcntl import LOCK_EX, LOCK_NB, flock
+        from lib.setup_directories import directory_fd
+
+        check_root()
+        with directory_fd(CONFIG_DIR, create=True) as config_directory:
+            try:
+                flock(config_directory, LOCK_EX | LOCK_NB)
+            except BlockingIOError as exc:
+                raise RuntimeError("Another Cloudflare tunnel setup is active") from exc
             success = main(
-                interactive=True, auto_update=args.auto_update, tunnel_name=args.tunnel_name,
+                interactive=not args.non_interactive, auto_update=args.auto_update, tunnel_name=args.tunnel_name,
                 allow_direct=args.allow_direct, access_sources=args.access_sources,
+                managed_hostnames=args.managed_hostnames, hostnames=args.hostnames,
             )
-            sys.exit(0 if success else 1)
+        sys.exit(0 if success else 1)
     except KeyboardInterrupt:
         print("\n\n✗ Setup cancelled by user")
         sys.exit(1)

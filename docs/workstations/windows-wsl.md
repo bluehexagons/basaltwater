@@ -37,7 +37,9 @@ From Command Prompt, the equivalent one-line entry point is:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$p=Join-Path $env:TEMP ('basaltwater-wsl-'+[guid]::NewGuid()+'.ps1'); Invoke-WebRequest 'https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.ps1' -UseBasicParsing -OutFile $p -ErrorAction Stop; & $p -Profile server_wsl -BuildServer -T3CodeDesktop -Node -Python -AgentTool gh,codex"
 ```
 
-Use `-Plan` to check the intended options without installing. `-LinuxUser`,
+Once WSL is enabled, setup runs `winget upgrade --all` for applicable installed
+Windows packages from enabled implicit sources before preparing Ubuntu. Use `-Plan` to
+preview the upgrade and the selected options. `-LinuxUser`,
 `-DistroName`, and `-DistroLocation` select the Ubuntu account, official stable
 Ubuntu WSL distribution, and absolute Windows drive directory for a new
 distro. Without a distro name, setup selects the newest versioned stable Ubuntu
@@ -61,6 +63,10 @@ Existing `wsl.conf` settings are retained, including files without a final newli
 Restart intent is saved before account/systemd preparation. After interruption,
 resume restarts only the selected distro even if its configuration is already
 unchanged; a live PID1 check also detects systemd settings not yet applied.
+Setup clears the restart marker and stages Ubuntu setup only after checking that
+systemd is PID 1 in the restarted distro. If that check fails, correct the WSL
+or Ubuntu configuration and use the saved installer's `-Resume` option.
+[Microsoft's WSL systemd guide](https://learn.microsoft.com/en-us/windows/wsl/systemd)
 New accounts have root-protected preparation markers under
 `/var/lib/basaltwater/wsl-accounts`. An interrupted password prompt is retried
 before adding sudo membership or completing preparation. Existing accounts
@@ -82,7 +88,7 @@ completion status under `%LOCALAPPDATA%\Basaltwater\t3-completion`.
 Setup also prints a Windows restart notice based on available update, servicing
 and pending file replacement indicators. Unreadable checks are reported as
 unknown; Windows is never rebooted automatically. See the
-[native workstation guidance](windows.md#install) for the limitations.
+[native workstation guidance](windows-install.md#install) for the limitations.
 For native GitHub Actions jobs with WSL access, see
 [Windows GitHub runners](windows-github-runner.md). `-BuildServer` alone does
 not register a GitHub runner.
@@ -90,7 +96,23 @@ not register a GitHub runner.
 If WSL needs a restart, setup prints an exact `-Resume` command. Restart
 Windows, log in to the same account, and run it. The state and pinned source
 are under `%LOCALAPPDATA%\Basaltwater`; credentials are never saved in setup
-state. Reusing `-Resume` reapplies the pinned setup and updates Ubuntu packages.
+state. Reusing `-Resume` reapplies the pinned setup and updates WinGet and Ubuntu
+packages. If WinGet reports a restart requirement, restart Windows manually and
+rerun the pinned installer with `-Resume`.
+Ubuntu setup requires a successful APT index refresh before upgrading, allows new
+dependencies, keeps locally modified package configuration, and prunes obsolete APT
+downloads. It also rechecks selected versioned runtimes, including Node.js and uv.
+Installed packages are retained. If Ubuntu reports a pending restart, finish
+active work first. For `-BuildServer` setups, use the management script's
+`stop` and `start` actions to restart the distro and login worker. For setups
+without the worker, run these commands in Windows PowerShell. [WSL command reference](https://learn.microsoft.com/en-us/windows/wsl/basic-commands#terminate)
+
+```powershell
+$state = Get-Content "$env:LOCALAPPDATA\Basaltwater\wsl-setup.json" -Raw | ConvertFrom-Json
+wsl.exe --terminate $state.Distro
+wsl.exe --distribution $state.Distro --user $state.LinuxUser
+```
+
 WSL and Ubuntu release upgrades are deliberate maintenance; an existing
 Ubuntu distribution is not silently replaced. The user may need to log in to
 each selected agent after setup. On an unmanaged Windows machine, choose the
@@ -111,24 +133,20 @@ it does not establish WSL service readiness. Rerun installation from updated
 pinned source to refresh skills; `Manage-Wsl.ps1 refresh` retains the existing
 source revision. See [skill access](../agents/agent-skills.md#access-from-different-sessions).
 
-The shared T3 integration baseline is stable **0.1.7**. The existing
-project-development bundle now includes [client workflows](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-016-client-workflows)
-for side chats, project pin/archive, local commit review, and build-gated
-1Password sources, plus [0.1.7 workflows](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-017-client-workflows)
-for child approvals, thread links, usage filters and model history.
-Updating the Windows desktop alone does not update Ubuntu's
-skills or authenticate its providers. Use the source-refresh flow below for
-Ubuntu guidance and selected tools, then verify the desktop version in About
-and an authenticated provider turn/terminal on the intended Ubuntu connection.
+The [shared T3 integration baseline](../agents/t3-qualification.md#stable-feature-baseline)
+and [client workflows](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md)
+apply to compatible versions. Update Ubuntu's skills and selected tools using
+the source-refresh flow below. Check the Windows client version in About, then
+verify an authenticated provider turn and terminal on the intended Ubuntu
+connection. Record the installed versions when qualifying this workflow.
 Provider variables and secret references resolve in that environment; Windows
 `op` presence or login does not qualify Ubuntu access. This profile installs
 no T3 systemd service in Ubuntu, so Debian's `t3 service protect` flow is not
-a WSL refresh step. Native Windows/WSL 0.1.7 interaction remains unqualified
-until exercised on those platforms.
+a WSL refresh step.
 
 ## Managed Windows policy
 
-T3 0.1.7 disables desktop WSL environments when Windows managed policy is
+T3 disables desktop WSL environments when Windows managed policy is
 present, even if that policy otherwise allows providers and remote access.
 Invalid or unreadable policy also leaves WSL unavailable. Ubuntu preparation,
 provider installation and WSL discovery do not establish that T3 may connect.
@@ -139,14 +157,27 @@ An independently authorized T3 server inside Ubuntu reads that distro's
 `/etc/t3code/policy.json`, not Windows policy. Deploying Linux policy does not
 re-enable the desktop WSL path, and this profile does not provision such a
 service. See the [platform reference](../../common/agent_skills/basaltwater-project-development/references/t3-platforms.md#windows-policy-and-ubuntu-wsl)
-and [upstream policy guide](https://github.com/pingdotgg/t3code/blob/v0.1.7/docs/user/managed-policy.md#what-a-policy-does-not-cover).
+and [upstream policy guide](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/managed-policy.md#what-a-policy-does-not-cover).
 
 ## Run a native PowerShell job
 
 Native jobs are submitted locally by the logged-in Windows owner. Prepare a
-Git checkout on an NTFS volume, with the job script and its output path inside
-that checkout. Commit the job script before running it: the runner checks its
-exact 40-character commit revision and rejects untracked or modified scripts.
+Git checkout on an NTFS volume and commit the job script and its project
+inputs. The runner checks that HEAD matches the requested 40-character
+revision, fetches the commit into a private Git repository, and runs the script
+from an export of the committed tree. A locally modified entry script stops
+the job before execution. Other checkout edits are excluded from the export.
+Commit edits and supply the new revision to include them. The export supports
+regular tracked files, honors committed `export-ignore` attributes, and rejects
+revisions containing symlinks or submodules. Git LFS files are exported as
+their committed pointers.
+
+Use paths relative to the snapshot for project inputs and outputs. The
+artifact path must be absent from the export. The script runs as the Windows
+owner and can use host tools and other external inputs. Trusted jobs that use
+external dependencies should pin them and record their identities in the
+artifact or build logs.
+
 It uploads one artifact only after a successful job. The upload destination must
 use HTTPS, accept bearer authentication in an HTTP PUT, and echo the received
 SHA-256 digest in `X-Artifact-SHA256`. The receiver should verify that digest
@@ -178,17 +209,18 @@ if ($LASTEXITCODE -ne 0) { throw 'Native artifact job failed' }
 These commands bypass script policy only in the child process. The runner
 checks the artifact's path again after the job exits, rejecting junctions or
 symlinks created in its parent directories during execution.
-It writes a result receipt and separate logs under
-`%LOCALAPPDATA%\Basaltwater\jobs`. Jobs have a one-hour timeout by default,
-50 MiB combined log limit, and 1 GiB artifact limit. A Windows Job Object owns
+It retains the snapshot and generated files alongside the result receipt and
+logs under `%LOCALAPPDATA%\Basaltwater\jobs`. The receipt records the commit
+and the SHA-256 of the source archive before script execution. Jobs have a
+one-hour timeout by default, a 50 MiB combined log limit, and a 1 GiB artifact limit.
+A Windows Job Object owns
 the process tree before the script can run. On normal exit, failure or timeout,
 the runner terminates remaining descendants and verifies cleanup within five
 seconds before checking artifacts or recording completion. If cleanup cannot
 be confirmed, its receipt says `cleanup-uncertain` with no `CompletedUtc`;
 inspect owned processes and logs before retrying. On script failure or checksum
 mismatch it reports failure and does not report an uploaded artifact.
-A job can be retried explicitly with a
-fresh output path or clean checkout. Run Ubuntu builds in the selected distro
+An explicit retry gets a new snapshot. Run Ubuntu builds in the selected distro
 as the configured non-root Linux user; keep Linux workspaces under its native
 filesystem rather than `/mnt/c`.
 
@@ -202,11 +234,10 @@ $state = Get-Content "$env:LOCALAPPDATA\Basaltwater\wsl-setup.json" -Raw | Conve
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $state.Source 'windows\Manage-Wsl.ps1') -Action status
 ```
 
-`refresh` updates WSL, Ubuntu packages, selected
-tools, and selected WinGet packages without changing the pinned Basaltwater
-source. Selected Windows packages, including T3, receive available WinGet
-updates. WinGet's catalog can lag the app's own updater; see
-[native update behavior](windows.md#review-selections-from-a-checkout).
+`refresh` updates WSL, Ubuntu packages, selected tools, and eligible WinGet
+packages using the pinned Basaltwater source. WinGet's catalogs can lag the
+app's own updater. See
+[native update behavior](windows-tool-selection.md#review-selections-from-a-checkout).
 To advance the source deliberately, run a freshly downloaded installer
 with `-Resume -UpdateSource` and optional `-Version REF`; it stages the new
 revision for both Windows and Ubuntu before reapplying setup.
@@ -237,7 +268,7 @@ gh workflow run windows-manual.yml --ref main -f suite=wsl
 ```
 
 `native` uses a GitHub-hosted x64 Windows Server runner to parse the PowerShell
-files and test installer planning and native job success, script changes,
+files and test installer planning and native job success, snapshot isolation,
 timeout, log limits, and digest rejection. Upload is replaced by a local test
 function; no artifact token or external receiver is needed. A hosted Server
 runner cannot qualify the Windows 11 bootstrap or T3 desktop.
@@ -251,10 +282,19 @@ real Windows/WSL interruption behavior.
 an isolated, already prepared Windows 11 x86-64 machine. Start the runner
 interactively as the same Windows account that owns the completed Ubuntu WSL
 setup; WSL distributions are account-scoped. The WSL job checks Windows 11,
-WSL, the Ubuntu distribution, systemd, the installer plan, the Ubuntu setup dry
-run, and focused Python tests. Its `distribution` input can name the selected
-distro explicitly; if omitted, the job uses the saved setup state. The job does
-not install, update, restart, or shut down WSL.
+WSL, the Ubuntu distribution, systemd, the installer plan, an Ubuntu setup dry
+run with the saved selection, and focused Python tests. It runs version checks
+for the installed build tools, selected runtimes and provider CLIs in the
+saved Linux user's Bash login environment. Provider sign-in, interactive
+terminals and full project builds are separate checks. Its
+`distribution` input can name the selected distro explicitly. If omitted, the
+job uses the saved setup state. The commands can start the selected distribution
+if it is stopped. They leave installed software and setup configuration intact.
+Run the same checks locally from a reviewed checkout on the prepared host:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\tests\Run-WslTests.ps1
+```
 
 The first release must be qualified on a Windows machine before declaring
 Windows support production ready. Exercise fresh install and restart, WinGet

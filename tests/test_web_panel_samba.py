@@ -45,6 +45,7 @@ def policy():
 
 class SambaAccountInspectionTests(unittest.TestCase):
     def setUp(self):
+        self.enterContext(patch("smb.unix_accounts.os.getgrouplist", return_value=[1000]))
         self.enterContext(patch.object(accounts, "_inspection_database", side_effect=lambda _private: nullcontext("/private-copy")))
 
     def inspect(self, *, listing="alice:1000:PRIVATE FULL NAME\n", details=None, uid=1000):
@@ -52,7 +53,7 @@ class SambaAccountInspectionTests(unittest.TestCase):
         self.inspection = self.enterContext(patch.object(accounts, "_inspect", side_effect=[
             "standalone server\n", "tdbsam\n", "/var/lib/samba/private\n", listing, details]))
         self.enterContext(patch.object(accounts, "_stamp", return_value=(1, 2, 3, 4, 5)))
-        self.enterContext(patch.object(accounts.pwd, "getpwnam", return_value=SimpleNamespace(pw_uid=uid)))
+        self.enterContext(patch.object(accounts.pwd, "getpwnam", return_value=SimpleNamespace(pw_uid=uid, pw_gid=1000, pw_name="alice")))
 
     def test_export_projects_only_account_flags_and_identity_without_hashes(self):
         self.inspect(details="Unix username: alice\nAccount Flags: [DUXL ]\nUser SID: S-1-5-21-1-2-3-1000\nFull Name: PRIVATE\n")
@@ -106,7 +107,7 @@ class SambaAccountInspectionTests(unittest.TestCase):
             with patch.object(accounts, "_inspect", side_effect=["standalone server", "tdbsam", "/var/lib/samba/private",
                 "alice:1000:Name\n", f"Unix username: alice\nAccount Flags: {control}\nUser SID: {sid}\n"]), \
                  patch.object(accounts, "_stamp", side_effect=[(1,), (database,), (database,), (1,)]), \
-                 patch.object(accounts.pwd, "getpwnam", return_value=SimpleNamespace(pw_uid=1000)):
+                 patch.object(accounts.pwd, "getpwnam", return_value=SimpleNamespace(pw_uid=1000, pw_gid=1000, pw_name="alice")):
                 return accounts._accounts()[0]["revision"]
         revision = inspect()
         self.assertEqual(inspect(database=3), revision)

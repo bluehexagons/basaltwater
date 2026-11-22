@@ -158,8 +158,8 @@ By default, the curated Debian cloud-image catalog
 (`lib/cloud_images.py`) supplies the qcow2. Override with `--image`:
 
 ```bash
-# Direct URL
-... --image https://cloud.debian.org/.../debian-13-genericcloud-amd64.qcow2
+# Direct URL and its expected 128-character SHA-512 digest
+... --image "$image_url" --image-sha512 "$expected_sha512"
 
 # Pre-uploaded image on the Proxmox node
 ... --image local:import/my-debian.qcow2
@@ -168,10 +168,18 @@ By default, the curated Debian cloud-image catalog
 ... --image-storage local
 ```
 
-Refresh the catalog with `python3 scripts/update_cloud_images.py`. Add
-`--pin-snapshot` to refresh entries to a specific upstream snapshot directory
-and record its SHA-512. The checked-in catalog is pinned and verified by
-default.
+Preview a catalog refresh with `python3 scripts/update_cloud_images.py --dry-run`.
+Run it without `--dry-run` to update the catalog. The updater selects concrete
+Debian snapshots and reads their `SHA512SUMS` over HTTPS. Review the snapshot,
+filename, URL, and digest changes for every alias before committing. The
+unversioned `debian` alias must match its versioned release entry. A missing or
+ambiguous checksum or a changed digest for the same snapshot stops the refresh.
+
+Provisioning verifies new downloads before publishing them to image storage
+and checks cached bytes again before import. For a deliberate custom image
+update, obtain the expected digest from a trusted source and use a distinct
+filename or move the old cached image aside after confirming the change. A
+pre-uploaded storage reference relies on operator verification before import.
 
 ## State Persistence
 

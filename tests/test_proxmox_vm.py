@@ -111,7 +111,7 @@ class TestImageStorage(unittest.TestCase):
     def test_download_dry_run_uses_import_volume_name(self):
         image = _ResolvedImage(
             url="https://example.com/debian.qcow2",
-            sha512=None,
+            sha512="a" * 128,
             filename="debian.qcow2",
             storage_ref=None,
         )
@@ -131,7 +131,7 @@ class TestImageStorage(unittest.TestCase):
     def test_download_dry_run_uses_iso_compatible_img_name(self):
         image = _ResolvedImage(
             url="https://example.com/debian.qcow2",
-            sha512=None,
+            sha512="a" * 128,
             filename="debian.qcow2",
             storage_ref=None,
         )
@@ -161,7 +161,7 @@ class TestImageStorage(unittest.TestCase):
         ]
         image = _ResolvedImage(
             url="https://example.com/debian.qcow2",
-            sha512=None,
+            sha512="a" * 128,
             filename="debian.qcow2",
             storage_ref=None,
         )
@@ -216,8 +216,34 @@ class TestImageStorage(unittest.TestCase):
 
         command = mock_run.call_args_list[2].args[3]
         self.assertIn("flock --exclusive /run/lock/basaltwater-image-", command)
-        self.assertIn("sha512sum -c -", command)
+        fetch_script = shlex.split(command)[-1]
+        self.assertIn("verify /var/lib/vz/import/debian.qcow2; else", fetch_script)
+        self.assertIn('verify "$partial"; mv -T', fetch_script)
+        self.assertIn("sha512sum -c -", fetch_script)
         self.assertEqual(mock_run.call_count, 3)
+
+    @patch("lib.proxmox_vm._ssh_run")
+    def test_missing_or_invalid_digest_fails_before_staging_or_cache_lookup(self, run):
+        for digest in (None, "", "z" * 128, "a" * 127):
+            with self.subTest(digest=digest), self.assertRaisesRegex(ProvisionError, "SHA-512"):
+                _download_image_to_host(
+                    _ResolvedImage("https://example.com/test.qcow2", digest, "test.qcow2", None),
+                    "local", "import", "192.0.2.10", "root", [], dry_run=False,
+                )
+        run.assert_not_called()
+
+    @patch("lib.proxmox_vm._ssh_run")
+    def test_failed_checksum_prevents_image_handoff(self, run):
+        run.side_effect = [
+            subprocess.CompletedProcess([], 0, "/images/test.qcow2\n", ""),
+            subprocess.CompletedProcess([], 0, "", ""),
+            subprocess.CompletedProcess([], 1, "", "sha512sum: checksum mismatch"),
+        ]
+        with self.assertRaisesRegex(ProvisionError, "checksum mismatch"):
+            _download_image_to_host(
+                _ResolvedImage("https://example.com/test.qcow2", "a" * 128, "test.qcow2", None),
+                "local", "import", "192.0.2.10", "root", [], dry_run=False,
+            )
 
 
 class TestGuestAgentWait(unittest.TestCase):
@@ -754,7 +780,7 @@ class TestCloudInitBootstrap(unittest.TestCase):
         self.events = []
         self.enterContext(patch(
             "lib.proxmox_vm.enroll_provisioned_guest_host_keys",
-            side_effect=lambda *a, **kw: self.events.append("enroll"),
+            side_effect=lambda *a, **kw: self.events.append(f"enroll {kw['tool']} {kw['vmid']}"),
         ))
         self.enterContext(patch("lib.proxmox_vm._ssh_run", side_effect=self._run))
         self.failed_command = ""
@@ -775,11 +801,20 @@ class TestCloudInitBootstrap(unittest.TestCase):
             stderr="injected failure" if failed else "",
         )
 
+    @patch("lib.proxmox_vm._report_memory_capacity", return_value=False)
+    @patch("lib.proxmox_vm._upload_user_data")
+    def test_memory_refusal_does_not_upload_cloud_init(self, upload, _capacity):
+        with self.assertRaisesRegex(ProvisionError, "memory floor would exceed"):
+            _provision_vm_locked(self.config)
+
+        upload.assert_not_called()
+        self.assertEqual(self.events, [])
+
     def test_success_verifies_before_enrollment_detachment_and_unlink(self):
         _provision_vm_locked(self.config)
         self.assertIn("qm guest exec 101", self.events[0])
         self.assertEqual(self.events[1:], [
-            "enroll", "qm set 101 --delete cicustom", "rm -f /var/lib/vz/snippets/test.yaml",
+            "enroll qm 101", "qm set 101 --delete cicustom", "rm -f /var/lib/vz/snippets/test.yaml",
         ])
 
     def test_verification_failure_destroys_before_unlinking(self):

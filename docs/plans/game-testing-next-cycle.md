@@ -11,6 +11,40 @@ Prepare tooling and documentation updates before selecting a fresh set of runs.
 This document does not activate another game, desktop fixture, helper refresh or
 evaluation phase.
 
+**Consuming evidence update, November 12:** the owner subsequently refreshed and
+authorized further bounded runs. One Medium learning match completed first on
+clean CLI/managed/helper `7e33c77f`; the new process receipts retained live game
+and wrapper identities and supported same-boot absence checks after UI Quit.
+Cloud upload and original overlay restoration were verified; exit codes remain
+unknown. The finalized recorder verified 196 PNG references with no uncertainty
+or truncation. These are selected consuming observations, not broad qualification.
+
+NC-01 remains open: two End Turn-labelled clicks repeated the same wrong point
+and inspected a card; a later changed point advanced the match. There were also
+an unintended offer purchase and an upgrade activated during intended inspection.
+Freshness and valid numeric coordinates cannot establish target identity. The
+consuming project now selects a finite offline crop/mapping rehearsal on three
+retained targets before another live brief. Require a changed mapping explanation
+after a verified miss and distinguish inspection from a spending transaction.
+Reuse existing literal crops and offline geometry mapping first; if those remain
+unreliable, consider the source-bound diagnostic point preview proposed below.
+No new preview API, helper behavior, dependency or setup refresh is delivered by
+this documentation update. Historical restart instructions below describe the
+original preparation gate; each later run retains its own explicit activation.
+
+**Source update after the offline rehearsal, November 12:** all three proposed
+points fell inside independently pinned target regions, but the controller could
+not establish the outer viewer's dimensions and correctly withheld input
+qualification. That provides the measured case for the optional diagnostic.
+The [offline point preview](../workstations/native-qa-evidence.md#offline-point-previews)
+now retains both unchanged and marked pixels. Explicit
+[`map-point --image-coordinates`](../workstations/desktop-observations.md#explicit-source-png-points-and-offline-previews)
+uses the existing source-PNG basis without inventing a viewer transform. Receipt
+origins, freshness and permission checks remain unchanged. These are source/offline
+features; refresh the installed setup, check provenance and qualify a disposable
+control before consuming-game adoption. The earlier docs-only delivery statement
+describes the prior milestone, not this code update. No new game Start is activated.
+
 The next cycle should reduce control mistakes, missed observations and reporting
 overhead while making learning experiments useful and comparisons interpretable.
 A completed match or verified PNG inventory alone does not establish those goals.
@@ -68,7 +102,8 @@ Retain the presented dimensions, image dimensions/origin and mapped point in the
 private decision evidence. If useful, add an offline diagnostic preview showing
 the proposed point on a derivative of the exact source frame. Such a preview
 would send no input, confer no new authority and renew no observation token.
-Do not add a second coordinate system or infer an unknown viewer transform.
+Use the existing source-PNG coordinate basis explicitly; do not infer an unknown
+viewer transform. The delivered preview and mapping route are documented above.
 
 Acceptance: synthetic full-view scaling, crop origins, margins, independent-axis
 scaling and drag endpoints still pass existing contracts. A fresh controller

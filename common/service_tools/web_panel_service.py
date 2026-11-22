@@ -5,12 +5,16 @@ from __future__ import annotations
 
 import argparse
 import html
+import hashlib
 import http.client
 import ipaddress
 import json
 import os
+import pwd
 import secrets
 import shutil
+import socket
+import struct
 import socketserver
 import subprocess
 import sys
@@ -28,9 +32,9 @@ SOURCE_ROOT = os.path.dirname(
 if SOURCE_ROOT not in sys.path:
     sys.path.insert(0, SOURCE_ROOT)
 
-from common.t3code_steps import _temporary_t3_loginctl_shim
 from common.service_tools.web_panel_diagnostics import (
     SYSTEM_UNITS,
+    _bounded_command,
     parse_query as parse_diagnostic_query,
     render_diagnostics,
 )
@@ -48,6 +52,10 @@ from common.service_tools.web_panel_share_actions import (
     unavailable_reason as shares_unavailable,
 )
 from common.service_tools import web_panel_routine_actions as routine_actions
+from common.service_tools import web_panel_headscale
+from common.service_tools import web_panel_status as status_model
+from common.service_tools import web_panel_refresh as refresh_ui
+from common.service_tools.web_panel_notification_details import render_security_findings
 from lib.storage_diagnostics import StorageDiagnostics
 from common.service_tools.web_panel_github_runner import parse_runner_query, render_runner_page
 from common.service_tools.web_panel_features import AGENT_TOOLS, PanelFeatures, discover_features, unit_installed
@@ -99,73 +107,10 @@ from common.web_panel_events import (
 _MAX_CONFIG_BYTES = 256 * 1024
 _MAX_REQUEST_BYTES = 16 * 1024
 _MAX_INGEST_REQUEST_BYTES = 64 * 1024
-_MAX_OUTPUT_BYTES = 24 * 1024
 _MAX_SERVICE_PROBE_BYTES = 8 * 1024
 _SERVICE_PROBE_TIMEOUT_SECONDS = 1
 _SYSTEM_OVERVIEW_CACHE_SECONDS = 30
 _INTERNAL_WEB_URL_FILE = "/etc/basaltwater/internal-web/base-url"
-_T3_UPDATE_TIMEOUT_SECONDS = 30 * 60
-_T3_STARTUP_TIMEOUT_SECONDS = 30 * 60
-# Doctor also inventories the runtime, tools and service configuration.
-_T3_READINESS_TIMEOUT_SECONDS = _T3_STARTUP_TIMEOUT_SECONDS + 300
-_T3_ACTION_TIMEOUT_SECONDS = _T3_UPDATE_TIMEOUT_SECONDS + _T3_READINESS_TIMEOUT_SECONDS + 60
-_T3_CORE_READINESS_CHECKS = (
-    "service_active",
-    "service_enabled",
-    "runtime",
-    "native_runtime",
-    "wrapper",
-    "pairing_helper",
-    "endpoint",
-    "startup_ready",
-    "t3_agent_skill",
-)
-_T3_GITHUB_READINESS_CHECKS = (
-    "git_identity",
-    "gh_authenticated",
-    "git_credential_helper",
-)
-_T3_READINESS_LABELS = {
-    "service_active": "service active",
-    "service_enabled": "service enabled at boot",
-    "runtime": "T3 runtime installed",
-    "native_runtime": "native runtime ready",
-    "wrapper": "pairing provider installed",
-    "pairing_helper": "pairing helper installed",
-    "endpoint": "web endpoint responding",
-    "startup_ready": "service startup stable",
-    "t3_agent_skill": "managed T3 skills installed",
-    "git_identity": "Git author identity configured",
-    "gh_authenticated": "GitHub CLI authenticated",
-    "git_credential_helper": "Git credential helper configured",
-}
-_T3_UPDATE_SCRIPT = r'''
-set -eu
-export NVM_DIR="$HOME/.nvm"
-if [ -s "$NVM_DIR/nvm.sh" ]; then . "$NVM_DIR/nvm.sh"; fi
-export PATH="$BASALTWATER_T3_LOGINCTL_SHIM:$HOME/.local/share/basaltwater/t3-npm/bin:$PATH"
-unset BASALTWATER_T3_LOGINCTL_SHIM
-unset npm_config_dangerously_allow_all_scripts
-unset NPM_CONFIG_DANGEROUSLY_ALLOW_ALL_SCRIPTS
-unset npm_config_allow_scripts
-unset NPM_CONFIG_ALLOW_SCRIPTS
-export CC=gcc
-export CXX=g++
-export npm_config_strict_allow_scripts=false
-export npm_config_foreground_scripts=true
-npx --yes --package=t3@latest -c \
-  'env -u npm_config_allow_scripts \
-    -u NPM_CONFIG_ALLOW_SCRIPTS \
-    -u npm_config_dangerously_allow_all_scripts \
-    -u NPM_CONFIG_DANGEROUSLY_ALLOW_ALL_SCRIPTS \
-    t3 service install'
-'''.strip()
-
-
-def _subprocess_text(value: str | bytes | None) -> str:
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="replace")
-    return value or ""
 
 
 def _reject_json_constant(value: str) -> None:
@@ -190,11 +135,10 @@ def _load_manifest(path: str) -> dict[str, Any]:
     if not isinstance(value.get("features"), dict):
         raise RuntimeError("Web panel manifest has no valid features")
     for name in (
-        "t3_github_readiness",
-        "t3_git_identity_readiness",
         "notification_ingest",
         "git",
-        "t3_update",
+        "t3code",
+        "t3_update",  # Saved manifests before the native-updater handoff.
     ):
         if not isinstance(value["features"].get(name, False), bool):
             raise RuntimeError("Web panel manifest has invalid feature settings")
@@ -238,23 +182,18 @@ def _safe_url(value: object) -> str | None:
 
 
 def _run_json(command: list[str]) -> dict[str, Any]:
-    try:
-        result = subprocess.run(
-            command,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return {}
-    if result.returncode != 0 or len(result.stdout.encode("utf-8")) > _MAX_CONFIG_BYTES:
+    output, issue = _bounded_command(command, timeout=10, max_bytes=_MAX_CONFIG_BYTES)
+    if issue:
         return {}
     try:
-        value = json.loads(result.stdout)
-    except (TypeError, ValueError):
+        value = json.loads(output)
+    except (TypeError, ValueError, RecursionError):
         return {}
     return value if isinstance(value, dict) else {}
+
+
+class _DiscoveredServices(list[dict[str, str]]):
+    incomplete = False
 
 
 def _internal_web_landing_service(
@@ -297,7 +236,7 @@ def discover_basaltwater_web_services() -> list[dict[str, str]]:
     utility = shutil.which("basaltwater-web")
     if not utility:
         return []
-    services: list[dict[str, str]] = []
+    services = _DiscoveredServices()
     landing = _internal_web_landing_service(utility)
     if landing:
         services.append(landing)
@@ -308,6 +247,7 @@ def discover_basaltwater_web_services() -> list[dict[str, str]]:
         payload = _run_json(command)
         records = payload.get(collection)
         if not isinstance(records, list):
+            services.incomplete = True
             continue
         for record in records:
             if not isinstance(record, dict):
@@ -322,13 +262,10 @@ def discover_basaltwater_web_services() -> list[dict[str, str]]:
                     description = "not responding"
                 else:
                     description = "Readiness not reported"
-                services.append(
-                    {
-                        "label": f"{label_prefix}: {name}",
-                        "url": url,
-                        "description": description,
-                    }
-                )
+                service = {"label": f"{label_prefix}: {name}", "url": url, "description": description}
+                if collection == "forwards" and name == "t3code":
+                    service["application"] = "t3code"
+                services.append(service)
     return services
 
 
@@ -682,8 +619,20 @@ def _probe_homebox(port: int) -> tuple[str, str]:
     connection = http.client.HTTPConnection(
         "127.0.0.1", port, timeout=_SERVICE_PROBE_TIMEOUT_SECONDS
     )
+    deadline = None
     try:
         connection.request("GET", "/api/v1/status")
+        # A socket timeout alone restarts on every received byte. Bound the
+        # complete response too, including a peer that dribbles its headers.
+        transport = connection.sock
+        def interrupt() -> None:
+            try:
+                transport.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        deadline = threading.Timer(_SERVICE_PROBE_TIMEOUT_SECONDS, interrupt)
+        deadline.daemon = True
+        deadline.start()
         response = connection.getresponse()
         body = response.read(_MAX_SERVICE_PROBE_BYTES + 1)
         if response.status != HTTPStatus.OK or len(body) > _MAX_SERVICE_PROBE_BYTES:
@@ -697,6 +646,8 @@ def _probe_homebox(port: int) -> tuple[str, str]:
     ):
         return "unavailable", "HomeBox is not responding"
     finally:
+        if deadline is not None:
+            deadline.cancel()
         connection.close()
 
     if not isinstance(status, dict) or status.get("health") is not True:
@@ -718,7 +669,11 @@ def _deduplicate_services(
             continue
         url = _safe_url(record.get("url"))
         label = record.get("label")
-        if not url or not isinstance(label, str) or not label or url in seen:
+        if not url or not isinstance(label, str) or not label:
+            continue
+        if url in seen:
+            if record.get("application") == "t3code":
+                next(service for service in services if service["url"] == url)["application"] = "t3code"
             continue
         description = record.get("description")
         service: dict[str, Any] = {
@@ -726,61 +681,13 @@ def _deduplicate_services(
             "url": url,
             "description": description if isinstance(description, str) else "",
         }
+        if record.get("application") == "t3code":
+            service["application"] = "t3code"
         if (probe_port := _homebox_probe_port(record)) is not None:
             service["probe"] = {"kind": "homebox", "port": probe_port}
         services.append(service)
         seen.add(url)
     return services
-
-
-def _evaluate_t3_readiness(
-    manifest: dict[str, Any], output: str
-) -> tuple[bool, str] | None:
-    """Evaluate doctor JSON against the capabilities selected during setup."""
-
-    try:
-        records = json.loads(output)
-    except (TypeError, ValueError):
-        return None
-    if not isinstance(records, list):
-        return None
-    result = next(
-        (
-            record
-            for record in records
-            if isinstance(record, dict) and record.get("capability") == "t3code"
-        ),
-        None,
-    )
-    if not isinstance(result, dict) or not isinstance(result.get("checks"), dict):
-        return None
-
-    checks = result["checks"]
-    required = list(_T3_CORE_READINESS_CHECKS)
-    if manifest["features"].get("t3_git_identity_readiness") is True:
-        required.append("git_identity")
-    if manifest["features"].get("t3_github_readiness") is True:
-        required.extend(("gh_authenticated", "git_credential_helper"))
-    failed = [name for name in required if checks.get(name) is not True]
-    optional_failed = [
-        name
-        for name in _T3_GITHUB_READINESS_CHECKS
-        if name not in required and checks.get(name) is False
-    ]
-
-    lines = ["Readiness checks:"]
-    for name in required:
-        marker = "✓" if checks.get(name) is True else "✗"
-        lines.append(f"  {marker} {_T3_READINESS_LABELS[name]}")
-    if optional_failed:
-        labels = ", ".join(_T3_READINESS_LABELS[name] for name in optional_failed)
-        lines.append(f"  • Not required by this setup: {labels}")
-    fixes = result.get("fixes")
-    if isinstance(fixes, list):
-        for fix in fixes:
-            if isinstance(fix, str) and fix:
-                lines.append(f"  ✓ Repair applied: {fix}")
-    return not failed, "\n".join(lines) + "\n"
 
 
 class WebPanelState:
@@ -805,16 +712,8 @@ class WebPanelState:
             if self.notification_ingest_enabled()
             else None
         )
-        self.action_status = "idle"
-        self.action_message = ""
-        self.action_output = ""
-        self.action_started_at: float | None = None
-        self._overview: list[dict[str, str]] = []
-        self._overview_at = 0.0
-        self._overview_lock = threading.Lock()
-        self._service_health: list[dict[str, str]] = []
-        self._service_health_at = float("-inf")
-        self._service_health_lock = threading.Lock()
+        self.status_cache = status_model.StatusCache()
+        self.status = status_model.PanelStatus(self)
         self.publishing = Publishing(agent_home)
         self.publishing_auth = PublishingAuth(self.publishing)
         self.agent_tasks = AgentTasks(agent_home, background_tick=self.publishing_tick)
@@ -908,198 +807,53 @@ class WebPanelState:
                 path=self._notification_log_path,
             )
 
-    def system_overview(self) -> list[dict[str, str]]:
-        """Return a briefly cached host report to keep refreshes inexpensive."""
+    def system_overview(self) -> status_model.Reading:
+        """Share host values and observation metadata atomically with clients."""
+        return self.status_cache.read("host", _SYSTEM_OVERVIEW_CACHE_SECONDS, collect_system_overview)
 
-        with self._overview_lock:
-            now = time.monotonic()
-            if self._overview and now - self._overview_at < _SYSTEM_OVERVIEW_CACHE_SECONDS:
-                return list(self._overview)
-            self._overview = collect_system_overview()
-            self._overview_at = time.monotonic()
-            return list(self._overview)
+    def service_health(self) -> status_model.Reading:
+        """Cache process state and its observation metadata, including failures."""
 
-    def service_health(self) -> list[dict[str, str]]:
-        """Cache local service state for thirty seconds, including failures."""
+        return self.status_cache.read("services", _SYSTEM_OVERVIEW_CACHE_SECONDS,
+                    lambda: collect_service_health(user_services=self.features().t3))
 
-        with self._service_health_lock:
-            now = time.monotonic()
-            if now - self._service_health_at >= _SYSTEM_OVERVIEW_CACHE_SECONDS:
-                self._service_health = collect_service_health(user_services=self.features().t3)
-                self._service_health_at = now
-            return list(self._service_health)
+    def proxmox_snapshot(self) -> dict[str, Any]:
+        return load_proxmox_snapshot()
 
-    def t3_update_available(self) -> bool:
-        """Return whether T3 Code is both configured and present for this user."""
+    def web_services(self) -> status_model.Reading:
+        """Cache discovery and a bounded number of independently cached probes."""
+        def collect() -> list[dict[str, Any]]:
+            discovered = discover_basaltwater_web_services()
+            services = _deduplicate_services(self.manifest.get("services", []), discovered)
+            incomplete = bool(getattr(discovered, "incomplete", False))
+            if not services and incomplete:
+                raise RuntimeError("Service discovery unavailable")
+            limited = len(services) > 64 or incomplete
+            probes = 0
+            for record in services[:64]:
+                description = record["description"]
+                record.update(id=hashlib.sha256(record["url"].encode()).hexdigest()[:24],
+                              status="ready" if description == "live" else "unavailable" if description == "not responding" else "unchecked",
+                              status_text="Responding" if description == "live" else "Not responding" if description == "not responding" else "Not checked")
+                if (port := _homebox_probe_port(record)) is not None:
+                    if probes < 4:
+                        probe = self.status_cache.read("homebox-" + str(port), 60, lambda: _probe_homebox(port))
+                        record["status"], record["status_text"] = probe.value or ("unavailable", "Probe unavailable")
+                        record["probe_observed_at"] = probe.observed_at
+                        limited = limited or probe.failed
+                    else:
+                        record.update(status="unchecked", status_text="Probe limit reached")
+                        limited = True
+                    probes += 1
+                record["limited"] = limited
+            return services[:64]
+        return self.status_cache.read("web", 60, collect)
 
-        return bool(
-            self.features().t3
-            and self.manifest["features"].get("t3_update") is True
-            and os.path.isdir(os.path.expanduser("~/.t3/runtime"))
-        )
-
-    def trigger_t3_update(self) -> bool:
-        if not self.t3_update_available():
-            return False
-        with self._lock:
-            if self.action_status == "running":
-                return False
-            self.action_status = "running"
-            self.action_message = "Updating T3 Code…"
-            self.action_output = ""
-            self.action_started_at = time.monotonic()
-        threading.Thread(target=self._run_t3_update_guarded, daemon=True).start()
-        return True
-
-    def _run_t3_update_guarded(self) -> None:
-        try:
-            self._run_t3_update()
-        except Exception as exc:
-            self._finish_action(
-                "failed",
-                "T3 Code update stopped unexpectedly.",
-                f"{type(exc).__name__}: {exc}",
-            )
-
-    def _run_t3_update(self) -> None:
-        deadline = time.monotonic() + _T3_ACTION_TIMEOUT_SECONDS
-        home = os.path.expanduser("~")
-        environment = os.environ.copy()
-        environment.pop("BASALTWATER_T3_LOGINCTL_SHIM", None)
-        environment["HOME"] = home
-        environment["PATH"] = os.pathsep.join(
-            (
-                os.path.join(home, ".local", "bin"),
-                os.path.join(home, ".local", "share", "basaltwater", "t3-npm", "bin"),
-                environment.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
-            )
-        )
-        environment.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
-        environment.setdefault(
-            "DBUS_SESSION_BUS_ADDRESS",
-            f"unix:path=/run/user/{os.getuid()}/bus",
-        )
-        try:
-            with _temporary_t3_loginctl_shim(
-                home, self.manifest["username"]
-            ) as shim_path:
-                update_environment = environment.copy()
-                update_environment["BASALTWATER_T3_LOGINCTL_SHIM"] = shim_path
-                update_environment["PATH"] = os.pathsep.join(
-                    (shim_path, environment["PATH"])
-                )
-                result = subprocess.run(
-                    ["/bin/bash", "-lc", _T3_UPDATE_SCRIPT],
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                    timeout=_T3_UPDATE_TIMEOUT_SECONDS,
-                    cwd=home,
-                    env=update_environment,
-                )
-        except subprocess.TimeoutExpired as exc:
-            output = _subprocess_text(exc.stdout) + _subprocess_text(exc.stderr)
-            self._finish_action("failed", "T3 Code update timed out.", output)
-            return
-        except OSError as exc:
-            self._finish_action("failed", "T3 Code updater could not start.", str(exc))
-            return
-
-        output = (result.stdout or "") + (result.stderr or "")
-        if result.returncode != 0:
-            self._finish_action(
-                "failed",
-                f"T3 Code update failed with exit code {result.returncode}.",
-                output,
-            )
-            return
-
-        doctor = shutil.which("basaltw", path=environment["PATH"])
-        if not doctor:
-            self._finish_action(
-                "failed",
-                "T3 Code updated, but the managed readiness command is unavailable.",
-                output,
-            )
-            return
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            self._finish_action("failed", "T3 Code update exceeded its action deadline.", output)
-            return
-        with self._lock:
-            self.action_message = "Waiting for T3 Code startup (up to 30 minutes)…"
-        try:
-            check = subprocess.run(
-                [
-                    doctor,
-                    "agent",
-                    "doctor",
-                    "--capability",
-                    "t3code",
-                    "--wait-for-t3-startup",
-                    "--json",
-                ],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=min(_T3_READINESS_TIMEOUT_SECONDS, remaining),
-                cwd=home,
-                env=environment,
-            )
-        except subprocess.TimeoutExpired as exc:
-            output += _subprocess_text(exc.stdout) + _subprocess_text(exc.stderr)
-            self._finish_action(
-                "failed",
-                "T3 Code updated, but its readiness check timed out.",
-                output,
-            )
-            return
-        except OSError as exc:
-            self._finish_action(
-                "failed",
-                "T3 Code updated, but its readiness check could not start.",
-                output + str(exc),
-            )
-            return
-        if time.monotonic() >= deadline:
-            self._finish_action(
-                "failed", "T3 Code update exceeded its action deadline.",
-                output + (check.stderr or ""),
-            )
-            return
-        readiness = _evaluate_t3_readiness(self.manifest, check.stdout or "")
-        if readiness is None:
-            output += (check.stdout or "") + (check.stderr or "")
-            self._finish_action(
-                "failed",
-                "T3 Code updated, but its readiness result was invalid.",
-                output,
-            )
-            return
-        ready, readiness_output = readiness
-        output += (check.stderr or "") + readiness_output
-        if not ready:
-            self._finish_action(
-                "failed",
-                "T3 Code updated, but its readiness check failed.",
-                output,
-            )
-            return
-        self._finish_action("complete", "T3 Code update completed.", output)
-
-    def _finish_action(self, status: str, message: str, output: str) -> None:
-        encoded = output.encode("utf-8", errors="replace")
-        if len(encoded) > _MAX_OUTPUT_BYTES:
-            encoded = encoded[-_MAX_OUTPUT_BYTES:]
-            output = "… earlier output omitted …\n" + encoded.decode(
-                "utf-8", errors="replace"
-            )
-        with self._lock:
-            self.action_status = status
-            self.action_message = message
-            self.action_output = output.strip()
-            self.action_started_at = None
-
+    def certificate_trust(self) -> dict[str, str | bool] | None:
+        def collect() -> dict[str, str | bool] | None:
+            return (discover_certificate_trust(self.manifest) if self.manifest.get("system_type") == "server_proxmox"
+                    else discover_certificate_trust())
+        return self.status_cache.read("trust", 60, collect).value
 
 _PAGE_STYLE = """
 * { box-sizing: border-box; }
@@ -1407,6 +1161,20 @@ meter::-moz-meter-bar { background: var(--accent); }
 .event-meta { margin: 3px 0 0; color: var(--muted); font-size: .82rem; }
 .event-detail { margin: 8px 0 0; }
 .event-values { margin: 8px 0 0; color: var(--muted); font-size: .85rem; }
+.event-timing { display: flex; flex-wrap: wrap; gap: 2px 16px; }
+.event-actions { margin: 8px 0 0; padding-left: 20px; }
+.event > details { margin-top: 0; }
+.event > details > pre { margin-top: 0; }
+.event-findings { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.event-findings > li { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
+.event-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 12px;
+  margin: 4px 0 0; font-size: .85rem; }
+.event-facts dt { color: var(--muted); }
+.event-facts dd { margin: 0; }
+@media (max-width: 460px) {
+  .event-facts { grid-template-columns: minmax(0, 1fr); }
+  .event-facts dd { margin-bottom: 4px; }
+}
 .badge {
   display: inline-block;
   padding: 2px 7px;
@@ -1628,10 +1396,12 @@ def render_service_status(state: WebPanelState, load: bool) -> str:
         'system and current-user services.</p></div>'
     )
     if load:
-        health = state.service_health()
+        reading = state.service_health()
+        health = reading.value or []
         cards = "".join(
-            '<div class="metric"><dt>{}</dt><dd><span class="metric-value {}">{}</span>'
+            '<div class="metric" data-panel-metric="{}"><dt>{}</dt><dd><span class="metric-value {}">{}</span>'
             '<span class="metric-description">{}</span>{}</dd></div>'.format(
+                html.escape(record["label"]),
                 html.escape(record["label"]),
                 {"active": "active", "failed": "failed", "Unavailable": "unavailable"}.get(record["value"], ""),
                 html.escape(record["value"]),
@@ -1647,18 +1417,19 @@ def render_service_status(state: WebPanelState, load: bool) -> str:
         summary = f"{len(health)} records"
         if attention:
             summary += f" · {attention} inactive or unavailable"
-        content = f'<p class="count">{summary} · cached up to 30 seconds</p>'
+        content = f'<p class="count" data-service-summary>{summary} · cached up to 30 seconds</p>'
         content += (
             f'<dl class="overview-grid">{cards}</dl>' if cards else
             '<p class="empty">No supported local services were found.</p>'
         )
+        content = refresh_ui.region("services", "Local service status", content, status_model.service_snapshot(reading))
     header = f'''<header><p class="eyebrow">Basaltwater web panel</p><h1>Local service status</h1>
 <p class="lede">Process state for supported services on <code>{host}</code>.</p></header>'''
     scope = "fixed system services and the panel user's T3 Code service" if features.t3 else "fixed system services"
     body = f'''<form class="job-load" method="get" action="/services"><button name="load" value="1">Load local service status</button></form>
 <p class="endpoint">This checks {scope}. It does not prove public DNS, TLS, or application readiness.</p>
 {tool_link("checkup", "Prepare a system checkup") if prompts else ""}{content}'''
-    footer = '<footer><a href="/">Back to dashboard</a><span>Loaded on request · no automatic refresh</span></footer>'
+    footer = '<footer><a href="/">Back to dashboard</a><span>Fixed process state updates after loading</span></footer>' if load else '<footer><a href="/">Back to dashboard</a><span>Loaded on request · no automatic refresh</span></footer>'
     return render_document(
         title=f"Local service status · {state.manifest['host']}",
         style=_PAGE_STYLE,
@@ -1670,7 +1441,7 @@ def render_service_status(state: WebPanelState, load: bool) -> str:
 
 
 def _render_audit_section(state: WebPanelState) -> str:
-    snapshot = state.audit_snapshot()
+    snapshot = state.status_cache.read("audit", 300, state.audit_snapshot).value or {}
     events = snapshot.get("events", [])
     status = str(snapshot.get("status", "unavailable"))
     generated_at = str(snapshot.get("generated_at", ""))
@@ -1726,7 +1497,7 @@ def _render_audit_section(state: WebPanelState) -> str:
                     html.escape(str(event.get("meaning", "Audit event"))),
                     html.escape(severity, quote=True),
                     html.escape(severity),
-                    html.escape(str(event.get("timestamp", "Unknown time"))),
+                    refresh_ui.render_log_time(str(event.get("timestamp", "Unknown time"))),
                     html.escape(str(event.get("key", "unknown"))),
                     value_html,
                 )
@@ -1751,7 +1522,7 @@ def _render_audit_section(state: WebPanelState) -> str:
     elif status == "degraded":
         status_label = "Collection incomplete"
     else:
-        status_label = f"Snapshot {generated_at}" if generated_at else "Latest 24 hours"
+        status_label = f"Snapshot {refresh_ui.render_log_time(generated_at)}" if generated_at else "Latest 24 hours"
     count = len(events) if isinstance(events, list) else 0
     warning_count = sum(
         event.get("severity") in {"warning", "error"} for event in events
@@ -1759,8 +1530,53 @@ def _render_audit_section(state: WebPanelState) -> str:
     warning_label = f" · {warning_count} warning/error event" + ("s" if warning_count != 1 else "")
     return f'''<section aria-labelledby="audit-heading"><div class="section-heading"><div>
 {render_heading("System audit log", "security", heading_id="audit-heading")}</div>
-<span class="count">{count} event{"" if count == 1 else "s"}{warning_label} · {html.escape(status_label)}</span>
-</div>{issue_html}{suppression_html}{content}</section>'''
+<span class="count">{count} event{"" if count == 1 else "s"}{warning_label} · {status_label}</span>
+</div>{refresh_ui.state_region(state, "audit", "Audit snapshot", '<p class="panel-summary" data-panel-summary>Audit snapshot summary</p><p class="filesystem-note">Event history and header totals reflect the page-load snapshot. Reload the dashboard to inspect a newer export.</p>')}
+{issue_html}{suppression_html}{content}</section>'''
+
+
+def _render_notification_row(
+    record: dict[str, Any], *, count: int | None = None, first_received: str = "",
+) -> str:
+    notification = record["notification"]
+    event = notification["event"]
+    operator = notification["operator"]
+    severity = html.escape(event["status"])
+    sender = html.escape(operator["system"])
+    source = html.escape(record["source_ip"])
+    received = refresh_ui.render_log_time(record["received_at"])
+    timing = []
+    if occurred_at := event.get("occurred_at"):
+        timing.append(f"<span>Reported occurrence {refresh_ui.render_log_time(occurred_at)}</span>")
+    if count is None:
+        meta = f"{html.escape(operator['job'])} · {html.escape(event['state'])} · reported system {sender} · from {source}"
+        timing.append(f"<span>Received {received}</span>")
+    elif count == 1:
+        meta = f"Reported system {sender} · from {source} · 1 report"
+        timing.append(f"<span>Received {received}</span>")
+    else:
+        meta = f"Reported system {sender} · from {source} · {count} reports"
+        timing.append(f"<span>First received {refresh_ui.render_log_time(first_received)}</span>")
+        timing.append(f"<span>Latest received {received}</span>")
+    action_html = ""
+    if actions := operator.get("suggested_actions"):
+        items = "".join(f"<li>{html.escape(action)}</li>" for action in actions)
+        action_html = f'<ul class="event-actions" aria-label="Suggested actions">{items}</ul>'
+    summary, findings = render_security_findings(notification)
+    detail_html = findings
+    if details := operator.get("details"):
+        label = "Sender's full report" if findings else "Report details"
+        detail_html += f"<details><summary>{label}</summary><pre>{html.escape(details)}</pre></details>"
+    message = operator["what_happened"]
+    if summary and message.startswith("Security monitor found activity or source coverage"):
+        message = summary
+    return (
+        f'<li class="event"><div class="event-head"><strong>{html.escape(operator["subject"])}</strong>'
+        f'<span class="badge {severity}">{severity}</span></div>'
+        f'<p class="event-meta">{meta}</p>'
+        f'<p class="event-meta event-timing">{"".join(timing)}</p>'
+        f'<p class="event-detail">{html.escape(message)}</p>{action_html}{detail_html}</li>'
+    )
 
 
 def _render_notification_section(state: WebPanelState) -> str:
@@ -1768,25 +1584,12 @@ def _render_notification_section(state: WebPanelState) -> str:
         return ""
     events = state.notification_events()
     alerts = unresolved_notification_alerts(events)
-    alert_rows = []
-    for alert in alerts:
-        record = alert["record"]
-        notification = record["notification"]
-        operator = notification["operator"]
-        severity = notification["event"]["status"]
-        alert_rows.append(
-            '<li class="event"><div class="event-head"><strong>{}</strong>'
-            '<span class="badge {}">{}</span></div>'
-            '<p class="event-meta">Reported system {} · from {} · {} {} · '
-            'first received {} · latest received {}</p><p class="event-detail">{}</p></li>'.format(
-                html.escape(operator["subject"]), html.escape(severity, quote=True),
-                html.escape(severity), html.escape(operator["system"]),
-                html.escape(record["source_ip"]), alert["count"],
-                "report" if alert["count"] == 1 else "reports",
-                html.escape(alert["first_received_at"]), html.escape(record["received_at"]),
-                html.escape(operator["what_happened"]),
-            )
+    alert_rows = [
+        _render_notification_row(
+            alert["record"], count=alert["count"], first_received=alert["first_received_at"],
         )
+        for alert in alerts
+    ]
     alert_content = (
         _render_event_history(alert_rows) if alert_rows else
         '<p class="empty">No unresolved warning or error reports in retained history.</p>'
@@ -1794,53 +1597,7 @@ def _render_notification_section(state: WebPanelState) -> str:
     if not events:
         content = '<p class="empty">No remote notifications have been received.</p>'
     else:
-        rows = []
-        for record in events:
-            notification = record["notification"]
-            event = notification["event"]
-            operator = notification["operator"]
-            details = str(operator.get("details", ""))
-            detail_html = (
-                '<details><summary>Details</summary><pre>{}</pre></details>'.format(
-                    html.escape(details)
-                )
-                if details
-                else ""
-            )
-            actions = operator.get("suggested_actions", [])
-            action_html = ""
-            if isinstance(actions, list) and actions:
-                action_html = '<p class="event-values">Suggested: {}</p>'.format(
-                    html.escape(" · ".join(str(action) for action in actions))
-                )
-            status = str(event.get("status", "info"))
-            state_label = str(event.get("state", "unknown"))
-            occurred_at = event.get("occurred_at")
-            timing = (
-                f"reported occurrence {occurred_at} · received "
-                if isinstance(occurred_at, str)
-                else "received "
-            )
-            rows.append(
-                '<li class="event"><div class="event-head"><strong>{}</strong>'
-                '<span class="badge {}">{}</span></div>'
-                '<p class="event-meta">{} · {} · reported system {} · {}{} '
-                'from {}</p>'
-                '<p class="event-detail">{}</p>{}{}</li>'.format(
-                    html.escape(str(operator.get("subject", "Notification"))),
-                    html.escape(status, quote=True),
-                    html.escape(status),
-                    html.escape(str(operator.get("job", "unknown job"))),
-                    html.escape(state_label),
-                    html.escape(str(operator.get("system", "Unknown system"))),
-                    html.escape(timing),
-                    html.escape(str(record.get("received_at", "Unknown time"))),
-                    html.escape(str(record.get("source_ip", "unknown"))),
-                    html.escape(str(operator.get("what_happened", ""))),
-                    action_html,
-                    detail_html,
-                )
-            )
+        rows = [_render_notification_row(record) for record in events]
         content = '<details class="history"><summary>Notification history ({} received)</summary>{}</details>'.format(
             len(events), _render_event_history(rows),
         )
@@ -1874,9 +1631,8 @@ def render_page(state: WebPanelState, *, proxmox_query: ProxmoxQuery | None = No
 
     manifest = state.manifest
     features = state.features()
-    services = _deduplicate_services(
-        manifest["services"], discover_basaltwater_web_services()
-    )
+    web_reading = state.web_services()
+    services = web_reading.value or []
     service_cards = ""
     service_states = {"ready": 0, "attention": 0, "unavailable": 0, "unchecked": 0}
     for record in services:
@@ -1902,22 +1658,25 @@ def render_page(state: WebPanelState, *, proxmox_query: ProxmoxQuery | None = No
             status_class = tone
             description = ""
         if (probe_port := _homebox_probe_port(record)) is not None:
-            status_class, status_text = _probe_homebox(probe_port)
+            status_class, status_text = record["status"], record["status_text"]
             status_html = '<span class="card-status {}">{}</span>'.format(
                 status_class, html.escape(status_text)
             )
+        if not status_html:
+            status_html = '<span class="card-status unchecked">{}</span>'.format(html.escape(record["status_text"]))
         service_states[status_class] += 1
         icon, category = {
             "Published site": ("web-services", "sea"),
             "HTTPS service": ("service-status", "workspace"),
         }.get(kind, ("web-services", "water"))
         service_cards += (
-            '<a class="card service-card tone-{}" href="{}"><span class="card-top"><span class="action-icon">{}</span>'
+            '<a class="card service-card tone-{}" data-panel-service="{}" href="{}"><span class="card-top"><span class="action-icon">{}</span>'
             '<span class="service-title"><strong>{}</strong><span class="service-kind">{}</span></span>'
             '<span class="service-arrow" aria-hidden="true">&#8599;</span></span>'
             '<span class="service-detail">{}{}</span><span class="card-url">{}</span></a>'
         ).format(
             category,
+            record["id"],
             html.escape(record["url"], quote=True),
             render_icon(icon),
             html.escape(label),
@@ -1938,7 +1697,8 @@ def render_page(state: WebPanelState, *, proxmox_query: ProxmoxQuery | None = No
     )
     access_content = f'<ul class="access-list">{access_rows}</ul>' if access_rows else ""
 
-    overview = state.system_overview()
+    overview_reading = state.system_overview()
+    overview = overview_reading.value or []
     overview_cards = ""
     pressure_cards = ""
     has_root_filesystem = any(
@@ -1970,10 +1730,10 @@ def render_page(state: WebPanelState, *, proxmox_query: ProxmoxQuery | None = No
         elif value == "Unavailable":
             tone = "unavailable"
         card = (
-            '<div class="metric"><dt>{}</dt><dd><span class="metric-value {}">{}</span>{}'
+            '<div class="metric" data-panel-metric="{}"><dt>{}</dt><dd><span class="metric-value {}">{}</span>{}'
             '<span class="metric-description">{}</span></dd></div>'
         ).format(
-            html.escape(record["label"]), tone, html.escape(value), meter,
+            html.escape(record["label"], quote=True), html.escape(record["label"]), tone, html.escape(value), meter,
             html.escape(record["description"]),
         )
         if record.get("kind") == "pressure":
@@ -1988,13 +1748,17 @@ def render_page(state: WebPanelState, *, proxmox_query: ProxmoxQuery | None = No
     )
     filesystem_section = render_filesystems(overview, _format_bytes)
     proxmox_section = (
-        render_proxmox(load_proxmox_snapshot(), manifest, _format_bytes, _format_uptime, query=proxmox_query)
+        render_proxmox(state.status_cache.read("proxmox", 60, state.proxmox_snapshot).value or {"available": False, "issues": []},
+                       manifest, _format_bytes, _format_uptime, query=proxmox_query)
         if manifest["system_type"] == "server_proxmox" else ""
     )
+    if proxmox_section:
+        proxmox_section = refresh_ui.state_region(state, "proxmox", "Proxmox snapshot",
+            '<p class="panel-summary" data-panel-summary>Proxmox snapshot summary</p>'
+            '<p class="filesystem-note">Summary updates automatically. Filtered inventory and details below reflect the page-load snapshot; reload to inspect a newer export.</p>' + proxmox_section)
     if filesystem_section:
-        filesystem_section += '<p><a class="refresh-link" href="/storage">Explore storage usage →</a></p>'
-    trust = (discover_certificate_trust(manifest) if manifest["system_type"] == "server_proxmox"
-             else discover_certificate_trust())
+        filesystem_section += '<p class="filesystem-note">Mounted storage reflects the page-load readings. Reload the dashboard for new filesystem details.</p><p><a class="refresh-link" href="/storage">Explore storage usage →</a></p>'
+    trust = state.certificate_trust()
     trust_section = _render_certificate_trust(trust) if trust else ""
     audit_section = _render_audit_section(state)
     notification_section = _render_notification_section(state)
@@ -2048,16 +1812,18 @@ def render_page(state: WebPanelState, *, proxmox_query: ProxmoxQuery | None = No
     ) + '</nav>'
     services_section = f'''<section aria-labelledby="services-heading"><div class="section-heading"><div>
 {render_heading("Web services", "web-services", heading_id="services-heading")}</div>
-<span class="count">{service_count}</span></div><div class="grid service-grid">{service_cards}</div></section>''' if services else ""
+<span class="count" data-web-summary>{service_count}</span></div><div class="grid service-grid">{service_cards}</div></section>''' if services else ""
+    if services_section:
+        services_section = refresh_ui.region("web", "Web services", services_section, status_model.web_snapshot(web_reading))
     access_section = f'''<section aria-labelledby="access-heading"><div class="section-heading"><div>
 {render_heading("Access", "access", heading_id="access-heading")}</div>
 <span class="count">{access_label}</span></div>{access_content}</section>''' if access_rows else ""
     body = f'''{section_nav}<section aria-labelledby="overview-heading"><div class="section-heading"><div>
 {render_heading("System overview", "dashboard", heading_id="overview-heading")}</div>
-<span class="count">Snapshot on page load · cached up to 30 seconds</span></div>
-<dl class="overview-grid host-overview">{overview_cards}</dl>{pressure_section}</section>
+<span class="count">Host readings · cached up to 30 seconds</span></div>
+{refresh_ui.region("host", "System overview", '<dl class="overview-grid host-overview">' + overview_cards + '</dl>' + pressure_section, status_model.host_snapshot(overview_reading))}</section>
 {proxmox_section}{filesystem_section}
-{render_agent_activity(state) if features.prompts else ""}
+{refresh_ui.state_region(state, "agents", "Agent activity", '<p class="panel-summary" data-panel-summary>Saved agent activity</p><span data-panel-elapsed hidden></span><p class="filesystem-note">Summary updates automatically. Activity cards and run links reflect the page-load snapshot. Open Agents to inspect changed runs and review decisions.</p>' + render_agent_activity(state)) if features.prompts else ""}
 {services_section}
 {audit_section}{notification_section}
 {access_section}{'<div id="trust">' + trust_section + '</div>' if trust_section else ""}{action}
@@ -2078,9 +1844,13 @@ class WebPanelHandler(BaseHTTPRequestHandler):
     sys_version = ""
     state: WebPanelState
 
+    def setup(self) -> None:
+        super().setup()
+        self.connection.settimeout(15)
+
     def _feature_available(self, path: str) -> bool:
-        if path == "/actions/t3-update":
-            return self.state.t3_update_available()
+        if path in {"/headscale", "/actions/headscale"}:
+            return self.state.features().headscale
         pages = {
             "/github-runner": "github-runner",
             RUNNER_REGISTRATION_ENDPOINT: "github-runner",
@@ -2124,19 +1894,39 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         payload = body.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", f"{content_type}; charset=utf-8")
-        self.send_header("Content-Length", str(len(payload)))
+        if status != HTTPStatus.NOT_MODIFIED:
+            self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
-        script_policy = f"script-src {CA_SCRIPT_CSP}; " if content_type == "text/html" else ""
+        script_policy = f"script-src {CA_SCRIPT_CSP} {refresh_ui.SCRIPT_CSP}; connect-src 'self'; " if content_type == "text/html" else ""
         if content_type == "text/html" and self.state.manifest.get("system_type") == "server_proxmox":
-            script_policy = f"script-src {CA_SCRIPT_CSP} {PROXMOX_SCRIPT_CSP}; "
+            script_policy = f"script-src {CA_SCRIPT_CSP} {PROXMOX_SCRIPT_CSP} {refresh_ui.SCRIPT_CSP}; connect-src 'self'; "
         self.send_header("Content-Security-Policy", f"default-src 'none'; {script_policy}img-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         for name, value in (headers or {}).items():
             self.send_header(name, value)
-        self.end_headers()
-        self.wfile.write(payload)
+        try:
+            self.end_headers()
+            if payload:
+                self.wfile.write(payload)
+        except (BrokenPipeError, ConnectionResetError):
+            # Navigation and hidden-tab suspension cancel passive GETs. A
+            # disconnected client needs no response or server traceback.
+            self.close_connection = True
+
+    def _headscale_authorized(self) -> bool:
+        try:
+            _pid, uid, _gid = struct.unpack("3i", self.request.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+            valid = (self.request.family == socket.AF_UNIX and uid == pwd.getpwnam("www-data").pw_uid
+                     and self.headers.get_all("X-Basaltwater-User") == [self.state.manifest["username"]]
+                     and self.state.credential_transport_available()
+                     and self.headers.get_all("X-Forwarded-Proto") == ["https"])
+        except (OSError, KeyError):
+            valid = False
+        if not valid:
+            self._send(HTTPStatus.FORBIDDEN, "Authenticated HTTPS panel proxy required\n", "text/plain")
+        return valid
 
     def _send_json(self, status: HTTPStatus, value: dict[str, object]) -> None:
         self._send(
@@ -2146,8 +1936,20 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         )
 
     def do_GET(self) -> None:
+        try:
+            self._get()
+        except status_model.StatusBusy:
+            self._send(HTTPStatus.SERVICE_UNAVAILABLE, "Status busy; retry shortly\n", "text/plain", headers={"Retry-After": "5"})
+
+    def _get(self) -> None:
         parsed = urllib.parse.urlsplit(self.path)
         path = parsed.path
+        if path.startswith(status_model.API_PREFIX):
+            status_model.serve(self, path.removeprefix(status_model.API_PREFIX), parsed.query)
+            return
+        if path == "/assets/panel-refresh.js" and not parsed.query:
+            self._send(HTTPStatus.OK, refresh_ui.SCRIPT, "text/javascript")
+            return
         if path == "/favicon.svg":
             self._send(HTTPStatus.OK, render_favicon(), "image/svg+xml")
             return
@@ -2156,6 +1958,14 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             return
         if not self._feature_available(path):
             self._send(HTTPStatus.NOT_FOUND, "Feature is not installed on this machine\n", "text/plain")
+            return
+        if path == "/headscale":
+            if not self._headscale_authorized():
+                return
+            if parsed.query:
+                self._send(HTTPStatus.BAD_REQUEST, "Invalid Headscale query\n", "text/plain")
+                return
+            self._send(HTTPStatus.OK, web_panel_headscale.render(self.state, _PAGE_STYLE), "text/html")
             return
         if path == "/shares-data":
             try:
@@ -2196,7 +2006,8 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             except ValueError:
                 self._send(HTTPStatus.BAD_REQUEST, "Invalid agent view\n", "text/plain")
                 return
-            self._send(HTTPStatus.OK, render_agents(self.state, _PAGE_STYLE, query), "text/html")
+            body = render_agents(self.state, _PAGE_STYLE, query)
+            self._send(HTTPStatus.OK, refresh_ui.agent_document(self.state, body), "text/html")
             return
         if path == "/agent-tools":
             try:
@@ -2313,7 +2124,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             self._handle_notification_ingest()
             return
         agent_paths = {"/actions/agent-task/save", "/actions/agent-task", "/actions/agent-diagnostics", "/actions/agent-tool/prepare"}
-        admin_paths = {"/actions/admin/cancel"}
+        admin_paths = {"/actions/admin/cancel", "/actions/headscale"}
         data_paths = {"/actions/data/review", "/actions/data/submit", "/actions/data/cancel"}
         samba_paths = {"/actions/samba/review", "/actions/samba/submit", "/actions/samba/cancel"}
         share_paths = {"/actions/shares/review", "/actions/shares/submit", "/actions/shares/cancel"}
@@ -2321,7 +2132,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         credential_paths = {"/actions/credentials/identity", "/actions/credentials/github", "/actions/credentials/github-remove"}
         publishing_paths = {"/actions/publishing/" + action for action in PUBLISHING_FIELDS}
         maintenance_paths = {"/actions/maintenance-agent", "/actions/agent-inbox"}
-        if path not in {"/actions/t3-update", "/actions/storage-scan"} and path not in agent_paths | admin_paths | data_paths | samba_paths | share_paths | routine_paths | credential_paths | publishing_paths | maintenance_paths:
+        if path not in {"/actions/storage-scan"} and path not in agent_paths | admin_paths | data_paths | samba_paths | share_paths | routine_paths | credential_paths | publishing_paths | maintenance_paths:
             self._send(HTTPStatus.NOT_FOUND, "Not found\n", "text/plain")
             return
         if parsed.query:
@@ -2330,6 +2141,14 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         if not self._feature_available(path):
             self._send(HTTPStatus.NOT_FOUND, "Feature is not installed on this machine\n", "text/plain")
             return
+        if path == "/actions/headscale":
+            if not self._headscale_authorized():
+                return
+            if (self.headers.get_all("Content-Type") != ["application/x-www-form-urlencoded"]
+                    or self.headers.get_all("Transfer-Encoding") is not None
+                    or len(self.headers.get_all("Content-Length") or []) != 1):
+                self._send(HTTPStatus.BAD_REQUEST, "Invalid Headscale form\n", "text/plain")
+                return
         try:
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
@@ -2353,6 +2172,17 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             values["csrf"][0].encode("utf-8"), self.state.csrf_token.encode("utf-8"),
         ):
             self._send(HTTPStatus.FORBIDDEN, "Invalid request\n", "text/plain")
+            return
+        if path == "/actions/headscale":
+            if any(len(entries) != 1 for entries in values.values()):
+                self._send(HTTPStatus.BAD_REQUEST, "Invalid Headscale form\n", "text/plain")
+                return
+            try:
+                web_panel_headscale.submit({key: entries[0] for key, entries in values.items() if key != "csrf"})
+            except (OSError, ValueError, RuntimeError):
+                self._send(HTTPStatus.CONFLICT, "Request was not confirmed. Inspect requests and enrolled nodes before starting a fresh verified registration.\n", "text/plain")
+                return
+            self._send(HTTPStatus.SEE_OTHER, "", "text/plain", headers={"Location": "/admin?view=requests"})
             return
         if path == "/actions/storage-scan":
             try:
@@ -2406,16 +2236,6 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         if path in publishing_paths:
             self._handle_publishing_action(path, values)
             return
-        if set(values) - {"csrf", "return"} or any(len(entries) != 1 for entries in values.values()) or values.get("return", ["agents"])[0] != "agents":
-            self._send(HTTPStatus.BAD_REQUEST, "Invalid update action\n", "text/plain")
-            return
-        if not self.state.trigger_t3_update():
-            self._send(HTTPStatus.CONFLICT, "Action is unavailable\n", "text/plain")
-            return
-        self.send_response(HTTPStatus.SEE_OTHER)
-        self.send_header("Location", "/agents?view=diagnostics")
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
 
     def _handle_runner_registration(self, query: str) -> None:
         if not self._feature_available(RUNNER_REGISTRATION_ENDPOINT):
@@ -2926,12 +2746,44 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         return
 
 
-class _ThreadingUnixHTTPServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+class _BoundedThreadingMixIn(socketserver.ThreadingMixIn):
+    """Admit at most 32 request threads, including slow request headers."""
     daemon_threads = True
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self._request_slots = threading.BoundedSemaphore(32)
+        super().__init__(*args, **kwargs)
 
-class _ThreadingTCPHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
-    daemon_threads = True
+    def process_request(self, request: socket.socket, client_address: Any) -> None:
+        if not self._request_slots.acquire(blocking=False):
+            try:
+                request.settimeout(0.2)
+                request.sendall(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n"
+                                b"Cache-Control: no-store\r\nRetry-After: 5\r\nConnection: close\r\n\r\n")
+            except OSError:
+                pass
+            finally:
+                self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._request_slots.release()
+            raise
+
+    def process_request_thread(self, request: socket.socket, client_address: Any) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._request_slots.release()
+
+
+class _ThreadingUnixHTTPServer(_BoundedThreadingMixIn, socketserver.UnixStreamServer):
+    pass
+
+
+class _ThreadingTCPHTTPServer(_BoundedThreadingMixIn, HTTPServer):
+    pass
 
 
 def _parser() -> argparse.ArgumentParser:

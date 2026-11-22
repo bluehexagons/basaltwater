@@ -154,9 +154,8 @@ def operation_plan(policy: dict, uid: int, operation: str, parameters: object) -
             effect += " Run independently of the panel with a six-hour limit; dispatch does not prove completion."
     elif operation == "data.run":
         parameters = validate_data_action(parameters)
-        # Scrub actions are confirmed in Shares & Data. Keep broker claims,
-        # validation and supervision without a second human approval step.
-        mode = "allow"
+        # Only verification may update a finding without a decision-side review.
+        mode = "allow" if parameters["action"] == "verify" else "approve"
         argv = data_dispatch_argv(parameters)
         effect = DATA_ACTIONS[parameters["action"]][1] + " Run once independently of the panel with a six-hour limit. A changed finding or file is rejected; dispatch does not prove recovery."
         if "items" in parameters:
@@ -187,6 +186,18 @@ def operation_plan(policy: dict, uid: int, operation: str, parameters: object) -
                      if parameters["action"] in PASSWORD_ACTIONS else "")
                   + "Existing SMB sessions may continue. Reject changed account/configuration metadata; "
                   "run once in a supervised root service with a 45-second limit and wait for its result.")
+    elif operation == "headscale.admin":
+        from lib.headscale_portal import require_installed, review_endpoint, validate_action
+
+        require_installed()
+        parameters = validate_action(parameters)
+        endpoint = review_endpoint()
+        mode = "approve"
+        argv = []  # In-process fixed native adapter, never a shell command.
+        effect = ("Headscale " + parameters["action"] + " at " + endpoint
+                  + ". Approval admits or changes access to the shared network. "
+                  "Register only the exact Auth ID verified with the selected person. "
+                  "Registration expires after five minutes or broker restart; attempt once, never retry automatically.")
     elif operation == "command.run" and set(parameters) == {"argv"}:
         argv = validate_command_argv(parameters["argv"])
         mode = policy.get("commands", "approve")
@@ -195,6 +206,9 @@ def operation_plan(policy: dict, uid: int, operation: str, parameters: object) -
         raise ValueError("Unknown operation or parameters")
     if mode == "deny":
         raise PermissionError("Operation is not registered in administrator policy")
-    return {"machine": policy["machine"], "uid": uid, "operation": operation,
+    plan = {"machine": policy["machine"], "uid": uid, "operation": operation,
             "parameters": parameters, "argv": argv, "effect": effect,
             "policy_digest": digest(policy), "mode": mode}
+    if operation == "headscale.admin":
+        plan["headscale_endpoint"] = endpoint
+    return plan

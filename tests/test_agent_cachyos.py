@@ -8,6 +8,7 @@ import io
 import shlex
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -30,7 +31,9 @@ class CachyOSSetupTests(unittest.TestCase):
         return cachyos_config_from_args(self.parser.parse_args(
             ["setup", "agent_cachyos", "localhost", "human", "--agent-tool", "codex", *options]))
 
-    def test_default_plan_is_only_local_tooling(self):
+    def test_default_plan_upgrades_system_before_installing_workstation_tools(self):
+        from common.cachyos_cleanup import recover_cachyos_package_space
+
         config = self.config()
         self.assertEqual(config.selected_agent_tools(), ["gh", "codex"])
         self.assertFalse(config.auto_restart)
@@ -41,6 +44,10 @@ class CachyOSSetupTests(unittest.TestCase):
         self.assertTrue(all(function.__module__ in {"common.cachyos_steps", "common.cachyos_cleanup"}
                             for function in functions))
         self.assertNotIn(steps.install_cachyos_t3, functions)
+        self.assertLess(functions.index(recover_cachyos_package_space),
+                        functions.index(steps.upgrade_cachyos_packages))
+        self.assertLess(functions.index(steps.upgrade_cachyos_packages),
+                        functions.index(steps.install_cachyos_packages))
 
     def test_rejects_unsupported_options_before_target_execution(self):
         cases = [
@@ -199,6 +206,30 @@ class CachyOSSetupTests(unittest.TestCase):
         software.assert_called_once_with(config)
         ssh.assert_called_once_with(config)
         firewall.assert_called_once_with(config)
+
+    def test_package_upgrade_syncs_and_upgrades_in_one_transaction(self):
+        current_python = f"{sys.version_info.major}.{sys.version_info.minor}\n"
+        with patch.object(steps, "run", side_effect=[
+            subprocess.CompletedProcess([], 0),
+            subprocess.CompletedProcess([], 0, stdout=current_python),
+        ]) as run:
+            steps.upgrade_cachyos_packages(self.config())
+        self.assertEqual(run.call_args_list[0].args[0], ["sudo", "pacman", "-Syu", "--noconfirm"])
+        self.assertTrue(run.call_args_list[0].kwargs["interactive"])
+
+    def test_failed_upgrade_stops_before_checking_python(self):
+        with patch.object(steps, "run", return_value=subprocess.CompletedProcess([], 1)) as run, \
+                self.assertRaisesRegex(RuntimeError, "system upgrade failed"):
+            steps.upgrade_cachyos_packages(self.config())
+        self.assertEqual(run.call_count, 1)
+
+    def test_python_minor_upgrade_requires_fresh_setup_process(self):
+        upgraded_python = f"{sys.version_info.major}.{sys.version_info.minor + 1}\n"
+        with patch.object(steps, "run", side_effect=[
+            subprocess.CompletedProcess([], 0),
+            subprocess.CompletedProcess([], 0, stdout=upgraded_python),
+        ]), self.assertRaisesRegex(RuntimeError, "Rerun setup with the updated Python"):
+            steps.upgrade_cachyos_packages(self.config())
 
     def test_package_install_retains_installed_packages_and_never_syncs(self):
         def command(argv, **kwargs):

@@ -447,6 +447,13 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
                     if config is not None and config.t3code_desktop and name == "service.t3code" else
                     "User unit not observed active; inspect with systemctl --user. Selection may be unknown."), selected=selected)
 
+        if config is not None and (config.web_interfaces or config.t3code_desktop):
+            from common.cachyos_t3 import collect_completion_health
+
+            if completion := collect_completion_health(home):
+                state, reason = completion
+                record("configuration.t3-completion", state, reason, selected=True)
+
         from lib.cachyos_health import (
             collect_host_health, collect_network_health, collect_sunshine_health, collect_t3_storage_health,
             collect_ssh_health,

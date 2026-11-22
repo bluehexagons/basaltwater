@@ -95,6 +95,42 @@ class PackageCleanupTests(unittest.TestCase):
         self.assertTrue(all(call.args[0][0] != "sudo" for call in self.capture.call_args_list))
         self.run.assert_not_called()
 
+    def test_pressure_retains_recent_and_installed_versions_and_stops_at_target(self):
+        old = self.archive("example-1.0-1-x86_64.pkg.tar.zst", age=10)
+        signature = self.archive(old.name + ".sig", age=10)
+        later = self.archive("second-1.0-1-x86_64.pkg.tar.zst", age=10)
+        recent = self.archive("recent-1.0-1-x86_64.pkg.tar.zst", age=2)
+        installed = self.archive("installed-1.0-1-x86_64.pkg.tar.zst", age=10)
+        self.installed = "installed 1.0-1\n"
+        with patch.object(cleanup, "_under_pressure", side_effect=[True, True, False]):
+            self.assertEqual(cleanup.prune_package_cache(dry_run=False, pressure=True), 2)
+        self.assertFalse(old.exists())
+        self.assertFalse(signature.exists())
+        self.assertTrue(all(path.exists() for path in (later, recent, installed)))
+        self.assertEqual(self.capture.call_args_list[0].args[0][-2:], ["--keep", "1"])
+
+    def test_pressure_threshold_uses_available_bytes_and_inodes(self):
+        for free, inodes, supported, expected in ((2 * 1024**3, 10000, True, False),
+                (2 * 1024**3 - 1, 10000, True, True), (4 * 1024**3, 9999, True, True),
+                (4 * 1024**3, 0, False, False)):
+            with self.subTest(free=free, inodes=inodes, supported=supported), patch.object(
+                    cleanup.os, "statvfs", return_value=SimpleNamespace(
+                        f_bavail=free, f_frsize=1, f_files=int(supported), f_favail=inodes)):
+                self.assertEqual(cleanup._under_pressure(), expected)
+        with patch.object(cleanup, "_under_pressure", return_value=False):
+            self.assertEqual(cleanup.prune_package_cache(dry_run=False, pressure=True), 0)
+        self.capture.assert_not_called()
+
+    def test_pressure_setup_previews_and_rechecks_as_root_before_install(self):
+        with patch.object(Path, "is_file", return_value=True), patch.object(
+                cleanup, "prune_package_cache", return_value=1) as prune:
+            cleanup.recover_cachyos_package_space(SimpleNamespace(dry_run=False))
+        prune.assert_called_once_with(dry_run=True, pressure=True)
+        self.assertEqual(self.run.call_args.args[0][-2:], ["--apply", "--pressure"])
+        self.run.reset_mock()
+        cleanup.recover_cachyos_package_space(SimpleNamespace(dry_run=True))
+        self.run.assert_not_called()
+
     def test_installed_arch_names_and_epochs_are_retained_after_downgrades(self):
         self.installed = "lm_sensors 1:1.0-1\nexample@stable 1.0-1\n"
         protected = [self.archive(f"{name}-1.0-1-x86_64.pkg.tar.zst")
@@ -196,6 +232,30 @@ class PackageCleanupTests(unittest.TestCase):
         with patch.object(Path, "is_symlink", return_value=True), \
                 self.assertRaisesRegex(RuntimeError, "symlinked"):
             _real_cache_available()
+
+
+class PendingPackageConfigTests(unittest.TestCase):
+    @patch.object(cleanup, "is_dry_run", return_value=False)
+    @patch.object(cleanup, "run_captured")
+    @patch("builtins.print")
+    def test_package_config_review_is_read_only_and_advisory(self, output, capture, dry_run):
+        paths = "/etc/example.conf.pacnew\n/etc/previous.conf.pacsave\n"
+        capture.side_effect = [subprocess.CompletedProcess([], 0, paths, ""),
+                               subprocess.CompletedProcess([], 0, "", ""),
+                               FileNotFoundError()]
+        config = SimpleNamespace(dry_run=False)
+        cleanup.report_pending_package_configs(config)
+        self.assertEqual(capture.call_args.args[0],
+                         ["/usr/bin/pacdiff", "--output", "--pacmandb", "--nocolor"])
+        self.assertIn("2 package configuration files need review", output.call_args_list[0].args[0])
+        self.assertIn("/etc/example.conf.pacnew", output.call_args_list[1].args[0])
+        output.reset_mock()
+        cleanup.report_pending_package_configs(config)
+        output.assert_not_called()
+        cleanup.report_pending_package_configs(config)
+        self.assertIn("Could not check pending package configuration", output.call_args.args[0])
+        cleanup.report_pending_package_configs(SimpleNamespace(dry_run=True))
+        self.assertEqual(capture.call_count, 3)
 
 
 class T3CacheTests(unittest.TestCase):

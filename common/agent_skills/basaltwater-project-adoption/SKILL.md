@@ -56,6 +56,12 @@ for the division between shared environment support and project-owned behavior.
   check is too costly or unavailable, state that and give the exact command for
   the project owner to run. Report what changed and any remaining conversion
   gaps.
+- For a T3 Code project, put useful shared actions in `t3.json` and invoke the
+  existing project commands. Adopt sparse worktrees only when fewer tracked
+  files materially help setup or agent work. Check the intended commit and
+  required inputs with `basaltw manifest check-t3-worktree`, then verify the
+  actual project setup in a disposable T3 worktree. See the
+  [T3 project actions and worktrees guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/project-manifests.md#t3-code-project-actions-and-worktrees).
 
 ## Artifacts and cleanup
 

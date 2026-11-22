@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -60,6 +61,7 @@ class TestRepositorySelection(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             self.assertTrue(_checkout_repository_ref(directory, "refs/heads/release/stable"))
         commands = [call.args[0] for call in run.call_args_list]
+        self.assertEqual(commands[0][1:5], ["-c", "maintenance.autoDetach=false", "-c", "gc.autoDetach=false"])
         self.assertEqual(commands[0][-1], "+refs/heads/release/stable:refs/basaltwater/deploy")
         self.assertEqual(commands[1][-3:], ["reset", "--hard", "refs/basaltwater/deploy"])
         self.assertEqual(commands[2][-2:], ["clean", "-fdx"])
@@ -97,6 +99,41 @@ class TestRepositorySelection(unittest.TestCase):
         self.assertEqual(commands[0][-2], self.url)
         self.assertIn("--depth", commands[1])
         self.assertEqual(commands[1][-1], "+refs/heads/release/stable:refs/basaltwater/deploy")
+
+    def test_cached_staging_failures_do_not_return_a_checkout(self):
+        for results in (
+            [MagicMock(returncode=128, stderr="transfer failed")],
+            [MagicMock(returncode=0), MagicMock(returncode=128, stderr="origin failed")],
+            [subprocess.TimeoutExpired("git", 300)],
+        ):
+            with self.subTest(results=results), tempfile.TemporaryDirectory() as directory, \
+                 patch("lib.setup_common.resource_lock"), \
+                 patch("lib.setup_common._refresh_repository_cache", return_value=True), \
+                 patch("lib.setup_common.subprocess.run", side_effect=results), \
+                 patch("lib.deploy_utils.get_git_commit_hash") as commit:
+                self.assertIsNone(clone_repository(self.url, directory, cache_dir=os.path.join(directory, "cache")))
+                commit.assert_not_called()
+
+    @patch("lib.setup_common.subprocess.run")
+    def test_missing_remote_head_never_falls_back_to_a_stale_branch(self, run):
+        run.side_effect = [MagicMock(returncode=0), MagicMock(returncode=1, stderr="missing remote HEAD")]
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertFalse(_refresh_repository_cache(self.url, directory, "server"))
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertEqual(len(commands), 2)
+        self.assertEqual(commands[-1], ["git", "-C", directory, "remote", "set-head", "origin", "--auto"])
+
+    def test_successful_clone_without_a_head_commit_is_refused(self):
+        for dry_run, cached in ((False, False), (False, True), (True, True)):
+            with self.subTest(dry_run=dry_run, cached=cached), tempfile.TemporaryDirectory() as directory, \
+                 patch("lib.setup_common.resource_lock"), \
+                 patch("lib.setup_common._refresh_repository_cache", return_value=True), \
+                 patch("lib.setup_common.subprocess.run", return_value=MagicMock(returncode=0)), \
+                 patch("lib.deploy_utils.get_git_commit_hash", return_value=None) as commit:
+                self.assertIsNone(clone_repository(self.url, directory,
+                                                   cache_dir=os.path.join(directory, "cache") if cached else None,
+                                                   dry_run=dry_run))
+                commit.assert_called_once()
 
 
 class TestParseDeploySpec(unittest.TestCase):

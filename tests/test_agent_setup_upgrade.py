@@ -6,6 +6,7 @@ import json
 from contextlib import contextmanager
 import os
 from pathlib import Path
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -19,11 +20,16 @@ class SetupUpgradeTests(unittest.TestCase):
     def setUp(self):
         self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
         self.runtime = self.root / "opt/basaltwater"
+        self.state = self.root / "var/lib/basaltwater"
+        (self.root / "var").mkdir(mode=0o755)
+        self.state.parent.mkdir(mode=0o755)
         self.source = self.root / "incoming"
         self.source.mkdir()
-        (self.source / "basaltwater.py").write_text("# new runtime\n")
+        entry = self.source / "basaltwater.py"
+        entry.write_text("# new runtime\n")
+        entry.chmod(0o644)
         self.enterContext(patch.object(setup_common, "REMOTE_INSTALL_DIR", str(self.runtime)))
-        self.enterContext(patch.object(setup_common, "PERSISTENT_STATE_DIR", str(self.root / "var/lib/basaltwater")))
+        self.enterContext(patch.object(setup_common, "PERSISTENT_STATE_DIR", str(self.state)))
         self.enterContext(patch("web.webhook_build_steps.reject_legacy_build_services"))
         self.enterContext(patch("web.github_runner_steps.reject_active_legacy_runner"))
 
@@ -36,9 +42,15 @@ class SetupUpgradeTests(unittest.TestCase):
         return journal
 
     def test_fresh_setup_activates_current_runtime(self):
-        setup_upgrade.prepare_target_runtime(str(self.source), "agent")
+        previous_umask = os.umask(0o002)
+        try:
+            setup_upgrade.prepare_target_runtime(str(self.source), "agent")
+        finally:
+            os.umask(previous_umask)
         self.assertEqual((self.runtime / "basaltwater.py").read_text(), "# new runtime\n")
-        self.assertEqual((self.runtime / "state").resolve(), self.root / "var/lib/basaltwater")
+        self.assertEqual((self.runtime / "state").resolve(), self.state)
+        self.assertEqual(stat.S_IMODE(self.state.stat().st_mode), 0o700)
+        self.assertTrue((self.state / "setup-operation.json.lock").is_file())
 
     def test_first_upgrade_refuses_active_legacy_worker_even_with_coordinator(self):
         unit = self.root / "etc/systemd/system/basaltwater-build-host.service"
@@ -124,8 +136,9 @@ class SetupUpgradeTests(unittest.TestCase):
             marker.unlink()
 
     def test_runtime_replacement_preserves_syncthing_traversal(self):
-        home = self.root / "var/lib/basaltwater/syncthing"
-        home.mkdir(parents=True)
+        self.state.mkdir(mode=0o710)
+        home = self.state / "syncthing"
+        home.mkdir()
         original_stat = Path.stat
 
         def owned_stat(path, *args, **kwargs):
@@ -143,6 +156,14 @@ class SetupUpgradeTests(unittest.TestCase):
         self.assertEqual(run.call_args.args[0], ["setfacl", "--set-file=-", "--", str(home.parent)])
         self.assertIn(f"user:{os.geteuid() + 1}:--x", run.call_args.kwargs["input"])
 
+    def test_failed_runtime_staging_preserves_existing_traversal_mask(self):
+        self.state.mkdir(mode=0o700)
+        self.state.chmod(0o710)
+        with patch.object(setup_common.shutil, "copytree", side_effect=OSError("disk full")):
+            with self.assertRaisesRegex(OSError, "disk full"):
+                setup_upgrade.prepare_target_runtime(str(self.source), "agent")
+        self.assertEqual(stat.S_IMODE(self.state.stat().st_mode), 0o710)
+
     def test_traversal_does_not_unmask_existing_acl_rights(self):
         before = "user::rwx\nuser:1001:rwx\ngroup::rwx\nmask::r--\nother::---\n"
         after = setup_upgrade._traversal_acl(before, 1001)
@@ -150,7 +171,8 @@ class SetupUpgradeTests(unittest.TestCase):
         self.assertIn("group::r--\n", after)
 
     def test_runtime_activation_checks_setup_guard_before_displacing_source(self):
-        marker = self.root / "var/lib/basaltwater/setup-operation.json"
+        self.state.mkdir(mode=0o700)
+        marker = self.state / "setup-operation.json"
         store = OperationStateStore(str(marker))
         record = store.begin("target_setup", "server_web", "applying")
         store.close()

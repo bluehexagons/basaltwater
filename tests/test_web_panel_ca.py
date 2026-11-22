@@ -430,14 +430,17 @@ exit "$TRUST_TEST_INSTALL_EXIT"'''),
                         self.assertEqual(file_obj.read(), contents)
                     self.assertFalse(any(name.startswith("tmp.") for name in os.listdir(directory)))
 
-    @unittest.skipUnless(shutil.which("fish"), "fish is optional on the Debian test host")
     def test_fish_can_execute_the_copied_arch_script(self):
+        fish = shutil.which("fish")
+        if fish is None:
+            self.skipTest("fish is optional on the Debian test host")
         payload = "public certificate fixture\n"
         script = ScriptTemplates(_certificate_scripts(hashlib.sha256(payload.encode()).hexdigest(),
             "https://example.test:8443/basaltwater-ca.crt")).scripts["arch", "http", "fish"]
         with tempfile.TemporaryDirectory() as directory:
             self._run_installer(directory, "true", payload)
-            result = subprocess.run(["fish", "-c", script], cwd=directory, capture_output=True, text=True, timeout=10,
+            result = subprocess.run([os.path.abspath(fish), "--no-config", "-c", script],
+                cwd=directory, capture_output=True, text=True, timeout=10,
                 env={"PATH": directory + ":/usr/bin:/bin", "TMPDIR": directory, "TRUST_TEST_PAYLOAD": payload,
                      "TRUST_TEST_DOWNLOAD_EXIT": "0", "TRUST_TEST_INSTALL_EXIT": "0"})
             self.assertEqual(result.returncode, 0, result.stderr)

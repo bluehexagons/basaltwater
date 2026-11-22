@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import base64
+from collections.abc import Callable
 import hashlib
 import ipaddress
 import os
+from pathlib import Path
+import select
 import shlex
 import shutil
 import stat
 import tempfile
+import time
 from typing import Optional, Sequence
 
 from lib.types import Deployments, StrList, PathPair
@@ -26,6 +30,72 @@ NGINX_SITES_AVAILABLE_DIR = "/etc/nginx/sites-available"
 NGINX_SITES_ENABLED_DIR = "/etc/nginx/sites-enabled"
 PRESERVED_SITE_PREFIXES = ("antistatic_", "gogs_", "webhook_")
 GENERATED_CONFIG_MARKER = "# Managed by basaltwater deployment nginx generator"
+
+
+class NginxPauseRecoveryRequired(RuntimeError):
+    """Keep maintenance routes in place until release recovery is confirmed."""
+
+
+def _nginx_workers() -> tuple[int, dict[int, bytes]]:
+    """Observe live Debian nginx worker processes under its systemd master."""
+    result = run(["systemctl", "show", "nginx.service", "-p", "MainPID", "--value"],
+                 capture_output=True, timeout=5)
+    master = int(result.stdout.strip())
+    if master <= 1:
+        raise RuntimeError("Cannot identify the Nginx master process")
+    # Read the service's process list, including workers already draining from
+    # an earlier reload. /proc/<pid>/task/<pid>/children can omit a sibling
+    # while another child is exiting.
+    processes = {int(pid) for pid in Path("/sys/fs/cgroup/system.slice/nginx.service/cgroup.procs").read_text().split()}
+    if master not in processes:
+        raise RuntimeError("Nginx master is outside its managed service cgroup")
+    workers = {}
+    for pid in processes:
+        try:
+            with Path(f"/proc/{pid}/cmdline").open("rb") as command:
+                title = command.read(256).partition(b"\0")[0].strip()
+        except FileNotFoundError:
+            continue
+        if title.startswith(b"nginx: worker process"):
+            workers[pid] = title
+    return master, workers
+
+
+def _reload_for_maintenance() -> None:
+    """Require a new worker generation and drain the old one before replacement."""
+    master, workers = _nginx_workers()
+    if not workers:
+        raise RuntimeError("Cannot verify existing Nginx workers before maintenance")
+    descriptors = []
+    try:
+        pending = select.poll()
+        for pid in workers:
+            try:
+                descriptor = os.pidfd_open(pid)
+            except ProcessLookupError:
+                continue
+            descriptors.append(descriptor)
+            pending.register(descriptor, select.POLLIN)
+        if not descriptors:
+            raise RuntimeError("Nginx workers changed before maintenance could begin")
+        remaining = set(descriptors)
+        run("systemctl reload nginx", timeout=15)
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            for descriptor, _events in pending.poll(100):
+                pending.unregister(descriptor)
+                remaining.remove(descriptor)
+            current_master, current_workers = _nginx_workers()
+            if current_master != master:
+                raise RuntimeError("Nginx master changed during maintenance reload")
+            if (current_workers and not workers.keys() & current_workers.keys()
+                    and all(title == b"nginx: worker process" for title in current_workers.values())
+                    and not remaining):
+                return
+        raise RuntimeError("Nginx workers did not drain before maintenance; release was left active")
+    finally:
+        for descriptor in descriptors:
+            os.close(descriptor)
 
 
 def _config_name_for_domain(domain: Optional[str], site_owner: str = "deployment") -> str:
@@ -187,6 +257,15 @@ def _restore_deployment_sites(
             attempt(directory, lambda directory=directory: fsync_tree(directory))
     if errors:
         raise RuntimeError("Nginx file restoration failed: " + "; ".join(errors))
+
+
+def _reload_restored_sites(snapshot: dict, names: set[str], extra_paths: tuple[str, ...]) -> None:
+    _restore_deployment_sites(snapshot, names, extra_paths)
+    if run("nginx -t", check=False).returncode != 0:
+        raise RuntimeError("Restored Nginx configuration test failed")
+    run("systemctl reload nginx")
+    if run("systemctl is-active --quiet nginx", check=False, capture_output=True).returncode != 0:
+        raise RuntimeError("Nginx is not active after restoration")
 
 
 def _self_signed_cert_path(name: str) -> PathPair:
@@ -418,6 +497,7 @@ def _make_static_location(path: str, serve_path: str, index_file: str, try_files
         f"        {directive} {directory};",
         f"        index {index_file};",
         "        autoindex off;",
+        "        disable_symlinks on;",
         "        charset utf-8;",
         f"        try_files {try_files};"
     ]
@@ -514,7 +594,12 @@ def generate_merged_nginx_config(
         validate_nginx_path(path)
         location_path = path.rstrip('/') if path != '/' else '/'
         
-        if dep['needs_proxy']:
+        if dep.get("target_maintenance") is True:
+            paused = [location_path]
+            if location_path != "/":
+                paused = ["= " + location_path, location_path + "/"]
+            locations.extend(f"    location {item} {{ return 503; }}" for item in paused)
+        elif dep['needs_proxy']:
             backend_port = dep.get('backend_port')
             proxy_port = dep.get('proxy_port') or backend_port or 3000
             locations.append(_make_proxy_location(
@@ -645,8 +730,14 @@ def create_nginx_sites_for_groups(
     *,
     managed_domains: Optional[set[Optional[str]] | list[Optional[str]]] = None,
     site_owner: str = "deployment",
+    while_paused: Callable[[], None] | None = None,
 ) -> None:
-    """Recoverably reconcile deployment sites and their generated TLS files."""
+    """Reconcile sites, or temporarily serve maintenance routes around a callback.
+
+    The callback runs only after the previous workers have drained. Its
+    ordinary failures may restore the original routes. A callback must raise
+    NginxPauseRecoveryRequired when the release state cannot be confirmed.
+    """
     if not isinstance(grouped_deployments, dict):
         raise ValueError("Nginx deployment groups must be a mapping")
     # Carry service ownership through the shared SSL regeneration path too.
@@ -660,6 +751,11 @@ def create_nginx_sites_for_groups(
         raise ValueError("Unknown Nginx site owner")
     if site_owner == "webhook" and managed_domains is None:
         raise ValueError("Webhook reconciliation requires explicit managed domains")
+    has_paused_routes = any(dep.get("target_maintenance") is True
+                            for group in grouped_deployments.values() for dep in group)
+    if has_paused_routes != (while_paused is not None) or (has_paused_routes and (
+            not callable(while_paused) or managed_domains is None or site_owner != "deployment")):
+        raise ValueError("Temporary Nginx maintenance needs explicit deployment routes")
     for domain in grouped_deployments:
         if domain is not None and (not isinstance(domain, str) or not validate_host(domain)):
             raise ValueError("Nginx deployment domain must be a valid host")
@@ -774,11 +870,27 @@ def create_nginx_sites_for_groups(
             store.transition(record.operation_id, "verifying")
             if run("nginx -t", check=False).returncode != 0:
                 raise RuntimeError("nginx configuration test failed")
-            run("systemctl reload nginx")
+            if while_paused is None:
+                run("systemctl reload nginx")
+            else:
+                _reload_for_maintenance()
             if run("systemctl is-active --quiet nginx", check=False, capture_output=True).returncode != 0:
                 raise RuntimeError("Nginx is not active after reload")
+            if while_paused is not None:
+                store.transition(record.operation_id, "routes-paused")
+                try:
+                    while_paused()
+                except Exception:
+                    raise
+                except BaseException as exc:
+                    raise NginxPauseRecoveryRequired("Activation was interrupted with Nginx routes paused") from exc
+                store.transition(record.operation_id, "restoring-routes")
+                _reload_restored_sites(snapshot, current_config_names, extra_paths)
             store.complete(record.operation_id)
             resolved = True
+        except NginxPauseRecoveryRequired:
+            store.transition(record.operation_id, "recovery", status="recovery_required")
+            raise
         except BaseException as error:
             errors = []
             try:
@@ -787,12 +899,7 @@ def create_nginx_sites_for_groups(
                 errors.append(type(exc).__name__)
             if modified:
                 try:
-                    _restore_deployment_sites(snapshot, current_config_names, extra_paths)
-                    if run("nginx -t", check=False).returncode != 0:
-                        raise RuntimeError("Restored Nginx configuration test failed")
-                    run("systemctl reload nginx")
-                    if run("systemctl is-active --quiet nginx", check=False, capture_output=True).returncode != 0:
-                        raise RuntimeError("Nginx is not active after restoration")
+                    _reload_restored_sites(snapshot, current_config_names, extra_paths)
                 except BaseException as exc:
                     errors.append(type(exc).__name__)
             if errors:

@@ -10,6 +10,9 @@ import shutil
 
 from lib.config import SetupConfig
 from lib.machine_state import detect_machine_type
+from lib.maintenance_defaults import (
+    APT_DPKG_OPTIONS, APT_LOCK_OPTIONS, APT_UPDATE_OPTIONS, APT_UPGRADE_SAFETY_OPTIONS,
+)
 from lib.remote_utils import is_dry_run, run
 from lib.validators import validate_username
 
@@ -65,17 +68,22 @@ def install_wsl_base(config: SetupConfig) -> None:
     del config
     if is_dry_run():
         return
-    os.environ["DEBIAN_FRONTEND"] = "noninteractive"
-    run(["apt-get", "update", "-qq"])
-    run(["apt-get", "upgrade", "-y", "-qq"])
-    run(["apt-get", "install", "-y", "-qq", "ca-certificates", "curl", "git",
+    env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
+    install_options = ["-y", "-qq", *APT_LOCK_OPTIONS, *APT_DPKG_OPTIONS, *APT_UPGRADE_SAFETY_OPTIONS]
+    run(["apt-get", "update", "-qq", *APT_UPDATE_OPTIONS], env=env)
+    run(["apt-get", "upgrade", "--with-new-pkgs", *install_options], env=env)
+    run(["apt-get", "install", *install_options, "ca-certificates", "curl", "git",
          "git-lfs", "python3", "python3-venv", "build-essential", "unzip", "ripgrep",
-         "sudo"])
+         "sudo"], env=env)
+    run(["apt-get", "autoclean", "-qq", *APT_LOCK_OPTIONS], env=env)
 
 
 def report_wsl_readiness(config: SetupConfig) -> None:
     commands = ("git", "rg", "python3")
     missing = [name for name in commands if not shutil.which(name)]
-    if missing and not is_dry_run():
-        raise RuntimeError(f"Missing WSL tools: {', '.join(missing)}")
+    if not is_dry_run():
+        if missing:
+            raise RuntimeError(f"Missing WSL tools: {', '.join(missing)}")
+        if Path("/run/reboot-required").is_file():
+            print("  Ubuntu WSL requires a distribution restart. Finish active work, then stop and start this distribution.")
     print(f"  Ubuntu WSL tools ready for {config.username}")

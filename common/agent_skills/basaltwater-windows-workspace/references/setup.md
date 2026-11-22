@@ -4,7 +4,8 @@ Use for authorized installation, refresh or recovery. Read-only doctor is the
 diagnostic route; neither an unhealthy check nor this reference authorizes repair.
 
 `basaltw refresh --dry-run` previews; `basaltw refresh` updates source from main
-and reapplies saved selections, including available WinGet/npm updates. Provider
+and reapplies saved selections, including a bulk upgrade of installed packages
+from configured WinGet sources and npm updates for selected providers. Provider
 logins are preserved. The root `install.ps1 -Profile agent_windows` and the
 documented downloaded entrypoint save the same selections; the one-command
 invocation handles a new or existing PC. Setup supplies stable PowerShell 7 and

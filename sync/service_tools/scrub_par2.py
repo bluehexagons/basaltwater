@@ -429,10 +429,7 @@ def scrub_directory(directory: str, database: str, redundancy: int, log_file: st
     if not suppress_notifications:
         try:
             from lib.machine_state import load_setup_config
-            from lib.notifications import (
-                notification_level_from_state,
-                parse_notification_args,
-            )
+            from lib.notifications import notification_configs_from_state
             setup_config = load_setup_config()
             if setup_config:
                 if 'notify_specs' in setup_config:
@@ -443,16 +440,7 @@ def scrub_directory(directory: str, database: str, redundancy: int, log_file: st
                             log_file,
                         )
                         _LOGGERS[log_file] = notif_logger
-                    notification_configs = parse_notification_args(
-                        setup_config['notify_specs'],
-                        notification_level=notification_level_from_state(
-                            setup_config.get('notification_level'),
-                            notif_logger,
-                        ),
-                        strict_https=(
-                            setup_config.get('notification_strict_https') is True
-                        ),
-                    )
+                    notification_configs = notification_configs_from_state(setup_config, notif_logger)
                 friendly_name = setup_config.get('friendly_name')
         except (ImportError, OSError, ValueError, KeyError, TypeError) as e:
             # If notification loading fails, just log and continue without notifications

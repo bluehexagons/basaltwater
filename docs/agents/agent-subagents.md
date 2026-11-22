@@ -1,170 +1,25 @@
 # Subagent workflows and model choices
 
-Debian agent-enabled setups, CachyOS workstations, and Ubuntu WSL coding profiles
-install the shared `basaltwater-subagents` skill with local lifecycle,
-model-selection, session-context, and T3 orchestration references.
-Their workspace skills retain each platform's account and setup boundaries.
-Detailed guidance needs neither a Basaltwater checkout nor a GitHub connection.
+Start with the installed [subagent skill](../../common/agent_skills/basaltwater-subagents/SKILL.md).
+Check the active session's delegation tools and live model catalog. A fresh worker
+needs a bounded assignment, relevant paths, and a clear acceptance check. For
+large documentation reviews, divide the corpus into independent read-only batches
+and ask for findings and coverage limits. The parent reconciles findings and
+verifies edits.
 
-Read the skill entrypoint first and follow only the route needed for the task.
-Routine T3 delegation uses the session's injected orchestration instructions
-and live schemas; it does not require reading the model-policy, cross-account,
-and worktree lifecycle references together. Read those when maintaining model
-records, changing session context, or managing the relevant worktree owner.
-Request bounded worker evidence rather than full logs or repeated inventories.
+| Task | Reference |
+| --- | --- |
+| Choose a model, effort, and service tier | [Workload choices](../../common/agent_skills/basaltwater-subagents/references/model-selection.md#current-workload-choices) |
+| Recommend or record settings for a project | [Project policy and outcomes](../../common/agent_skills/basaltwater-subagents/references/model-policy.md) |
+| Delegate from T3 or work across linked environments | [T3 orchestration boundaries](../../common/agent_skills/basaltwater-subagents/references/t3-orchestration.md) |
+| Create, adopt, integrate, or clean up a Basaltwater-owned worktree | [Owned worktree lifecycle](../../common/agent_skills/basaltwater-subagents/references/lifecycle.md) |
+| Change provider, account, or execution environment | [Session context](../../common/agent_skills/basaltwater-subagents/references/session-context.md) |
+| Schedule an independent prompt or bounded goal | [Agent tasks](agent-tasks.md) |
 
-Inside T3 Code, follow the shipped
-[native orchestration reference](../../common/agent_skills/basaltwater-subagents/references/t3-orchestration.md)
-for live provider/model discovery, child tasks, asynchronous results, worktree
-binding, queues, forks, and PR watches. Native workers are appropriate for
-same-provider work when they support the selected model and no model options
-are requested or inherited; use T3 `delegate_task` otherwise, including
-cross-provider work. Top-level conversations need an
-explicit user request for separate threads. Each independent delegated review
-round is a fresh task with its own ID and explicit prior findings.
-
-Stable T3 0.1.4 adds an opt-in linked-environment beta, enabled on both machines
-under **Settings → Labs**. Discover peers through `t3_environment_links` and
-their model catalog through `orchestrator_capabilities` with `environmentId`.
-Remote delegation uses `target.environmentId` and optionally `target.projectId`;
-otherwise exactly one peer project must match the repository. It runs in the
-peer's project checkout and rejects worktree isolation. Keep editing work
-isolated locally, or use an explicitly authorized remote top-level launch with
-its own worktree binding. Remote results can lack a local `childThreadId`;
-retain `taskId` and follow its completion/cancellation tools. Link access and
-caller modes both limit remote work. See the reference for setup-script,
-attachment, retry, and revocation boundaries. Use returned thread `link` values
-verbatim; current links identify both the owning environment and thread.
-
-Select T3 worktree isolation before starting a T3-owned editor. T3 owns that
-checkout's binding and cleanup; the Basaltwater commands below apply to
-Basaltwater-owned worktrees. A shell directory change does not rebind a T3
-thread. Fork/merge-back transfers conversation context separately from Git
-changes. Provider switching can carry recorded command output, filenames, and
-plans as budgeted historical text, while native tool state, reasoning, and
-attachments are not replayed. Inspect the transferred history; delegation keeps
-the original harness's working session available.
-
-Fresh workers need the relevant project instructions and absolute skill paths
-in their assignment. Their enabled skills and tools depend on the provider,
-account, and working directory; they may not inherit the parent's loaded skill
-bodies or T3 browser attachment. The shipped
-[session-context guide](../../common/agent_skills/basaltwater-subagents/references/session-context.md)
-explains terminal, T3, WSL, and unattended task boundaries and includes a bounded
-worker assignment. Use `basaltw agent manifest /absolute/project --json` for
-local catalog inventory, then check discovery in the active agent session.
-
-Use the active harness's messaging tools for authorized parent/worker
-coordination. Check whether a message wakes an idle worker or needs a separate
-follow-up task. Independent terminal processes and T3 threads do not share a
-Basaltwater inbox; panel tasks cannot receive follow-up input during a run.
-The session-context guide explains these boundaries for all three platforms.
-
-Use delegation for independent tasks with clear acceptance checks. User guides,
-historical records, and an independent review can split well; small changes
-touching the same configuration usually benefit from one owner. Account for
-context transfer, parent review, integration, retries, and model cost when
-deciding whether a worker will save time.
-
-Editing agents share a filesystem and need separate managed worktrees. A
-read-only reviewer can inspect the primary checkout; builds, formatters, and
-other checks that write files need isolation. Assign file boundaries explicitly,
-including a single owner for shared configuration and lockfiles. The parent owns
-integration, combined validation, project model records, and cleanup.
-
-Managed creation records private ownership and defaults to `agent/TASK`;
-`workspace create REPOSITORY TASK --branch feature/NAME` selects a new feature
-branch instead. Existing secondary worktrees below the managed root, including
-older `agent/*` worktrees, need explicit `workspace adopt WORKTREE --task TASK`.
-Adoption changes ownership metadata only and preserves dirty files. Supply
-`--root PATH` for custom roots. Cleanup requires matching ownership, clean
-files, and merge ancestry for both task and feature branches. JSON refusals
-include `ok: false`, a stable `issue`, and `remediation`.
-
-`workspace group TASK REPOSITORY RELATED_REPOSITORY --json` provides a read-only
-view of matching owned branches and paths across related projects, plus missing
-repositories. Use the same task label when creating or adopting each worktree;
-integration remains explicit in each repository.
-
-Choose normal branch merges before starting. Managed cleanup requires task
-commits to be ancestors of the primary checkout's current `HEAD`; cherry-pick
-and squash do not satisfy that condition. `workspace status --json` exposes
-ancestry, while `remove --dry-run` checks all cleanup conditions. The shipped
-[complete lifecycle](../../common/agent_skills/basaltwater-subagents/references/lifecycle.md)
-connects worktree creation, bounded assignments, standard handoffs, commit review,
-merge, validation, and removal in one example.
-
-The shared subagent skill also ships
-[model selection and learning](../../common/agent_skills/basaltwater-subagents/references/model-selection.md).
-The [current workload choices](../../common/agent_skills/basaltwater-subagents/references/model-selection.md#current-workload-choices)
-were reviewed **2026-11-09**. Prefer available included subscription usage and
-compare allowance consumption, latency, acceptance and parent rework. Sol and
-Opus are the recommended higher-end frontier models, both reasonably affordable
-on subscriptions. Astra and Fable are discouraged for general use because their
-extra cost usually brings too little gain; reserve them for an exceptional unmet
-need with evidence of benefit. Terra is a middle option for writing, vision and
-app work; Sonnet and Haiku offer lighter Claude alternatives. Check exact IDs,
-billing route and the actual delegation interface before selecting any model.
-
-Start with Luna at medium for bounded classification, documentation, small
-fixes, focused tests, and app-script or export validation. Explicit deterministic
-trivial work may use low with straightforward checks. Use Luna high or xhigh
-only when concrete complexity justifies it. Keep broad coding, integration,
-ambiguous cross-file tasks, and reviews on Sol high; use Astra only for an
-exceptional unmet need with evidence of benefit over Sol/Opus. These are
-provisional suggestions, not performance proof; preserve existing project policy
-and record actual outcomes. Give each
-worker clear ownership and acceptance criteria. Do not assign competing control
-of a desktop/app session, and do not blindly time out and relaunch desktop
-mutations. Verify the exact model and effort supported by the current session. Use standard service and
-exclude fast mode, `max`, and `ultra` unless explicitly selected by the user.
-
-These local commands create a per-project policy, recommend a setting from an
-actual session inventory, and retain the parent's reviewed outcomes:
-
-```bash
-basaltw agent models init ~/repos/PROJECT --json
-basaltw agent models recommend ~/repos/PROJECT coding --available SESSION_MODELS.json --json
-basaltw agent models record ~/repos/PROJECT --task coding --model gpt-6.1-sol --effort high --outcome accepted --validation 'Focused checks and parent review passed' --json
-basaltw agent models report ~/repos/PROJECT --json
-```
-
-The primary checkout holds `.basaltwater/agent-models.json` and
-`.basaltwater/agent-model-results.json`; linked-worktree invocations resolve to
-the same records. Writes use a shared Git-directory lock and atomic file
-replacement. The files contain project policy and non-secret observations,
-and can be committed so the project carries its own evidence across sessions.
-Initialization preserves existing policies. Recording requires a validation
-result; observed costs, runtime, retry counts, and parent rework are optional.
-Unknown billing remains unknown, including subscription sessions. Neither
-command launches agents or calls a model API.
-Unobserved parent rework also remains unknown; reports expose a known subtotal
-and observation count rather than present missing observations as no rework.
-
-Recommendations intersect verified project metadata with current runtime
-availability and safe efforts. New IDs can be added without upgrading
-Basaltwater; no version whitelist controls selection. The result identifies
-uncatalogued or stale models so the agent can verify official metadata, update
-the project policy, and evaluate candidates. Proven choices use recent outcomes
-for the same task, evaluation version, model ID, and effort. Untested candidates
-are exposed for trials; they do not displace a proven choice automatically.
-Proven higher efforts remain eligible even when a lower supported default has
-failed. Provisional choices use the lowest supported effort meeting the task's
-minimum, and do not automatically retry with untested higher effort. Shipped
-bounded Luna classes start at medium; broad coding/review starts at Sol high.
-Initialization preserves older project policies and explicit operator choices.
-An empty eligible set returns nonzero and a null selection.
-
-The starter catalog is dated **2026-11-09**, with standard API token rates and
-reasoning support checked against the
-[OpenAI model catalog](https://developers.openai.com/api/docs/models) and
-[reasoning guide](https://developers.openai.com/api/docs/guides/reasoning).
-Those are estimates for comparison, not a quote for a subscription account or
-a guarantee that a particular tool exposes the same models. The selector covers
-OpenAI Luna/Sol/Astra roles; it does not model subscription allowance or rank
-Claude and Terra. Use the shared guidance for those choices. The workload
-defaults apply the task/cost tradeoffs described by
-[OpenAI model selection](https://developers.openai.com/api/docs/guides/model-selection).
-Review the seed on initialization, after model releases or pricing/access
-changes, and when outcomes regress. New model evidence stays separate from
-older model versions, and old observations remain available for comparison.
+GPT-6 Luna at medium reasoning and Standard service is a starting point for
+bounded documentation, extraction, and classification. GPT-6.2 Sol at high
+remains the starting point for broad implementation and substantive review.
+Treat these as workload defaults and use the live catalog to confirm the exact
+model, effort, and tier before starting a worker. The local model selector
+recommends and records results using project policy and a supplied session
+inventory. See the [selector reference](../../common/agent_skills/basaltwater-subagents/references/model-selection.md#openai-selector-defaults).

@@ -15,7 +15,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from desktop import development, development_workflows as workflows
+from desktop import debian_development, development, development_workflows as workflows
 from lib.atomic_io import write_json_atomic
 
 
@@ -166,11 +166,35 @@ class TestDevelopmentWorkflows(unittest.TestCase):
         self.probe.assert_not_called()
         self.assertFalse((self.home / ".local").exists())
 
+    def test_development_check_forwards_the_review_manifest(self):
+        parser = argparse.ArgumentParser()
+        development.add_development_parser(parser.add_subparsers(dest="command"))
+        args = parser.parse_args(["develop", "check", "smoke", "--project", str(self.project),
+                                  "--review-manifest", "captures/review file.json", "--dry-run"])
+        args.native = True
+        with redirect_stdout(output := StringIO()):
+            self.assertEqual(development.run_development_command(args), 0)
+        command = json.loads(output.getvalue())["argv"]
+        self.assertEqual(command[-1], "--review-manifest=captures/review file.json")
+        generation = "a" * 32
+        status = {"state": "running", "generation": generation, "control_revision": "b" * 32,
+                  "capabilities": ["supervised-development"]}
+        with (
+            patch.object(debian_development.session_runtime, "status", return_value=status),
+            patch.object(debian_development.session_runtime, "request",
+                         side_effect=lambda payload: debian_development.handle_task(payload, generation)),
+            patch.object(development, "_environment", return_value=({"DISPLAY": ":12"}, "available")),
+        ):
+            self.assertEqual(debian_development.request_task(args)["argv"], command)
+        self.probe.assert_not_called()
+        self.assertFalse((self.home / ".local").exists())
+
     def test_invalid_settings_deadlines_and_extra_args_fail_before_recipe_discovery(self):
         settings = self.home / "settings.json"
         settings.write_text('{"exposure":NaN}')
         for kwargs in ({"timeout": 0}, {"timeout": 3601}, {"timeout": True},
-                       {"settings": str(settings)}, {"argv": ["ignored"]}):
+                       {"settings": str(settings)}, {"argv": ["ignored"]},
+                       {"review_manifest": "../outside.json"}):
             with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
                 self.launch("check", recipe="smoke", **kwargs)
         self.inspect.assert_not_called()

@@ -50,7 +50,7 @@ def build_post_setup_steps(
             create_cloudflared_config_directory(_config)
             configure_nginx_for_cloudflare(_config)
             install_cloudflared_service_helper(_config)
-            print("  Direct web access policy will be applied after cloudflared is verified active")
+            print("  Origin firewall changes are deferred until cloudflared is verified active")
 
         steps.append(("Preparing Cloudflare tunnel support", prepare_cloudflare))
 
@@ -139,10 +139,11 @@ def build_post_setup_steps(
                 run_cloudflare_tunnel_setup,
             )
 
-            if run_cloudflare_tunnel_setup(_config, allow_create=True):
+            if run_cloudflare_tunnel_setup(
+                _config, allow_create=True,
+                deployed_hostnames=[domain for dep in deployments if (domain := dep.get("domain"))],
+            ):
                 configure_cloudflare_firewall(_config)
-            else:
-                print("  ℹ Direct HTTP/HTTPS access retained until a tunnel is configured")
 
         steps.append(("Verifying Cloudflare tunnel activation", activate_cloudflare))
 

@@ -8,13 +8,14 @@ from io import StringIO
 import json
 import os
 from pathlib import Path
+import ssl
 import subprocess
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
-from lib import agent_browser, agent_cli
+from lib import agent_browser, agent_cli, t3_preview
 from lib.agent_readiness import build_agent_readiness_record
 
 
@@ -260,6 +261,105 @@ class TestAgentBrowser(unittest.TestCase):
             self.assertEqual(agent_browser.run_browser_command(args), 0)
         self.assertTrue(json.loads(output.getvalue())["healthy"])
         self.assertIn("Running browser diagnostic", errors.getvalue())
+
+
+class TestT3Preview(unittest.TestCase):
+    def setUp(self) -> None:
+        self.parser = argparse.ArgumentParser()
+        agent_cli.add_agent_subparser(self.parser.add_subparsers(dest="command"))
+        self.connect = self.enterContext(patch.object(t3_preview.socket, "create_connection"))
+        self.tls = self.enterContext(patch.object(t3_preview.ssl, "create_default_context"))
+        self.connection = self.enterContext(patch.object(t3_preview.http.client, "HTTPConnection"))
+        self.response = self.connection.return_value.getresponse.return_value.__enter__.return_value
+        self.response.status = 200
+        self.response.getheaders.return_value = []
+
+    def resolve(self, *extra: str) -> tuple[int, dict[str, object]]:
+        args = self.parser.parse_args(["agent", "browser", "resolve-preview", "--port", "8080", "--json", *extra])
+        with redirect_stdout(output := StringIO()):
+            status = agent_cli.run_agent_command(args)
+        return status, json.loads(output.getvalue())
+
+    def test_default_target_preserves_t3_defaults(self) -> None:
+        status, result = self.resolve()
+        self.assertEqual(status, 0)
+        self.assertEqual(result["navigation"], {"target": {"kind": "environment-port", "port": 8080}})
+        self.connect.assert_called_once_with(("127.0.0.1", 8080), timeout=3)
+        self.tls.assert_not_called()
+        self.assertEqual(self.connection.return_value.request.call_args.args, ("GET", "/"))
+
+    def test_https_probes_nested_route_with_localhost_identity(self) -> None:
+        status, result = self.resolve("--host", "::1", "--protocol", "https", "--path", "/app/?tab=one#details")
+        self.assertEqual(status, 0)
+        self.assertEqual(result["upstream_url"], "https://[::1]:8080/app/?tab=one")
+        self.assertEqual(result["navigation"], {"target": {
+            "kind": "environment-port", "port": 8080, "protocol": "https", "path": "/app/?tab=one#details",
+        }})
+        self.connect.assert_called_once_with(("::1", 8080), timeout=3)
+        self.tls.return_value.wrap_socket.assert_called_once_with(
+            self.connect.return_value, server_hostname="localhost",
+        )
+        request = self.connection.return_value.request.call_args
+        self.assertEqual(request.args, ("GET", "/app/?tab=one"))
+        self.assertEqual(request.kwargs["headers"]["Host"], "localhost:8080")
+
+    def test_default_falls_back_to_ipv6_after_ipv4_connect_failure(self) -> None:
+        self.connect.side_effect = [ConnectionRefusedError("IPv4 refused"), self.connect.return_value]
+        status, result = self.resolve("--path", "/app/")
+        self.assertEqual(status, 0)
+        self.assertEqual(result["upstream_url"], "http://[::1]:8080/app/")
+        self.assertEqual(result["navigation"], {"target": {"kind": "environment-port", "port": 8080, "path": "/app/"}})
+        self.assertEqual(self.connect.call_args_list, [
+            call(("127.0.0.1", 8080), timeout=3), call(("::1", 8080), timeout=3),
+        ])
+
+    def test_explicit_host_does_not_fall_back(self) -> None:
+        self.connect.side_effect = ConnectionRefusedError("refused")
+        status, result = self.resolve("--host", "127.0.0.1")
+        self.assertEqual(status, 1)
+        self.assertEqual(result["issue"], "connection_refused")
+        self.connect.assert_called_once_with(("127.0.0.1", 8080), timeout=3)
+
+    def test_http_response_prevents_fallback(self) -> None:
+        self.response.status = 404
+        status, result = self.resolve()
+        self.assertEqual(status, 1)
+        self.assertEqual(result["issue"], "http_error")
+        self.connect.assert_called_once_with(("127.0.0.1", 8080), timeout=3)
+
+    def test_invalid_address_or_path_fails_before_network(self) -> None:
+        for extra in (
+            ("--host", "127.0.0.2"), ("--host", "192.0.2.1"), ("--port", "65536"),
+            ("--path", "https://example.com/"), ("--path", "//example.com/"),
+            ("--path", "/\\example.com/"), ("--path", "/app\r\nX-Test: value"),
+        ):
+            with self.subTest(extra=extra):
+                self.assertEqual(self.resolve(*extra)[0], 2)
+        self.connect.assert_not_called()
+
+    def test_transport_failure_has_no_navigation(self) -> None:
+        for protocol, probe, error, expected in (
+            ("http", self.connect, ConnectionRefusedError("refused"), "connection_refused"),
+            ("https", self.tls.return_value.wrap_socket, ssl.SSLCertVerificationError("untrusted"), "certificate_untrusted"),
+        ):
+            with self.subTest(issue=expected):
+                probe.side_effect = error
+                status, result = self.resolve("--protocol", protocol)
+                probe.side_effect = None
+                self.assertEqual(status, 1)
+                self.assertEqual(result["issue"], expected)
+                self.assertEqual(result["component"], "upstream")
+                self.assertIsNone(result["navigation"])
+                self.assertEqual(self.connect.call_count, 2 if protocol == "http" else 1)
+                self.connect.reset_mock()
+
+    def test_godot_checks_upstream_headers(self) -> None:
+        self.assertEqual(self.resolve("--profile", "godot")[1]["issue"], "isolation_headers_missing")
+        self.response.getheaders.return_value = [
+            ("Cross-Origin-Opener-Policy", "same-origin"),
+            ("Cross-Origin-Embedder-Policy", "require-corp"),
+        ]
+        self.assertEqual(self.resolve("--profile", "godot")[0], 0)
 
 
 if __name__ == "__main__":

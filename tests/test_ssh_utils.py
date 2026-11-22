@@ -24,7 +24,10 @@ from lib.ssh_utils import (
     ssh_batch_mode,
     ssh_process_timeout,
     strict_ssh_transport,
+    workspace_pinned_ssh,
 )
+from lib.config import SetupConfig
+from lib.setup_common import run_remote_setup
 
 
 class TestSshUtils(unittest.TestCase):
@@ -241,6 +244,33 @@ class TestSshUtils(unittest.TestCase):
                         1,
                     )
 
+    @patch("lib.ssh_utils.get_workspace_known_hosts_path", return_value="/workspace/known_hosts")
+    def test_provisioned_guest_handoff_requires_workspace_ed25519_pin(self, _path):
+        host = "192.0.2.40"
+        with workspace_pinned_ssh(host):
+            self.assertEqual(get_ssh_control_path(host, "root"), "none")
+            command = build_ssh_command(
+                host, "root", "/keys/guest", port=2222, batch_mode=False,
+                known_hosts_path="/other/pins", control_path="/tmp/old-socket",
+                allow_host_key_prompt=True,
+            )
+            ordinary = build_ssh_command("192.0.2.41", "root", batch_mode=False, allow_host_key_prompt=True)
+        self.assertIn("StrictHostKeyChecking=ask", ordinary)
+        self.assertEqual(command[command.index("-p") + 1], "22")
+        self.assertNotIn("/other/pins", " ".join(command))
+        self.assertNotIn("/tmp/old-socket", " ".join(command))
+        for option in (
+            "StrictHostKeyChecking=yes", "UserKnownHostsFile=/workspace/known_hosts",
+            "GlobalKnownHostsFile=/dev/null", "KnownHostsCommand=none",
+            "VerifyHostKeyDNS=no", "HostKeyAlgorithms=ssh-ed25519", "UpdateHostKeys=no",
+            "ControlPath=none", f"HostKeyAlias={host}",
+            "ForwardAgent=no", "ForwardX11=no", "ClearAllForwardings=yes", "Tunnel=no",
+            "PermitLocalCommand=no", "RequestTTY=no",
+        ):
+            self.assertIn(option, command)
+        self.assertNotIn("ForwardAgent=no", ordinary)
+        self.assertNotIn("ClearAllForwardings=yes", ordinary)
+
     @patch("lib.ssh_utils.sys.stdin.isatty", return_value=True)
     def test_setup_resolves_terminal_policy_before_host_key_confirmation(self, _isatty):
         command = build_ssh_command(
@@ -249,6 +279,39 @@ class TestSshUtils(unittest.TestCase):
         )
         self.assertIn("StrictHostKeyChecking=ask", command)
         self.assertIn("BatchMode=no", command)
+
+    @patch("lib.ssh_utils.get_workspace_known_hosts_path", return_value="/workspace/known_hosts")
+    def test_strict_transport_preserves_or_rejects_the_managed_guest_binding(self, _path):
+        host = "192.0.2.40"
+        with workspace_pinned_ssh(host):
+            for path, port in (("/other/pins", 22), ("/workspace/known_hosts", 2222)):
+                with self.subTest(path=path, port=port), strict_ssh_transport(
+                    host, identity_file="/keys/guest", known_hosts_path=path, port=port,
+                ), self.assertRaisesRegex(ValueError, "conflicts with the verified workspace"):
+                    build_ssh_command(host, "root")
+            with strict_ssh_transport(host, identity_file="/keys/guest", known_hosts_path="/workspace/known_hosts"):
+                command = build_ssh_command(host, "root")
+        for option in ("HostKeyAlgorithms=ssh-ed25519", "UserKnownHostsFile=/workspace/known_hosts",
+                       "IdentityAgent=none", "BatchMode=yes"):
+            self.assertIn(option, command)
+
+    @patch("lib.ssh_utils.get_workspace_known_hosts_path", return_value="/workspace/known_hosts")
+    def test_shared_remote_setup_transport_requires_saved_guest_pin(self, _path):
+        config = SetupConfig(
+            host="192.0.2.40", username="root", system_type="server_lite",
+            machine_type="vm", hosted_node="node.example", dry_run=True,
+        )
+
+        def inspect_upload(target):
+            command = build_ssh_command(target.host, target.username, batch_mode=False, allow_host_key_prompt=True)
+            for option in ("StrictHostKeyChecking=yes", "HostKeyAlgorithms=ssh-ed25519",
+                           "ControlPath=none", "UserKnownHostsFile=/workspace/known_hosts"):
+                self.assertIn(option, command)
+            return 0
+
+        with patch("lib.setup_common._run_remote_setup_locked", side_effect=inspect_upload) as upload:
+            self.assertEqual(run_remote_setup(config), 0)
+        upload.assert_called_once_with(config)
 
     @patch("lib.ssh_utils.ssh_batch_mode", return_value=True)
     @patch("lib.ssh_utils.subprocess.run")

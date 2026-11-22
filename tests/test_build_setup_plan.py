@@ -302,15 +302,28 @@ class BuildSetupPlanTests(unittest.TestCase):
             with self.subTest(binary=binary), self.assertRaisesRegex(ValueError, "Interpreter"):
                 self.plan(data)
 
-    def test_godot_workflows_and_unmodeled_static_policy_are_refused(self):
+    def test_ci_metadata_does_not_change_component_delivery(self):
+        data = manifest_data()
+        expected = self.plan(data)
+        data["ci"] = {
+            "install": [{"argv": ["npm", "ci"], "env": {"CI_ONLY": "install-value"}}],
+            "build": [{"argv": ["python3", "ci.py"]}],
+            "test": [{"argv": ["false"]}],
+        }
+        self.assertEqual(self.plan(data), expected)
+
+    def test_ci_only_godot_publishing_and_unmodeled_static_policy_are_refused(self):
+        with self.assertRaisesRegex(ValueError, "deployment manifest"):
+            self.plan({"version": 1, "components": [],
+                       "ci": {"build": [{"argv": ["python3", "ci.py"]}]}})
         data = self.static_data()
         data["components"][0].pop("spa")
         data["components"][0]["type"] = "godot-web"
         with self.assertRaises(ValueError):
             self.plan(data)
         data = self.static_data()
-        data["ci"] = {"build": [{"argv": ["python3", "ci.py"]}]}
-        with self.assertRaisesRegex(ValueError, "CI and publishing"):
+        data["publishing"] = {"languages": {"source": "en", "supported": ["en"]}}
+        with self.assertRaisesRegex(ValueError, "Publishing"):
             self.plan(data)
         for key, value in (("gzip", True), ("expires", "1d"), ("data_dir", "/srv/data")):
             manifest = parse_manifest(self.static_data())

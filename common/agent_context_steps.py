@@ -27,7 +27,7 @@ from lib.validators import validate_username
 
 # Review the linked prices in docs/agents/agent-context.md before advancing this
 # advisory date. Review age must never change a context budget.
-POLICY_VERIFIED_ON = date(2026, 10, 24)
+POLICY_VERIFIED_ON = date(2026, 11, 17)
 POLICY_REVIEW_DAYS = 7
 CODEX_CONTEXT_DEFAULTS = {
     "model_auto_compact_token_limit": 240_000,
@@ -44,6 +44,8 @@ CLAUDE_CONTEXT_DEFAULTS = {
     "env": {"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "80"},
 }
 _REVIEWED_OPENAI = {
+    "gpt-6.2-sol": (2.0, 10.0),
+    "gpt-6.2-astra": (8.0, 40.0),
     "gpt-6.1-sol": (2.0, 10.0),
     "gpt-6-astra": (10.0, 50.0),
     "gpt-6-luna": (0.1, 0.5),

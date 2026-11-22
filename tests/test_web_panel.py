@@ -10,10 +10,9 @@ import stat
 import subprocess
 import sys
 import tempfile
-import time
 import threading
 import unittest
-from contextlib import contextmanager, nullcontext, redirect_stdout
+from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
 from io import StringIO
 from types import SimpleNamespace
@@ -73,34 +72,6 @@ def _config(**overrides: object) -> SetupConfig:
     }
     values.update(overrides)
     return SetupConfig(**values)
-
-
-def _t3_doctor_output(**overrides: bool) -> str:
-    checks = {
-        "service_active": True,
-        "service_enabled": True,
-        "runtime": True,
-        "native_runtime": True,
-        "wrapper": True,
-        "pairing_helper": True,
-        "endpoint": True,
-        "startup_ready": True,
-        "git_identity": False,
-        "t3_agent_skill": True,
-        "gh_authenticated": False,
-        "git_credential_helper": False,
-    }
-    checks.update(overrides)
-    return json.dumps(
-        [
-            {
-                "capability": "t3code",
-                "healthy": all(checks.values()),
-                "checks": checks,
-                "fixes": [],
-            }
-        ]
-    )
 
 
 class WebPanelConfigTest(unittest.TestCase):
@@ -1029,9 +1000,7 @@ class WebPanelRenderingTest(unittest.TestCase):
             "services": [],
             "access": [],
             "features": {
-                "t3_update": True,
-                "t3_github_readiness": False,
-                "t3_git_identity_readiness": False,
+                "t3code": True,
             },
         }
 
@@ -1051,29 +1020,14 @@ class WebPanelRenderingTest(unittest.TestCase):
 
         self.assertEqual(manifest["title"], "Coding VM")
         self.assertEqual(manifest["panel_url"], "http://agent-vm.local/")
-        self.assertTrue(manifest["features"]["t3_update"])
-        self.assertFalse(manifest["features"]["t3_github_readiness"])
-        self.assertFalse(manifest["features"]["t3_git_identity_readiness"])
+        self.assertTrue(manifest["features"]["t3code"])
+        self.assertNotIn("t3_update", manifest["features"])
+        self.assertNotIn("t3_github_readiness", manifest["features"])
         values = [record["value"] for record in manifest["access"]]
         self.assertIn("ssh agent@agent-vm.local", values)
         self.assertIn("agent-vm.local:3389", values)
         self.assertIn("smb://agent-vm.local/work_write", values)
 
-    def test_manifest_requires_github_checks_only_for_staged_credentials(self) -> None:
-        manifest = build_web_panel_manifest(
-            _config(
-                agent_tools=["gh", "codex"],
-                web_interfaces=["t3code"],
-                git_access="read-write",
-                agent_payload=True,
-                github_auth_payload=True,
-                git_identity_payload=True,
-            ),
-            ["agent-vm.local"],
-        )
-
-        self.assertTrue(manifest["features"]["t3_github_readiness"])
-        self.assertTrue(manifest["features"]["t3_git_identity_readiness"])
 
     def test_homebox_probe_uses_only_the_local_status_endpoint(self) -> None:
         response = SimpleNamespace(
@@ -1129,7 +1083,7 @@ class WebPanelRenderingTest(unittest.TestCase):
                         "probe": {"kind": "homebox", "port": 7745},
                     }
                 ],
-                "features": {"t3_update": False},
+                "features": {"t3code": False},
             }
         )
         with (
@@ -1141,7 +1095,7 @@ class WebPanelRenderingTest(unittest.TestCase):
                 "common.service_tools.web_panel_service._probe_homebox",
                 return_value=("ready", "HomeBox is ready"),
             ),
-            patch.object(state, "system_overview", return_value=[]),
+            patch.object(panel, "collect_system_overview", return_value=[]),
         ):
             rendered = render_page(state)
 
@@ -1199,6 +1153,12 @@ class WebPanelRenderingTest(unittest.TestCase):
         )
 
         self.assertIn(f"location = {WEB_PANEL_NOTIFICATION_ENDPOINT}", rendered)
+        ingest = rendered.split(f"location = {WEB_PANEL_NOTIFICATION_ENDPOINT} {{", 1)[1].split("\n    }", 1)[0]
+        self.assertIn('proxy_set_header Authorization $basaltwater_ingest_authorization;', ingest)
+        auth_map = rendered.split("map $http_authorization $basaltwater_ingest_authorization {", 1)[1].split("}", 1)[0]
+        self.assertEqual(auth_map.splitlines()[1:], ['    default "";', '    "~^Bearer " $http_authorization;'])
+        panel = rendered.rsplit("location / {", 1)[1].split("}", 1)[0]
+        self.assertIn('proxy_set_header Authorization "";', panel)
         self.assertIn("auth_basic off", rendered)
         self.assertIn("rate=30r/m", rendered)
         self.assertIn("client_max_body_size 64k", rendered)
@@ -1243,7 +1203,7 @@ class WebPanelEventTest(unittest.TestCase):
                 file_obj.write("a" * 43 + "\n")
             manifest = {
                 **WebPanelRenderingTest._t3_manifest(),
-                "features": {"t3_update": False, "notification_ingest": True},
+                "features": {"t3code": False, "notification_ingest": True},
             }
             state = WebPanelState(
                 manifest,
@@ -1353,7 +1313,7 @@ class WebPanelEventTest(unittest.TestCase):
             state = WebPanelState(
                 {
                     **WebPanelRenderingTest._t3_manifest(),
-                    "features": {"t3_update": False, "notification_ingest": True},
+                    "features": {"t3code": False, "notification_ingest": True},
                 },
                 notification_log_path=notification_path,
                 ingest_token_path=token_path,
@@ -1603,7 +1563,7 @@ class WebPanelEventTest(unittest.TestCase):
             state = WebPanelState(
                 {
                     **self._t3_manifest(),
-                    "features": {"t3_update": False, "notification_ingest": True},
+                    "features": {"t3code": False, "notification_ingest": True},
                 },
                 audit_snapshot_path=audit_path,
                 notification_log_path=notification_path,
@@ -1614,7 +1574,7 @@ class WebPanelEventTest(unittest.TestCase):
                     "common.service_tools.web_panel_service.discover_basaltwater_web_services",
                     return_value=[],
                 ),
-                patch.object(state, "system_overview", return_value=[]),
+                patch.object(panel, "collect_system_overview", return_value=[]),
             ):
                 rendered = render_page(state)
 
@@ -1655,7 +1615,7 @@ class WebPanelEventTest(unittest.TestCase):
                 }
             ],
             "access": [{"label": "SSH", "value": "ssh agent@agent-vm.local"}],
-            "features": {"t3_update": True},
+            "features": {"t3code": True},
         }
         with (
             patch(
@@ -1678,26 +1638,6 @@ class WebPanelEventTest(unittest.TestCase):
         self.assertIn("https://agent-vm.local:3773/", rendered)
         self.assertNotIn("Agent <VM>", rendered)
 
-    def test_running_agent_update_does_not_refresh_the_host_dashboard(self) -> None:
-        state = WebPanelState(self._t3_manifest())
-        state.action_status = "running"
-        state.action_message = "Updating T3 Code…"
-        state.action_started_at = time.monotonic() - 125
-        with (
-            patch(
-                "common.service_tools.web_panel_service.discover_basaltwater_web_services",
-                return_value=[],
-            ),
-            patch(
-                "common.service_tools.web_panel_service.os.path.isdir",
-                return_value=True,
-            ),
-        ):
-            rendered = render_page(state)
-
-        self.assertNotIn('http-equiv="refresh"', rendered)
-        self.assertNotIn("Updating T3 Code", rendered)
-        self.assertNotIn('action="/actions/t3-update"', rendered)
 
     def test_unconfigured_dashboard_sections_are_omitted(self) -> None:
         state = WebPanelState(
@@ -1705,13 +1645,13 @@ class WebPanelEventTest(unittest.TestCase):
                 **self._t3_manifest(),
                 "services": [],
                 "access": [],
-                "features": {"t3_update": False},
+                "features": {"t3code": False},
             }
         )
         with (
             patch("common.service_tools.web_panel_service.discover_basaltwater_web_services", return_value=[]),
             patch("common.service_tools.web_panel_service.discover_certificate_trust", return_value=None),
-            patch.object(state, "system_overview", return_value=[]),
+            patch.object(panel, "collect_system_overview", return_value=[]),
             patch.object(state, "audit_snapshot", return_value={"status": "ok", "events": []}),
         ):
             rendered = render_page(state)
@@ -1849,7 +1789,7 @@ class WebPanelEventTest(unittest.TestCase):
                 "common.service_tools.web_panel_service.discover_certificate_trust",
                 return_value=trust,
             ),
-            patch.object(state, "system_overview", return_value=[]),
+            patch.object(panel, "collect_system_overview", return_value=[]),
             patch(
                 "common.service_tools.web_panel_service.os.path.isdir",
                 return_value=True,
@@ -1929,7 +1869,7 @@ class WebPanelEventTest(unittest.TestCase):
                 "common.service_tools.web_panel_service.discover_basaltwater_web_services",
                 return_value=[],
             ),
-            patch.object(state, "system_overview", return_value=overview),
+            patch.object(panel, "collect_system_overview", return_value=overview),
             patch(
                 "common.service_tools.web_panel_service.os.path.isdir",
                 return_value=True,
@@ -1986,226 +1926,6 @@ class WebPanelEventTest(unittest.TestCase):
         self.assertEqual(by_label["Memory"]["value"], "50% used")
         self.assertEqual(by_label["Root disk"]["value"], "50% used")
         self.assertIn("Tue 2026-09-01", by_label["Maintenance"]["description"])
-
-    def test_t3_update_uses_the_user_launcher_for_readiness(self) -> None:
-        state = WebPanelState(self._t3_manifest())
-        updated = SimpleNamespace(returncode=0, stdout="updated\n", stderr="")
-        checked = SimpleNamespace(
-            returncode=1,
-            stdout=_t3_doctor_output(),
-            stderr="",
-        )
-
-        @contextmanager
-        def linger_shim(home: str, username: str):
-            self.assertEqual(home, "/home/agent")
-            self.assertEqual(username, "agent")
-            yield "/home/agent/.basaltwater-t3-loginctl-test"
-
-        with (
-            patch(
-                "common.service_tools.web_panel_service.os.path.expanduser",
-                return_value="/home/agent",
-            ),
-            patch(
-                "common.service_tools.web_panel_service.shutil.which",
-                return_value="/home/agent/.local/bin/basaltwater",
-            ) as mock_which,
-            patch(
-                "common.service_tools.web_panel_service.subprocess.run",
-                side_effect=[updated, checked],
-            ) as mock_run,
-            patch(
-                "common.service_tools.web_panel_service._temporary_t3_loginctl_shim",
-                side_effect=linger_shim,
-            ),
-        ):
-            state._run_t3_update()
-
-        update_environment = mock_run.call_args_list[0].kwargs["env"]
-        self.assertTrue(
-            update_environment["PATH"].startswith(
-                "/home/agent/.basaltwater-t3-loginctl-test:"
-            )
-        )
-        self.assertEqual(
-            update_environment["BASALTWATER_T3_LOGINCTL_SHIM"],
-            "/home/agent/.basaltwater-t3-loginctl-test",
-        )
-        self.assertIn(
-            "$BASALTWATER_T3_LOGINCTL_SHIM:",
-            mock_run.call_args_list[0].args[0][2],
-        )
-        launcher_path = mock_run.call_args_list[1].kwargs["env"]["PATH"]
-        self.assertTrue(launcher_path.startswith("/home/agent/.local/bin:"))
-        self.assertNotIn(
-            "BASALTWATER_T3_LOGINCTL_SHIM",
-            mock_run.call_args_list[1].kwargs["env"],
-        )
-        mock_which.assert_called_once_with("basaltw", path=launcher_path)
-        self.assertIn("--json", mock_run.call_args_list[1].args[0])
-        self.assertIn("--wait-for-t3-startup", mock_run.call_args_list[1].args[0])
-        self.assertNotIn("--fix", mock_run.call_args_list[1].args[0])
-        self.assertEqual(
-            mock_run.call_args_list[1].kwargs["timeout"],
-            panel._T3_READINESS_TIMEOUT_SECONDS,
-        )
-        self.assertEqual(len(mock_run.call_args_list), 2)
-        self.assertEqual(
-            mock_run.call_args_list[0].kwargs["timeout"],
-            panel._T3_UPDATE_TIMEOUT_SECONDS,
-        )
-        self.assertEqual(state.action_status, "complete")
-        self.assertIn("Not required by this setup", state.action_output)
-
-    def test_t3_update_bounds_readiness_and_total_worker_time(self) -> None:
-        for scenario in ('slow-update', 'worker-deadline', 'worker-expired', 'doctor-timeout', 'unstable-startup'):
-            with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as home:
-                state = WebPanelState(self._t3_manifest(), agent_home=home)
-                elapsed = 0
-                commands = []
-
-                def run(command, **kwargs):
-                    nonlocal elapsed
-                    commands.append((command, kwargs))
-                    if len(commands) == 1:
-                        elapsed += (
-                            panel._T3_ACTION_TIMEOUT_SECONDS + 1 if scenario == 'worker-expired' else
-                            panel._T3_ACTION_TIMEOUT_SECONDS - 10 if scenario == 'worker-deadline' else
-                            panel._T3_UPDATE_TIMEOUT_SECONDS
-                        )
-                        return SimpleNamespace(returncode=0, stdout='updated\n', stderr='')
-                    self.assertIn('Waiting for T3 Code startup', state.action_message)
-                    if scenario == 'doctor-timeout':
-                        raise subprocess.TimeoutExpired(command, kwargs['timeout'], output=b'partial', stderr=b'migration busy')
-                    if scenario == 'worker-deadline':
-                        elapsed += 11
-                    return SimpleNamespace(returncode=0,
-                        stdout=_t3_doctor_output(startup_ready=scenario != 'unstable-startup'), stderr='')
-
-                with (
-                    patch.object(panel, 'time', SimpleNamespace(monotonic=lambda: elapsed)),
-                    patch.object(panel.os.path, 'expanduser', return_value=home),
-                    patch.object(panel.shutil, 'which', return_value=home + '/basaltw'),
-                    patch.object(panel, '_temporary_t3_loginctl_shim', return_value=nullcontext(home)),
-                    patch.object(panel.subprocess, 'run', side_effect=run),
-                ):
-                    state._run_t3_update()
-                self.assertGreaterEqual(panel._T3_READINESS_TIMEOUT_SECONDS, 30 * 60 + 300)
-                self.assertGreaterEqual(panel._T3_ACTION_TIMEOUT_SECONDS,
-                                        panel._T3_UPDATE_TIMEOUT_SECONDS + panel._T3_READINESS_TIMEOUT_SECONDS)
-                if scenario == 'worker-expired':
-                    self.assertEqual(len(commands), 1)
-                else:
-                    self.assertEqual(len(commands), 2)
-                    self.assertEqual(commands[1][1]['timeout'],
-                                     10 if scenario == 'worker-deadline' else panel._T3_READINESS_TIMEOUT_SECONDS)
-                    self.assertNotIn('--fix', commands[1][0])
-                    self.assertIn('--wait-for-t3-startup', commands[1][0])
-                self.assertEqual(state.action_status, 'complete' if scenario == 'slow-update' else 'failed')
-                if scenario in {'worker-expired', 'worker-deadline'}:
-                    self.assertIn('action deadline', state.action_message)
-                elif scenario == 'doctor-timeout':
-                    self.assertIn('timed out', state.action_message)
-                    self.assertIn('partial', state.action_output)
-                    self.assertIn('migration busy', state.action_output)
-                elif scenario == 'unstable-startup':
-                    self.assertIn('✗ service startup stable', state.action_output)
-
-    def test_t3_update_requires_github_checks_when_credentials_were_staged(self) -> None:
-        manifest = self._t3_manifest()
-        manifest["features"] = {
-            "t3_update": True,
-            "t3_github_readiness": True,
-            "t3_git_identity_readiness": True,
-        }
-        state = WebPanelState(manifest)
-        updated = SimpleNamespace(returncode=0, stdout="updated\n", stderr="")
-        checked = SimpleNamespace(
-            returncode=1,
-            stdout=_t3_doctor_output(),
-            stderr="",
-        )
-        with (
-            patch(
-                "common.service_tools.web_panel_service.subprocess.run",
-                side_effect=[updated, checked],
-            ),
-            patch(
-                "common.service_tools.web_panel_service.shutil.which",
-                return_value="/home/agent/.local/bin/basaltwater",
-            ),
-            patch(
-                "common.service_tools.web_panel_service._temporary_t3_loginctl_shim",
-                return_value=nullcontext("/tmp/basaltwater-t3-loginctl-test"),
-            ),
-        ):
-            state._run_t3_update()
-
-        self.assertEqual(state.action_status, "failed")
-        self.assertIn("GitHub CLI authenticated", state.action_output)
-
-    def test_t3_update_still_requires_core_service_checks(self) -> None:
-        state = WebPanelState(self._t3_manifest())
-        updated = SimpleNamespace(returncode=0, stdout="updated\n", stderr="")
-        checked = SimpleNamespace(
-            returncode=1,
-            stdout=_t3_doctor_output(endpoint=False),
-            stderr="",
-        )
-        with (
-            patch(
-                "common.service_tools.web_panel_service.subprocess.run",
-                side_effect=[updated, checked],
-            ),
-            patch(
-                "common.service_tools.web_panel_service.shutil.which",
-                return_value="/home/agent/.local/bin/basaltwater",
-            ),
-            patch(
-                "common.service_tools.web_panel_service._temporary_t3_loginctl_shim",
-                return_value=nullcontext("/tmp/basaltwater-t3-loginctl-test"),
-            ),
-        ):
-            state._run_t3_update()
-
-        self.assertEqual(state.action_status, "failed")
-        self.assertIn("web endpoint responding", state.action_output)
-
-    def test_t3_update_fails_closed_without_readiness_command(self) -> None:
-        state = WebPanelState(self._t3_manifest())
-        completed = SimpleNamespace(returncode=0, stdout="updated\n", stderr="")
-        with (
-            patch(
-                "common.service_tools.web_panel_service.subprocess.run",
-                return_value=completed,
-            ),
-            patch(
-                "common.service_tools.web_panel_service.shutil.which",
-                return_value=None,
-            ),
-            patch(
-                "common.service_tools.web_panel_service._temporary_t3_loginctl_shim",
-                return_value=nullcontext("/tmp/basaltwater-t3-loginctl-test"),
-            ),
-        ):
-            state._run_t3_update()
-
-        self.assertEqual(state.action_status, "failed")
-        self.assertIn("readiness command is unavailable", state.action_message)
-
-    def test_t3_update_guard_records_unexpected_failures(self) -> None:
-        state = WebPanelState(self._t3_manifest())
-        with patch.object(
-            state,
-            "_run_t3_update",
-            side_effect=RuntimeError("unexpected"),
-        ):
-            state._run_t3_update_guarded()
-
-        self.assertEqual(state.action_status, "failed")
-        self.assertEqual(state.action_message, "T3 Code update stopped unexpectedly.")
-        self.assertIn("RuntimeError: unexpected", state.action_output)
 
 
 if __name__ == "__main__":

@@ -48,7 +48,7 @@ try {
     Assert-Held ($repeatStop.Invoke($null,@([long]($frequency+$frequency/20),$frequency,(3*$frequency),[long]($frequency/20))) -eq 'schedule-late') 'Missed repeat intervals could catch up in a burst'
     foreach ($case in @('complete','partial','rejected','release-failed','physical-owner','crashed-intent')) {
         $dir=Join-Path $temporary $case; New-NativeDesktopPrivateDirectory $dir
-        [Basaltwater.Desktop.HeldStore]::Create($dir)
+        New-NativeHeldOwnership $dir
         $store=[Basaltwater.Desktop.HeldStore]::new($dir,('Local\Basaltwater.HeldTest.'+[guid]::NewGuid().ToString('N')))
         $events=[Threading.EventWaitHandle[]]@(
             (New-Object Threading.EventWaitHandle($false,'ManualReset')),
@@ -103,7 +103,7 @@ try {
     function Get-NativeDesktopStatePath { return Join-Path $temporary 'state.json' }
     $root=Get-NativeHeldRoot; New-NativeDesktopPrivateDirectory $root
     $id='a'*32; $dir=Join-Path $root $id; New-NativeDesktopPrivateDirectory $dir
-    [Basaltwater.Desktop.HeldStore]::Create($dir)
+    New-NativeHeldOwnership $dir
     Write-NativeHeldJson (Join-Path $dir 'request.json') @{version=1;id=$id;sid='fixture';session='fixture-session';directory=$dir;revision='r';task=('Basaltwater-Hold-'+$id);name=('Local\Basaltwater.Hold.'+$id)}
     Write-NativeHeldJson (Join-Path $root 'active.json') @{id=$id}
     $caught=$null; try { Assert-NativeHeldIdle } catch { $caught=$_ }
@@ -132,13 +132,13 @@ try {
     Assert-NativeHeldIdle
     Assert-Held (-not (Test-Path -LiteralPath (Join-Path $root 'active.json'))) 'Confirmed cleanup did not release admission'
     $unstarted=Join-Path $temporary 'unstarted'; New-NativeDesktopPrivateDirectory $unstarted
-    [Basaltwater.Desktop.HeldStore]::Create($unstarted)
+    New-NativeHeldOwnership $unstarted
     $name='Local\Basaltwater.HeldTest.'+[guid]::NewGuid().ToString('N')
     Assert-Held ([Basaltwater.Desktop.Native]::SettleUnstartedHold($unstarted,$name)) 'Unstarted ownership could not close admission'
     Assert-Held (-not [Basaltwater.Desktop.Native]::SettleUnstartedHold($unstarted,$name)) 'Terminal ownership reopened'
     Assert-Held ([Basaltwater.Desktop.Native]::HeldReleaseConfirmed($unstarted,$name)) 'Closed unstarted ownership not confirmed'
     $expired=Join-Path $temporary 'expired-before-down';New-NativeDesktopPrivateDirectory $expired
-    [Basaltwater.Desktop.HeldStore]::Create($expired)
+    New-NativeHeldOwnership $expired
     $store=[Basaltwater.Desktop.HeldStore]::new($expired,('Local\Basaltwater.HeldTest.'+[guid]::NewGuid().ToString('N')))
     try {
         $heartbeat=[Func[Basaltwater.Desktop.HeldStore+State,int]]{param($s) $s.heartbeat=[Diagnostics.Stopwatch]::GetTimestamp();return 0}

@@ -728,6 +728,8 @@ class T3CodeWebTest(unittest.TestCase):
         state = {"allow_seen": False}
 
         def run_command(command: str, **_kwargs):
+            if isinstance(command, list):
+                return SimpleNamespace(returncode=0, stdout=":INPUT DROP [0:0]\n")
             if command == "ufw status numbered":
                 rules = (
                     "[ 1] 3773/tcp ALLOW IN 192.168.0.0/24 "

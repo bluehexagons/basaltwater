@@ -20,6 +20,7 @@ import unittest
 import urllib.error
 import urllib.request
 import urllib.response
+from pathlib import Path
 from unittest.mock import MagicMock, mock_open, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -559,6 +560,14 @@ class TestNginxIntegration(unittest.TestCase):
             "example.com", deps, enable_https_redirect=False,
         )
 
+        for location, serving in (("/", "root /var/www/release/dist/;"),
+                                  ("/dashboard/", "alias /var/www/release/dashboard-dist/;")):
+            blocks = cfg.split(f"    location {location} {{")[1:]
+            self.assertEqual(len(blocks), 2)  # HTTP origin and HTTPS
+            for block in blocks:
+                directives = block.split("}", 1)[0]
+                self.assertIn(serving, directives)
+                self.assertIn("disable_symlinks on;", directives)
         self.assertIn("try_files $uri $uri.html $uri/ /index.html;", cfg)
         self.assertIn(
             "try_files $uri $uri.html $uri/ /dashboard/index.html;", cfg,
@@ -1360,6 +1369,164 @@ class TestDeployManifest(unittest.TestCase):
         self.assertFalse(
             any("systemctl stop" in call.args[0] for call in mock_run.call_args_list)
         )
+
+    def test_final_static_output_rejections_preserve_active_site(self):
+        active = Path(self.base_dir, "example_com", "frontend", "dist")
+        active.mkdir(parents=True)
+        previous = active / "index.html"
+        previous.write_text("previous release")
+        previous_inode = previous.stat().st_ino
+        self.manifest.components[0].output = "frontend/dist"
+        for relative, kind in (
+            ("frontend", "directory link"), ("frontend", "regular"),
+            ("frontend/dist", "directory link"), ("frontend/dist", "regular"),
+            ("frontend/dist/current", "directory link"), ("frontend/dist/leaf", "file link"),
+            ("frontend/dist/dangling", "dangling"), ("frontend/dist/asset", "hard link"),
+            ("frontend/dist/assets/pipe", "fifo"),
+        ):
+            with self.subTest(relative=relative, kind=kind):
+                def build(component, workspace, *_):
+                    if component.name != "api":
+                        return
+                    # The last component can change an earlier component's output.
+                    member = Path(workspace, relative)
+                    member.parent.mkdir(parents=True, exist_ok=True)
+                    if kind == "directory link":
+                        member.symlink_to(active.parent if relative == "frontend" else active,
+                                          target_is_directory=True)
+                    elif kind in {"file link", "dangling"}:
+                        member.symlink_to(previous if kind == "file link" else "absent")
+                    elif kind == "hard link":
+                        os.link(previous, member)
+                    elif kind == "fifo":
+                        os.mkfifo(member)
+                    else:
+                        member.write_text("file where a directory was selected")
+
+                with (
+                    patch("lib.deployment.run", return_value=MagicMock(returncode=0)),
+                    patch.object(self.orch, "_get_used_ports", return_value=set()),
+                    patch.object(self.orch, "_app_unit_snapshots", return_value=_old_unit_snapshot()),
+                    patch.object(self.orch, "_run_component_build", side_effect=build),
+                    patch.object(self.orch, "_stop_app_unit") as stop,
+                    patch("lib.deployment.rename_path_durable") as activate,
+                    self.assertRaisesRegex(ValueError, "real directory|link or special|hard link"),
+                ):
+                    self.orch.deploy_manifest(self.manifest, self.source, "example.com", "/",
+                                              "url", "revision", keep_source=True)
+                stop.assert_not_called()
+                activate.assert_not_called()
+                self.assertEqual(previous.read_text(), "previous release")
+                self.assertEqual(previous.stat().st_ino, previous_inode)
+                self.assertFalse(Path(self._operation_marker_path()).exists())
+                self.assertEqual(list(Path(self.base_dir).glob(".example_com.*-*")), [])
+
+    def test_snapshot_keeps_public_bytes_independent_and_preserves_service_layout(self):
+        self.manifest.components.insert(1, _static_component(
+            name="guide", path="/guide", output="frontend/../dist/guide/", spa=True,
+        ))
+        self.manifest.components.insert(2, _static_component(
+            name="game", type="godot-web", path="/play", output="exports/web",
+        ))
+        retained_file = None
+
+        def build(component, workspace, *_):
+            nonlocal retained_file
+            if component.name != "api":
+                return
+            root = Path(workspace)
+            (root / "dist/guide").mkdir()
+            (root / "dist/guide/index.html").write_text("nested guide")
+            export = root / "exports/web"
+            export.mkdir(parents=True)
+            for filename, data in (("index.html", b"game"), ("index.js", b"script"),
+                                   ("index.wasm", b"\x00asm"), ("index.pck", b"GDPC")):
+                (export / filename).write_bytes(data)
+            (root / "server/current").symlink_to("app")
+            os.link(root / "server/app", root / "server/cached-app")
+            retained_file = (root / "dist/index.html").open("r+b")
+            self.addCleanup(retained_file.close)
+
+        with (
+            patch("lib.deployment.run", return_value=MagicMock(returncode=0)),
+            patch.object(self.orch, "_get_used_ports", return_value=set()),
+            patch.object(self.orch, "_run_component_build", side_effect=build),
+            patch.object(self.orch, "_install_service_component") as install,
+        ):
+            site, guide, game, api = self.orch.deploy_manifest(
+                self.manifest, self.source, "example.com", "/", "url", "revision", keep_source=True,
+            )
+        install.assert_called_once()
+        self.assertIsNotNone(retained_file)
+        retained_file.write(b"later build write")
+        retained_file.flush()
+        served = Path(site["serve_path"], "index.html")
+        self.assertNotEqual(served.stat().st_ino, os.fstat(retained_file.fileno()).st_ino)
+        self.assertEqual(served.read_text(), "<html></html>")
+        self.assertEqual((served.stat().st_mode | served.parent.stat().st_mode) & 0o022, 0)
+        self.assertEqual(Path(guide["serve_path"], "index.html").read_text(), "nested guide")
+        self.assertEqual(game["project_type"], "godot-web")
+        self.assertEqual(Path(game["serve_path"], "index.wasm").read_bytes(), b"\x00asm")
+        executable = Path(api["dest_path"], "server/current")
+        self.assertEqual(executable.readlink(), Path("app"))
+        self.assertTrue(os.access(executable, os.X_OK))
+        self.assertEqual(executable.read_bytes(), _prebuilt_elf64())
+
+    def test_root_snapshot_restored_on_finalization_failure(self):
+        manifest = Manifest(version=1, components=[_static_component(output=".")])
+        arguments = (manifest, self.source, None, "/current", "url", "revision")
+        source_file = Path(self.source, "index.html")
+        source_file.write_text("previous")
+        with (
+            patch("lib.deployment.run", return_value=MagicMock(returncode=0)),
+            patch.object(self.orch, "_get_used_ports", return_value=set()),
+        ):
+            dep, = self.orch.deploy_manifest(*arguments, keep_source=True)
+            served = Path(dep["serve_path"], "index.html")
+            self.assertEqual(served.parent, Path(self.base_dir, "current"))
+            self.assertFalse(served.parent.is_symlink())
+            previous = served.stat()
+            source_file.write_text("replacement")
+
+            def reject(*_):
+                self.assertEqual(served.read_text(), "replacement")
+                raise OSError("metadata unavailable")
+
+            with (
+                patch("lib.deployment.save_deployment_metadata", side_effect=reject),
+                self.assertRaisesRegex(OSError, "metadata unavailable"),
+            ):
+                self.orch.deploy_manifest(*arguments, keep_source=True)
+        self.assertEqual(served.read_text(), "previous")
+        self.assertTrue(os.path.samestat(previous, served.stat()))
+
+    def test_current_link_at_end_of_build_is_preserved(self):
+        manifest = Manifest(version=1, components=[_static_component(output="dist")])
+        current = Path(self.base_dir, "current")
+        previous = Path(self.base_dir, "previous")
+        previous.mkdir()
+        (previous / "index.html").write_text("previous")
+        with (
+            patch("lib.deployment.run", return_value=MagicMock(returncode=0)),
+            patch.object(self.orch, "_get_used_ports", return_value=set()),
+            patch.object(self.orch, "_run_component_build", side_effect=lambda *_: current.symlink_to(previous)),
+            patch("lib.deployment.rename_path_durable") as activate,
+            self.assertRaisesRegex(ValueError, "not a link"),
+        ):
+            self.orch.deploy_manifest(manifest, self.source, None, "/current", "url", "revision", keep_source=True)
+        activate.assert_not_called()
+        self.assertEqual(current.readlink(), previous)
+        self.assertEqual((previous / "index.html").read_text(), "previous")
+
+    def test_linked_release_ancestor_refuses_before_staging(self):
+        linked = Path(self.base_dir, "linked")
+        linked.symlink_to(self.source, target_is_directory=True)
+        self.orch.base_dir = str(linked / "www")
+        with patch("lib.deployment.run") as command, self.assertRaisesRegex(ValueError, "symlink"):
+            self.orch.deploy_manifest(self.manifest, self.source + "/dist", "example.com", "/",
+                                      "url", "revision", keep_source=True)
+        command.assert_not_called()
+        self.assertFalse(Path(self.source, "www").exists())
 
     @patch.object(DeploymentOrchestrator, '_poll_health')
     @patch('lib.deployment.create_managed_service')

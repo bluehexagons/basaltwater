@@ -98,7 +98,7 @@ def queue_completion(config: SetupConfig) -> None:
         result = run([
             "/usr/bin/systemd-run", "--quiet", "--unit=" + unit,
             "--on-active=5s", "--timer-property=AccuracySec=1s",
-            "--property=Type=exec", "--property=RemainAfterExit=yes",
+            "--timer-property=RemainAfterElapse=no", "--property=Type=exec",
             "--property=UMask=0077", "--property=StandardInput=null",
             "--property=StandardOutput=null", "--property=StandardError=journal",
             "--working-directory=/", "--", sys.executable, "-I", WORKER,
@@ -112,11 +112,11 @@ def queue_completion(config: SetupConfig) -> None:
         _receipt(request, "failed", "dispatch_failed")
         raise RuntimeError("Could not queue the final T3 reload; inspect the service before retrying")
     print("T3 Code will start/reload after setup exits; active T3 terminals may disconnect.")
-    print(f"Completion result: sudo systemctl status {unit}.service")
+    print(f"Completion journal: sudo journalctl -u {unit}.service -n 30 --no-pager")
     print(f"Private completion receipt: {_receipt_path(request)}")
 
 
-def complete(request: str, pid: int, started: str) -> None:
+def complete(request: str, pid: int, started: str) -> str:
     """Finish outside the T3 cgroup, excluding setup and source replacement."""
     if (len(request) != 32 or any(c not in "0123456789abcdef" for c in request)
             or pid <= 0 or not started.isdecimal()):
@@ -125,6 +125,7 @@ def complete(request: str, pid: int, started: str) -> None:
         _receipt(request, "waiting_for_setup")
         outcome = _complete(request, pid, started)
         _receipt(request, outcome)
+        return outcome
     except Exception as exc:
         _receipt(request, "failed", exc.issue if isinstance(exc, CompletionError) else "completion_failed")
         raise

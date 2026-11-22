@@ -179,21 +179,16 @@ class AgentTaskFlowRouteTests(unittest.TestCase):
         handler.send_response.assert_called_once_with(303)
         handler.send_header.assert_any_call("Location", "/agents?view=tasks")
 
-    def test_readiness_and_t3_update_return_to_diagnostics_with_or_without_codex(self) -> None:
-        for tools in (frozenset({"codex"}), frozenset()):
-            with self.subTest(tools=tools), patch.object(
-                self.state, "features", return_value=PanelFeatures(tools=tools, t3=True),
-            ), patch.object(self.state.agent_diagnostics, "trigger", return_value=True) as diagnose, \
-                 patch.object(self.state, "t3_update_available", return_value=True), \
-                 patch.object(self.state, "trigger_t3_update", return_value=True) as update:
-                for path, fields in (("/actions/agent-diagnostics", {}),
-                                     ("/actions/t3-update", {"return": "agents"})):
-                    handler = self.handler(path, fields)
-                    handler.do_POST()
-                    handler.send_response.assert_called_once_with(303)
-                    handler.send_header.assert_any_call("Location", "/agents?view=diagnostics")
+    def test_readiness_returns_to_diagnostics_with_or_without_codex(self) -> None:
+        for selected in (frozenset({"codex"}), frozenset()):
+            with self.subTest(tools=selected), patch.object(
+                self.state, "features", return_value=PanelFeatures(tools=selected, t3=True),
+            ), patch.object(self.state.agent_diagnostics, "trigger", return_value=True) as diagnose:
+                handler = self.handler("/actions/agent-diagnostics", {})
+                handler.do_POST()
+                handler.send_response.assert_called_once_with(303)
+                handler.send_header.assert_any_call("Location", "/agents?view=diagnostics")
                 diagnose.assert_called_once_with()
-                update.assert_called_once_with()
 
     def test_busy_readiness_check_does_not_redirect_or_start_a_task(self) -> None:
         handler = self.handler("/actions/agent-diagnostics", {})

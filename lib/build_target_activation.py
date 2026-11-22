@@ -23,11 +23,12 @@ from lib.build_target_policy import authorize_target_deployment
 from lib.build_target_routing import load_target_routing, routing_for_config
 from lib.nginx_validation import validate_nginx_path
 from lib.deployment import DeploymentOrchestrator
-from lib.nginx_config import create_nginx_sites_for_groups
+from lib.nginx_config import NginxPauseRecoveryRequired, create_nginx_sites_for_groups
 from lib.operation_state import OperationStateStore
 from lib.project_manifest import Manifest, parse_manifest, collect_public_udp
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_host
+from lib.runtime_bindings import check_target_runtime_bindings
 
 
 MAX_REGISTRY_BYTES = 4 * 1024**2
@@ -328,6 +329,45 @@ class TargetReleaseActivator:
                 groups.setdefault(deployment["domain"], []).append(deployment)
         return groups
 
+    def _replace_release(self, manager: DeploymentOrchestrator, root: str, old_groups: dict,
+                         previous: dict | None, deploy: Callable[[], list[dict]]) -> list[dict]:
+        if previous is None or not any(route["needs_proxy"] for route in previous["deployments"]):
+            return deploy()
+
+        # Keep the existing routes of other applications on the same domains.
+        domains = {route["domain"] for route in previous["deployments"]}
+        maintenance = {
+            domain: [{**route, "target_maintenance": True} if route["dest_path"] == root else route
+                     for route in old_groups[domain]]
+            for domain in domains
+        }
+        manifest_operation = OperationStateStore(os.path.join(
+            manager._get_persistent_root(os.path.basename(root)), "manifest-operation.json",
+        ))
+        deployments = []
+
+        def activate() -> None:
+            nonlocal deployments
+            try:
+                deployments = deploy()
+            except Exception as exc:
+                try:
+                    incomplete = manifest_operation.load() is not None
+                except (OSError, ValueError):
+                    incomplete = True
+                if incomplete:
+                    raise NginxPauseRecoveryRequired(
+                        "Release recovery is incomplete; Nginx routes remain paused",
+                    ) from exc
+                raise
+
+        create_nginx_sites_for_groups(
+            maintenance, managed_domains=domains,
+            enable_https_redirect=not load_target_routing(self.root).cloudflare,
+            while_paused=activate,
+        )
+        return deployments
+
     def _check_expected(self, expected: list[dict[str, Any]], state: dict,
                         admissions: DeploymentAdmissionStore | None) -> None:
         """Check all installed identities, then current intent, before replay."""
@@ -415,6 +455,7 @@ class TargetReleaseActivator:
                 for app, record in sorted(state["applications"].items()):
                     binding = record["bindings"]
                     checked, manifest = _bindings_manifest(binding, record["request"], binding["principal"])
+                    check_target_runtime_bindings(checked["bindings"])
                     parent, basename = os.path.split(record["root"])
                     with _trusted_directory(parent, private=False):
                         pass
@@ -472,6 +513,7 @@ class TargetReleaseActivator:
             raise ValueError("Invalid target activation identity")
         checked, manifest = _bindings_manifest(bindings, request, principal)
         binding = checked["bindings"]
+        check_target_runtime_bindings(binding)
         job = parse_build_request(request)
         root = binding["deployment_root"]
         parent, basename = os.path.split(root)
@@ -539,10 +581,13 @@ class TargetReleaseActivator:
                                             application=binding["application"],
                                             bindings_sha256=checked["bindings_sha256"],
                                             artifact_sha256=artifact_sha256) as bundle:
-                        deployments = manager.deploy_prebuilt(
-                            manifest, bundle, job, artifact_sha256, None, "/" + basename,
-                            "https://basaltwater.invalid/" + job["project"] + ".git",
-                            staging_root=self.staging_root, target_platform=DEBIAN_PLATFORM,
+                        deployments = self._replace_release(
+                            manager, root, old_groups, previous,
+                            lambda: manager.deploy_prebuilt(
+                                manifest, bundle, job, artifact_sha256, None, "/" + basename,
+                                "https://basaltwater.invalid/" + job["project"] + ".git",
+                                staging_root=self.staging_root, target_platform=DEBIAN_PLATFORM,
+                            ),
                         )
                     installed["deployments"] = _deployments(deployments, root)
                     state["applications"][binding["application"]] = installed

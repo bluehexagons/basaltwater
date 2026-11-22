@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import contextmanager
 import fcntl
 import filecmp
@@ -85,8 +86,18 @@ def _protect_desktop_data(home: Path) -> None:
             os.close(descriptor)
 
 
+def _runtime_prefix(home: Path) -> Path:
+    prefix = home / ".local/share/basaltwater/cachyos-t3"
+    validate_filesystem_path(str(prefix))
+    for path in (prefix, *prefix.parents):
+        if path.is_symlink() or (path.exists() and not path.is_dir()):
+            raise ValueError(f"Unsafe T3 directory: {path}")
+    return prefix
+
+
 def _check_managed_paths(home: Path) -> tuple[Path, Path]:
     unit = _user_unit_path(home)
+    validate_filesystem_path(str(unit.parent))
     default_directory = home / ".config/systemd/user"
     if unit.parent != default_directory:
         for name in (T3_SERVICE, "t3code.service"):
@@ -97,13 +108,8 @@ def _check_managed_paths(home: Path) -> tuple[Path, Path]:
                     "configuration before changing XDG_CONFIG_HOME"
                 )
     desktop.autostart_path(home)
-    prefix = home / ".local/share/basaltwater/cachyos-t3"
+    prefix = _runtime_prefix(home)
     marker = prefix / "desktop-mode"
-    for path in (prefix, unit.parent):
-        validate_filesystem_path(str(path))
-        for parent in (path, *path.parents):
-            if parent.is_symlink() or (parent.exists() and not parent.is_dir()):
-                raise ValueError(f"Unsafe T3 directory: {parent}")
     for path in (unit, marker):
         if path.is_symlink() or (path.exists() and (
             not path.is_file() or _MARKER not in path.read_text()
@@ -363,13 +369,16 @@ def _wait_for_ui(url: str) -> None:
                     if response.status == 200 and same_origin(response.geturl()):
                         invocation = run([
                             "systemctl", "--user", "show", T3_SERVICE,
-                            "--property=InvocationID", "--value",
+                            "--property=InvocationID,ActiveState",
                         ], check=False, capture_output=True, timeout=15)
-                        current = (invocation.stdout or "").strip().lower()
-                        if invocation.returncode == 0 and re.fullmatch(r"[0-9a-f]{32}", current):
+                        properties = dict(line.split("=", 1) for line in (invocation.stdout or "").splitlines()
+                                          if "=" in line)
+                        current = properties.get("InvocationID", "").lower()
+                        if (invocation.returncode == 0 and properties.get("ActiveState") == "active"
+                                and re.fullmatch(r"[0-9a-f]{32}", current)):
                             stable = stable + 1 if current == stable_invocation else 1
                             stable_invocation = current
-                            if stable >= _T3_READINESS_STABLE_CHECKS:
+                            if stable >= _T3_READINESS_STABLE_CHECKS and time.monotonic() < deadline:
                                 print(f"  T3 HTTP UI reachable: {url}")
                                 print("  Provider threads and interactive terminals still require a client test")
                                 return
@@ -442,7 +451,7 @@ def _pending_completion(prefix: Path) -> dict | None:
         raise ValueError("Unsafe T3 pending completion record")
     record = read_json_file(str(path), max_bytes=32768)
     if (not isinstance(record, dict) or record.get("owner") != _MARKER
-            or record.get("mode") not in {"web", "desktop"}
+            or record.get("mode") not in ("web", "desktop")
             or not isinstance(record.get("request"), str)
             or not re.fullmatch(r"[0-9a-f]{32}", record["request"])):
         raise ValueError("Invalid T3 pending completion record")
@@ -452,6 +461,20 @@ def _pending_completion(prefix: Path) -> dict | None:
     if set(record) != expected or not all(isinstance(value, str) for value in record.values()):
         raise ValueError("Invalid T3 pending completion record")
     return record
+
+
+def collect_completion_health(home: Path) -> tuple[str, str] | None:
+    """Expose unfinished activation independently of the currently running app."""
+    try:
+        pending = _pending_completion(_runtime_prefix(home))
+    except FileNotFoundError:
+        return None  # The worker can retire the record during observation.
+    except (OSError, ValueError):
+        return "failed", "T3 completion record is unsafe or unreadable. Inspect it locally before retrying."
+    if pending is None:
+        return None
+    return ("deferred", f"T3 {pending['mode']} activation is still pending. "
+            "Check the setup completion journal for a queued, failed, or interrupted worker.")
 
 
 def _stage_completion(config: SetupConfig, prefix: Path, values: dict) -> None:
@@ -509,8 +532,11 @@ def setup_completion_lock(config: SetupConfig) -> Iterator[int | None]:
         os.close(descriptor)
 
 
-def complete_setup(home: Path, mode: str, request: str) -> bool:
-    """Activate exactly the completed setup requested by the detached worker."""
+def complete_setup(
+    home: Path, mode: str, request: str, *,
+    restart_desktop: Callable[[Callable[[], None]], object] | None = None,
+) -> bool:
+    """Activate the matching request. The desktop handler calls finish just before exec."""
     prefix, unit = _check_managed_paths(home)
     _check_service_ownership(prefix, unit)
     with _setup_lock(prefix):
@@ -518,7 +544,10 @@ def complete_setup(home: Path, mode: str, request: str) -> bool:
         if record is None or record["request"] != request or record["mode"] != mode:
             print("T3 completion superseded; no service or desktop was changed", flush=True)
             return False
+        pending_path = prefix / "pending-completion.json"
         if mode == "desktop":
+            if restart_desktop is None:
+                raise ValueError("T3 desktop completion requires a relaunch handler")
             _recover_activation(prefix, unit, start_previous=False)
             if unit.exists():
                 run(["systemctl", "--user", "disable", "--now", T3_SERVICE])
@@ -529,6 +558,15 @@ def complete_setup(home: Path, mode: str, request: str) -> bool:
                 if enabled.returncode != 1 or enabled.stdout.strip() != "disabled":
                     raise RuntimeError("Managed T3 web service remains enabled; inspect user/global systemd enablement")
             _write_managed(prefix / "desktop-mode", _MARKER + "\n", mode=0o600)
+            # A successful exec never returns. Keep the record through shutdown
+            # and restore it if exec fails synchronously after removing it.
+            try:
+                restart_desktop(pending_path.unlink)
+            except BaseException:
+                if not pending_path.exists():
+                    write_json_atomic(str(pending_path), record)
+                raise
+            pending_path.unlink(missing_ok=True)
         else:
             candidate = Path(record["candidate"])
             validate_filesystem_path(str(candidate), must_exist=True)
@@ -547,7 +585,7 @@ def complete_setup(home: Path, mode: str, request: str) -> bool:
             if previous.is_relative_to(releases):
                 keep.add(releases / previous.relative_to(releases).parts[0])
             _prune_releases(releases, keep)
-        (prefix / "pending-completion.json").unlink()
+            pending_path.unlink()
     return True
 
 

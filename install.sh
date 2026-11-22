@@ -3,8 +3,9 @@
 set -eu
 
 REPOSITORY="bluehexagons/basaltwater"
+OFFICIAL_URL="https://github.com/$REPOSITORY.git"
 # Explicit values, including empty settings, are validated below.
-REPOSITORY_URL="${BASALTWATER_REPOSITORY_URL-https://github.com/$REPOSITORY.git}"
+REPOSITORY_URL="${BASALTWATER_REPOSITORY_URL-$OFFICIAL_URL}"
 CHANNEL="${BASALTWATER_CHANNEL-dev}"
 CHANNEL_SET=0
 if [ "${BASALTWATER_CHANNEL+x}" = "x" ]; then
@@ -19,6 +20,7 @@ INSTALL_QEMU_GUEST_AGENT=0
 HOST_OS_SUPPORTED=1
 HOST_OS_ID=""
 PLAN_ONLY=0
+SOURCE_COMMIT=""
 
 usage() {
     cat <<'EOF'
@@ -33,6 +35,8 @@ Options:
   --channel CHANNEL     stable, dev, v[version], branch-[branch], or commit-[hash]
                         (default: dev for the current development release)
   --ref REF             Compatibility alias for --channel; bare refs are branches
+  --source-commit SHA    Require this full Git commit before activating source
+                        (new system installs and legacy migrations need a pin)
   --install-dir PATH   Source destination (default: /opt/basaltwater as root,
                        otherwise ~/.local/share/basaltwater)
   --user USER          User receiving local tools and completions
@@ -48,9 +52,10 @@ Options:
 Examples:
   sh install.sh --plan --local-setup agent_cachyos --t3code-desktop
   sh install.sh --local-setup agent_cachyos --t3code-desktop --node --python
-  sudo sh install.sh --user "$USER" --local-setup control_plane --agent-tool gh
+  sudo sh install.sh --user "$USER" --source-commit "$reviewed_commit" \
+    --local-setup control_plane --agent-tool gh
 
-Download and run from fish, Bash, or Zsh (copy the whole block):
+Download and run a user install from fish, Bash, or Zsh (copy the whole block):
   sh -c '
     installer=$(mktemp) || exit
     cleanup() { rm -f -- "$installer"; }
@@ -67,7 +72,7 @@ fail() {
 }
 
 require_supported_python() {
-    if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'; then
+    if ! python3 -I -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'; then
         fail "Python 3.11 or newer is required; use a distribution with a supported system Python. The installer does not upgrade the OS release."
     fi
 }
@@ -184,7 +189,7 @@ validate_host_os() {
 resolve_channel_ref() {
     case "$CHANNEL" in
         stable)
-            TARGET_REF=$(git -C "$STAGED_DIR" tag --list 'v[0-9]*' | awk '/^v[0-9]+\.[0-9]+\.[0-9]+$/ { print }' | sort -V | tail -n 1)
+            TARGET_REF=$(source_git -C "$STAGED_DIR" tag --list 'v[0-9]*' | awk '/^v[0-9]+\.[0-9]+\.[0-9]+$/ { print }' | sort -V | tail -n 1)
             [ -n "$TARGET_REF" ] || fail "no versioned release tags are available for stable"
             TARGET_REF="refs/tags/$TARGET_REF"
             ;;
@@ -194,21 +199,41 @@ resolve_channel_ref() {
         commit-*) TARGET_REF=${CHANNEL#commit-} ;;
     esac
 
-    if ! git -C "$STAGED_DIR" rev-parse --verify --quiet "$TARGET_REF^{commit}" >/dev/null; then
+    if [ "${CHANNEL#commit-}" != "$CHANNEL" ]; then
+        if [ "$(printf %s "${CHANNEL#commit-}" | wc -c)" -eq 40 ]; then
+            source_git -C "$STAGED_DIR" cat-file -e "$TARGET_REF^{commit}" 2>/dev/null ||
+                source_git -C "$STAGED_DIR" fetch --no-tags origin "$TARGET_REF"
+        fi
+    fi
+    if ! RESOLVED_COMMIT=$(source_git -C "$STAGED_DIR" rev-parse --verify --quiet "$TARGET_REF^{commit}"); then
         fail "channel does not exist in the repository: $CHANNEL"
+    fi
+    if [ -n "$SOURCE_COMMIT" ] && [ "$RESOLVED_COMMIT" != "$SOURCE_COMMIT" ]; then
+        fail "selected source commit $RESOLVED_COMMIT does not match expected $SOURCE_COMMIT"
     fi
 }
 
 write_channel_state() {
-    state_dir="$INSTALL_DIR/.basaltwater"
+    state_dir="$STAGED_DIR/.basaltwater"
     mkdir -p "$state_dir"
-    commit=$(git -C "$INSTALL_DIR" rev-parse --verify HEAD)
     state_path="$state_dir/channel.json"
-    temporary_state="$state_path.new.$$"
+    temporary_state=$(mktemp "$state_path.new.XXXXXX")
     printf '{\n  "channel": "%s",\n  "commit": "%s"\n}\n' \
-        "$CHANNEL" "$commit" > "$temporary_state"
-    chmod 600 "$temporary_state"
+        "$CHANNEL" "$RESOLVED_COMMIT" > "$temporary_state"
     mv "$temporary_state" "$state_path"
+}
+
+source_git() {
+    if [ "$SYSTEM_INSTALL" -eq 0 ]; then
+        git "$@"
+        return
+    fi
+    # Fetch system source without caller-supplied Git config, hooks, helpers or
+    # transport redirects. The administrator trusts the official HTTPS origin.
+    env -i PATH="$PATH" LC_ALL=C GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+        GIT_TERMINAL_PROMPT=0 git --no-replace-objects -c core.hooksPath=/dev/null \
+        -c protocol.allow=never -c protocol.https.allow=always \
+        -c http.followRedirects=false -c http.sslVerify=true "$@"
 }
 
 INSTALL_REF="${BASALTWATER_REF-}"
@@ -229,6 +254,15 @@ while [ "$#" -gt 0 ]; do
             [ "$#" -ge 2 ] || fail "--ref requires a value"
             normalize_ref "$2"
             CHANNEL_SET=1
+            shift 2
+            ;;
+        --source-commit)
+            [ "$#" -ge 2 ] || fail "--source-commit requires a full commit SHA"
+            case "$2" in
+                ''|*[!A-Fa-f0-9]*) fail "--source-commit requires a full commit SHA" ;;
+            esac
+            [ "${#2}" -eq 40 ] || fail "--source-commit requires a full commit SHA"
+            SOURCE_COMMIT=$(printf %s "$2" | tr A-F a-f)
             shift 2
             ;;
         --install-dir)
@@ -288,6 +322,11 @@ if [ "$LOCAL_SETUP_REQUESTED" -eq 1 ] && [ "$#" -lt 1 ]; then
 fi
 
 CURRENT_USER=$(id -un)
+SYSTEM_INSTALL=0
+if [ "$(id -u)" -eq 0 ]; then
+    SYSTEM_INSTALL=1
+    [ "$REPOSITORY_URL" = "$OFFICIAL_URL" ] || fail "system installations require $OFFICIAL_URL"
+fi
 if [ -z "$TARGET_USER" ]; then
     if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
         TARGET_USER=$SUDO_USER
@@ -337,9 +376,6 @@ if [ "$LOCAL_SETUP_REQUESTED" -eq 1 ]; then
     shift
     set -- "$SETUP_SYSTEM_TYPE" localhost "$TARGET_USER" "$@"
     LOCAL_SETUP=1
-    if [ "$(id -u)" -ne 0 ]; then
-        command -v sudo >/dev/null 2>&1 || fail "local setup requires sudo; install sudo or rerun the installer with sudo"
-    fi
 elif [ "$RUN_SETUP" -eq 1 ]; then
     case "$2" in
         localhost|127.0.0.1|::1) LOCAL_SETUP=1 ;;
@@ -353,10 +389,6 @@ elif [ "$RUN_SETUP" -eq 1 ]; then
             set -- "$SETUP_SYSTEM_TYPE" "$SETUP_HOST" "$TARGET_USER" "$@"
         else
             set -- "$SETUP_SYSTEM_TYPE" "$SETUP_HOST" "$@"
-        fi
-
-        if [ "$(id -u)" -ne 0 ]; then
-            command -v sudo >/dev/null 2>&1 || fail "local setup requires sudo; install sudo or rerun the installer with sudo"
         fi
     fi
 fi
@@ -378,6 +410,14 @@ fi
 if [ "$HOST_OS_SUPPORTED" -eq 0 ] && [ "$HOST_OS_ID" != cachyos ] && [ "$LOCAL_SETUP" -eq 1 ]; then
     fail "local setup is not supported on an unsupported host; install the launcher and use remote setup instead"
 fi
+if [ "$LOCAL_SETUP" -eq 1 ] && [ "$SYSTEM_INSTALL" -eq 0 ] &&
+    [ "$HOST_OS_ID" != cachyos ] && [ "$PLAN_ONLY" -eq 0 ]; then
+    for setup_arg in "$@"; do
+        [ "$setup_arg" != --dry-run ] || break
+    done
+    [ "$setup_arg" = --dry-run ] ||
+        fail "rerun the reviewed installer with sudo for local system setup"
+fi
 
 missing_prerequisite=0
 missing_prerequisites=""
@@ -398,6 +438,9 @@ fi
 if [ "$PLAN_ONLY" -eq 1 ]; then
     printf 'Installer plan for %s (%s):\n' "$TARGET_USER" "$HOST_OS_ID"
     printf '  Source destination: %s\n  Requested channel: %s\n' "$INSTALL_DIR" "$CHANNEL"
+    if [ -n "$SOURCE_COMMIT" ]; then
+        printf '  Required source commit: %s\n' "$SOURCE_COMMIT"
+    fi
     printf '  Missing prerequisites: %s\n' "${missing_prerequisites:-none}"
     printf '  Would download source, validate it, preserve managed data, and install the launcher.\n'
     if [ "$RUN_SETUP" -eq 1 ]; then
@@ -670,54 +713,151 @@ fi
 
 require_supported_python
 
-python3 - "$INSTALL_DIR" "$TARGET_HOME" "$HOST_OS_ID" <<'EOF'
+validate_install_directory() {
+    python3 -I - "${1:-$INSTALL_DIR}" "$TARGET_HOME" "$HOST_OS_ID" "$SYSTEM_INSTALL" <<'EOF'
 from __future__ import annotations
+
 import os
 from pathlib import Path
+import stat
 import sys
 
 target = Path(sys.argv[1])
 home = Path(sys.argv[2])
+system = sys.argv[4] == "1"
+
 def refuse(reason: str) -> None:
     sys.exit(f"Basaltwater installer: refusing install directory {target}: {reason}")
 
-if str(target) != os.path.normpath(sys.argv[1]) or '..' in target.parts:
+def protected(info: os.stat_result) -> bool:
+    return info.st_uid == os.geteuid() and not info.st_mode & 0o022
+
+if sys.argv[1] != str(target) or '..' in target.parts:
     refuse('use a normalized absolute path')
 if target == home or target in home.parents:
     refuse('home directory or its ancestor')
 if len(target.parts) < 3 or str(target) in ('/var/lib', '/usr/local', '/usr/share', '/var/cache'):
     refuse('use a dedicated application directory')
-for part in (target, *target.parents):
-    if part.is_symlink():
-        refuse('symlink path component')
+for path in (target, *target.parents):
+    if path.is_symlink():
+        refuse(f'symlink path component: {path}')
+    if system and path != target:
+        info = path.lstat() if path.exists() else None
+        if info and (not stat.S_ISDIR(info.st_mode) or info.st_uid not in {0, os.geteuid()} or (
+            info.st_mode & 0o022 and not (info.st_uid == 0 and info.st_mode & stat.S_ISVTX)
+        )):
+            refuse(f'unprotected system install ancestor: {path}')
+        # A sticky shared ancestor protects a trusted existing child only.
+        if not path.exists() and path.parent.is_dir() and path.parent.stat().st_mode & 0o022:
+            refuse(f'create the protected install parent first: {path}')
+
 if os.path.ismount(target):
     refuse('mount point')
 for parent in (home / '.config', home / '.cache', home / '.local/share', home / '.local/state', target.parent):
     for name in ('infra_tools', 'infra-tools'):
         if os.path.lexists(parent / name):
             refuse('retired infra-tools data; use the intermediate version in docs/migration-guide.md first')
-if target.exists():
-    marker = target / '.basaltwater' / 'managed-install'
-    managed = marker.is_file() and not marker.is_symlink() and marker.read_text() == 'basaltwater-v1\n'
-    data_only = (
-        sys.argv[3] == 'cachyos'
-        and target == home / '.local/share/basaltwater'
-        and target.is_dir()
-        and (target / 'cachyos-t3').is_dir()
-        and not (target / 'cachyos-t3').is_symlink()
-        and sorted(path.name for path in target.iterdir()) == ['cachyos-t3']
-    )
-    migrated = (
-        target.name == 'basaltwater'
-        and (target / 'basaltwater.py').is_file()
-        and any(target.parent.glob('.basaltwater-migration-*'))
-    )
-    if not managed and not data_only and not migrated:
-        refuse('unmanaged directory; infra-tools migration requires the intermediate version in docs/migration-guide.md')
+
+if not target.exists():
+    if system and target.parent.is_dir() and target.parent.stat().st_mode & 0o022:
+        refuse('create a protected install parent first')
+    print('fresh')
+    sys.exit()
+if not target.is_dir():
+    refuse('expected a directory')
+
+data = {'state', 'deployments', 'worktrees', 'cachyos-t3'}
+def safe_checkout() -> bool:
+    def fail_walk(error: OSError) -> None:
+        raise error
+
+    if not protected(target.lstat()):
+        return False
+    for directory, dirs, files in os.walk(target, onerror=fail_walk):
+        if directory == str(target):
+            dirs[:] = [name for name in dirs if name not in data]
+            files = [name for name in files if name not in data]
+        for name in (*dirs, *files):
+            path = Path(directory, name)
+            info = path.lstat()
+            if not protected(info) or not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)):
+                return False
+    return True
+
+if system and not safe_checkout():
+    # The legacy path is operator-selected. Inspect directory entries only and
+    # never run Git, open channel state, or transfer files from this checkout.
+    if not (os.path.lexists(target / '.git') and os.path.lexists(target / 'basaltwater.py')):
+        refuse('unprotected directory does not resemble a legacy checkout')
+    print('legacy')
+    sys.exit()
+
+marker = target / '.basaltwater' / 'managed-install'
+managed = marker.is_file() and not marker.is_symlink() and marker.read_text() == 'basaltwater-v1\n'
+snapshot = system and target == Path('/opt/basaltwater') and (target / '.basaltwater-installation.json').is_file()
+data_only = (
+    sys.argv[3] == 'cachyos'
+    and target == home / '.local/share/basaltwater'
+    and (target / 'cachyos-t3').is_dir()
+    and not (target / 'cachyos-t3').is_symlink()
+    and sorted(path.name for path in target.iterdir()) == ['cachyos-t3']
+)
+migrated = (
+    target.name == 'basaltwater'
+    and (target / 'basaltwater.py').is_file()
+    and any(target.parent.glob('.basaltwater-migration-*'))
+)
+if not managed and not snapshot and not data_only and not migrated:
+    refuse('unmanaged directory; infra-tools migration requires the intermediate version in docs/migration-guide.md')
+print('managed')
 EOF
+}
+
+if [ "$SYSTEM_INSTALL" -eq 1 ]; then
+    umask 022
+fi
+INSTALL_PARENT=$(dirname "$INSTALL_DIR")
+INSTALL_KIND=$(validate_install_directory)
+mkdir -p "$INSTALL_PARENT"
+if [ "$SYSTEM_INSTALL" -eq 1 ] && [ "$INSTALL_DIR" = /opt/basaltwater ]; then
+    python3 -I - <<'EOF'
+from __future__ import annotations
+
+import os
+import stat
+
+for name in ('basaltwater-setup-bootstrap.lock', 'basaltwater-setup.lock'):
+    path = '/run/lock/' + name
+    fd = os.open(path, os.O_NOFOLLOW | os.O_CREAT | os.O_RDONLY | os.O_NONBLOCK, 0o600)
+    with os.fdopen(fd, 'rb') as handle:
+        info = os.fstat(handle.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+            raise SystemExit(f'Unsafe setup lock: {path}')
+EOF
+    exec 8</run/lock/basaltwater-setup-bootstrap.lock
+    flock --exclusive --nonblock 8 || fail "another Basaltwater setup or installation is running"
+    exec 9</run/lock/basaltwater-setup.lock
+    flock --exclusive --nonblock 9 || fail "another Basaltwater setup or installation is running"
+fi
+INSTALL_KIND=$(validate_install_directory)
+if [ "$INSTALL_KIND" = legacy ] && [ "$CHANNEL_SET" -eq 0 ]; then
+    fail "select --channel explicitly when replacing a writable legacy checkout"
+fi
+if [ "$SYSTEM_INSTALL" -eq 1 ] && [ "$INSTALL_KIND" != managed ] && [ -z "$SOURCE_COMMIT" ]; then
+    case "$CHANNEL" in
+        commit-*)
+            pinned_commit=${CHANNEL#commit-}
+            if [ "${#pinned_commit}" -eq 40 ]; then
+                SOURCE_COMMIT=$(printf %s "$pinned_commit" | tr A-F a-f)
+            fi
+            ;;
+    esac
+    [ -n "$SOURCE_COMMIT" ] ||
+        fail "a new system install or legacy migration requires --source-commit or a full commit channel"
+fi
 
 if [ "$CHANNEL_SET" -eq 0 ] && [ -f "$INSTALL_DIR/.basaltwater/channel.json" ]; then
-    existing_channel=$(python3 -c \
+    existing_channel=$(python3 -I -c \
         'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("channel", ""))' \
         "$INSTALL_DIR/.basaltwater/channel.json" 2>/dev/null || true)
     if [ -n "$existing_channel" ]; then
@@ -726,9 +866,9 @@ if [ "$CHANNEL_SET" -eq 0 ] && [ -f "$INSTALL_DIR/.basaltwater/channel.json" ]; 
     fi
 fi
 
-if [ -e "$INSTALL_DIR" ] && [ -d "$INSTALL_DIR/.git" ]; then
+if [ "$INSTALL_KIND" = managed ] && [ -d "$INSTALL_DIR/.git" ]; then
     for data_name in .basaltwater state deployments worktrees cachyos-t3; do
-        tracked_data=$(git -C "$INSTALL_DIR" ls-files -- "$data_name")
+        tracked_data=$(source_git -C "$INSTALL_DIR" ls-files -- "$data_name")
         # The cleanup policy is source-owned; all other files here are private
         # installation state and must never be tracked by the source repository.
         if [ "$data_name" = .basaltwater ] && [ "$tracked_data" = .basaltwater/cleanup.json ]; then
@@ -738,10 +878,10 @@ if [ -e "$INSTALL_DIR" ] && [ -d "$INSTALL_DIR/.git" ]; then
             fail "managed data path is tracked by the source repository: $data_name"
         fi
     done
-    existing_changes=$(git -C "$INSTALL_DIR" status --porcelain -- . \
+    existing_changes=$(source_git -C "$INSTALL_DIR" status --porcelain -- . \
         ':(exclude).basaltwater' ':(exclude)state' \
         ':(exclude)cachyos-t3' ':(exclude)deployments' ':(exclude)worktrees')
-    policy_changes=$(git -C "$INSTALL_DIR" status --porcelain --untracked-files=no -- .basaltwater/cleanup.json)
+    policy_changes=$(source_git -C "$INSTALL_DIR" status --porcelain --untracked-files=no -- .basaltwater/cleanup.json)
     if [ -n "$existing_changes$policy_changes" ]; then
         fail "existing install has local changes; commit or stash them before reinstalling"
     fi
@@ -753,6 +893,10 @@ ACTIVATION_PENDING=0
 rollback_install() {
     # If the first rename never happened, the original tree is still active.
     if [ -n "$BACKUP_DIR" ] && [ ! -e "$BACKUP_DIR" ]; then
+        return
+    fi
+    if [ "$INSTALL_KIND" = legacy ]; then
+        printf 'Writable legacy source quarantined at %s. Retry with the reviewed installer and explicit channel. Staged source: %s\n' "$BACKUP_DIR" "$STAGED_DIR" >&2
         return
     fi
     FAILED_DIR="${INSTALL_DIR}.failed.$$"
@@ -784,67 +928,58 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 
-INSTALL_PARENT=$(dirname "$INSTALL_DIR")
-mkdir -p "$INSTALL_PARENT"
 [ ! -e "$STAGED_DIR" ] && [ ! -L "$STAGED_DIR" ] || fail "staging path already exists: $STAGED_DIR"
 
 printf 'Cloning Basaltwater repository (%s)...\n' "$CHANNEL"
-if ! git clone "$REPOSITORY_URL" "$STAGED_DIR"; then
-    fail "could not clone repository: $REPOSITORY_URL"
+if ! source_git clone --no-local --no-checkout -- "$REPOSITORY_URL" "$STAGED_DIR"; then
+    fail "could not clone the selected repository"
 fi
-if ! git -C "$STAGED_DIR" fetch --prune --tags origin; then
+if ! source_git -C "$STAGED_DIR" fetch --prune --tags origin; then
     fail "could not fetch repository refs"
 fi
 resolve_channel_ref
-if ! git -C "$STAGED_DIR" checkout --detach "$TARGET_REF" >/dev/null; then
-    fail "could not check out channel: $CHANNEL"
-fi
 
-[ -f "$STAGED_DIR/basaltwater.py" ] || fail "selected source predates Basaltwater; historical releases are unsupported"
-
-python3 - "$INSTALL_DIR" "$TARGET_HOME" "$HOST_OS_ID" <<'EOF'
+# Validate the tree before checkout and before merging installation data.
+# Git symlinks and gitlinks may redirect an executable or an import path.
+python3 -I - "$STAGED_DIR" "$SYSTEM_INSTALL" "$RESOLVED_COMMIT" <<'EOF'
 from __future__ import annotations
+
 import os
 from pathlib import Path
+import subprocess
 import sys
 
-target = Path(sys.argv[1])
-home = Path(sys.argv[2])
-def refuse(reason: str) -> None:
-    sys.exit(f"Basaltwater installer: refusing install directory {target}: {reason}")
-
-if str(target) != os.path.normpath(sys.argv[1]) or '..' in target.parts:
-    refuse('use a normalized absolute path')
-if target == home or target in home.parents:
-    refuse('home directory or its ancestor')
-if len(target.parts) < 3 or str(target) in ('/var/lib', '/usr/local', '/usr/share', '/var/cache'):
-    refuse('use a dedicated application directory')
-for part in (target, *target.parents):
-    if part.is_symlink():
-        refuse('symlink path component')
-if os.path.ismount(target):
-    refuse('mount point')
-if target.exists():
-    marker = target / '.basaltwater' / 'managed-install'
-    managed = marker.is_file() and not marker.is_symlink() and marker.read_text() == 'basaltwater-v1\n'
-    data_only = (
-        sys.argv[3] == 'cachyos'
-        and target == home / '.local/share/basaltwater'
-        and target.is_dir()
-        and (target / 'cachyos-t3').is_dir()
-        and not (target / 'cachyos-t3').is_symlink()
-        and sorted(path.name for path in target.iterdir()) == ['cachyos-t3']
-    )
-    migrated = (
-        target.name == 'basaltwater'
-        and (target / 'basaltwater.py').is_file()
-        and any(target.parent.glob('.basaltwater-migration-*'))
-    )
-    if not managed and not data_only and not migrated:
-        refuse('unmanaged directory; infra-tools migration requires the intermediate version in docs/migration-guide.md')
+source = Path(sys.argv[1])
+environment = dict(os.environ)
+if sys.argv[2] == '1':
+    environment = {
+        'PATH': os.environ['PATH'], 'GIT_CONFIG_NOSYSTEM': '1',
+        'GIT_CONFIG_GLOBAL': '/dev/null',
+    }
+tree = subprocess.check_output(['git', '--no-replace-objects', '-C', str(source), 'ls-tree', '-rz', sys.argv[3]], env=environment)
+reserved = {
+    b'state', b'deployments', b'worktrees', b'cachyos-t3', b'agent_payload',
+    b'github_runner_payload', b'device_pairing_payload', b'web_panel_payload',
+    b'.remote_setup_args.json', b'.basaltwater-installation.json', b'.basaltwater-refresh.json',
+}
+for entry in filter(None, tree.split(b'\0')):
+    mode, _, path = entry.partition(b'\t')
+    directory, _, name = path.partition(b'/')
+    if directory in reserved or (
+        directory == b'.basaltwater' and name != b'cleanup.json'
+    ) or (sys.argv[2] == '1' and mode.split()[0] not in (b'100644', b'100755')):
+        sys.exit(f'Basaltwater installer: unsafe or reserved source entry {os.fsdecode(path)!r}')
 EOF
+if ! source_git -C "$STAGED_DIR" checkout --detach "$RESOLVED_COMMIT" >/dev/null; then
+    fail "could not check out channel: $CHANNEL"
+fi
+[ -f "$STAGED_DIR/basaltwater.py" ] || fail "selected source predates Basaltwater; historical releases are unsupported"
 
-if [ -e "$INSTALL_DIR" ]; then
+[ "$(validate_install_directory)" = "$INSTALL_KIND" ] || fail "install directory changed during staging"
+if [ "$INSTALL_KIND" = legacy ]; then
+    BACKUP_CONTAINER=$(mktemp -d "$INSTALL_PARENT/.basaltwater-quarantine.XXXXXX")
+    BACKUP_DIR="$BACKUP_CONTAINER/source"
+elif [ "$INSTALL_KIND" = managed ]; then
     BACKUP_DIR="${INSTALL_DIR}.backup.$(date +%s).$$"
     [ ! -e "$BACKUP_DIR" ] && [ ! -L "$BACKUP_DIR" ] || fail "backup path already exists: $BACKUP_DIR"
 fi
@@ -882,6 +1017,40 @@ if (result.returncode not in (0, 4)
     sys.exit(message)
 EOF
 fi
+if [ "$INSTALL_KIND" = managed ]; then
+    if [ "$SYSTEM_INSTALL" -eq 1 ] && [ -L "$INSTALL_DIR/state" ]; then
+        [ "$(readlink "$INSTALL_DIR/state")" = /var/lib/basaltwater ] || fail "unexpected system state link"
+        ln -s /var/lib/basaltwater "$STAGED_DIR/state"
+    elif [ -d "$INSTALL_DIR/state" ]; then
+        cp -a -- "$INSTALL_DIR/state" "$STAGED_DIR/state"
+    fi
+    if [ -d "$INSTALL_DIR/.basaltwater" ]; then
+        mkdir -p "$STAGED_DIR/.basaltwater"
+        for state_path in "$INSTALL_DIR/.basaltwater"/* \
+            "$INSTALL_DIR/.basaltwater"/.[!.]* "$INSTALL_DIR/.basaltwater"/..?*; do
+            [ -e "$state_path" ] || [ -L "$state_path" ] || continue
+            case "${state_path##*/}" in cleanup.json|managed-install|system-install|channel.json) continue ;; esac
+            cp -a -- "$state_path" "$STAGED_DIR/.basaltwater/"
+        done
+    fi
+    for data_name in deployments worktrees cachyos-t3; do
+        if [ -d "$INSTALL_DIR/$data_name" ] && [ ! -L "$INSTALL_DIR/$data_name" ]; then
+            cp -a -- "$INSTALL_DIR/$data_name" "$STAGED_DIR/$data_name"
+        fi
+    done
+elif [ "$INSTALL_KIND" = legacy ] && [ "$INSTALL_DIR" = /opt/basaltwater ] &&
+    [ -d /var/lib/basaltwater ] && [ ! -L /var/lib/basaltwater ]; then
+    ln -s /var/lib/basaltwater "$STAGED_DIR/state"
+fi
+write_channel_state
+printf 'basaltwater-v1\n' > "$STAGED_DIR/.basaltwater/managed-install"
+if [ "$SYSTEM_INSTALL" -eq 1 ]; then
+    printf 'basaltwater-system-v1\n' > "$STAGED_DIR/.basaltwater/system-install"
+    chmod 644 "$STAGED_DIR/.basaltwater/channel.json"
+    printf '\n/deployments/\n/worktrees/\n/agent_payload\n/device_pairing_payload\n/web_panel_payload\n/github_runner_payload\n/.remote_setup_args.json\n' >> "$STAGED_DIR/.git/info/exclude"
+    [ "$(validate_install_directory "$STAGED_DIR")" = managed ] || fail "staged source ownership is unsafe"
+fi
+
 # Set the rollback guard before either rename, including signal boundaries.
 ACTIVATION_PENDING=1
 if [ -n "$BACKUP_DIR" ]; then
@@ -890,51 +1059,11 @@ fi
 if ! mv "$STAGED_DIR" "$INSTALL_DIR"; then
     fail "could not activate downloaded source"
 fi
-if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR/state" ]; then
-    if ! cp -a "$BACKUP_DIR/state" "$INSTALL_DIR/state"; then
-        fail "could not preserve existing basaltwater state"
-    fi
-fi
-if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR/.basaltwater" ]; then
-    mkdir -p "$INSTALL_DIR/.basaltwater"
-    for state_path in "$BACKUP_DIR/.basaltwater"/* \
-        "$BACKUP_DIR/.basaltwater"/.[!.]* "$BACKUP_DIR/.basaltwater"/..?*; do
-        [ -e "$state_path" ] || [ -L "$state_path" ] || continue
-        # Keep the policy from the selected source, not the previous checkout.
-        [ "${state_path##*/}" != cleanup.json ] || continue
-        if ! cp -a "$state_path" "$INSTALL_DIR/.basaltwater/"; then
-            fail "could not preserve existing channel state"
-        fi
-    done
-fi
-for data_name in deployments worktrees cachyos-t3; do
-    if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR/$data_name" ]; then
-        if [ -e "$INSTALL_DIR/$data_name" ]; then
-            fail "could not preserve existing $data_name data"
-        fi
-        if ! cp -a "$BACKUP_DIR/$data_name" "$INSTALL_DIR/$data_name"; then
-            fail "could not preserve existing $data_name data"
-        fi
-    fi
-done
-write_channel_state
-printf 'basaltwater-v1\n' > "$INSTALL_DIR/.basaltwater/managed-install"
-
-if [ "$(id -u)" -eq 0 ] && [ "$TARGET_USER" != "root" ]; then
-    TARGET_UID=$(getent passwd "$TARGET_USER" | awk -F: 'NR == 1 { print $3 }')
-    TARGET_GID=$(getent passwd "$TARGET_USER" | awk -F: 'NR == 1 { print $4 }')
-    if [ -z "$TARGET_UID" ] || [ -z "$TARGET_GID" ]; then
-        fail "could not determine target user ownership"
-    fi
-    if ! chown -R "$TARGET_UID:$TARGET_GID" "$INSTALL_DIR"; then
-        fail "could not assign the managed repository to $TARGET_USER"
-    fi
-fi
 
 ENTRY_SCRIPT="$INSTALL_DIR/basaltwater.py"
 printf 'Installing Basaltwater for %s...\n' "$TARGET_USER"
 if [ "$(id -u)" -eq 0 ]; then
-    if ! run_bootstrap env HOME="$TARGET_HOME" python3 "$ENTRY_SCRIPT" bootstrap \
+    if ! run_bootstrap python3 -I -B "$ENTRY_SCRIPT" bootstrap \
         --shell "$SHELL_NAME" \
         --user "$TARGET_USER"; then
         exit 1
@@ -952,14 +1081,18 @@ USER_LAUNCHER="$TARGET_HOME/.local/bin/basaltw"
 if [ ! -x "$USER_LAUNCHER" ]; then
     fail "bootstrap completed without creating $USER_LAUNCHER"
 fi
-if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR" ]; then
+if [ "$INSTALL_KIND" = managed ] && [ -d "$BACKUP_DIR" ]; then
     chmod 700 "$BACKUP_DIR"
 fi
 ACTIVATION_PENDING=0
+if [ "$SYSTEM_INSTALL" -eq 1 ] && [ "$INSTALL_DIR" = /opt/basaltwater ]; then
+    exec 9>&- 8>&-
+fi
 
 printf '\nBasaltwater installed successfully.\n'
 printf '  Source: %s\n' "$INSTALL_DIR"
 printf '  Channel: %s\n' "$CHANNEL"
+printf '  Commit: %s\n' "$RESOLVED_COMMIT"
 printf '  Command: %s\n' "$USER_LAUNCHER"
 if [ -n "$BACKUP_DIR" ]; then
     printf '  Previous source backup: %s\n' "$BACKUP_DIR"
@@ -978,22 +1111,20 @@ run_for_target() {
 }
 
 run_local_setup() {
-    if [ "$HOST_OS_ID" = cachyos ]; then
+    if [ "$HOST_OS_ID" = cachyos ] || [ "$SYSTEM_INSTALL" -eq 0 ]; then
         run_for_target python3 "$ENTRY_SCRIPT" setup "$@"
         return
     fi
     if [ -t 2 ] && [ -r /dev/tty ]; then
         run_privileged env \
-            HOME="$TARGET_HOME" \
             USER="$TARGET_USER" \
             SUDO_USER="$TARGET_USER" \
-            python3 "$ENTRY_SCRIPT" setup "$@" < /dev/tty
+            python3 -I -B "$ENTRY_SCRIPT" setup "$@" < /dev/tty
     else
         run_privileged env \
-            HOME="$TARGET_HOME" \
             USER="$TARGET_USER" \
             SUDO_USER="$TARGET_USER" \
-            python3 "$ENTRY_SCRIPT" setup "$@"
+            python3 -I -B "$ENTRY_SCRIPT" setup "$@"
     fi
 }
 

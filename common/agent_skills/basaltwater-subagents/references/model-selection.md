@@ -1,26 +1,28 @@
-# Cost-aware subagents and project learning
+# Cost-aware subagent selection
 
 This workflow applies to Debian agent VMs, CachyOS workstations, and Ubuntu
-under Windows Subsystem for Linux (WSL). The commands below use Bash or fish
-syntax; run them in the corresponding Linux shell and use the actual project
-path for that environment.
+under Windows Subsystem for Linux (WSL). For CLI commands that maintain
+project evaluation records, see [project model policy](model-policy.md).
 
 ## Subscription cost and performance
 
-Reviewed **2026-11-09**. Prefer an available subscription route when its included
+Reviewed **2026-11-17**. Prefer an available subscription route when its included
 usage covers the task. Check the active login/billing route, remaining allowance,
 reset time, and model access before comparing candidates. A subscription is not
 unlimited: parallel workers consume allowance too, and paid credits or an API
 key can introduce additional charges. Do not switch authentication, buy credits,
 or enable overage merely to obtain a recommended model.
 
-Optimize for an accepted result within the user's time and usage budget. Sol
-and Opus are the recommended higher-end frontier choices and are reasonably
-affordable through subscriptions. Astra and Fable are discouraged for general
-use: their extra cost typically yields too little improvement. This is the
-maintained project recommendation, not a claim of a universal benchmark result.
-Reserve either for a specific unmet need with evidence that the benefit
-justifies the cost; do not automatically escalate just because it is available.
+GPT-6.2 Sol and Astra launched in ChatGPT Work, Codex, and the API. Access and
+speed options depend on the client, plan and workspace settings. See the
+[ChatGPT and Codex changelog](https://learn.chatgpt.com/docs/changelog).
+
+Optimize for an accepted result within the user's time and usage budget.
+Use GPT-6.2 Sol for routine coding and Opus 5.5 for demanding Claude work.
+GPT-6.2 Astra's lower rates and stronger performance on complex coding and
+professional artifacts make it a candidate for a bounded trial when the task
+has a specific unmet need. Use project outcomes to justify promotion. Apply
+the same evidence standard to Fable and check its separate credit requirements.
 
 A stronger included model can cost less overall when it avoids failed attempts
 and parent rework; a cheaper worker helps only when its result passes review.
@@ -30,10 +32,10 @@ subscription price into an invented per-task charge or mix API estimates and
 subscription observations as if they were the same measurement.
 
 [Codex pricing](https://learn.chatgpt.com/docs/pricing) lists approximate Plus
-and Standard Business local-message ranges per five hours: Luna 350–3,000,
-Terra 35–285, Sol 15–160, Astra 5–45. These overlap and depend on task/context;
-they indicate relative allowance pressure, not measured speed or a fixed number
-of worker jobs. Local and cloud usage share allowance; check the live dashboard.
+and Standard Business local-message ranges per five hours of 350–3,000 for
+Luna, 35–285 for Terra, 17–180 for GPT-6.2 Sol, and 6–50 for GPT-6.2 Astra.
+The ranges depend on the task and context. Local and cloud usage share an
+allowance. Check the live dashboard for actual usage and reset times.
 For Claude, check `/model` and the account's usage display: Fable can require
 separate credits even with a subscription. See
 [Claude billing and model access](https://code.claude.com/docs/en/model-config).
@@ -48,12 +50,14 @@ user choice and project evidence; availability in public docs is insufficient.
 | --- | --- | --- |
 | Bounded extraction, classification, small edits, named checks | GPT-6 Luna; Claude Haiku 5.5 | Low allowance pressure and latency; give narrow inputs and observable checks |
 | Writing, image/screen interpretation, app work | GPT-6.1 Terra | Efficient middle option; evaluate coding separately rather than assume Sol-level coding performance |
-| Broad coding, integration, substantive review | GPT-6.1 Sol | Recommended higher-end coding choice; start at high for this workload |
+| Broad coding, integration, substantive review | GPT-6.2 Sol | Start at high for this workload and retain a proven project setting pending representative trials |
 | Routine Claude coding and focused review | Claude Sonnet 5.5 | Faster option with lower usage than Opus; use project outcomes to decide whether it suffices |
 | Difficult debugging, architecture, long agentic coding and review | Claude Opus 5.5 | Recommended higher-end Claude choice; subscription affordability makes it practical when stronger reasoning helps |
-| Exceptional unmet need with demonstrated gain | GPT-6 Astra; Claude Fable 5.2 | Discouraged for general use; require a concrete benefit over Sol/Opus and check separate credit billing |
+| Difficult cross-service debugging, complex frontend work, or template-driven artifacts | GPT-6.2 Astra | Trial against Sol or Opus when the workload warrants it, and verify the rendered result or end-to-end behavior |
+| Exceptional Claude workload | Claude Fable 5.2 | Require a concrete benefit over Opus and check separate credit billing |
 
 Provider sources: [OpenAI model roles](https://learn.chatgpt.com/docs/models),
+[GPT-6.2 launch evaluations](https://openai.com/index/introducing-gpt-6-2-astra-sol/),
 [Terra capabilities](https://developers.openai.com/api/docs/models/gpt-6.1-terra),
 [Claude coding guidance](https://support.claude.com/en/articles/14552983-models-usage-and-limits-in-claude-code),
 and [Claude model comparison](https://platform.claude.com/docs/en/models/overview).
@@ -61,14 +65,29 @@ These sources describe different workloads; they do not establish a universal
 cross-provider winner. Check fresh provider evidence after releases, then run
 representative project trials before changing a proven policy.
 
+OpenAI's GDPval v2 evaluation of professional workflows reports a 6.2-point
+gain for GPT-6.2 Astra with 22% fewer output tokens than GPT-6 Astra, and a
+5.3-point gain for GPT-6.2 Sol over GPT-6.1 Sol. For Basaltwater trials, compare
+the same repository checks, rendered outputs or tool results before measuring
+usage and rework. See the [launch evaluations](https://openai.com/index/introducing-gpt-6-2-astra-sol/).
+
 For API fallback, standard uncached input/output USD per million tokens are
-Luna $0.10/$0.50, Terra $1/$5, Sol $2/$10, Astra $10/$50; Claude Haiku 5.5
-$0.10/$0.50 up to 100K input, Sonnet 5.5 $2/$10, Opus 5.5 $4/$20, and Fable
-5.2 $8/$40. These omit caches, reasoning volume, tools and context surcharges.
+Luna $0.10/$0.50, Terra $1/$5, GPT-6.2 Sol $2/$10, and GPT-6.2 Astra $8/$40.
+Claude rates are $0.10/$0.50 for Haiku 5.5 up to 100K input, $2/$10 for Sonnet
+5.5, $4/$20 for Opus 5.5, and $8/$40 for Fable 5.2. These omit caches,
+reasoning volume, tools and context surcharges.
 See [context and pricing boundaries](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/agent-context.md)
 for exact model sources, long-prompt rates and client limits. A large inherited
 history can erase the savings of a cheap subagent; send a bounded fresh brief
 when the interface supports it. Leave headroom for tool results and output.
+
+For ongoing GPT-6.2 API conversations, keep the existing message prefix and
+append steering as new turns. OpenAI documents that prefix edits and model
+downgrades can discard retained reasoning. In Codex or T3, send corrections as
+follow-ups and retain a concise checkpoint before switching models or restarting
+a provider session. Give longer tasks explicit acceptance checks and authority
+to make routine, reversible decisions within scope. See
+[GPT-6.2 prompting and migration guidance](https://developers.openai.com/api/docs/guides/latest-model).
 
 ## OpenAI selector defaults
 
@@ -78,10 +97,9 @@ small fixes, focused tests, and app-script or export validation. Explicit,
 deterministic trivial work may use `low` when inputs and verification are
 straightforward. Use Luna `high` or `xhigh` only for a concrete complex task.
 Keep broad coding, integration, ambiguous cross-file changes, and substantive
-reviews on Sol `high`; use Astra only for an exceptional unmet need with evidence
-of benefit over Sol/Opus. These suggestions are not performance proof. Preserve
-existing project policy, check the live session, and record actual outcomes. A small independent
-task does not need the parent's model.
+reviews on GPT-6.2 Sol `high`. Use Astra for a specific unmet need, and record
+the outcome to establish whether it improves on Sol or Opus. Preserve existing
+project policy and check the live session. Match the worker to its own task.
 
 Check that the exact model **and the delegation tool** expose the chosen
 setting. Current
@@ -90,9 +108,10 @@ and [reasoning guidance](https://developers.openai.com/api/docs/guides/reasoning
 describe model-dependent support. Plan/account access and the runtime tool's
 available settings may be narrower than API documentation.
 
-Always choose standard service. Never select fast mode (including a `priority`
-service-tier alias), `max`, or `ultra` autonomously, inherit them into a worker,
-or use them as an automatic retry. If the user explicitly selects one, explain
+Choose Standard service by default. Fast and Ultrafast are speed settings.
+`max` and `ultra` are reasoning efforts. Keep these higher-cost settings out of
+autonomous choices, inherited worker settings and automatic retries. If the
+user explicitly selects one, explain
 the likely extra cost and ask for confirmation when their intent is ambiguous
 or the expected benefit is weak. A specific, already-confirmed selection is
 authorization; do not ask repeatedly. The recommendation command deliberately
@@ -116,141 +135,8 @@ solely to satisfy a schema or treat the selector's API estimate as a subscriptio
 recommendation. Changing selector roles or billing support is a separate code
 change requiring validation.
 
-## Project policy and outcomes
+## Choose a topic
 
-The parent owns `.basaltwater/agent-models.json` and
-`.basaltwater/agent-model-results.json` in the **primary checkout**. Commands
-resolve linked worktrees to that same checkout. Review and commit these non-secret
-project files within the user's authorized scope; workers report observations
-to the parent rather than concurrently edit them.
-
-If the project ignores `.basaltwater/`, inspect its ignore rules before staging.
-When evidence should travel with the repository, allow only these two files;
-installation-channel state and unrelated local data must stay ignored. For
-example, put these rules after an existing directory exclusion in the project's
-`.gitignore`, within the authorized scope:
-
-```gitignore
-!/.basaltwater/
-/.basaltwater/*
-!/.basaltwater/agent-models.json
-!/.basaltwater/agent-model-results.json
-```
-
-Stage the two reviewed files explicitly. Do not force-add the whole directory.
-
-```bash
-basaltw agent models init ~/repos/PROJECT --json
-basaltw agent models recommend ~/repos/PROJECT classification --available SESSION_MODELS.json --json
-basaltw agent models record ~/repos/PROJECT --task classification --model gpt-6-luna --effort medium --outcome accepted --validation 'Parent checked every category against the agreed rules' --json
-basaltw agent models report ~/repos/PROJECT --json
-```
-
-`init` creates a starter policy and refuses to overwrite an existing one. Its
-catalog is a dated seed that requires review, not a live availability assertion.
-`--available` must describe this session's actual delegation choices:
-
-```json
-[
-  {"id": "gpt-6-luna", "efforts": ["low", "medium", "high", "xhigh"]},
-  {"id": "gpt-6.1-sol", "efforts": ["low", "medium", "high", "xhigh"]}
-]
-```
-
-The command also accepts Codex's public `models_cache.json` shape, with `slug`,
-`visibility`, and `supported_reasoning_levels`. That cache describes terminal
-Codex selection; use it only when it represents the task's actual interface.
-Do not substitute a broad API model list for a subagent tool's availability.
-
-Only models with fresh verified metadata and a supported safe effort are
-eligible. The task's requested effort is a minimum; shipped bounded Luna task
-classes start at `medium`, while broad coding and review start at Sol `high`.
-Existing project policies and explicit operator selections are preserved.
-A provisional setting uses the lowest supported safe effort at or above the
-task minimum. Proven settings at higher supported efforts also compete using
-their own evidence and costs, so
-successful `high` results are not hidden by an unsuccessful `medium` default.
-Untested higher efforts are not automatic retries. Change the task minimum only
-after reviewing its needs. Inspect the returned effort and cost before launch.
-No eligible choice returns nonzero and `selection: null`.
-
-`accepted` means the parent accepted the initial result after validation;
-`reworked` means correction was needed; `failed` includes unusable results and
-escalations. Record failures as well as successes. Use `--attempts`, `--seconds`,
-and `--rework-minutes` when observed. `--cost-usd` is optional: leave unavailable
-billing unknown, including subscription sessions without dollar telemetry. Also
-leave unobserved runtime and parent rework unknown; explicitly record zero when
-you checked and found no rework. Reports expose the known rework subtotal and
-sample count, and return a null total when observations are incomplete.
-Optional telemetry omitted from saved outcomes is also unknown. Invalid or
-overflowing numeric values produce a validation error; inspect the project data
-and correct it without replacing history or inventing measurements.
-Never invent a cost or treat missing cost as zero. Each cost should cover all
-attempts represented by that outcome; record another model's escalation as
-another outcome. Validation should describe acceptance evidence without prompts,
-credentials, or confidential source excerpts.
-
-Results remain separate by task class, evaluation version, exact model ID, and
-effort. Set task-specific acceptance criteria and update its `evaluation` value
-when those criteria, prompts, harness behavior, platform-dependent checks, or the
-workload materially change. Separate Debian-specific and CachyOS-specific task
-classes when their acceptance requirements differ. Old versions remain visible
-in `report` but do not drive current choices.
-Split easy file classification from ambiguous classification rather than average
-them into a misleading score.
-
-For bounded Luna work, assign one owner and state the deliverable, owned files
-or checks, and acceptance criteria. Active examples include a small fix with
-focused tests, a named test selection, or validation of an app script/export.
-For script/export validation, return the process status and only bounded,
-actionable failure excerpts. Do not let workers compete for desktop or app
-session control. A timeout does not prove a desktop mutation failed: inspect
-completion and state before deciding what to do next; never blindly relaunch it.
-
-## Adapt to newly available models
-
-At the start of a delegation session, and when access or model options change:
-
-1. Inspect the actual exposed model IDs and supported efforts. Export a fresh
-   availability file for `recommend`; availability alone says nothing about price
-   or suitability.
-2. Act on `uncatalogued_models`, `stale_models`, and `refresh_required`: inspect
-   current official OpenAI metadata, access, reasoning support, and standard
-   pricing. Add or revise the relevant project catalog entries with their exact
-   ID, OpenAI provider, Luna/Sol/Astra role, safe efforts, rates, source URL, and
-   `verified_on` date. Do not guess a new model's role from its name or reset the
-   date without checking its source. Rerun the recommendation after refresh.
-3. Evaluate a promising candidate on representative bounded tasks using the
-   same inputs and acceptance criteria as the incumbent. Include tool use,
-   format adherence, correctness, runtime, retries, and parent rework. Keep a
-   proven incumbent while gathering evidence; an expensive candidate needs a
-   concrete reason, especially Astra.
-4. Record reviewed outcomes and compare results. The defaults require at least
-   three recent samples with 80% initial acceptance before an alternative is
-   treated as proven. These small-sample thresholds are configurable project
-   conventions, not statistical proof. Use more evidence for consequential work.
-5. Promote a candidate when its observed effectiveness and total cost justify
-   it. Exact model IDs keep a new release from inheriting an older release's
-   success history. Roll back a regression and retain the failed observations.
-
-The selector chooses the cheapest proven setting that meets the project quality
-threshold. If all proven choices have complete cost observations, it compares
-total observed cost divided by initially accepted outcomes, including failed
-attempt costs. Otherwise it compares standard token-cost estimates consistently
-for every candidate using the task's expected input/output tokens. Estimates
-omit variable reasoning, caching, context surcharges, tools, and subscription
-accounting; review the reported runtime and rework as well. Sparse alternatives
-are returned as `trial_candidates`, not silently promoted over proven choices.
-
-With no proven setting, a provisional choice starts at the task's family or a
-stronger available family; poorly performing settings with enough evidence are
-excluded. Astra remains excluded unless `--astra-reason` explains the benefit.
-The default catalog lifetime is 30 days and the evidence window is 90 days.
-Recheck sooner after releases, deprecations, pricing/access changes, or repeated
-failures. Preserve older evidence for history while checking recent results.
-
-New IDs and revised project defaults need no Basaltwater release. Basaltwater
-still maintains the shipped seed and workflow when provider schemas, role
-assumptions, or tool interfaces change. Discovery and representative evaluation
-are agent responsibilities; the local selector does not contact a provider,
-run an evaluation, spend money, or automatically switch a session.
+<a id="project-policy-and-outcomes"></a>
+<a id="adapt-to-newly-available-models"></a>
+- [Project model policy and outcomes](model-policy.md) Initialize, recommend, record results, and qualify new models.

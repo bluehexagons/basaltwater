@@ -1,7 +1,9 @@
 # Headscale enrollment and onboarding security
 
-Status: proposed implementation contract for the [Headscale plan](headscale.md).
-These enrollment commands and onboarding services are not implemented yet.
+Status: enrollment commands, static onboarding and portal handlers are integrated
+under the [Headscale plan](headscale.md). Selected installed Debian portal and
+personal-client checks pass; other native platform qualification remains
+incomplete. See the [qualification record](../testing/headscale.md).
 
 Initial enrollment uses Headscale's native administrator approval and machine
 keys. OIDC integration and provider qualification are deferred; the
@@ -33,30 +35,42 @@ long-lived control connections. Sanitize proxy headers and keep authentication
 codes, tokens and pending approval identifiers out of proxy/application logs.
 Do not place a browser login gate in front of native client protocol endpoints.
 
-Initially administer enrollment through authenticated SSH and Headscale's local
-Unix socket. Registering a named external endpoint conveys no administrative
-authority; configure management access separately or let its administrator
-approve devices. A future web approval service needs its own authenticated,
-authorized backend, CSRF defenses and audit records. The public static site
+Include a Headscale administration page when Headscale and the Web Portal are
+both installed. Use the portal's authenticated administrator context, explicit
+authorization for each operation, CSRF defenses and audit records without secret
+values. Preserve existing privileged-action review and policy boundaries; a
+portal login or T3 pairing session alone does not grant privileged authority.
+A narrowly scoped backend performs native Headscale operations through
+the local Unix socket; do not expose that socket, raw administrative credentials,
+shell commands or database access to the browser. Keep CLI administration over
+authenticated SSH as an independent recovery path. Registering a named external
+endpoint conveys no administrative authority; configure management access
+separately or let its administrator approve devices. The public static site
 cannot issue keys or approve devices, and T3 pairing credentials grant no access.
 
 ## Enrollment setup
 
 1. **Choose the network and policy.** Resolve the saved server name to its
-   stable record and HTTPS endpoint. Establish recovery access and a restrictive
-   Headscale policy before admitting clients; grant only intended service access
-   and explicitly authorize service-tag ownership. Personal devices require
+   stable record and HTTPS endpoint. Establish recovery access and the selected
+   Headscale policy before admitting clients. New networks default to all-to-all
+   access among enrolled nodes; preserve an adopted server's existing policy.
+   Explain that approval admits a device to that shared trust boundary and
+   explicitly authorize service-tag ownership. Personal devices require
    native administrator approval. Never fall back to open enrollment after an
    approval failure. User identity and network access grants remain separate.
 2. **Use native administrator approval.** Create a Headscale user
    per person. The user installs the official client, selects the custom server
    and initiates browser registration. Through an authenticated channel, verify
    the intended person and exact pending authentication ID before approving that
-   request for that user with Headscale's CLI. Hostname alone is insufficient.
+   request for that user through the authorized portal backend or Headscale's
+   CLI. Hostname alone is insufficient.
+   Do not assume the pinned API can enumerate pending requests: an administrator
+   may enter the Auth ID obtained through the verified channel. Resolve it using
+   native registration and reject expired, already-consumed or mismatched requests.
    Expired or failed requests restart native registration; do not distribute a
    shared reusable key or invent a separate invitation-token system.
 3. **Automate managed machines separately.** After target preflight, an explicitly
-   authorized administrator/controller issues a short-lived, single-use
+   authorized administrator/controller issues a one-hour, single-use
    preauthenticated key carrying only the approved service tags. Deliver it over
    authenticated private transport and use the client's supported secret-file or
    equivalent private input mechanism. Keep secret values out of argv, URLs,
@@ -64,9 +78,12 @@ cannot issue keys or approve devices, and T3 pairing credentials grant no access
    use. Preserve the client's durable identity with appropriate permissions.
    On uncertain completion, inspect enrollment before issuing another key.
 4. **Verify and manage the lifecycle.** Check the enrolled node's server,
-   identity, tags and intended access, including a denied-service probe. Ordinary
-   reruns preserve valid enrollment. Set and document device reauthentication
-   policy separately from key expiry. Offboarding blocks future enrollment and
+   identity, tags and intended access. Test bidirectional access under the default
+   policy and denied access where a restrictive policy is selected. Ordinary
+   reruns preserve valid enrollment. Preserve native Headscale/client device
+   lifetimes; do not add scheduled reapproval or renewal. Display observed device
+   expiry separately from the one-hour bootstrap-key lifetime, and support native
+   administrative expiry/revocation. Offboarding blocks future enrollment and
    explicitly revokes/removes existing nodes and affected access grants. Revoking
    a bootstrap key alone is not verified node removal;
    confirm loss of access and retain an independent administrative recovery path.
@@ -77,11 +94,15 @@ cannot issue keys or approve devices, and T3 pairing credentials grant no access
   expose only intended content; the static site cannot read administrative state.
 - Administrator approval binds the exact pending request to the verified
   intended user; denied, expired or replayed approvals do not register devices.
+- The administration page appears only when both services are installed.
+  Unauthenticated or unauthorized requests and forged cross-site actions cannot
+  manage users, approve devices, issue keys or revoke nodes; SSH recovery works.
 - Personal devices preserve user ownership; machine keys cannot assign
   unauthorized tags. Single-use, expiry and uncertain-completion paths preserve
   identity and reveal no credentials in process arguments, logs or saved state.
-- Allowed services work and denied services stay blocked. Revocation is verified
-  against a connected client, including after restart; recovery access survives.
+- Default peer access works in both directions; configured restrictions and host
+  authentication remain effective. Revocation is verified against a connected
+  client, including after restart; recovery access survives.
 - Qualify each advertised desktop/mobile flow on its actual platform. Test native
   protocol connectivity with the site's security settings enabled. Record
   sanitized results and remaining gaps under the main plan's coverage contract.

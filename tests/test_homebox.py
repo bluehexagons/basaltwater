@@ -18,7 +18,7 @@ import tarfile
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, mock_open, patch
 
 from basaltwater import create_basaltwater_parser, _patch_preserve_keys
 from lib.arg_parser import create_setup_argument_parser
@@ -30,6 +30,7 @@ from lib.homebox_config import (
     validate_homebox_version,
 )
 from web import homebox_steps as h
+from web import service_storage
 
 
 def config(**kwargs):
@@ -247,7 +248,8 @@ class HomeBoxFixture:
             path.mkdir(parents=True, exist_ok=True)
         self.secret = {"pepper": "p" * 64, "password": "s" * 32}
         self.stack.enter_context(patch.object(h, "_private_file"))
-        self.value = state(data_path=str(self.root / "data"))
+        self.value = state(data_path=str(self.root / "data"),
+                           mount={**state()["mount"], "target": str(self.root)})
         # Keep production path validation at the configuration boundary; this
         # fixture uses temporary data rather than a real /srv tree.
         self.stack.enter_context(patch.object(h, "validate_homebox_path", side_effect=lambda p: p))
@@ -268,6 +270,53 @@ class HomeBoxFixture:
             h._activate_files(self.value)
 
 class HomeBoxFilesTests(HomeBoxFixture, unittest.TestCase):
+    def test_nested_filesystem_and_bind_refuse_backup_and_restore_before_changes(self):
+        archive = h.BACKUPS / "source.tar.gz"
+        h.create_backup(self.value, archive)
+        child = self.data / "attachments" / "other disk"
+        child.mkdir()
+        protected = child / "inventory"
+        protected.write_text("independent data")
+        original = protected.stat()
+        root_mount = "1 0 8:1 / / rw - ext4 /dev/fixture rw\n"
+        for device, root in (("8:2", "/"), ("8:1", "/bind-source")):
+            escaped = str(child).replace(" ", r"\040")
+            table = root_mount + f"2 1 {device} {root} {escaped} rw - ext4 /dev/fixture rw\n"
+            with self.subTest(device=device), \
+                 patch.object(service_storage, "open", mock_open(read_data=table), create=True), \
+                 patch.object(h, "_maintenance") as maintenance, patch.object(h, "_stop_service") as stop:
+                for action, path in (("backup", h.BACKUPS / "unsafe.tar.gz"), ("restore", archive)):
+                    with self.assertRaisesRegex(service_storage.StorageBoundaryError, "Nested mount"):
+                        h.operate_homebox(action, str(path), yes=True)
+                with self.assertRaisesRegex(service_storage.StorageBoundaryError, "Nested mount"):
+                    h._preserve_damaged(self.value, h.BACKUPS / "damaged.tar.gz")
+                maintenance.assert_not_called()
+                stop.assert_not_called()
+            self.assertEqual(protected.read_text(), "independent data")
+            self.assertEqual((protected.stat().st_uid, protected.stat().st_gid), (original.st_uid, original.st_gid))
+            self.assertEqual(list(h.BACKUPS.iterdir()), [archive])
+
+    def test_backup_checks_mount_id_again_when_reading_archive_entries(self):
+        attachment = self.data / "attachments" / "photo.txt"
+        archive = h.BACKUPS / "snapshot.tar.gz"
+        size_checked = False
+        original_size = h._tree_size
+
+        def measure(tree):
+            nonlocal size_checked
+            size = original_size(tree)
+            size_checked = True
+            return size
+
+        def mount_id(fd):
+            return 2 if size_checked and os.readlink(f"/proc/self/fd/{fd}") == str(attachment) else 1
+
+        with patch.object(service_storage, "mount_id", side_effect=mount_id), patch.object(h, "_tree_size", side_effect=measure):
+            with self.assertRaisesRegex(service_storage.StorageBoundaryError, "Mount boundary crossed"):
+                h.create_backup(self.value, archive)
+        self.assertEqual(list(h.BACKUPS.iterdir()), [])
+        self.assertEqual(attachment.read_text(), "original attachment")
+
     def test_local_api_requests_use_literal_loopback_client(self):
         response = MagicMock()
         response.__enter__.return_value.read.return_value = b'{"health": true}'
@@ -747,6 +796,34 @@ class HomeBoxTransactionTests(HomeBoxFixture, unittest.TestCase):
                 h.setup_homebox(cfg)
         marker = json.loads((h.CONFIG / "maintenance").read_text())
         self.assertTrue(Path(marker["backup"]).exists())
+
+    def test_failed_update_refuses_late_bind_mount_and_retains_recovery(self):
+        cfg = self.fixture_setup()
+        child = self.data / "attachments"
+        protected = child / "photo.txt"
+        mounted = False
+
+        def failed_migration(*_args):
+            nonlocal mounted
+            mounted = True
+            raise RuntimeError("bad migration")
+
+        def mount_id(fd):
+            return 2 if mounted and os.readlink(f"/proc/self/fd/{fd}") == str(child) else 1
+
+        original = protected.stat()
+        with patch.object(h, "wait_ready", side_effect=failed_migration), \
+             patch.object(service_storage, "mount_id", side_effect=mount_id), \
+             patch.object(h, "_restore_files") as restore:
+            with self.assertRaisesRegex(RuntimeError, "recovery failed") as failure:
+                h.setup_homebox(cfg)
+        self.assertIsInstance(failure.exception.__cause__, service_storage.StorageBoundaryError)
+        restore.assert_not_called()
+        self.assertEqual(protected.read_text(), "original attachment")
+        self.assertEqual((protected.stat().st_uid, protected.stat().st_gid), (original.st_uid, original.st_gid))
+        marker = json.loads((h.CONFIG / "maintenance").read_text())
+        self.assertTrue(Path(marker["backup"]).is_file())
+        self.assertEqual(h.read_state()["version"], "v0.27.0")
 
     def test_failure_after_reopening_ingress_does_not_roll_back_inventory(self):
         cfg = self.fixture_setup()

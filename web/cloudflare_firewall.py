@@ -7,14 +7,48 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from lib.ufw_ingress import verify_live_ufw_ingress
 from lib.validation import validate_network_ip_or_cidr
 
 
 RULE_PREFIX = "basaltwater cloudflare web "
-SSH_RULE_PREFIX = "basaltwater cloudflare ssh "
+WEB_RULE_PREFIX = "basaltwater web TCP"
+ORIGIN_PORTS = (80, 443)
 _INBOUND_RULE = re.compile(r'^\[\s*\d+\]\s+(.+?)\s+(?:ALLOW|LIMIT)\s+IN\s+(.+)$')
 _PORT_SPEC = re.compile(r'\d+(?::\d+)?(?:,\d+(?::\d+)?)*(?:/(?:tcp|udp))?')
-_POLICY_PORTS = {22, 80, 443}
+_POLICY_PORTS = set(ORIGIN_PORTS)
+
+
+def validate_direct_service_port(port: int) -> None:
+    """Keep a direct service from claiming a Cloudflare-managed origin port."""
+    if port in ORIGIN_PORTS:
+        raise ValueError(f"TCP {port} is reserved by Cloudflare origin policy; select another direct service port")
+
+
+def _origin_port(line: str) -> int | None:
+    match = _INBOUND_RULE.match(line.split("#", 1)[0].strip())
+    if match:
+        destination = match[1].removesuffix(" (v6)")
+        return next((port for port in ORIGIN_PORTS if destination == f"{port}/tcp"), None)
+    return None
+
+
+def setup_origin_rule(line: str, comment: str) -> bool:
+    """Identify origin rules from before Cloudflare owned the standard web ports."""
+    port = _origin_port(line)
+    return port is not None and (
+        comment == f"{WEB_RULE_PREFIX} {port}"
+        or comment.startswith(f"{WEB_RULE_PREFIX} {port} source ")
+    )
+
+
+def legacy_gogs_origin_rule(line: str, comment: str) -> bool:
+    """Identify standard web ports that older direct Gogs setups owned."""
+    port = _origin_port(line)
+    return port is not None and (
+        comment in {"gogs web", "gogs direct HTTP"}
+        or comment.startswith(f"basaltwater Gogs {port}/tcp source ")
+    )
 
 
 def normalize_access_sources(sources: list[str] | None) -> list[str]:
@@ -80,7 +114,7 @@ def _policy_ports(destination: str, command_runner: Callable[..., Any], profiles
 
 def _verify_access_policy(stdout: str, *, allow_direct: bool, sources: list[str], command_runner: Callable[..., Any]) -> None:
     """Refuse success when remaining rules grant access outside the web policy."""
-    if allow_direct and not sources:
+    if allow_direct:
         return
     networks = [ipaddress.ip_network(source) for source in sources]
     profiles: dict[str, set[int]] = {}
@@ -89,9 +123,7 @@ def _verify_access_policy(stdout: str, *, allow_direct: bool, sources: list[str]
         if not match:
             continue
         ports = _policy_ports(match[1], command_runner, profiles)
-        web_restricted = not allow_direct and bool(ports & {80, 443})
-        ssh_restricted = bool(sources) and 22 in ports
-        if not web_restricted and not ssh_restricted:
+        if not ports:
             continue
         source = match[2].split()[0]
         try:
@@ -100,13 +132,11 @@ def _verify_access_policy(stdout: str, *, allow_direct: bool, sources: list[str]
             network = ipaddress.ip_network(source, strict=False)
         except ValueError as exc:
             raise RuntimeError(f"Could not inspect UFW rule source: {line.strip()}") from exc
-        broad = network.prefixlen == 0
-        web_allowed = any(
+        allowed_source = any(
             network.version == allowed.version and network.subnet_of(allowed)
             for allowed in networks
         )
-        # Keep separately configured, source-specific management SSH rules.
-        if (web_restricted and not web_allowed) or (ssh_restricted and broad and not web_allowed):
+        if not allowed_source:
             raise RuntimeError(
                 "UFW rule grants access outside the requested Cloudflare policy: "
                 f"{line.strip()}. Review 'ufw status numbered' and remove or narrow this rule."
@@ -116,27 +146,21 @@ def _verify_access_policy(stdout: str, *, allow_direct: bool, sources: list[str]
 def reconcile_tunnel_firewall(
     *, allow_direct: bool, sources: list[str], command_runner: Callable[..., Any],
 ) -> None:
-    """Apply web and SSH source policy, activate UFW, and remove stale owned rules."""
+    """Apply only the origin web policy on an already active firewall."""
     if not isinstance(allow_direct, bool):
         raise ValueError("Cloudflare direct access must be a boolean")
     sources = normalize_access_sources(sources)
-    desired_comments = set()
-    if sources:
-        for source in sources:
-            comment = f"{SSH_RULE_PREFIX}{source}"
-            command_runner([
-                'ufw', 'allow', 'from', source, 'to', 'any', 'port', '22',
-                'proto', 'tcp', 'comment', comment,
-            ])
-            desired_comments.add(comment)
-        ssh_rules = ('allow ssh', 'allow 22/tcp', 'limit ssh', 'limit 22/tcp')
-    else:
-        command_runner(['ufw', 'limit', 'ssh'])
-        ssh_rules = ('allow ssh', 'allow 22/tcp')
-    for rule in ssh_rules:
-        command_runner(['ufw', 'delete', *rule.split()], check=False)
+    try:
+        status = command_runner(['ufw', 'status', 'verbose'], check=False, capture_output=True)
+    except FileNotFoundError as exc:
+        raise RuntimeError("Cloudflare origin changes require an active UFW firewall") from exc
+    if status.returncode != 0 or not isinstance(status.stdout, str) or "Status: active" not in status.stdout:
+        raise RuntimeError("Could not inspect active UFW; configure the firewall before changing Cloudflare origin access")
+    if not re.search(r"^Default:\s+(?:deny|reject)\s+\(incoming\)", status.stdout, re.MULTILINE):
+        raise RuntimeError("Cloudflare origin changes require a deny or reject incoming UFW default")
 
-    for port in (80, 443):
+    desired_comments = set()
+    for port in ORIGIN_PORTS:
         if allow_direct:
             comment = f"{RULE_PREFIX}{port}"
             command_runner(['ufw', 'allow', f'{port}/tcp', 'comment', comment])
@@ -150,17 +174,15 @@ def reconcile_tunnel_firewall(
                 ])
                 desired_comments.add(comment)
 
-    if not allow_direct:
-        # Install scoped replacements before removing the broad setup rules.
-        for rule in ('80/tcp', '443/tcp', '80', '443'):
-            command_runner(['ufw', 'delete', 'allow', rule], check=False)
-
-    command_runner(['ufw', '--force', 'enable'])
     stdout = _active_rules(command_runner)
     stale_numbers = []
     for line in stdout.splitlines():
         match = re.match(r'^\[\s*(\d+)\]\s+.*?#\s*(.+)$', line.strip())
-        if match and match[2].startswith((RULE_PREFIX, SSH_RULE_PREFIX)) and match[2] not in desired_comments:
+        if match and (
+            setup_origin_rule(line, match[2])
+            or legacy_gogs_origin_rule(line, match[2])
+            or (_origin_port(line) is not None and match[2].startswith(RULE_PREFIX) and match[2] not in desired_comments)
+        ):
             stale_numbers.append(int(match[1]))
     # Numbered UFW rules shift after deletion, including IPv6 counterparts.
     for number in sorted(stale_numbers, reverse=True):
@@ -168,6 +190,8 @@ def reconcile_tunnel_firewall(
     if stale_numbers:
         stdout = _active_rules(command_runner)
     _verify_access_policy(stdout, allow_direct=allow_direct, sources=sources, command_runner=command_runner)
+    if not allow_direct:
+        verify_live_ufw_ingress({("tcp", port): sources for port in ORIGIN_PORTS}, command_runner)
 
     if allow_direct:
         print("  ✓ Cloudflare tunnel and unrestricted direct HTTP/HTTPS access enabled")
