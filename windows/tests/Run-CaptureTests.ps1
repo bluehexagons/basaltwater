@@ -84,6 +84,9 @@ try {
     Write-NativeEvidenceJson $owned @{value=2}
     Assert-Capture ((Read-NativeHeldJson $owned).value -eq 2) 'Private evidence publication lost ownership or atomic replacement'
     Write-Host 'Windows GPU capture, event-journal and pacing offline contracts passed.'
+} catch {
+    Write-Host $_.ScriptStackTrace
+    throw
 } finally {
     $full=[IO.Path]::GetFullPath($temporary);$root=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\')+'\'
     if(-not $full.StartsWith($root,[StringComparison]::OrdinalIgnoreCase)){throw 'Unsafe capture test cleanup'}

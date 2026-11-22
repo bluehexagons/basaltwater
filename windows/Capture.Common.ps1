@@ -29,16 +29,7 @@ function Initialize-NativeEvidenceFileOwner([string]$Path) {
     }
 }
 function Write-NativeEvidenceJson([string]$Path,$Record,[int]$Limit=65536) {
-    Assert-NativeDesktopPrivatePath (Split-Path -Parent $Path)
-    Assert-NativeDesktopPath $Path
-    if(Test-Path -LiteralPath $Path){Assert-NativeDesktopPrivatePath $Path}
-    $temporary=$Path+'.'+[guid]::NewGuid().ToString('N')+'.tmp'
-    try {
-        [IO.File]::WriteAllText($temporary,($Record|ConvertTo-Json -Depth 12 -Compress),(New-Object Text.UTF8Encoding($false)))
-        if((Get-Item -LiteralPath $temporary).Length -gt $Limit){throw 'Evidence receipt exceeds bound'}
-        Initialize-NativeEvidenceFileOwner $temporary
-        if(Test-Path -LiteralPath $Path){[IO.File]::Replace($temporary,$Path,[NullString]::Value)}else{[IO.File]::Move($temporary,$Path)}
-    }finally{if(Test-Path -LiteralPath $temporary){Remove-Item -LiteralPath $temporary}}
+    Write-NativeHeldJson $Path $Record $Limit
 }
 function Get-NativeEvidenceTool([ValidateSet('Capture.Window','Capture.Trace','Audio.Capture')][string]$Name) {
     $source = Join-Path $PSScriptRoot ($Name + '.cpp')
