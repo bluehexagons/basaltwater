@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import _thread
+from contextlib import chdir
 import ctypes
 import json
 import os
@@ -94,6 +95,28 @@ class MediaTests(unittest.TestCase):
         result = cli.inspect(str(self.source), str(self.root / "playlist"))
         self.assertEqual(result["status"], "unsupported")
         self.assertEqual(json.loads((self.root / "playlist/manifest.json").read_text())["status"], "unsupported")
+
+    def test_discovery_recovers_a_removed_executable(self):
+        saved_probe = self.root / "saved-ffprobe.exe"
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        new_ffmpeg = bin_dir / "ffmpeg.exe"
+        (self.root / "ffmpeg.exe").touch()
+        saved_probe.touch()
+        new_ffmpeg.touch()
+        with patch.dict(os.environ, {
+            "BASALTWATER_FFMPEG_EXE": str(self.root / "removed-ffmpeg.exe"),
+            "BASALTWATER_FFPROBE_EXE": str(saved_probe),
+            "PATH": os.pathsep.join((".", str(bin_dir))),
+        }), chdir(self.root):
+            self.assertEqual(native.discover(), {
+                "ffmpeg": str(new_ffmpeg), "ffprobe": str(saved_probe),
+            })
+            new_ffmpeg.unlink()
+            self.assertIsNone(native.discover()["ffmpeg"])
+        with patch.dict(os.environ, {"BASALTWATER_FFMPEG_EXE": r"\\server\share\ffmpeg.exe"}):
+            with self.assertRaisesRegex(ValueError, "absolute local drive"):
+                native.discover()
 
     def test_mocked_audio_contract_and_no_linux_imports(self):
         metadata = {"format": {"duration": "2"}, "streams": [

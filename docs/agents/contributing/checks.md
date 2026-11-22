@@ -54,10 +54,11 @@ from the repository root (use `python3` instead of `python` where appropriate):
 ```text
 python scripts/check_cli_docs.py
 python scripts/check_doc_links.py
-python run_tests.py tests.test_cli_docs
+python -m unittest tests.test_cli_docs tests.test_doc_links
 ```
 
-These offline checks need only the standard library. The CLI checker reads actual
+These offline checks need only the standard library. Direct `unittest` avoids
+the POSIX imports in the shared test runner. The CLI checker reads actual
 root parser registrations without importing the Linux controller. It follows
 imported builders and local helper functions, includes literal names and aliases,
 and ignores nested commands. Nonliteral names/aliases, conditional registration,

@@ -12,7 +12,6 @@ import msvcrt
 import os
 from pathlib import Path
 import re
-import shutil
 import stat
 import subprocess
 import threading
@@ -171,9 +170,23 @@ def write_json_atomic(path: str, value: dict, **_kwargs) -> None:
 def discover() -> dict:
     result = {}
     for name in ("ffmpeg", "ffprobe"):
-        command = os.environ.get("BASALTWATER_" + name.upper() + "_EXE") or shutil.which(name + ".exe")
+        command = os.environ.get("BASALTWATER_" + name.upper() + "_EXE") or None
         if command:
-            validate_path(command, must_exist=True)
+            try:
+                validate_path(command, must_exist=True)
+            except FileNotFoundError:
+                # WinGet upgrades can remove a versioned executable path.
+                command = None
+        if not command:
+            # Use absolute PATH entries only; shutil.which on Python 3.11
+            # implicitly searches the current working directory first.
+            for folder in map(Path, os.get_exec_path()):
+                candidate = folder / (name + ".exe")
+                if folder.is_absolute() and candidate.is_file():
+                    command = str(candidate)
+                    validate_path(command, must_exist=True)
+                    break
+        if command:
             if Path(command).suffix.lower() != ".exe" or not Path(command).is_file():
                 raise ValueError("Media tools must be regular .exe files")
         result[name] = command

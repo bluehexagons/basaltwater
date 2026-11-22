@@ -23,7 +23,9 @@ original executable is preserved even when the other needs installation.
 Validated executable paths are saved in current-user `BASALTWATER_FFMPEG_EXE`
 and `BASALTWATER_FFPROBE_EXE`; discovery prefers those paths, then PATH, then
 WinGet portable package directories. Direct Python invocation uses those
-environment variables or PATH. Open a new terminal after setup.
+environment variables, then absolute PATH directories if a saved executable has
+been removed. This recovers from a WinGet upgrade when the replacement is on
+PATH. Open a new terminal after setup.
 
 Gyan is a third-party Windows build. The AV step revalidates existing binaries.
 WinGet-managed FFmpeg can be updated by the [bulk maintenance pass](windows-tool-selection.md#review-selections-from-a-checkout).
