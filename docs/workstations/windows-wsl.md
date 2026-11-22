@@ -283,10 +283,14 @@ an isolated, already prepared Windows 11 x86-64 machine. Start the runner
 interactively as the same Windows account that owns the completed Ubuntu WSL
 setup; WSL distributions are account-scoped. The WSL job checks Windows 11,
 WSL, the Ubuntu distribution, systemd, the installer plan, an Ubuntu setup dry
-run with the account's saved selection, and focused Python tests. Its
+run with the saved selection, and focused Python tests. It runs version checks
+for the installed build tools, selected runtimes and provider CLIs in the
+saved Linux user's Bash login environment. Provider sign-in, interactive
+terminals and full project builds are separate checks. Its
 `distribution` input can name the selected distro explicitly. If omitted, the
-job uses the saved setup state. The job does not install, update, restart, or
-shut down WSL. Run the same checks locally from a checkout on the prepared host:
+job uses the saved setup state. The commands can start the selected distribution
+if it is stopped. They leave installed software and setup configuration intact.
+Run the same checks locally from a reviewed checkout on the prepared host:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\tests\Run-WslTests.ps1

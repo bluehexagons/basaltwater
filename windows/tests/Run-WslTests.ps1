@@ -47,6 +47,24 @@ $linuxRepo = $linuxRepo.Trim()
 $setupArgs = @(Get-UbuntuSetupArguments $state)
 & wsl.exe --distribution $Distribution --user root --exec /usr/bin/python3 -B ($linuxRepo + '/remote_setup.py') @setupArgs --dry-run
 if ($LASTEXITCODE -ne 0) { throw 'Ubuntu WSL setup dry run failed' }
+
+# Use the login PATH to exercise the installed tools, including the managed
+# Node default and account-local providers. Only fixed command names go to Bash.
+$tools = @('git', 'git-lfs', 'rg', 'python3', 'cc', 'make')
+if ($state.Node) { $tools += @('node', 'npm', 'pnpm') }
+if ($state.Python) { $tools += @('python', 'uv') }
+if ($state.Go) { $tools += 'go' }
+foreach ($provider in @('gh', 'codex', 'claude', 'opencode')) {
+    if ($provider -in $state.AgentTool) { $tools += $provider }
+}
+$checks = foreach ($tool in $tools) {
+    $versionArg = if ($tool -eq 'go') { 'version' } else { '--version' }
+    "echo Checking $tool && /usr/bin/timeout --kill-after=5s 30s $tool $versionArg"
+}
+$versionChecks = 'cd && ' + ($checks -join ' && ')
+& wsl.exe --distribution $Distribution --user $state.LinuxUser --exec /bin/bash -lc $versionChecks
+if ($LASTEXITCODE -ne 0) { throw 'Installed Ubuntu WSL tool version check failed' }
+
 & wsl.exe --distribution $Distribution --user $state.LinuxUser --cd $linuxRepo `
     --exec /usr/bin/python3 -B -m unittest tests.test_config_wsl tests.test_machine_state tests.test_plugin_registry -q
 if ($LASTEXITCODE -ne 0) { throw 'Ubuntu WSL focused tests failed' }

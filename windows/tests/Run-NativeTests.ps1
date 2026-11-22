@@ -247,6 +247,25 @@ try {
         param([string]$Name)
         return [pscustomobject]@{ Free = 100GB }
     }
+    function global:wsl.exe {
+        param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Arguments)
+        $global:LASTEXITCODE = 0
+        if ($Arguments[0] -eq '--version') { return }
+        Assert-True ($Arguments[0] -eq '--distribution' -and $Arguments[1] -eq 'Ubuntu-26.04') 'Qualification targeted the wrong distro'
+        if ($Arguments -contains 'uname') { return '6.6.87-microsoft-standard-WSL2' }
+        if ($Arguments -contains '/etc/os-release') { return 'ID=ubuntu' }
+        if ($Arguments -contains '/proc/1/comm') { return 'systemd' }
+        if ($Arguments -contains 'wslpath') { return '/mnt/c/checkout with spaces' }
+        if ($Arguments -contains '--dry-run') { return }
+        if ($Arguments -contains '/bin/bash') {
+            Assert-True (($Arguments -join ' ') -match '--user agent --exec /bin/bash -lc') 'Version checks must run as the saved non-root user in a login shell'
+            $script:WslVersionChecks = $Arguments[-1]
+            if ($script:WslToolBroken) { $global:LASTEXITCODE = 127 }
+            return
+        }
+        if ($Arguments -contains 'unittest') { return }
+        throw "Unexpected WSL qualification operation: $Arguments"
+    }
     try {
         $plan = & (Join-Path $repo 'install.ps1') -Plan -BuildServer -AgentTool gh,codex 6>&1 | Out-String
         Assert-True ($plan -match 'Plan: install WinGet/WSL') 'Installer plan did not complete'
@@ -268,7 +287,28 @@ try {
         Assert-Throws {
             & (Join-Path $repo 'install.ps1') -Plan -UpdateSource
         } 'UpdateSource requires Resume'
+
+        $setupDirectory = Join-Path $env:LOCALAPPDATA 'Basaltwater'
+        New-Item -ItemType Directory -Path $setupDirectory -Force | Out-Null
+        $qualificationState = [pscustomobject]@{
+            OwnerSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+            Phase = 'complete'; Distro = 'Ubuntu-26.04'; LinuxUser = 'agent'
+            Node = $true; Python = $true; Go = $true; AgentTool = @('gh', 'codex')
+        }
+        $qualificationState | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $setupDirectory 'wsl-setup.json') -Encoding UTF8
+        $wslTests = Join-Path $PSScriptRoot 'Run-WslTests.ps1'
+        $script:WslToolBroken = $false
+        $script:WslVersionChecks = ''
+        & $wslTests | Out-Null
+        foreach ($tool in @('git-lfs', 'cc', 'make', 'python3', 'node', 'npm', 'pnpm', 'python', 'uv', 'gh', 'codex')) {
+            Assert-True ($script:WslVersionChecks.Contains(" $tool --version")) "Qualification did not run $tool"
+        }
+        Assert-True ($script:WslVersionChecks.Contains(' go version')) 'Qualification did not run Go'
+        Assert-True (-not $script:WslVersionChecks.Contains(' claude --version')) 'Qualification ran an unselected provider'
+        $script:WslToolBroken = $true
+        Assert-Throws { & $wslTests } 'Installed Ubuntu WSL tool version check failed'
     } finally {
+        Remove-Item Function:\wsl.exe
         Remove-Item Function:\Get-CimInstance
         Remove-Item Function:\Get-PSDrive
     }
