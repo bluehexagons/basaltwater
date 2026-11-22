@@ -162,8 +162,9 @@ run `visuals batch` on the retained manifest in a new output directory.
 
 Both `visuals check` and `visuals capture` accept `--verify-evidence`.
 Add `--require-artifact-kind native --require-artifact-kind typescript
---require-artifact-kind asset` for a game using all three build inputs; each
-selector implies verification. Missing receipts, unapplied requested settings,
+--require-artifact-kind asset` for a game using all three build inputs. Each
+selector implies verification. The option also accepts project-defined kinds
+such as `shader-bundle`. Missing receipts, unapplied requested settings,
 wrong revisions, missing kinds or changed artifact bytes fail before creating
 a revision comparison. Without these options, verification is explicitly
 `unverified`; ordinary recipe exit-status checks remain available.
@@ -199,7 +200,8 @@ settings may include additional observations. Each artifact must name the
 intended revision and a unique file below the repository. Digests are checked
 against current regular files, limited to 4096 files, 512 MiB each and 2 GiB
 total. Include all consumed outputs and asset companions, not just a sample.
-Custom lowercase artifact kinds are supported in receipts.
+Artifact kinds start with a lowercase letter and contain up to 64 lowercase
+letters, digits or hyphens.
 
 The project owns build-time revision stamping and runtime resource identity.
 Do not relabel stale outputs with the current Git HEAD or hash arbitrary files

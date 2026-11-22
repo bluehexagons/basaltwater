@@ -19,6 +19,7 @@ from lib.atomic_io import read_json_file, write_json_atomic
 from lib.remote_utils import run
 from lib.validation import validate_filesystem_path, validate_no_control_characters, validate_positive_integer
 from lib.visual_compare_viewer import render_viewer
+from lib.visual_evidence import validate_artifact_kind
 
 
 MAX_IMAGE_BYTES = 16 * 1024 * 1024
@@ -58,7 +59,8 @@ def add_visuals_parser(commands: argparse._SubParsersAction) -> None:
     for action in (capture, check):
         action.add_argument("--verify-evidence", action="store_true", help="Require a runtime settings and build artifact receipt")
         action.add_argument("--require-artifact-kind", action="append", default=[],
-                            choices=("native", "typescript", "asset"), help="Require this artifact kind in the receipt; implies --verify-evidence")
+                            type=validate_artifact_kind, metavar="KIND",
+                            help="Require a lowercase artifact kind such as native, asset, or shader-bundle (implies --verify-evidence)")
     for action in (compare, batch, capture, check):
         action.add_argument("--output", help="New artifact directory; default: private managed state")
         action.add_argument("--json", action="store_true")
