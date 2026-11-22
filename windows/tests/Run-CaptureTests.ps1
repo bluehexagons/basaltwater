@@ -80,6 +80,14 @@ try {
     Assert-CaptureThrows {Get-NativePacingSummary $csv 42} 'QPC order'
     [IO.File]::WriteAllText($csv,"ProcessID,SwapChainAddress,CPUFrameTime,CPUStartQPC`n")
     Assert-CaptureThrows {Get-NativePacingSummary $csv 42} 'No presentation'
+    $header="ProcessID,SwapChainAddress,CPUFrameTime,CPUStartQPC`n"
+    $unavailable="42,0x1,,100`n42,0x1,0,200`n"
+    [IO.File]::WriteAllText($csv,$header+$unavailable)
+    Assert-CaptureThrows {Get-NativePacingSummary $csv 42} 'No usable CPU frame intervals'
+    [IO.File]::WriteAllText($csv,$header+$unavailable+"42,0x1,16,300`n")
+    $partial=Get-NativePacingSummary $csv 42
+    Assert-Capture ($partial.rows -eq 3 -and $partial.unavailable_cpu_intervals -eq 2 -and
+        $partial.swap_chains[0].samples -eq 1 -and $partial.swap_chains[0].cpu_frame_ms_max -eq 16) 'Partial timings lost their sample or unavailable count'
     $owned=Join-Path $temporary 'owned.json'
     Write-NativeEvidenceJson $owned @{value=1}
     Write-NativeEvidenceJson $owned @{value=2}

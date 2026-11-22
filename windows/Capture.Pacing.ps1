@@ -51,6 +51,7 @@ function Get-NativePacingSummary([string]$Path,[int]$ProcessId) {
             -not [double]::IsNaN($value) -and -not [double]::IsInfinity($value) -and $value -gt 0){$chain.values.Add($value)}else{$unavailable++}
     }
     if($rows -eq 0){throw 'No presentation rows observed; an empty trace is not a smooth-run result'}
+    if($rows -eq $unavailable){throw 'No usable CPU frame intervals observed; raw CSV retained'}
     $summaries=@(foreach($key in $chains.Keys){
         $chain=$chains[$key];$values=@($chain.values | Sort-Object);$count=$values.Count
         @{swap_chain=$key;samples=$count;cpu_frame_ms_mean=$(if($count){($values | Measure-Object -Average).Average}else{$null});cpu_frame_ms_max=$(if($count){$values[-1]}else{$null});

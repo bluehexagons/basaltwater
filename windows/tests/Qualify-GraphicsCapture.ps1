@@ -63,7 +63,8 @@ try {
     if($Pacing){
         $trace=Invoke-QualificationCli @('desktop','pacing','--task',$task.Id,'--project',$directory,'--output',(Join-Path $directory 'pacing'),'--seconds','5')
         Write-NativeHeldJson (Join-Path $directory 'pacing-result.json') $trace 262144
-        Assert-Gpu ($trace.result.cleanup_confirmed -and $trace.result.summary.rows -ge 20 -and
+        $sampleCount=$trace.result.summary.rows-$trace.result.summary.unavailable_cpu_intervals
+        Assert-Gpu ($trace.result.cleanup_confirmed -and $sampleCount -ge 20 -and
             @($trace.result.summary.swap_chains | Where-Object hitches_over_50ms -GT 0).Count -ge 1) 'Trace did not observe the deliberately delayed D3D workload'
     }
     $complete=$true
@@ -72,12 +73,22 @@ finally {
     if($task){
         try {
             $profile=$task.TestSession.ProfilePath
-            if(Test-Path -LiteralPath $profile -PathType Container){
-                [IO.File]::WriteAllText((Join-Path $profile 'stop'),'stop')
+            try {
+                if(Test-Path -LiteralPath $profile -PathType Container){
+                    [IO.File]::WriteAllText((Join-Path $profile 'stop'),'stop')
+                }
+            } catch {
+                $complete=$false
+                $failure=(@($failure,('Fixture stop request: '+$_.Exception.Message)) | Where-Object {$_}) -join ' | '
             }
             $settled=Invoke-QualificationCli @('desktop','develop','wait',$task.Id,'--timeout','15') -AllowWaitFailure
             if($settled.TimedOut){
-                $null=Invoke-QualificationCli @('desktop','develop','cancel',$task.Id)
+                try {$null=Invoke-QualificationCli @('desktop','develop','cancel',$task.Id)}
+                catch {
+                    # The request can take effect before the CLI returns an error.
+                    $complete=$false
+                    $failure=(@($failure,('Fixture cancellation: '+$_.Exception.Message)) | Where-Object {$_}) -join ' | '
+                }
                 $settled=Invoke-QualificationCli @('desktop','develop','wait',$task.Id,'--timeout','30') -AllowWaitFailure
             }
             Write-NativeHeldJson (Join-Path $directory 'settled.json') $settled 65536

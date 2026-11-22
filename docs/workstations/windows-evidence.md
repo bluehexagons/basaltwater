@@ -80,9 +80,11 @@ limited context and elevate only the collector when required.
 The bundle retains raw v2/QPC CSV, tool/hash/version, selected identity, private
 logs, clock anchors and cleanup evidence. Summaries group CPUFrameTime by swap
 chain with mean, maximum, hitches over 50 ms, and p95 only with at least 20
-samples. Empty, mixed-process, malformed or nonmonotonic data fails. Event loss
-remains null when unavailable. CPU frame intervals do not establish physical
-presentation or input latency; OpenGL/Vulkan have PresentMon-specific limits.
+samples. Empty, mixed-process, malformed or nonmonotonic trace data fails.
+The summary counts unavailable intervals separately and requires at least one
+usable interval. Event loss remains null when unavailable. Physical presentation
+and input latency require separate measurements. OpenGL/Vulkan have
+PresentMon-specific limits.
 This console route retains CSV rather than raw ETL.
 
 Collection accepts 1–30 seconds. PresentMon has its own timed exit; the native
@@ -133,9 +135,10 @@ Graphics qualification independently checks both color phases of a synthetic
 D3D11 window and metadata. Its stop marker requests normal exit through the
 disposable profile, so cleanup works even when desktop input is unavailable.
 The runner waits for the supervised task to settle and verifies profile removal.
-`-Pacing`
-adds a process trace and requires observation of deliberate workload hitches;
-it needs existing ETW permission. Do not elevate the entire fixture runner.
+If the fixture fails to stop in time, the runner requests cancellation and
+checks whether cleanup settled. `-Pacing` adds a process trace and requires at
+least 20 measured intervals and an observed workload hitch. It needs existing
+ETW permission. Do not elevate the entire fixture runner.
 The watchdog runner deliberately stalls its main thread without touching the
 GPU, proving the actual independent deadline/caller-loss path. These tests
 establish only their recorded fixtures; other GPUs, mixed DPI/monitor origins,
