@@ -63,7 +63,8 @@ different default file owner. The hosted capture fixture exposed the same
 default ownership on helper-written files. Capture now verifies the private
 ACL and sets account ownership on the frame journal and PNGs before consuming
 them. Evidence manifests use the same account-owned atomic JSON publication
-as desktop receipts.
+as desktop receipts. The offline pacing fixture creates its CSV with explicit
+account ownership, matching the production parser's admission rule.
 
 See the [Windows evidence procedures](../workstations/windows-evidence.md) for
 reproduction commands and [file media qualification](../workstations/windows-media.md#native-qualification)

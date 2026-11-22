@@ -70,7 +70,8 @@ try {
     [IO.File]::WriteAllText($events,('x'*(128KB+1)))
     Assert-CaptureThrows {Read-NativeProjectEvents $events} '128 KiB'
     $csv=Join-Path $temporary 'pacing.csv'
-    [IO.File]::WriteAllText($csv,"ProcessID,SwapChainAddress,CPUFrameTime,CPUStartQPC,PresentRuntime,PresentMode`n42,0x1,5,100,DXGI,Composed`n42,0x1,16,200,DXGI,Composed`n42,0x1,100,300,DXGI,Composed`n")
+    $trace = "ProcessID,SwapChainAddress,CPUFrameTime,CPUStartQPC,PresentRuntime,PresentMode`n42,0x1,5,100,DXGI,Composed`n42,0x1,16,200,DXGI,Composed`n42,0x1,100,300,DXGI,Composed`n"
+    New-NativeDesktopPrivateFile $csv ([Text.Encoding]::UTF8.GetBytes($trace))
     $summary=Get-NativePacingSummary $csv 42
     Assert-Capture ($summary.rows -eq 3 -and $summary.swap_chains[0].cpu_frame_ms_max -eq 100 -and
         $summary.swap_chains[0].hitches_over_50ms -eq 1 -and $null -eq $summary.swap_chains[0].cpu_frame_ms_p95 -and $null -eq $summary.event_loss) 'Pacing summary invented percentile/loss or missed a hitch'
