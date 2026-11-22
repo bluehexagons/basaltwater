@@ -216,7 +216,9 @@ public static class DesktopInspectionFixture {
     $fixtureSource = Join-Path $temporary "worker's unicode $([char]0x03bb)"
     New-NativeDesktopPrivateDirectory $fixtureSource
     $fixture = Join-Path $fixtureSource 'Desktop.Common.ps1'
-    [IO.File]::WriteAllText($fixture, @'
+    $realSource = (Join-Path $originalSource 'Desktop.Common.ps1').Replace("'", "''")
+    $bootstrap = ". '$realSource'" + [Environment]::NewLine
+    [IO.File]::WriteAllText($fixture, $bootstrap + @'
 function Invoke-NativeDesktopWorkerBody($Request) {
     # Autoload a framework module in the isolated worker, without desktop APIs.
     $null = Get-Command Get-Acl -ErrorAction Stop
@@ -237,11 +239,11 @@ function Invoke-NativeDesktopWorkerBody($Request) {
             $echo.modules.Split(';') -notcontains $parentModules) 'Desktop worker inherited caller module paths or selected the project runtime'
         Assert-True ($env:PSModulePath -ceq $inheritedModules) 'Worker isolation changed the invoking shell module path'
         $env:PSModulePath = $savedModulePath
-        [IO.File]::WriteAllText($fixture, 'function Invoke-NativeDesktopWorkerBody($Request) { throw "fixture failure" }')
+        [IO.File]::WriteAllText($fixture, $bootstrap + 'function Invoke-NativeDesktopWorkerBody($Request) { throw "fixture failure" }')
         $caught = $null
         try { & $realWorker @{ command = 'fixture' } | Out-Null } catch { $caught = $_ }
         Assert-True ($null -ne $caught -and $caught.Exception.Message -match 'fixture failure') 'Worker swallowed failure'
-        [IO.File]::WriteAllText($fixture, 'function Invoke-NativeDesktopWorkerBody($Request) { Start-Sleep -Seconds 20 }')
+        [IO.File]::WriteAllText($fixture, $bootstrap + 'function Invoke-NativeDesktopWorkerBody($Request) { Start-Sleep -Seconds 20 }')
         $caught = $null
         try { & $realWorker @{ command = 'fixture' } 1 | Out-Null } catch { $caught = $_ }
         Assert-True ($null -ne $caught -and $caught.Exception.Message -match 'timed out') 'Owned hanging worker not bounded'

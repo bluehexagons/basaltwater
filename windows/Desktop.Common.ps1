@@ -287,14 +287,19 @@ function Invoke-NativeDesktopWorker($Request, [int]$TimeoutSeconds = 8) {
                 $payload.state_session=$state.session; $payload.revision=$state.revision; $payload.generation=$state.generation
             }
         }
-        [IO.File]::WriteAllText($inputPath, ($payload | ConvertTo-Json -Depth 40 -Compress))
+        New-NativeDesktopPrivateFile $inputPath ([Text.Encoding]::UTF8.GetBytes(($payload | ConvertTo-Json -Depth 40 -Compress)))
         $source = (Join-Path $script:NativeDesktopSource 'Desktop.Common.ps1').Replace("'", "''")
         $escapedInput = $inputPath.Replace("'", "''"); $escapedOutput = $outputPath.Replace("'", "''")
         $entry = @"
 `$ErrorActionPreference = 'Stop'
-try { . '$source'; `$request = Get-Content -LiteralPath '$escapedInput' -Raw -Encoding UTF8 | ConvertFrom-Json; if(`$request.PSObject.Properties['request']){`$result=Invoke-NativeColdEnvelope `$request}else{`$result = Invoke-NativeDesktopWorkerBody `$request} }
+. '$source'
+try {
+    `$request = Get-Content -LiteralPath '$escapedInput' -Raw -Encoding UTF8 | ConvertFrom-Json
+    `$result = if (`$request.PSObject.Properties['request']) { Invoke-NativeColdEnvelope `$request }
+        else { Invoke-NativeDesktopWorkerBody `$request }
+}
 catch { `$result = @{ error = `$_.Exception.Message; ok=`$false; submitted=`$false } }
-[IO.File]::WriteAllText('$escapedOutput', (`$result | ConvertTo-Json -Depth 40 -Compress))
+New-NativeDesktopPrivateFile '$escapedOutput' ([Text.Encoding]::UTF8.GetBytes((`$result | ConvertTo-Json -Depth 40 -Compress)))
 "@
         # Encode script, never interpolate user arguments into executable code.
         $start = New-Object Diagnostics.ProcessStartInfo

@@ -56,6 +56,11 @@ Unicode through a console code page. The corrected fixtures use disposable
 account-local paths for skill admission and compare ASCII-framed UTF-8 argv.
 Separate raw log streams preserved the original diagnostics.
 
+The hosted Windows worker fixture also exposed a cold mailbox ownership
+mismatch. Cold requests and replies now use the same account-owned file
+creation as warm mailboxes, including when an administrator token supplies a
+different default file owner.
+
 See the [Windows evidence procedures](../workstations/windows-evidence.md) for
 reproduction commands and [file media qualification](../workstations/windows-media.md#native-qualification)
 for the decoder gates. These results cover synthetic fixtures on one prepared
