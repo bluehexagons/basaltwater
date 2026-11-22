@@ -31,10 +31,18 @@ get('captureData').textContent = payload;
 for (const value of ['after','overlay','difference']) { const el = new Element(); el.value = value; get('mode').append(el); }
 get('opacity').value = '50'; get('gain').value = '1';
 let downloaded, blob, timerId = 0;
+let deferDecode = false;
+const pendingImages = [];
 const timers = new Map(), documentHandlers = {};
 const context = {document:{getElementById:get, querySelector:get, createElement:tag => new Element(tag),
   addEventListener:(event, handler) => { documentHandlers[event] = handler; }},
-  Image:class { constructor() { this.naturalWidth = this.naturalHeight = 4; } set src(value) { Promise.resolve().then(() => this.onload()); } },
+  Image:class {
+    constructor() { this.naturalWidth = this.naturalHeight = 4; }
+    set src(value) {
+      if (deferDecode) pendingImages.push(this);
+      else Promise.resolve().then(() => this.onload());
+    }
+  },
   Blob, URL:{createObjectURL(value) { blob = value; return 'blob:test'; }, revokeObjectURL() {}},
   requestAnimationFrame:fn => fn(), setTimeout:fn => { timers.set(++timerId, fn); return timerId; },
   clearTimeout:id => timers.delete(id), Uint8ClampedArray};
@@ -67,26 +75,63 @@ const flush = () => new Promise(resolve => setImmediate(resolve));
   assert.equal(record.visual_correctness, 'unverified');
   assert.deepEqual(record.expected_categories, data.expected_categories);
   assert.deepEqual(record.missing_categories, data.missing_categories);
+  assert.deepEqual(record.sequence, data.sequence ?? undefined);
   if (data.sequence) {
+    const frames = data.sequence.pair_ids ?? data.pairs.map(pair => pair.id);
     assert.equal(get('timeline').hidden, false);
+    assert.equal(get('scrub').max, String(frames.length - 1));
+    if (data.sequence.pair_ids) assert.equal(get('frameValue').textContent, 'Still view');
     get('zoom').value = '150'; get('zoom').handlers.input();
     get('mode').value = 'overlay'; get('mode').handlers.input();
     get('play').click();
     assert.equal(get('play').textContent, 'Pause');
+    await flush();
+    assert.equal(get('pair').value, frames[0]);
     // Ignore the export's URL cleanup timer and advance playback once.
     const frameTimer = Math.max(...timers.keys());
     const tick = timers.get(frameTimer); timers.delete(frameTimer); await tick(); await flush();
-    assert.equal(get('pair').selectedIndex, 1);
+    assert.equal(get('pair').value, frames[1]);
     assert.equal(get('scrub').value, '1');
     assert.equal(get('zoom').value, '150');
     assert.equal(get('mode').value, 'after'); // incompatible frame disables overlay
     assert.equal(get('inspected').checked, false); // playback never marks inspection
+    const endTimer = Math.max(...timers.keys());
+    const finish = timers.get(endTimer); timers.delete(endTimer); await finish();
+    assert.equal(get('play').textContent, 'Play');
+    assert.equal(get('pair').value, frames[1]);
     get('scrub').value = '0'; get('scrub').handlers.input(); await flush();
     assert.equal(get('play').textContent, 'Play');
-    assert.equal(get('pair').selectedIndex, 0);
+    assert.equal(get('pair').value, frames[0]);
     assert.equal(get('zoom').value, '150');
     get('play').click(); context.document.hidden = true; documentHandlers.visibilitychange();
     assert.equal(get('play').textContent, 'Play');
+    context.document.hidden = false;
+
+    // Starting during a scrub must wait for both PNGs before scheduling playback.
+    const timersBeforePlay = timers.size;
+    deferDecode = true;
+    get('scrub').handlers.input();
+    get('play').click();
+    assert.equal(pendingImages.length, 2);
+    await flush();
+    assert.equal(timers.size, timersBeforePlay);
+    pendingImages.shift().onload();
+    await flush();
+    assert.equal(timers.size, timersBeforePlay);
+    pendingImages.shift().onload();
+    await flush();
+    assert.equal(timers.size, timersBeforePlay + 1);
+    get('play').click();
+
+    // A bad frame at Play must leave its decode error visible and cancel playback.
+    get('scrub').handlers.input();
+    get('play').click();
+    pendingImages.shift().onerror();
+    pendingImages.shift().onload();
+    await flush();
+    assert.equal(get('status').textContent, 'Invalid PNG capture');
+    assert.equal(get('play').textContent, 'Play');
+    assert.equal(timers.size, timersBeforePlay);
   }
   process.stdout.write('Batch UI contract passed\n');
 })().catch(error => { console.error(error); process.exitCode = 1; });

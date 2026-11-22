@@ -108,7 +108,7 @@ class BatchReviewTests(unittest.TestCase):
         self.assertNotEqual(result["batch_id"], original)
 
     def test_sequence_cadence_is_validated_and_bound_to_review_identity(self) -> None:
-        for fps in (True, 0, -1, 61, "24"):
+        for fps in (True, 0, -1, 61, "24", 10**400):
             self.manifest["sequence"] = {"fps": fps}
             with self.subTest(fps=fps), self.assertRaisesRegex(ValueError, "fps"):
                 self.review()
@@ -119,6 +119,23 @@ class BatchReviewTests(unittest.TestCase):
         self.args.output = str(self.root / "changed-cadence")
         self.manifest["sequence"] = {"fps": 24}
         self.assertNotEqual(self.review()["batch_id"], original["batch_id"])
+
+    def test_sequence_pair_selection_is_validated_and_bound_to_identity(self) -> None:
+        pair = self.manifest["pairs"][0]
+        self.manifest["pairs"].extend([{**pair, "id": "frame-2"}, {**pair, "id": "frame-1"}])
+        for frame_ids in (None, [], ["frame-1"] * 2, ["missing"], ["\n"], [True], ["frame-1"] * 257):
+            self.manifest["sequence"] = {"fps": 12, "pair_ids": frame_ids}
+            with self.subTest(frame_ids=frame_ids[:2] if isinstance(frame_ids, list) else frame_ids):
+                with self.assertRaisesRegex(ValueError, "pair_ids|pair ID"):
+                    self.review()
+                self.assertFalse((self.root / "review").exists())
+        self.manifest["sequence"] = {"fps": 12, "pair_ids": ["frame-1", "frame-2"]}
+        result = self.review()
+        self.assertEqual(result["sequence"], self.manifest["sequence"])
+        self.assertEqual([entry["id"] for entry in result["pairs"]], ["rear-high", "frame-2", "frame-1"])
+        self.args.output = str(self.root / "reversed")
+        self.manifest["sequence"]["pair_ids"].reverse()
+        self.assertNotEqual(self.review()["batch_id"], result["batch_id"])
 
     def test_dimension_mismatch_and_unsafe_metadata(self) -> None:
         (self.root / "b.png").write_bytes(png_bytes(5, 4))
@@ -137,10 +154,18 @@ class BatchReviewTests(unittest.TestCase):
         self.manifest["pairs"].append(pair)
         self.manifest["expected_categories"] = ["silhouette", "settings"]
         self.args.allow_incompatible = True
-        for sequence in (None, {"fps": 12}):
-            with self.subTest(sequence=sequence):
+        scenarios = {
+            "still": None,
+            "all-frames": {"fps": 12},
+            "mixed": {"fps": 12, "pair_ids": ["frame-first", "incompatible"]},
+        }
+        for name, sequence in scenarios.items():
+            with self.subTest(scenario=name):
+                if name == "mixed":
+                    pair = self.manifest["pairs"][0]
+                    self.manifest["pairs"].extend([{**pair, "id": "frame-first"}, {**pair, "id": "detail-still"}])
                 self.manifest["sequence"] = sequence
-                self.args.output = str(self.root / ("sequence" if sequence else "still"))
+                self.args.output = str(self.root / name)
                 result = self.review()
                 completed = subprocess.run(
                     [shutil.which("node"), str(Path(__file__).with_name("visual_batch_harness.cjs"))],

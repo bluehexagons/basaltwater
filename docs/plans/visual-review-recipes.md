@@ -23,10 +23,14 @@ review presentation. See the
 - The local fixture and regression tests cover sequence order, gallery
   generation from saved images, standalone batch replay, missing images or
   manifests, incompatible settings and evidence path containment. Failed
-  gallery checks retain the recipe result and logs.
+  gallery checks retain the recipe result and logs. A disposable Blender
+  Cycles CPU recipe exercised two fixed views, a short playback sequence and
+  a checked artifact receipt in one run.
 - In the consumer pilot, exercise a still and a short sequence. Cover
   identical replay settings and a deliberate setting change with verified
   observed values. Check representative crops against the original captures.
+  Use [explicit sequence pair IDs](../workstations/visual-comparison-review.md#review-transition-sequences)
+  to play the motion frames with the fixed poses available in the same gallery.
   Setting meanings and comparison axes belong to the project.
 
 ## Report the executable a recipe will use

@@ -252,6 +252,9 @@ if (data.pairs) {
   }
   const currentPair = () => data.pairs.find(pair => pair.id === get('pair').value);
   const currentRecord = () => records[get('pair').value][get('crop').value];
+  const frameIds = data.sequence ? (data.sequence.pair_ids ?? data.pairs.map(pair => pair.id)) : [];
+  const currentFrame = () => frameIds.indexOf(get('pair').value);
+  let pairLoad;
   function progress() {
     const all = Object.values(records).flatMap(Object.values);
     get('progress').textContent = `${all.filter(record => record.inspected_at).length} / ${all.length} views and crops inspected`;
@@ -259,18 +262,24 @@ if (data.pairs) {
   function selectCrop(preserveView = false) {
     const pair = currentPair(), record = currentRecord();
     get('inspected').checked = Boolean(record.inspected_at); get('notes').value = record.notes;
-    return showPair(pair, pair.crops.find(crop => crop.name === get('crop').value)?.rect, preserveView);
+    pairLoad = showPair(pair, pair.crops.find(crop => crop.name === get('crop').value)?.rect, preserveView);
+    return pairLoad;
   }
   function selectPair(preserveView = false) {
     get('crop').replaceChildren();
     for (const name of ['Full image', ...currentPair().crops.map(crop => crop.name)]) {
       const option = document.createElement('option'); option.value = option.textContent = name; get('crop').append(option);
     }
-    if (data.sequence) {
-      get('scrub').value = String(get('pair').selectedIndex);
-      get('frameValue').textContent = `${get('pair').selectedIndex + 1} / ${data.pairs.length} · ${currentPair().label}`;
+    if (frameIds.length) {
+      const index = currentFrame();
+      get('scrub').value = String(Math.max(0, index));
+      get('frameValue').textContent = index < 0 ? 'Still view' : `${index + 1} / ${frameIds.length} · ${currentPair().label}`;
     }
     return selectCrop(preserveView);
+  }
+  function selectFrame(index) {
+    get('pair').value = frameIds[index];
+    return selectPair(true);
   }
   let playing = false, playbackTimer = null, playbackRevision = 0;
   function pause() {
@@ -280,32 +289,30 @@ if (data.pairs) {
     const revision = playbackRevision;
     playbackTimer = setTimeout(async () => {
       if (!playing || revision !== playbackRevision) return;
-      if (get('pair').selectedIndex === data.pairs.length - 1) { pause(); return; }
-      get('pair').selectedIndex++;
-      const loaded = await selectPair(true);
+      const next = currentFrame() + 1;
+      if (next >= frameIds.length) { pause(); return; }
+      const loaded = await selectFrame(next);
       if (revision !== playbackRevision) return;
       if (!loaded) { pause(); return; }
       scheduleFrame();
     }, 1000 / data.sequence.fps);
   }
-  if (data.sequence) {
+  if (frameIds.length) {
     get('timeline').hidden = false;
-    get('scrub').max = String(data.pairs.length - 1);
+    get('scrub').max = String(frameIds.length - 1);
     get('cadence').textContent = `${data.sequence.fps} fps requested · paired frames advance together; decode may slow playback`;
     get('play').addEventListener('click', async () => {
       if (playing) { pause(); return; }
       playing = true; get('play').textContent = 'Pause';
       const revision = ++playbackRevision;
-      if (get('pair').selectedIndex === data.pairs.length - 1) {
-        get('pair').selectedIndex = 0;
-        const loaded = await selectPair(true);
-        if (revision !== playbackRevision) return;
-        if (!loaded) { pause(); return; }
-      }
+      const index = currentFrame();
+      const loaded = await (index < 0 || index === frameIds.length - 1 ? selectFrame(0) : pairLoad);
+      if (revision !== playbackRevision) return;
+      if (!loaded) { pause(); return; }
       scheduleFrame();
     });
     get('scrub').addEventListener('input', () => {
-      pause(); get('pair').selectedIndex = Number(get('scrub').value); selectPair(true);
+      pause(); selectFrame(Number(get('scrub').value));
     });
     document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
   }

@@ -163,25 +163,30 @@ observations, hashes, crops, compatibility issues and missing categories;
 
 Add `"sequence": {"fps": 12}` at the top level of a batch manifest and list
 its pairs in chronological order. Each pair is one synchronized before/after
-frame. Include the observed simulation frame/time in each side's settings and
-in `compare_keys`, alongside camera and renderer observations. The project
-owns pairing, equal capture steps and deterministic transition preparation;
-file names alone do not establish synchronization.
+frame. For a batch with still views and a transition, set
+`"sequence": {"fps": 12, "pair_ids": ["frame-001", "frame-002"]}`.
+Supply unique IDs of existing pairs in playback order. All pairs remain
+available in the View menu. Play starts from the first frame when the current
+view is a still. Without `pair_ids`, playback uses every pair in manifest order.
+
+Include the observed simulation frame/time in each side's settings and in
+`compare_keys`, alongside camera and renderer observations. The project owns
+pairing, equal capture steps and deterministic transition preparation.
 
 The gallery adds a keyboard-accessible frame scrubber and Play/Pause control.
-Playback advances both images together, retains zoom/scroll and the selected
-comparison mode, and stops at the last pair or a decode error. Incompatible
-pairs still disable overlays/differences. Scrubbing, changing views, entering
-notes or hiding the tab pauses playback. Playing through a frame never marks
-it inspected. Notes and inspection records remain per frame/crop; download
-the record to retain them. Playback starts only when requested.
+Playback advances both images together, retains zoom and scroll, and stops
+at the last frame or a decode error. It also retains the comparison mode when
+the pair supports it. Incompatible pairs disable overlays and differences.
+Scrubbing, changing views, entering notes or hiding the tab pauses playback.
+Playing through a frame never marks it inspected. Notes and inspection records
+remain per frame and crop. Download the record to retain them.
 
-`fps` accepts a finite number greater than zero through 60 and is included in
-the batch identity and downloaded record. The browser waits for both images
-before advancing; decoding and pixel-difference computation can slow playback.
-This is visual sequence review, not a measurement of display cadence. Existing
-batch limits apply, including 256 pairs and 128 MiB embedded image data; split
-longer transitions. No GIF/video conversion, server or network is required.
+`fps` accepts a finite number greater than zero through 60. Cadence and the
+explicit playback order are included in the batch identity and downloaded
+record. The browser waits for both images before advancing. Decoding and
+pixel-difference computation can slow playback. Measure display cadence
+with the project's timing harness. Split longer transitions to stay within
+the batch limits of 256 pairs and 128 MiB of embedded image data.
 
 ## Export and inspect the consumer
 

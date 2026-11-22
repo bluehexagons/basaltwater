@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import math
 import os
 from pathlib import Path
 import uuid
@@ -76,11 +75,20 @@ def review_batch(args: argparse.Namespace, *, evidence_root: Path | None = None)
     keys = _keys(manifest.get("compare_keys"))
     categories = _expected_categories(manifest["expected_categories"]) if "expected_categories" in manifest else CATEGORIES
     sequence = manifest.get("sequence")
+    frame_ids = []
     if sequence is not None:
-        if (not isinstance(sequence, dict) or set(sequence) != {"fps"}
-                or type(sequence["fps"]) not in (int, float) or not math.isfinite(sequence["fps"])
-                or not 0 < sequence["fps"] <= 60):
-            raise ValueError("sequence requires only fps, greater than zero and at most 60")
+        if not isinstance(sequence, dict) or set(sequence) - {"fps", "pair_ids"}:
+            raise ValueError("sequence requires fps and accepts optional pair_ids")
+        fps = sequence.get("fps")
+        if type(fps) not in (int, float) or not 0 < fps <= 60:
+            raise ValueError("sequence fps must be greater than zero and at most 60")
+        if "pair_ids" in sequence:
+            frame_ids = sequence["pair_ids"]
+            if not isinstance(frame_ids, list) or not 1 <= len(frame_ids) <= 256:
+                raise ValueError("sequence pair_ids must contain 1–256 pair IDs")
+            frame_ids = [_label(identity, "Sequence pair ID") for identity in frame_ids]
+            if len(set(frame_ids)) != len(frame_ids):
+                raise ValueError("sequence pair_ids must be unique")
     entries = manifest.get("pairs")
     if not isinstance(entries, list) or not 1 <= len(entries) <= 256:
         raise ValueError("Batch manifest requires 1–256 pairs")
@@ -137,6 +145,8 @@ def review_batch(args: argparse.Namespace, *, evidence_root: Path | None = None)
             names.add(name)
             pair["crops"].append({"name": name, "rect": rect})
         pairs.append(pair)
+    if unknown := set(frame_ids) - ids:
+        raise ValueError("Unknown sequence pair IDs: " + ", ".join(sorted(unknown)))
     # Identity binds downloaded review records to the exact images, metadata and crops.
     records = [{**pair, "before": pair["before"]["metadata"], "after": pair["after"]["metadata"]} for pair in pairs]
     identity_data = {"pairs": records, "sequence": sequence}
