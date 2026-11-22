@@ -41,7 +41,7 @@ These areas are not prerequisites for the shared Debian build/CI host.
 | Audio and video | Develop portable file analysis, bounded Debian production and CachyOS desktop/GPU workflows under the [audio and video plan](audio-video-support.md); Windows is scoped to simple debugging analysis. |
 | Games and publishing | Keep [Godot/release bundle scope](game-publishing.md) bounded. Live provider behavior, rendering and automatic public posts remain gated in the [communications plan](game-release-communications.md). |
 | Agent-assisted game testing | Start with the [next-cycle plan](game-testing-next-cycle.md) for the current delivery sequence and restart gate. [Capability evidence](game-testing.md), [learning milestones](game-testing-learning.md), and [implementation handoffs](game-testing-handoffs/README.md) support specific tasks. |
-| Visual review and tool preflight | Pilot a project-produced still and motion gallery and record each recipe's selected tool version. See [visual review recipes](visual-review-recipes.md). |
+| Visual review and tool preflight | Run the Antistatic pilot, repeat on a second renderer and verify two native Blender selections on CachyOS. Gallery and version preflight have portable checks and a Debian Blender smoke. See [visual review recipes](visual-review-recipes.md). |
 | Broader recovery | Test restore on another physical host and remaining storage/network failures; use the [roadmap](roadmap.md) and [transaction recovery guide](../operations/transaction-recovery.md). |
 
 ## Backlog references

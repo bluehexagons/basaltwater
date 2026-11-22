@@ -15,6 +15,7 @@ import unittest
 from unittest.mock import patch
 
 from lib import agent_cli, agent_environment, agent_visual_check
+from lib.agent_probe import ProbeResult
 from lib.remote_utils import CommandTimeoutError
 from tests.test_agent_visuals import png_bytes
 
@@ -57,6 +58,7 @@ class TestAgentVisualCheck(unittest.TestCase):
         self.assertEqual(result["gpu_readiness"], "unverified")
         self.assertEqual(result["ui_readiness"], "unverified")
         self.assertNotIn("review", result)
+        self.assertNotIn("tool_version", result)
         call = self.execute.call_args
         self.assertEqual(call.args[0], self.manifest["recipes"]["graphics"]["argv"])
         self.assertEqual(call.kwargs["cwd"], str(self.project / "."))
@@ -87,6 +89,64 @@ class TestAgentVisualCheck(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertIn("renderer could not initialize", (self.output / "check.log").read_text())
         self.assertTrue((self.output / "environment.json").is_file())
+
+    def test_pinned_executable_reaches_the_recipe_after_a_bounded_probe(self) -> None:
+        version = {"executable": "blender", "expected": "Blender 4.5.2"}
+        self.manifest["recipes"]["graphics"]["version_check"] = version
+        tool = self.project / "tools" / "blender"
+
+        def probe_version(argv, **kwargs):
+            self.assertNotIn("BASALTWATER_VISUAL_TOOL", kwargs["env"])
+            return ProbeResult("Blender 4.5.2\nBuild details\n")
+
+        with (
+            patch.dict(os.environ, {"PATH": "tools:/usr/bin", "BASALTWATER_VISUAL_TOOL": "/other"}),
+            patch.object(agent_visual_check.shutil, "which", return_value=str(tool)) as locate,
+            patch.object(agent_visual_check, "run_probe", side_effect=probe_version) as probe,
+        ):
+            result = agent_visual_check.check_recipe(self.args())
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["tool_version"], {**version, "path": str(tool), "observed": version["expected"], "status": "verified"})
+        locate.assert_called_once_with("blender", path=f"{tool.parent}:/usr/bin")
+        self.assertEqual(probe.call_args.args[0], [str(tool), "--version"])
+        self.assertEqual(probe.call_args.kwargs["cwd"], str(self.project))
+        self.assertEqual(probe.call_args.kwargs["timeout"], 5)
+        self.assertEqual(probe.call_args.kwargs["max_bytes"], 4096)
+        self.assertEqual(self.execute.call_args.kwargs["env"]["BASALTWATER_VISUAL_TOOL"], str(tool))
+        self.assertEqual(self.execute.call_args.kwargs["env"]["PATH"], "tools:/usr/bin")
+
+    def test_preflight_failures_distinguish_missing_mismatch_and_failed_probes(self) -> None:
+        from lib import agent_performance
+
+        selection = {"executable": "./tools/blender", "expected": "Blender 4.5.2"}
+        self.manifest["recipes"]["graphics"]["version_check"] = selection
+        tool = str(self.project / "tools" / "blender")
+        variants = (
+            (None, None, "missing", None, None),
+            (tool, ProbeResult("Blender 4.3.2\n"), "unexpected-version", "Blender 4.3.2", None),
+            (tool, ProbeResult(issue="probe_timeout"), "probe-failed", None, "probe_timeout"),
+            (tool, ProbeResult(issue="probe_output_limit"), "probe-failed", None, "probe_output_limit"),
+            (tool, ProbeResult("\x1b[34mBlender 4.5.2\n"), "probe-failed", None, "invalid_version_line"),
+        )
+        for index, (path, response, status, observed, issue) in enumerate(variants):
+            with (
+                self.subTest(status=status, issue=issue),
+                patch.object(agent_visual_check.shutil, "which", return_value=path) as locate,
+                patch.object(agent_visual_check, "run_probe", return_value=response) as probe,
+                patch.object(agent_performance, "performance_snapshot") as snapshot,
+            ):
+                self.output = self.root / f"preflight-{index}"
+                result = agent_visual_check.check_recipe(self.args("--performance-session"))
+                self.assertFalse(result["ok"])
+                self.assertIsNone(result["returncode"])
+                version = result["tool_version"]
+                self.assertEqual((version["status"], version["observed"], version.get("issue")), (status, observed, issue))
+                self.assertEqual(json.loads((self.output / "check.json").read_text()), result)
+                self.assertTrue((self.output / "environment.json").is_file())
+                locate.assert_called_once_with(str(self.project / "./tools/blender"))
+                self.assertEqual(probe.call_count, int(path is not None))
+                snapshot.assert_not_called()
+        self.execute.assert_not_called()
 
     def test_strict_check_verifies_runtime_and_build_evidence(self) -> None:
         artifact = self.project / "asset.bin"

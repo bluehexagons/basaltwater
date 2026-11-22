@@ -11,7 +11,7 @@ Native validation on other supported platforms is a later acceptance phase.
 | Workflow entry points | Native development, Blender smoke, project visual recipes | One short workflow route page linking the owning commands |
 | Instruction ownership | Repository policy, installed skills, orchestration references | Explicit ownership and precedence; keep delegation out of desktop operation guidance |
 | Current-state notes | Revision-checked local project memory | Shared current checkpoint, separate history, completed/obsolete script convention |
-| Command results | Private capture helper, visual reports, Blender evidence, task logs | Reuse these interfaces; document the common minimum and add task duration evidence |
+| Command results | Private capture helper, visual reports, Blender evidence, task logs | Use the common evidence fields and task durations. For visual recipes, see the [gallery and tool preflight](visual-review-recipes.md). |
 | Owned processes | Native development transient units and guarded stop; portal session ownership | Expose task unit process metadata and completion evidence; retain identity guards |
 | Handoffs | Existing project/visual qualification guidance | Lightweight implementation, visual review and hardware acceptance templates |
 

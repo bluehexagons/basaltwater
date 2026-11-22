@@ -219,13 +219,28 @@ def _required_tools(value: object) -> list[str]:
     return list(dict.fromkeys(value))
 
 
+def _version_check(value: object) -> dict[str, str]:
+    if not isinstance(value, dict) or set(value) != {"executable", "expected"}:
+        raise ValueError("Recipe version_check requires executable and expected")
+    executable = _text(value["executable"], "version check executable")
+    validate_filesystem_path(executable)
+    if "/" not in executable:
+        _required_tools([executable])
+    elif not os.path.isabs(executable) and (".." in Path(executable).parts or not Path(executable).parts):
+        raise ValueError("Relative version check executables must name a file below the recipe directory")
+    expected = _text(value["expected"], "expected version line")
+    if expected != expected.strip():
+        raise ValueError("Expected version line must have no leading or trailing whitespace")
+    return {"executable": executable, "expected": expected}
+
+
 def _recipes(value: object, repository: str) -> dict[str, object]:
     if not isinstance(value, dict) or len(value) > 100:
         raise ValueError("recipes must be an object of at most 100 named workflows")
     recipes = {}
     for name, recipe in value.items():
         _text(name, "recipe name")
-        if not isinstance(recipe, dict) or set(recipe) - {"description", "argv", "directory", "requires"}:
+        if not isinstance(recipe, dict) or set(recipe) - {"description", "argv", "directory", "requires", "version_check"}:
             raise ValueError(f"Invalid recipe: {name}")
         description = _text(recipe.get("description"), "recipe description")
         argv = recipe.get("argv")
@@ -247,6 +262,8 @@ def _recipes(value: object, repository: str) -> dict[str, object]:
             "description": description, "argv": argv, "directory": directory,
             "requires": _required_tools(recipe.get("requires", [])),
         }
+        if "version_check" in recipe:
+            recipes[name]["version_check"] = _version_check(recipe["version_check"])
     return recipes
 
 
@@ -655,6 +672,8 @@ def run_manifest_command(args: argparse.Namespace) -> int:
     for name, recipe in result["recipes"].items():
         print(f"Recipe: {name} — {recipe['description']}")
         print(f"  Directory: {recipe['directory']}; command: {shlex.join(recipe['argv'])}")
+        if version := recipe.get("version_check"):
+            print(f"  Declared version: {version['expected']} ({version['executable']}, unverified)")
         if recipe["missing_tools"]:
             print("  Missing tools: " + ", ".join(recipe["missing_tools"]))
     for name, application in result["desktop_applications"].items():

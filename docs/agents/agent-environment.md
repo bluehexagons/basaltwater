@@ -274,6 +274,11 @@ never executed by the manifest. Arguments do not expand environment variables,
 substitutions, or globs. Choose whether to run a recipe according to the user's
 task and review project commands before execution.
 
+Optional `version_check` declares a project-selected executable and
+expected version line for a visual recipe. Discovery reports the declaration
+as unverified. See [recipe version preflight](../workstations/visual-comparison-capture.md#check-a-recipe-tool-version)
+for selection, execution and result fields.
+
 `basaltw agent visuals check RECIPE --repository PATH --json` explicitly runs
 one declared recipe and retains its output, settings and environment evidence.
 This separate command is useful for post-refresh rendering checks; manifest and

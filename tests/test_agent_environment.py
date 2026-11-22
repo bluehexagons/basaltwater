@@ -251,6 +251,7 @@ class TestAgentEnvironment(unittest.TestCase):
                 "description": "Render the shared validation scene",
                 "argv": ["blender", "--background", "scene with spaces.blend", "--render-frame", "1"],
                 "requires": ["blender", "scene_tool"],
+                "version_check": {"executable": "./tools/blender", "expected": "Blender 4.5.2"},
             }},
         )
         with (
@@ -267,7 +268,10 @@ class TestAgentEnvironment(unittest.TestCase):
         self.assertEqual(result["required_tools"]["scene_tool"], {"executable": None, "status": "missing"})
         self.assertEqual(result["recipes"]["render"]["missing_tools"], ["scene_tool"])
         self.assertEqual(result["recipes"]["render"]["directory"], ".")
+        self.assertEqual(result["recipes"]["render"]["version_check"],
+                         {"executable": "./tools/blender", "expected": "Blender 4.5.2"})
         self.assertIn("Required tool: scene_tool (missing)", output.getvalue())
+        self.assertIn("Declared version: Blender 4.5.2 (./tools/blender, unverified)", output.getvalue())
         self.assertIn("'scene with spaces.blend'", output.getvalue())
         execute.assert_not_called()
 
@@ -298,6 +302,22 @@ class TestAgentEnvironment(unittest.TestCase):
             }})
             with self.assertRaisesRegex(ValueError, "remain below"):
                 agent_environment.load_project_environment(self.directory)
+
+    def test_invalid_version_check_declarations_are_rejected(self) -> None:
+        selection = {"executable": "blender", "expected": "Blender 4.5.2"}
+        for invalid in (
+            None, {"executable": "blender"}, {**selection, "args": ["--help"]},
+            {**selection, "executable": "--version"}, {**selection, "executable": "blender --version"},
+            {**selection, "executable": "../blender"}, {**selection, "executable": "./"},
+            {**selection, "expected": "Version\nOK"}, {**selection, "expected": " Blender 4.5.2"},
+            {**selection, "expected": ""},
+        ):
+            with self.subTest(version_check=invalid):
+                self.declaration(recipes={"render": {
+                    "description": "Check rendering", "argv": ["./render"], "version_check": invalid,
+                }})
+                with self.assertRaises(ValueError):
+                    agent_environment.load_project_environment(self.directory)
 
     def test_invalid_schema_and_mapping_are_rejected(self) -> None:
         for data in (

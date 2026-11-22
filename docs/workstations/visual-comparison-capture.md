@@ -71,8 +71,9 @@ Requested settings and inherited environment are context;
 the project must record the actual backend, GPU/software renderer, runtime,
 dimensions and settings used by its rendering process, including child workers.
 
-Success means that the declared recipe exited zero with its recorded settings
-intact. The project owns image decoding, complete-content checks, renderer
+The recipe must exit zero with its recorded settings intact. Requested version,
+receipt and gallery checks also contribute to the result. The project owns
+image decoding, complete-content checks, renderer
 assertions and performance thresholds. Generic GPU and UI readiness remain
 unverified; a prerequisite check, PNG header or exit code alone cannot verify
 them. Use 1440p/4K fixtures with known content near every edge to detect clipped
@@ -95,6 +96,39 @@ request `--power-profile performance|power-saver` for a command-scoped hold.
 See [performance sessions](performance-sessions.md) for power preferences,
 clock/thermal/workload snapshots, reservations, cleanup and measurement scope.
 Project scripts retain all performance and image acceptance thresholds.
+
+## Check a recipe tool version
+
+Add an optional `version_check` object to the recipe in `basaltwater-agent.json`:
+
+```json
+"version_check": {
+  "executable": "./tools/blender",
+  "expected": "Blender 4.5.2"
+}
+```
+
+Select an installed command name, a path relative to the recipe directory,
+or an absolute path. Keep private host paths out of shared declarations.
+Use the selected executable directly and keep any additional PATH prerequisites
+in `requires`. Choose a tool whose `--version` prints its version on the
+first stdout line without installing packages or activating a toolchain.
+
+When an explicit visual check runs this recipe, it checks the selected tool
+before launching the recipe or taking performance snapshots. The probe runs
+in the recipe's directory with a five-second deadline and a 4 KiB stdout
+limit. It matches the first line with surrounding whitespace removed.
+The private `tool_version` record in `check.json` gives the declaration, selected
+path, observed line, and outcome. A `missing`, `probe-failed` or
+`unexpected-version` result stops the recipe and retains the report and
+environment evidence. No recipe log is created before launch.
+
+For a `verified` match, the recipe receives the selected absolute executable
+path in `BASALTWATER_VISUAL_TOOL`. Its script should invoke
+`"$BASALTWATER_VISUAL_TOOL"` so the checked executable is the one used.
+PATH is inherited. Basaltwater discovery only displays the declaration.
+The project still owns the record of which executable and renderer produced
+its artifacts.
 
 ## Review a recipe's captures
 

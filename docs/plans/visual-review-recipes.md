@@ -1,11 +1,10 @@
 # Visual review recipes and tool preflight
 
-Start with a project recipe that produces both fixed poses and a sequence.
-Run it through the existing commands before extending the runner. Today
-`visuals check` retains recipe results and
-environment evidence, `visuals batch` reviews a prepared set of pairs, and
-`visuals capture` runs one PNG per revision in managed worktrees. Use those
-interfaces for the first pilot. See the [capture and receipt guide](../workstations/visual-comparison-capture.md)
+The recipe runner supports a retained gallery and an optional executable
+version preflight. The next consumer test is a recipe that produces both
+fixed poses and a sequence. Use `visuals check` for the recipe and environment
+evidence, `visuals batch` to reopen saved pairs, and `visuals capture` for one PNG
+per revision in managed worktrees. See the [capture and receipt guide](../workstations/visual-comparison-capture.md)
 and [sequence viewer](../workstations/visual-comparison-review.md#review-transition-sequences).
 
 Antistatic is the pilot consumer. Its recipe owns the named views, frame
@@ -21,31 +20,28 @@ review presentation. See the
   to retain the gallery with the check report. If the pilot needs whole capture
   sets from two commits, extend managed revision capture to accept that declared
   output while keeping its one-image mode.
-- Check the manifest and its referenced images within the retained recipe
-  evidence. Reuse the gallery's metadata compatibility checks and the
-  runner's optional origin receipts. Leave setting meanings and deliberate
-  comparison axes to the project. Preserve frame order, crops and the
-  original observations. Preserve the failed run's report and logs when
-  output or evidence is missing, malformed or incompatible.
-- Exercise a fictional recipe with a still and a short sequence, then the
-  consumer pilot. Cover identical replay settings, a deliberate setting
-  change with verified values, a missing frame, an incompatible pair and a
-  missing manifest. Check that existing single-image recipes still run and
-  that gallery generation uses the saved evidence without another render.
+- The local fixture and regression tests cover sequence order, gallery
+  generation from saved images, standalone batch replay, missing images or
+  manifests, incompatible settings and evidence path containment. Failed
+  gallery checks retain the recipe result and logs.
+- In the consumer pilot, exercise a still and a short sequence. Cover
+  identical replay settings and a deliberate setting change with verified
+  observed values. Check representative crops against the original captures.
+  Setting meanings and comparison axes belong to the project.
 
 ## Report the executable a recipe will use
 
-The [manifest](../agents/agent-environment.md) currently declares executable
-names for discovery. Pilot an opt-in recipe check for a project-selected
-executable and version using Blender. The project selects and pins the binary
-per recipe. Basaltwater should surface the selected path, observed version and
-result in the check report. Reuse bounded version probes where they fit, and
-make discovery safe to run without selecting tools, downloading packages or
-changing PATH. Distinguish a missing tool, an unexpected version, a failed
-probe and a verified match before expensive work starts. Verify on CachyOS
-with two recipe selections and a deliberate mismatch, then cover the portable
-check with executable fixtures. Leave schema parity and bake provenance to the
-consuming project's authoring checks.
+The [recipe version preflight](../workstations/visual-comparison-capture.md#check-a-recipe-tool-version)
+records the selected path, observed version line and outcome before running
+the recipe. Discovery reports the declaration without running the probe.
+Portable fixtures cover two executable selections, mismatch, absence and
+probe failure. A Debian Blender fixture used the checked path for a Cycles
+CPU render.
+
+Repeat on CachyOS with two installed Blender selections and a deliberate
+mismatch. Confirm the recipe invokes the checked path and the mismatch
+prevents a render. Schema parity and bake provenance belong to the consuming
+project's authoring checks.
 
 ## Repeat on another renderer
 

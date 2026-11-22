@@ -85,6 +85,9 @@ switch the primary checkout or publish evidence. Read
 [visual comparisons](../workstations/visual-comparisons.md) for harness requirements and cleanup.
 
 `agent visuals check` runs a declared recipe and retains its private evidence.
+If the recipe declares a `version_check`, it checks the selected executable
+before launch and records the result in `tool_version`. See
+[recipe version preflight](../workstations/visual-comparison-capture.md#check-a-recipe-tool-version).
 When the recipe emits a batch manifest, `--review-manifest RELATIVE_JSON`
 also generates a gallery and links it in the check report. See
 [recipe gallery generation](../workstations/visual-comparison-capture.md#review-a-recipes-captures).

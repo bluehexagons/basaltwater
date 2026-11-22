@@ -14,12 +14,13 @@ import uuid
 
 from lib.agent_environment import inspect_environment
 from lib.agent_graphics import graphics_environment
+from lib.agent_probe import run_probe
 from lib.agent_reservations import termination_cleanup
 from lib.agent_visuals import _directory, _settings, _settings_unchanged, validate_review_manifest
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.remote_utils import is_dry_run, run
 from lib.streamed_process import run_streamed
-from lib.validation import validate_filesystem_path
+from lib.validation import validate_filesystem_path, validate_no_control_characters
 
 
 ARCH_GRAPHICS_PACKAGES = (
@@ -91,6 +92,31 @@ def host_context(environment: dict[str, str]) -> dict:
     return context
 
 
+def _check_tool_version(selection: dict[str, str], cwd: str, environment: dict[str, str]) -> dict:
+    executable = selection["executable"]
+    expected = selection["expected"]
+    if "/" in executable:
+        path = shutil.which(str(Path(cwd) / executable))
+    else:
+        # Match lookup in the recipe's directory even when PATH has relative entries.
+        search_path = os.pathsep.join(os.path.join(cwd, entry) for entry in os.get_exec_path(environment))
+        path = shutil.which(executable, path=search_path)
+    evidence = {**selection, "path": path, "observed": None, "status": "missing"}
+    if path is None:
+        return evidence
+    result = run_probe([path, "--version"], cwd=cwd, env=environment, timeout=5, max_bytes=4096)
+    if result.issue:
+        return {**evidence, "status": "probe-failed", "issue": result.issue}
+    observed = result.output.partition("\n")[0].strip()
+    try:
+        validate_no_control_characters(observed, "Observed version line")
+    except ValueError:
+        observed = ""
+    if not 1 <= len(observed) <= 256:
+        return {**evidence, "status": "probe-failed", "issue": "invalid_version_line"}
+    return {**evidence, "observed": observed, "status": "verified" if observed == expected else "unexpected-version"}
+
+
 @termination_cleanup()
 def check_recipe(args: argparse.Namespace) -> dict:
     """Execute one reviewed declaration and retain the requested evidence."""
@@ -141,24 +167,33 @@ def check_recipe(args: argparse.Namespace) -> dict:
         report["review"] = {"manifest": os.path.join(directory, args.review_manifest)}
     performance = None
     profile = getattr(args, "power_profile", None)
-    if getattr(args, "performance_session", False) or profile:
-        performance = {"schema_version": 1, "requested_profile": profile, "before": None, "after": None,
-                       "active_observation": os.path.join(directory, "performance-active.json"),
-                       "scope": "point-in-time-snapshots; no peak or exclusivity assertion"}
-        report["performance"] = os.path.join(directory, "performance.json")
     write_json_atomic(report_path, report)
     started = time.monotonic()
     try:
+        snapshot = {"manifest": manifest, "host": host_context(environment)}
+        write_json_atomic(environment_path, snapshot)
+        if selection := recipe.get("version_check"):
+            environment.pop("BASALTWATER_VISUAL_TOOL", None)
+            version = _check_tool_version(selection, cwd, environment)
+            report["tool_version"] = version
+            if version["status"] != "verified":
+                detail = version["observed"] or version.get("issue") or "executable not found"
+                raise RuntimeError(f"Recipe tool {version['executable']!r} preflight {version['status']}: "
+                                   f"expected {version['expected']!r}, found {detail!r}")
+            environment["BASALTWATER_VISUAL_TOOL"] = version["path"]
+            write_json_atomic(report_path, report)
         argv = recipe["argv"]
-        if performance is not None:
+        if getattr(args, "performance_session", False) or profile:
             from lib.agent_performance import performance_argv, performance_snapshot
 
+            performance = {"schema_version": 1, "requested_profile": profile, "before": None, "after": None,
+                           "active_observation": os.path.join(directory, "performance-active.json"),
+                           "scope": "point-in-time-snapshots; no peak or exclusivity assertion"}
+            report["performance"] = os.path.join(directory, "performance.json")
             performance["before"] = performance_snapshot()
             write_json_atomic(report["performance"], performance)
             argv = performance_argv(argv, directory, args.timeout, profile)
             report["execution_command"] = argv
-        snapshot = {"manifest": manifest, "host": host_context(environment)}
-        write_json_atomic(environment_path, snapshot)
         descriptor = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "wb", buffering=0) as log:
             written = 0
