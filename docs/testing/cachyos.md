@@ -40,18 +40,22 @@ CachyOS VM/container provisioning are outside its scope. See the
 ## Prepare a current native test
 
 From the owning KDE account, use a reviewed checkout of the candidate revision
-to inspect the installed state and preview its saved setup.
+to inspect the installed state. Preview the saved setup with the installed CLI,
+which has the managed upgrade channel.
 
 ```fish
 git rev-parse HEAD
 git status -sb
 python3 -B ./basaltwater.py local cachyos-doctor --json
 python3 -B ./basaltwater.py agent manifest . --installation-context --capability skills --json
-python3 -B ./basaltwater.py refresh --dry-run
+basaltw refresh --dry-run
 ```
 
+Confirm that the displayed channel will apply the candidate revision. The
+`dev` channel follows `main`, and version or commit channels remain pinned.
 Record checkout and installed revisions, failures, and deferred observations in
-private evidence. Compare the running T3 version with the
+private evidence, including any pending T3 completion. Compare the T3 version
+in use with the
 [shared baseline](../agents/t3-qualification.md#stable-feature-baseline) and
 the package available for the selected desktop or web mode. Use the
 [refresh guide](../workstations/cachyos-refresh.md#upgrade-and-repeat-your-last-setup)

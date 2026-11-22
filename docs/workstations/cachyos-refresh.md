@@ -112,6 +112,19 @@ authenticated provider turn and terminal after activation. The final reload
 can disconnect the setup terminal, so save active work first. Concurrent setup
 or completion work is refused until the current operation finishes.
 
+If the terminal closes before you save the journal command, check local doctor
+and the recent completion units from the same account:
+
+```fish
+basaltw local cachyos-doctor --attention
+journalctl --user -u 'basaltwater-t3-completion-*.service' -n 60 --no-pager
+```
+
+A deferred `configuration.t3-completion` observation means the staged
+activation record is still present. Match the journal time to the setup run
+to distinguish work in progress from failure or interruption. A previous web
+runtime can remain active after rollback.
+
 The private record is `~/.local/state/basaltwater/cachyos/last-setup.json`.
 The adjacent private `last-report.json` records completion time, source commit
 and channel (when available), selected tool/package versions, and diagnostic

@@ -85,8 +85,18 @@ def _protect_desktop_data(home: Path) -> None:
             os.close(descriptor)
 
 
+def _runtime_prefix(home: Path) -> Path:
+    prefix = home / ".local/share/basaltwater/cachyos-t3"
+    validate_filesystem_path(str(prefix))
+    for path in (prefix, *prefix.parents):
+        if path.is_symlink() or (path.exists() and not path.is_dir()):
+            raise ValueError(f"Unsafe T3 directory: {path}")
+    return prefix
+
+
 def _check_managed_paths(home: Path) -> tuple[Path, Path]:
     unit = _user_unit_path(home)
+    validate_filesystem_path(str(unit.parent))
     default_directory = home / ".config/systemd/user"
     if unit.parent != default_directory:
         for name in (T3_SERVICE, "t3code.service"):
@@ -97,13 +107,8 @@ def _check_managed_paths(home: Path) -> tuple[Path, Path]:
                     "configuration before changing XDG_CONFIG_HOME"
                 )
     desktop.autostart_path(home)
-    prefix = home / ".local/share/basaltwater/cachyos-t3"
+    prefix = _runtime_prefix(home)
     marker = prefix / "desktop-mode"
-    for path in (prefix, unit.parent):
-        validate_filesystem_path(str(path))
-        for parent in (path, *path.parents):
-            if parent.is_symlink() or (parent.exists() and not parent.is_dir()):
-                raise ValueError(f"Unsafe T3 directory: {parent}")
     for path in (unit, marker):
         if path.is_symlink() or (path.exists() and (
             not path.is_file() or _MARKER not in path.read_text()
@@ -445,7 +450,7 @@ def _pending_completion(prefix: Path) -> dict | None:
         raise ValueError("Unsafe T3 pending completion record")
     record = read_json_file(str(path), max_bytes=32768)
     if (not isinstance(record, dict) or record.get("owner") != _MARKER
-            or record.get("mode") not in {"web", "desktop"}
+            or record.get("mode") not in ("web", "desktop")
             or not isinstance(record.get("request"), str)
             or not re.fullmatch(r"[0-9a-f]{32}", record["request"])):
         raise ValueError("Invalid T3 pending completion record")
@@ -455,6 +460,20 @@ def _pending_completion(prefix: Path) -> dict | None:
     if set(record) != expected or not all(isinstance(value, str) for value in record.values()):
         raise ValueError("Invalid T3 pending completion record")
     return record
+
+
+def collect_completion_health(home: Path) -> tuple[str, str] | None:
+    """Expose unfinished activation independently of the currently running app."""
+    try:
+        pending = _pending_completion(_runtime_prefix(home))
+    except FileNotFoundError:
+        return None  # The worker can retire the record during observation.
+    except (OSError, ValueError):
+        return "failed", "T3 completion record is unsafe or unreadable. Inspect it locally before retrying."
+    if pending is None:
+        return None
+    return ("deferred", f"T3 {pending['mode']} activation is still pending. "
+            "Check the setup completion journal for a queued, failed, or interrupted worker.")
 
 
 def _stage_completion(config: SetupConfig, prefix: Path, values: dict) -> None:
