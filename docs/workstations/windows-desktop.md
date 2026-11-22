@@ -48,7 +48,11 @@ not trigger reboot. `--no-reboot` defers reboot for this run; see
 [restart conditions and status](windows.md) for details.
 
 The workstation doctor checks stable PowerShell 7 and, when T3 is selected,
-desktop readiness. Neither installed GPU drivers, an accessible desktop nor a
+desktop readiness. After a Windows logon change, doctor can check the current
+desktop without rewriting saved state. A successful inventory records the
+current session and invalidates the previous session's window references and
+capture receipts.
+Neither installed GPU drivers, an accessible desktop nor a
 healthy Sunshine service proves rendering, audio, encoder or streaming readiness.
 Qualify actual Moonlight video/audio/input, display/scaling changes, lock and
 reconnect behavior using the [Sunshine guide](windows-sunshine.md).

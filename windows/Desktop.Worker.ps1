@@ -17,11 +17,14 @@ function Invoke-NativeColdEnvelope($Envelope) {
         $peer=Pin-NativeWarmProcess $record ([int]$Envelope.pid) ([long]$Envelope.created)
         $now=[Diagnostics.Stopwatch]::GetTimestamp()
         if([long]$Envelope.deadline -le $now -or [long]$Envelope.deadline-$now -gt 10*[Diagnostics.Stopwatch]::Frequency){throw 'Cold worker request expired or exceeds budget'}
-        if(Test-Path -LiteralPath (Get-NativeDesktopStatePath)){
-            $state=Read-NativeHeldJson (Get-NativeDesktopStatePath) 2097152
-            if($state.owner -cne $Envelope.sid -or $state.session -cne $Envelope.session -or $state.revision -cne $Envelope.revision -or $state.generation -cne $Envelope.generation){throw 'Desktop control/generation changed before cold dispatch'}
+        $state=Read-NativeDesktopStateRecord
+        if (($null -eq $state -and $null -ne $Envelope.state_session) -or
+            ($null -ne $state -and ($state.owner -cne $Envelope.sid -or $state.session -cne $Envelope.state_session -or
+                $state.revision -cne $Envelope.revision -or $state.generation -cne $Envelope.generation))) {
+            throw 'Desktop control/generation changed before cold dispatch'
         }
         if($Envelope.request.command -in @('input','window','element','hold-plan','hold')){
+            if ($null -eq $state -or $state.session -cne $Envelope.session) { throw 'Desktop control does not belong to the current session' }
             $coldRecord=$record;$coldEnvelope=$Envelope;$coldPeer=$peer
             $script:NativeDesktopInputGuard=[Func[string]]{Get-NativeWarmInputGuardReason $coldRecord $coldEnvelope $coldPeer}
             $reason=$script:NativeDesktopInputGuard.Invoke();if($reason){throw $reason}

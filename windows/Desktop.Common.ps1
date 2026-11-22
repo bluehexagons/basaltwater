@@ -103,15 +103,21 @@ function Set-NativeDesktopMarker([string]$Path, [string]$Text) {
     }
 }
 
-function Read-NativeDesktopState($Context) {
+function Read-NativeDesktopStateRecord {
     $path = Get-NativeDesktopStatePath
-    $state = @{ version = 1; owner = $Context.Sid; mode = 'enabled'; until = 0L; revision = [guid]::NewGuid().ToString('N');
-        session = $Context.Session; generation = [guid]::NewGuid().ToString('N'); windows = @(); elements = @(); window_observed = 0L; element_observed = 0L }
     if (Test-Path -LiteralPath $path) {
         Assert-NativeDesktopPrivatePath (Split-Path -Parent $path)
-        Assert-NativeDesktopPrivatePath $path
-        if ((Get-Item -LiteralPath $path).Length -gt 2097152) { throw 'Desktop state exceeds size bound' }
-        $record = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+        $record = Read-NativeHeldJson $path 2097152
+        if ($record -isnot [pscustomobject]) { throw 'Invalid desktop state record' }
+        return $record
+    }
+}
+
+function Read-NativeDesktopState($Context) {
+    $record = Read-NativeDesktopStateRecord
+    $state = @{ version = 1; owner = $Context.Sid; mode = 'enabled'; until = 0L; revision = [guid]::NewGuid().ToString('N');
+        session = $Context.Session; generation = [guid]::NewGuid().ToString('N'); windows = @(); elements = @(); window_observed = 0L; element_observed = 0L }
+    if ($null -ne $record) {
         foreach ($key in @($state.Keys)) {
             if (-not $record.PSObject.Properties[$key]) { throw "Invalid desktop state: missing $key" }
             $state[$key] = $record.$key
@@ -126,9 +132,7 @@ function Read-NativeDesktopState($Context) {
     }
     # Optional bounded receipt: older version-1 state files remain readable.
     $state.observation = $null
-    if (Test-Path -LiteralPath $path) {
-        if ($record.PSObject.Properties['observation']) { $state.observation = $record.observation }
-    }
+    if ($null -ne $record -and $record.PSObject.Properties['observation']) { $state.observation = $record.observation }
     if ($state.observation -and ($state.observation.session -cne $state.session -or $state.observation.generation -cne $state.generation -or $state.observation.revision -cne $state.revision)) { $state.observation = $null }
     return $state
 }
@@ -271,11 +275,17 @@ function Invoke-NativeDesktopWorker($Request, [int]$TimeoutSeconds = 8) {
         $payload=$Request
         $enveloped=$Request.command -in @('ready','windows','inspect','window','element','input','screenshot','hold-plan','hold')
         if($enveloped){
-            $context=Get-NativeDesktopContext;$state=Read-NativeDesktopState $context
+            $context=Get-NativeDesktopContext
+            # Match what the worker can read on disk. The caller's normalized
+            # state can already have a new session generation or revision.
+            $state=Read-NativeDesktopStateRecord
             $self=[Diagnostics.Process]::GetCurrentProcess()
             try{$created=$self.StartTime.ToUniversalTime().Ticks}finally{$self.Dispose()}
             $payload=@{version=1;id=[guid]::NewGuid().ToString('N');pid=$PID;created=$created;sid=$context.Sid;session=$context.Session;directory=$directory;
-                revision=$state.revision;generation=$state.generation;deadline=([Diagnostics.Stopwatch]::GetTimestamp()+$TimeoutSeconds*[Diagnostics.Stopwatch]::Frequency);request=$Request}
+                state_session=$null;revision=$null;generation=$null;deadline=([Diagnostics.Stopwatch]::GetTimestamp()+$TimeoutSeconds*[Diagnostics.Stopwatch]::Frequency);request=$Request}
+            if ($null -ne $state) {
+                $payload.state_session=$state.session; $payload.revision=$state.revision; $payload.generation=$state.generation
+            }
         }
         [IO.File]::WriteAllText($inputPath, ($payload | ConvertTo-Json -Depth 40 -Compress))
         $source = (Join-Path $script:NativeDesktopSource 'Desktop.Common.ps1').Replace("'", "''")

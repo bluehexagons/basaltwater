@@ -93,10 +93,17 @@ try {
         function Get-NativeDesktopStatePath {return Join-Path $temporary 'state.json'}
         function Get-NativeDesktopContext {return @{Sid='fixture';Session='fixture-session'}}
         function Pin-NativeWarmProcess($Record,[int]$ProcessId,[long]$Created){if($Created -ne 123){throw 'stale caller'};return [Diagnostics.Process]::GetCurrentProcess()}
-        function Invoke-NativeDesktopWorkerBody($Request){$reason=$script:NativeDesktopInputGuard.Invoke();if($reason){throw $reason};$script:BacklogEffects++;return @{submitted=$true}}
+        function Invoke-NativeDesktopWorkerBody($Request){
+            if ($Request.command -eq 'input') {
+                $reason=$script:NativeDesktopInputGuard.Invoke()
+                if ($reason) { throw $reason }
+            }
+            $script:BacklogEffects++
+            return @{submitted=$true}
+        }
         $script:BacklogEffects=0
         Write-NativeHeldJson (Get-NativeDesktopStatePath) @{owner='fixture';session='fixture-session';revision='r';generation='g';mode='enabled'}
-        $envelope=[pscustomobject]@{version=1;id=('c'*32);sid='fixture';session='fixture-session';directory=$temporary;pid=$PID;created=123;revision='r';generation='g';deadline=([Diagnostics.Stopwatch]::GetTimestamp()+8*[Diagnostics.Stopwatch]::Frequency);request=@{command='input'}}
+        $envelope=[pscustomobject]@{version=1;id=('c'*32);sid='fixture';session='fixture-session';state_session='fixture-session';directory=$temporary;pid=$PID;created=123;revision='r';generation='g';deadline=([Diagnostics.Stopwatch]::GetTimestamp()+8*[Diagnostics.Stopwatch]::Frequency);request=@{command='input'}}
         $reply=Invoke-NativeColdEnvelope $envelope
         Assert-Backlog ($reply.ok -and $script:BacklogEffects -eq 1) 'Cold envelope refused valid pinned request'
         $envelope.created=124;$reply=Invoke-NativeColdEnvelope $envelope
@@ -106,6 +113,25 @@ try {
         $envelope.deadline=[Diagnostics.Stopwatch]::GetTimestamp()+8*[Diagnostics.Stopwatch]::Frequency;$envelope.generation='changed'
         $reply=Invoke-NativeColdEnvelope $envelope
         Assert-Backlog (-not $reply.ok -and -not $reply.submitted -and $script:BacklogEffects -eq 1) 'Cold worker ignored generation change'
+        Write-NativeHeldJson (Get-NativeDesktopStatePath) @{owner='fixture';session='previous-session';revision='r';generation='g';mode='disabled'}
+        $envelope.state_session='previous-session';$envelope.generation='g'
+        $envelope.request.command='windows'
+        $reply=Invoke-NativeColdEnvelope $envelope
+        Assert-Backlog ($reply.ok -and $script:BacklogEffects -eq 2) 'Cold observation refused the unchanged prior-session record'
+        $envelope.request.command='input'
+        $reply=Invoke-NativeColdEnvelope $envelope
+        Assert-Backlog (-not $reply.ok -and -not $reply.submitted -and $script:BacklogEffects -eq 2) 'Prior-session authority allowed cold input'
+        $envelope.request.command='ready'
+        $envelope.revision='changed'
+        $reply=Invoke-NativeColdEnvelope $envelope
+        Assert-Backlog (-not $reply.ok -and -not $reply.submitted -and $script:BacklogEffects -eq 2) 'Cold readiness ignored a control revision change'
+        $envelope.revision='r'
+        Remove-Item -LiteralPath (Get-NativeDesktopStatePath)
+        $reply=Invoke-NativeColdEnvelope $envelope
+        Assert-Backlog (-not $reply.ok -and -not $reply.submitted -and $script:BacklogEffects -eq 2) 'Cold readiness ignored removal of the saved state'
+        $envelope.state_session=$null;$envelope.revision=$null;$envelope.generation=$null
+        $reply=Invoke-NativeColdEnvelope $envelope
+        Assert-Backlog ($reply.ok -and $script:BacklogEffects -eq 3) 'Cold readiness required a state file on first use'
     }
     Write-Host 'Input backlog event, ownership, timeline and cold envelope tests passed (all APIs mocked).'
 } finally {
