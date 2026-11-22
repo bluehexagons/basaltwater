@@ -49,7 +49,9 @@ try {
     Assert-CaptureThrows {Invoke-NativeWindowCapture ($selectors+@('--output',(Join-Path $temporary 'stale')))} 'fresh matching'
     $script:CaptureFixtureState.generation='fixture-generation'
     $good=Invoke-NativeWindowCapture ($selectors+@('--output',(Join-Path $temporary 'good'),'--frames','1'))
-    Assert-Capture ($good.ok -and $good.result.frames.Count -eq 1 -and $null -eq $good.result.observation_id -and $good.result.cleanup_confirmed) 'Capture lost evidence or minted input authority'
+    Assert-Capture ($good.ok -and $good.result.frames.Count -eq 1 -and $null -eq $good.result.observation_id -and $good.result.cleanup_confirmed) "Capture lost evidence or minted input authority. Errors: $($good.result.errors -join ', ')"
+    Assert-NativeDesktopPrivatePath (Join-Path $temporary 'good\frames.jsonl')
+    Assert-NativeDesktopPrivatePath (Join-Path $temporary 'good\frame-0000.png')
     Assert-Capture ($good.result.frames[0].sha256 -eq (Get-FileHash (Join-Path $temporary 'good\frame-0000.png')).Hash.ToLowerInvariant()) 'Frame digest missing'
     Assert-CaptureThrows {Invoke-NativeWindowCapture ($selectors+@('--output',(Join-Path $temporary 'good')))} 'new directory'
     Assert-Capture ($script:CaptureFixtureCalls -eq 1) 'Existing output replayed capture'

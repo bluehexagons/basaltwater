@@ -18,12 +18,15 @@ function Initialize-NativeEvidenceFileOwner([string]$Path) {
     Assert-NativeDesktopPath $Path
     $acl=Get-Acl -LiteralPath $Path
     $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User
-    if($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -notin @($sid.Value,'S-1-5-32-544')){throw 'Unexpected new evidence file owner'}
+    $owner=$acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+    if($owner -notin @($sid.Value,'S-1-5-32-544')){throw 'Unexpected new evidence file owner'}
     foreach($rule in $acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])){
         if($rule.AccessControlType -eq 'Allow' -and $rule.IdentityReference.Value -notin @($sid.Value,'S-1-5-18','S-1-5-32-544')){throw 'Unsafe new evidence file ACL'}
     }
-    $acl.SetOwner($sid);Set-Acl -LiteralPath $Path -AclObject $acl
-    Assert-NativeDesktopPrivatePath $Path
+    if($owner -ne $sid.Value){
+        $acl.SetOwner($sid);Set-Acl -LiteralPath $Path -AclObject $acl
+        Assert-NativeDesktopPrivatePath $Path
+    }
 }
 function Write-NativeEvidenceJson([string]$Path,$Record,[int]$Limit=65536) {
     Assert-NativeDesktopPrivatePath (Split-Path -Parent $Path)
@@ -176,12 +179,13 @@ function Invoke-NativeWindowCapture([string[]]$Arguments) {
         $receipt.cleanup_confirmed=$true; $receipt.helper=$result.Receipt
         $path=Join-Path $directory 'frames.jsonl'
         if(Test-Path -LiteralPath $path){
+            Initialize-NativeEvidenceFileOwner $path
             if((Get-Item -LiteralPath $path).Length -gt 128KB){throw 'Frame journal exceeds bound'}
             foreach($line in Get-Content -LiteralPath $path){
                 if($receipt.frames.Count -ge 120){throw 'Frame count exceeds bound'}
                 $frame=$line | ConvertFrom-Json
                 if($frame.sequence -ne $receipt.frames.Count -or $frame.artifact -cne ('frame-{0:D4}.png' -f $receipt.frames.Count)){throw 'Invalid frame journal identity'}
-                $image=Join-Path $directory $frame.artifact;Assert-NativeDesktopPrivatePath $image
+                $image=Join-Path $directory $frame.artifact;Initialize-NativeEvidenceFileOwner $image
                 $frame | Add-Member NoteProperty sha256 (Get-FileHash -LiteralPath $image).Hash.ToLowerInvariant()
                 $receipt.frames+=,$frame
             }

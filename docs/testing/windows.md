@@ -59,7 +59,10 @@ Separate raw log streams preserved the original diagnostics.
 The hosted Windows worker fixture also exposed a cold mailbox ownership
 mismatch. Cold requests and replies now use the same account-owned file
 creation as warm mailboxes, including when an administrator token supplies a
-different default file owner.
+different default file owner. The hosted capture fixture exposed the same
+default ownership on helper-written files. Capture now verifies the private
+ACL and sets account ownership on the frame journal and PNGs before consuming
+them.
 
 See the [Windows evidence procedures](../workstations/windows-evidence.md) for
 reproduction commands and [file media qualification](../workstations/windows-media.md#native-qualification)
