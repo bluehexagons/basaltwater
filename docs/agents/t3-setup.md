@@ -110,10 +110,12 @@ is needed. See [Windows setup](../workstations/windows.md).
 Debian `sudo basaltw refresh` runs in an independent system service, including
 when invoked from a local T3 terminal or over SSH from another environment.
 The caller's exit 0 confirms dispatch. Inspect the printed private refresh log,
-refresh unit result and final T3 completion unit result before assuming success.
+refresh unit result, and final T3 completion receipt and journal. The transient
+completion timer and successful service unload when the worker finishes.
+Failed services remain visible in systemd.
 CachyOS keeps package and sudo prompts interactive until the completion handoff.
-Queue acceptance does not prove app or provider readiness: inspect the printed
-unit/status, then verify an authenticated provider turn and terminal. See
+Check the printed unit status on CachyOS. Verify an authenticated provider turn
+and terminal after completion. See
 [refresh behavior](../reference/command-line.md#refresh-this-machine).
 
 When Codex is selected, root-owned Codex defaults make direct CLI sessions use

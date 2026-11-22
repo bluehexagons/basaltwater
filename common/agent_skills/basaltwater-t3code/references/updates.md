@@ -250,15 +250,17 @@ or an SSH connection from another T3 environment. Exit 0 confirms dispatch,
 not successful refresh. The command prints its private log under
 `/var/log/basaltwater-refresh/` and a `systemctl show` command for the final
 `Result` and `ExecMainStatus`. The final T3 reload is a separate completion
-unit whose identity appears in that log; inspect its result too, then run
+job. Use the receipt path and journal command printed in that log, then run
 `basaltw agent doctor --capability t3code`. Dry runs and OCI refresh without
 service management stay in the foreground; OCI does not host managed T3.
 
-The final T3 completion worker reports a private per-request JSON receipt.
-Check `status` and `issue` as well as the unit result. A `ready` receipt
-confirms the worker's readiness checks. Verify an authenticated provider turn
-separately. If the worker has exited and the receipt is still nonterminal,
-inspect its unit and logs before starting a replacement refresh.
+The final T3 completion worker records `status` and `issue` in a private
+per-request JSON receipt. The timer and successful service unload after the
+worker exits. The journal records its outcome, and failed services remain
+visible in systemd. A `ready` receipt confirms the worker's readiness checks.
+Verify an authenticated provider turn separately. If the worker has exited
+and the receipt is still nonterminal, check the journal before starting a
+replacement refresh.
 
 CachyOS retains interactive package/sudo prompts and defers disruptive T3
 activation until all steps, saved state and notifications finish. Its queued

@@ -857,8 +857,9 @@ class DebianT3CompletionTests(unittest.TestCase):
             pw_uid=1000, pw_dir="/home/human")))
 
     def queue(self):
-        with patch("sys.stdout", new_callable=io.StringIO):
+        with patch("sys.stdout", new_callable=io.StringIO) as stdout:
             self.completion.queue_completion(self.config)
+        self.queue_output = stdout.getvalue()
         return json.loads(self.request.read_text())["id"]
 
     def receipt(self, request):
@@ -873,11 +874,16 @@ class DebianT3CompletionTests(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(self.request.stat().st_mode), 0o600)
         command = self.run.call_args.args[0]
         self.assertIn("--property=StandardInput=null", command)
+        self.assertIn("--property=StandardOutput=null", command)
         self.assertIn("--on-active=5s", command)
-        self.completion.complete(old, 123, "456")
+        self.assertIn("--timer-property=RemainAfterElapse=no", command)
+        self.assertNotIn("--property=RemainAfterExit=yes", command)
+        self.assertIn(f"journalctl -u basaltwater-t3-finish-{current}.service", self.queue_output)
+        self.assertIn(self.completion._receipt_path(current), self.queue_output)
+        self.assertEqual(self.completion.complete(old, 123, "456"), "superseded")
         self.service.assert_not_called()
         self.assertEqual(self.receipt(old)["status"], "superseded")
-        self.completion.complete(current, 123, "456")
+        self.assertEqual(self.completion.complete(current, 123, "456"), "ready")
         self.service.assert_called_once_with("human", 1000, "restart", "t3code")
         self.ready.assert_called_once_with("human", 1000, "127.0.0.1", 3773, "/home/human")
         receipt = self.receipt(current)
