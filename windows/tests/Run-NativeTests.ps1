@@ -259,8 +259,8 @@ try {
         if ($Arguments -contains '--dry-run') { return }
         if ($Arguments -contains '/bin/bash') {
             Assert-True (($Arguments -join ' ') -match '--user agent --exec /bin/bash -lc') 'Version checks must run as the saved non-root user in a login shell'
-            $script:WslVersionChecks = $Arguments[-1]
-            if ($script:WslToolBroken) { $global:LASTEXITCODE = 127 }
+            $global:BasaltwaterWslVersionChecks = $Arguments[-1]
+            if ($global:BasaltwaterWslToolBroken) { $global:LASTEXITCODE = 127 }
             return
         }
         if ($Arguments -contains 'unittest') { return }
@@ -297,20 +297,21 @@ try {
         }
         $qualificationState | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $setupDirectory 'wsl-setup.json') -Encoding UTF8
         $wslTests = Join-Path $PSScriptRoot 'Run-WslTests.ps1'
-        $script:WslToolBroken = $false
-        $script:WslVersionChecks = ''
+        $global:BasaltwaterWslToolBroken = $false
+        $global:BasaltwaterWslVersionChecks = ''
         & $wslTests | Out-Null
         foreach ($tool in @('git-lfs', 'cc', 'make', 'python3', 'node', 'npm', 'pnpm', 'python', 'uv', 'gh', 'codex')) {
-            Assert-True ($script:WslVersionChecks.Contains(" $tool --version")) "Qualification did not run $tool"
+            Assert-True ($global:BasaltwaterWslVersionChecks.Contains(" $tool --version")) "Qualification did not run $tool"
         }
-        Assert-True ($script:WslVersionChecks.Contains(' go version')) 'Qualification did not run Go'
-        Assert-True (-not $script:WslVersionChecks.Contains(' claude --version')) 'Qualification ran an unselected provider'
-        $script:WslToolBroken = $true
+        Assert-True ($global:BasaltwaterWslVersionChecks.Contains(' go version')) 'Qualification did not run Go'
+        Assert-True (-not $global:BasaltwaterWslVersionChecks.Contains(' claude --version')) 'Qualification ran an unselected provider'
+        $global:BasaltwaterWslToolBroken = $true
         Assert-Throws { & $wslTests } 'Installed Ubuntu WSL tool version check failed'
     } finally {
         Remove-Item Function:\wsl.exe
         Remove-Item Function:\Get-CimInstance
         Remove-Item Function:\Get-PSDrive
+        Remove-Variable BasaltwaterWslVersionChecks, BasaltwaterWslToolBroken -Scope Global -ErrorAction SilentlyContinue
     }
 
     # Each job exports this entire fixture. Include the shipping smoke script
