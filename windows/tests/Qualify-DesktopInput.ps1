@@ -119,11 +119,14 @@ try {
         if($holder.HasExited -or $clock.Elapsed.TotalSeconds -gt 25){throw 'Monitoring probe never observed an actual held key'}
         Start-Sleep -Milliseconds 20
     }
-    $monitor=Invoke-Probe (@('screenshot')+$selectors[0..5]+@('--output',(Join-Path $EvidenceDirectory 'during-hold.png')))
+    # Starting the lease invalidates the pre-input window inventory.
+    $monitorSelectors=Get-ProbeInputArgs
+    $monitor=Invoke-Probe (@('screenshot')+$monitorSelectors[0..5]+@('--output',(Join-Path $EvidenceDirectory 'during-hold.png')))
     if($null -ne $monitor.result.observation_id -or $monitor.result.observation_unavailable_reason -ne 'keyboard-lease-active-or-uncertain'){throw 'Capture during actual held input minted authority'}
     if(-not $holder.WaitForExit(30000)){throw 'Monitoring hold did not settle'}
     $held=Get-Content -LiteralPath (Join-Path $EvidenceDirectory 'monitor-hold.json') -Raw|ConvertFrom-Json
-    if(-not $held.ok -or -not $held.receipt.cleanup_confirmed){throw 'Monitoring hold cleanup unconfirmed'}
+    if(-not $held.receipt.cleanup_confirmed){throw 'Monitoring hold cleanup unconfirmed'}
+    if(-not $held.ok){throw "Monitoring hold stopped early: $($held.result.reason) $($held.error)"}
     $holder.Dispose();$holder=$null
     $capture=New-ProbeCapture
     if(-not $capture.result.observation_id){throw 'Fresh capture after cleanup did not regain authority'}

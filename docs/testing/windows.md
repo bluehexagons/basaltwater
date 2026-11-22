@@ -1,7 +1,7 @@
 # Windows and WSL testing status
 
-**Evidence reconciled 2026-11-01 from installed and checkout native checks,
-retained task and project QA records, and the owner's basic setup report.** Native Windows
+**Native evidence updated 2026-11-22.** Historical entries retain their dates
+and source revisions. Native Windows
 and Ubuntu WSL are separate environments: a pass on one does not establish the other. See the
 [status legend](README.md#status-legend) and
 [Windows qualification procedure](../workstations/windows-qualification.md).
@@ -28,6 +28,41 @@ web services, privilege broker or remote setup profiles. See the
 | Windows/WSL GitHub runner | 🟡 **Partial** | Offline native runner tests; live Windows 11/WSL qualification open | Registration, real jobs, cancellation and reboot |
 | Selected native builds, packages and Godot exports | 🟢 **Labbed** | Historical project-owned QA from 2026-10-28 covers C++/Node builds, OpenGL fixtures, package startup and Godot suites/export. The 2026-11-01 source game follow-up rebuilt its addon/TypeScript and passed its full Windows gate and desktop checks; Godot 4.7.2 executable was rechecked | Historical packages and Godot exports were not rebuilt or requalified; matching templates are not revalidated by doctor. Manual presentation, physical input/audio, clean-machine packages and broader projects remain open |
 | Managed native build host | ⚪ **Planning only** | Proposed backend; distinct from the existing runner | Implementation, isolation, transport and native workload qualification |
+
+### Native qualification: 2026-11-22
+
+On a prepared Windows 11 x64 account, all 28 checks passed in both the
+installed and checkout workstation doctors at `03e4e245`. Cold window discovery
+also passed against a disposable saved record carrying a simulated stale logon
+identity. The real cold worker renewed the generation and preserved the
+control mode and revision. The shared desktop record was unchanged by that
+probe.
+
+| Check | Observed result and scope |
+| --- | --- |
+| File media | A saved FFmpeg 9.0.2 executable path was stale after a WinGet update. With the discovery fix in `bd8a4380`, the 18 synthetic fixtures passed with Gyan FFmpeg/ffprobe 9.1 on Python 3.11 and 3.15. The checkout media CLI also analyzed a synthetic WAV successfully. |
+| GPU window capture | The synthetic D3D11 fixture produced five Windows Graphics Capture frames, both expected color phases, and frame geometry, DPI and timestamps. The lossless debug clip matched the decoded pixels exactly, with maximum timestamp error under 0.4 ms. The fixture exited through its disposable profile and its task registration was retired. |
+| Capture watchdog | The intentionally stalled helper exited at its 20-second deadline and stopped on loss of its owned caller. This exercised the production watchdog with a synthetic stall. |
+| Process audio | The generated owned tone was present, the unrelated tone was excluded, silence remained isolated, and cancellation retained partial audio. Terminating the public launcher stopped the helper. The owned session profile and task registration were removed. |
+| Held input and monitoring | A disposable WinForms window observed overlapping keys, timeline transitions, three drag endpoints and a wheel event. The original monitoring step reused window selectors invalidated by the hold. With fresh selectors, capture during the held key returned no input authority. One lease stopped early with confirmed release, and the subsequent cold observation run passed through the full hold, cleanup and fresh post-hold input. |
+| Process pacing | PresentMon 2.6.0 could not start an ETW trace under the current account. The incomplete receipt confirmed collector cleanup, and the fixture task and profile retired. Hitch measurements remain open for an account with trace privileges. |
+
+The complete checkout native suite passed in 397.5 seconds under Windows
+PowerShell 5.1 with PowerShell 7.7.0 and Python 3.15.2. It included 19 agent-output
+tests with three POSIX-only skips and eight Windows file-media tests. Earlier
+attempts exposed two fixture issues. Redirected TEMP put skill fixtures below
+an ancestor refused by the real ACL check. The detached argv probe decoded
+Unicode through a console code page. The corrected fixtures use disposable
+account-local paths for skill admission and compare ASCII-framed UTF-8 argv.
+Separate raw log streams preserved the original diagnostics.
+
+See the [Windows evidence procedures](../workstations/windows-evidence.md) for
+reproduction commands and [file media qualification](../workstations/windows-media.md#native-qualification)
+for the decoder gates. These results cover synthetic fixtures on one prepared
+account. Physical presentation and audio, fresh installation, WSL and
+streaming remain separate checks.
+
+### Historical native checks
 
 The 2026-10-31 [native record](../workstations/windows-qualification.md#recorded-local-run-2026-10-31)
 passed the complete offline suite on Windows PowerShell 5.1 and focused contracts

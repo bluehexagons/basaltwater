@@ -172,7 +172,9 @@ workers, but safely refused under concurrent test load. The default probe uses
 300 ms event spacing. Record actual send times rather than assuming that an
 accepted offset is achievable on every loaded system.
 The runner also checks token reuse/supersession, receipt mapping and null
-authority during an actual held key. Separately qualify SDL
+authority during an actual held key. The lease invalidates the previous window
+inventory, so the runner re-observes its fixture before taking the monitoring
+screenshot. Separately qualify SDL
 frame-polled overlap, cold/warm monitoring captures, capture expiry during slow
 watchdog startup, fullscreen reason codes, physical takeover, cancellation and
 hard caller/driver/watchdog loss. The probe alone does not establish these cases.

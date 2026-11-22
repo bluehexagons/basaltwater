@@ -67,8 +67,11 @@ It uses temporary state and mocked installers and requires Python 3.11+:
 ```powershell
 $nativeCommand = '$env:PSModulePath = [Environment]::GetEnvironmentVariable("PSModulePath", "Machine"); & .\windows\tests\Run-NativeTests.ps1'
 $nativeEncoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($nativeCommand))
-powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand $nativeEncoded *> (Join-Path $evidence 'native-tests.log')
-$nativeExit = $LASTEXITCODE
+$nativeProcess = Start-Process powershell.exe -ArgumentList @(
+    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $nativeEncoded
+) -WindowStyle Hidden -RedirectStandardOutput (Join-Path $evidence 'native-stdout.log') `
+    -RedirectStandardError (Join-Path $evidence 'native-stderr.log') -Wait -PassThru
+$nativeExit = $nativeProcess.ExitCode
 Set-Content -LiteralPath (Join-Path $evidence 'native-tests-exit.txt') -Value $nativeExit
 ```
 
@@ -79,6 +82,8 @@ duplicate type-data errors. The encoded command preserves its literal quotes;
 the invoking shell and saved user/machine module paths remain unchanged. The
 installed native CLI already isolates its compatibility workers. The full suite
 uses the 5.1 framework UI Automation assemblies; project tasks still use 7.
+Separate raw stdout and stderr capture preserves diagnostics when Windows
+PowerShell emits both CLIXML and plain native stderr. Inspect both streams.
 
 Inspect every nonzero result before rerunning. Preserve failure logs and use
 the relevant focused test entry point for diagnosis. A successful retry does

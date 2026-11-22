@@ -8,7 +8,10 @@ function Assert-Throws([scriptblock]$action, [string]$pattern) {
     if (-not $caught -or $caught.Exception.Message -notmatch $pattern) { throw "Expected failure: $pattern; received: $caught" }
 }
 $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
-$temporary = Join-Path ([IO.Path]::GetTempPath()) ('basaltwater-agent-test-' + [guid]::NewGuid().ToString('N'))
+# Skill delivery checks real ancestor ACLs, so keep the fake home on the
+# account's local profile even when TEMP is redirected to another volume.
+$fixtureRoot = [Environment]::GetFolderPath('LocalApplicationData')
+$temporary = Join-Path $fixtureRoot ('basaltwater-agent-test-' + [guid]::NewGuid().ToString('N'))
 $savedProfile = $env:USERPROFILE
 $savedLocal = $env:LOCALAPPDATA
 $savedAppData = $env:APPDATA
@@ -624,6 +627,13 @@ function Invoke-NativeAgentSetup {
     finally { [IO.Directory]::Delete($junction) }
 
     # Exercise the complete tool workflow without invoking any actual installer/provider.
+    # Stage a copy so real skill admission also works from an external checkout.
+    $setupSource = Join-Path $temporary 'setup-source'
+    $setupCommon = Join-Path $setupSource 'common'
+    New-Item -ItemType Directory -Path $setupCommon -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $repo 'common\agent_skills') -Destination $setupCommon -Recurse
+    Copy-Item -LiteralPath (Join-Path $repo 'windows') -Destination $setupSource -Recurse
+    Copy-Item -LiteralPath (Join-Path $repo 'pyproject.toml') -Destination $setupSource
     function Ensure-Winget { $script:EnsureCalls++ }
     function Update-WingetPackages {
         Assert-True ($script:EnsureCalls -eq ($script:UpgradeCalls + 1)) 'Bulk upgrade ran before WinGet was available'
@@ -676,16 +686,16 @@ function Invoke-NativeAgentSetup {
     $script:AddedPaths = @(); $script:NpmCalls = @(); $script:NpmExit = 0
     $script:VersionExit = 0; $script:FailPackage = $false
     $script:UvCalls = @(); $script:UvExit = 0
-    Assert-Throws { Invoke-NativeAgentSetup -Source $repo -Plan } 'requires -AgentTool'
-    Invoke-NativeAgentSetup -Source $repo -AgentTool claude -Plan
+    Assert-Throws { Invoke-NativeAgentSetup -Source $setupSource -Plan } 'requires -AgentTool'
+    Invoke-NativeAgentSetup -Source $setupSource -AgentTool claude -Plan
     Assert-True ($script:NpmCalls.Count -eq 0) 'Claude-only plan selected npm providers'
-    Invoke-NativeAgentSetup -Source $repo -AgentTool 'gh,codex,claude,opencode' -Node -Python -Go -NodeVersions -T3CodeDesktop -Sunshine -Plan
+    Invoke-NativeAgentSetup -Source $setupSource -AgentTool 'gh,codex,claude,opencode' -Node -Python -Go -NodeVersions -T3CodeDesktop -Sunshine -Plan
     Assert-True ($script:EnsureCalls -eq 0 -and $script:UpgradeCalls -eq 0 -and $script:Packages.Count -eq 0) 'Plan invoked a package manager'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.claude'))) 'Plan changed the fake home'
-    Invoke-NativeAgentSetup -Source $repo -AgentTool 'gh,codex,claude,opencode' -Node -Python -Go -NodeVersions -T3CodeDesktop
+    Invoke-NativeAgentSetup -Source $setupSource -AgentTool 'gh,codex,claude,opencode' -Node -Python -Go -NodeVersions -T3CodeDesktop
     Assert-True ($script:Packages.Count -eq 8) 'Fresh setup missed a selected native package'
     Assert-True ($script:NpmCalls.Count -eq 2) 'Fresh setup missed npm providers'
-    Invoke-NativeAgentSetup -Source $repo -AgentTool claude
+    Invoke-NativeAgentSetup -Source $setupSource -AgentTool claude
     Assert-True ($script:UpgradeCalls -eq 2) 'Setup rerun skipped the bulk upgrade'
     Assert-True ($script:NpmCalls.Count -eq 2) 'Claude-only setup installed Codex or OpenCode'
     Assert-True ($script:NpmCalls[0] -contains '--prefix') 'npm install was not scoped to the user prefix'
@@ -698,10 +708,10 @@ function Invoke-NativeAgentSetup {
     Push-Location -LiteralPath $pinnedProject
     try {
         $env:UV_PYTHON = '3.11'
-        Invoke-NativeAgentSetup -Source $repo -AgentTool codex -Python
+        Invoke-NativeAgentSetup -Source $setupSource -AgentTool codex -Python
         Assert-True ($env:UV_PYTHON -eq '3.11' -and $script:UvCalls[-2] -contains '--default') 'Host setup changed the caller Python request'
         $script:UvExit = 23
-        Assert-Throws { Invoke-NativeAgentSetup -Source $repo -AgentTool codex -Python } 'Python installation failed'
+        Assert-Throws { Invoke-NativeAgentSetup -Source $setupSource -AgentTool codex -Python } 'Python installation failed'
         Assert-True ($env:UV_PYTHON -eq '3.11') 'Python failure lost the caller request'
     } finally {
         $script:UvExit = 0
@@ -709,23 +719,23 @@ function Invoke-NativeAgentSetup {
         Pop-Location
     }
     $script:Packages = @(); $script:NpmCalls = @()
-    Invoke-NativeAgentSetup -Source $repo -AgentTool codex -T3CodeDesktop
+    Invoke-NativeAgentSetup -Source $setupSource -AgentTool codex -T3CodeDesktop
     Assert-True ($script:Packages.Count -eq 4 -and $script:NpmCalls.Count -eq 1 -and
         $script:Packages -contains 'T3Tools.T3Code') 'Rerun skipped selected package/provider updates'
     $script:VersionExit = 9
-    Assert-Throws { Invoke-NativeAgentSetup -Source $repo -AgentTool codex } 'version check failed'
+    Assert-Throws { Invoke-NativeAgentSetup -Source $setupSource -AgentTool codex } 'version check failed'
     $script:VersionExit = 0
     $script:Tools.Remove('codex'); $script:NpmExit = 23
-    Assert-Throws { Invoke-NativeAgentSetup -Source $repo -AgentTool codex } 'npm installation failed'
+    Assert-Throws { Invoke-NativeAgentSetup -Source $setupSource -AgentTool codex } 'npm installation failed'
     $script:Tools = @{}; $script:FailPackage = $true
-    Assert-Throws { Invoke-NativeAgentSetup -Source $repo -AgentTool codex } 'simulated package failure'
-    Assert-Throws { Invoke-NativeAgentSetup -Source $repo -AgentTool unsupported -Plan } 'Unsupported native agent tool'
+    Assert-Throws { Invoke-NativeAgentSetup -Source $setupSource -AgentTool codex } 'simulated package failure'
+    Assert-Throws { Invoke-NativeAgentSetup -Source $setupSource -AgentTool unsupported -Plan } 'Unsupported native agent tool'
     Write-Host 'Native agent workstation tests passed.'
 } finally {
     $env:USERPROFILE = $savedProfile; $env:LOCALAPPDATA = $savedLocal
     $env:APPDATA = $savedAppData; $env:PATH = $savedPath
     $resolvedTemporary = [IO.Path]::GetFullPath($temporary)
-    $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
+    $tempRoot = [IO.Path]::GetFullPath($fixtureRoot).TrimEnd('\') + '\'
     if (-not $resolvedTemporary.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'Unsafe test cleanup path' }
     [IO.Directory]::Delete('\\?\' + $resolvedTemporary, $true)
 }

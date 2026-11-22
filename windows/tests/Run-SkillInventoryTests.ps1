@@ -9,7 +9,9 @@ function Assert-Throws([scriptblock]$Action, [string]$Pattern) {
 }
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 . (Join-Path $repo 'windows\AgentWorkstation.Common.ps1')
-$temporary = Join-Path ([IO.Path]::GetTempPath()) ('basaltwater-skills-' + [guid]::NewGuid().ToString('N'))
+# The real ACL checks require trusted ancestors even when TEMP is redirected.
+$fixtureRoot = [Environment]::GetFolderPath('LocalApplicationData')
+$temporary = Join-Path $fixtureRoot ('basaltwater-skills-' + [guid]::NewGuid().ToString('N'))
 $savedProfile = $env:USERPROFILE
 $writer = ${function:Write-NativeSkillInventory}
 try {
@@ -137,7 +139,7 @@ try {
     Set-Item Function:\Write-NativeSkillInventory $writer
     $env:USERPROFILE = $savedProfile
     $resolved = [IO.Path]::GetFullPath($temporary)
-    $root = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
+    $root = [IO.Path]::GetFullPath($fixtureRoot).TrimEnd('\') + '\'
     if (-not $resolved.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { throw 'Unsafe skill test cleanup' }
     if (Test-Path $resolved) { Remove-Item -LiteralPath $resolved -Recurse -Force }
 }
