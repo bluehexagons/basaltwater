@@ -37,6 +37,28 @@ CachyOS VM/container provisioning are outside its scope. See the
 | Desktop/browser CA enrollment | ⚪ **Untested** | Arch userland probes ran as container root, not on the CachyOS desktop | Full desktop and browser trust with the intended client |
 | Managed Playwright | ⚪ **Planning only** | Deferred | Implementation and native qualification |
 
+## Prepare a current native test
+
+From the owning KDE account, use a reviewed checkout of the candidate revision
+to inspect the installed state and preview its saved setup.
+
+```fish
+git rev-parse HEAD
+git status -sb
+python3 -B ./basaltwater.py local cachyos-doctor --json
+python3 -B ./basaltwater.py agent manifest . --installation-context --capability skills --json
+python3 -B ./basaltwater.py refresh --dry-run
+```
+
+Record checkout and installed revisions, failures, and deferred observations in
+private evidence. Compare the running T3 version with the
+[shared baseline](../agents/t3-qualification.md#stable-feature-baseline) and
+the package available for the selected desktop or web mode. Use the
+[refresh guide](../workstations/cachyos-refresh.md#upgrade-and-repeat-your-last-setup)
+to apply the candidate, then retain the completion journal and repeat the
+checks. Run an authenticated provider turn and terminal in the selected
+environment before starting project-specific tests.
+
 ## Next checks
 
 1. Exercise the corrected T3 completion worker through a real shutdown/relaunch,

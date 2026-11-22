@@ -472,11 +472,15 @@ class DesktopRefreshTests(unittest.TestCase):
                 patch.object(desktop.pwd, "getpwnam", return_value=SimpleNamespace(pw_uid=1000)), \
                 patch("common.cachyos_steps._home", return_value=self.home), \
                 patch.object(desktop.time, "clock_gettime_ns", return_value=self.QUEUED_BEFORE_NS), \
-                patch("lib.remote_utils.run") as run:
+                patch("lib.remote_utils.run") as run, \
+                patch("sys.stdout", new_callable=io.StringIO) as output:
             desktop.queue_refresh(config)
             argv = run.call_args.args[0]
             self.assertEqual(argv[:3], ["/usr/bin/systemd-run", "--user", "--collect"])
             self.assertIn("--on-active=5s", argv)
+            self.assertIn("--timer-property=RemainAfterElapse=no", argv)
+            unit = next(arg.removeprefix("--unit=") for arg in argv if arg.startswith("--unit="))
+            self.assertIn(f"journalctl --user -u {unit}.service -n 30 --no-pager", output.getvalue())
             self.assertEqual(argv[-8:-6], ["/usr/bin/python3", "-I"])
             self.assertTrue(argv[-6].endswith("/common/service_tools/cachyos_t3_refresh.py"))
             self.assertEqual(argv[-5:], [str(self.QUEUED_BEFORE_NS), "desktop", str(self.home),
@@ -485,6 +489,23 @@ class DesktopRefreshTests(unittest.TestCase):
             run.reset_mock()
             desktop.queue_refresh(config)
             run.assert_not_called()
+
+    def test_web_worker_reports_http_readiness_only_after_activation(self):
+        with patch.object(refresh.os, "getuid", return_value=1000), \
+                patch.object(refresh.os, "open", return_value=2000), \
+                patch.object(refresh.os, "fstat", return_value=SimpleNamespace(
+                    st_mode=stat.S_IFREG | 0o600, st_uid=1000, st_nlink=1)), \
+                patch.object(refresh.fcntl, "flock"), \
+                patch.object(refresh, "restart_running_desktop") as restart, \
+                patch("common.cachyos_t3.complete_setup") as complete, \
+                patch.dict(os.environ):
+            for activated in (True, False):
+                with self.subTest(activated=activated), patch("sys.stdout", new_callable=io.StringIO) as output:
+                    complete.return_value = activated
+                    self.assertEqual(refresh.main(self.QUEUED_BEFORE_NS, "web", self.home,
+                                                  self.home / ".config", "a" * 32), 0)
+                    self.assertEqual("HTTP readiness passed" in output.getvalue(), activated)
+            restart.assert_not_called()
 
     def test_worker_serializes_before_discovery_and_rejects_unsafe_locks(self):
         with patch.object(refresh, "_runtime_directory", self.runtime_directory), \

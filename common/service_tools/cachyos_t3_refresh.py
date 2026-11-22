@@ -318,8 +318,11 @@ def main(queued_before_ns: int, mode: str, home: Path, config_root: Path, reques
         if not home.is_absolute() or not config_root.is_absolute() or ".." in home.parts or ".." in config_root.parts:
             raise ValueError("T3 completion requires absolute home/configuration paths")
         os.environ["XDG_CONFIG_HOME"] = str(config_root)
-        if complete_setup(home, mode, request) and mode == "desktop":
-            restart_running_desktop(queued_before_ns, home)
+        if complete_setup(home, mode, request):
+            if mode == "desktop":
+                restart_running_desktop(queued_before_ns, home)
+            else:
+                print("T3 web activation completed and HTTP readiness passed.", flush=True)
         return 0
     finally:
         os.close(descriptor)

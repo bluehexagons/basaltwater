@@ -97,6 +97,7 @@ def queue_refresh(config: SetupConfig) -> None:
     queued_before_ns = time.clock_gettime_ns(time.CLOCK_BOOTTIME)
     run(["/usr/bin/systemd-run", "--user", "--collect", "--unit=" + unit,
          "--on-active=5s", "--timer-property=AccuracySec=1s",
+         "--timer-property=RemainAfterElapse=no",
          "--property=Type=exec", "--property=UMask=0077",
          "--property=StandardOutput=journal", "--property=StandardError=journal",
          "/usr/bin/python3", "-I", str(helper), str(queued_before_ns), mode,
@@ -108,6 +109,6 @@ def queue_refresh(config: SetupConfig) -> None:
         print("  Without a graphical session, desktop launch waits until KDE login")
     else:
         print("  Web runtime activation and HTTP readiness run in the queued worker")
-    print(f"  Refresh status: systemctl --user status {unit}.service; journalctl --user -u {unit}.service")
+    print(f"  Completion journal: journalctl --user -u {unit}.service -n 30 --no-pager")
     print("  Saved threads resume on the next message; automatic turn continuation follows T3 settings")
     print("  Verify an authenticated provider thread and terminal after the app reopens")

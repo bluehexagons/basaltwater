@@ -103,10 +103,13 @@ upgrading, installing, or changing the saved selection.
 `refresh` may run in a local or remote T3 terminal. CachyOS keeps the interactive
 terminal for package-review and sudo prompts. Selected T3 startup, reload and
 mode changes run independently after every setup step, saved result and
-notification finishes. The printed worker unit provides completion status and
-journal output; a queued job alone does not qualify the app or provider. The
-final reload can disconnect that terminal, so save active work first. Concurrent
-setup or completion work is refused until the current operation finishes.
+notification finishes. Use the printed journal command to check the worker's
+outcome after its transient units unload. In web mode, the journal reports
+successful activation and HTTP readiness. In desktop mode, a worker that
+launches T3 becomes the app and stays active for its lifetime. Verify an
+authenticated provider turn and terminal after activation. The final reload
+can disconnect the setup terminal, so save active work first. Concurrent setup
+or completion work is refused until the current operation finishes.
 
 The private record is `~/.local/state/basaltwater/cachyos/last-setup.json`.
 The adjacent private `last-report.json` records completion time, source commit
