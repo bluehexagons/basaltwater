@@ -2,6 +2,7 @@
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot '..\Desktop.Common.ps1')
+. (Join-Path $PSScriptRoot '..\Desktop.Hold.ps1')
 Initialize-NativeDesktopTypes
 function Assert-Backlog([bool]$Value,[string]$Message){if(-not $Value){throw $Message}}
 $temporary=Join-Path ([IO.Path]::GetTempPath()) ('basaltwater-input-backlog-'+[guid]::NewGuid().ToString('N'))
@@ -46,7 +47,7 @@ try {
     $wire=[Basaltwater.Desktop.HeldPlan]($plan|ConvertTo-Json -Depth 12|ConvertFrom-Json)
     Assert-Backlog ($wire.keys.Length -eq 3 -and ($wire.timeline.mask -join ',') -eq '3,2,6,0') 'JSON hop lost the typed held timeline'
     $storeDir=Join-Path $temporary 'timeline';New-NativeDesktopPrivateDirectory $storeDir
-    [Basaltwater.Desktop.HeldStore]::Create($storeDir)
+    New-NativeHeldOwnership $storeDir
     $store=[Basaltwater.Desktop.HeldStore]::new($storeDir,('Local\Basaltwater.HeldTest.'+[guid]::NewGuid().ToString('N')))
     try {
         $script:BacklogBatches=@();$script:BacklogReject=$false
@@ -72,7 +73,7 @@ try {
         Assert-Backlog ($locked.Invoke($store,@($phase)) -eq 3) 'Failed timeline up did not retain uncertain ownership'
     } finally {$store.Dispose()}
     $expiredDir=Join-Path $temporary 'expired';New-NativeDesktopPrivateDirectory $expiredDir
-    [Basaltwater.Desktop.HeldStore]::Create($expiredDir)
+    New-NativeHeldOwnership $expiredDir
     $store=[Basaltwater.Desktop.HeldStore]::new($expiredDir,('Local\Basaltwater.HeldTest.'+[guid]::NewGuid().ToString('N')))
     try {
         $script:BacklogBatches=@();$script:BacklogReject=$false

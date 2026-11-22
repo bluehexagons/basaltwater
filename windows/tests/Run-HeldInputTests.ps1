@@ -30,7 +30,7 @@ try {
         Assert-Held ($null -ne $caught) "Invalid timeline admitted: $invalid"
     }
     $eightDir=Join-Path $temporary 'eight';New-NativeDesktopPrivateDirectory $eightDir
-    [Basaltwater.Desktop.HeldStore]::Create($eightDir)
+    New-NativeHeldOwnership $eightDir
     $eightStore=[Basaltwater.Desktop.HeldStore]::new($eightDir,('Local\Basaltwater.HeldTest.'+[guid]::NewGuid().ToString('N')))
     try {
         $set=[Func[Basaltwater.Desktop.HeldStore+State,int]]{param($s) $s.mask=255;$s.transferred=128;return 0}
