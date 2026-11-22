@@ -72,5 +72,9 @@ when they would help on a different screen.
   previews, or project tests. Report the evidence and what it covers, including
   any workflow or platform that could not be exercised.
 
+When a project emits a batch manifest from a Basaltwater visual recipe, use
+the [recipe gallery](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/visual-comparison-capture.md#review-a-recipes-captures)
+to inspect the saved pairs and frame sequences.
+
 Design references are available from [Anthropic](https://github.com/anthropics/skills/blob/main/skills/frontend-design/SKILL.md)
 and [OpenAI](https://learn.chatgpt.com/use-cases/frontend-designs).

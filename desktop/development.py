@@ -84,6 +84,8 @@ def add_development_parser(commands: argparse._SubParsersAction) -> None:
         else:
             action.add_argument("--settings", help="Existing non-secret JSON settings to record and pass to the recipe")
             action.add_argument("--timeout", type=int, default=600, help="Recipe process-group deadline in seconds (1–3600)")
+            action.add_argument("--review-manifest", metavar="RELATIVE_JSON",
+                                help="Build a gallery from a batch manifest produced in the recipe evidence directory")
     for name in ("status", "stop", "wait"):
         action = actions.add_parser(name)
         action.add_argument("task", help="Task ID returned by a development launch")
@@ -542,7 +544,7 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
            argv: list[str] | None = None, dry_run: bool = False, headless: bool = False,
            quit_after: int | None = None, rendering_method: str | None = None,
            script: str | None = None, manager: str | None = None, recipe: str | None = None,
-           settings: str | None = None, timeout: int = 600,
+           settings: str | None = None, timeout: int = 600, review_manifest: str | None = None,
            session_generation: str | None = None, control_revision: str | None = None) -> dict:
     uid = _guard()
     if kind not in KINDS:
@@ -554,6 +556,8 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
         arguments = arguments[1:]
     if kind in ("import", "check") and arguments:
         raise ValueError("Import and check tasks do not accept extra command arguments")
+    if kind != "check" and review_manifest is not None:
+        raise ValueError("--review-manifest requires a check task")
     if kind not in ("editor", "run") and (headless or quit_after is not None or rendering_method is not None):
         raise ValueError("Godot run options require editor or run")
     if quit_after is not None and (type(quit_after) is not int or not 1 <= quit_after <= 1000000):
@@ -565,7 +569,7 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
         arguments = node_command(path, script, manager, arguments)
     elif kind == "check":
         from desktop.development_workflows import check_command
-        arguments = check_command(path, recipe, settings, timeout)
+        arguments = check_command(path, recipe, settings, timeout, review_manifest=review_manifest)
     elif kind == "exec":
         validate_argv(arguments)
         arguments[0] = _executable(arguments[0])
@@ -678,7 +682,8 @@ def run_development_command(args: argparse.Namespace) -> int:
                 headless=getattr(args, "headless", False), quit_after=getattr(args, "quit_after", None),
                 rendering_method=getattr(args, "rendering_method", None), script=getattr(args, "script", None),
                 manager=getattr(args, "manager", None), recipe=getattr(args, "recipe", None),
-                settings=getattr(args, "settings", None), timeout=getattr(args, "timeout", 600))
+                settings=getattr(args, "settings", None), timeout=getattr(args, "timeout", 600),
+                review_manifest=getattr(args, "review_manifest", None))
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         result = {"ok": False, "error": str(exc)}
     print(json.dumps(result, indent=2))

@@ -145,11 +145,13 @@ identity, image hashes and incompatibilities. State is held only in the tab;
 no inspection is marked automatically. Downloaded records are private evidence,
 not a correctness verdict, and are not written back to the source manifest.
 
-Use categories `silhouette`, `underside`, `junction`, and `detail` across the
-batch. The viewer reports absent categories; category presence alone does not
-establish coverage. Include front/rear silhouettes, undersides, attachment
-junctions and close-ups at useful scales, across relevant quality levels and
-in the consuming application. Record defects even when captures succeeded.
+The viewer reports absent categories. For an asset review, the defaults are
+`silhouette`, `underside`, `junction`, and `detail`. Include front/rear
+silhouettes, undersides, attachment junctions and close-ups at useful scales.
+For other surfaces, add a top-level `expected_categories` array of up to 32
+unique labels, such as `["gameplay", "pause", "settings"]`. Use an empty array
+when the review needs no category check. Category presence is coverage
+metadata. Inspect each capture for the relevant defects.
 
 Batches accept 1–256 pairs, up to 32 named crops per pair, a 1 MiB manifest,
 and at most 128 MiB of embedded image data. Split larger runs. PNG limits and

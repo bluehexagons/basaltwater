@@ -63,6 +63,8 @@ actions, assertions and actual renderer/runtime observations. It reads
 status returns the private `check_report` path with revision/settings/outcome
 evidence and a bounded check log. Record what the harness actually exercised;
 exit status alone does not verify GPU, audio, input or complete UI behavior.
+When the recipe produces a batch manifest, add `--review-manifest RELATIVE_JSON`
+and read `review.viewer` in the completed check report.
 
 For local asset work, launch the active executable from the graphical session:
 

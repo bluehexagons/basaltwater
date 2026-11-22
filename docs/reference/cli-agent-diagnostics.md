@@ -13,6 +13,7 @@ holds also change state:
 basaltw agent manifest --json
 basaltw agent blender smoke --json
 basaltw agent visuals compare before.png after.png --json
+basaltw agent visuals check pause-menu --review-manifest captures/review.json --json
 basaltw agent visuals capture --before HEAD~1 --after HEAD --settings ~/capture-settings.json --json -- ./tools/capture-scene --settings '{settings}' --output '{output}'
 basaltw agent doctor
 basaltw agent doctor --tool codex --tool claude --json
@@ -82,6 +83,11 @@ accept `--output NEW_DIRECTORY` and otherwise use private managed state.
 Worktrees, logs and evidence are retained on success or failure; captures never
 switch the primary checkout or publish evidence. Read
 [visual comparisons](../workstations/visual-comparisons.md) for harness requirements and cleanup.
+
+`agent visuals check` runs a declared recipe and retains its private evidence.
+When the recipe emits a batch manifest, `--review-manifest RELATIVE_JSON`
+also generates a gallery and links it in the check report. See
+[recipe gallery generation](../workstations/visual-comparison-capture.md#review-a-recipes-captures).
 
 The default doctor check covers GitHub CLI, Codex CLI, Claude Code, and OpenCode.
 Missing credential files are reported as sign-in reminders but do not make an

@@ -72,9 +72,10 @@ def node_command(project: Path, script: str, manager: str | None, arguments: lis
     return command
 
 
-def check_command(project: Path, recipe: str, settings: str | None, timeout: int) -> list[str]:
+def check_command(project: Path, recipe: str, settings: str | None, timeout: int,
+                  *, review_manifest: str | None = None) -> list[str]:
     from lib.agent_environment import inspect_environment
-    from lib.agent_visuals import _settings
+    from lib.agent_visuals import _settings, validate_review_manifest
 
     if not isinstance(recipe, str) or not 1 <= len(recipe) <= 256 or recipe.startswith("-"):
         raise ValueError("Recipe name must contain 1–256 characters and must not start with an option")
@@ -85,6 +86,8 @@ def check_command(project: Path, recipe: str, settings: str | None, timeout: int
         validate_filesystem_path(settings)
         settings = str(Path(settings).expanduser().resolve())
     _settings(settings)  # Validate before allocating a task or running project code.
+    if review_manifest is not None:
+        validate_review_manifest(review_manifest)
     manifest = inspect_environment(str(project))
     declared = manifest["recipes"].get(recipe)
     if declared is None:
@@ -98,4 +101,6 @@ def check_command(project: Path, recipe: str, settings: str | None, timeout: int
                "--repository", str(project), "--timeout", str(timeout), "--json"]
     if settings is not None:
         command.extend(["--settings", settings])
+    if review_manifest is not None:
+        command.append(f"--review-manifest={review_manifest}")
     return command

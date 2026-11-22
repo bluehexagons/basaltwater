@@ -7,6 +7,7 @@ import base64
 import hashlib
 import json
 import os
+from pathlib import Path
 import stat
 import struct
 import subprocess
@@ -49,6 +50,8 @@ def add_visuals_parser(commands: argparse._SubParsersAction) -> None:
     check.add_argument("--repository", default=".")
     check.add_argument("--settings", help="Non-secret JSON capture settings to retain with the check")
     check.add_argument("--timeout", type=validate_positive_integer, default=600)
+    check.add_argument("--review-manifest", metavar="RELATIVE_JSON",
+                       help="Build a review gallery from a batch manifest produced in the recipe evidence directory")
     check.add_argument("--performance-session", action="store_true", help="Retain before/active/after power, temperature, clock and workload snapshots")
     check.add_argument("--power-profile", choices=("performance", "power-saver"),
                        help="Hold this profile for the recipe using powerprofilesctl launch; implies --performance-session")
@@ -59,6 +62,13 @@ def add_visuals_parser(commands: argparse._SubParsersAction) -> None:
     for action in (compare, batch, capture, check):
         action.add_argument("--output", help="New artifact directory; default: private managed state")
         action.add_argument("--json", action="store_true")
+
+
+def validate_review_manifest(path: str) -> None:
+    validate_filesystem_path(path)
+    relative = Path(path)
+    if relative.is_absolute() or not relative.parts or ".." in relative.parts:
+        raise ValueError("--review-manifest must name a file relative to the evidence directory")
 
 
 def _settings(path: str | None) -> dict:
@@ -249,6 +259,8 @@ def run_visuals_command(args: argparse.Namespace) -> int:
     elif result.get("ok"):
         print(f"Project recipe passed: {result['recipe']} ({result['elapsed_seconds']}s)")
         print(f"Evidence: {result['directory']}")
+        if result.get("review"):
+            print(f"Review gallery: {result['review']['viewer']}")
         print("Review project observations for renderer, GPU and image-content verification")
     else:
         print(f"Error: {result['error']}")

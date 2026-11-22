@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import os
+from pathlib import Path
 import platform
 import shutil
 import subprocess
@@ -14,7 +15,7 @@ import uuid
 from lib.agent_environment import inspect_environment
 from lib.agent_graphics import graphics_environment
 from lib.agent_reservations import termination_cleanup
-from lib.agent_visuals import _directory, _settings, _settings_unchanged
+from lib.agent_visuals import _directory, _settings, _settings_unchanged, validate_review_manifest
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.remote_utils import is_dry_run, run
 from lib.streamed_process import run_streamed
@@ -92,11 +93,13 @@ def host_context(environment: dict[str, str]) -> dict:
 
 @termination_cleanup()
 def check_recipe(args: argparse.Namespace) -> dict:
-    """Execute exactly one reviewed declaration; its exit status defines success."""
+    """Execute one reviewed declaration and retain the requested evidence."""
     if type(args.timeout) is not int or not 1 <= args.timeout <= 3600:
         raise ValueError("Visual check timeout must be from 1 through 3600 seconds")
     if is_dry_run():
         raise ValueError("A visual check requires execution; dry-run cannot verify rendering")
+    if args.review_manifest is not None:
+        validate_review_manifest(args.review_manifest)
     settings = _settings(args.settings)
     manifest = inspect_environment(args.repository)
     recipe = manifest["recipes"].get(args.recipe)
@@ -134,6 +137,8 @@ def check_recipe(args: argparse.Namespace) -> dict:
         "verification": {"status": "unverified"},
         "log_limit_bytes": LOG_LIMIT, "log_truncated": False,
     }
+    if args.review_manifest is not None:
+        report["review"] = {"manifest": os.path.join(directory, args.review_manifest)}
     performance = None
     profile = getattr(args, "power_profile", None)
     if getattr(args, "performance_session", False) or profile:
@@ -201,6 +206,21 @@ def check_recipe(args: argparse.Namespace) -> dict:
             report.update(ok=False, status="failed", error=f"Performance evidence failed: {exc}")
         except KeyboardInterrupt:
             report.update(ok=False, status="interrupted", error="Performance evidence collection interrupted")
+    if report["ok"] and (review := report.get("review")):
+        from lib.agent_visual_batch import review_batch
+
+        try:
+            gallery = review_batch(
+                argparse.Namespace(manifest=review["manifest"], output=os.path.join(directory, "review-gallery"),
+                                   allow_incompatible=False),
+                evidence_root=Path(directory),
+            )
+            review.update(viewer=gallery["viewer"], batch_id=gallery["batch_id"],
+                          batch_report=os.path.join(gallery["directory"], "batch.json"))
+        except (OSError, RuntimeError, ValueError) as exc:
+            report.update(ok=False, status="failed", error=f"Review gallery failed: {exc}")
+        except KeyboardInterrupt:
+            report.update(ok=False, status="interrupted", error="Review gallery generation interrupted")
     report["elapsed_seconds"] = round(time.monotonic() - started, 3)
     report["finished_at"] = datetime.now(timezone.utc).isoformat()
     write_json_atomic(report_path, report)

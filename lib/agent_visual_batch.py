@@ -36,6 +36,20 @@ def _keys(value: object) -> list[str]:
     return keys
 
 
+def _expected_categories(value: object) -> list[str]:
+    if not isinstance(value, list) or len(value) > 32:
+        raise ValueError("expected_categories must contain at most 32 labels")
+    categories = [_label(category, "Expected category") for category in value]
+    if len(set(categories)) != len(categories):
+        raise ValueError("expected_categories must be unique")
+    return categories
+
+
+def _require_retained_path(path: Path, evidence_root: Path) -> None:
+    if not path.resolve().is_relative_to(evidence_root):
+        raise ValueError(f"Review input must remain inside the recipe evidence directory: {path}")
+
+
 def _compatibility(before: dict, after: dict, keys: list[str]) -> list[str]:
     issues = []
     for key in keys:
@@ -48,15 +62,19 @@ def _compatibility(before: dict, after: dict, keys: list[str]) -> list[str]:
     return issues
 
 
-def review_batch(args: argparse.Namespace) -> dict:
+def review_batch(args: argparse.Namespace, *, evidence_root: Path | None = None) -> dict:
     """Reject incomplete/incompatible inputs before writing any review artifacts."""
     path = Path(os.path.abspath(os.path.expanduser(args.manifest)))
+    if evidence_root is not None:
+        evidence_root = evidence_root.resolve()
+        _require_retained_path(path, evidence_root)
     validate_filesystem_path(str(path), must_exist=True)
     manifest = read_json_file(str(path), max_bytes=1024 * 1024)
     if not isinstance(manifest, dict) or type(manifest.get("version")) is not int or manifest["version"] != 1:
         raise ValueError("Batch manifest requires version: 1")
     json.dumps(manifest, allow_nan=False)
     keys = _keys(manifest.get("compare_keys"))
+    categories = _expected_categories(manifest["expected_categories"]) if "expected_categories" in manifest else CATEGORIES
     sequence = manifest.get("sequence")
     if sequence is not None:
         if (not isinstance(sequence, dict) or set(sequence) != {"fps"}
@@ -84,13 +102,20 @@ def review_batch(args: argparse.Namespace) -> dict:
             if not isinstance(image_path, str) or not image_path:
                 raise ValueError(f"{identity}: {side} image path is required")
             validate_filesystem_path(image_path)
-            pair[side] = _image(str(path.parent / os.path.expanduser(image_path)), capture["settings"])
+            image_path = Path(os.path.expanduser(image_path))
+            capture_path = Path(os.path.abspath(path.parent / image_path))
+            if evidence_root is not None:
+                if image_path.is_absolute():
+                    raise ValueError(f"{identity}: {side} image path must be relative to the batch manifest")
+                _require_retained_path(capture_path, evidence_root)
+            pair[side] = _image(str(capture_path), capture["settings"])
             total_bytes += len(pair[side]["image"])
             if total_bytes > MAX_BATCH_BYTES:
                 raise ValueError("Batch embedded images exceed 128 MiB; split the manifest")
         pair["issues"] = _compatibility(pair["before"]["metadata"], pair["after"]["metadata"], keys)
         if pair["issues"] and not args.allow_incompatible:
-            raise ValueError(f"{identity}: {'; '.join(pair['issues'])}; repair metadata/captures or explicitly use --allow-incompatible")
+            raise ValueError(f"{identity}: {'; '.join(pair['issues'])}; repair metadata/captures or use "
+                             "'visuals batch --allow-incompatible' for side-by-side inspection")
         crops = entry.get("crops", [])
         if not isinstance(crops, list) or len(crops) > 32:
             raise ValueError("Each pair accepts at most 32 named crops")
@@ -114,10 +139,15 @@ def review_batch(args: argparse.Namespace) -> dict:
         pairs.append(pair)
     # Identity binds downloaded review records to the exact images, metadata and crops.
     records = [{**pair, "before": pair["before"]["metadata"], "after": pair["after"]["metadata"]} for pair in pairs]
-    identity = hashlib.sha256(json.dumps({"pairs": records, "sequence": sequence}, sort_keys=True, allow_nan=False).encode()).hexdigest()
+    identity_data = {"pairs": records, "sequence": sequence}
+    if "expected_categories" in manifest:
+        identity_data["expected_categories"] = categories
+    identity = hashlib.sha256(json.dumps(identity_data, sort_keys=True, allow_nan=False).encode()).hexdigest()
     result = {"schema_version": 1, "batch_id": identity, "compare_keys": keys, "pairs": records,
-              "missing_categories": sorted(set(CATEGORIES) - {pair["category"] for pair in pairs}),
+              "missing_categories": sorted(set(categories) - {pair["category"] for pair in pairs}),
               "visual_correctness": "unverified"}
+    if "expected_categories" in manifest:
+        result["expected_categories"] = categories
     if sequence is not None:
         result["sequence"] = sequence
     title = _label(manifest.get("title", "Batch visual review"), "Batch title")

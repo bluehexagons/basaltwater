@@ -96,6 +96,34 @@ See [performance sessions](performance-sessions.md) for power preferences,
 clock/thermal/workload snapshots, reservations, cleanup and measurement scope.
 Project scripts retain all performance and image acceptance thresholds.
 
+## Review a recipe's captures
+
+When a recipe writes a [batch manifest](visual-comparison-review.md#review-a-batch),
+generate the gallery as part of the same check:
+
+```bash
+basaltw agent visuals check pause-menu --repository ~/repos/my-game \
+  --review-manifest captures/review.json --json
+```
+
+The recipe writes the selected manifest below `BASALTWATER_VISUAL_EVIDENCE`.
+Image paths in the manifest are relative to it and must resolve inside the
+same evidence directory. Keep that directory's `review-gallery` subdirectory
+available for the viewer. Projects choose the views, their order, the observed
+settings to compare, and any expected coverage categories.
+
+After the recipe and any requested receipt checks pass, Basaltwater builds a
+strict batch gallery from the saved captures. The `review` object in
+`check.json` and the JSON response gives the manifest path, viewer path, batch
+report path and batch ID on success. An unavailable or incompatible gallery
+fails the opted-in check and retains the recipe's exit code, logs, and captures.
+The gallery is private and ready for inspection. Visual acceptance still
+depends on reviewing the captures and exercising the intended workflow.
+
+Queued desktop checks accept the same flag. Read `review` in the returned
+task's `check_report` after completion. To review an existing batch again,
+run `visuals batch` on the retained manifest in a new output directory.
+
 ## Gate captures on runtime and build evidence
 
 Both `visuals check` and `visuals capture` accept `--verify-evidence`.

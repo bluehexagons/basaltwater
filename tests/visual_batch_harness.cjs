@@ -5,6 +5,7 @@ const html = fs.readFileSync(0, 'utf8');
 assert.match(html, /<body id="viewer" data-theme="t3">/);
 assert.equal((html.match(/<details class="metadata">/g) || []).length, 2, 'Capture metadata should start collapsed');
 const payload = html.match(/id="captureData">([\s\S]*?)<\/script>/)[1];
+const data = JSON.parse(payload);
 const script = html.match(/<script>\s*([\s\S]*?)<\/script>/)[1];
 class Element {
   constructor(id) {
@@ -64,7 +65,9 @@ const flush = () => new Promise(resolve => setImmediate(resolve));
   assert.ok(record.pairs[0].views['Full image'].inspected_at);
   assert.equal(record.pairs[0].views.attachment.inspected_at, null);
   assert.equal(record.visual_correctness, 'unverified');
-  if (JSON.parse(payload).sequence) {
+  assert.deepEqual(record.expected_categories, data.expected_categories);
+  assert.deepEqual(record.missing_categories, data.missing_categories);
+  if (data.sequence) {
     assert.equal(get('timeline').hidden, false);
     get('zoom').value = '150'; get('zoom').handlers.input();
     get('mode').value = 'overlay'; get('mode').handlers.input();

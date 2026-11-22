@@ -241,7 +241,9 @@ if (data.pairs) {
   get('batch').hidden = false;
   document.querySelector('h1').textContent = data.title;
   document.title = data.title;
-  get('coverage').textContent = data.missing_categories.length ? `Missing coverage categories: ${data.missing_categories.join(', ')}` : 'Manifest includes silhouettes, undersides, junctions and details. Review each view and crop.';
+  get('coverage').textContent = data.missing_categories.length
+    ? `Missing coverage categories: ${data.missing_categories.join(', ')}`
+    : 'Review each view and crop.';
   for (const pair of data.pairs) {
     const option = document.createElement('option'); option.value = pair.id;
     option.textContent = `${pair.category} · ${pair.label}${pair.issues.length ? ' · incompatible' : ''}`;
@@ -317,7 +319,7 @@ if (data.pairs) {
   get('notes').addEventListener('focus', pause);
   get('notes').addEventListener('input', () => { pause(); currentRecord().notes = get('notes').value; });
   get('export').addEventListener('click', () => {
-    const report = {schema_version:1, batch_id:data.batch_id, sequence:data.sequence, exported_at:new Date().toISOString(), visual_correctness:'unverified', missing_categories:data.missing_categories,
+    const report = {schema_version:1, batch_id:data.batch_id, sequence:data.sequence, exported_at:new Date().toISOString(), visual_correctness:'unverified', expected_categories:data.expected_categories, missing_categories:data.missing_categories,
       pairs:data.pairs.map(pair => ({id:pair.id, before_sha256:pair.before.metadata.sha256, after_sha256:pair.after.metadata.sha256, issues:pair.issues, views:records[pair.id]}))};
     const url = URL.createObjectURL(new Blob([JSON.stringify(report,null,2)], {type:'application/json'}));
     const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'inspection.json'; anchor.click(); setTimeout(() => URL.revokeObjectURL(url),1000);

@@ -16,12 +16,11 @@ review presentation. See the
 
 ## Review a recipe's output
 
-- Use the existing batch manifest as the handoff. Pilot a way for the
-  recipe result to identify that manifest and make the generated gallery
-  easy to open from the check report. Keep existing standalone batch usage
-  available. If the pilot needs whole capture sets from two commits, extend
-  managed revision capture to accept that declared output while keeping its
-  one-image mode.
+- Use the existing batch manifest as the handoff. Run the pilot recipe with
+  [`visuals check --review-manifest`](../workstations/visual-comparison-capture.md#review-a-recipes-captures)
+  to retain the gallery with the check report. If the pilot needs whole capture
+  sets from two commits, extend managed revision capture to accept that declared
+  output while keeping its one-image mode.
 - Check the manifest and its referenced images within the retained recipe
   evidence. Reuse the gallery's metadata compatibility checks and the
   runner's optional origin receipts. Leave setting meanings and deliberate

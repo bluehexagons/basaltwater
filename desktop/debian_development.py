@@ -65,7 +65,7 @@ def supervisor_environment(uid: int) -> tuple[dict[str, str], str]:
 
 
 OPTIONS = {"engine", "scene", "argv", "dry_run", "headless", "quit_after", "rendering_method",
-           "script", "manager", "recipe", "settings", "timeout", "export_check"}
+           "script", "manager", "recipe", "settings", "timeout", "export_check", "review_manifest"}
 
 
 def handle_task(payload: dict, generation: str) -> dict:

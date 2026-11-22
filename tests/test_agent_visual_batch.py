@@ -87,6 +87,26 @@ class BatchReviewTests(unittest.TestCase):
         self.manifest["pairs"][0]["crops"][0]["rect"] = [0, 0, 1, 1]
         self.assertNotEqual(self.review()["batch_id"], original)
 
+    def test_project_coverage_categories_are_optional_and_bound_to_identity(self) -> None:
+        original = self.review()["batch_id"]
+        self.args.output = str(self.root / "custom")
+        for bad_categories in (None, "pause", ["pause", "pause"], ["\n"]):
+            with self.subTest(categories=bad_categories), self.assertRaises(ValueError):
+                self.manifest["expected_categories"] = bad_categories
+                self.review()
+            self.assertFalse(Path(self.args.output).exists())
+        self.manifest["expected_categories"] = ["pause", "settings"]
+        self.manifest["pairs"][0]["category"] = "pause"
+        result = self.review()
+        self.assertEqual(result["expected_categories"], ["pause", "settings"])
+        self.assertEqual(result["missing_categories"], ["settings"])
+        self.args.output = str(self.root / "without-categories")
+        self.manifest["expected_categories"] = []
+        result_without_categories = self.review()
+        self.assertEqual(result_without_categories["missing_categories"], [])
+        self.assertNotEqual(result["batch_id"], result_without_categories["batch_id"])
+        self.assertNotEqual(result["batch_id"], original)
+
     def test_sequence_cadence_is_validated_and_bound_to_review_identity(self) -> None:
         for fps in (True, 0, -1, 61, "24"):
             self.manifest["sequence"] = {"fps": fps}
@@ -115,6 +135,7 @@ class BatchReviewTests(unittest.TestCase):
         pair["id"] = "incompatible"
         pair["after"]["settings"]["quality"] = 2
         self.manifest["pairs"].append(pair)
+        self.manifest["expected_categories"] = ["silhouette", "settings"]
         self.args.allow_incompatible = True
         for sequence in (None, {"fps": 12}):
             with self.subTest(sequence=sequence):
