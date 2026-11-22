@@ -36,8 +36,11 @@ function Update-WingetPackages {
     $exitCode = $LASTEXITCODE
     # An empty inventory or no applicable update is valid on fresh or current hosts.
     if ($exitCode -in @(-1978335212, -1978335189)) { return }
+    # UPDATE_ALL_HAS_FAILURE can come from any installed app. Setup still
+    # reconciles its own selected packages separately through exact installs.
     if ($exitCode -eq -1978335188) {
-        throw "WinGet package upgrade completed with failures (exit code $exitCode). Inspect the per-package output above, resolve the reported errors or restart if requested, then rerun setup."
+        Write-Warning "WinGet package upgrade completed with failures (exit code $exitCode). Basaltwater setup will continue. Review the per-package output above and retry the affected apps separately after resolving their errors or restarting if requested."
+        return
     }
     Assert-WingetOperationSucceeded $exitCode 'WinGet package upgrade' 'WinGet bulk upgrade'
 }

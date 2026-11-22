@@ -38,10 +38,14 @@ Setup and refresh start package maintenance with `winget upgrade --all`.
 The bulk pass covers applicable installed apps from enabled implicit sources,
 including the Microsoft Store when configured. It honors WinGet pins and skips
 packages with unknown installed versions. Windows OS updates are handled through
-Windows Update. Setup then reconciles selected tools by exact WinGet identity and updates
-npm providers through npm. Tools are rediscovered and version-checked afterward.
-A failed upgrade or broken tool stops setup. For a bulk upgrade failure, review
-WinGet's per-package output for the reported error or restart requirement.
+Windows Update. When WinGet completes the bulk pass and reports that individual
+upgrades failed (`0x8A15002C`), setup warns and continues. Review the per-package
+output in the refresh log and retry the affected apps after resolving their
+errors or restarting if requested. Other bulk errors and explicit restart
+codes still interrupt setup. Setup then reconciles selected tools by exact
+WinGet identity and updates npm providers through npm. Tools are rediscovered
+and version-checked afterward. A failed selected package operation or broken
+required tool still stops setup.
 T3 Code is updated too, and its
 installer may close the running desktop. If that interrupts a T3 terminal,
 the default detached refresh continues independently. For a foreground installer,

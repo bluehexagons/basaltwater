@@ -25,9 +25,9 @@ and `BASALTWATER_FFPROBE_EXE`; discovery prefers those paths, then PATH, then
 WinGet portable package directories. Direct Python invocation uses those
 environment variables or PATH. Open a new terminal after setup.
 
-Gyan is a third-party Windows build. Preinstalled binaries retain their existing
-update owner. AV refresh revalidates existing binaries; it does not silently
-upgrade them. For a WinGet-managed installation, explicitly review and apply
+Gyan is a third-party Windows build. The AV step revalidates existing binaries.
+WinGet-managed FFmpeg can be updated by the [bulk maintenance pass](windows-tool-selection.md#review-selections-from-a-checkout).
+To retry a failed Gyan package upgrade on its own, apply
 `winget upgrade --id Gyan.FFmpeg --exact --source winget`, then rerun discovery
 and qualification. Exact-source WinGet installation of Gyan.FFmpeg 9.0.2,
 native discovery and the public source `media doctor` route pass. A full

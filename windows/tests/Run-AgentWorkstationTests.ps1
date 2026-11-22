@@ -199,7 +199,12 @@ try {
         Assert-True ($script:WingetCalls.Count -eq 3) 'Bulk upgrades queried individual packages on a no-op'
         Assert-True (($script:WingetCalls[-1] -join ' ') -eq 'upgrade --all --disable-interactivity --silent --accept-source-agreements --accept-package-agreements') 'Bulk upgrade used unexpected options'
         $script:InstallExit = -1978335188
-        Assert-Throws { Update-WingetPackages } 'completed with failures \(exit code -1978335188\).*per-package output'
+        $warning = Update-WingetPackages 3>&1
+        Assert-True ($warning -is [System.Management.Automation.WarningRecord] -and
+            $warning.Message -match 'completed with failures \(exit code -1978335188\).*per-package output') 'Partial WinGet upgrade lost its warning'
+        Assert-Throws { Ensure-WingetPackage Git.Git 'Git install' } 'exit code -1978335188'
+        $script:InstallExit = 17
+        Assert-Throws { Update-WingetPackages } 'exit code 17'
         $script:InstallExit = 3010
         $rebootFailure = $null
         try { Update-WingetPackages } catch { $rebootFailure = $_ }
@@ -533,6 +538,9 @@ function Invoke-NativeAgentSetup {
                 Revision = 'e' * 40; Source = $source; Phase = 'complete'; Distro = 'Ubuntu-24.04'; DistroSelection = 'explicit' }
             $wslInstaller = Join-Path $source 'install.ps1'
             function wsl.exe {
+                if (($args -join ' ') -eq '--update' -and $wslUpgradeExit -eq -1978335188) {
+                    throw 'Fixture reached WSL update after a partial WinGet failure'
+                }
                 Assert-True (($args -join ' ') -eq '--status') 'Ubuntu preparation ran after a failed Windows upgrade'
                 $global:LASTEXITCODE = 0
             }
@@ -540,7 +548,8 @@ function Invoke-NativeAgentSetup {
                 Assert-True ($args[0] -eq 'upgrade' -and $args -contains '--all') 'WSL setup skipped the bulk upgrade'
                 $global:LASTEXITCODE = $wslUpgradeExit
             }
-            foreach ($case in @(@{ Code = -1978335188; Phase = 'applying'; Error = 'completed with failures' },
+            foreach ($case in @(@{ Code = -1978335188; Phase = 'applying'; Error = 'Fixture reached WSL update' },
+                                @{ Code = 17; Phase = 'applying'; Error = 'WinGet package upgrade failed \(exit code 17\)' },
                                 @{ Code = 3010; Phase = 'restart-required'; Error = 'requires a Windows restart' })) {
                 $wslState | ConvertTo-Json | Set-Content -LiteralPath $wslStatePath -Encoding UTF8
                 $wslUpgradeExit = $case.Code

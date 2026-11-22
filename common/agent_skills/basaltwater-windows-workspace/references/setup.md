@@ -20,6 +20,10 @@ survives T3 closing. Retain the job ID and inspect `refresh --status ID`,
 `--logs ID`, or reconnect with `--follow ID`. `--wait` instead runs setup in the
 invoking terminal; `--cancel ID` only cancels a queued job.
 
+If WinGet reports individual failures from the bulk pass, setup logs a warning
+and continues with selected packages. Review WinGet's per-package output before
+retrying those apps. A failed selected package operation still stops setup.
+
 T3 starts or gracefully restarts after successful setup by default. The current
 account's login startup uses a hidden PowerShell helper without an output console.
 `-NoUpdateSource` / `refresh --no-update-source` retains saved source while still

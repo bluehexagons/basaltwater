@@ -38,8 +38,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$p=Join-Path $env:TE
 ```
 
 Once WSL is enabled, setup runs `winget upgrade --all` for applicable installed
-Windows packages from enabled implicit sources before preparing Ubuntu. Use `-Plan` to
-preview the upgrade and the selected options. `-LinuxUser`,
+Windows packages from enabled implicit sources before preparing Ubuntu. If the
+bulk pass completes with individual upgrade failures, setup warns and continues
+with WSL. See the [WinGet update guidance](windows-tool-selection.md#review-selections-from-a-checkout).
+Use `-Plan` to preview the upgrade and the selected options. `-LinuxUser`,
 `-DistroName`, and `-DistroLocation` select the Ubuntu account, official stable
 Ubuntu WSL distribution, and absolute Windows drive directory for a new
 distro. Without a distro name, setup selects the newest versioned stable Ubuntu
