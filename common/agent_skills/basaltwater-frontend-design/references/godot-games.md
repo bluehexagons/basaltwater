@@ -31,6 +31,12 @@
   Exercise the affected export if it changes input, layout, or rendering.
   Reuse the project's capture and smoke-test recipes when available.
 
+For a pause menu change, enter from active play using the controller, open
+settings, and cancel or confirm a change. Check focus on return and confirm
+that menu input did not trigger gameplay and play resumes when the menu closes.
+Use the project’s fixed scene and frame sequence to compare HUD readability
+and transitions when relevant.
+
 See Godot's guides to [containers](https://docs.godotengine.org/en/stable/tutorials/ui/gui_containers.html),
 [themes](https://docs.godotengine.org/en/stable/tutorials/ui/gui_skinning.html),
 [navigation and focus](https://docs.godotengine.org/en/stable/tutorials/ui/gui_navigation.html),

@@ -121,3 +121,18 @@ agent will follow every instruction.
 
 Also run `git diff --check` and verify that every skill retains the
 `managed-by: basaltwater` marker before committing.
+
+### Compare skill behavior
+
+For a substantial instruction change, use representative requests and known
+starting states. Repeat runs with the same model, reasoning effort, tools,
+fixture revisions, and budget, changing only the skill version. Include a
+narrow request to see which guidance the agent loads. Inspect outputs against
+the same rubric without knowing which skill produced them when possible.
+
+For frontend guidance, use a new website, an existing app workflow with a
+recoverable error, and a Godot UI reached in normal play. Review captures at
+the intended display size and verify task outcomes through the actual controls.
+Record component reuse, material findings resolved across passes, coverage
+gaps, and run cost. Reuse project recipes and keep raw traces and captures in
+private storage.

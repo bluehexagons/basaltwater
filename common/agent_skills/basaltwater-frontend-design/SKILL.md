@@ -18,16 +18,26 @@ additional references when the task spans multiple surfaces.
 | Godot HUDs, menus, settings, and gameplay overlays | [Godot games](references/godot-games.md) |
 | Native windows, editors, utilities, and packaged desktop apps | [Desktop software](references/desktop-software.md) |
 
-## Understand the product
+## Choose a starting point
 
-- Identify who uses the screen, what they need to accomplish, and which content
-  or state has priority. Read project instructions and inspect nearby screens,
-  shared components, and the normal entry point. Ask a focused question when a
-  missing decision would materially change the outcome.
-- Read supplied references for hierarchy, density, typography, and interaction.
-  Translate those choices into the project's own design system and platform
-  conventions. For a new visual direction, choose a coherent composition,
-  type scale, and palette grounded in the subject and audience.
+Identify the user, the task they need to complete, and which content or state
+has priority. Read the project instructions and the relevant part of its design
+guide (such as `DESIGN.md`), component examples, and tokens where they exist.
+
+- For a new direction, choose a composition, type scale, and palette grounded
+  in the subject and real content. Use a sketch or visual concept when seeing
+  the direction early would resolve a consequential design choice.
+- For a supplied design, identify the intended hierarchy, density, and states.
+  Use the project's components and tokens to implement them, and infer
+  unspecified responsive and interactive behavior from nearby screens.
+- For an existing interface, use its normal entry point to observe the workflow
+  and related screens before choosing changes. Capture a baseline when it will
+  help compare the result.
+
+Make routine, reversible design decisions and state assumptions that affect the
+result. Ask when a consequential choice depends on information only the user
+can provide. Record durable design decisions in the project’s existing guidance
+when they would help on a different screen.
 
 ## Shape and build the interface
 
@@ -42,21 +52,25 @@ additional references when the task spans multiple surfaces.
   visible focus, readable contrast, and clear cues for status and recovery.
   Keep essential actions available across supported inputs.
 
-## Review the result
+## Verify and iterate
 
-- Run the app through the project's normal entry point and use the available
-  visual review workflow under the active session's tool policy. Inspect the
-  rendered interface and exercise the main task, including relevant layout
-  constraints, alternate states, and input methods. When comparing captures,
-  match the data, state, and dimensions so changes are attributable. If the
-  target runtime is unavailable, use existing captures, component previews,
-  or project tests and qualify conclusions to the checks they support.
-- For a critique, tie findings to an observable state or interaction,
-  explain the user impact, and prioritize changes that help the affected task.
-- When asked to iterate, rerun the main task on each revision. Check affected
-  flows and shared components for the next material improvement. Continue
-  through design, implementation, and verification while worthwhile work
-  remains in scope. Report the checks performed and any coverage gaps.
+- Choose the workflow, relevant states, and observable outcomes to verify.
+  Run the app through its normal entry point using the available tools under
+  the session policy. For appearance, inspect the rendered UI at its intended
+  size and a relevant constraint. Match data, state, and dimensions for
+  before/after comparisons. Use a sequence when timing or motion matters.
+  For behavior, exercise the controls with supported input and verify the
+  resulting state, including a relevant edge or recovery path.
+- Tie critique findings to an observed state or interaction and its user
+  impact. Use technical checks to investigate issues such as keyboard access,
+  overflow, or slow rendering when they affect the surface under review.
+- When asked to iterate, fix the highest-impact findings, rerun affected
+  checks, and inspect an adjacent state or shared component for regressions.
+  Revisit the whole brief before handing back and continue while a fresh pass
+  finds a material improvement worth making within scope.
+- If the target runtime is unavailable, use existing captures, component
+  previews, or project tests. Report the evidence and what it covers, including
+  any workflow or platform that could not be exercised.
 
 Design references are available from [Anthropic](https://github.com/anthropics/skills/blob/main/skills/frontend-design/SKILL.md)
-and [OpenAI](https://developers.openai.com/blog/designing-delightful-frontends-with-gpt-5-4).
+and [OpenAI](https://learn.chatgpt.com/use-cases/frontend-designs).

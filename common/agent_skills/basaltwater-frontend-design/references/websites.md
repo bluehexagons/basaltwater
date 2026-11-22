@@ -30,6 +30,10 @@
   unreadable text, or obscured anchors. Follow the primary action or use site
   navigation from a deep link, whichever best represents the visitor's task.
 
-See [OpenAI's frontend design guidance](https://developers.openai.com/blog/designing-delightful-frontends-with-gpt-5-4),
+For a landing page review, use the same content at desktop and phone widths.
+Check that the offer is legible in the opening view, then follow its main
+action and verify it reaches the promised destination.
+
+See [OpenAI's responsive frontend workflow](https://learn.chatgpt.com/use-cases/frontend-designs),
 [responsive layout basics](https://web.dev/articles/responsive-web-design-basics),
 and [guidance on loading the largest visible element](https://web.dev/articles/optimize-lcp).

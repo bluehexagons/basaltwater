@@ -25,6 +25,8 @@ See [project standards](docs/agents/project-standards.md) and
 For requests to iterate or keep improving, use the
 [project development skill](common/agent_skills/basaltwater-project-development/SKILL.md#iterate-on-the-outcome)
 to run successive review and improvement passes within the request's scope.
+Use the [publication checks](common/agent_skills/basaltwater-project-development/SKILL.md#publish-authorized-work)
+when asked to commit or push.
 
 ## Before Editing
 

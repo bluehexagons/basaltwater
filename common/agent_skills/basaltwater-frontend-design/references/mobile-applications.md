@@ -26,6 +26,10 @@
   resuming with an unfinished form. Identify which checks ran on hardware,
   in a simulator or emulator, or in a component preview.
 
+For a form layout change, enter a draft on a compact screen with the keyboard
+open, change to another supported window configuration, and finish the form.
+Verify that the draft survives and the primary action stays reachable.
+
 See [Apple's iOS design guidance](https://developer.apple.com/design/human-interface-guidelines/designing-for-ios)
 and [accessibility guidance](https://developer.apple.com/design/human-interface-guidelines/accessibility),
 and Android's guides to [adaptive layouts](https://developer.android.com/develop/ui/compose/layouts/adaptive/get-started-with-adaptive-apps),

@@ -80,4 +80,12 @@ timeout and read its final result before reporting success.
 ## Review and report
 
 Run focused project checks. Review the diff for scope, artifacts, and secrets.
-Report the change, validation, and gaps. Commit or publish when authorized.
+Report the change, validation, and gaps.
+
+## Publish authorized work
+
+When asked to commit or push, reconcile the worktree and local commits against
+the full request, including in-scope edits and commits from earlier passes.
+Review and stage only the authorized changes. After a push, verify the intended
+commits are on the requested remote branch. Recheck the worktree and account
+for any requested changes still local in the handoff.

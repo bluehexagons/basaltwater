@@ -28,6 +28,10 @@
   window management, native dialogs, menus, or OS integration. Record the
   platform and app mode exercised.
 
+For an editor with multiple documents, edit one document, switch windows,
+then invoke a native save dialog with the keyboard. Cancel and verify that
+the draft and active document remain intact and focus returns to the editor.
+
 See [Apple's macOS design guidance](https://developer.apple.com/design/human-interface-guidelines/designing-for-macos),
 [Microsoft's Windows accessibility checklist](https://learn.microsoft.com/en-us/windows/apps/design/accessibility/accessibility-checklist),
 and [GNOME's keyboard guidelines](https://developer.gnome.org/hig/guidelines/keyboard.html).

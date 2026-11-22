@@ -31,6 +31,11 @@
   assertions as complementary checks. Use the project's test setup and
   assert outcomes through user-facing controls and content.
 
+For a settings form, cause a recoverable save failure with the project's test
+fixture. Verify that the current draft is available for retry, save again, and
+reload to confirm the saved settings. Check the keyboard path to the error
+and retry controls.
+
 See [Vercel's interface guidelines](https://vercel.com/design/guidelines),
 [WCAG 2.2](https://www.w3.org/TR/WCAG22/),
 [ARIA Authoring Practices](https://www.w3.org/WAI/ARIA/apg/practices/read-me-first/),
