@@ -1,6 +1,6 @@
 ---
 name: basaltwater-project-development
-description: Plan, implement, review and verify repository changes using the project's own conventions.
+description: Plan, implement, review, verify and iterate on project work using the project's own conventions.
 metadata:
   managed-by: basaltwater
 ---
@@ -43,6 +43,28 @@ Reconcile uncertain mutations before retrying. See the [handoff templates](https
 | Return images or other visual evidence in T3 | [Visual replies](references/t3-visual-replies.md) |
 
 Verify actual tool exposure in the live session.
+
+## Iterate on the outcome
+
+Treat “iterate,” “keep improving,” and similar requests as authorization to
+choose and carry out successive passes within the stated scope. If the user
+asks for findings or a plan, keep changes within the authority they gave.
+
+For broad reviews, investigations, and playtests, map the main workflows or
+plausible causes up front. Pick representative cases and prioritize leads by
+likely impact. Check neighboring paths or another plausible cause before
+calling the exploration complete.
+
+Use each verified improvement as a checkpoint. Reassess the updated result
+against the original request, explore what remains, and implement and verify
+the next worthwhile improvement. Carry out feasible, authorized follow-ups
+you would otherwise report as next steps. Share progress during the work and
+resolve routine decisions yourself.
+
+Finish when the requested outcome is verified and a fresh pass finds no
+material in-scope improvement worth pursuing. Stop at a user-set limit or when
+a concrete blocker prevents further useful work. In the handoff, state the
+coverage, verification, and reason for stopping.
 
 ## Bound optimization work
 

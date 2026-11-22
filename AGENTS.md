@@ -22,6 +22,10 @@ See [project standards](docs/agents/project-standards.md) and
 | Operate a managed coding VM or workstation | [Agent systems](docs/agents/README.md) |
 | Delegate work or select a model | [Subagent workflows](docs/agents/agent-subagents.md) and the live session catalog |
 
+For requests to iterate or keep improving, use the
+[project development skill](common/agent_skills/basaltwater-project-development/SKILL.md#iterate-on-the-outcome)
+to run successive review and improvement passes within the request's scope.
+
 ## Before Editing
 
 1. Run `git status -sb` and preserve unrelated worktree changes.
