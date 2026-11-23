@@ -49,7 +49,9 @@ Quarantine atomically moves source files into a recognized root-owned, mode-0700
 `.basaltwater-quarantine` directory on the source filesystem, preserving relative
 paths under unique operation directories with `.corrupt` names. The quarantine
 directory is placed inside a nested mount or Btrfs subvolume when necessary so
-the move stays atomic. Read-only snapshots cannot be quarantined or deleted;
+the move stays atomic. A filename too long for the `.corrupt` suffix is stored
+as `source.corrupt` in its own operation directory, with its original name in the
+disposition record. Read-only snapshots cannot be quarantined or deleted;
 the worker reports that restriction without changing snapshot flags.
 Both actions reject symlinks, multiple hard links and unsafe
 or unrecognized quarantine directories. They also reject reserved scrub metadata,
@@ -59,6 +61,11 @@ tasks; coordinate recovery across their reports through the administrator comman
 line. Permanent deletion removes source bytes; it retains the finding/disposition
 history, parity and mirror protection.
 
+An older worker could leave a root-owned, mode-2700 `.basaltwater-quarantine`
+directory with no `.owner` marker on a Samba share. If an administrator confirms
+it is that empty leftover, remove just the empty directory with `rmdir` before
+reviewing the action again. Preserve marked or nonempty directories for inspection.
+
 **Recovery activity** lists each file as pending, running, completed, skipped,
 failed or unresolved, with a count for each state. Completed means the action
 finished; a completed verification can still report damage. Missing item results
@@ -66,8 +73,10 @@ are shown as unresolved. Activity identifies the scrub root and parity directory
 and links back to that exact task's findings. Cancelling a recovery review also
 returns to its selected task.
 
-The whole selection is checked before effects, and each file is checked again
-before acting. Changed entries are skipped. Interruption
+The whole selection is checked before effects, including required nested mounts
+and read-only mount flags. Each file is checked again before acting. If its
+identity changes before any move is attempted, the worker skips it so it can be
+verified and reviewed again. Interruption
 can leave partial completion or an unresolved action. Inspect actual state and
 individually review remaining files; batches are never replayed automatically.
 Findings below still follow the five-minute export.

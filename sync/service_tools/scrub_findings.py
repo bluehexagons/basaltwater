@@ -18,6 +18,7 @@ from lib.atomic_io import _fsync_directory, read_json_file, write_json_atomic
 
 METADATA_DIR = ".basaltwater-scrub"
 QUARANTINE_DIR = ".basaltwater-quarantine"
+_QUARANTINE_MARKER = b"basaltwater-quarantine-v1\n"
 _UNREVIEWED = object()
 ADVICE = {
     "unrepairable": "Restore from an independent copy; existing parity has insufficient recovery blocks.",
@@ -31,6 +32,14 @@ ADVICE = {
     "repair_failed": "Repair did not recover valid content; restore an independent copy.",
     "missing_file": "Restore or repair the missing file; recovery evidence has been retained.",
 }
+
+
+class UnsafeQuarantine(ValueError):
+    """The private quarantine directory cannot be trusted."""
+
+
+class DispositionSourceChanged(ValueError):
+    """The source changed before any move was attempted."""
 
 
 def stamp() -> str:
@@ -152,13 +161,13 @@ def _open_directory(path: str) -> int:
 
 def _mount_points() -> frozenset[str]:
     """Read bounded kernel metadata, including same-device bind mounts."""
-    with open("/proc/self/mountinfo", encoding="utf-8") as stream:
+    with open("/proc/self/mountinfo", encoding="utf-8", errors="surrogateescape", newline="\n") as stream:
         data = stream.read(1024 * 1024 + 1)
     if len(data) > 1024 * 1024 or not data:
         raise ValueError("Mount table unavailable or too large")
     points = set()
-    for line in data.splitlines():
-        fields = line.split()
+    for line in data.rstrip("\n").split("\n"):
+        fields = line.split(" ")
         if len(fields) < 10 or "-" not in fields[6:] or not fields[4].startswith("/"):
             raise ValueError("Invalid mount table")
         points.add(re.sub(r"\\([0-7]{3})", lambda match: chr(int(match[1], 8)), fields[4]))
@@ -186,7 +195,38 @@ def quarantine_root(path: str, directory: str) -> str:
     return str(current)
 
 
-def disposition_preflight(path: str, directory: str, database: str, job_id: str = "") -> None:
+def _check_quarantine(descriptor: int, device: int, *, created: bool = False) -> None:
+    info = os.fstat(descriptor)
+    if info.st_uid != 0 or info.st_dev != device:
+        raise UnsafeQuarantine("Unsafe or cross-filesystem quarantine")
+    mode = stat.S_IMODE(info.st_mode)
+    if created and mode == (stat.S_ISGID | 0o700):
+        # Samba share directories can pass setgid to a newly made child.
+        os.fchmod(descriptor, 0o700)
+        mode = stat.S_IMODE(os.fstat(descriptor).st_mode)
+    if mode != 0o700:
+        raise UnsafeQuarantine("Unsafe quarantine directory mode")
+    if created:
+        return
+    try:
+        marker = os.open(".owner", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=descriptor)
+    except (FileNotFoundError, IsADirectoryError) as exc:
+        raise UnsafeQuarantine("Quarantine ownership marker is missing or invalid") from exc
+    try:
+        info = os.fstat(marker)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
+                or info.st_nlink != 1 or info.st_mode & 0o077
+                or os.read(marker, 100) != _QUARANTINE_MARKER):
+            raise UnsafeQuarantine("Unrecognized quarantine ownership marker")
+    finally:
+        os.close(marker)
+
+
+def _quarantine_id(relative: str, job_id: str) -> str:
+    return job_id + "-" + hashlib.sha256(os.fsencode(relative)).hexdigest()[:16]
+
+
+def disposition_preflight(path: str, directory: str, database: str, job_id: str = "") -> str:
     from sync.service_tools.scrub_par2 import _confined_path
 
     _confined_path(path, directory)
@@ -199,30 +239,29 @@ def disposition_preflight(path: str, directory: str, database: str, job_id: str 
     local_root = quarantine_root(path, directory)
     if os.stat(local_root, follow_symlinks=False).st_dev != info.st_dev:
         raise OSError(errno.EXDEV, "Cross-filesystem quarantine is unavailable")
-    if len(os.fsencode(os.path.basename(path) + ".corrupt")) > os.pathconf(local_root, "PC_NAME_MAX"):
-        raise ValueError("Quarantine filename is too long")
+    for location in (os.path.dirname(path), local_root, database):
+        if os.statvfs(location).f_flag & os.ST_RDONLY:
+            raise OSError(errno.EROFS, "Disposition requires writable source and parity storage")
     quarantine_path = os.path.join(local_root, QUARANTINE_DIR)
     if os.path.lexists(quarantine_path):
         descriptor = _open_directory(quarantine_path)
         try:
-            quarantine_info = os.fstat(descriptor)
-            if (quarantine_info.st_uid != 0 or stat.S_IMODE(quarantine_info.st_mode) != 0o700
-                    or quarantine_info.st_dev != info.st_dev):
-                raise ValueError("Unsafe quarantine")
-            marker = os.open(".owner", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=descriptor)
-            try:
-                marker_info = os.fstat(marker)
-                if (not stat.S_ISREG(marker_info.st_mode) or marker_info.st_uid != 0
-                        or marker_info.st_nlink != 1 or marker_info.st_mode & 0o077
-                        or os.read(marker, 100) != b"basaltwater-quarantine-v1\n"):
-                    raise ValueError("Unrecognized quarantine")
-            finally:
-                os.close(marker)
-            quarantine_id = job_id + "-" + hashlib.sha256(os.path.relpath(path, directory).encode()).hexdigest()[:16]
-            if job_id and os.path.lexists(os.path.join(quarantine_path, quarantine_id)):
+            _check_quarantine(descriptor, info.st_dev)
+            if job_id and os.path.lexists(os.path.join(quarantine_path, _quarantine_id(os.path.relpath(path, directory), job_id))):
                 raise ValueError("Quarantine path collision")
         finally:
             os.close(descriptor)
+    return local_root
+
+
+def _require_disposition_identity(parent: int, name: str, identity: list[int]) -> None:
+    try:
+        info = os.stat(name, dir_fd=parent, follow_symlinks=False)
+    except FileNotFoundError as exc:
+        raise DispositionSourceChanged("File disappeared before disposition") from exc
+    current = [info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns]
+    if current != identity or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        raise DispositionSourceChanged("File changed before disposition")
 
 
 def dispose(path: str, directory: str, database: str, action: str,
@@ -230,15 +269,16 @@ def dispose(path: str, directory: str, database: str, action: str,
     """Persist intent before irreversible effects; ambiguous outcomes retain protection."""
     if action not in {"quarantine", "delete"}:
         raise ValueError("Unknown disposition")
-    disposition_preflight(path, directory, database, job_id)
-    local_root = quarantine_root(path, directory)
+    local_root = disposition_preflight(path, directory, database, job_id)
     relative = os.path.relpath(path, directory)
     report = Findings(directory, database)
     if report.disposition_blocked(relative, identity):
         raise ValueError("Disposition already recorded; inspect before further action")
     parent = _open_directory(os.path.dirname(path))
+    name = os.path.basename(path)
     quarantine = None
     try:
+        _require_disposition_identity(parent, name, identity)
         destination = ""
         if action in {"quarantine", "delete"}:
             root = _open_directory(local_root)
@@ -249,33 +289,20 @@ def dispose(path: str, directory: str, database: str, action: str,
                 except FileExistsError:
                     created = False
                 quarantine = os.open(QUARANTINE_DIR, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root)
-                info = os.fstat(quarantine)
-                if info.st_uid != 0 or stat.S_IMODE(info.st_mode) != 0o700 or info.st_dev != identity[0]:
-                    raise ValueError("Unsafe or cross-filesystem quarantine")
-                marker = b"basaltwater-quarantine-v1\n"
+                _check_quarantine(quarantine, identity[0], created=created)
                 if created:
                     marker_fd = os.open(".owner", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=quarantine)
                     try:
-                        os.write(marker_fd, marker)
+                        os.write(marker_fd, _QUARANTINE_MARKER)
                         os.fsync(marker_fd)
                     finally:
                         os.close(marker_fd)
                     os.fsync(quarantine)
                     os.fsync(root)
-                else:
-                    marker_fd = os.open(".owner", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=quarantine)
-                    try:
-                        marker_info = os.fstat(marker_fd)
-                        if (not stat.S_ISREG(marker_info.st_mode) or marker_info.st_uid != 0
-                                or marker_info.st_nlink != 1 or marker_info.st_mode & 0o077
-                                or os.read(marker_fd, 100) != marker):
-                            raise ValueError("Unrecognized quarantine")
-                    finally:
-                        os.close(marker_fd)
             finally:
                 os.close(root)
             # One private job directory retains the complete source relative path.
-            quarantine_id = job_id + "-" + hashlib.sha256(relative.encode()).hexdigest()[:16]
+            quarantine_id = _quarantine_id(relative, job_id)
             os.mkdir(quarantine_id, 0o700, dir_fd=quarantine)
             child = os.open(quarantine_id, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=quarantine)
             os.fsync(quarantine)
@@ -287,7 +314,13 @@ def dispose(path: str, directory: str, database: str, action: str,
                 os.fsync(quarantine)
                 os.close(quarantine)
                 quarantine = child
-            destination = os.path.join(local_root, QUARANTINE_DIR, quarantine_id, relative + ".corrupt")
+            leaf = name + ".corrupt"
+            name_max = os.fpathconf(quarantine, "PC_NAME_MAX")
+            if name_max >= 0 and len(os.fsencode(leaf)) > name_max:
+                # The job directory already identifies this source. Keep the
+                # original name in the disposition record for long filenames.
+                leaf = "source.corrupt"
+            destination = os.path.join(local_root, QUARANTINE_DIR, quarantine_id, os.path.dirname(relative), leaf)
         intent = {"action": action, "state": "intent", "job_id": job_id,
                   "file_identity": identity, "destination": destination, "started_at": stamp()}
         previous = report.data.get("dispositions", {}).get(relative)
@@ -296,20 +329,28 @@ def dispose(path: str, directory: str, database: str, action: str,
                                  {key: value for key, value in previous.items() if key != "history"}]
         report.data.setdefault("dispositions", {})[relative] = intent
         report.save()
-        info = os.stat(os.path.basename(path), dir_fd=parent, follow_symlinks=False)
-        current = [info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns]
-        if current != identity or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-            raise ValueError("File changed before disposition")
+        try:
+            _require_disposition_identity(parent, name, identity)
+        except DispositionSourceChanged:
+            # Nothing has moved. Restore any previous disposition so a fresh
+            # verification and review can proceed.
+            if previous is None:
+                del report.data["dispositions"][relative]
+            else:
+                report.data["dispositions"][relative] = previous
+            report.save()
+            raise
         if action in {"quarantine", "delete"}:
             libc = ctypes.CDLL(None, use_errno=True)
             rename = libc.renameat2
             rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
             rename.restype = ctypes.c_int
-            if rename(parent, os.fsencode(os.path.basename(path)), quarantine,
+            if rename(parent, os.fsencode(name), quarantine,
                       os.fsencode(os.path.basename(destination)), 1) != 0:
                 error = ctypes.get_errno()
                 raise OSError(error, os.strerror(error))
             os.fsync(quarantine)
+            os.fsync(parent)
             moved = os.stat(os.path.basename(destination), dir_fd=quarantine, follow_symlinks=False)
             # Pin the bytes privately before deletion. A name swapped in the
             # syscall window is retained for inspection, never unlinked.
@@ -319,7 +360,6 @@ def dispose(path: str, directory: str, database: str, action: str,
             if action == "delete":
                 os.unlink(os.path.basename(destination), dir_fd=quarantine)
                 os.fsync(quarantine)
-        os.fsync(parent)
         intent.update(state="completed", finished_at=stamp())
         entry = report.data["files"].get(relative)
         if entry:

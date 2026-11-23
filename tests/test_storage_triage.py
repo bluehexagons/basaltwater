@@ -208,8 +208,30 @@ class TriageTests(unittest.TestCase):
              patch.object(data_job, "dispose", side_effect=race):
             self.assertEqual(data_job.run_action(self.value), 1)
         self.assertTrue(self.paths[0].exists())
-        self.assertEqual(self.result()["items"][0]["status"], "unresolved")
-        self.assertEqual(self.report().data["dispositions"]["one"]["state"], "intent")
+        self.assertEqual(self.result()["items"][0]["status"], "skipped")
+        self.assertEqual(self.result()["items"][0]["failure"], "file_changed")
+        self.assertFalse(self.report().disposed("one"))
+
+    def test_file_changed_after_intent_can_be_reviewed_again(self):
+        self.value.update(action="delete", items=self.value["items"][:1])
+        save = findings.Findings.save
+
+        def change_after_intent(report):
+            save(report)
+            if report.disposed("one"):
+                self.paths[0].write_bytes(b"changed after intent")
+
+        with patch.object(findings.Findings, "save", change_after_intent):
+            self.assertEqual(data_job.run_action(self.value), 1)
+        self.assertEqual(self.result()["items"][0]["failure"], "file_changed")
+        self.assertFalse(self.report().disposed("one"))
+        self.assertEqual(self.paths[0].read_bytes(), b"changed after intent")
+        report = self.report()
+        report.record("one", {"category": "unrepairable", "file_identity": findings.file_identity(str(self.paths[0]))})
+        self.value["items"][0]["finding"] = finding_revision(report.data["files"]["one"])
+        self.value["job_id"] = "b" * 32
+        self.assertEqual(data_job.run_action(self.value), 0)
+        self.assertFalse(self.paths[0].exists())
 
     def test_changed_finding_rejects_entire_batch(self):
         self.report().record("two", {"category": "repairable"})
@@ -342,6 +364,7 @@ class TriageTests(unittest.TestCase):
         self.assertEqual(json.loads(self.archive().read_text()), self.result())
 
     def test_quarantine_retains_relative_path_parity_and_excludes_inventory(self):
+        self.source.chmod(0o2770)
         (self.database / "one.par2").write_bytes(b"parity evidence")
         self.assertEqual(data_job.run_action(self.value), 0)
         self.assertEqual([item["status"] for item in self.result()["items"]], ["completed"] * 2)
@@ -349,12 +372,24 @@ class TriageTests(unittest.TestCase):
         for item in self.result()["items"]:
             self.assertEqual(Path(item["destination"]).read_bytes(), b"damaged bytes")
             self.assertTrue(item["destination"].endswith(Path(item["file"]).name + ".corrupt"))
-        self.assertEqual((self.source / findings.QUARANTINE_DIR).stat().st_mode & 0o777, 0o700)
+        self.assertEqual((self.source / findings.QUARANTINE_DIR).stat().st_mode & 0o7777, 0o700)
         self.assertTrue((self.database / "one.par2").exists())
         inventory = scrub_par2._scan_tree(str(self.source))
         self.assertFalse(any(files for _, _, files in inventory))
         scrub_par2._record_missing_files(str(self.source), str(self.database), set(), str(self.root / "log"))
         self.assertEqual(self.report().data["files"]["one"]["category"], "unrepairable")
+
+    def test_quarantine_accepts_maximum_length_source_filename(self):
+        name = "x" * os.pathconf(self.source, "PC_NAME_MAX")
+        path = self.paths[0].rename(self.source / name)
+        report = self.report()
+        report.record(name, {"category": "unrepairable", "file_identity": findings.file_identity(str(path))})
+        self.value["items"] = [{"file": str(path), "finding": finding_revision(report.data["files"][name])}]
+        self.assertEqual(data_job.run_action(self.value), 0)
+        destination = Path(self.report().data["dispositions"][name]["destination"])
+        self.assertEqual(destination.name, "source.corrupt")
+        self.assertEqual(destination.read_bytes(), b"damaged bytes")
+        self.assertFalse(path.exists())
 
     def test_quarantine_stays_inside_nested_subvolume_and_mirrors_exclude_it(self):
         nested = self.source / "snapshots" / "sample"
@@ -420,6 +455,51 @@ class TriageTests(unittest.TestCase):
         self.assertTrue(all(path.exists() for path in self.paths))
         self.assertNotIn("PRIVATE", self.state.read_text())
 
+    def test_unmounted_declared_subtree_blocks_quarantine_before_effects(self):
+        nested = self.source / "nested"
+        nested.mkdir()
+        self.paths[1] = self.paths[1].rename(nested / "two")
+        report = self.report()
+        report.record("nested/two", {"category": "unrepairable", "file_identity": findings.file_identity(str(self.paths[1]))})
+        self.value["items"][1] = {"file": str(self.paths[1]), "finding": finding_revision(report.data["files"]["nested/two"])}
+        self.saved["storage_mounts"] = [["data", str(nested)]]
+        with patch("lib.task_utils.os.path.ismount", return_value=False):
+            self.assertEqual(data_job.run_action(self.value), 1)
+        self.assertEqual([item["failure"] for item in self.result()["items"]], ["batch_preflight", "mount_unavailable"])
+        self.assertTrue(all(path.exists() for path in self.paths))
+
+    def test_read_only_nested_mount_stops_the_whole_disposition_batch(self):
+        nested = self.source / "snapshot"
+        nested.mkdir()
+        self.paths[1] = self.paths[1].rename(nested / "two")
+        report = self.report()
+        report.record("snapshot/two", {"category": "unrepairable", "file_identity": findings.file_identity(str(self.paths[1]))})
+        self.value["items"][1] = {"file": str(self.paths[1]), "finding": finding_revision(report.data["files"]["snapshot/two"])}
+        self.mounts.return_value = frozenset({str(nested)})
+        statvfs = os.statvfs
+
+        def readonly(path):
+            data = list(statvfs(path))
+            if Path(path).is_relative_to(nested):
+                data[8] |= os.ST_RDONLY
+            return os.statvfs_result(data)
+
+        with patch.object(findings.os, "statvfs", side_effect=readonly):
+            self.assertEqual(data_job.run_action(self.value), 1)
+        self.assertEqual([item["failure"] for item in self.result()["items"]], ["batch_preflight", "read_only"])
+        self.assertTrue(all(path.exists() for path in self.paths))
+        self.assertFalse((self.source / findings.QUARANTINE_DIR).exists())
+
+    def test_unmarked_inherited_quarantine_is_reported_without_adopting_it(self):
+        quarantine = self.source / findings.QUARANTINE_DIR
+        quarantine.mkdir()
+        quarantine.chmod(0o2700)
+        self.assertEqual(data_job.run_action(self.value), 1)
+        self.assertEqual(self.result()["failure"], "unsafe_quarantine")
+        self.assertEqual(quarantine.stat().st_mode & 0o7777, 0o2700)
+        self.assertEqual(list(quarantine.iterdir()), [])
+        self.assertTrue(all(path.exists() for path in self.paths))
+
     def test_delete_retains_parity_and_intent_on_ambiguous_failure(self):
         self.value["action"] = "delete"
         (self.database / "one.par2").write_bytes(b"parity")
@@ -432,9 +512,11 @@ class TriageTests(unittest.TestCase):
             self.assertEqual(data_job.run_action(self.value), 1)
         self.assertTrue(all(entry["state"] == "intent" for entry in self.report().data["dispositions"].values()))
         self.assertTrue((self.database / "one.par2").exists())
+        self.assertEqual(self.result()["status"], "failed")
         self.assertTrue(all(item["status"] == "unresolved" for item in self.result()["items"]))
 
     def test_successful_delete_keeps_disposition(self):
+        self.source.chmod(0o2770)
         self.value["action"] = "delete"
         self.assertEqual(data_job.run_action(self.value), 0)
         self.assertFalse(any(path.exists() for path in self.paths))
@@ -619,9 +701,11 @@ class TriageTests(unittest.TestCase):
 
 class QuarantineMountInventoryTests(unittest.TestCase):
     def test_kernel_escaped_mount_paths_are_decoded(self):
-        table = "20 1 0:7 / / rw - tmpfs none rw\n21 20 0:7 /bound /srv/bound\\040data rw - tmpfs none rw\n"
+        table = ("20 1 0:7 / / rw - tmpfs none rw\n"
+                 "21 20 0:7 /bound /srv/bound\\040data rw - tmpfs none rw\n"
+                 "22 20 0:7 /bound /srv/bound\u00a0data\udcff rw - tmpfs none rw\n")
         with patch("builtins.open", mock_open(read_data=table)):
-            self.assertEqual(findings._mount_points(), frozenset({"/", "/srv/bound data"}))
+            self.assertEqual(findings._mount_points(), frozenset({"/", "/srv/bound data", "/srv/bound\u00a0data\udcff"}))
 
     def test_empty_malformed_and_oversized_mount_tables_are_rejected(self):
         for table in ("", "invalid mount\n", "x" * (1024 * 1024 + 1)):

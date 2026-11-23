@@ -292,6 +292,7 @@ class DataRecoveryTests(unittest.TestCase):
         marker = str(self.root / "setup-operation.json")
         with OperationStateStore(marker).ownership():
             self.assertEqual(self.run_root_job(self.value), 1)
+        self.assertEqual(data_job._record()["failure"], "storage_busy")
         data_job.recover.assert_not_called()
         data_job.load_setup_config.assert_not_called()
         def recovering(_parameters, saved):

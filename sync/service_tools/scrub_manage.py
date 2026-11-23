@@ -22,6 +22,10 @@ from sync.service_tools.parity_sets import locate
 from sync.service_tools.storage_ops import LOCK_FILE, OperationLock, resolve_scrub_database_path, validate_mounts_for_operation
 
 
+class ScrubMountUnavailable(ValueError):
+    """A mount needed by a scrub management operation is unavailable."""
+
+
 def selected_jobs(config: RuntimeConfig, args: argparse.Namespace) -> list[tuple[str, str, int]]:
     validate_scrub_specs(config.scrub_specs)
     for field in ("file", "directory", "database", "backup"):
@@ -41,9 +45,12 @@ def selected_jobs(config: RuntimeConfig, args: argparse.Namespace) -> list[tuple
         path = getattr(args, "file", None)
         if path and (not Path(path).is_relative_to(directory) or Path(path).is_relative_to(database) or path == directory):
             continue
-        valid, error = validate_mounts_for_operation([directory, database], config, "scrub management")
+        paths = [directory, database]
+        if path:
+            paths.append(path)
+        valid, error = validate_mounts_for_operation(paths, config, "scrub management")
         if not valid:
-            raise ValueError(error)
+            raise ScrubMountUnavailable(error)
         _confined_path(directory, directory)
         _confined_path(database, database)
         if path:
@@ -85,7 +92,7 @@ def execute(args: argparse.Namespace, config: RuntimeConfig) -> tuple[dict, int]
         if backup:
             valid, error = validate_mounts_for_operation([backup], config, "scrub restore")
             if not valid:
-                raise ValueError(error)
+                raise ScrubMountUnavailable(error)
         review = {"reviewed_identity": args.reviewed_identity} if hasattr(args, "reviewed_identity") else {}
         result = remediate(path, directory, database, redundancy, args.action, backup=backup, **review)
     else:

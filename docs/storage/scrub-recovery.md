@@ -135,8 +135,10 @@ Btrfs subvolume, quarantine lives at that boundary inside the scrub root, keepin
 moves within the source mount and device. Mount boundaries come from Linux's
 mount inventory; unavailable or invalid inventory stops disposition before moving
 files. An operation directory preserves the source
-relative path with a `.corrupt` suffix. An existing directory needs the recognized
-ownership marker and mode 0700; it is never silently adopted. Disposition requires
+relative path with a `.corrupt` suffix. If the suffix would exceed the filesystem's
+filename limit, the operation directory stores `source.corrupt` and the report
+retains the original path. An existing directory needs the recognized
+ownership marker and mode 0700. Disposition requires
 a regular file with one hard link on a writable filesystem and Linux
 `renameat2` support. Deletion first moves the reviewed inode privately, rechecks
 it, then unlinks it. An uncertain move or deletion retains a durable intent and

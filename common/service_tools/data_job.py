@@ -23,16 +23,22 @@ if __name__ == "__main__" and not __package__:
 from lib.atomic_io import read_json_file, remove_file_durable, write_json_atomic
 from lib.data_actions import DATA_MESSAGE_BYTES, DATA_STATE, DATA_UNIT, HEX_ID, finding_revision, validate_data_action
 from lib.machine_state import PERSISTENT_STATE_DIR as STATE_DIR, can_manage_system_services, load_setup_config
-from lib.operation_state import OperationStateStore
+from lib.operation_state import OperationStateError, OperationStateStore
 from lib.privilege_execution import ENVIRONMENT
 from lib.privilege_policy import protected_path
 from lib.runtime_config import RuntimeConfig
-from sync.service_tools.scrub_findings import ADVICE, Findings, file_identity, examine, dispose, disposition_preflight
-from sync.service_tools.scrub_manage import execute, selected_jobs
+from sync.service_tools.scrub_findings import (
+    ADVICE, DispositionSourceChanged, Findings, UnsafeQuarantine,
+    disposition_preflight, dispose, examine, file_identity,
+)
+from sync.service_tools.scrub_manage import ScrubMountUnavailable, execute, selected_jobs
 from sync.service_tools.storage_ops import LOCK_FILE, OperationLock, resolve_scrub_database_path
 
 RESULTS = {"running", "succeeded", "findings", "failed", "interrupted"}
-FAILURES = {"", "storage_busy", "setup_recovery_required", "finding_changed", "file_changed", "identity_unavailable", "overlapping_scrubs", "reserved_path", "execution_rejected", "job_interrupted", "read_only", "permission_denied", "no_space", "cross_device", "batch_preflight"}
+FAILURES = {"", "storage_busy", "setup_recovery_required", "finding_changed", "file_changed",
+            "identity_unavailable", "overlapping_scrubs", "reserved_path", "execution_rejected",
+            "job_interrupted", "read_only", "permission_denied", "no_space", "cross_device",
+            "batch_preflight", "unsafe_quarantine", "mount_unavailable"}
 
 
 class DataJobRejected(ValueError):
@@ -42,6 +48,14 @@ class DataJobRejected(ValueError):
 def _failure(exc: Exception) -> str:
     if isinstance(exc, DataJobRejected):
         return str(exc)
+    if isinstance(exc, DispositionSourceChanged):
+        return "file_changed"
+    if isinstance(exc, UnsafeQuarantine):
+        return "unsafe_quarantine"
+    if isinstance(exc, ScrubMountUnavailable):
+        return "mount_unavailable"
+    if isinstance(exc, OperationStateError):
+        return "storage_busy" if isinstance(exc.__cause__, BlockingIOError) else "setup_recovery_required"
     if isinstance(exc, OSError):
         return {errno.EROFS: "read_only", errno.EACCES: "permission_denied",
                 errno.EPERM: "permission_denied", errno.ENOSPC: "no_space",
@@ -290,13 +304,19 @@ def recover_batch(parameters: dict, saved: dict, value: dict) -> None:
                 result = dispose(item["file"], directory, database, parameters["action"],
                                  entry["file_identity"], parameters["job_id"])
             item.update(status="completed", category=result["category"], destination=result.get("destination", ""))
+        except DispositionSourceChanged as exc:
+            item.update(status="skipped", failure=_failure(exc))
         except (OSError, ValueError, RuntimeError) as exc:
             item.update(status="failed" if parameters["action"] == "verify" else "unresolved", failure=_failure(exc))
         finally:
             item["finished"] = time.time()
             _save_record(value)
-    succeeded = all(item["status"] == "completed" and item["category"] in {"healthy", "delete", "quarantine"} for item in value["items"])
-    value.update(status="succeeded" if succeeded else "findings")
+    if any(item["failure"] for item in value["items"]):
+        value["status"] = "failed"
+    elif all(item["status"] == "completed" and item["category"] in {"healthy", "delete", "quarantine"} for item in value["items"]):
+        value["status"] = "succeeded"
+    else:
+        value["status"] = "findings"
 
 
 def run_action(parameters: dict) -> int:
