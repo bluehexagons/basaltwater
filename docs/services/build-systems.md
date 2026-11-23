@@ -163,5 +163,24 @@ Setup refuses `/etc/basaltwater/cicd` or old sudoers/unit evidence.
 4. Archive old configuration outside its active path, then run new setup.
    Migration does not automatically delete user data.
 
-Existing Actions runner units use a different old lock. Let jobs finish and
-stop those units before upgrading; credentials are retained by the upgrade.
+### Upgrade a legacy Actions runner
+
+If setup asks you to stop legacy GitHub runners, the installed units are still
+using the old lock. Pause new assignments and let active jobs finish. On the
+runner host, list the managed units and stop the affected services:
+
+```bash
+systemctl list-units 'basaltwater-github-runner*.service' --all
+sudo systemctl stop basaltwater-github-runner.service
+```
+
+For a multi-repository installation, stop each active legacy
+`basaltwater-github-runner-ID.service` as well. A stopped service can be
+upgraded without removing its GitHub registration or its workspace.
+
+To add the managed builder, run `setup server_lite` for the same target with
+`--build-server --github-runner` and repeat the existing repository or
+organization, allowed users, and labels. Keep the existing SSH access settings.
+Omit `--ci-register-with-gh` when reusing a working registration for the same
+scope and labels. After setup, verify the runner is online and idle in GitHub
+before resuming assignments. See [runner operation and recovery](github-runner-operations.md).
