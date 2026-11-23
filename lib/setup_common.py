@@ -37,6 +37,7 @@ from lib.credentials import prepare_runtime_config, store_cli_credentials
 from lib.homebox_config import validate_homebox_settings
 from lib.kiosk_config import validate_kiosk_settings
 from lib.github_runner_config import PAYLOAD_NAME as RUNNER_PAYLOAD_NAME
+from lib.github_runner_config import PROFILE as GITHUB_RUNNER_PROFILE
 from lib.github_runner_credentials import prepare_registration_payload
 from lib.network_transition import finish_network_transition
 from lib.proxmox_hosts import ProxmoxHost, find_proxmox_host, sync_proxmox_host
@@ -1508,6 +1509,9 @@ def _run_remote_setup_locked(config: SetupConfig, *, expected_releases: object =
     prompt_options = {"on_input_request": answer_setup_prompt, "interactive": True} if relay_prompts else {}
     is_local = config.host in {"localhost", "127.0.0.1", "::1"}
     bootstrap_target = config.custom_steps == "bootstrap_build_target"
+    runner_setup = not (config.custom_steps or client_preparation) and (
+        config.system_type == GITHUB_RUNNER_PROFILE or config.enable_github_runner or config.disable_github_runner
+    )
     
     if is_local and not config.dry_run and os.geteuid() != 0:
         print("Error: Local setup requires root privileges. Please run with sudo.")
@@ -1611,6 +1615,8 @@ def _run_remote_setup_locked(config: SetupConfig, *, expected_releases: object =
                 print(f"  Upload files to {config.host}:{REMOTE_INSTALL_DIR}")
                 print(f"  Run: {shlex.join(command_tokens)}")
             print("  Refuse retired infra-tools installations; migrate with the documented intermediate version")
+            if runner_setup:
+                print("  Wait for managed legacy runner jobs and stop idle legacy runners before upgrading")
             if config.artifact_deployments:
                 print("  Reconcile retained target artifacts (controller deployment required for missing inputs)")
             if config.activate_network:
@@ -1633,6 +1639,8 @@ def _run_remote_setup_locked(config: SetupConfig, *, expected_releases: object =
                     from lib.setup_upgrade import prepare_target_runtime
                     if bootstrap_target:
                         prepare_target_runtime(build_dir, config.username, bootstrap_build_target=True)
+                    elif runner_setup:
+                        prepare_target_runtime(build_dir, config.username, upgrade_github_runner=True)
                     else:
                         prepare_target_runtime(build_dir, config.username)
                     with link_payloads(payload, REMOTE_INSTALL_DIR):
@@ -1677,7 +1685,8 @@ def _run_remote_setup_locked(config: SetupConfig, *, expected_releases: object =
                 'cd "$basaltwater_stage"; '
                 f'export {PROMPT_RELAY_ENV}={"1" if relay_prompts else "0"}; '
                 f'python3 -E -s -B -u -m lib.setup_upgrade --username {shlex.quote(config.username)}'
-                + (' --bootstrap-build-target' if bootstrap_target else '') + '; '
+                + (' --bootstrap-build-target' if bootstrap_target else '')
+                + (' --upgrade-github-runner' if runner_setup else '') + '; '
                 f'cd {shlex.quote(REMOTE_INSTALL_DIR)}; '
                 f'python3 -E -s -B -u -m lib.setup_payloads --timeout {setup_timeout} --payload-bytes {len(private_data)}'
             )

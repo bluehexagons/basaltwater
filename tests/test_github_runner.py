@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 from contextlib import contextmanager, nullcontext
+import fcntl
 import io
 import json
 import os
@@ -258,7 +259,7 @@ class LegacyRunnerGuardTests(unittest.TestCase):
         self.assertIn(f"{self.secondary} (activating/auto-restart)", str(error.exception))
         self.assertNotIn(SERVICE, str(error.exception))
         self.run.assert_called_with(
-            ["systemctl", "show", self.secondary, "--property=LoadState,ActiveState,SubState", "--no-pager"],
+            ["systemctl", "show", self.secondary, unittest.mock.ANY, "--no-pager"],
             check=False, capture_output=True, timeout=30,
         )
 
@@ -290,6 +291,95 @@ class LegacyRunnerGuardTests(unittest.TestCase):
                     steps.reject_active_legacy_runner(unit_dir=self.unit_dir)
                 self.assertIn(SERVICE, str(error.exception))
                 self.assertIn(message, str(error.exception))
+
+    def legacy_listener(self, service=SERVICE) -> tuple[Path, Path, dict]:
+        hook = Path(steps.HOOK_DIR, "job-started.sh")
+        hook.write_text(steps.render_hook())
+        hook.chmod(0o755)
+        self.enterContext(patch.object(steps, "HOOK", str(hook)))
+        (self.unit_dir / service).write_text(f"[Service]\nEnvironment=ACTIONS_RUNNER_HOOK_JOB_STARTED={hook}\n")
+        data = self.unit_dir / "data"
+        data.mkdir(exist_ok=True)
+        data.chmod(0o755)
+        queue = data / "queue.lock"
+        queue.touch(mode=0o600)
+        self.enterContext(patch.object(steps, "DATA", str(data)))
+        self.enterContext(patch.object(steps.pwd, "getpwnam", return_value=SimpleNamespace(
+            pw_uid=os.geteuid(), pw_gid=os.getegid(),
+        )))
+        real_fstat = os.fstat
+        protected = {data.stat().st_ino, hook.stat().st_ino}
+
+        def fstat(descriptor):
+            info = real_fstat(descriptor)
+            if info.st_ino in protected:
+                return SimpleNamespace(st_uid=0, st_mode=info.st_mode, st_nlink=info.st_nlink, st_gid=info.st_gid)
+            return info
+
+        self.enterContext(patch.object(steps.os, "fstat", side_effect=fstat))
+        cgroup_root = self.unit_dir / "cgroups"
+        cgroup = cgroup_root / "system.slice" / service
+        cgroup.mkdir(parents=True)
+        procs = cgroup / "cgroup.procs"
+        procs.write_text("123\n")
+        self.enterContext(patch.object(steps, "_CGROUP_ROOT", cgroup_root))
+        self.enterContext(patch.object(steps.os, "readlink", return_value=steps.APP + "/bin/Runner.Listener"))
+        state = dict(LoadState="loaded", ActiveState="active", SubState="running", MainPID="123",
+                     ControlGroup=f"/system.slice/{service}", ReadWritePaths=f"{data} {queue}",
+                     KillMode="control-group", FragmentPath=str(self.unit_dir / service),
+                     DropInPaths="", NeedDaemonReload="no")
+        return queue, procs, state
+
+    def test_waits_for_legacy_lock_and_worker_then_stops_under_lock(self) -> None:
+        queue, procs, state = self.legacy_listener()
+        procs.write_text("123\n124\n")
+        waits = []
+
+        with queue.open("rb") as job:
+            fcntl.flock(job, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+            def wait(seconds):
+                waits.append(seconds)
+                if len(waits) == 1:
+                    fcntl.flock(job, fcntl.LOCK_UN)
+                else:
+                    # A worker that has reached the cgroup before taking the
+                    # lock can still admit its work while setup is waiting.
+                    fcntl.flock(job, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    procs.write_text("123\n")
+                    fcntl.flock(job, fcntl.LOCK_UN)
+
+            def systemctl(command, **_options):
+                if command[1] == "stop":
+                    self.assertEqual(command, ["systemctl", "stop", SERVICE])
+                    self.assertEqual(waits, [1, 1])
+                    with self.assertRaises(BlockingIOError):
+                        fcntl.flock(job, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    state.update(ActiveState="inactive", SubState="dead", MainPID="0")
+                return subprocess.CompletedProcess(command, 0, "\n".join(f"{key}={val}" for key, val in state.items()))
+
+            self.run.side_effect = systemctl
+            with patch.object(steps.time, "sleep", side_effect=wait), patch("sys.stdout", new_callable=io.StringIO):
+                steps.reject_active_legacy_runner(stop_idle=True, unit_dir=self.unit_dir)
+            self.assertEqual(state["ActiveState"], "inactive")
+            fcntl.flock(job, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def test_refuses_unverified_or_still_busy_listener_without_stopping(self) -> None:
+        queue, _procs, state = self.legacy_listener()
+
+        def systemctl(command, **_options):
+            self.assertEqual(command[1], "show")
+            return subprocess.CompletedProcess(command, 0, "\n".join(f"{key}={val}" for key, val in state.items()))
+
+        self.run.side_effect = systemctl
+        with patch.dict(state, ReadWritePaths=steps.DATA), self.assertRaisesRegex(RuntimeError, "Cannot verify job locking"):
+            steps.reject_active_legacy_runner(stop_idle=True, unit_dir=self.unit_dir)
+        with patch.dict(state, DropInPaths="/etc/systemd/system/custom.conf"), self.assertRaisesRegex(RuntimeError, "Cannot verify job locking"):
+            steps.reject_active_legacy_runner(stop_idle=True, unit_dir=self.unit_dir)
+        with queue.open("rb") as job, patch("lib.build_coordinator.WAIT_SECONDS", 0):
+            fcntl.flock(job, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with self.assertRaisesRegex(RuntimeError, "still busy"):
+                steps.reject_active_legacy_runner(stop_idle=True, unit_dir=self.unit_dir)
 
 
 class ConfigurationTests(unittest.TestCase):
@@ -796,6 +886,7 @@ class ControllerCredentialTests(unittest.TestCase):
                       patch.object(setup_common, "create_tar_from_dir", side_effect=archive)):
                     self.assertEqual(setup_common.run_remote_setup(configured), 0)
                     stream.assert_called_once()
+                    self.assertIn("--upgrade-github-runner", shlex.join(stream.call_args.args[0]))
                     if outcome != "success":
                         self.assertIn("GitHub runner registration deferred:", output.getvalue())
                         self.assertFalse(configured.ci_registration_payload)

@@ -165,9 +165,16 @@ Setup refuses `/etc/basaltwater/cicd` or old sudoers/unit evidence.
 
 ### Upgrade a legacy Actions runner
 
-Setup checks that services using the old runner lock have stopped. It reports
-the unit names and systemd states that block the upgrade. On the runner host
-named in your setup command, inspect all managed runner units:
+Rerun your normal runner setup to upgrade it. Setup takes the legacy runner's
+job lock, checks that only the listeners remain, and stops the idle services
+before replacing the runtime. It waits up to 60 seconds for jobs to finish.
+If a job still holds the runner after that, retry setup when the job completes.
+The normal runner installation step brings the service back online using the
+existing registration and workspace. An assignment arriving during the stop
+may need a retry in GitHub.
+
+For very old units without a verifiable job lock, or if setup cannot confirm
+the systemd state, inspect the named units on the runner host:
 
 ```bash
 sudo systemctl list-units --all 'basaltwater-github-runner*.service' --no-pager
@@ -175,12 +182,12 @@ sudo systemctl show --property=Id,LoadState,ActiveState,SubState \
   'basaltwater-github-runner*.service'
 ```
 
-Pause new assignments and let jobs finish. Stop each legacy unit named by
-setup with `sudo systemctl stop UNIT`, then confirm it shows `ActiveState=inactive`
-or `ActiveState=failed`. A multi-repository installation can have separate
-`basaltwater-github-runner-ID.service` units alongside the default one. If the
-systemd query fails, resolve that error on the runner host before retrying.
-Stopping a service preserves its GitHub registration and workspace.
+For a manual stop, pause new assignments and let jobs finish, then use
+`sudo systemctl stop UNIT`. Confirm it shows `ActiveState=inactive` or
+`ActiveState=failed`. A multi-repository installation can have separate
+`basaltwater-github-runner-ID.service` units alongside the default one. If
+setup reports an error after stopping an idle runner, correct the error
+and rerun the same setup to finish the upgrade and start the service.
 
 To add the managed builder, run `setup server_lite` for the same target with
 `--build-server --github-runner` and repeat the existing repository or

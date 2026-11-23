@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from contextlib import contextmanager
+import fcntl
 import os
 from pathlib import Path
 import stat
@@ -66,6 +67,29 @@ class SetupUpgradeTests(unittest.TestCase):
                     with self.assertRaisesRegex(RuntimeError, "legacy managed build-host"):
                         setup_upgrade.prepare_target_runtime(str(self.source), "agent")
                 activate.assert_not_called()
+
+    def test_runner_upgrade_quiesces_legacy_service_under_setup_ownership(self):
+        marker = self.state / "setup-operation.json"
+        events = []
+
+        def observe(**kwargs):
+            self.assertEqual(kwargs, {"stop_idle": True})
+            with marker.with_suffix(".json.lock").open("rb") as descriptor:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            events.append("quiesced")
+
+        with patch("web.github_runner_steps.reject_active_legacy_runner", side_effect=observe) as guard, \
+             patch.object(setup_common, "_activate_local_runtime", side_effect=lambda _: events.append("activated")):
+            setup_upgrade.prepare_target_runtime(str(self.source), "agent", upgrade_github_runner=True)
+            self.assertEqual(events, ["quiesced", "activated"])
+            guard.reset_mock()
+            store = OperationStateStore(str(marker))
+            store.begin("target_setup", "server_github_runner", "applying")
+            store.close()
+            with self.assertRaisesRegex(ValueError, "Unfinished target setup"):
+                setup_upgrade.prepare_target_runtime(str(self.source), "agent", upgrade_github_runner=True)
+            guard.assert_not_called()
 
     def test_retired_runtime_or_state_is_untouched(self):
         for relative in ("opt/infra_tools", "opt/infra-tools", "var/lib/infra_tools", "var/lib/infra-tools"):

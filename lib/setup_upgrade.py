@@ -118,7 +118,8 @@ def repair_syncthing_state_access(root: Path) -> None:
     )
 
 
-def prepare_target_runtime(source: str, username: str, *, bootstrap_build_target: bool = False) -> None:
+def prepare_target_runtime(source: str, username: str, *, bootstrap_build_target: bool = False,
+                           upgrade_github_runner: bool = False) -> None:
     """Activate current runtime; leave retired installations untouched."""
     from lib import setup_common
 
@@ -132,7 +133,8 @@ def prepare_target_runtime(source: str, username: str, *, bootstrap_build_target
     from web.webhook_build_steps import reject_legacy_build_services
 
     reject_legacy_build_services()
-    reject_active_legacy_runner()
+    if not upgrade_github_runner:
+        reject_active_legacy_runner()
     reject_active_legacy_worker(root)
     _check_unit_operation_markers(root)
     _check_journal(root)
@@ -158,6 +160,8 @@ def prepare_target_runtime(source: str, username: str, *, bootstrap_build_target
         # Requests execute installed modules. Replace that tree only when no
         # typed request can still be using it, including disabled enrollments.
         enrolled = os.path.lexists(root / "etc/basaltwater/build-target")
+        if upgrade_github_runner:
+            reject_active_legacy_runner(stop_idle=True)
         # Keep intake drained across the process boundary into remote_setup.
         # A failed or interrupted activation retains the drain for inspection.
         builder = os.path.lexists(root / DIRECTORY.lstrip("/"))
@@ -171,6 +175,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--username", required=True)
     parser.add_argument("--bootstrap-build-target", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--upgrade-github-runner", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     try:
         if os.geteuid() != 0:
@@ -178,6 +183,7 @@ def main() -> int:
         prepare_target_runtime(
             str(Path(__file__).resolve().parents[1]), args.username,
             bootstrap_build_target=args.bootstrap_build_target,
+            upgrade_github_runner=args.upgrade_github_runner,
         )
         return 0
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:

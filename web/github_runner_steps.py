@@ -16,6 +16,7 @@ import stat
 import subprocess
 import tarfile
 import tempfile
+import time
 import urllib.request
 
 from lib.atomic_io import (
@@ -31,7 +32,7 @@ from lib.machine_state import can_manage_system_services
 from lib.github_runner_registration import RunnerRegistrationError, registration_error_message
 from lib.remote_utils import is_dry_run, read_os_release, run
 from lib.setup_directories import check_directory_path, directory_fd
-from lib.unit_transaction import replace_units
+from lib.unit_transaction import replace_units, snapshot_unit_file
 from lib.validation import validate_filesystem_path, validate_github_runner_settings, validate_runner_registration_token
 
 
@@ -555,35 +556,136 @@ def _setup_github_runner(config: SetupConfig) -> None:
                 write_json_atomic(paths.policy, previous | {"enabled": False}, mode=0o644)
 
 
-def reject_active_legacy_runner(*, unit_dir: Path = Path("/etc/systemd/system")) -> None:
-    """An older runner does not hold the common lease; require it stopped first."""
+_LEGACY_GUIDE = "See docs/services/build-systems.md#upgrade-a-legacy-actions-runner."
+_STOPPED = {"inactive", "failed"}
+_CGROUP_ROOT = Path("/sys/fs/cgroup")
+
+
+def _legacy_runner_state(service: str) -> dict[str, str]:
+    properties = "LoadState,ActiveState,SubState,MainPID,ControlGroup,ReadWritePaths,KillMode,FragmentPath,DropInPaths,NeedDaemonReload"
+    try:
+        result = run(["systemctl", "show", service, "--property=" + properties, "--no-pager"],
+                     check=False, capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"Could not query systemd for legacy GitHub runner {service}. {_LEGACY_GUIDE}") from exc
+    if result.returncode != 0:
+        raise RuntimeError(f"Could not query systemd for legacy GitHub runner {service} "
+                           f"(exit {result.returncode}). {_LEGACY_GUIDE}")
+    state = dict(line.split("=", 1) for line in (result.stdout or "").splitlines() if "=" in line)
+    load, active = state.get("LoadState", "unknown"), state.get("ActiveState")
+    if load not in {"loaded", "not-found"} or not active:
+        raise RuntimeError(f"Cannot confirm legacy GitHub runner {service} state "
+                           f"(LoadState={load}, ActiveState={active or 'unknown'}). {_LEGACY_GUIDE}")
+    return state
+
+
+def _legacy_runner_idle(paths: RunnerPaths, state: dict[str, str]) -> bool:
+    group = "/system.slice/" + paths.service
+    pid = state.get("MainPID", "")
+    if state["ActiveState"] != "active" or state.get("SubState") != "running":
+        return False
+    if state.get("ControlGroup") != group or not pid.isascii() or not pid.isdecimal() or int(pid) <= 1:
+        raise RuntimeError(f"Cannot verify the listener for legacy GitHub runner {paths.service}. {_LEGACY_GUIDE}")
+    directory = _CGROUP_ROOT / group.lstrip("/")
+    try:
+        # An admitted job holds the queue lock. Check for additional processes
+        # as well, since a dispatched job can reach the hook before taking it.
+        return ((directory / "cgroup.procs").read_text().split() == [pid]
+                and not any(directory.glob("*/cgroup.procs"))
+                and os.readlink(f"/proc/{pid}/exe") == paths.app + "/bin/Runner.Listener")
+    except FileNotFoundError:
+        return False  # The observed listener may have exited or restarted.
+
+
+def _verify_legacy_job_lock(paths: RunnerPaths, state: dict[str, str], unit: Path, queue_path: str) -> None:
+    if (state.get("FragmentPath") != str(unit) or state.get("NeedDaemonReload") != "no"
+            or state.get("DropInPaths") != "" or state.get("KillMode") != "control-group"
+            or queue_path not in state.get("ReadWritePaths", "").split()):
+        raise RuntimeError(f"Cannot verify job locking for legacy GitHub runner {paths.service}. {_LEGACY_GUIDE}")
+    check_directory_path(paths.hook_dir)
+    hook = snapshot_unit_file(paths.hook)
+    if (hook is None or hook["uid"] != 0 or hook["mode"] & 0o022 or hook["content"] != render_hook(paths.instance)
+            or f"Environment=ACTIONS_RUNNER_HOOK_JOB_STARTED={paths.hook}" not in unit.read_text(encoding="utf-8").splitlines()):
+        raise RuntimeError(f"Cannot verify the job admission hook for legacy GitHub runner {paths.service}. {_LEGACY_GUIDE}")
+
+
+def _stop_idle_legacy_runners(runners: list[RunnerPaths], unit_dir: Path) -> None:
+    from lib.build_coordinator import WAIT_SECONDS
+
+    queue_path = DATA + "/queue.lock"
+    try:
+        account = pwd.getpwnam(ACCOUNT)
+        with directory_fd(DATA) as directory:
+            parent = os.fstat(directory)
+            if parent.st_uid != 0 or parent.st_mode & 0o022:
+                raise ValueError("Legacy runner state directory is writable or not root-owned")
+            queue = os.open("queue.lock", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+    except (OSError, KeyError, ValueError) as exc:
+        raise RuntimeError(f"Cannot open the legacy GitHub runner job lock for automatic upgrade. {_LEGACY_GUIDE}") from exc
+    try:
+        info = os.fstat(queue)
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o600
+                or (info.st_uid, info.st_gid) != (account.pw_uid, account.pw_gid)):
+            raise RuntimeError(f"Unsafe legacy GitHub runner job lock. {_LEGACY_GUIDE}")
+        deadline = time.monotonic() + WAIT_SECONDS
+        waiting = False
+        while True:
+            live = [(paths, state) for paths in runners
+                    if (state := _legacy_runner_state(paths.service))["ActiveState"] not in _STOPPED]
+            if not live:
+                return
+            for paths, state in live:
+                _verify_legacy_job_lock(paths, state, unit_dir / paths.service, queue_path)
+            try:
+                fcntl.flock(queue, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                pass
+            else:
+                try:
+                    if all(_legacy_runner_idle(paths, state) for paths, state in live):
+                        services = [paths.service for paths, _ in live]
+                        print("  Stopping idle legacy GitHub runners: " + ", ".join(services), flush=True)
+                        run(["systemctl", "stop", *services], timeout=150)
+                        for service in services:
+                            state = _legacy_runner_state(service)
+                            if state["ActiveState"] not in _STOPPED or state.get("MainPID") != "0":
+                                raise RuntimeError(f"Could not confirm legacy GitHub runner {service} stopped. {_LEGACY_GUIDE}")
+                        return
+                finally:
+                    fcntl.flock(queue, fcntl.LOCK_UN)
+            if time.monotonic() >= deadline:
+                names = ", ".join(paths.service for paths, _ in live)
+                raise RuntimeError(f"Legacy GitHub runners are still busy after {WAIT_SECONDS} seconds ({names}). "
+                                   f"Retry setup after their jobs finish. {_LEGACY_GUIDE}")
+            if not waiting:
+                print(f"  Waiting up to {WAIT_SECONDS} seconds for legacy GitHub runner jobs to finish", flush=True)
+                waiting = True
+            time.sleep(1)
+    finally:
+        os.close(queue)
+
+
+def reject_active_legacy_runner(*, stop_idle: bool = False, unit_dir: Path = Path("/etc/systemd/system")) -> None:
+    """Keep legacy runner jobs out of runtime replacement."""
     from lib.build_coordinator import LOCK
 
+    runners = []
     busy = []
-    guide = "See docs/services/build-systems.md#upgrade-a-legacy-actions-runner."
     for instance in ("", *installed_instances(HOOK_DIR)):
-        service = _paths(instance).service
-        unit = unit_dir / service
+        paths = _paths(instance)
+        unit = unit_dir / paths.service
         if not unit.exists() or LOCK in unit.read_text(encoding="utf-8"):
             continue
-        try:
-            result = run(["systemctl", "show", service, "--property=LoadState,ActiveState,SubState", "--no-pager"],
-                         check=False, capture_output=True, timeout=30)
-        except (OSError, subprocess.SubprocessError) as exc:
-            raise RuntimeError(f"Could not query systemd for legacy GitHub runner {service}. {guide}") from exc
-        if result.returncode != 0:
-            raise RuntimeError(f"Could not query systemd for legacy GitHub runner {service} "
-                               f"(exit {result.returncode}). {guide}")
-        state = dict(line.split("=", 1) for line in (result.stdout or "").splitlines() if "=" in line)
-        load, active = state.get("LoadState", "unknown"), state.get("ActiveState")
-        if load not in {"loaded", "not-found"} or not active:
-            raise RuntimeError(f"Cannot confirm legacy GitHub runner {service} is stopped "
-                               f"(LoadState={load}, ActiveState={active or 'unknown'}). {guide}")
-        if active not in {"inactive", "failed"}:
-            busy.append(f"{service} ({active}/{state.get('SubState', 'unknown')})")
+        runners.append(paths)
+        state = _legacy_runner_state(paths.service)
+        if state["ActiveState"] not in _STOPPED:
+            busy.append(f"{paths.service} ({state['ActiveState']}/{state.get('SubState', 'unknown')})")
     if busy:
+        if stop_idle:
+            _stop_idle_legacy_runners(runners, unit_dir)
+            return
         raise RuntimeError("Let jobs finish, then stop these legacy GitHub runners before upgrading: "
-                           + ", ".join(busy) + f". {guide}")
+                           + ", ".join(busy) + f". {_LEGACY_GUIDE}")
 
 
 def setup_github_runner(config: SetupConfig) -> None:
