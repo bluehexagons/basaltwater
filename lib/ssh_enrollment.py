@@ -171,8 +171,14 @@ def _check_known_hosts_path(path: str) -> None:
         raise RuntimeError(f"refusing unsafe known_hosts file: {path}")
 
 
-def pin_verified_ed25519_key(host: str, public_key: str, paths: Sequence[str]) -> list[str]:
-    """Add a management-channel key only if all existing host pins agree."""
+def pin_verified_ed25519_key(
+    host: str,
+    public_key: str,
+    paths: Sequence[str],
+    *,
+    additional_public_keys: Sequence[str] = (),
+) -> list[str]:
+    """Pin Ed25519 when all existing pins agree with management-channel keys."""
     if not validate_host(host):
         raise ValueError(f"Invalid host: {host}")
     lines = public_key.strip().splitlines()
@@ -186,7 +192,20 @@ def pin_verified_ed25519_key(host: str, public_key: str, paths: Sequence[str]) -
     if len(blob) != 51 or not blob.startswith(b"\x00\x00\x00\x0bssh-ed25519\x00\x00\x00\x20"):
         raise ValueError("invalid Ed25519 SSH public key data")
 
-    key = fields[:2]
+    key = tuple(fields[:2])
+    verified_keys = {key}
+    for line in additional_public_keys:
+        fields = line.split()
+        if (
+            len(line) > 8192 or len(line.strip().splitlines()) != 1
+            or len(fields) < 2 or fields[0] == "ssh-ed25519"
+            or fields[0] not in _SUPPORTED_HOST_KEY_TYPES
+        ):
+            raise ValueError("invalid alternate SSH host key reported by guest")
+        alternate_key = tuple(fields[:2])
+        _fingerprint(f"{host} {' '.join(alternate_key)}")
+        verified_keys.add(alternate_key)
+
     known_hosts_paths = sorted({os.path.abspath(os.path.expanduser(path)) for path in paths})
     with ExitStack() as stack:
         for path in known_hosts_paths:
@@ -197,12 +216,13 @@ def pin_verified_ed25519_key(host: str, public_key: str, paths: Sequence[str]) -
             existing = ""
             if os.path.isfile(path):
                 matches = _matching_known_host_lines(path, host)
-                if any(line.split()[1:3] != key for line in matches):
+                existing_keys = {tuple(line.split()[1:3]) for line in matches}
+                if any(line.startswith("@") for line in matches) or not existing_keys <= verified_keys:
                     raise RuntimeError(
                         f"conflicting SSH host key for {host} in {path}; "
                         "verify the guest and explicitly rotate its pins before retrying"
                     )
-                if matches:
+                if key in existing_keys:
                     continue
                 with open(path, encoding="utf-8", newline="") as file_obj:
                     existing = file_obj.read()

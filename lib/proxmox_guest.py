@@ -1190,7 +1190,7 @@ def enroll_provisioned_guest_host_keys(
     vmid: int | None,
     dry_run: bool = False,
 ) -> None:
-    """Read and pin the host key of the guest selected on the trusted node."""
+    """Read the selected guest's host keys and pin its Ed25519 key."""
     if dry_run:
         print(f"  [DRY-RUN] Would verify the guest SSH host key for {target_ip}")
         return
@@ -1198,26 +1198,36 @@ def enroll_provisioned_guest_host_keys(
             or not 100 <= vmid <= 999999999 or not validate_ip_address(target_ip)):
         raise ProvisionError(f"Missing or invalid Proxmox guest identity for {target_ip}")
 
-    read_key = ["/bin/cat", "/etc/ssh/ssh_host_ed25519_key.pub"]
+    read_keys = [
+        "/bin/sh", "-c",
+        'set -eu; /bin/cat /etc/ssh/ssh_host_ed25519_key.pub; '
+        'for key in /etc/ssh/ssh_host_ecdsa_key.pub /etc/ssh/ssh_host_rsa_key.pub; do '
+        'if [ -f "$key" ]; then printf "\\n"; /bin/cat "$key"; fi; done',
+    ]
     command = (
         ["qm", "guest", "exec", str(vmid), "--timeout", "15", "--synchronous", "1", "--"]
         if tool == "qm" else ["pct", "exec", str(vmid), "--"]
     )
     try:
-        result = _ssh_run(node_ip, user, ssh_opts, shlex.join(command + read_key), quiet=True)
+        result = _ssh_run(node_ip, user, ssh_opts, shlex.join(command + read_keys), quiet=True)
         if result.returncode != 0:
             raise RuntimeError("Proxmox guest command failed")
-        public_key = result.stdout or ""
+        public_keys = result.stdout or ""
         if tool == "qm":
-            status = parse_json(public_key)
+            status = parse_json(public_keys)
             if (not isinstance(status, dict) or status.get("exited") != 1
                     or status.get("exitcode") != 0 or status.get("out-truncated")
                     or not isinstance(status.get("out-data"), str)):
                 raise RuntimeError("QEMU guest agent returned no complete, successful key read")
-            public_key = status["out-data"]
+            public_keys = status["out-data"]
+        key_lines = [line for line in public_keys.splitlines() if line.strip()]
+        if not key_lines or len(key_lines) > 3:
+            raise RuntimeError("guest returned an unexpected SSH public key list")
+        ed25519_key, *alternate_keys = key_lines
         known_hosts_paths = pin_verified_ed25519_key(
-            target_ip, public_key,
+            target_ip, ed25519_key,
             [get_workspace_known_hosts_path(), "~/.ssh/known_hosts"],
+            additional_public_keys=alternate_keys,
         )
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
         raise ProvisionError(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -313,22 +314,28 @@ class TestProvisionedGuestHostKeyEnrollment(unittest.TestCase):
     @patch("lib.proxmox_guest.pin_verified_ed25519_key", return_value=["workspace", "user"])
     @patch("lib.proxmox_guest._ssh_run")
     def test_fresh_enrollment_reads_the_created_guest_by_id(self, run, pin, _path):
-        key = "ssh-ed25519 SYNTHETIC test\n"
-        for tool, output, command in (
-            ("pct", key, "pct exec 105 --"),
-            ("qm", json.dumps({"exited": 1, "exitcode": 0, "out-data": key}),
-             "qm guest exec 105 --timeout 15 --synchronous 1 --"),
+        key = "ssh-ed25519 SYNTHETIC test"
+        alternate_keys = ["ecdsa-sha2-nistp256 ECDSA test", "ssh-rsa RSA test"]
+        output = "\n\n".join([key, *alternate_keys]) + "\n"
+        for tool, response, command, expected_keys in (
+            ("pct", key + "\n", "pct exec 105 --", []),
+            ("qm", json.dumps({"exited": 1, "exitcode": 0, "out-data": output}),
+             "qm guest exec 105 --timeout 15 --synchronous 1 --", alternate_keys),
         ):
             with self.subTest(tool=tool):
-                run.return_value = subprocess.CompletedProcess([], 0, output, "")
+                run.return_value = subprocess.CompletedProcess([], 0, response, "")
                 enroll_provisioned_guest_host_keys(
                     "192.0.2.40", "192.0.2.10", "root", ["node-options"],
                     tool=tool, vmid=105,
                 )
                 self.assertEqual(run.call_args.args[:3], ("192.0.2.10", "root", ["node-options"]))
-                self.assertEqual(run.call_args.args[3], command + " /bin/cat /etc/ssh/ssh_host_ed25519_key.pub")
+                args = shlex.split(run.call_args.args[3])
+                self.assertEqual(args[:-1], command.split() + ["/bin/sh", "-c"])
+                for algorithm in ("ed25519", "ecdsa", "rsa"):
+                    self.assertIn(f"/etc/ssh/ssh_host_{algorithm}_key.pub", args[-1])
                 pin.assert_called_once_with(
                     "192.0.2.40", key, ["/workspace/known_hosts", "~/.ssh/known_hosts"],
+                    additional_public_keys=expected_keys,
                 )
                 pin.reset_mock()
 
@@ -343,6 +350,7 @@ class TestProvisionedGuestHostKeyEnrollment(unittest.TestCase):
             (105, 0, '{"exited":0,"out-data":"key"}'),
             (105, 0, '{"exited":1,"exitcode":1,"out-data":"key"}'),
             (105, 0, '{"exited":1,"exitcode":0,"out-truncated":1,"out-data":"key"}'),
+            (105, 0, '{"exited":1,"exitcode":0,"out-data":""}'),
         ):
             with self.subTest(vmid=vmid, returncode=returncode, stdout=stdout):
                 run.reset_mock(return_value=True)

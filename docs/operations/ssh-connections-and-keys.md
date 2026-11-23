@@ -188,10 +188,13 @@ guest must have a working management channel and the public key at
 `/etc/ssh/ssh_host_ed25519_key.pub`.
 
 Basaltwater compares plain and hashed entries in the workspace `known_hosts`
-and the invoking user's `~/.ssh/known_hosts`. It adds the verified key where
-the address has no entry and preserves matching entries. A conflict in either
-file or an unavailable guest key stops setup before route repair and payload
-upload. Entries for other key algorithms require operator review as well.
+and the invoking user's `~/.ssh/known_hosts`. OpenSSH can save additional RSA
+and ECDSA keys during an interactive login. Setup preserves those entries if
+they match the public keys read from the guest's standard host-key paths
+through Proxmox. It adds the verified Ed25519 key wherever that pin is missing.
+A conflict in either file, a matching entry marked `@revoked` or
+`@cert-authority`, or an unavailable guest Ed25519 key stops setup before route
+repair and payload upload.
 Hosted setup requires the workspace Ed25519 pin on TCP 22 for those SSH
 connections and opens fresh connections to verify it. Saved `patch`, `deploy`
 and `shares` uploads to managed guests also require the existing workspace

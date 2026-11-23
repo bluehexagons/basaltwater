@@ -233,8 +233,11 @@ class TestVerifiedGuestPins(unittest.TestCase):
         self.enterContext(patch("lib.ssh_enrollment.resource_lock", side_effect=lambda *a, **kw: nullcontext()))
         self.find = self.enterContext(patch("lib.ssh_enrollment.subprocess.run"))
 
-    def pin(self):
-        return pin_verified_ed25519_key(self.host, self.public_key + " guest\n", self.paths)
+    def pin(self, *alternate_keys):
+        return pin_verified_ed25519_key(
+            self.host, self.public_key + " guest\n", self.paths,
+            additional_public_keys=alternate_keys,
+        )
 
     def test_first_enrollment_and_matching_hashed_pin_fill_only_missing_stores(self):
         self.pin()
@@ -283,6 +286,61 @@ class TestVerifiedGuestPins(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "conflicting SSH host key"):
                     self.pin()
                 self.assertEqual([item.read_bytes() for item in (self.workspace, self.user)], before)
+
+    @patch("lib.ssh_enrollment._fingerprint", return_value=EXPECTED_FINGERPRINT)
+    def test_preserves_verified_rsa_and_ecdsa_entries_and_fills_missing_ed25519(self, fingerprint):
+        rsa_key = "ssh-rsa RSA"
+        ecdsa_key = "ecdsa-sha2-nistp256 ECDSA"
+        self.workspace.parent.mkdir()
+        self.user.parent.mkdir()
+        ed25519_entry = f"{self.host} {self.public_key}\n"
+        alternate_entries = (
+            f"{self.host},other.example {ecdsa_key} original comment\r\n"
+            f"|1|salt|hash {rsa_key}\r\n"
+        )
+        self.workspace.write_text(ed25519_entry)
+        self.user.write_bytes(alternate_entries.encode())
+        self.find.side_effect = [
+            subprocess.CompletedProcess([], 0, alternate_entries, ""),
+            subprocess.CompletedProcess([], 0, ed25519_entry, ""),
+        ]
+
+        self.pin(rsa_key, ecdsa_key)
+
+        self.assertEqual(fingerprint.call_count, 2)
+        self.assertEqual(self.workspace.read_text(), ed25519_entry)
+        self.assertEqual(self.user.read_bytes(), (alternate_entries + ed25519_entry).encode())
+
+        self.find.side_effect = [
+            subprocess.CompletedProcess([], 0, alternate_entries + ed25519_entry, ""),
+            subprocess.CompletedProcess([], 0, ed25519_entry, ""),
+        ]
+        with patch("lib.ssh_enrollment.write_text_atomic") as write:
+            self.pin(rsa_key, ecdsa_key)
+        write.assert_not_called()
+
+    @patch("lib.ssh_enrollment._fingerprint", return_value=EXPECTED_FINGERPRINT)
+    def test_unverified_and_marked_alternate_pins_stop_enrollment(self, _fingerprint):
+        self.workspace.parent.mkdir()
+        self.user.parent.mkdir()
+        for entry in (
+            f"{self.host} ssh-rsa DIFFERENT\n",
+            f"@revoked {self.host} ssh-rsa VERIFIED\n",
+            f"@cert-authority {self.host} ssh-rsa VERIFIED\n",
+        ):
+            with self.subTest(entry=entry):
+                self.user.write_text(entry)
+                self.workspace.write_bytes(b"# workspace\r\n")
+                self.find.side_effect = [
+                    subprocess.CompletedProcess([], 0, entry, ""),
+                    subprocess.CompletedProcess([], 1, "", ""),
+                ]
+
+                with self.assertRaisesRegex(RuntimeError, "conflicting SSH host key"):
+                    self.pin("ssh-rsa VERIFIED")
+
+                self.assertEqual(self.workspace.read_bytes(), b"# workspace\r\n")
+                self.assertEqual(self.user.read_text(), entry)
 
     def test_malformed_management_identity_reaches_neither_store(self):
         for malformed in ("", "ssh-ed25519 " + "x" * 68, self.public_key + "\n" + self.public_key):
