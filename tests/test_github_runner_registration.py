@@ -222,6 +222,7 @@ class RegistrationUnitTests(unittest.TestCase):
                     stack.enter_context(patch.object(panel_setup, "_install_auth_file", return_value=(False, None)))
                     stack.enter_context(patch.object(panel_setup, "_ensure_web_panel_service_account", return_value=account))
                     nginx = stack.enter_context(patch.object(panel_setup, "_write_nginx_site"))
+                    recovery = stack.enter_context(patch.object(panel_setup, "_configure_recovery_service"))
                     configure = stack.enter_context(patch.object(units, "configure_registration_service"))
                     remove = stack.enter_context(patch.object(units, "remove_registration_service"))
                     values = dict(system_type=target, web_panel_port=9443 if tls else 8080,
@@ -230,6 +231,7 @@ class RegistrationUnitTests(unittest.TestCase):
                     if target != "server_github_runner" and not enabled:
                         values.update(ci_repository="", ci_allowed_users=None, ci_labels=None)
                     panel_setup.configure_web_panel(config(**values))
+                    recovery.assert_called_once_with(account)
                     if expected:
                         configure.assert_called_once_with(account)
                         remove.assert_not_called()
