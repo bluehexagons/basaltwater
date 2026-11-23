@@ -15,12 +15,13 @@ import unittest
 from unittest.mock import Mock, patch
 from urllib.parse import urlencode
 
-from common.service_tools import data_job, privilege_broker, web_panel_data_actions as actions, web_panel_storage as storage
+from common.service_tools import data_control, data_job, privilege_broker, web_panel_data_actions as actions, web_panel_storage as storage
 from common.service_tools.web_panel_admin import PanelAdmin
 from common.service_tools.web_panel_features import PanelFeatures
 from common.service_tools.web_panel_service import WebPanelHandler
 from common.service_tools.web_panel_templates import panel_navigation
 from lib.data_actions import DATA_HELPER, DATA_TIMEOUT, finding_revision, validate_data_action
+from lib.data_client import RecoveryRequestUnconfirmed
 from lib.operation_state import OperationStateError, OperationStateStore
 from lib.privilege_execution import ExecutionResult
 from lib.privilege_policy import MAX_MESSAGE, canonical, operation_plan
@@ -42,6 +43,33 @@ def policy() -> dict:
 
 
 class DataActionContractTests(unittest.TestCase):
+    def test_direct_dispatch_requires_the_new_worker_record(self):
+        value = parameters()
+        request = {"action": "data-submit", "parameters": value}
+        clock = SimpleNamespace(monotonic=Mock(), sleep=Mock())
+        with patch.object(data_control, "snapshot", return_value=status()) as snapshot, \
+             patch.object(data_control, "stage_data_job") as stage, \
+             patch.object(data_control, "job_recorded") as recorded, \
+             patch.object(data_control.subprocess, "run") as run, \
+             patch.object(data_control, "time", clock):
+            recorded.return_value = False
+            clock.monotonic.side_effect = [0, data_control.START_TIMEOUT]
+            with self.assertRaisesRegex(data_control.WorkerStartUnconfirmed, "did not record this job"):
+                data_control.dispatch(request)
+            run.assert_called_once()
+            recorded.assert_called_once_with(value["job_id"])
+
+            recorded.side_effect = [False, True]
+            clock.monotonic.side_effect = [0, 1]
+            self.assertEqual(data_control.dispatch(request), {"job_id": value["job_id"]})
+            clock.sleep.assert_called_once()
+
+            snapshot.return_value = {**status(), "latest": {"parameters": value}}
+            with self.assertRaisesRegex(ValueError, "already recorded"):
+                data_control.dispatch(request)
+            self.assertEqual(stage.call_count, 2)
+            self.assertEqual(run.call_count, 2)
+
     def test_reviewed_plan_is_typed_and_dispatched_with_a_deadline(self):
         value = parameters()
         plan = operation_plan(policy(), 1000, "data.run", value)
@@ -434,4 +462,13 @@ class DataReviewTests(unittest.TestCase):
             self.assertEqual(handler._send.call_args.args[0], 409)
             self.assertNotIn('name="ticket"', handler._send.call_args.args[1])
             self.assertNotIn("PRIVATE", handler._send.call_args.args[1])
+            self.assertNotIn(ticket, self.manager.tickets)
+
+            ticket, _ = self.manager.prepare(self.fields())
+            message = "The worker did not record this job before the start deadline."
+            exchange.side_effect = [status(), RecoveryRequestUnconfirmed(message), status()]
+            handler = self.handler("/actions/data/submit", {"csrf": "csrf", "ticket": ticket, "confirmation": "CHANGE FILE"})
+            handler.do_POST()
+            self.assertEqual(handler._send.call_args.args[0], 409)
+            self.assertIn(message, handler._send.call_args.args[1])
             self.assertNotIn(ticket, self.manager.tickets)

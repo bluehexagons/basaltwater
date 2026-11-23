@@ -73,6 +73,10 @@ are shown as unresolved. Activity identifies the scrub root and parity directory
 and links back to that exact task's findings. Cancelling a recovery review also
 returns to its selected task.
 
+Confirmation waits for the worker to record the submitted job. If that start
+cannot be confirmed, inspect Recovery activity and the recovery service journal
+before reviewing again. A worker that starts late can still finish.
+
 The whole selection is checked before effects, including required nested mounts
 and read-only mount flags. Each file is checked again before acting. If its
 identity changes before any move is attempted, the worker skips it so it can be

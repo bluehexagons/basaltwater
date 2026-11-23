@@ -180,6 +180,11 @@ def job_status() -> dict:
         return {"unit_state": "unavailable", "latest": {}, "blocked": True, "available": False}
 
 
+def job_recorded(job_id: str) -> bool:
+    """Check whether the worker published the requested job to its result slot."""
+    return _record().get("parameters", {}).get("job_id") == job_id
+
+
 def recover(parameters: dict, saved: dict) -> tuple[dict, int]:
     """Match a configured job, reject stale evidence, then use the CLI's guards."""
     parameters = validate_data_action(parameters)

@@ -56,6 +56,7 @@ from common.service_tools import web_panel_headscale
 from common.service_tools import web_panel_status as status_model
 from common.service_tools import web_panel_refresh as refresh_ui
 from common.service_tools.web_panel_notification_details import render_security_findings
+from lib.data_client import RecoveryRequestUnconfirmed
 from lib.storage_diagnostics import StorageDiagnostics
 from common.service_tools.web_panel_github_runner import parse_runner_query, render_runner_page
 from common.service_tools.web_panel_features import AGENT_TOOLS, PanelFeatures, discover_features, unit_installed
@@ -2381,7 +2382,9 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                     review = render_data_inputs(fields, csrf)
                 except ValueError:
                     pass
-            elif path.endswith("/submit"):
+            elif isinstance(exc, RecoveryRequestUnconfirmed):
+                message = str(exc)
+            else:
                 try:
                     value = self.state.data.reviewed(fields["ticket"])
                     review = render_saved_data_review(fields["ticket"], value, csrf)

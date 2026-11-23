@@ -10,15 +10,22 @@ import socket
 import struct
 import subprocess
 import sys
+import time
 
 if __name__ == "__main__" and not __package__:
     sys.path.insert(0, "/opt/basaltwater")
 
-from common.service_tools.data_job import job_status, stage_data_job
+from common.service_tools.data_job import job_recorded, job_status, stage_data_job
 from lib.data_actions import DATA_HELPER, data_dispatch_argv, read_data_message, validate_data_action
 from lib.privilege_execution import ENVIRONMENT
 from lib.privilege_policy import protected_path
 from sync.routine_job import _unit_state as routine_unit_state
+
+START_TIMEOUT = 3
+
+
+class WorkerStartUnconfirmed(RuntimeError):
+    """The dispatch did not establish a recorded worker start."""
 
 
 def snapshot() -> dict:
@@ -40,10 +47,23 @@ def dispatch(message: object) -> dict:
     status = snapshot()
     if not status["available"] or status["blocked"] or status["other_active"] or status["unit_state"] not in {"inactive", "failed"}:
         raise ValueError("The recovery worker is busy or unavailable")
+    job_id = parameters["job_id"]
+    if status["latest"].get("parameters", {}).get("job_id") == job_id:
+        raise ValueError("This recovery job was already recorded")
     stage_data_job(parameters)
+    deadline = time.monotonic() + START_TIMEOUT
     subprocess.run(data_dispatch_argv(parameters), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                   stderr=subprocess.DEVNULL, cwd="/", env=ENVIRONMENT, timeout=3, check=True)
-    return {"job_id": parameters["job_id"]}
+                   cwd="/", env=ENVIRONMENT, timeout=START_TIMEOUT, check=True)
+    # Type=exec establishes that Python started. The exact job record
+    # establishes that the helper loaded its payload and claimed this job.
+    while not job_recorded(job_id):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise WorkerStartUnconfirmed(
+                "The worker did not record this job before the start deadline. Check Recovery activity and the service journal before reviewing again."
+            )
+        time.sleep(min(0.05, remaining))
+    return {"job_id": job_id}
 
 
 def handle(connection: socket.socket, allowed_uid: int) -> None:
@@ -55,9 +75,11 @@ def handle(connection: socket.socket, allowed_uid: int) -> None:
         with connection.makefile("rb") as stream:
             result = dispatch(read_data_message(stream))
         response = {"ok": True, "result": result}
-    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, RecursionError):
-        response = {"ok": False, "error": "Recovery service could not confirm the request. Check recovery activity and the service journal before retrying."}
-        print("Recovery service could not confirm a request", file=sys.stderr)
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, RecursionError) as exc:
+        error = (str(exc) if isinstance(exc, WorkerStartUnconfirmed)
+                 else "Recovery service could not confirm the request. Check Recovery activity and the service journal before reviewing again.")
+        response = {"ok": False, "error": error}
+        print(error, file=sys.stderr)
     try:
         connection.sendall((json.dumps(response) + "\n").encode())
     except OSError:

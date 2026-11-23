@@ -8,6 +8,10 @@ import socket
 from lib.data_actions import DATA_MESSAGE_BYTES, DATA_SOCKET, read_data_message
 
 
+class RecoveryRequestUnconfirmed(ValueError):
+    """The local recovery service returned a public reason for uncertainty."""
+
+
 def exchange(message: dict) -> dict:
     data = (json.dumps(message) + "\n").encode()
     if len(data) > DATA_MESSAGE_BYTES:
@@ -21,7 +25,7 @@ def exchange(message: dict) -> dict:
     if not isinstance(response, dict):
         raise ValueError("Invalid recovery response")
     if response.get("ok") is False and isinstance(response.get("error"), str):
-        raise ValueError(response["error"])
+        raise RecoveryRequestUnconfirmed(response["error"])
     if response.get("ok") is not True or not isinstance(response.get("result"), dict):
         raise ValueError("Invalid recovery response")
     return response["result"]
