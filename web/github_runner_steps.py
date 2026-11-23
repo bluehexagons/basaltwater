@@ -555,19 +555,35 @@ def _setup_github_runner(config: SetupConfig) -> None:
                 write_json_atomic(paths.policy, previous | {"enabled": False}, mode=0o644)
 
 
-def reject_active_legacy_runner() -> None:
+def reject_active_legacy_runner(*, unit_dir: Path = Path("/etc/systemd/system")) -> None:
     """An older runner does not hold the common lease; require it stopped first."""
     from lib.build_coordinator import LOCK
 
+    busy = []
+    guide = "See docs/services/build-systems.md#upgrade-a-legacy-actions-runner."
     for instance in ("", *installed_instances(HOOK_DIR)):
-        paths = _paths(instance)
-        unit = Path("/etc/systemd/system", paths.service)
-        if not unit.exists():
+        service = _paths(instance).service
+        unit = unit_dir / service
+        if not unit.exists() or LOCK in unit.read_text(encoding="utf-8"):
             continue
-        if LOCK not in unit.read_text(encoding="utf-8"):
-            result = run(["systemctl", "is-active", "--quiet", paths.service], check=False)
-            if result.returncode not in {3, 4}:
-                raise RuntimeError("Stop all legacy GitHub runners after their jobs finish before upgrading; see docs/services/build-systems.md")
+        try:
+            result = run(["systemctl", "show", service, "--property=LoadState,ActiveState,SubState", "--no-pager"],
+                         check=False, capture_output=True, timeout=30)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise RuntimeError(f"Could not query systemd for legacy GitHub runner {service}. {guide}") from exc
+        if result.returncode != 0:
+            raise RuntimeError(f"Could not query systemd for legacy GitHub runner {service} "
+                               f"(exit {result.returncode}). {guide}")
+        state = dict(line.split("=", 1) for line in (result.stdout or "").splitlines() if "=" in line)
+        load, active = state.get("LoadState", "unknown"), state.get("ActiveState")
+        if load not in {"loaded", "not-found"} or not active:
+            raise RuntimeError(f"Cannot confirm legacy GitHub runner {service} is stopped "
+                               f"(LoadState={load}, ActiveState={active or 'unknown'}). {guide}")
+        if active not in {"inactive", "failed"}:
+            busy.append(f"{service} ({active}/{state.get('SubState', 'unknown')})")
+    if busy:
+        raise RuntimeError("Let jobs finish, then stop these legacy GitHub runners before upgrading: "
+                           + ", ".join(busy) + f". {guide}")
 
 
 def setup_github_runner(config: SetupConfig) -> None:

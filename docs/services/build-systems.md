@@ -165,18 +165,22 @@ Setup refuses `/etc/basaltwater/cicd` or old sudoers/unit evidence.
 
 ### Upgrade a legacy Actions runner
 
-If setup asks you to stop legacy GitHub runners, the installed units are still
-using the old lock. Pause new assignments and let active jobs finish. On the
-runner host, list the managed units and stop the affected services:
+Setup checks that services using the old runner lock have stopped. It reports
+the unit names and systemd states that block the upgrade. On the runner host
+named in your setup command, inspect all managed runner units:
 
 ```bash
-systemctl list-units 'basaltwater-github-runner*.service' --all
-sudo systemctl stop basaltwater-github-runner.service
+sudo systemctl list-units --all 'basaltwater-github-runner*.service' --no-pager
+sudo systemctl show --property=Id,LoadState,ActiveState,SubState \
+  'basaltwater-github-runner*.service'
 ```
 
-For a multi-repository installation, stop each active legacy
-`basaltwater-github-runner-ID.service` as well. A stopped service can be
-upgraded without removing its GitHub registration or its workspace.
+Pause new assignments and let jobs finish. Stop each legacy unit named by
+setup with `sudo systemctl stop UNIT`, then confirm it shows `ActiveState=inactive`
+or `ActiveState=failed`. A multi-repository installation can have separate
+`basaltwater-github-runner-ID.service` units alongside the default one. If the
+systemd query fails, resolve that error on the runner host before retrying.
+Stopping a service preserves its GitHub registration and workspace.
 
 To add the managed builder, run `setup server_lite` for the same target with
 `--build-server --github-runner` and repeat the existing repository or

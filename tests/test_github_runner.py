@@ -231,6 +231,67 @@ class IdentityTests(unittest.TestCase):
             self.assertNotIn("never-store", json.dumps(value))
 
 
+class LegacyRunnerGuardTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.unit_dir = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        hook_dir = self.unit_dir / "hooks"
+        self.enterContext(patch.object(steps, "HOOK_DIR", str(hook_dir)))
+        self.instance = steps.repository_instance("owner/second")
+        (hook_dir / "instances" / self.instance).mkdir(parents=True)
+        self.secondary = steps.runner_paths(self.instance).service
+        self.run = self.enterContext(patch.object(steps, "run"))
+
+    def test_missing_and_coordinated_units_do_not_block(self) -> None:
+        (self.unit_dir / self.secondary).write_text(steps.render_unit(steps.runner_paths(self.instance)))
+        steps.reject_active_legacy_runner(unit_dir=self.unit_dir)
+        self.run.assert_not_called()
+
+    def test_reports_a_secondary_runner_when_the_default_runner_is_stopped(self) -> None:
+        for service in (SERVICE, self.secondary):
+            (self.unit_dir / service).write_text("[Service]\nRestart=always\n")
+        self.run.side_effect = [
+            subprocess.CompletedProcess([], 0, "LoadState=loaded\nActiveState=inactive\nSubState=dead\n"),
+            subprocess.CompletedProcess([], 0, "LoadState=loaded\nActiveState=activating\nSubState=auto-restart\n"),
+        ]
+        with self.assertRaises(RuntimeError) as error:
+            steps.reject_active_legacy_runner(unit_dir=self.unit_dir)
+        self.assertIn(f"{self.secondary} (activating/auto-restart)", str(error.exception))
+        self.assertNotIn(SERVICE, str(error.exception))
+        self.run.assert_called_with(
+            ["systemctl", "show", self.secondary, "--property=LoadState,ActiveState,SubState", "--no-pager"],
+            check=False, capture_output=True, timeout=30,
+        )
+
+    def test_reports_stopping_runner_and_allows_stopped_runner(self) -> None:
+        (self.unit_dir / SERVICE).write_text("[Service]\nRestart=always\n")
+        for active, sub in (("active", "running"), ("deactivating", "stop-sigterm"),
+                            ("inactive", "dead"), ("failed", "failed")):
+            with self.subTest(active=active):
+                self.run.return_value = subprocess.CompletedProcess(
+                    [], 0, f"LoadState=loaded\nActiveState={active}\nSubState={sub}\n",
+                )
+                if active in {"inactive", "failed"}:
+                    steps.reject_active_legacy_runner(unit_dir=self.unit_dir)
+                else:
+                    with self.assertRaises(RuntimeError) as error:
+                        steps.reject_active_legacy_runner(unit_dir=self.unit_dir)
+                    self.assertIn(f"{SERVICE} ({active}/{sub})", str(error.exception))
+
+    def test_query_failure_and_incomplete_states_refuse_with_unit_name(self) -> None:
+        (self.unit_dir / SERVICE).write_text("[Service]\nRestart=always\n")
+        for result, message in (
+            (subprocess.CompletedProcess([], 4, ""), f"Could not query systemd for legacy GitHub runner {SERVICE} (exit 4)"),
+            (subprocess.CompletedProcess([], 0, "LoadState=loaded\n"), "LoadState=loaded, ActiveState=unknown"),
+            (TimeoutError("private diagnostics"), f"Could not query systemd for legacy GitHub runner {SERVICE}"),
+        ):
+            with self.subTest(message=message):
+                self.run.side_effect = [result]
+                with self.assertRaises(RuntimeError) as error:
+                    steps.reject_active_legacy_runner(unit_dir=self.unit_dir)
+                self.assertIn(SERVICE, str(error.exception))
+                self.assertIn(message, str(error.exception))
+
+
 class ConfigurationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.enterContext(patch("lib.build_coordinator.ensure_coordinator"))
