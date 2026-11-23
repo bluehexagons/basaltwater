@@ -139,6 +139,85 @@ class StorageManagementTests(unittest.TestCase):
                 setup(SimpleNamespace(username="fixture", deploy_specs=[]), SimpleNamespace(dry_run=False))
             maintain.assert_not_called()
 
+    def test_repository_setup_recovers_pressure_between_sites(self):
+        from tests import real_storage_operation_guard
+
+        for reclaimed_mib in (150, 0):
+            with self.subTest(reclaimed_mib=reclaimed_mib), tempfile.TemporaryDirectory() as directory:
+                mib = storage.MIB
+                free_mib = 1700
+                deployed = []
+
+                def capacity(path):
+                    return dict(path=path, mount="/", filesystem_type="ext4", total_bytes=10 * 1024 * mib,
+                                free_bytes=free_mib * mib, free_inodes=400000, inodes_supported=True)
+
+                def reclaim(**options):
+                    nonlocal free_mib
+                    self.assertEqual(deployed, ["first"])
+                    self.assertEqual(options["requirements"], {
+                        "/": {"required_bytes": 1024 * mib, "required_inodes": 10000},
+                    })
+                    self.assertIsNone(options["budget"])
+                    # An independent lock holder must be excluded during cleanup.
+                    with ThreadPoolExecutor(max_workers=1) as executor:
+                        with self.assertRaises(BlockingIOError):
+                            executor.submit(standalone_build).result()
+                    free_mib += reclaimed_mib
+                    return {"accounts": []}
+
+                def standalone_build():
+                    with storage.storage_lock():
+                        pass
+
+                class Deployment:
+                    base_dir = "/srv/releases"
+
+                    @storage.guarded_deployment
+                    def deploy(self, site):
+                        nonlocal free_mib
+                        deployed.append(site)
+                        free_mib = 907
+
+                @storage.guarded_setup
+                def setup(config, args):
+                    for site in config.deploy_specs:
+                        Deployment().deploy(site)
+
+                config = SimpleNamespace(username="fixture", deploy_specs=["first", "second"],
+                                         artifact_deployments=False)
+                args = SimpleNamespace(dry_run=False)
+                real_fstat = os.fstat
+
+                def root_info(fd):
+                    info = real_fstat(fd)
+                    return SimpleNamespace(st_mode=info.st_mode, st_uid=0, st_nlink=info.st_nlink)
+
+                with patch.object(storage, "operation_guard", real_storage_operation_guard), patch.object(
+                        storage, "LOCK", directory + "/lock"), patch.object(
+                        storage.os, "fstat", side_effect=root_info), patch.object(
+                        storage.pwd, "getpwnam", return_value=SimpleNamespace(pw_dir="/home/fixture")), patch.object(
+                        storage, "filesystem", side_effect=capacity), patch.object(
+                        storage, "inspect_storage", return_value={"candidates": []}), patch.object(
+                        storage, "maintain", side_effect=reclaim) as caches, patch(
+                        "lib.storage_pressure.clean_system_storage", return_value=[]), patch(
+                        "lib.storage_pressure.clean_build_versions", return_value=[]), patch.dict(os.environ, {
+                            "BASALTWATER_STORAGE_PEAK_MIB": "512",
+                            "BASALTWATER_STORAGE_RESERVE_MIB": "512",
+                            "BASALTWATER_STORAGE_MIN_INODES": "10000",
+                        }):
+                    if reclaimed_mib:
+                        setup(config, args)
+                        self.assertEqual(deployed, ["first", "second"])
+                    else:
+                        with self.assertRaisesRegex(storage.StoragePreflightError, "during deployment"):
+                            setup(config, args)
+                        self.assertEqual(deployed, ["first"])
+                    # Setup releases the lock and its cleanup policy after either outcome.
+                    with self.assertRaisesRegex(storage.StoragePreflightError, "during deployment"):
+                        Deployment().deploy("standalone")
+                    caches.assert_called_once()
+
     def test_cli_role_dispatch_releases_cache_lock_and_reports_shortfall(self):
         from contextlib import contextmanager
         import io
@@ -282,7 +361,7 @@ class StorageManagementTests(unittest.TestCase):
         from tests import real_storage_operation_guard
         held = []
         @contextmanager
-        def lock():
+        def lock(*, cleanup=False):
             held.append(True)
             try:
                 yield
@@ -299,7 +378,8 @@ class StorageManagementTests(unittest.TestCase):
         with patch.object(storage, "operation_guard", real_storage_operation_guard), patch.object(
                 storage, "storage_lock", side_effect=lock), patch.object(storage, "configured_preflight") as preflight, \
                 patch.object(storage.pwd, "getpwnam", return_value=SimpleNamespace(pw_dir="/home/fixture")):
-            setup(SimpleNamespace(username="fixture", deploy_specs=["fixture"]), SimpleNamespace(dry_run=False))
+            setup(SimpleNamespace(username="fixture", deploy_specs=["fixture"], artifact_deployments=False),
+                  SimpleNamespace(dry_run=False))
             self.assertIn("/home/fixture", preflight.call_args.args[1])
             Deployment().deploy(staging_root="/srv/staging")
             self.assertIn("/srv/staging", preflight.call_args.args[1])

@@ -60,22 +60,25 @@ each target at 10% of the filesystem's total bytes or inodes. Setup still enforc
 its configured workload estimates. A cache is selected when the
 account exceeds its budget or its filesystem falls below the target. `--force`
 selects all eligible candidates. Before setup starts, a failed capacity check
-triggers one pressure cleanup pass, under exclusive storage ownership. Setup then
-rechecks capacity under its normal shared lock. It never replays setup steps or
-repeats cleanup on a later build failure. Unsafe or active
-caches remain protected; insufficient space still stops setup. Preflight reports
+triggers one pressure cleanup pass under exclusive storage ownership. Setup then
+rechecks capacity before making changes and stops if it remains below the
+requirement. Unsafe or active caches remain protected. Preflight reports
 all failing temporary and ordinary paths together, so the single cleanup pass can
-address them all. Each disk's cleanup target is at least 1536 MiB, increased to
-that filesystem's configured setup requirement when larger. Separate non-root
+address them all. The startup cleanup target on each disk is at least 1536 MiB,
+increased to that filesystem's configured setup requirement when larger. Separate non-root
 memory filesystems cap that reserve at 10% of capacity while still meeting their
 full setup requirement. Paths sharing a mount retain the strictest requirement.
 Automatic cleanup selects only filesystems reported by the failed preflight and
 also responds to insufficient free inodes. A full separate tmpfs does not trigger
 cache or log deletion on an unrelated disk. Cleanup still cannot enlarge a tmpfs
 or reclaim storage outside its eligible paths.
-Deployment operations do not trigger automatic cleanup. Raise the target
-to accommodate your measured deployment peak plus a reserve. Use a systemd
-override for the service's `ExecStart` to persist different policy arguments.
+If a repository deployment within setup falls below its capacity requirement,
+setup runs one pressure cleanup pass before starting that site and rechecks
+capacity. This pass uses the failing mounts' deployment thresholds and stops
+selecting caches once those thresholds are met. A build that has already started
+is never replayed automatically. Deployments outside repository setup use
+preflight alone. Use a systemd override for the maintenance service's
+`ExecStart` to persist different policy arguments.
 
 For root and explicitly selected host accounts, these conventional caches are eligible:
 
@@ -182,9 +185,12 @@ by a root host timer. Use the explicit completed-attempt collector in the
 
 ## Exclusion and headroom
 
-Setup and deployment hold a shared `/run/basaltwater-storage.lock`; maintenance
-takes it exclusively without waiting. An active setup or deployment defers the
-whole maintenance pass. Any process on an ordinary selected account defers its
+Setup and deployment hold `/run/basaltwater-storage.lock`. Setup with repository
+builds takes it exclusively so it can reclaim disposable storage between sites
+while excluding other build launchers. Other setup runs and standalone
+deployments hold it in shared mode during their work. Maintenance takes it
+exclusively without waiting, so an active setup or deployment defers the whole
+maintenance pass. Any process on an ordinary selected account defers its
 cleanup; relevant root package-manager, compiler, installer and Node processes
 also defer root cleanup. Incomplete process visibility fails closed. This is
 deliberately conservative on interactive workstations.

@@ -30,6 +30,8 @@ LOCK = "/run/basaltwater-storage.lock"
 BUILD_HOMES = "/var/lib/basaltwater/build-users"
 _held = ContextVar("managed_storage_lock", default=False)
 _lock_fd = ContextVar("managed_storage_lock_fd", default=None)
+_deployment_cleanup_accounts: ContextVar[list[str] | None] = ContextVar(
+    "deployment_cleanup_accounts", default=None)
 MIB = 1024 * 1024
 CACHES = (
     (".npm/_cacache", "npm-content", "Packages must be downloaded again"),
@@ -150,60 +152,85 @@ def configured_preflight(phase: str, paths: list[str]) -> list[dict]:
     return _check_preflight(phase, rows)
 
 
+def _cleanup_preflight_pressure(phase: str, failures: list[dict], names: list[str]) -> None:
+    """Reclaim eligible storage on failing mounts while holding exclusive ownership."""
+    from lib.storage_pressure import clean_system_storage, clean_build_versions
+
+    setup = phase == "setup"
+    requirements = {}
+    for row in failures:
+        reserve = 1536 * MIB if setup else 0
+        if row["mount"] != "/" and row.get("filesystem_type") in {"tmpfs", "ramfs"}:
+            reserve = min(reserve, row["total_bytes"] // 10)
+        required = requirements.setdefault(row["mount"], dict(required_bytes=0, required_inodes=0))
+        required["required_bytes"] = max(required["required_bytes"], reserve, row["required_bytes"])
+        required["required_inodes"] = max(required["required_inodes"], row["required_inodes"])
+    print(f"Storage is below {phase} requirements. Running one disposable-cache cleanup pass...", flush=True)
+    try:
+        for row in clean_system_storage(target=0, apply=True, requirements=requirements):
+            change = ""
+            if "net_freed_bytes" in row:
+                change = f"; free space change {row['net_freed_bytes'] / MIB:+.1f} MiB"
+            if "net_freed_inodes" in row:
+                change += f"; free inodes {row['net_freed_inodes']:+d}"
+            print(f"  {row['category']}: {row['status']}{change}" + (f" ({row['reason']})" if row.get("reason") else ""))
+        result = maintain(names=names, apply=True, budget=1024 * MIB if setup else None,
+                          target=0, requirements=requirements)
+        for row in clean_build_versions(target=0, apply=True, requirements=requirements):
+            print(f"  {row['path']}: {row['status']}" + (f" ({row['reason']})" if row.get("reason") else ""))
+    except (OSError, ValueError) as exc:
+        print(f"  Warning: cache maintenance deferred or failed: {exc}")
+        return
+    for account in result["accounts"]:
+        cleaned = sum(row["status"] == "cleaned" for row in account["candidates"])
+        print(f"  Cache maintenance for {account['account']}: {cleaned} cleaned")
+        if account.get("error"):
+            print(f"  Warning: {account['error']}")
+        for row in account["candidates"]:
+            if row["status"] in {"deferred", "skipped_unsafe_or_incomplete"} or row["status"].startswith("failed"):
+                print(f"  {row['category']}: {row['status']}" + (f" ({row['reason']})" if row.get("reason") else ""))
+
+
 @contextmanager
-def operation_guard(phase: str, paths: list[str], *, cleanup_accounts: list[str] | None = None):
-    """One host-operation boundary, mocked by unrelated orchestration tests."""
-    if cleanup_accounts is not None:
-        # Catch only preflight refusal, before yielding to any setup mutation.
+def _operation_storage(phase: str, paths: list[str], cleanup_accounts: list[str] | None,
+                       recover_deployments: bool):
+    if cleanup_accounts is not None and not recover_deployments:
         # Release shared ownership before attempting exclusive cache cleanup.
-        with storage_lock():
-            try:
+        try:
+            with storage_lock():
                 configured_preflight(phase, paths)
-            except StoragePreflightError as exc:
-                requirements = {}
-                for row in exc.failures:
-                    reserve = 1536 * MIB
-                    if row["mount"] != "/" and row.get("filesystem_type") in {"tmpfs", "ramfs"}:
-                        reserve = min(reserve, row["total_bytes"] // 10)
-                    required = requirements.setdefault(row["mount"], dict(required_bytes=0, required_inodes=0))
-                    required["required_bytes"] = max(required["required_bytes"], reserve, row["required_bytes"])
-                    required["required_inodes"] = max(required["required_inodes"], row["required_inodes"])
-            else:
-                requirements = None
-        if requirements is not None:
-            print("Storage is below setup requirements; running one disposable-cache cleanup pass...", flush=True)
+        except StoragePreflightError as exc:
             try:
                 with storage_lock(cleanup=True):
-                    from lib.storage_pressure import clean_system_storage
+                    _cleanup_preflight_pressure(phase, exc.failures, cleanup_accounts)
+            except (OSError, ValueError) as cleanup_error:
+                print(f"  Warning: cache maintenance deferred or failed: {cleanup_error}")
 
-                    for row in clean_system_storage(target=0, apply=True, requirements=requirements):
-                        change = ""
-                        if "net_freed_bytes" in row:
-                            change = f"; free space change {row['net_freed_bytes'] / MIB:+.1f} MiB"
-                        if "net_freed_inodes" in row:
-                            change += f"; free inodes {row['net_freed_inodes']:+d}"
-                        print(f"  {row['category']}: {row['status']}{change}" + (f" ({row['reason']})" if row.get("reason") else ""))
-                    result = maintain(names=cleanup_accounts, apply=True, budget=1024 * MIB,
-                                      target=0, requirements=requirements)
-                    from lib.storage_pressure import clean_build_versions
+    # Keep exclusive ownership across setup with repository builds so recovery
+    # between sites never drops the lock or races an independent build.
+    with storage_lock(cleanup=recover_deployments):
+        names = cleanup_accounts if recover_deployments else (
+            _deployment_cleanup_accounts.get() if phase == "deployment" else None)
+        try:
+            configured_preflight(phase, paths)
+        except StoragePreflightError as exc:
+            if names is None:
+                raise
+            _cleanup_preflight_pressure(phase, exc.failures, names)
+            configured_preflight(phase, paths)
+        token = _deployment_cleanup_accounts.set(cleanup_accounts) if recover_deployments else None
+        try:
+            yield
+        finally:
+            if token is not None:
+                _deployment_cleanup_accounts.reset(token)
 
-                    for row in clean_build_versions(target=0, apply=True, requirements=requirements):
-                        print(f"  {row['path']}: {row['status']}" + (f" ({row['reason']})" if row.get("reason") else ""))
-            except (OSError, ValueError) as exc:
-                print(f"  Warning: cache maintenance deferred or failed: {exc}")
-                result = {"accounts": []}
-            for account in result["accounts"]:
-                cleaned = sum(row["status"] == "cleaned" for row in account["candidates"])
-                print(f"  Cache maintenance for {account['account']}: {cleaned} cleaned")
-                if account.get("error"):
-                    print(f"  Warning: {account['error']}")
-                for row in account["candidates"]:
-                    if row["status"] in {"deferred", "skipped_unsafe_or_incomplete"} or row["status"].startswith("failed"):
-                        print(f"  {row['category']}: {row['status']}" + (f" ({row['reason']})" if row.get("reason") else ""))
-        # Recheck under shared ownership even if another operation or cleanup
-        # changed capacity while ownership was being transferred.
-    with storage_lock():
-        configured_preflight(phase, paths)
+
+@contextmanager
+def operation_guard(phase: str, paths: list[str], *, cleanup_accounts: list[str] | None = None,
+                    recover_deployments: bool = False):
+    """One host-operation boundary, mocked by unrelated orchestration tests."""
+    with _operation_storage(phase, paths, cleanup_accounts, recover_deployments):
         try:
             yield
         except Exception as exc:
@@ -235,7 +262,10 @@ def guarded_setup(function):
             paths.extend([BUILD_HOMES, "/var/www"])
         operation_started = False
         try:
-            with operation_guard("setup", paths, cleanup_accounts=cleanup_accounts):
+            with operation_guard(
+                "setup", paths, cleanup_accounts=cleanup_accounts,
+                recover_deployments=bool(config.deploy_specs and not config.artifact_deployments),
+            ):
                 operation_started = True
                 return function(config, args)
         except StoragePreflightError as exc:
@@ -418,10 +448,10 @@ def safe_cache_path(path: str, home: str, uid: int) -> bool:
     return False
 
 
-def maintain(*, names: list[str], apply: bool, budget: int, target: int, force: bool = False,
+def maintain(*, names: list[str], apply: bool, budget: int | None, target: int, force: bool = False,
              requirements: dict[str, dict] | None = None) -> dict:
     """Inventory all candidates; evict only when over budget or below reserve."""
-    if min(budget, target) < 0:
+    if target < 0 or (budget is not None and budget < 0):
         raise ValueError("Storage policy cannot be negative")
     result = {"read_only": not apply, "accounts": [], "shortfalls": []}
     for account in accounts(names):
@@ -461,7 +491,7 @@ def maintain(*, names: list[str], apply: bool, budget: int, target: int, force: 
                         or row["hardlinked_files"] or not safe_cache_path(row["path"], home, account.pw_uid)):
                     row["status"] = "skipped_unsafe_or_incomplete"
                     continue
-                if not force and total <= budget and not needs_reclamation(
+                if not force and (budget is None or total <= budget) and not needs_reclamation(
                         row["before"], target=target, requirements=requirements):
                     row["status"] = "below_limits"
                     continue
