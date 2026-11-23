@@ -159,7 +159,7 @@ def _open_directory(path: str) -> int:
         raise
 
 
-def _mount_points() -> frozenset[str]:
+def _mount_points(*, include_automounts: bool = True) -> frozenset[str]:
     """Read bounded kernel metadata, including same-device bind mounts."""
     with open("/proc/self/mountinfo", encoding="utf-8", errors="surrogateescape", newline="\n") as stream:
         data = stream.read(1024 * 1024 + 1)
@@ -168,8 +168,10 @@ def _mount_points() -> frozenset[str]:
     points = set()
     for line in data.rstrip("\n").split("\n"):
         fields = line.split(" ")
-        if len(fields) < 10 or "-" not in fields[6:] or not fields[4].startswith("/"):
+        if len(fields) < 10 or "-" not in fields[6:-3] or not fields[4].startswith("/"):
             raise ValueError("Invalid mount table")
+        if not include_automounts and fields[fields.index("-", 6) + 1] == "autofs":
+            continue
         points.add(re.sub(r"\\([0-7]{3})", lambda match: chr(int(match[1], 8)), fields[4]))
     return frozenset(points)
 

@@ -16,6 +16,7 @@ from lib.machine_state import load_setup_config
 from lib.runtime_config import RuntimeConfig
 from lib.scrub_cli import ACTIONS, MUTATIONS, add_target_arguments
 from lib.validation import validate_filesystem_path, validate_scrub_specs
+from sync.service_tools import scrub_findings
 from sync.service_tools.scrub_findings import Findings, examine, file_identity, remediate
 from sync.service_tools.scrub_par2 import _confined_path
 from sync.service_tools.parity_sets import locate
@@ -24,6 +25,20 @@ from sync.service_tools.storage_ops import LOCK_FILE, OperationLock, resolve_scr
 
 class ScrubMountUnavailable(ValueError):
     """A mount needed by a scrub management operation is unavailable."""
+
+
+def _require_mounts(paths: list[str], config: RuntimeConfig, operation: str) -> None:
+    valid, error = validate_mounts_for_operation(paths, config, operation)
+    if valid:
+        return
+    # ismount() cannot see a Linux bind mount on the same device as its parent.
+    try:
+        mounted = scrub_findings._mount_points(include_automounts=False)
+    except (OSError, ValueError) as exc:
+        raise ScrubMountUnavailable(error) from exc
+    valid, _ = validate_mounts_for_operation(paths, config, operation, mounted_roots=mounted)
+    if not valid:
+        raise ScrubMountUnavailable(error)
 
 
 def selected_jobs(config: RuntimeConfig, args: argparse.Namespace) -> list[tuple[str, str, int]]:
@@ -48,9 +63,7 @@ def selected_jobs(config: RuntimeConfig, args: argparse.Namespace) -> list[tuple
         paths = [directory, database]
         if path:
             paths.append(path)
-        valid, error = validate_mounts_for_operation(paths, config, "scrub management")
-        if not valid:
-            raise ScrubMountUnavailable(error)
+        _require_mounts(paths, config, "scrub management")
         _confined_path(directory, directory)
         _confined_path(database, database)
         if path:
@@ -90,9 +103,7 @@ def execute(args: argparse.Namespace, config: RuntimeConfig) -> tuple[dict, int]
             raise ValueError("Single-file remediation requires explicit --yes confirmation")
         backup = getattr(args, "backup", None)
         if backup:
-            valid, error = validate_mounts_for_operation([backup], config, "scrub restore")
-            if not valid:
-                raise ScrubMountUnavailable(error)
+            _require_mounts([backup], config, "scrub restore")
         review = {"reviewed_identity": args.reviewed_identity} if hasattr(args, "reviewed_identity") else {}
         result = remediate(path, directory, database, redundancy, args.action, backup=backup, **review)
     else:

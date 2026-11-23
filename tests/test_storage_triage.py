@@ -439,8 +439,10 @@ class TriageTests(unittest.TestCase):
         path = self.paths[0].rename(nested / "one")
         self.report().record("bound data/one", {"category": "unrepairable", "file_identity": findings.file_identity(str(path))})
         self.value["items"] = [{"file": str(path), "finding": finding_revision(self.report().data["files"]["bound data/one"])}]
+        self.saved["storage_mounts"] = [["data", str(nested)]]
         self.mounts.return_value = frozenset({str(nested)})
         self.assertEqual(path.stat().st_dev, self.source.stat().st_dev)
+        self.assertFalse(os.path.ismount(nested))
         self.assertEqual(data_job.run_action(self.value), 0)
         destination = Path(self.result()["items"][0]["destination"])
         self.assertTrue(destination.is_relative_to(nested / findings.QUARANTINE_DIR))
@@ -706,6 +708,15 @@ class QuarantineMountInventoryTests(unittest.TestCase):
                  "22 20 0:7 /bound /srv/bound\u00a0data\udcff rw - tmpfs none rw\n")
         with patch("builtins.open", mock_open(read_data=table)):
             self.assertEqual(findings._mount_points(), frozenset({"/", "/srv/bound data", "/srv/bound\u00a0data\udcff"}))
+
+    def test_mount_fallback_ignores_dormant_automounts(self):
+        table = ("20 1 0:7 / / rw - tmpfs none rw\n"
+                 "21 20 0:8 / /srv/dormant rw - autofs systemd rw\n"
+                 "22 20 0:9 / /srv/active rw - autofs systemd rw\n"
+                 "23 22 0:10 / /srv/active rw - cifs //example/share rw\n")
+        with patch("builtins.open", mock_open(read_data=table)):
+            self.assertEqual(findings._mount_points(), frozenset({"/", "/srv/dormant", "/srv/active"}))
+            self.assertEqual(findings._mount_points(include_automounts=False), frozenset({"/", "/srv/active"}))
 
     def test_empty_malformed_and_oversized_mount_tables_are_rejected(self):
         for table in ("", "invalid mount\n", "x" * (1024 * 1024 + 1)):

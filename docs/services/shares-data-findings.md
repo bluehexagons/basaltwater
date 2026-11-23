@@ -78,12 +78,13 @@ cannot be confirmed, inspect Recovery activity and the recovery service journal
 before reviewing again. A worker that starts late can still finish.
 
 The whole selection is checked before effects, including required nested mounts
-and read-only mount flags. Each file is checked again before acting. If its
-identity changes before any move is attempted, the worker skips it so it can be
-verified and reviewed again. Interruption
-can leave partial completion or an unresolved action. Inspect actual state and
-individually review remaining files; batches are never replayed automatically.
-Findings below still follow the five-minute export.
+and read-only mount flags. The worker recognizes active bind mounts even when
+they share a device with their parent. Each file is checked again before acting.
+If its identity changes before any move is attempted, the worker skips it so it
+can be verified and reviewed again. Interruption can leave partial completion
+or an unresolved action. Inspect the actual state and review remaining files
+individually. The worker never replays batches automatically. Findings below
+follow the five-minute export.
 
 Disposed paths do not reopen as ordinary missing files on later scans. A new
 file appearing there requires fresh verification against retained parity.
