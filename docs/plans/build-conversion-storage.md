@@ -30,10 +30,14 @@ completed sources, bundles and extraction trees while preserving history proof.
 Interrupted payload deletion requires original revisions. Record runway warnings
 do not reclaim or erase replay identities.
 
+The [six-application Debian conversion](../testing/build-projects.md#populated-six-application-conversion)
+verified a populated target with static and Go applications, service data and
+SQLite backups, multiple routes, and a direct UDP listener.
+
 Remaining work: replay-safe record retirement and long-run qualification beyond
 existing record bounds; controller automatic age/budget scheduling; configurable
-inode-driven collection policy; full live populated-target conversion and measured
-small-disk/tmpfs peaks; richer pre-mutation inspection of arbitrary installed
+inode-driven collection policy; interruption recovery and measured small-disk
+and tmpfs peaks; richer pre-mutation inspection of arbitrary installed
 service/root changes and end-to-end route verification. No automatic runtime
 removal or shared writable toolchain design is introduced. The requirements below
 remain the full design, not a claim that these qualification boundaries have passed.
@@ -71,9 +75,8 @@ cases. Installed runtimes are a separate, explicitly requested cleanup class.
 | P1 | `run_build_setup` replaces caught failures with a generic recovery-required error. | Retain a bounded, redacted phase and cause/refusal code alongside exact recovery identities and storage observations. |
 | P2 | Switching modes retains old toolchains, build homes and uploaded source staging. | Inventory leftovers and remove only proven obsolete managed payloads; runtime removal requires separate reference checks. |
 
-These findings come from repository code and contracts, not an inspection of a
-particular server. Existing selected native checks do not qualify populated
-source-built target conversion; see the [coverage map](testing-coverage.md).
+These findings guided the original implementation. See the
+[coverage map](testing-coverage.md) for the verified boundaries across workflows.
 
 ## Delivery order
 
@@ -210,13 +213,9 @@ global packages, including external/unmanaged references. Uncertain references
 skip removal. Do not recursively delete old build homes or introduce shared
 writable toolchains as a storage shortcut.
 
-## First implementation slice
+## Next implementation slice
 
-Implement conversion inventory, capacity reporting and failure diagnostics, then
-qualify one populated maintenance-window conversion. Next deliver target bundle
-retirement and controller completed-payload collection with preservation tests,
-reuse builder retention primitives, and only then enable scheduled payload
-cleanup. Record retirement is a separate protocol change required before
-claiming sustained bounded operation. Keep this order visible in the operator
-guide as features become available; planned cleanup commands must not appear as
-already supported.
+Extend conversion qualification to interruptions and small filesystems. Expand
+scheduled cleanup using the existing payload collectors and their preservation
+checks. Replay-safe record retirement is required for sustained bounded
+operation.

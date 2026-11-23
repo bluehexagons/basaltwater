@@ -33,6 +33,16 @@ Before converting the target:
   cannot use this delivery flow. Inferred ordinary deployments need explicit
   manifests first. Preserve destination paths and component names, and compare
   generated deployment roots with the installed roots before applying.
+- Review the complete release file list. A prebuilt release contains the
+  declared artifacts. With no explicit `artifacts`, Basaltwater exports the
+  static output or the service executable. If a service also needs assets,
+  migration files, or a companion administration executable, list those paths
+  together with the executable in the component's `artifacts`.
+- Check exact Node and package-manager pins on the builder before converting.
+  A supported version can still be absent from the installed inventory.
+  Controller dry-run checks authenticated tool availability but the supervised
+  build checks each project's exact pins. See the
+  [managed Node inventory](#install-an-additional-node-version).
 - Back up persistent data, saved setup state and serving configuration. Keep
   other setup/deployment controllers idle. Activation restarts affected services;
   the complete multi-application switch is not atomic.
@@ -82,6 +92,11 @@ their disk space. Later saved deployments use:
 basaltw deploy web.example.com --yes
 ```
 
+For target-side maintenance, `sudo /usr/bin/python3 -I /opt/basaltwater/basaltwater.py refresh`
+updates the installed Basaltwater source and reconciles the installed releases
+from retained bundles, including when the builder is offline. Check the
+printed systemd job result before treating refresh as complete.
+
 Before first enrollment, the target saves private, bounded evidence at
 `/var/lib/basaltwater/build-conversion.json`: enrolled roots/routes, existing
 persistent-directory device/inode/UID/GID identities, Nginx site configuration
@@ -99,9 +114,11 @@ operator verification.
 
 On failure, preserve the printed attempt/journal and inspect the actual target
 state using the [recovery procedure](#diagnose-a-refusal). Do not retry blindly,
-delete guards or use `--no-build-on` as a rollback. Native qualification covers
-selected fresh-target and retained-refresh flows; it does not establish a
-populated source-built target conversion or a crash-safe multi-site switch.
+delete guards or use `--no-build-on` as a rollback. The
+[populated Debian conversion](../testing/build-projects.md#populated-six-application-conversion)
+verified six applications, their routes, and persistent data under a
+maintenance window. Crash recovery and public Cloudflare operation remain
+separate qualification cases.
 
 ## Add a site or change its grants
 
@@ -256,6 +273,40 @@ uncertain provider requests retain a distinct external-power drain. Inspect
 the provider's task state before arranging the power operation administratively;
 a confirmed subsequent boot clears the previous-boot intent. Local
 `shutdown -c` cannot cancel provider tasks and preserves this external drain.
+
+### Install an additional Node version
+
+Run this on the enrolled builder during an idle maintenance window. Substitute
+the exact Node and npm versions reviewed for your project. This uses the managed
+tool inventory and holds shared capacity while changing it.
+
+```bash
+sudo /usr/bin/python3 -I - 24.22.2 npm@11.18.0 <<'PY'
+import os
+import subprocess
+import sys
+
+source = "/opt/basaltwater"
+sys.path.insert(0, source)
+from lib.build_coordinator import maintenance
+from lib.project_build_tools import BUILD_NODE_HOME, BUILD_NVM_DIR
+
+with maintenance():
+    os.umask(0o022)
+    subprocess.run(
+        ["/usr/bin/python3", "-I", source + "/basaltwater.py", "node", "install",
+         "--project", BUILD_NODE_HOME, "--version", sys.argv[1],
+         "--package-manager", sys.argv[2]],
+        cwd=BUILD_NODE_HOME, check=True,
+        env={"HOME": BUILD_NODE_HOME, "NVM_DIR": BUILD_NVM_DIR,
+             "USER": "root", "LOGNAME": "root", "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"},
+    )
+PY
+```
+
+An installation failure leaves the host drained for inspection. Review the
+error and complete the maintenance operation before starting new builds.
+Regular builder setup preserves additional installed versions.
 
 ## Choose maintenance by the exhausted resource
 

@@ -26,7 +26,7 @@ These areas are not prerequisites for the shared Debian build/CI host.
 
 | Area | Next boundary and owner |
 | --- | --- |
-| Build retention and recovery | Preserve explicit settlement/pruning/bundle release and stop-and-inspect recovery. Plan populated target conversion, per-owner cleanup and replay-safe record retirement under the [conversion and storage lifecycle plan](build-conversion-storage.md), alongside the [build plan](cicd-manifest-reuse.md). |
+| Build retention and recovery | Preserve explicit settlement/pruning/bundle release and stop-and-inspect recovery. Extend the [populated conversion checks](../testing/build-projects.md#populated-six-application-conversion) to interruption and small-filesystem cases, and advance per-owner cleanup and replay-safe record retirement under the [conversion and storage lifecycle plan](build-conversion-storage.md). |
 | Deployment secrets | Target-owned runtime binding IDs are implemented for ordinary and selected-builder services. Qualify native delivery and manual rotation/recovery before consumer inventory or a broader secret store. Literal `env_file` remains outside selected-builder scope. See [secret references](deploy-secrets.md). |
 | Headscale private networking | Hosting, client enrollment, owned relays, the Web Portal, and managed Unbound are implemented. Use the [setup guide](../services/headscale-setup.md) for operation. Public ACME, additional platforms, and broader recovery remain open in [qualification](../testing/headscale.md#outstanding-acceptance). |
 | Proxmox, storage and Gogs | Extend selected same-host recovery to off-host restore; coordinate guest filesystem growth separately from provider disk resize. See [VM/storage work](vm-management-and-lightweight-git-hosting.md). |

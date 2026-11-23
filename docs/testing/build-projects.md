@@ -57,3 +57,39 @@ SSH connection, without enrolling it into a client-wide trust store.
 
 Raw logs, credentials, application source identities, transport keys, guest
 inventories and operation handles remain in private evidence outside Git.
+
+## Populated six-application conversion
+
+**2026-11-23 UTC; runtime source `6a8f0f03`, Debian 13 x86-64 on a
+disposable 4 GiB builder VM and a separate 2 GiB, 24 GiB web VM.** A normal
+source-built setup first installed three static applications and three Go
+services. The manifests included a second hostname and subpath, two branches of
+one repository, a SQLite backup declaration, and one direct UDP listener.
+
+- Source preparation pinned all six selectors. The initial managed builder
+  had the required Go version and needed two additional exact Node pins.
+  Installed them in the [managed inventory](../services/build-operations.md#install-an-additional-node-version).
+- The public `patch --build-on` dry run accepted the full cohort with the
+  Cloudflare and direct-origin flags. Default ceilings required about 12.9 GiB
+  available on the web filesystem at preflight. Live delivery used direct lab
+  HTTPS with independently obtained origin certificates.
+- The six managed builds produced verified bundles. The largest extracted
+  payload was about 28.5 MiB and the largest inventory had 459 entries. The old
+  releases still served during the build phase. The target staged all bundles,
+  activated the six applications, and recorded a completed conversion.
+- All route and service probes passed after conversion. The static entry pages
+  matched their original hashes, both branch-specific version reports
+  matched, and the UDP listener answered a STUN binding request. All three
+  persistent service directory identities were preserved. The live SQLite
+  database and retained backups passed `PRAGMA quick_check`.
+- A second patch built and delivered all six applications with a target ceiling
+  of 64 MiB and 2,048 entries per application. Preflight required about 2.66 GiB
+  and 47,056 free inodes on the web root filesystem.
+- With the builder VM shut down, the local refresh worker reconciled all six
+  apps from retained bundles and exited successfully. The route and STUN
+  probes, directory identities and live SQLite checks passed after both the
+  repeat delivery and the retained refresh.
+- One ordinary release contained an administration executable alongside its
+  service executable. The project declared no artifact list, so the selected
+  builder exported the service executable only. A release that needs both
+  executables must list both in `artifacts`.
