@@ -1,4 +1,4 @@
-"""Browser selection, exact batch reviews and single-use deletion approvals."""
+"""Browser selection, exact batch reviews and single-use confirmations."""
 
 from __future__ import annotations
 
@@ -30,14 +30,13 @@ class ScrubTriagePanelTests(unittest.TestCase):
         self.assertIn("DELETE 2 FILES", review)
         self.assertIn("/srv/data/0&lt;x&gt;.bin", review)
         self.assertIn("Permanently remove", review)
-        self.assertIn("Open the pending request", review)
-        self.assertIn("<button>Request approval</button>", review)
-        with patch.object(actions, "exchange", return_value=status()) as exchange:
+        self.assertIn("<button>Permanently delete files</button>", review)
+        with patch.object(actions, "exchange", side_effect=[status(), {"job_id": parameters["job_id"]}]) as exchange:
             with self.assertRaises(ValueError):
                 self.manager.submit(ticket, "DELETE 1 FILES")
             exchange.assert_not_called()
             self.manager.submit(ticket, "DELETE 2 FILES")
-            self.assertEqual(exchange.call_args.args[0]["operation"], "data.run")
+            self.assertEqual(exchange.call_args.args[0]["action"], "data-submit")
             self.assertEqual(exchange.call_args.args[0]["parameters"], parameters)
             with self.assertRaises(ValueError):
                 self.manager.submit(ticket, "DELETE 2 FILES")
@@ -68,6 +67,21 @@ class ScrubTriagePanelTests(unittest.TestCase):
             self.assertEqual(handler._send.call_args.args[0], 409)
             self.assertIn("DELETE 2 FILES", handler._send.call_args.args[1])
             self.assertIn(ticket, self.manager.tickets)
+
+    def test_http_reviews_percent_encoded_batch_at_parameter_limit(self):
+        fields = self.fields(action="quarantine", count=0)
+        for index in range(10):
+            # Percent signs expand in form encoding but remain short in
+            # the worker's JSON envelope. All path components fit NAME_MAX.
+            path = "/srv/data/" + ("%" * 200 + "/") * 4 + str(index)
+            fields["items"].append(json.dumps({"file": path, "finding": "a" * 64}))
+        handler = self.handler("/actions/data/review", {"csrf": "csrf", **fields})
+        self.assertGreater(int(handler.headers["Content-Length"]), 16 * 1024)
+        with patch.object(actions, "exchange", return_value=status()), \
+             patch.object(panel.storage, "load_storage_snapshot", return_value={"available": False}):
+            handler.do_POST()
+        self.assertEqual(handler._send.call_args.args[0], 200)
+        self.assertIn("10 reviewed files", handler._send.call_args.args[1])
 
     def test_http_rejects_duplicates_and_missing_csrf_before_preparing(self):
         for values, code in ((self.fields(), 403),
@@ -100,7 +114,7 @@ class ScrubTriagePanelTests(unittest.TestCase):
         latest = {"parameters": parameters, "status": "interrupted", "started": 1, "finished": 2,
                   "items": [{"index": 0, "status": "completed", "category": "delete"},
                             {"index": 1, "status": "skipped", "failure": "file_changed"}]}
-        body = actions.render_status({**status(), "latest": latest}, "CSRF")
+        body = actions.render_status({**status(), "latest": latest})
         for expected in ("completed", "skipped", "unresolved", "never replayed", "0&lt;x&gt;.bin", "2&lt;x&gt;.bin"):
             self.assertIn(expected, body)
         self.assertNotIn('<button>', body)
@@ -116,13 +130,13 @@ class ScrubTriagePanelTests(unittest.TestCase):
         latest = {"parameters": parameters, "status": "succeeded", "started": 1, "finished": 2,
                   "items": [{"index": 0, "status": "completed", "category": "healthy"},
                             {"index": 1, "status": "completed", "category": "quarantine"}]}
-        body = actions.render_status({**status(), "latest": latest}, "CSRF")
+        body = actions.render_status({**status(), "latest": latest})
         self.assertIn('class="badge success">succeeded', body)
         self.assertIn("Verified healthy; kept in place.", body)
         self.assertIn("Moved into private quarantine", body)
         latest.update(status="failed", items=[{"index": 0, "status": "skipped", "failure": "batch_preflight"},
                                              {"index": 1, "status": "skipped", "failure": "read_only"}])
-        body = actions.render_status({**status(), "latest": latest}, "CSRF")
+        body = actions.render_status({**status(), "latest": latest})
         self.assertIn('class="badge error">failed', body)
         self.assertIn("This file passed preflight.", body)
         self.assertIn("read-only", body)
@@ -134,7 +148,7 @@ class ScrubTriagePanelTests(unittest.TestCase):
                   "items": [{"index": index, "status": state,
                              "category": "unrepairable" if state == "completed" else ""}
                             for index, state in enumerate(states)]}
-        body = actions.render_status({**status(), "latest": latest}, "CSRF")
+        body = actions.render_status({**status(), "latest": latest})
         self.assertIn("1 pending · 1 running · 1 completed · 1 skipped · 1 failed · 2 unresolved", body)
         self.assertIn("verification can still report damage", body)
         self.assertIn("completed · unrepairable", body)
@@ -150,10 +164,8 @@ class ScrubTriagePanelTests(unittest.TestCase):
         review = actions.render_saved_review(ticket, parameters, "CSRF")
         self.assertIn(f'href="{link}">Cancel review', review)
         latest = {"parameters": parameters, "status": "interrupted", "started": 1, "finished": 2}
-        body = actions.render_status({**status(), "latest": latest,
-                                      "requests": [{"id": "c" * 32, "parameters": parameters,
-                                                    "state": "dispatched", "created": 1}]}, "CSRF")
-        self.assertEqual(body.count(f'href="{link}"'), 2)
+        body = actions.render_status({**status(), "latest": latest})
+        self.assertIn(f'href="{link}"', body)
         self.assertIn("/srv/parity&lt;&amp;&gt;", body)
         self.assertNotIn("/srv/parity<&>", body)
         self.assertNotEqual(scope, task_key(parameters["directory"], "/srv/other-parity"))

@@ -1216,50 +1216,51 @@ test.describe('Shares & Data', () => {
     const review = page.locator('.data-review');
     await expect(review).toContainText('Only accept content you have independently confirmed is correct');
     await expect(review).toContainText('/srv/archive/photos/holiday.jpg');
-    const requestApproval = review.getByRole('button', { name: 'Request approval', exact: true });
+    const acceptContent = review.getByRole('button', { name: 'Accept current content', exact: true });
     const recoveryTicket = await review.locator('input[name=ticket]').inputValue();
     await review.getByLabel('Type ACCEPT CURRENT CONTENT to confirm', { exact: true }).fill('wrong');
     diagnostics.allowed.add(dev.url + '/actions/data/submit');
     diagnostics.expectedConsole.push('the server responded with a status of 409');
     const refused = page.waitForResponse(response => response.url() === dev.url + '/actions/data/submit');
-    await requestApproval.click();
+    await acceptContent.click();
     expect((await refused).status()).toBe(409);
     await expect(page.getByRole('alert')).toContainText('could not be confirmed');
     await expect(review.locator('input[name=ticket]')).toHaveValue(recoveryTicket);
     await review.getByLabel('Type ACCEPT CURRENT CONTENT to confirm', { exact: true }).fill('ACCEPT CURRENT CONTENT');
     diagnostics.allowed.delete(dev.url + '/actions/data/submit');
-    await requestApproval.click();
+    await acceptContent.click();
     const activity = page.getByRole('region', { name: 'Recovery activity', exact: true });
     const recovery = activity.getByRole('article').filter({
       has: page.getByRole('heading', { name: 'Accept current content', exact: true }),
     });
-    await expect(recovery.getByText('Dispatch:', { exact: false })).toContainText('pending');
-    await expect(recovery.getByRole('link', { name: 'Open recovery approval', exact: false })).toBeVisible();
-    await recovery.getByRole('button', { name: 'Cancel recovery request', exact: true }).click();
-    await expect(recovery.getByText('Dispatch:', { exact: false })).toContainText('cancelled');
-    await expect(recovery.getByRole('button', { name: 'Cancel recovery request', exact: true })).toHaveCount(0);
+    await expect(recovery).toContainText('succeeded');
     const firstFinding = page.locator('.data-finding').first();
     await firstFinding.locator('summary').click();
     await firstFinding.getByLabel('Recovery action', { exact: true }).selectOption('verify');
     await firstFinding.getByRole('button', { name: 'Review recovery', exact: true }).click();
     await page.locator('.data-review').getByRole('button', { name: 'Verify file', exact: true }).click();
-    await expect(page.getByRole('link', { name: 'Request details', exact: false }).first()).toBeVisible();
-    await expect(page.getByText('Dispatch:', { exact: false }).first()).toContainText('dispatched');
-    await expect(page.getByRole('link', { name: 'Open recovery approval', exact: false })).toHaveCount(0);
-    const activityUrl = page.url();
-    const requestUrl = await page.getByRole('link', { name: 'Request details', exact: false }).first().getAttribute('href');
-    await page.goto(new URL(requestUrl, dev.url).href);
-    await expect(page.getByRole('heading', { name: 'Verify file', exact: true })).toBeVisible();
-    await expect(page.locator('.sidebar').getByRole('link', { name: 'Shares & Data', exact: true })).toBeVisible();
-    await expect(page.locator('.approval-targets')).toContainText('/srv/archive/');
-    await expect(page.getByRole('button', { name: 'Approve once', exact: true })).toHaveCount(0);
-    await page.screenshot({ path: info.outputPath('recovery-request-desktop.png'), fullPage: true });
+    await expect(activity.getByRole('heading', { name: 'Verify file', exact: true })).toBeVisible();
+    await expect(activity).toContainText('succeeded');
+    for (const [action, phrase, button] of [
+      ['quarantine', 'CHANGE FILE', 'Quarantine corrupt files'],
+      ['delete', 'DELETE 1 FILES', 'Permanently delete files'],
+    ]) {
+      await page.goto(dev.url + '/shares-data?view=scrubs&scope=' + scope);
+      await page.locator('.data-finding').first().getByRole('checkbox').check();
+      await page.getByLabel('Action for all selected files', { exact: true }).selectOption(action);
+      await page.getByRole('button', { name: 'Review selected findings', exact: true }).click();
+      await review.getByLabel('Type ' + phrase + ' to confirm', { exact: true }).fill(phrase);
+      await review.getByRole('button', { name: button, exact: true }).click();
+      await expect(activity.getByRole('heading', { name: button, exact: true })).toBeVisible();
+      await expect(activity.getByRole('list', { name: 'Per-file outcomes' })).toContainText('completed · ' + action);
+    }
+    await page.screenshot({ path: info.outputPath('recovery-activity-desktop.png'), fullPage: true });
     await page.setViewportSize({ width: 320, height: 900 });
     await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'Recovery request with enlarged text').toBe(true);
-    await page.screenshot({ path: info.outputPath('recovery-request-mobile.png'), fullPage: true });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'Recovery activity with enlarged text').toBe(true);
+    await page.screenshot({ path: info.outputPath('recovery-activity-mobile.png'), fullPage: true });
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto(activityUrl);
+    await page.goto(dev.url + '/shares-data?view=scrubs');
     const draftFinding = page.locator('.data-finding').first();
     await draftFinding.locator('summary').click();
     await draftFinding.getByLabel('Recovery action', { exact: true }).selectOption('restore');

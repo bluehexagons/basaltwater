@@ -1,4 +1,4 @@
-"""Reviewable single-file integrity operations for Shares & Data."""
+"""Reviewed integrity operations for Shares & Data."""
 
 from __future__ import annotations
 
@@ -11,11 +11,14 @@ import re
 from lib.validation import validate_filesystem_path
 
 DATA_HELPER = "/opt/basaltwater/common/service_tools/data_job.py"
+DATA_CONTROL = "/opt/basaltwater/common/service_tools/data_control.py"
+DATA_SOCKET = "/run/basaltwater-data-recovery.sock"
 DATA_STATE = "/var/lib/basaltwater-privilege-broker/data-job.json"
 DATA_UNIT = "basaltwater-data-management.service"
 DATA_TIMEOUT = 6 * 60 * 60
 BATCH_LIMIT = 10
 BATCH_MAX_BYTES = 10000
+DATA_MESSAGE_BYTES = 32 * 1024
 BATCH_ACTIONS = {"verify", "quarantine", "delete"}
 HEX_ID = re.compile(r"[a-f0-9]{32}\Z")
 HEX_DIGEST = re.compile(r"[a-f0-9]{64}\Z")
@@ -86,6 +89,13 @@ def finding_revision(entry: dict) -> str:
     """Bind review to the recorded classification, check time and file identity."""
     public = {key: entry.get(key) for key in ("state", "category", "last_checked", "file_identity")}
     return hashlib.sha256(json.dumps(public, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def read_data_message(stream) -> object:
+    raw = stream.readline(DATA_MESSAGE_BYTES + 1)
+    if len(raw) > DATA_MESSAGE_BYTES or not raw.endswith(b"\n"):
+        raise ValueError("Invalid recovery message")
+    return json.loads(raw)
 
 
 def data_dispatch_argv(parameters: dict) -> list[str]:

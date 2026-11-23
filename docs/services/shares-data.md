@@ -28,23 +28,25 @@ inventory catches up.
 
 ## Review, approve and check the result
 
-Browser changes require the [privilege approval service](../agents/privilege-approvals.md),
+Share, account and routine changes require the [privilege approval service](../agents/privilege-approvals.md),
 installed with the main web panel by default. `--no-privilege-broker` disables it.
 Account creation and password
 entry also require the configured HTTPS panel.
 
-For share, account, routine and scrub recovery changes, follow these steps.
+For share, account and routine changes, follow these steps.
 
 1. Choose an action and review its exact target and effects.
 2. Enter the displayed confirmation and create an approval request.
 3. Open that request's approval review and approve or deny it using the panel login.
 4. Return to **Activity & approvals**, refresh and check the worker result.
 
-Scrub verification starts after panel confirmation. Quarantine, deletion,
-repair, restoration and acceptance each require approval of the exact request.
 **Dispatched** means a worker was
 launched; it does not establish completion. Cancel an unclaimed request from
 activity. Cancellation cannot undo changes already made.
+
+Scrub recovery starts from the panel review using the local recovery service,
+including when the approval broker is disabled. Review the exact paths, enter
+the displayed confirmation and check the job under **Recovery activity**.
 
 Reviews last five minutes and submit once. Input errors retain editable values;
 confirmation errors retain the review. If configuration changes or editing

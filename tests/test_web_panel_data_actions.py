@@ -33,7 +33,7 @@ def parameters() -> dict:
 
 
 def status() -> dict:
-    return {"available": True, "blocked": False, "unit_state": "inactive", "latest": {}, "requests": []}
+    return {"available": True, "blocked": False, "unit_state": "inactive", "latest": {}, "other_active": False}
 
 
 def policy() -> dict:
@@ -141,12 +141,7 @@ class DataActionContractTests(unittest.TestCase):
             self.assertEqual(result["requests"][0]["id"], newest["id"])
             self.assertTrue(result["outstanding"])
             self.assertEqual(result["latest"], latest)
-            body = actions.render_status(result, "CSRF")
-            self.assertIn("Reviewed files: 10", body)
-            self.assertIn("exact paths", body)
-            self.assertIn('/requests/' + newest["id"], body)
-            self.assertIn('name="id" value="' + newest["id"] + '"', body)
-            self.assertNotIn("Worker result for this request", body)
+            self.assertEqual(result["requests"][0]["target_count"], 10)
             self.assertEqual(broker.status(newest["id"], 1000)["plan"]["parameters"]["items"], value["items"])
             self.assertEqual(broker.cancel(newest["id"], 1000)["state"], "cancelled")
 
@@ -168,9 +163,6 @@ class DataActionContractTests(unittest.TestCase):
             self.assertLessEqual(len((canonical({"ok": True, "result": result}) + "\n").encode()), MAX_MESSAGE)
             self.assertEqual(result["requests"][0]["id"], request["id"])
             self.assertTrue(result["latest_omitted"])
-            self.assertIn("exceeds the activity display limit", actions.render_status(result, "CSRF"))
-            body = actions.render_status({**result, "requests": []}, "CSRF")
-            self.assertNotIn("No recovery requests recorded", body)
 
 
 class DataRecoveryTests(unittest.TestCase):
@@ -341,10 +333,10 @@ class DataRecoveryTests(unittest.TestCase):
 
 class DataReviewTests(unittest.TestCase):
     def setUp(self):
-        self.admin = PanelAdmin({"host": "vm.example", "services": [{"label": "Privilege approvals", "url": "https://vm.example:9444/"}]})
-        self.manager = actions.PanelData(self.admin)
+        self.admin = PanelAdmin({"host": "vm.example", "services": []})
+        self.manager = actions.PanelData()
         self.state = SimpleNamespace(manifest={"host": "vm.example"}, admin=self.admin, data=self.manager, csrf_token="csrf",
-            features=lambda: PanelFeatures(admin=True), navigation=lambda current: panel_navigation(current=current))
+            features=PanelFeatures, navigation=lambda current: panel_navigation(current=current))
 
     def fields(self):
         return {key: value for key, value in parameters().items() if key != "job_id"}
@@ -357,7 +349,7 @@ class DataReviewTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.manager.submit(ticket, "CHANGE FILE")
             self.assertEqual(exchange.call_count, 2)
-            self.assertEqual(exchange.call_args.args[0]["operation"], "data.run")
+            self.assertEqual(exchange.call_args.args[0]["action"], "data-submit")
         for action in ("repair", "restore", "accept"):
             fields = {**self.fields(), "action": action, "backup": "/srv/backup/file.bin" if action == "restore" else ""}
             ticket, value = self.manager.prepare(fields)
@@ -368,7 +360,6 @@ class DataReviewTests(unittest.TestCase):
 
     def test_busy_unavailable_and_expired_reviews_cannot_request_recovery(self):
         for snapshot in ({**status(), "unit_state": "active"}, {**status(), "available": False},
-                         {**status(), "requests": [{"state": "pending"}]}, {**status(), "outstanding": True},
                          {**status(), "other_active": True}, {**status(), "blocked": True},
                          {key: value for key, value in status().items() if key != "blocked"}):
             ticket, _ = self.manager.prepare(self.fields())
@@ -390,7 +381,7 @@ class DataReviewTests(unittest.TestCase):
         handler._send = Mock()
         return handler
 
-    def test_http_review_and_confirm_create_only_one_approval_request(self):
+    def test_http_review_and_confirm_dispatch_without_broker(self):
         with patch.object(actions, "exchange", return_value=status()) as exchange, patch.object(storage, "load_storage_snapshot", return_value={"available": False}):
             handler = self.handler("/actions/data/review", {"csrf": "csrf", **self.fields()})
             handler.do_POST()
@@ -399,10 +390,12 @@ class DataReviewTests(unittest.TestCase):
             ticket = re.search(r'name="ticket" value="([^"]+)"', document).group(1)
             self.assertIn("CHANGE FILE", document)
             self.assertTrue(all(call.args[0]["action"] == "data-status" for call in exchange.call_args_list))
-        with patch.object(actions, "exchange", side_effect=[status(), {"id": "c" * 32, "state": "pending"}]) as exchange:
+        job_id = self.manager.reviewed(ticket)["job_id"]
+        with patch.object(actions, "exchange", side_effect=[status(), {"job_id": job_id}]) as exchange:
             handler = self.handler("/actions/data/submit", {"csrf": "csrf", "ticket": ticket, "confirmation": "CHANGE FILE"})
             handler.do_POST()
             self.assertEqual(handler._send.call_args.args[0], 303)
+            self.assertEqual(exchange.call_args.args[0]["action"], "data-submit")
             self.assertEqual(exchange.call_args.args[0]["parameters"]["file"], parameters()["file"])
 
     def test_http_missing_csrf_duplicate_or_extra_fields_cannot_submit(self):

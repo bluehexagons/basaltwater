@@ -4,7 +4,7 @@ Status: Implemented with offline regressions and selected installed Debian
 qualification on 2026-11-08; see the [native evidence and remaining boundaries](../testing/evidence.md#storage-triage-and-native-filesystems).
 Extend the existing **Shares & Data → Scrubs & findings**
 view with bounded bulk triage and reviewed file disposition. Single-file verify,
-repair, restore and accept already use the panel's approval flow; this plan adds
+repair, restore and accept use individual panel reviews; this plan adds
 bulk management for findings where isolating or removing the file is the chosen
 integrity decision.
 
@@ -54,8 +54,8 @@ unavailable and remains a separate future reviewed operation.
   action. Record durable per-item results so an interruption cannot repeat
   completed moves or deletions. Retain batch parameters and outcomes in root-only
   per-job claim records even after another job replaces the panel's latest result.
-- Permanent deletion requires a review listing every path, a count-based typed
-  confirmation and an approval decision for that batch. Explain that deletion
+- Permanent deletion requires a review listing every path and a count-based
+  typed confirmation for that batch. Explain that deletion
   removes source bytes and retains the disposition history and parity metadata.
 
 ## Acceptance

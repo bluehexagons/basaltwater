@@ -709,6 +709,7 @@ class WebPanelLifecycleTest(unittest.TestCase):
             patch("common.web_panel_steps.os.makedirs"),
             patch("common.web_panel_steps.write_json_atomic"),
             patch("common.web_panel_steps._configure_audit_exporter"),
+            patch("common.web_panel_steps._configure_recovery_service"),
             patch(
                 "common.web_panel_steps._configure_service",
                 side_effect=lambda _config, _home: order.append("service"),

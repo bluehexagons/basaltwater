@@ -1,4 +1,4 @@
-"""Single-use scrub recovery reviews and broker-supervised requests."""
+"""Single-use reviews for scrub recovery jobs."""
 
 from __future__ import annotations
 
@@ -8,11 +8,11 @@ import secrets
 import threading
 import time
 
-from common.service_tools.web_panel_admin import _review_url, _timestamp
+from common.service_tools.web_panel_admin import _timestamp
 from common.service_tools.web_panel_findings import task_key
 from common.service_tools.web_panel_templates import render_heading
-from lib.data_actions import BATCH_LIMIT, DATA_ACTIONS, HEX_ID, validate_data_action
-from lib.privilege_client import exchange
+from lib.data_actions import BATCH_LIMIT, DATA_ACTIONS, validate_data_action
+from lib.data_client import exchange
 
 FAILURE_LABELS = {
     "batch_preflight": "This file passed preflight. No files were processed because another selected file failed its checks. Review the reported failures before selecting a new batch.",
@@ -30,33 +30,23 @@ FAILURE_LABELS = {
     "execution_rejected": "Recovery could not complete. Inspect setup activity, configured mounts and the scrub report through the controller before retrying.",
     "job_interrupted": "The worker stopped without a confirmed result. Inspect the file and report before retrying.",
 }
-DISPATCH_FAILURES = {
-    "action_unavailable": "The recovery worker was busy or unavailable at dispatch.",
-    "executor_unavailable": "The worker could not be staged or launched. Inspect the approval service and protected payload before retrying.",
-    "wait_timeout": "Dispatch exceeded its wait deadline; the worker may still start. Inspect its state before retrying.",
-    "executor_signal": "Dispatch was interrupted; the worker may still start. Inspect its state before retrying.",
-    "nonzero_exit": "The service manager refused dispatch. Inspect its worker unit before retrying.",
-}
 
 
 class PanelData:
-    def __init__(self, admin) -> None:
-        self.admin = admin
+    def __init__(self) -> None:
         self.lock = threading.Lock()
         self.tickets: dict[str, tuple[dict, float]] = {}
 
     def snapshot(self) -> dict:
-        if not self.admin.approval_url:
-            return {"error": "Recovery approvals are disabled. Re-enable the panel approval service with --privilege-broker, or use the controller commands below."}
         try:
             result = exchange({"action": "data-status"})
-            if (any(type(result.get(key)) is not bool for key in ("available", "blocked")) or not isinstance(result.get("requests"), list)
+            if (any(type(result.get(key)) is not bool for key in ("available", "blocked", "other_active"))
                     or not isinstance(result.get("latest"), dict)
                     or result.get("unit_state") not in {"active", "activating", "deactivating", "inactive", "failed", "unavailable"}):
                 raise ValueError("Unsupported recovery status")
             return result
         except (OSError, ValueError, RuntimeError):
-            return {"error": "Recovery status is unavailable. Check or update the approval service before submitting work."}
+            return {"error": "Recovery status is unavailable. Check the local recovery service or rerun the saved panel setup to install it."}
 
     def prepare(self, fields: dict) -> tuple[str, dict]:
         if "items" in fields:
@@ -82,7 +72,7 @@ class PanelData:
             saved = self.tickets.get(ticket)
             if saved is None or saved[1] <= time.monotonic():
                 self.tickets.pop(ticket, None)
-                raise ValueError("This review expired or was already submitted. Check recent requests before reviewing again.")
+                raise ValueError("This review expired or was already submitted. Check Recovery activity before reviewing again.")
             return saved[0]
 
     def submit(self, ticket: str, confirmation: str) -> None:
@@ -99,9 +89,10 @@ class PanelData:
         with self.lock:
             saved = self.tickets.pop(ticket, None)
         if saved is None or saved[1] <= time.monotonic():
-            raise ValueError("This review expired or was already submitted. Check recent requests before reviewing again.")
-        exchange({"action": "request", "operation": "data.run", "parameters": parameters,
-                  "reason": "Shares & Data: " + DATA_ACTIONS[parameters["action"]][0]})
+            raise ValueError("This review expired or was already submitted. Check Recovery activity before reviewing again.")
+        result = exchange({"action": "data-submit", "parameters": parameters})
+        if result.get("job_id") != parameters["job_id"]:
+            raise ValueError("Recovery service did not confirm the reviewed job")
 
 
 def unavailable_reason(status: dict) -> str:
@@ -115,8 +106,6 @@ def unavailable_reason(status: dict) -> str:
         return "A recovery job is running. Refresh status after it finishes."
     if status.get("other_active"):
         return "A storage routine job is running. Refresh its status in Backups & sync after it finishes."
-    if status.get("outstanding") or any(row.get("state") in {"pending", "approved", "executing"} for row in status.get("requests", [])):
-        return "Review or cancel the outstanding storage request before submitting another."
     return ""
 
 
@@ -207,12 +196,6 @@ def render_saved_review(ticket: str, parameters: dict, csrf: str) -> str:
     label, effect = DATA_ACTIONS[action]
     if "items" in parameters and action == "verify":
         label = "Verify selected files"
-    if action == "verify":
-        next_step = "Confirm to start verification."
-        button = label
-    else:
-        next_step = "Confirm to request approval. Open the pending request in Activity &amp; approvals to review the exact files and authorize the worker."
-        button = "Request approval"
     required = confirmation_phrase(parameters)
     confirmation = (f'<label for="recovery-confirm">Type <code>{required}</code> to confirm</label><input id="recovery-confirm" name="confirmation" required autocomplete="off">'
                     if required else '<input type="hidden" name="confirmation" value="">')
@@ -222,22 +205,20 @@ def render_saved_review(ticket: str, parameters: dict, csrf: str) -> str:
     targets = _targets(parameters) if "items" in parameters else ""
     return f'''<section class="event data-review" aria-labelledby="recovery-review">{render_heading("Review: " + label, "security", heading_id="recovery-review")}
 <p>{html.escape(effect)}</p>{targets}<dl class="job-facts">{facts}</dl>
-<p>{next_step} The worker checks the reviewed finding and file metadata, verifies changed files before quarantine, and runs independently for up to six hours.</p>
+<p>Confirm to start the worker. It checks the reviewed finding and file metadata, verifies changed files before quarantine, and runs independently for up to six hours.</p>
 <p>Batches report each file separately. Interrupted or uncertain work is never replayed automatically. Inspect outcomes and individually review remaining files before retrying.</p>
-<form method="post" action="/actions/data/submit" class="data-recovery-form">{csrf}<input type="hidden" name="ticket" value="{html.escape(ticket, quote=True)}">{confirmation}<button>{html.escape(button)}</button></form>
+<form method="post" action="/actions/data/submit" class="data-recovery-form">{csrf}<input type="hidden" name="ticket" value="{html.escape(ticket, quote=True)}">{confirmation}<button>{html.escape(label)}</button></form>
 <a href="{html.escape(_findings_url(parameters), quote=True)}">Cancel review</a></section>'''
 
 
-def render_status(status: dict, csrf: str) -> str:
+def render_status(status: dict) -> str:
     escape = html.escape
     body = '<section aria-labelledby="recovery-status">' + render_heading("Recovery activity", "maintenance", heading_id="recovery-status")
     if reason := unavailable_reason(status):
         body += f'<p class="data-notice" role="status">{escape(reason)}</p>'
     latest = status.get("latest", {})
-    if status.get("latest_omitted"):
-        body += '<p class="data-notice">The latest worker result exceeds the activity display limit. Inspect its retained record through the controller.</p>'
-    if not latest and not status.get("latest_omitted") and not status.get("requests") and not unavailable_reason(status):
-        body += '<p class="data-notice">No recovery requests recorded. Open a finding below to review verification or recovery.</p>'
+    if not latest and not unavailable_reason(status):
+        body += '<p class="data-notice">No recovery jobs recorded. Open a finding below to review verification or recovery.</p>'
     if latest:
         parameters = latest.get("parameters", {})
         label = DATA_ACTIONS.get(parameters.get("action"), ("Recovery job", ""))[0]
@@ -283,32 +264,4 @@ def render_status(status: dict, csrf: str) -> str:
         if failure := latest.get("failure"):
             body += f'<p>{escape(FAILURE_LABELS.get(failure, "Inspect the worker and scrub report before retrying."))}</p>'
         body += '<p>Findings below follow the five-minute snapshot export. A completed recovery may appear there until the next export.</p></article>'
-    for row in status.get("requests", [])[:10]:
-        identifier = row.get("id", "")
-        if not isinstance(identifier, str) or not HEX_ID.fullmatch(identifier):
-            continue
-        parameters = row.get("parameters", {})
-        label = DATA_ACTIONS.get(parameters.get("action"), ("Recovery request", ""))[0]
-        state = row.get("state", "unavailable")
-        targets = (f'<p>Reviewed files: {row["target_count"]}. Open request details for exact paths.</p>'
-                   if type(row.get("target_count")) is int and 1 <= row["target_count"] <= BATCH_LIMIT else _targets(parameters))
-        body += f'<article class="event"><h3>{escape(label)}</h3>' + _task_context(parameters) + targets + f'<p>Dispatch: <strong>{escape(state)}</strong></p>'
-        body += f'<p class="event-meta">Requested: {_timestamp(row.get("created"))}</p>'
-        if state in {"pending", "approved"}:
-            body += f'<p class="event-meta">Approval expires: {_timestamp(row.get("expires"))}</p>'
-        if state in {"failed", "uncertain", "invalidated"}:
-            body += '<p>Dispatch did not establish completion. Inspect the request on the approval page and the current worker result before retrying.</p>'
-            failure = (row.get("execution") or {}).get("failure")
-            if failure in DISPATCH_FAILURES:
-                body += f'<p>{escape(DISPATCH_FAILURES[failure])}</p>'
-        if parameters.get("job_id") and latest.get("parameters", {}).get("job_id") == parameters["job_id"]:
-            body += f'<p>Worker result for this request: <strong>{escape(latest.get("status", "unavailable"))}</strong></p>'
-        elif state == "dispatched":
-            body += '<p>This request was dispatched. Its completion is not established by the latest worker record above; inspect the scrub report before retrying.</p>'
-        if url := _review_url(row.get("review_url")):
-            link_label = "Open recovery approval" if state == "pending" else "Request details"
-            body += f'<a class="refresh-link" href="{escape(url, quote=True)}" target="_blank" rel="noopener noreferrer">{link_label} ↗</a>'
-        if state in {"pending", "approved"}:
-            body += f'<form method="post" action="/actions/data/cancel">{csrf}<input type="hidden" name="id" value="{identifier}"><button>Cancel recovery request</button></form>'
-        body += '</article>'
     return body + '</section>'

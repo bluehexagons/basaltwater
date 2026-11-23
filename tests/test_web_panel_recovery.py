@@ -36,6 +36,17 @@ class PanelServiceRecoveryTest(unittest.TestCase):
     def configure(self) -> bool:
         return panel._configure_service(self.config, "/home/agent")
 
+    def test_recovery_socket_is_installed_for_the_panel_account(self) -> None:
+        panel._configure_recovery_service(SimpleNamespace(pw_uid=1001, pw_gid=1002))
+        socket_unit = panel.RECOVERY_SOCKET_UNIT
+        socket = (self.root / socket_unit).read_text()
+        service = (self.root / panel.RECOVERY_SERVICE_UNIT).read_text()
+        self.assertIn("SocketMode=0660\nSocketGroup=1002", socket)
+        self.assertIn(f"ListenStream={panel.DATA_SOCKET}", socket)
+        self.assertIn(f"PartOf={socket_unit}", service)
+        self.assertIn(f"-I {panel.DATA_CONTROL} --uid 1001", service)
+        self.assertEqual(self.systemd.states[socket_unit], ["active", "enabled"])
+
     def test_readiness_failure_restores_existing_definition_and_inactive_state(self) -> None:
         self.readiness.side_effect = RuntimeError("socket unavailable")
         with self.assertRaisesRegex(RuntimeError, "socket unavailable"):

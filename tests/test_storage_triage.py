@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+from concurrent.futures import ThreadPoolExecutor
 import copy
 import errno
 import hashlib
 import json
 import os
 from pathlib import Path
+import socket
 import tempfile
 import unittest
 from unittest.mock import Mock, mock_open, patch
 
-from common.service_tools import data_job
+from common.service_tools import data_control, data_job
+from common.service_tools.web_panel_data_actions import PanelData, confirmation_phrase
+from lib import data_client
 from lib.data_actions import finding_revision, validate_data_action
 from lib.runtime_config import RuntimeConfig
 from sync.service_tools import scrub_findings as findings, scrub_par2, storage_ops, sync_rsync
@@ -435,6 +439,54 @@ class TriageTests(unittest.TestCase):
         self.assertEqual(data_job.run_action(self.value), 0)
         self.assertFalse(any(path.exists() for path in self.paths))
         self.assertTrue(all(entry["state"] == "completed" for entry in self.report().data["dispositions"].values()))
+
+    def test_panel_dispatches_quarantine_and_delete_through_local_socket(self):
+        def start(command, **kwargs):
+            self.assertTrue(kwargs["check"])
+            self.assertNotIn(str(self.source), " ".join(command))
+            self.assertEqual(data_job.run_action(data_job.consume_data_job(command[-1])), 0)
+
+        with socket.socket(socket.AF_UNIX) as listener, ThreadPoolExecutor() as executor:
+            socket_path = str(self.root / "recovery.sock")
+            listener.bind(socket_path)
+            listener.listen()
+            listener.settimeout(3)
+
+            def serve(count, uid):
+                for _ in range(count):
+                    connection, _ = listener.accept()
+                    with connection:
+                        data_control.handle(connection, uid)
+
+            with patch.object(data_client, "DATA_SOCKET", socket_path), \
+                 patch.object(data_job, "_unit_state", return_value="inactive"), \
+                 patch.object(data_control, "routine_unit_state", return_value="inactive"), \
+                 patch.object(data_control, "protected_path"), \
+                 patch.object(data_control.subprocess, "run", side_effect=start) as launch:
+                refused = executor.submit(serve, 1, os.getuid() + 1)
+                with self.assertRaises((OSError, ValueError)):
+                    data_client.exchange({"action": "data-submit", "parameters": self.value})
+                refused.result(timeout=3)
+                launch.assert_not_called()
+
+                panel = PanelData()
+                for action, selected in zip(("quarantine", "delete"), self.value["items"]):
+                    with self.subTest(action=action):
+                        fields = {"action": action, "directory": str(self.source),
+                                  "database": str(self.database), "items": [json.dumps(selected)]}
+                        ticket, reviewed = panel.prepare(fields)
+                        accepted = executor.submit(serve, 3, os.getuid())
+                        panel.submit(ticket, confirmation_phrase(reviewed))
+                        latest = panel.snapshot()["latest"]
+                        accepted.result(timeout=3)
+                        self.assertEqual(latest["parameters"], reviewed)
+                        self.assertEqual(latest["status"], "succeeded")
+                        self.assertEqual(latest["items"][0]["category"], action)
+                        self.assertFalse(Path(selected["file"]).exists())
+                        destination = Path(self.result()["items"][0]["destination"])
+                        self.assertEqual(destination.exists(), action == "quarantine")
+                        if action == "quarantine":
+                            self.assertEqual(destination.read_bytes(), b"damaged bytes")
 
     def test_symlink_hardlink_and_unrecognized_quarantine_rejected_before_effects(self):
         for case in ("symlink", "hardlink", "directory", "collision"):

@@ -28,10 +28,11 @@ from lib.auth_failure_bans import (
     remove_nginx_auth_failure_ban,
 )
 from lib.config import SetupConfig, WEB_PANEL_CA_HTTP_PORT
+from lib.data_actions import DATA_CONTROL, DATA_SOCKET, DATA_STATE
 from lib.github_runner_config import PROFILE as GITHUB_RUNNER_PROFILE
 from lib.privilege_setup import integrated_approvals
 from lib.remote_utils import install_package, is_dry_run, is_service_active, run
-from lib.unit_transaction import UnitOwnership, replace_units, unit_ownership
+from lib.unit_transaction import UnitOwnership, remove_units, replace_units, snapshot_unit_file, unit_ownership
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
 from lib.headscale_portal import managed_installed
@@ -39,6 +40,8 @@ from lib.headscale_portal import managed_installed
 
 WEB_PANEL_SERVICE_NAME = "basaltwater-web-panel"
 WEB_PANEL_SERVICE_FILE = f"/etc/systemd/system/{WEB_PANEL_SERVICE_NAME}.service"
+RECOVERY_SOCKET_UNIT = "basaltwater-data-recovery.socket"
+RECOVERY_SERVICE_UNIT = "basaltwater-data-recovery.service"
 WEB_PANEL_AUDIT_SERVICE_NAME = "basaltwater-web-panel-audit"
 WEB_PANEL_AUDIT_SERVICE_FILE = (
     f"/etc/systemd/system/{WEB_PANEL_AUDIT_SERVICE_NAME}.service"
@@ -840,6 +843,58 @@ def _verify_service_socket() -> None:
     raise RuntimeError(message + (f":\n{detail}" if detail else ""))
 
 
+def _recovery_units(unit_dir: str) -> tuple[str, ...]:
+    units = (RECOVERY_SOCKET_UNIT, RECOVERY_SERVICE_UNIT)
+    for unit in units:
+        path = os.path.join(unit_dir, unit)
+        saved = snapshot_unit_file(path)
+        if saved is not None and not saved["content"].startswith(_SERVICE_MARKER + "\n"):
+            raise RuntimeError(f"Refusing unmanaged web panel recovery unit: {path}")
+    return units
+
+
+def _configure_recovery_service(account: pwd.struct_passwd) -> None:
+    unit_dir = os.path.dirname(WEB_PANEL_SERVICE_FILE)
+    socket_unit, service_unit = _recovery_units(unit_dir)
+    replace_units({
+        socket_unit: f"""{_SERVICE_MARKER}
+[Unit]
+Description=basaltwater scrub recovery socket
+
+[Socket]
+ListenStream={DATA_SOCKET}
+SocketMode=0660
+SocketGroup={account.pw_gid}
+RemoveOnStop=true
+
+[Install]
+WantedBy=sockets.target
+""",
+        service_unit: f"""{_SERVICE_MARKER}
+[Unit]
+Description=basaltwater scrub recovery dispatcher
+PartOf={socket_unit}
+
+[Service]
+User=root
+ExecStart=/usr/bin/python3 -I {DATA_CONTROL} --uid {account.pw_uid}
+StateDirectory={os.path.basename(os.path.dirname(DATA_STATE))}
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX
+LimitCORE=0
+""",
+    }, activate=(socket_unit,), deactivate=(socket_unit,), unit_dir=unit_dir)
+
+
 def _configure_service(config: SetupConfig, home: str) -> bool:
     service_user = (
         config.username if config.username != "root" else _WEB_PANEL_SYSTEM_USER
@@ -1138,6 +1193,7 @@ def remove_web_panel() -> None:
 def _remove_web_panel(owner: UnitOwnership) -> None:
     """Keep the unit owner through preflight, nested removals and data cleanup."""
     nginx_content, link_exists = _preflight_web_panel_removal()
+    recovery_units = _recovery_units(owner.unit_dir)
     from desktop.guacamole_steps import preflight_configuration, preflight_units, remove_guacamole
 
     preflight_units()
@@ -1167,6 +1223,7 @@ def _remove_web_panel(owner: UnitOwnership) -> None:
         if present and (os.path.exists(path) or _missing_panel_unit_needs_stop(unit)):
             run(command, check=True)
     _remove_nginx_site(nginx_content, link_exists)
+    remove_units(recovery_units, owner=owner)
     from common.proxmox_web_panel_steps import remove_proxmox_snapshot
 
     remove_proxmox_snapshot(unit_owner=owner)
@@ -1309,6 +1366,8 @@ def configure_web_panel(config: SetupConfig) -> None:
             from web.github_runner_registration_steps import configure_registration_service
 
             configure_registration_service(account)
+        if config.system_type != "server_proxmox":
+            _configure_recovery_service(account)
         _configure_service(config, account.pw_dir)
         if config.guacamole:
             from desktop.guacamole_steps import configure_guacamole

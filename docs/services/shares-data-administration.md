@@ -32,7 +32,7 @@ history remain target state.
 | Complete catalog | Health/findings from all configured scrub tasks; twenty tasks and twenty findings per query |
 | Export bounds | Twenty-second collection deadline, 128 MiB catalog, 8 MiB summary/transport; only completed exports publish |
 | Worker deadlines | Accounts: 45 seconds; share changes: one hour; routine changes/runs and recovery: six hours |
-| Concurrent approvals | One Samba request; one routine/file-recovery request, with those workers excluding each other |
+| Concurrency | One Samba approval request and one routine approval request. Routine and file-recovery workers share the storage lock |
 
 Privileged management uses `/var/lib/basaltwater`; `/opt/basaltwater/state` is a
 convenience symlink. Privileged files or ancestors inside the durable directory
@@ -65,7 +65,8 @@ No old password is retained for rollback.
 | Symptom | Next step |
 | --- | --- |
 | Lists still show old values after success | Wait for the five-minute export, then refresh |
-| Controls unavailable but findings visible | Check approvals, complete configuration export and setup recovery state |
+| Recovery controls unavailable but findings visible | Check `basaltwater-data-recovery.socket`, the `basaltwater-data-recovery.service` journal and setup recovery state. Rerun saved panel setup after updating to provision the recovery service |
+| Share, account or routine controls unavailable | Check approvals, complete configuration export and setup recovery state |
 | Request dispatched without a matching worker result | Inspect the request, worker and actual state; bounded latest records cannot prove older completion |
 | Catalog, health or account inspection unavailable | Check mounts, exporter journal and supported limits; rerun setup/refresh if the exporter is older |
 | Failed, interrupted or uncertain change | Inspect actual state and follow [transaction recovery](../operations/transaction-recovery.md) before retrying |

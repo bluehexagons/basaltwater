@@ -719,7 +719,7 @@ class WebPanelState:
         self.agent_tasks = AgentTasks(agent_home, background_tick=self.publishing_tick)
         self.git_settings = AgentGitSettings(self.agent_tasks.home, manifest.get("username", ""))
         self.admin = PanelAdmin(manifest)
-        self.data = PanelData(self.admin)
+        self.data = PanelData()
         self.samba = PanelSamba(self.admin)
         self.share_actions = PanelShares(self.admin)
         self.routines = routine_actions.PanelRoutines(self.admin)
@@ -1857,7 +1857,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             "/agents": "agents", "/agent-tools": "agent-tools", "/agent-inbox": "agent-inbox",
             "/maintenance-agent": "maintenance-agent", "/credentials": "credentials",
             "/publishing": "publishing", "/admin": "admin", "/shares-data": "shares-data",
-            "/actions/data/review": "shares-data", "/actions/data/submit": "shares-data", "/actions/data/cancel": "shares-data",
+            "/actions/data/review": "shares-data", "/actions/data/submit": "shares-data",
             "/actions/samba/review": "shares-data", "/actions/samba/submit": "shares-data", "/actions/samba/cancel": "shares-data",
             "/actions/shares/review": "shares-data", "/actions/shares/submit": "shares-data", "/actions/shares/cancel": "shares-data",
             "/actions/routines/review": "shares-data", "/actions/routines/submit": "shares-data", "/actions/routines/cancel": "shares-data",
@@ -2125,7 +2125,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             return
         agent_paths = {"/actions/agent-task/save", "/actions/agent-task", "/actions/agent-diagnostics", "/actions/agent-tool/prepare"}
         admin_paths = {"/actions/admin/cancel", "/actions/headscale"}
-        data_paths = {"/actions/data/review", "/actions/data/submit", "/actions/data/cancel"}
+        data_paths = {"/actions/data/review", "/actions/data/submit"}
         samba_paths = {"/actions/samba/review", "/actions/samba/submit", "/actions/samba/cancel"}
         share_paths = {"/actions/shares/review", "/actions/shares/submit", "/actions/shares/cancel"}
         routine_paths = {"/actions/routines/review", "/actions/routines/submit", "/actions/routines/cancel"}
@@ -2153,9 +2153,13 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             length = -1
-        # Percent encoding can triple a valid 64 KiB UTF-8 draft before
-        # transport. Leave bounded room for its title and revision metadata.
-        request_limit = 256 * 1024 if path in publishing_paths else 32 * 1024 if path == "/actions/agent-task/save" else _MAX_REQUEST_BYTES
+        request_limit = _MAX_REQUEST_BYTES
+        if path in publishing_paths:
+            # Percent encoding can triple a 64 KiB draft before transport.
+            request_limit = 256 * 1024
+        elif path in {"/actions/agent-task/save", "/actions/data/review"}:
+            # Allow encoded recovery batches up to the panel's proxy limit.
+            request_limit = 32 * 1024
         if not 0 <= length <= request_limit:
             self._send(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "Invalid request\n", "text/plain")
             return
@@ -2350,7 +2354,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
     def _handle_data_action(self, path: str, values: dict[str, list[str]]) -> None:
         batch = path.endswith("/review") and "items" in values
         expected = ({"action", "directory", "database", "file", "backup", "finding"} if path.endswith("/review")
-                    else {"ticket", "confirmation"} if path.endswith("/submit") else {"id"})
+                    else {"ticket", "confirmation"})
         if batch:
             expected = {"action", "directory", "database", "items"}
         if (set(values) != expected | {"csrf"}
@@ -2367,15 +2371,12 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                 review = render_data_review(self.state.data, fields, csrf)
                 self._send(HTTPStatus.OK, render_shares_data(self.state, _PAGE_STYLE, {"view": "scrubs"}, review=review), "text/html")
                 return
-            if path.endswith("/submit"):
-                self.state.data.submit(fields["ticket"], fields["confirmation"])
-            else:
-                self.state.admin.cancel(fields["id"])
+            self.state.data.submit(fields["ticket"], fields["confirmation"])
         except (OSError, ValueError, RuntimeError) as exc:
             review = ""
-            message = "The recovery request could not be confirmed. Check recovery activity and approval requests before trying again. Reviews expire after five minutes; a lost response is never replayed."
+            message = "The recovery request could not be confirmed. Check Recovery activity before trying again. Reviews expire after five minutes. A lost response is never replayed."
             if path.endswith("/review"):
-                message = "Recovery review could not be prepared: " + str(exc) if isinstance(exc, ValueError) else "Recovery review is unavailable. Check the snapshot and approval service."
+                message = "Recovery review could not be prepared: " + str(exc) if isinstance(exc, ValueError) else "Recovery review is unavailable. Check the snapshot and local recovery service."
                 try:
                     review = render_data_inputs(fields, csrf)
                 except ValueError:
@@ -2391,7 +2392,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             self._send(HTTPStatus.UNPROCESSABLE_ENTITY if path.endswith("/review") else HTTPStatus.CONFLICT,
                        render_shares_data(self.state, _PAGE_STYLE, {"view": "scrubs"}, review=review, error=message), "text/html")
             return
-        self._send(HTTPStatus.SEE_OTHER, "", "text/plain", headers={"Location": "/shares-data?view=scrubs"})
+        self._send(HTTPStatus.SEE_OTHER, "", "text/plain", headers={"Location": "/shares-data?view=scrubs#recovery-status"})
 
     def _handle_routine_action(self, path: str, values: dict[str, list[str]]) -> None:
         action = path.rsplit("/", 1)[-1]

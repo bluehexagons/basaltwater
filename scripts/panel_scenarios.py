@@ -328,8 +328,22 @@ class Scenario:
                 records = [row for row in self.data["requests"] if row.get("plan", {}).get("operation") == "samba.account"]
                 return {"available": self.name != "degraded", "outstanding": any(row.get("state") in {"pending", "approved", "executing"} and row.get("plan", {}).get("operation", "").startswith("samba.") for row in self.data["requests"]),
                         "requests": [{**copy.deepcopy(row), "parameters": row["plan"]["parameters"]} for row in records[:10]]}
-            if message["action"] in {"data-status", "routine-status"}:
-                operation = "data.routine" if message["action"] == "routine-status" else "data.run"
+            if message["action"] == "data-status":
+                return {"available": self.name != "degraded", "unit_state": "inactive", "blocked": False,
+                        "other_active": False, "latest": copy.deepcopy(self.data.get("recovery_latest", {}))}
+            if message["action"] == "data-submit":
+                parameters = message["parameters"]
+                now = time.time()
+                latest = {"parameters": parameters, "status": "succeeded", "started": now, "finished": now}
+                if "items" in parameters:
+                    category = "healthy" if parameters["action"] == "verify" else parameters["action"]
+                    latest["items"] = [{"index": index, "status": "completed", "category": category}
+                                       for index in range(len(parameters["items"]))]
+                self.data["recovery_latest"] = latest
+                self.save()
+                return {"job_id": parameters["job_id"]}
+            if message["action"] == "routine-status":
+                operation = "data.routine"
                 records = [row for row in self.data["requests"] if row.get("plan", {}).get("operation") == operation]
                 outstanding = any(row.get("state") in {"pending", "approved", "executing"} and row.get("plan", {}).get("operation", "").startswith("data.") for row in self.data["requests"])
                 return {"available": self.name != "degraded", "unit_state": "inactive", "latest": {}, "blocked": False,

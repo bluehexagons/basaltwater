@@ -1,6 +1,6 @@
 # Review storage findings
 
-Follow the [approval and result checks](shares-data.md#review-approve-and-check-the-result)
+Follow the [review and result checks](shares-data.md#review-approve-and-check-the-result)
 for recovery actions and inspect the exact worker result before retrying.
 
 ## Review and resolve one finding
@@ -23,8 +23,8 @@ followed by a controller command for reading its private evidence:
 | **Accept current content** | Replace the integrity baseline with content you independently confirmed is correct; type `ACCEPT CURRENT CONTENT` |
 
 Choose **Review recovery**, check the file, scrub root, parity directory and copy
-path and enter any required confirmation. Open the pending approval for recovery
-actions. Check the worker result in **Activity & approvals**. The worker rejects changed findings
+path and enter any required confirmation to start the worker. Check its result
+under **Recovery activity**. The worker rejects changed findings
 or changed file identities. A missing-file scan records absence as its reviewed
 identity; a file appearing afterward blocks recovery. Verify older findings
 without an identity before recovery. Verification that still detects damage
@@ -41,8 +41,8 @@ Long paths can require a smaller batch to fit the review limit.
 
 **Review selected findings** lists every exact path and one action. Quarantine
 requires `CHANGE FILE`; permanent deletion has its own review and requires
-`DELETE N FILES`, with the displayed count in place of `N`. Approve the exact
-batch in **Activity & approvals**. Verification starts directly after review.
+`DELETE N FILES`, with the displayed count in place of `N`. Submit the reviewed
+batch to start the worker.
 Acceptance of a new parity baseline is available for individual files only.
 
 Quarantine atomically moves source files into a recognized root-owned, mode-0700
@@ -59,7 +59,7 @@ tasks; coordinate recovery across their reports through the administrator comman
 line. Permanent deletion removes source bytes; it retains the finding/disposition
 history, parity and mirror protection.
 
-**Activity & approvals** lists each file as pending, running, completed, skipped,
+**Recovery activity** lists each file as pending, running, completed, skipped,
 failed or unresolved, with a count for each state. Completed means the action
 finished; a completed verification can still report damage. Missing item results
 are shown as unresolved. Activity identifies the scrub root and parity directory

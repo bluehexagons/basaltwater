@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Supervised, approved single-file recovery independent of the web panel."""
+"""Supervised recovery independent of the web panel."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ if __name__ == "__main__" and not __package__:
     sys.path.insert(0, "/opt/basaltwater")
 
 from lib.atomic_io import read_json_file, remove_file_durable, write_json_atomic
-from lib.data_actions import DATA_STATE, DATA_UNIT, HEX_ID, finding_revision, validate_data_action
+from lib.data_actions import DATA_MESSAGE_BYTES, DATA_STATE, DATA_UNIT, HEX_ID, finding_revision, validate_data_action
 from lib.machine_state import PERSISTENT_STATE_DIR as STATE_DIR, can_manage_system_services, load_setup_config
 from lib.operation_state import OperationStateStore
 from lib.privilege_execution import ENVIRONMENT
@@ -77,7 +77,7 @@ def _payload_path(job_id: str) -> str:
 
 
 def stage_data_job(parameters: dict) -> None:
-    """Stage only an already-claimed plan; user paths never enter systemd argv."""
+    """Stage validated parameters; user paths never enter systemd argv."""
     parameters = validate_data_action(parameters)
     path = _payload_path(parameters["job_id"])
     protected_path(os.path.dirname(path), directory=True)
@@ -93,7 +93,7 @@ def stage_data_job(parameters: dict) -> None:
 def consume_data_job(job_id: str) -> dict:
     path = _payload_path(job_id)
     protected_path(path)
-    parameters = validate_data_action(read_json_file(path, max_bytes=16384))
+    parameters = validate_data_action(read_json_file(path, max_bytes=DATA_MESSAGE_BYTES))
     if parameters["job_id"] != job_id:
         raise ValueError("Data job payload identity mismatch")
     remove_file_durable(path)

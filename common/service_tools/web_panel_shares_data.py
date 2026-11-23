@@ -504,8 +504,8 @@ def render_shares_data(state, style: str, query: dict[str, str], *, review: str 
     body += review
     csrf = f'<input type="hidden" name="csrf" value="{html.escape(getattr(state, "csrf_token", ""), quote=True)}">'
     activity = []
-    if manager is not None and (view == "scrubs" or view == "overview" and (status.get("requests") or status.get("latest"))):
-        activity.append((status, render_status(status, csrf)))
+    if manager is not None and (view == "scrubs" or view == "overview" and status.get("latest")):
+        activity.append((status, render_status(status)))
     samba_manager = getattr(state, "samba", None)
     samba_status = samba_manager.snapshot() if samba_manager is not None and view == "shares" else {}
     if samba_manager is not None and view == "shares":

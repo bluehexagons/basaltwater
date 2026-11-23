@@ -167,16 +167,10 @@ agent and publishing tools. Setup publishes these non-secret selections in the
 panel manifest so the isolated service does not need access to the operator's
 home directory. Rerun setup to publish missing selections on older installations.
 
-The panel’s [Shares & Data page](../services/shares-data.md) also requests
-`data.run` operations for verification, quarantine, deletion, single-file
-repair, restoration and explicit acceptance. Verification can run after panel
-confirmation. Every action that changes source files or parity also needs a
-decision on the approval page for that specific request. Review the exact file, configured
-scrub root, parity directory and any independent copy. These run in a separate
-worker with a six-hour deadline and a storage lock. `dispatched` reports launch;
-the page shows the worker’s result separately. A changed finding or file requires
-verification and a fresh review. This operation does not grant general file
-editing or automatic remediation.
+The panel’s [Shares & Data recovery controls](../services/shares-data-findings.md)
+submit reviewed scrub actions to the [local recovery service](privilege-broker-panel-and-storage.md#shares--data-recovery-operations).
+The broker retains its decision rules for existing `data.run` requests.
+Share, Samba account and routine changes continue to use broker approval.
 
 ## Rotate or remove it
 
