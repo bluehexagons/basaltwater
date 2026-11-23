@@ -49,8 +49,8 @@ switch; inspect the running version too. Preserve compatibility blocks rather
 than forcing a downgrade or changing migration records. Basaltwater setup
 continues to target stable. See the
 [track-switch guide](https://github.com/pingdotgg/t3code/blob/v0.1.5/docs/user/updating.md#switch-between-stable-and-nightly).
-For one provider on one VM, use that provider's
-individual control in **Settings → Providers** or
+For one provider on one VM, use its **Settings → Providers** update control.
+For a Basaltwater-managed terminal agent, use
 `basaltw agent update HOST USER --tool TOOL`. After a T3 provider update, run
 Basaltwater's doctor and record readiness; its updater records and rollback
 backups are created only by its own update flow. See the upstream
@@ -74,6 +74,22 @@ projectless threads when its data directory is inside a Git checkout. See the
 
 Follow the active T3 session's PR-linking and watch instructions, including for
 PRs created through `gh` and each layer of a stack.
+
+### Provider sign-in
+
+- **Claude Code.** Run `claude auth login` as the target user. T3 uses Claude
+  Code's login and configuration on that environment. If the selected
+  instance sets `CLAUDE_CONFIG_DIR`, use the same directory for the native
+  sign-in and status check. [Basaltwater's attended procedure](agent-authentication.md#claude-code-attended-testing) · [T3 Claude provider](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/providers-claude.md)
+- **Antigravity.** In **Settings → Providers** on web or desktop, select the
+  project environment, enable Antigravity, and install its managed runtime.
+  Choose the Google account sign-in and follow the browser prompt using the
+  account that owns the plan. If T3 asks for a code, paste it into the sign-in
+  field of the client that started the flow. Wait for T3 to confirm access and
+  display the available Gemini models. Use this for direct interactive prompts
+  by the account holder. T3 owns a separate sign-in from the terminal CLI, and
+  provider-backed Basaltwater qualification is pending.
+  [T3 Antigravity provider](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/providers-antigravity.md) · [Google's interactive ACP guidance](https://discuss.ai.google.dev/t/tos-clarification-is-human-supervised-codex-to-antigravity-acp-delegation-permitted/200697/2) · [Standalone integration plan](../plans/antigravity-integration.md)
 
 ### Native mobile device workflows
 

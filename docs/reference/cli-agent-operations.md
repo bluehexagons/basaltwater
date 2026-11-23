@@ -179,12 +179,13 @@ Only `--tool gh` accepts `--active`; it can retrieve a keyring-backed
 token through the controller's `gh auth token`. Codex, Claude Code, and
 OpenCode active credential copying has been removed. GitHub
 input is filtered to `github.com` and is installed with an atomic mode-`0600`
-replacement. Status reports only tool
-installation, credential presence/metadata, safe Codex refresh and cached-token
-dates, and the GitHub authentication check; it never prints credential
-contents, token strings, or Codex account IDs. Normal setup preserves existing
-credentials except for a safe refresh of known-outdated Codex auth; use
-`auth login` for Codex reauthorization and `auth set` for explicit file imports.
+replacement. Status reports installation, credential file metadata, safe Codex
+refresh and cached-token dates, the GitHub authentication check, and the names
+of selected Claude environment overrides. Credential contents and override
+values stay private. Normal setup preserves existing credentials except for a
+safe refresh of known-outdated Codex auth. Use `auth login` for Codex
+reauthorization, [native Claude sign-in](../agents/agent-authentication.md#claude-code-attended-testing)
+for Claude subscriptions, and `auth set` for authorized explicit file imports.
 `auth login` defaults to a target-owned ChatGPT subscription session. The
 controller prints a device URL/code; `--open-browser` optionally opens the URL.
 It needs no local Codex installation. Explicit `--method api-key` accepts a

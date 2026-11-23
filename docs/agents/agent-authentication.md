@@ -94,25 +94,32 @@ basaltw setup agent_vm HOST USER --claude
 basaltw agent auth status HOST USER --tool claude --json
 ```
 
-As the intended account holder, open a terminal on the target and run `claude`
-to authenticate. Use `/status` to confirm the account and billing route before
-an attended turn in a synthetic repository. Exercise reading, one small edit,
-approval, cancellation, and a new session after setup refreshes skills/settings.
-Use `/logout` afterward when retiring the disposable environment.
+As the account holder, open a terminal on the target as the intended user and
+run `claude auth login`. If the command directs you to `/login`, run it inside
+`claude`. Over SSH, open the link from the terminal in a local browser and
+paste the one-time code back into the Claude Code prompt. Keep codes in that
+prompt and OAuth sessions on their originating host. [Claude CLI reference](https://code.claude.com/docs/en/cli-reference) · [SSH sign-in help](https://support.claude.com/en/articles/14554922-claude-code-user-faq)
+
+Run `claude auth status --text` in the target terminal to check the native
+login. Use `/status` inside `claude` to confirm the account and billing route
+before an attended turn in a synthetic repository. For a subscription-only
+test, clear API credentials and cloud or endpoint overrides from the actual
+process environment and settings, and disable plan usage credits for the
+test account. Exercise a read, one small edit, approval, cancellation, and a
+new session after setup refreshes skills and settings. Run
+`claude auth logout` when retiring the disposable environment.
+[Claude authentication](https://code.claude.com/docs/en/authentication) · [Plan usage credits](https://support.claude.com/en/articles/12429409-manage-usage-credits-for-paid-claude-plans)
 
 Auth status inventories the standard credential file and reports the names of
 nonempty Claude credential, endpoint, config-directory, and cloud-platform
 environment overrides visible to its remote SSH process. Values are never
 reported, including OAuth access/refresh tokens and custom authentication
-headers, and Claude is never launched by this diagnostic. See the supported
-[Claude environment variables](https://code.claude.com/docs/en/env-vars).
-A missing standard
-credential file can be valid for another auth route. This does not inspect a
-running T3 service's environment or resolve project settings and key helpers.
-Verify those in the actual provider session. For subscription testing, clear
-API credentials and cloud/endpoint overrides in that session and confirm
-`/status`; never infer billing from file presence. See Anthropic's
-[authentication guidance](https://code.claude.com/docs/en/authentication).
+headers, and Claude is never launched by the diagnostic. A valid login can
+use a different path or credential store. For T3, check the environment and
+configuration directory of the selected Claude instance. Its service
+environment, project settings, and key helpers can differ from the diagnostic
+SSH process. Keep native status output with account details private.
+[Claude environment variables](https://code.claude.com/docs/en/env-vars) · [T3 Claude provider](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/providers-claude.md)
 
 Basaltwater's `agent auth login` command remains Codex-specific. Saved and
 scheduled tasks remain Codex-only; the Claude test is attended terminal use.
@@ -128,12 +135,10 @@ the flag. Normal patches retain the choice; use
 
 When opted in, every setup summary (including dry runs and saved reruns) warns
 that support is **highly experimental and untested with live Claude**, with
-basic offline code tests only. The flag grants no Anthropic authorization.
-Restricted uses require appropriate Anthropic pre-approval or authorized API
-usage as applicable; API usage incurs separate charges at API rates. It does
-not select credentials, change billing, or start a provider request. Live
-unattended/API testing is not planned. Only straightforward native models and
-modes are in scope; unsupported Claude cases will not receive bespoke systems.
+basic offline code tests only. Any future executor needs a route Anthropic
+permits for that use. Claude Console API usage is metered separately and can
+draw from eligible monthly API credits. Live unattended or API-billed testing
+requires a separate decision and budget.
 See the [integration plan](../plans/claude-code-integration.md#experimental-task-gate).
 
 ## Supported files
@@ -167,13 +172,14 @@ Authentication defaults are independent for each provider:
 | --- | --- | --- |
 | Codex | Target-owned subscription login | `--agent-auth none`, explicit `--agent-auth-file codex PATH`, or `agent auth login --method api-key` |
 | GitHub CLI | Active GitHub credentials on `agent_code_vm`; unselected on `agent_vm` and `agent_workstation` | `--git-auth active\|none`, `--git-auth-file PATH`, `--git-auth-token TOKEN`, `--git-auth-credential NAME`, or interactive token input |
-| Claude Code / OpenCode | No automatic credential import | `--agent-auth-file claude PATH` / `--agent-auth-file opencode PATH`, or authenticate on the target |
+| Claude Code | Native sign-in by the account holder on the target | Explicit `--agent-auth-file claude PATH` for files authorized for transfer |
+| OpenCode | No automatic credential import | `--agent-auth-file opencode PATH`, or authenticate on the target |
 
 Codex login and another provider's file import can be combined:
 
 ```bash
-basaltw setup agent_vm HOST USER --codex --claude \
-  --agent-auth login --agent-auth-file claude /run/secrets/claude.json \
+basaltw setup agent_vm HOST USER --codex --opencode \
+  --agent-auth login --agent-auth-file opencode /run/secrets/opencode.json \
   --git-access read --git-auth active
 ```
 
@@ -279,7 +285,7 @@ replacing a credential.
 | --- | --- |
 | `gh` | A `hosts.yml` with an embedded token is portable. A keyring-only file is not; use authenticated `gh` on the source controller or a protected token file. |
 | Codex | `auth.json` is file-backed, but ChatGPT OAuth state is renewable per machine. Do not use copies concurrently. Prefer independent login or a dedicated automation credential. |
-| Claude Code | Linux commonly uses the credentials file; macOS may use Keychain. A Keychain session is not exported by copying this file. |
+| Claude Code | Sign in natively on each target for Claude.ai subscriptions. The file importer remains available for files authorized for transfer under the applicable terms. macOS may store sessions in Keychain. [Anthropic credential rules](https://code.claude.com/docs/en/legal-and-compliance#authentication-and-credential-use) |
 | OpenCode | The JSON file can be copied, but use separate provider identities when independent revocation and audit are required. |
 
 Sharing a static token means every VM has the token's full scope, provider
@@ -293,10 +299,10 @@ and extensions for selected tools. It excludes auth files and `gh` `hosts.yml`.
 A setting that selects a keyring backend does not make a portable credential
 file appear. Missing configuration is skipped.
 
-T3 Code is an interface rather than a credential source. Its server uses the
-provider credentials installed for the target user, while pairing state is
-managed on the VM. Browser cookies and website sessions are also outside this
-copying flow.
+T3 Code uses the target-side Claude Code login for its Claude provider. T3's
+managed Antigravity provider has its own sign-in. Pairing state stays with the
+T3 server. Browser cookies, website sessions, and T3-managed provider logins
+are outside this copying flow. [T3 provider setup](t3-providers.md#provider-sign-in)
 
 ## Codex maintenance
 
