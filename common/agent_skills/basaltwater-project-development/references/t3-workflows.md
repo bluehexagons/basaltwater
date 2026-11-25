@@ -130,7 +130,7 @@ and [settings and cleanup](https://github.com/pingdotgg/t3code/blob/v0.1.8/docs/
 ## Choose a topic
 
 - [T3 issue-to-PR workflow](t3-issue-to-pr.md) Track an issue, run project checks, and follow the resulting PR from the thread.
-- [Schedules and workflows](../../basaltwater-subagents/references/t3-scheduling.md) Choose a native task or workflow and recover interrupted runs.
+- [Schedules and workflows](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-subagents/references/t3-scheduling.md) Choose a native task or workflow and recover interrupted runs.
 
 <a id="shared-016-client-workflows"></a>
 <a id="shared-017-client-workflows"></a>

@@ -43,7 +43,7 @@ host account, services, ports, and caches. Keep each editing task isolated
 and inspect the branch and diff before integration.
 For projects with several repositories, verify the selected checkouts and base
 commits and inspect shared paths before assigning isolated edits.
-[Multi-repository worktrees](../../basaltwater-project-development/references/t3-workflows.md#multi-repository-projects)
+[Multi-repository worktrees](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/t3-workflows.md#multi-repository-projects)
 
 For an explicitly requested new thread, 0.1.11 supports `clientRequestId`
 on `t3_thread_launch`. If the initial call included a key and the reply was
