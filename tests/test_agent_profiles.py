@@ -5,8 +5,12 @@ from __future__ import annotations
 import argparse
 import shlex
 import unittest
-from unittest.mock import patch
 from argparse import Namespace
+from contextlib import redirect_stdout
+from io import StringIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from lib.arg_parser import add_setup_arguments, create_setup_argument_parser
 from lib.config import SetupConfig
@@ -204,14 +208,20 @@ class TestAgentProfiles(unittest.TestCase):
             "--agent-auth", "none", "--provision-on", "pve1", "--memory", "2G",
             "--cores", "2", "--storage", "root", "16G", "--dry-run",
         ])
-        with (
-            patch("basaltwater.load_setup_command", return_value=None),
-            patch("lib.setup_common.find_proxmox_host", return_value=None),
-            patch("lib.proxmox_vm.provision_vm") as provision,
-            patch("basaltwater.run_remote_setup", return_value=0),
-            patch("builtins.print"),
-        ):
-            self.assertEqual(basaltwater.run_setup_command(args), 0)
+        with TemporaryDirectory() as directory:
+            key = Path(directory) / "id_ed25519"
+            key.write_text("test private key\n", encoding="utf-8")
+            key.with_suffix(".pub").write_text("test public key\n", encoding="utf-8")
+            with (
+                patch("basaltwater.load_setup_command", return_value=None),
+                patch("lib.setup_common.find_proxmox_host", return_value=None),
+                patch("lib.setup_common.resolve_guest_ssh_key", return_value=str(key)),
+                patch("lib.proxmox_vm.provision_vm") as provision,
+                patch("basaltwater.run_remote_setup", return_value=0),
+                redirect_stdout(StringIO()) as output,
+            ):
+                result = basaltwater.run_setup_command(args)
+            self.assertEqual(result, 0, output.getvalue())
         provision.assert_called_once()
         config = provision.call_args.args[0]
         self.assertEqual(config.host, "192.168.40.10")
