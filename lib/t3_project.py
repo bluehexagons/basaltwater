@@ -84,6 +84,11 @@ def check_t3_worktree(
             raise ValueError(f"t3.json at {ref!r} must be UTF-8 JSON") from exc
         if not isinstance(config, dict):
             raise ValueError(f"t3.json at {ref!r} must be a JSON object")
+        if "worktreeLayout" in config:
+            raise ValueError(
+                f"t3.json at {ref!r} declares worktreeLayout. "
+                "Verify the custom layout and its setup inputs in a disposable T3 worktree."
+            )
         if "worktreeSparsePatternsPath" in config:
             value = config["worktreeSparsePatternsPath"]
             if not isinstance(value, str) or not value.strip() or len(value) > 512:

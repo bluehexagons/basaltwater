@@ -51,3 +51,22 @@ hook are separate operations.
 
 For request and binding details, see the [MCP contract](https://github.com/pingdotgg/t3code/blob/v0.1.10/packages/contracts/src/orchestratorMcp.ts)
 and [workspace preservation](https://github.com/pingdotgg/t3code/blob/v0.1.10/apps/server/src/mcp/OrchestratorMcpService.ts).
+
+## Durable workflows
+
+T3 0.1.12 adds opt-in Workflows under **Settings → Labs** on the environment
+that owns the run. Use a scheduled task for a single prompt on a timer or
+webhook. Use a workflow for authorized multi-step T3 work with saved results,
+triggers, and explicit human decision points. Use the active instructions
+for tool access and authorization. The run and its journal stay on the
+starting server, including when an agent step targets a linked environment.
+
+Keep workflow definitions and credentials private. Review the selected
+provider, permissions, workspace and trigger before enabling a workflow.
+Keep versions used by unfinished runs, reuse the idempotency key when retrying
+the same start, and inspect the run and its open question before repeating a
+signal. Completed step results survive restarts. Make external writes
+retry-safe and verify uncertain effects before resuming an interrupted step.
+Basaltwater's independent jobs continue to provide lifetime budgets and
+receipts for host-owned work.
+[T3 Workflows](https://github.com/pingdotgg/t3code/blob/v0.1.12/docs/user/workflows.md)

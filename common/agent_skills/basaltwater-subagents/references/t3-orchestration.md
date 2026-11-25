@@ -2,7 +2,7 @@
 
 Follow the active T3 instructions and live schemas. For native delegation,
 thread controls, queue operations, and tool results, use the
-[T3 orchestration contract](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/orchestration-v2/orchestrator-mcp-server.md).
+[tagged T3 tool definitions](https://github.com/pingdotgg/t3code/tree/v0.1.12/apps/server/src/mcp/toolkits).
 Basaltwater's installed guidance does not grant access to those tools.
 
 ## Discovery and delegation fallback
@@ -16,7 +16,7 @@ session supplies an ACP bridge, use its instructions for reaching T3 tools.
 
 ## Linked environments
 
-Use the [T3 linked-environment guide](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/remote-access.md#link-another-environment)
+Use the [T3 linked-environment guide](https://github.com/pingdotgg/t3code/blob/v0.1.12/docs/user/remote-access.md#link-another-environment)
 for enrollment and revocation. The peer's grant limits operations in addition
 to the caller's runtime mode. Inspect provider readiness on the peer and
 resolve ambiguous project matches explicitly.
@@ -26,12 +26,24 @@ that requires isolation, use a local bound worktree or an explicitly requested
 remote thread with a T3-bound worktree. Disabling linking can leave work running
 on the peer. Check the peer before retrying after a disconnect or revocation.
 
+In 0.1.12, the **Environments** map shows known routes and peer links.
+Links are directional, and establishing a link through the map creates a
+separate grant on the destination. A linked thread can stream read-only via
+the connected environment. **Connect to interact** requires the client to
+reach the destination directly. One-step pairing also requires a full-access
+link and permission to manage access on the connected environment. Verify
+which environment owns a thread, route, or grant before acting on it.
+[Linked thread access](https://github.com/pingdotgg/t3code/blob/v0.1.12/docs/user/remote-access.md#read-a-linked-machines-threads)
+
 ## Workspace ownership and retention
 
 T3 binds its worktrees at launch. A shell directory change does not rebind a
 thread. Preparation starts from a commit, while worktrees still share the
 host account, services, ports, and caches. Keep each editing task isolated
 and inspect the branch and diff before integration.
+For projects with several repositories, verify the selected checkouts and base
+commits and inspect shared paths before assigning isolated edits.
+[Multi-repository worktrees](../../basaltwater-project-development/references/t3-workflows.md#multi-repository-projects)
 
 For an explicitly requested new thread, 0.1.11 supports `clientRequestId`
 on `t3_thread_launch`. If the initial call included a key and the reply was

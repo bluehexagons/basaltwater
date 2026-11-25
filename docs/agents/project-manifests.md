@@ -57,7 +57,13 @@ The command reads committed Git objects and reports the commit, `full` or
 field independently of the rest of the T3 project schema. For sparse
 inclusion checks, use a Git version with `sparse-checkout check-rules`.
 The command writes no Git or worktree configuration and runs no project
-scripts. After preflight, verify setup and checks in a fresh T3 worktree.
+scripts. Run it for each selected Git repository and its actual base revision
+when using T3 0.1.12 multi-repository projects. A plain project folder can have
+its own live `t3.json` and custom `worktreeLayout` commands. The preflight reads
+only the selected repository's committed file and refuses a declared custom
+layout. Verify the project's selected repositories, any shared paths, and the
+setup result in a disposable T3 worktree.
+[Upstream multi-repository projects](https://github.com/pingdotgg/t3code/blob/v0.1.12/docs/user/multi-repo-projects.md)
 
 ## Initialize a manifest
 

@@ -89,7 +89,20 @@ PRs created through `gh` and each layer of a stack.
   display the available Gemini models. Use this for direct interactive prompts
   by the account holder. T3 owns a separate sign-in from the terminal CLI, and
   provider-backed Basaltwater qualification is pending.
-  [T3 Antigravity provider](https://github.com/pingdotgg/t3code/blob/v0.1.11/docs/user/providers-antigravity.md) · [Google's interactive ACP guidance](https://discuss.ai.google.dev/t/tos-clarification-is-human-supervised-codex-to-antigravity-acp-delegation-permitted/200697/2) · [Standalone integration plan](../plans/antigravity-integration.md)
+  T3 0.1.12 discovers skills declared in Antigravity's `skills.json` manifests.
+  To expose the account's managed `~/.agents/skills` bundle to Antigravity,
+  include that folder in the selected instance's manifest and check which
+  skills the session lists. [T3 Antigravity provider](https://github.com/pingdotgg/t3code/blob/v0.1.12/docs/user/providers-antigravity.md#skills-and-attachments)
+  · [Google's interactive ACP guidance](https://discuss.ai.google.dev/t/tos-clarification-is-human-supervised-codex-to-antigravity-acp-delegation-permitted/200697/2)
+  · [Standalone integration plan](../plans/antigravity-integration.md)
+- **MCP sign-in in Codex and Claude.** With T3 0.1.12, an affected thread
+  can offer **Sign in** for an MCP server configured on its provider
+  instance. Confirm the selected instance and account before approving.
+  On a remote host, the callback page might not load in the user's browser.
+  Paste its address privately into T3's **Finish sign-in** field. The flow
+  requires permission to manage providers and reconnects the MCP server on
+  that provider instance. [Codex MCP sign-in](https://github.com/pingdotgg/t3code/blob/v0.1.12/docs/user/providers-codex.md#sign-in-to-an-mcp-server)
+  · [Claude MCP sign-in](https://github.com/pingdotgg/t3code/blob/v0.1.12/docs/user/providers-claude.md#sign-in-to-an-mcp-server)
 
 ### Native mobile device workflows
 

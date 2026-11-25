@@ -2,7 +2,7 @@
 
 Use these integrations when the active T3 session exposes the relevant tools.
 Follow its injected instructions and live schemas. This reference follows
-[T3 Code 0.1.11](https://github.com/pingdotgg/t3code/releases/tag/v0.1.11).
+[T3 Code 0.1.12](https://github.com/pingdotgg/t3code/releases/tag/v0.1.12).
 
 ## Establish the execution environment
 
@@ -82,6 +82,28 @@ When reviewing a sparse checkout, run `basaltw manifest check-t3-worktree
 `--require-file` for the setup script and inputs it depends on. Try setup and
 the project's checks in a disposable T3 worktree before relying on the rules.
 
+### Multi-repository projects
+
+In 0.1.12 a project can discover repositories under its folder and track
+additional paths on that environment. Check **Settings → Projects →
+Repositories** and the thread's actual checkout before editing. In a worktree
+thread, verify the selected repositories and their base commits independently:
+T3 uses the thread's base branch where it exists and each repository's default
+branch otherwise. Files outside the repositories in a plain project folder are
+shared links to the originals. Review Git changes and publish per repository.
+
+T3 reads the project folder's `t3.json` for project actions and custom
+`worktreeLayout`. The sparse preflight checks one repository's committed rules
+at a time. For a custom layout, review the scripts and verify the actual
+checkouts and setup result. T3 records owner approval of each exact layout
+command per project and environment. Review script changes too, since approval
+of the command text persists when a referenced script changes. Agent-initiated
+layout execution also needs Full access within the applicable host policy.
+[Multi-repository projects](https://github.com/pingdotgg/t3code/blob/v0.1.12/docs/user/multi-repo-projects.md)
+· [Managed policy](https://github.com/pingdotgg/t3code/blob/v0.1.12/docs/user/managed-policy.md#other-capabilities)
+
+### Action lifecycle
+
 `runOnSettle` can execute on every settlement of a thread with its own
 worktree. Use it only for an intended, repeatable project operation; do not
 attach broad cleanup, publication, or deployment as an incidental setup step.
@@ -108,6 +130,7 @@ and [settings and cleanup](https://github.com/pingdotgg/t3code/blob/v0.1.8/docs/
 ## Choose a topic
 
 - [T3 issue-to-PR workflow](t3-issue-to-pr.md) Track an issue, run project checks, and follow the resulting PR from the thread.
+- [Schedules and workflows](../../basaltwater-subagents/references/t3-scheduling.md) Choose a native task or workflow and recover interrupted runs.
 
 <a id="shared-016-client-workflows"></a>
 <a id="shared-017-client-workflows"></a>

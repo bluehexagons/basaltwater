@@ -259,6 +259,15 @@ class T3WorktreeTests(unittest.TestCase):
         _, result = self.check_worktree()
         self.assertIn("Sparse patterns file '.t3/sparse' is missing", result["error"])
 
+    def test_custom_layout_refuses_to_report_a_builtin_checkout(self):
+        self.config = b'''{
+            "worktreeLayout": {"create": "./scripts/create-workspace.sh"},
+            "worktreeSparsePatternsPath": ".t3/sparse"
+        }'''
+        status, result = self.check_worktree("app/start script.sh")
+        self.assertEqual(status, 1)
+        self.assertIn("declares worktreeLayout", result["error"])
+
     def test_full_checkout_and_invalid_paths(self):
         self.config = b'{"$schema":"https://t3.codes/schema/t3.json",}'
         status, result = self.check_worktree("app/start script.sh")

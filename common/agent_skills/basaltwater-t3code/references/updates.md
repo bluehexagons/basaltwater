@@ -128,10 +128,12 @@ Basaltwater and rerun the saved setup command to apply the readiness fix.
 
 ## Release tracks and archive layout
 
-Stable 0.1.11 retains launcher protocol 4 and accepts protocol 3 launchers for
-remote updates. Database migrations advance to 102. See the
-[0.1.11 operator record](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/t3-releases/0.1.11.md)
-for compatibility and verification.
+Stable 0.1.12 retains launcher protocol 4 and accepts protocol 3 launchers for
+remote updates. Database migrations advance from 102 to 117. Before an arranged
+restart, review active turns, terminals and any enabled workflow runs. Preserve
+the matching private recovery copy and allow database preflight to block an
+older build. See the
+[0.1.12 operator record](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/t3-releases/0.1.12.md).
 
 Stable 0.1.10 advances the launcher to protocol 4, retaining protocol 3 launcher
 compatibility and the durable state/layout contracts. Basaltwater recognizes

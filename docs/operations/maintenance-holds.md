@@ -33,6 +33,10 @@ subcommand and no saved rollout, Claude `--print`, and OpenCode `run` commands
 also count as work.
 Standalone interactive Claude and OpenCode sessions need an explicit hold when
 their work must cross the restart window.
+For T3 Workflows, this activity check covers executing provider turns. Use a
+bounded hold when workflow code steps need uninterrupted execution. Completed
+step results and human waits are persisted by T3.
+[T3 Workflows](https://github.com/pingdotgg/t3code/blob/v0.1.12/docs/user/workflows.md)
 
 Lingering login managers, background sessions, idle logins, idle provider
 servers, open terminals, tmux/screen, build/Git processes, and processes merely
