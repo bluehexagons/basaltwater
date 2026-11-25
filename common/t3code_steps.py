@@ -675,6 +675,13 @@ def _ensure_user_manager(username: str, uid: int) -> None:
     if manager.returncode != 0:
         detail = (manager.stderr or manager.stdout or "").strip()
         raise RuntimeError(f"Could not start the T3 Code user manager: {detail}")
+    if not os.path.exists(f"/run/user/{uid}/bus"):
+        # The user manager may predate installation of the session bus units.
+        for arguments in (("daemon-reload",), ("start", "dbus.socket")):
+            result = _user_systemctl(username, uid, *arguments)
+            if result.returncode != 0:
+                detail = (result.stderr or result.stdout or "").strip()
+                raise RuntimeError(f"Could not configure the T3 Code user D-Bus socket: {detail}")
     _validate_t3_systemd_directory(username, uid)
 
 
@@ -1026,6 +1033,7 @@ def _install_locked_t3_service(
 ) -> str:
     pending = _load_t3_reconciliation(reconciliation_path)
     for name, package in (
+        ("T3 Code user D-Bus session", "dbus-user-session"),
         ("T3 Code native build tools", "build-essential"),
         ("T3 Code Python build support", "python3"),
     ):
@@ -2160,47 +2168,27 @@ def install_t3code_web(config: SetupConfig) -> None:
 
     if config.device_pairing_providers:
         _configure_device_pairing(config, home, t3_cli_wrapper, host, port)
-        _remove_connect_restart_units(os.path.join(home, ".t3"))
-        https_endpoints = _configure_t3_https(
-            config,
-            port,
-            config.device_pairing_port,
-        )
-        if https_endpoints:
-            t3_https = https_endpoints.get("t3code")
-            pairing_https = https_endpoints.get("t3code-pairing")
-            if t3_https is None or pairing_https is None:
-                raise RuntimeError(
-                    "HTTPS gateway returned incomplete T3 Code endpoints"
-                )
-            _write_admin_pair_wrapper(
-                pair_wrapper,
-                home,
-                workspace,
-                t3_cli_wrapper,
-                server_url,
-                t3_https[0],
-            )
-            os.chown(pair_wrapper, account.pw_uid, account.pw_gid)
-            _set_pairing_t3_https_port(t3_https[1])
-    else:
-        _remove_connect_restart_units(os.path.join(home, ".t3"))
+    _remove_connect_restart_units(os.path.join(home, ".t3"))
+    if not config.device_pairing_providers:
         _remove_device_pairing()
-        _remove_t3_https(config, pairing_only=True)
-        https_endpoints = _configure_t3_https(config, port, None)
-        if https_endpoints:
-            t3_https = https_endpoints.get("t3code")
-            if t3_https is None:
-                raise RuntimeError("HTTPS gateway returned no T3 Code endpoint")
-            _write_admin_pair_wrapper(
-                pair_wrapper,
-                home,
-                workspace,
-                t3_cli_wrapper,
-                server_url,
-                t3_https[0],
-            )
-            os.chown(pair_wrapper, account.pw_uid, account.pw_gid)
+        _remove_t3_https(config, pairing_only=config.publish_t3_https)
+
+    https_endpoints = {}
+    if config.publish_t3_https:
+        pairing_port = config.device_pairing_port if config.device_pairing_providers else None
+        https_endpoints = _configure_t3_https(config, port, pairing_port)
+    if https_endpoints:
+        t3_https = https_endpoints.get("t3code")
+        if t3_https is None or (
+            config.device_pairing_providers and "t3code-pairing" not in https_endpoints
+        ):
+            raise RuntimeError("HTTPS gateway returned incomplete T3 Code endpoints")
+        _write_admin_pair_wrapper(
+            pair_wrapper, home, workspace, t3_cli_wrapper, server_url, t3_https[0],
+        )
+        os.chown(pair_wrapper, account.pw_uid, account.pw_gid)
+        if config.device_pairing_providers:
+            _set_pairing_t3_https_port(t3_https[1])
     print(f"  T3 Code web service listening on {host}:{port}")
     for name, label in (
         ("t3code", "T3 Code HTTPS endpoint"),
@@ -2209,10 +2197,11 @@ def install_t3code_web(config: SetupConfig) -> None:
         endpoint = https_endpoints.get(name)
         if endpoint is not None:
             print(f"  {label}: {endpoint[0]}")
-    print(
-        "  T3 Code HTTP compatibility: "
-        f"port {port} ({host}); use the printed HTTPS endpoint"
-    )
+    if https_endpoints:
+        print(
+            "  T3 Code HTTP compatibility: "
+            f"port {port} ({host}); use the printed HTTPS endpoint"
+        )
     print("  Readiness check: basaltw agent doctor --capability t3code")
     if config.device_pairing_providers:
         print(

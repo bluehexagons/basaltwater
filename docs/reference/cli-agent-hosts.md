@@ -13,7 +13,9 @@ the common T3 Code web service, Geany, RDP, private source ranges, protected T3
 pairing, read-write Git, active GitHub auth, and target-owned login when Codex is selected. Playwright remains an explicit
 fallback through `--browser-automation playwright` for SSH-only or standalone
 Codex and OpenCode sessions.
-All three default to GitHub CLI. Select at least one coding provider explicitly
+The [`agent_vm_lite` profile](../agents/agentic-vms.md#a-low-memory-coding-vm)
+targets 2 GiB with an SSH-first baseline and opt-in T3 Code. The other Debian
+agent profiles default to GitHub CLI. Select at least one coding provider explicitly
 with `--codex`, `--claude`, or `--opencode`.
 `--agent-tool` values add to those
 defaults and accept comma-separated lists; use `--no-agent-tool` to remove a
@@ -135,7 +137,7 @@ sudo basaltw setup workstation_dev localhost "$USER" \
 | `--no-web-interface` | Disable profile-provided web interfaces |
 | `--no-web-interface-source` | Clear profile-provided web-interface source ranges |
 | `--web-port PORT` | Manage an additional TCP web port through guest UFW; repeatable and source-restricted when generic sources are set |
-| `--no-default-web-ports` | Disable the agent-VM defaults of TCP 80, 443, 8080, and 8081 |
+| `--no-default-web-ports` | Disable the agent-VM defaults of TCP 80, 443, 8080, and 8081, already omitted by `agent_vm_lite` |
 | `--device-pairing PROVIDER` | Install the protected browser enrollment portal for a provider; repeatable, currently `t3code`; unavailable for `agent_cachyos`, which uses native T3 pairing |
 | `--device-pairing-port PORT` | Pairing portal port; default `3774` and must differ from the web-interface port |
 | `--device-pairing-auth-file PATH` | Controller-local Nginx htpasswd file for the portal; transient and not saved |
@@ -153,7 +155,7 @@ sudo basaltw setup workstation_dev localhost "$USER" \
 | `--git-auth-file PATH` | Seed a missing selected-host `hosts.yml` entry or one-line GitHub token from a controller-local file |
 | `--git-auth-token TOKEN` | Seed missing GitHub credentials with a classic or fine-grained access token; token is transient and omitted from saved commands |
 | `--git-auth-credential NAME` | Resolve a GitHub token from the named workspace credential; save only the name for controller reruns |
-| `--agent-auth login\|none` | Authorize Codex on the target (default for `agent_vm`, `agent_workstation`, and `agent_code_vm`), or disable Codex login; independent of GitHub auth and other providers' explicit files |
+| `--agent-auth login\|none` | Authorize Codex on the target (default for Debian agent profiles), or disable Codex login; independent of GitHub auth and other providers' explicit files |
 | `--agent-auth-file TOOL PATH` | Stage one selected agent credential from a controller-local file at its canonical target path; `gh` accepts a hosts file or one-line token; setup otherwise preserves existing credentials, except for safe stale-Codex refresh; repeatable |
 | `--agent-config active` | Copy known non-secret config from the active controller; does not copy auth files |
 | `--interactive` | Prompt for tools, HTTPS repositories, Git policy, and credential sources |
@@ -169,7 +171,7 @@ explicit `--web-port` values. The rules are global when no generic access
 source is set and source-restricted otherwise; applications must still bind a
 reachable interface and provide their own authentication and transport
 security. Local control planes, hardware, containers, and
-`server_lite` do not receive the defaults. An explicit `--web-port` still
+`server_lite` and `agent_vm_lite` do not receive the defaults. An explicit `--web-port` still
 enables the standard SSH-rate-limited UFW policy for `server_lite`.
 
 GitHub credential input requires `--git-access read` or `--git-access

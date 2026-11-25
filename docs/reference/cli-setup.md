@@ -10,6 +10,7 @@
 |------|-------------|
 | `control_plane` | Debian infrastructure control plane with administrator tools |
 | `agent_vm` | Headless agent coding VM; GitHub CLI default, explicit coding provider required |
+| `agent_vm_lite` | Minimal headless coding VM for a 2 GiB target; explicit provider and optional T3 Code |
 | `agent_workstation` | Graphical agent coding workstation; adds Firefox ESR |
 | `agent_code_vm` | Full graphical agent VM with T3 Code and Geany; Playwright is opt-in |
 | `agent_cachyos` | Coding tools for an existing CachyOS KDE workstation; supports local setup and remote-controller setup over SSH |

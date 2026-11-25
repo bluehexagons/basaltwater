@@ -61,6 +61,7 @@ SystemType = Literal[
     "agent_code_vm",
     "control_plane",
     "agent_vm",
+    "agent_vm_lite",
     "server_dev",
     "server_web",
     "server_lite",

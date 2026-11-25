@@ -41,6 +41,14 @@ PLUGIN = PluginDefinition(
             step_builder="plugins.server:build_server_steps",
         ),
         SystemTypeDefinition(
+            name="agent_vm_lite",
+            description="Minimal headless agent coding VM with optional T3 Code",
+            order=39,
+            include_cli_tools=True,
+            default_agent_auth_source="login",
+            step_builder="plugins.server:build_server_steps",
+        ),
+        SystemTypeDefinition(
             name="server_dev",
             description="Development server",
             order=40,

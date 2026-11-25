@@ -88,7 +88,10 @@ def validate_broker_settings(config) -> None:
         return
     if config.nopasswd or config.harden_agent or config.harden_user:
         raise ValueError("--approval-panel cannot be combined with --nopasswd or hardened modes; explicitly disable the other posture")
-    if config.username == "root" or config.system_type not in {"agent_vm", "agent_code_vm", "agent_workstation", "custom_steps", "server_github_runner"}:
+    if config.username == "root" or config.system_type not in {
+        "agent_vm", "agent_vm_lite", "agent_code_vm", "agent_workstation",
+        "custom_steps", "server_github_runner",
+    }:
         raise ValueError("--approval-panel requires a non-root agent or runner VM operator")
     if config.machine_type not in {"auto", "vm"}:
         raise ValueError("--approval-panel is supported on VMs only")

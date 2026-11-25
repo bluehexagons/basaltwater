@@ -42,7 +42,7 @@ the disconnect watcher before the helper exits.
 
 ### Setup and recovery
 
-`agent_vm`, `agent_workstation`, and `agent_code_vm` default to
+`agent_vm_lite`, `agent_vm`, `agent_workstation`, and `agent_code_vm` default to
 `--agent-auth login` when Codex is selected. Other Codex-enabled profiles can
 select it explicitly. `--agent-auth active` has been removed; replace it with
 `--agent-auth login` in existing commands.
@@ -171,7 +171,7 @@ Authentication defaults are independent for each provider:
 | Provider | Default on agent VM profiles | Override |
 | --- | --- | --- |
 | Codex | Target-owned subscription login | `--agent-auth none`, explicit `--agent-auth-file codex PATH`, or `agent auth login --method api-key` |
-| GitHub CLI | Active GitHub credentials on `agent_code_vm`; unselected on `agent_vm` and `agent_workstation` | `--git-auth active\|none`, `--git-auth-file PATH`, `--git-auth-token TOKEN`, `--git-auth-credential NAME`, or interactive token input |
+| GitHub CLI | Active GitHub credentials on `agent_code_vm`; unselected on the other Debian agent profiles | `--git-auth active\|none`, `--git-auth-file PATH`, `--git-auth-token TOKEN`, `--git-auth-credential NAME`, or interactive token input |
 | Claude Code | Native sign-in by the account holder on the target | Explicit `--agent-auth-file claude PATH` for files authorized for transfer |
 | OpenCode | No automatic credential import | `--agent-auth-file opencode PATH`, or authenticate on the target |
 

@@ -12,7 +12,12 @@ The safe default is loopback:
 --web-interface-port 3773
 ```
 
-Basaltwater publishes a managed HTTPS endpoint through its shared gateway. Use
+The [`agent_vm_lite` profile](agentic-vms.md#a-low-memory-coding-vm) runs
+the selected T3 service without the managed HTTPS gateway by default. Use
+an SSH tunnel, T3 Connect, or an existing external HTTPS endpoint. Explicitly
+selecting the protected pairing portal also installs the gateway.
+
+Other managed T3 setups publish an HTTPS endpoint through the shared gateway. Use
 direct HTTP only over localhost or in a controlled test environment. Direct
 HTTP can expose T3 credentials and pairing links without encryption. For a
 non-loopback bind, declare private source networks:
@@ -22,9 +27,9 @@ non-loopback bind, declare private source networks:
 --web-interface-source 192.168.1.0/24
 ```
 
-Setup preserves the existing T3 HTTPS forward and its public port when device
-pairing is disabled. It removes only the pairing forward before reconciling the
-T3 endpoint, so rerunning setup does not tear down and recreate that endpoint.
+On profiles with managed T3 HTTPS enabled by default, setup preserves the
+existing T3 HTTPS forward and its public port when device pairing is disabled.
+On `agent_vm_lite`, disabling the portal also removes both managed T3 forwards.
 Each T3 and pairing HTTPS route uses the current T3 source selection. Changing
 that selection removes previously managed exceptions from both routes. Without
 any sources, those HTTPS routes accept loopback connections only. Use the URL

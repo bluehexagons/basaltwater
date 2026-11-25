@@ -1280,6 +1280,11 @@ class SetupConfig:
             or self.publishing_tools
         )
 
+    @property
+    def publish_t3_https(self) -> bool:
+        """Determine whether to add managed HTTPS routes when installing T3."""
+        return self.system_type != "agent_vm_lite" or bool(self.device_pairing_providers)
+
     def effective_web_ports(self) -> list[int]:
         """Return managed TCP web ports for this resolved target."""
 
@@ -1294,7 +1299,7 @@ class SetupConfig:
             homebox_domain, homebox_port = parse_homebox_spec(self.homebox[0])
             if homebox_domain:
                 ports.extend((80, homebox_port))
-        if "t3code" in (self.web_interfaces or []):
+        if "t3code" in (self.web_interfaces or []) and self.publish_t3_https:
             # The shared internal HTTPS host serves the VM CA and landing page
             # used by the managed T3 HTTPS forwards.
             ports.append(GODOT_WEB_HTTPS_PORT)
@@ -1313,7 +1318,7 @@ class SetupConfig:
         if (
             self.default_web_ports
             and self.machine_type == "vm"
-            and self.system_type != "server_lite"
+            and self.system_type not in {"server_lite", "agent_vm_lite"}
             and self.has_agent_features()
         ):
             ports.extend(DEFAULT_AGENT_WEB_PORTS)

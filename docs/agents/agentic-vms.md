@@ -15,6 +15,7 @@ identity's privileges.
 | Configuration | Profile | Suitable for | Privilege model |
 | --- | --- | --- | --- |
 | Headless coding VM | `agent_vm` | SSH, terminal agents, CI-like project work | Password-required sudo by default, or browser-approved operations |
+| Low-memory coding VM | `agent_vm_lite` | One interactive agent over SSH or headless T3 Code | Password-required sudo by default, or browser-approved operations |
 | Full coding VM | `agent_code_vm` | T3 Code, RDP, Geany, Git write access, and target-owned Codex authentication | Browser-approved operations recommended; it keeps the agent capable without reusable root access |
 | Unrestricted maintenance VM | `agent_code_vm` or `agent_vm` with `--nopasswd` | A VM where a trusted operator intentionally wants agents to administer the whole guest | Unrestricted passwordless sudo; use only for trusted work and disposable guests |
 | Hardened evaluation VM | `agent_vm` with `--harden-user` | Unfamiliar code, unattended work, and disposable evaluation | No escalation path; many agent, browser, network, and credential capabilities are disabled |
@@ -24,12 +25,55 @@ Firefox but not the T3 Code/RDP/pairing defaults of `agent_code_vm`. See
 [Agentic coding security](agent-security.md) for the exact security boundaries
 of each privilege posture.
 
-All three profiles require an explicit provider selection. When Codex is selected,
+These agent profiles require an explicit provider selection. When Codex is selected,
 they default to target-owned Codex subscription login. GitHub
 authentication is separate: `agent_code_vm` defaults to `--git-auth active`,
-while the other two require an explicit GitHub source. Claude and OpenCode
+while the other profiles require an explicit GitHub source. Claude and OpenCode
 credentials are never copied implicitly. See [provider authentication
 defaults](agent-authentication.md#credential-sources) for independent overrides.
+
+## A low-memory coding VM
+
+`agent_vm_lite` keeps the shared terminal tools, SSH hardening, firewall, and
+security updates. Select a coding provider explicitly. GitHub CLI, project
+runtimes, browser automation, and the T3 service are opt-in. The default opens
+only SSH for remote access and omits the independent Codex task worker. Choosing
+the main web panel with Codex also enables the worker.
+
+For one interactive Codex session with optional T3 Code, start with a fresh
+Debian VM with 2 vCPUs, 2 GiB RAM, 16 GiB of root storage and 2 GiB of swap.
+Run this on the controller, replacing the example IPv4 address and Proxmox
+registry name with an available guest address and your enrolled node.
+
+```bash
+basaltw setup agent_vm_lite 192.168.1.61/24 agent \
+  --provision-on pve1 --name agent-lite-1 \
+  --memory 2G --cores 2 --storage root 16G \
+  --swap-file burst /swapfile 2G \
+  --codex --web-interface t3code
+```
+
+Omit `--web-interface t3code` for SSH-only operation. With it, setup installs
+the upstream T3 Code server, Node.js, and the systemd user D-Bus session.
+The T3 listener binds to guest loopback by default.
+In the [T3 desktop app](https://github.com/pingdotgg/t3code/blob/v0.1.12/docs/user/remote-access.md#desktop-managed-ssh),
+open **Settings → Environments → Add environment → SSH** and enter
+`agent@192.168.1.61` or an SSH alias with the matching key. Use the following
+commands to forward the loopback port and issue a one-time pairing URL manually.
+
+```bash
+ssh -N -L 3773:127.0.0.1:3773 agent@192.168.1.61
+# In a second terminal on the same computer
+basaltw agent web pair 192.168.1.61 agent
+```
+
+Paste the pairing URL into the app and keep the tunnel running while connected.
+For a separately hosted HTTPS client, use
+[T3 Connect](../services/device-pairing.md#t3-connect-management) or an
+externally managed HTTPS endpoint that reaches the server. The lite profile
+skips Basaltwater's T3 HTTPS gateway and protected pairing portal by default.
+T3's bundled HTTP assets remain on its API listener. Keep browser runs and
+large builds on another machine when using the 2 GiB allocation.
 
 ## A headless coding VM with browser-approved privileged actions
 

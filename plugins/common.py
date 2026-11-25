@@ -362,7 +362,11 @@ def extend_agent_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]]) -
         from common.browser_automation_steps import install_browser_automation
 
         steps.append(("Installing agent browser automation", install_browser_automation))
-    elif config.has_agent_features() and not config.disable_browser_automation:
+    elif (
+        config.has_agent_features()
+        and not config.disable_browser_automation
+        and config.system_type != "agent_vm_lite"
+    ):
         from common.browser_automation_steps import (
             reconcile_existing_browser_automation,
         )
@@ -386,7 +390,9 @@ def extend_agent_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]]) -
         steps.append(("Cloning agent repositories on target", clone_agent_repositories))
     # Prompt execution currently requires Codex. A monitoring-only panel must
     # not install an agent scheduler or prepare its private account storage.
-    if config.install_codex:
+    if config.install_codex and (
+        config.system_type != "agent_vm_lite" or config.web_panel_port is not None
+    ):
         from common.agent_task_steps import configure_agent_task_worker
 
         steps.append(("Configuring independent agent task worker", configure_agent_task_worker))

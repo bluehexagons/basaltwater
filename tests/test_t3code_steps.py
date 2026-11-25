@@ -11,12 +11,13 @@ import tempfile
 import unittest
 from contextlib import ExitStack
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 from common.t3code_steps import (
     _active_t3_binary,
     _configure_firewall,
     _configure_t3_https,
+    _ensure_user_manager,
     _install_t3_npm_shim,
     _install_t3_service,
     _rebuild_t3_native_runtime,
@@ -48,6 +49,21 @@ class T3CodeWebTest(unittest.TestCase):
         }
         values.update(overrides)
         return SetupConfig(**values)
+
+    def test_existing_user_manager_loads_new_session_bus_before_path_validation(self) -> None:
+        ok = subprocess.CompletedProcess([], 0, "", "")
+        with (
+            patch("common.t3code_steps.run", return_value=ok),
+            patch("common.t3code_steps.os.path.exists", return_value=False),
+            patch("common.t3code_steps._user_systemctl", return_value=ok) as systemctl,
+            patch("common.t3code_steps._validate_t3_systemd_directory") as validate,
+        ):
+            _ensure_user_manager("agent", 1000)
+        self.assertEqual(systemctl.call_args_list, [
+            call("agent", 1000, "daemon-reload"),
+            call("agent", 1000, "start", "dbus.socket"),
+        ])
+        validate.assert_called_once_with("agent", 1000)
 
     @staticmethod
     def _write_upstream_runtime(home: str, version: str = "0.0.34") -> str:

@@ -110,6 +110,7 @@ from lib.remote_utils import confirm_unsupported_environment
 from lib.setup_common import (
     REMOTE_SCRIPT_PATH,
     _apply_hosted_proxmox_defaults,
+    _normalize_provisioned_target,
     adopt_verified_network_host,
     get_last_remote_access_details,
     register_proxmox_setup_host,
@@ -2018,6 +2019,8 @@ def run_setup_command(args: argparse.Namespace) -> int:
         cached_config = load_setup_command(_provisioning_cache_target(args.host))
         resolve_cli_selection(args, cached_config)
         config = setup_config_with_saved_build_roles(args, cached_config)
+        if config.hosted_node and "/" in config.host:
+            _normalize_provisioned_target(config)
         if cached_config is not None:
             for name, value in merge_headscale_settings(cached_config, config).items():
                 setattr(config, name, value)

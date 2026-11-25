@@ -141,6 +141,82 @@ class TestAgentProfiles(unittest.TestCase):
         self.assertIn("Ensuring python command alias", step_names)
         self.assertNotIn("Installing desktop environment", step_names)
 
+    def test_lite_vm_keeps_the_interactive_baseline_across_setup_and_refresh(self) -> None:
+        import basaltwater
+
+        parser, _, _ = basaltwater.create_basaltwater_parser()
+        remote_parser = create_setup_argument_parser("remote", for_remote=True)
+        for t3_flags in ([], ["--web-interface", "t3code"]):
+            with self.subTest(t3_flags=t3_flags):
+                args = parser.parse_args([
+                    "setup", "agent_vm_lite", "192.0.2.10", "agent", "--machine", "vm",
+                    "--codex", *t3_flags,
+                ])
+                config = SetupConfig.from_args(args, args.system_type)
+                config.validate_agent_provider_selection()
+                saved = SetupConfig.from_dict(config.host, config.system_type, config.to_dict())
+                self.assertEqual(config.agent_auth_source, "login")
+                self.assertEqual(saved.agent_auth_source, "login")
+                remote_args = remote_parser.parse_args(shlex.split(" ".join(saved.to_remote_args())))
+                remote_args.host = config.host
+                remote = SetupConfig.from_args(remote_args, remote_args.system_type)
+                for selected in (config, saved, remote):
+                    self.assertEqual(selected.selected_agent_tools(), ["codex"])
+                    self.assertEqual(selected.effective_web_ports(), [])
+                    self.assertFalse(selected.publish_t3_https)
+                    self.assertIsNone(selected.device_pairing_providers)
+                    self.assertFalse(selected.include_desktop)
+                    self.assertFalse(selected.enable_rdp)
+                    self.assertEqual(bool(selected.install_node), bool(t3_flags))
+                    steps = {name for name, _ in get_steps_for_system_type(selected)}
+                    self.assertTrue({
+                        "Configuring firewall", "Configuring automatic security updates",
+                        "Installing CLI tools", "Installing Codex CLI",
+                    } <= steps)
+                    self.assertFalse({
+                        "Configuring independent agent task worker",
+                        "Reconciling existing agent browser automation",
+                        "Installing agent browser automation",
+                    } & steps)
+                    self.assertEqual("Installing T3 Code web interface" in steps, bool(t3_flags))
+                    if t3_flags:
+                        self.assertEqual(selected.web_interface_host, "127.0.0.1")
+
+    def test_lite_vm_allows_explicit_web_additions(self) -> None:
+        config = SetupConfig.from_args(
+            _setup_args(
+                web_interfaces=["t3code"], device_pairing_providers=["t3code"],
+                web_ports=[8082], browser_automation="playwright",
+            ),
+            "agent_vm_lite",
+        )
+        self.assertTrue(config.publish_t3_https)
+        self.assertEqual(config.effective_web_ports(), [8082, 8443])
+        steps = {name for name, _ in get_steps_for_system_type(config)}
+        self.assertIn("Installing agent browser automation", steps)
+
+    def test_lite_vm_provisioning_passes_a_positional_prefix_to_the_provider(self) -> None:
+        import basaltwater
+
+        parser, _, _ = basaltwater.create_basaltwater_parser()
+        args = parser.parse_args([
+            "setup", "agent_vm_lite", "192.168.40.10/22", "agent", "--codex",
+            "--agent-auth", "none", "--provision-on", "pve1", "--memory", "2G",
+            "--cores", "2", "--storage", "root", "16G", "--dry-run",
+        ])
+        with (
+            patch("basaltwater.load_setup_command", return_value=None),
+            patch("lib.setup_common.find_proxmox_host", return_value=None),
+            patch("lib.proxmox_vm.provision_vm") as provision,
+            patch("basaltwater.run_remote_setup", return_value=0),
+            patch("builtins.print"),
+        ):
+            self.assertEqual(basaltwater.run_setup_command(args), 0)
+        provision.assert_called_once()
+        config = provision.call_args.args[0]
+        self.assertEqual(config.host, "192.168.40.10")
+        self.assertEqual(config.static_ipv4, "192.168.40.10/22")
+
     def test_agent_workstation_adds_firefox_desktop(self) -> None:
         config = SetupConfig.from_args(_setup_args(), "agent_workstation")
 

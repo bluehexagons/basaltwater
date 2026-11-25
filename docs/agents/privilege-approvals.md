@@ -61,7 +61,7 @@ gateway's 8443–8999 range. Restrict the VM with `--lan-access` or
 `--access-source`, and enroll the VM CA on the device that will approve
 requests; see [Client CA trust](../services/client-ca-trust.md).
 
-The standalone panel is available on VM `agent_vm`, `agent_code_vm`, `agent_workstation`
+The standalone panel is available on VM `agent_vm_lite`, `agent_vm`, `agent_code_vm`, `agent_workstation`
 and `server_github_runner` setups. Runner hosts grant request access to the
 non-root setup/panel operator, never the dedicated build account. It cannot coexist with `--nopasswd`,
 `--harden-agent`, or `--harden-user`. On an existing VM, end old coding-user
