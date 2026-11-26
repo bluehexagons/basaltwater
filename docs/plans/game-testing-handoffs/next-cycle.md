@@ -6,6 +6,10 @@ helper refresh, permission change or new match. Reconcile any existing run and
 its owned resources before selecting a maintenance or testing window. Private
 current-run state belongs in the controller's checkpoint, not this repository.
 
+The [MB-R056 feedback intake](mb-r056-intake.md) records proposed portal-start
+diagnostics and capture-free external-process observation follow-ups. It is
+triage only and authorizes no implementation or live work.
+
 ## Delivered scope and remaining ownership
 
 | Item | Delivered here | Next owner / acceptance still needed |
