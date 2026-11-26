@@ -201,16 +201,17 @@ The game is published at `/sites/USERNAME/my-game/` and managed with the same
 `site list`, `site url`, `site doctor`, `site verify`, and `site remove` commands.
 The gateway adds cross-origin isolation headers to Godot sites, and
 `site doctor` checks those headers and the WebAssembly content type.
-`site verify` checks the published snapshot and its served bytes. When comparing
-an export directory with `site verify --project . --output exports/web`, use
-`--no-precompress` at publication time if that directory lacks the generated
-gzip files.
+`site verify` checks the published snapshot and its served bytes, including
+generated gzip files. When comparing the original export with
+`site verify --project . --output exports/web`, it compares the project's files
+without requiring the publisher's generated gzip copies.
 
 Gateway setup and refresh move existing Godot snapshots from `/games/` to
 `/sites/` without re-exporting. If the site name is taken, the game gets
 `-godot`, then a numbered suffix if needed. Refresh prints each migrated URL.
-Use `basaltwater-web site list` to find the new links. Old `/games/` URLs expire
-when the gateway reloads.
+Use `basaltwater-web site list` to find the new links. On an older gateway,
+an interrupted refresh leaves unmoved games reachable at their original URLs.
+It retires the old `/games/` route once migration succeeds.
 
 For a custom domain, deploy a repository with a
 [`godot-web` manifest component](deployments-manifests.md#godot-web-application).

@@ -59,6 +59,7 @@ GODOT_AGENT_SKILLS = (
 )
 
 _NGINX_MARKER = "# Managed by basaltwater Godot web hosting"
+_LEGACY_GAMES_LOCATION = "location /games/ {"
 _LOCAL_CA_COMMON_NAME = "basaltwater VM-local Web CA"
 _CHROMIUM_CA_NICKNAME = "basaltwater internal web CA"
 _CHROMIUM_NSS_DB_RELATIVE = (".local", "share", "pki", "nssdb")
@@ -472,8 +473,20 @@ def _base_url(identities: list[str]) -> str:
     return f"https://{_url_host(preferred)}:{GODOT_WEB_HTTPS_PORT}"
 
 
-def render_nginx_config(cert_path: str, key_path: str) -> str:
+def render_nginx_config(
+    cert_path: str, key_path: str, *, migrating_games: bool = False,
+) -> str:
     """Render the isolated HTTPS static host for web games and tools."""
+    legacy_route = '''    location /games/ {
+        autoindex on;
+        try_files $uri $uri/ =404;
+        add_header Cross-Origin-Opener-Policy "same-origin" always;
+        add_header Cross-Origin-Embedder-Policy "require-corp" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Cache-Control "no-cache" always;
+    }''' if migrating_games else '''    location ~ "^/games(?:/|$)" {
+        return 404;
+    }'''
 
     return f"""{_NGINX_MARKER}
 server {{
@@ -501,9 +514,7 @@ server {{
         try_files /index.html =404;
     }}
 
-    location ~ "^/games(?:/|$)" {{
-        return 404;
-    }}
+{legacy_route}
 
     location /sites/ {{
         autoindex on;
@@ -706,10 +717,19 @@ def _configure_site_host(
 ) -> bool:
     changed = _configure_user_roots(users)
     changed = _configure_landing_page(base_url, local_ca, users) or changed
+    if _LEGACY_GAMES_LOCATION in (_read_nginx_site() or ""):
+        # Enable Godot isolation at the destination before moving any files.
+        # Unmoved games remain reachable if a rolling upgrade is interrupted.
+        changed = _configure_nginx_site(
+            render_nginx_config(cert_path, key_path, migrating_games=True),
+            reload_required=True,
+        ) or changed
+        reload_required = False
+    changed = _migrate_legacy_sites(users) or changed
     changed = _configure_nginx_site(
         render_nginx_config(cert_path, key_path), reload_required=reload_required,
     ) or changed
-    return _migrate_legacy_sites(users) or changed
+    return changed
 
 
 def _install_managed_link(source: str, destination: str, label: str) -> bool:
@@ -873,48 +893,52 @@ def configure_godot_agent_skills(username: str, agent_tools: Sequence[str]) -> b
     )
 
 
+def _read_nginx_site() -> str | None:
+    if os.path.islink(GODOT_WEB_NGINX_SITE):
+        raise RuntimeError(f"Refusing symlinked Nginx site: {GODOT_WEB_NGINX_SITE}")
+    if not os.path.exists(GODOT_WEB_NGINX_SITE):
+        return None
+    if not os.path.isfile(GODOT_WEB_NGINX_SITE):
+        raise RuntimeError(f"Refusing unmanaged Nginx site: {GODOT_WEB_NGINX_SITE}")
+    with open(GODOT_WEB_NGINX_SITE, encoding="utf-8") as site_file:
+        content = site_file.read()
+    if _NGINX_MARKER not in content:
+        raise RuntimeError(f"Refusing unmanaged Nginx site: {GODOT_WEB_NGINX_SITE}")
+    return content
+
+
 def _configure_nginx_site(content: str, *, reload_required: bool = False) -> bool:
-    previous_content = None
-    if os.path.exists(GODOT_WEB_NGINX_SITE):
-        if os.path.islink(GODOT_WEB_NGINX_SITE):
-            raise RuntimeError(f"Refusing symlinked Nginx site: {GODOT_WEB_NGINX_SITE}")
-        with open(GODOT_WEB_NGINX_SITE, encoding="utf-8") as site_file:
-            previous_content = site_file.read()
-        if _NGINX_MARKER not in previous_content:
-            raise RuntimeError(f"Refusing unmanaged Nginx site: {GODOT_WEB_NGINX_SITE}")
-    changed = previous_content != content
-    if changed:
-        write_text_atomic(GODOT_WEB_NGINX_SITE, content, mode=0o644)
-
+    previous_content = _read_nginx_site()
+    config_changed = previous_content != content
+    link_exists = os.path.lexists(GODOT_WEB_NGINX_LINK)
+    if link_exists and (
+        not os.path.islink(GODOT_WEB_NGINX_LINK)
+        or os.path.realpath(GODOT_WEB_NGINX_LINK) != GODOT_WEB_NGINX_SITE
+    ):
+        raise RuntimeError(f"Refusing unmanaged Nginx link: {GODOT_WEB_NGINX_LINK}")
     link_created = False
-    if os.path.lexists(GODOT_WEB_NGINX_LINK):
-        if not (
-            os.path.islink(GODOT_WEB_NGINX_LINK)
-            and os.path.realpath(GODOT_WEB_NGINX_LINK) == GODOT_WEB_NGINX_SITE
-        ):
-            raise RuntimeError(f"Refusing unmanaged Nginx link: {GODOT_WEB_NGINX_LINK}")
-    else:
-        os.symlink(GODOT_WEB_NGINX_SITE, GODOT_WEB_NGINX_LINK)
-        changed = True
-        link_created = True
-
-    validation = run("nginx -t", check=False, capture_output=True)
-    if validation.returncode != 0:
-        if previous_content is None:
-            try:
-                os.unlink(GODOT_WEB_NGINX_SITE)
-            except FileNotFoundError:
-                pass
-        else:
-            write_text_atomic(GODOT_WEB_NGINX_SITE, previous_content, mode=0o644)
+    try:
+        if config_changed:
+            write_text_atomic(GODOT_WEB_NGINX_SITE, content, mode=0o644)
+        if not link_exists:
+            os.symlink(GODOT_WEB_NGINX_SITE, GODOT_WEB_NGINX_LINK)
+            link_created = True
+        changed = config_changed or link_created
+        validation = run("nginx -t", check=False, capture_output=True)
+        if validation.returncode != 0:
+            raise RuntimeError("Nginx rejected the internal HTTPS site configuration")
+        if changed or reload_required:
+            if run("systemctl reload nginx", check=False).returncode != 0:
+                raise RuntimeError("Nginx could not reload the internal HTTPS site configuration")
+    except (OSError, RuntimeError):
         if link_created:
-            try:
-                os.unlink(GODOT_WEB_NGINX_LINK)
-            except FileNotFoundError:
-                pass
-        raise RuntimeError("Nginx rejected the Godot HTTPS host configuration")
-    if changed or reload_required:
-        run("systemctl reload nginx", check=True)
+            os.unlink(GODOT_WEB_NGINX_LINK)
+        if config_changed:
+            if previous_content is not None:
+                write_text_atomic(GODOT_WEB_NGINX_SITE, previous_content, mode=0o644)
+            elif os.path.exists(GODOT_WEB_NGINX_SITE):
+                os.unlink(GODOT_WEB_NGINX_SITE)
+        raise
     return changed
 
 

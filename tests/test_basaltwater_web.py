@@ -1298,6 +1298,37 @@ class TestInfraWebPolicyReconciliation(unittest.TestCase):
 
 
 class TestInfraWebGames(unittest.TestCase):
+    def test_doctor_rejects_missing_godot_serving_requirements(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            site = os.path.join(directory, "agent", "demo")
+            os.makedirs(site)
+            metadata = os.path.join(site, basaltwater_web.static_web_publish.METADATA_FILE)
+            with open(metadata, "w", encoding="utf-8") as file_obj:
+                json.dump({"profile": "godot"}, file_obj)
+            base = "https://games.example:8443/sites/agent/demo/"
+            account = SimpleNamespace(pw_uid=os.getuid(), pw_name="agent")
+            isolated = {
+                "cross-origin-opener-policy": "same-origin",
+                "cross-origin-embedder-policy": "require-corp",
+            }
+            for html_headers, wasm_response, expected_error in (
+                ({}, (206, {"content-type": "application/wasm"}), "missing Cross-Origin-Opener-Policy"),
+                (isolated, (404, {}), "WASM endpoint returned 404"),
+            ):
+                with (
+                    self.subTest(expected_error=expected_error),
+                    patch.object(basaltwater_web.static_web_publish, "SITES_ROOT", directory),
+                    patch.object(basaltwater_web, "_site_account", return_value=account),
+                    patch.object(basaltwater_web.static_web_publish, "published_url", return_value=base),
+                    patch.object(basaltwater_web, "_https_headers",
+                                 side_effect=[(200, html_headers), wasm_response]) as request,
+                    redirect_stdout(StringIO()) as stdout,
+                ):
+                    status = basaltwater_web.main(["site", "doctor", "demo", "--json"])
+                    self.assertEqual(status, 1)
+                    self.assertIn(expected_error, " ".join(json.loads(stdout.getvalue())["errors"]))
+                    self.assertEqual(request.call_args.args, (base + "index.wasm",))
+
     def test_remove_deletes_only_confirmed_owned_game(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             games_root = os.path.join(temporary_dir, "games")

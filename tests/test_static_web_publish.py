@@ -72,11 +72,11 @@ class TestStaticWebPublish(unittest.TestCase):
                 patch.object(static_web_publish, "_base_url", return_value="https://vm.test:8443"),
                 patch.object(static_web_publish.godot_web_publish, "run") as export,
             ):
-                def invoke(*argv):
+                def invoke(*argv, expected_status=0):
                     stdout = io.StringIO()
                     with contextlib.redirect_stdout(stdout):
                         status = basaltwater_web.main([*argv, "--json"])
-                    self.assertEqual(status, 0, stdout.getvalue())
+                    self.assertEqual(status, expected_status, stdout.getvalue())
                     return json.loads(stdout.getvalue())
 
                 result = invoke(
@@ -87,10 +87,19 @@ class TestStaticWebPublish(unittest.TestCase):
                 self.assertEqual(result["metadata"]["profile"], "godot")
                 self.assertEqual(result["precompressed"], ["index.pck.gz", "index.wasm.gz"])
                 self.assertEqual(invoke("site", "list")["sites"][0]["profile"], "godot")
-                verified = invoke("site", "verify", "demo", "--local-only")
+                verify_args = ("site", "verify", "demo", "--local-only",
+                               "--project", str(output.parent), "--output", "web")
+                verified = invoke(*verify_args)
                 self.assertTrue(verified["ok"])
                 self.assertFalse(verified["build_performed"])
                 self.assertEqual(verified["artifacts"], 6)
+                (output / "index.wasm").write_bytes(b"\x00asmchanged")
+                mismatch = invoke(*verify_args, expected_status=1)
+                self.assertEqual([issue["component"] for issue in mismatch["issues"]], ["local_build"])
+                (output / "index.wasm").write_bytes(b"\x00asm")
+                (user_sites / "demo" / "index.wasm.gz").write_bytes(b"damaged gzip")
+                mismatch = invoke(*verify_args, expected_status=1)
+                self.assertEqual([issue["component"] for issue in mismatch["issues"]], ["publication"])
                 self.assertTrue(invoke("site", "remove", "demo", "--yes")["removed"])
                 self.assertFalse((user_sites / "demo").exists())
                 export.assert_not_called()
@@ -103,6 +112,9 @@ class TestStaticWebPublish(unittest.TestCase):
             legacy.mkdir(parents=True)
             (legacy / "index.html").write_text("existing game")
             (legacy / "index.wasm").write_bytes(b"\x00asm")
+            second_legacy = legacy.with_name("demo-godot")
+            second_legacy.mkdir()
+            (second_legacy / "index.html").write_text("second game")
             (legacy / static_web_publish.METADATA_FILE).write_text(json.dumps({
                 "game": "demo", "title": "Legacy game",
                 "published_at": "2026-01-01T00:00:00Z", "project": "/private/project",
@@ -110,7 +122,7 @@ class TestStaticWebPublish(unittest.TestCase):
             existing = root / "sites" / "agent" / "demo"
             existing.mkdir(parents=True)
             (existing / "index.html").write_text("existing site")
-            migrated = existing.with_name("demo-godot")
+            migrated = existing.with_name("demo-godot-2")
             account = SimpleNamespace(pw_name="agent", pw_uid=os.getuid())
             with (
                 patch.object(static_web_publish, "LEGACY_GAMES_ROOT", str(root / "games")),
@@ -118,11 +130,19 @@ class TestStaticWebPublish(unittest.TestCase):
                 patch.object(static_web_publish, "_current_account", return_value=account),
                 patch.object(static_web_publish, "_base_url", return_value="https://vm.test:8443"),
             ):
-                with patch.object(os, "rename", side_effect=OSError("interrupted move")):
+                rename = os.rename
+
+                def interrupt_second_game(source, destination):
+                    if Path(source) == second_legacy:
+                        raise OSError("interrupted move")
+                    rename(source, destination)
+
+                with patch.object(os, "rename", side_effect=interrupt_second_game):
                     with self.assertRaisesRegex(OSError, "interrupted move"):
                         static_web_publish.migrate_legacy_sites()
-                self.assertTrue((legacy / "index.html").is_file())
-                self.assertFalse(migrated.exists())
+                self.assertTrue(second_legacy.is_dir())
+                self.assertFalse(legacy.exists())
+                self.assertIn('href="demo-godot-2/"', (migrated.parent / "index.html").read_text())
                 self.assertEqual(static_web_publish.migrate_legacy_sites(), [
                     "https://vm.test:8443/sites/agent/demo-godot/",
                 ])
@@ -130,16 +150,17 @@ class TestStaticWebPublish(unittest.TestCase):
                 records = static_web_publish.list_sites(account)
             self.assertEqual((existing / "index.html").read_text(), "existing site")
             self.assertEqual((migrated / "index.html").read_text(), "existing game")
+            self.assertEqual((existing.with_name("demo-godot") / "index.html").read_text(), "second game")
             self.assertFalse(legacy.exists())
             self.assertEqual([(x["site"], x["profile"]) for x in records], [
-                ("demo", "static"), ("demo-godot", "godot"),
+                ("demo", "static"), ("demo-godot", "godot"), ("demo-godot-2", "godot"),
             ])
-            self.assertNotIn("project", records[1])
-            self.assertEqual(records[1]["published_at"], "2026-01-01T00:00:00Z")
+            self.assertNotIn("project", records[2])
+            self.assertEqual(records[2]["published_at"], "2026-01-01T00:00:00Z")
             receipt = static_publication.read_receipt(str(migrated))
             self.assertEqual(receipt["source"], {"commit": None, "dirty": None})
             self.assertEqual(set(receipt["artifacts"]), {"index.html", "index.wasm"})
-            self.assertIn('href="demo-godot/"', (migrated.parent / "index.html").read_text())
+            self.assertIn('href="demo-godot-2/"', (migrated.parent / "index.html").read_text())
 
     def test_publishes_existing_output_atomically_and_updates_catalog(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:

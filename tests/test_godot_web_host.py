@@ -8,6 +8,7 @@ import os
 import tempfile
 import unittest
 from contextlib import nullcontext, redirect_stderr, redirect_stdout
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -161,6 +162,7 @@ class TestGodotWebHost(unittest.TestCase):
                 patch.object(godot_web_steps, "GODOT_WEB_ROOT", web_root),
                 patch.object(godot_web_steps, "LEGACY_GAMES_ROOT", games_root),
                 patch.object(godot_web_steps, "INTERNAL_WEB_SITES_ROOT", sites_root),
+                patch.object(godot_web_steps, "GODOT_WEB_NGINX_SITE", os.path.join(temporary_dir, "nginx-site")),
                 patch.object(godot_web_steps, "GODOT_WEB_URL_FILE", url_file),
                 patch.object(godot_web_steps, "GODOT_WEB_CA_CERT", ca_cert),
                 patch.object(
@@ -229,6 +231,59 @@ class TestGodotWebHost(unittest.TestCase):
                 godot_web_steps.GODOT_WEB_UTILITY, "site", "migrate-legacy",
             ])
             self.assertEqual(run.call_count, 1)
+
+    def test_upgrade_keeps_both_routes_until_games_move_and_nginx_reloads(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            site = Path(directory) / "site"
+            link = Path(directory) / "enabled"
+            site.write_text(godot_web_steps._NGINX_MARKER + "\nlocation /games/ {}\n")
+            link.symlink_to(site)
+            events = []
+            fail_migration = True
+            fail_retirement = False
+
+            def migrate(users):
+                self.assertEqual(users, ["agent"])
+                self.assertIn("location /games/ {", site.read_text())
+                self.assertIn("/.basaltwater-godot", site.read_text())
+                events.append("migration")
+                if fail_migration:
+                    raise RuntimeError("migration interrupted")
+                return True
+
+            def run(command, **kwargs):
+                if command == "nginx -t":
+                    return SimpleNamespace(returncode=0)
+                self.assertEqual(command, "systemctl reload nginx")
+                keeps_games = "location /games/ {" in site.read_text()
+                events.append("enable both" if keeps_games else "retire games")
+                return SimpleNamespace(returncode=int(not keeps_games and fail_retirement))
+
+            with (
+                patch.object(godot_web_steps, "GODOT_WEB_NGINX_SITE", str(site)),
+                patch.object(godot_web_steps, "GODOT_WEB_NGINX_LINK", str(link)),
+                patch.object(godot_web_steps, "_configure_user_roots", return_value=False),
+                patch.object(godot_web_steps, "_configure_landing_page", return_value=False),
+                patch.object(godot_web_steps, "_migrate_legacy_sites", side_effect=migrate),
+                patch.object(godot_web_steps, "run", side_effect=run),
+            ):
+                def configure():
+                    return godot_web_steps._configure_site_host(
+                        "https://vm.test", True, ["agent"], "/cert", "/key", reload_required=False,
+                    )
+
+                with self.assertRaisesRegex(RuntimeError, "migration interrupted"):
+                    configure()
+                self.assertEqual(events, ["enable both", "migration"])
+                self.assertIn("location /games/ {", site.read_text())
+                fail_migration, fail_retirement = False, True
+                with self.assertRaisesRegex(RuntimeError, "could not reload"):
+                    configure()
+                self.assertIn("location /games/ {", site.read_text())
+                fail_retirement = False
+                self.assertTrue(configure())
+                self.assertEqual(events[-3:], ["enable both", "migration", "retire games"])
+                self.assertIn('location ~ "^/games(?:/|$)"', site.read_text())
 
     def test_web_policy_exposes_the_user_readable_ca_copy(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:

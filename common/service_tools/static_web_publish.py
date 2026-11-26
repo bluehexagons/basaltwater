@@ -8,6 +8,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 import fcntl
 import html
+from itertools import count
 import json
 import os
 import pwd
@@ -275,7 +276,10 @@ def _metadata(site_dir: str) -> dict[str, object]:
     return value if isinstance(value, dict) else {}
 
 
-def site_profile(site_dir: str) -> str:
+def site_profile(site_dir: str, metadata: dict[str, object] | None = None) -> str:
+    profile = (_metadata(site_dir) if metadata is None else metadata).get("profile")
+    if profile in ("static", "godot"):
+        return profile
     return "godot" if os.path.isfile(os.path.join(site_dir, GODOT_PROFILE_FILE)) else "static"
 
 
@@ -492,28 +496,32 @@ def migrate_legacy_sites() -> list[str]:
     _owned_user_root(LEGACY_GAMES_ROOT, account)
     user_root = _owned_user_root(SITES_ROOT, account)
     migrated = []
-    for name in sorted(os.listdir(legacy_root)):
-        if not _SITE_NAME_PATTERN.fullmatch(name):
-            continue
-        source = os.path.join(legacy_root, name)
-        with _site_lock(legacy_root, name):
-            if not os.path.lexists(source):
-                continue
-            godot_web_publish.validate_export_tree(source)
-            if os.stat(source).st_uid != account.pw_uid or not os.path.isfile(os.path.join(source, "index.html")):
-                raise RuntimeError(f"Invalid legacy game snapshot: {source}")
-            metadata = _metadata(source)
-            published_at = metadata.get("published_at")
-            if not isinstance(published_at, str):
-                published_at = _publication_time()
-            site = name
-            version = 1
-            while True:
-                with _site_lock(user_root, site):
-                    destination = os.path.join(user_root, site)
-                    if not os.path.lexists(destination):
-                        # The legacy tree stays under its old name until all
-                        # site metadata and the receipt are ready.
+    original_names = {name for name in os.listdir(legacy_root) if _SITE_NAME_PATTERN.fullmatch(name)}
+    try:
+        for name in sorted(original_names):
+            source = os.path.join(legacy_root, name)
+            with _site_lock(legacy_root, name):
+                if not os.path.lexists(source):
+                    continue
+                godot_web_publish.validate_export_tree(source)
+                if os.stat(source).st_uid != account.pw_uid or not os.path.isfile(os.path.join(source, "index.html")):
+                    raise RuntimeError(f"Invalid legacy game snapshot: {source}")
+                metadata = _metadata(source)
+                published_at = metadata.get("published_at")
+                if not isinstance(published_at, str):
+                    published_at = _publication_time()
+                for suffix_index in count():
+                    site = name
+                    if suffix_index:
+                        suffix = "-godot" if suffix_index == 1 else f"-godot-{suffix_index}"
+                        site = name[:63 - len(suffix)] + suffix
+                        if site in original_names:
+                            continue
+                    with _site_lock(user_root, site):
+                        destination = os.path.join(user_root, site)
+                        if os.path.lexists(destination):
+                            continue
+                        # Keep the legacy path until all new metadata is ready.
                         url = published_url(account.pw_name, site)
                         metadata.pop("project", None)
                         metadata.pop("game", None)
@@ -524,10 +532,8 @@ def migrate_legacy_sites() -> list[str]:
                         os.rename(source, destination)
                         migrated.append(url or destination)
                         break
-                suffix = "-godot" if version == 1 else f"-godot-{version}"
-                site = name[:63 - len(suffix)] + suffix
-                version += 1
-    write_user_catalog(user_root, account.pw_name)
+    finally:
+        write_user_catalog(user_root, account.pw_name)
     return migrated
 
 
@@ -549,11 +555,21 @@ def verify_site(args: argparse.Namespace) -> dict[str, object]:
     with _site_lock(user_root, args.name):
         if os.path.islink(site) or not os.path.isdir(site) or os.stat(site).st_uid != account.pw_uid:
             raise ValueError("Publication directory must be real and owned by the current account")
+        metadata = _metadata(site)
+        profile = site_profile(site, metadata)
         output = None
-        if project and (args.output or site_profile(site) == "static"):
+        if project and (args.output or profile == "static"):
             output = _resolve_output(project, args.output)
+        precompressed = metadata.get("precompressed")
+        generated = (
+            tuple(path for path in precompressed if isinstance(path, str))
+            if profile == "godot" and isinstance(precompressed, list) else ()
+        )
         try:
-            result = verify_receipt(site, url=url, local_output=output, project=project, timeout=args.timeout)
+            result = verify_receipt(
+                site, url=url, local_output=output, project=project, timeout=args.timeout,
+                generated_gzip=generated,
+            )
         except FileNotFoundError:
             if os.path.lexists(os.path.join(site, RECEIPT_FILE)):
                 raise
@@ -569,10 +585,11 @@ def list_sites(account: pwd.struct_passwd) -> list[dict[str, object]]:
         if name.startswith(".") or name == CATALOG_FILE or os.path.islink(path):
             continue
         if os.path.isdir(path):
+            metadata = _metadata(path)
             records.append(
                 {
-                    **_metadata(path),
-                    "profile": site_profile(path),
+                    **metadata,
+                    "profile": site_profile(path, metadata),
                     "site": name,
                     "url": published_url(account.pw_name, name),
                 }

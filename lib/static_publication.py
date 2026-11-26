@@ -153,7 +153,8 @@ def _served_hash(url: str, size: int, deadline: float) -> dict[str, object]:
 
 
 def verify_receipt(root: str, *, url: str | None, local_output: str | None = None,
-                   project: str | None = None, timeout: int = 60) -> dict[str, object]:
+                   project: str | None = None, timeout: int = 60,
+                   generated_gzip: tuple[str, ...] = ()) -> dict[str, object]:
     """Compare stored, local, and served bytes; never rebuild or republish."""
     if type(timeout) is not int or not 1 <= timeout <= 300:
         raise ValueError("Verification timeout must be from 1 through 300 seconds")
@@ -164,9 +165,20 @@ def verify_receipt(root: str, *, url: str | None, local_output: str | None = Non
         _ = parsed.port
     receipt = read_receipt(root)
     expected = receipt["artifacts"]
+    # Compare the project's own files against the published export. Generated
+    # gzip siblings remain part of both the on-disk and served verification.
+    generated = {
+        path for path in generated_gzip
+        if path.endswith((".wasm.gz", ".pck.gz")) and path in expected and path[:-3] in expected
+    }
     issues, warnings = [], []
-    for component, output in (("publication", root), ("local_build", local_output)):
-        if output is not None and artifact_hashes(output) != expected:
+    for component, output, ignored in (("publication", root, set()), ("local_build", local_output, generated)):
+        if output is None:
+            continue
+        actual = artifact_hashes(output)
+        if {path: record for path, record in actual.items() if path not in ignored} != {
+            path: record for path, record in expected.items() if path not in ignored
+        }:
             issues.append({"issue": "artifact_mismatch", "component": component,
                            "remediation": "Rebuild the intended source and publish the final output again."})
     source_matches = None

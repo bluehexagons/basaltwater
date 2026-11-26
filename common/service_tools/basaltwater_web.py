@@ -1158,6 +1158,7 @@ def _diagnose_site(account: pwd.struct_passwd, name: str, path: str, as_json: bo
     profile = static_web_publish.site_profile(path)
     wasm_url = None
     if profile == "godot":
+        wasm_url = urllib.parse.urljoin(url, "index.wasm")
         for current_dir, _dirs, files in os.walk(path):
             wasm_name = next((file_name for file_name in files if file_name.endswith(".wasm")), None)
             if wasm_name:
@@ -1200,7 +1201,7 @@ def _diagnose_endpoint(
     wasm_headers: dict[str, str] = {}
     if wasm_url:
         wasm_status, wasm_headers = _https_headers(wasm_url)
-        if wasm_status >= 400:
+        if not 200 <= wasm_status < 300:
             errors.append(f"WASM endpoint returned {wasm_status}")
         content_type = wasm_headers.get("content-type", "").split(";", 1)[0]
         if content_type != "application/wasm":
