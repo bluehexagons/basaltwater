@@ -47,6 +47,7 @@ class TestMigrateGuest(unittest.TestCase):
         self.quorate = 1
         self.tasks = []
         self.pending = []
+        self.migration_blockers = {}
         self.snapshots = [{"name": "current"}]
         self.bridges = [{"ifname": "vmbr0"}]
         self.extra_guests = []
@@ -119,6 +120,11 @@ class TestMigrateGuest(unittest.TestCase):
                 return json.dumps(self.pending)
             if path.endswith("/snapshot"):
                 return json.dumps(self.snapshots)
+            if path.endswith("/migrate"):
+                self.assertEqual(host, self.source)
+                self.assertEqual(path, f"/nodes/pve1/{self.kind}/100/migrate")
+                field = "not_allowed_nodes" if self.kind == "qemu" else "not-allowed-nodes"
+                return json.dumps({field: self.migration_blockers})
             if path.endswith("/config"):
                 self.assertIn("--current", tokens)
                 if path.split("/")[-2] != "100":
@@ -253,6 +259,38 @@ class TestMigrateGuest(unittest.TestCase):
         self.assertEqual(self.actions, [])
         self.assertEqual(before, {str(p): p.read_bytes() for p in Path(self.workspace).rglob("*") if p.is_file()})
         self.leases.assert_not_called()
+
+    def test_native_guest_identity_blocker_refuses_dry_run_and_apply_before_shutdown(self):
+        self.migration_blockers = {"pve2": {"guest-identity-unsupported": {
+            "version": "9.2.32", "required-version": "9.2.33",
+        }}}
+        for kind in ("qemu", "lxc"):
+            self.kind = kind
+            if kind == "lxc":
+                self.config = {"hostname": self.name, "rootfs": "hdd:vm-100-disk-0,size=8G"}
+            for dry_run in (True, False):
+                with self.subTest(kind=kind, dry_run=dry_run):
+                    with self.assertRaisesRegex(ProxmoxMigrateError, "pve2 cannot preserve this guest's identity"):
+                        self._migrate(dry_run=dry_run)
+                    self.assertEqual(self.state, "running")
+                    self.assertEqual(self.actions, [])
+                    self.assertFalse(self._marker().exists())
+
+    def test_native_migration_preconditions_keep_explicit_target_pool_and_check_only_destination(self):
+        self.migration_blockers = {
+            "pve2": {"unavailable-storages": ["hdd"]},
+            "pve3": {"guest-identity-unsupported": {"version": "9.2.32", "required-version": "9.2.33"}},
+        }
+        self._migrate()
+        self.assertEqual(self.node, "pve2")
+        self.assertEqual(self.state, "running")
+
+    def test_invalid_native_migration_preconditions_block_before_shutdown(self):
+        self.migration_blockers = {"pve2": None}
+        with self.assertRaisesRegex(ProxmoxMigrateError, "Invalid native migration preconditions"):
+            self._migrate()
+        self.assertEqual(self.actions, [])
+        self.assertFalse(self._marker().exists())
 
     def test_unrelated_retired_setup_fields_do_not_block_local_lvm_move(self):
         self._save_setup()
@@ -413,6 +451,11 @@ class TestMigrateGuest(unittest.TestCase):
         self.assertEqual(len(self.actions), 1)
         self.assertEqual(json.loads(self._marker().read_text())["phase"], "shutting_down")
         self.failure = None
+        self.migration_blockers = {"pve2": {"guest-identity-unsupported": {"required-version": "9.2.33"}}}
+        with self.assertRaisesRegex(ProxmoxMigrateError, "cannot preserve this guest's identity"):
+            self._migrate(resume=True)
+        self.assertEqual(len(self.actions), 1)
+        self.migration_blockers.clear()
         self._migrate(resume=True)
         self.assertEqual(self.node, "pve2")
 

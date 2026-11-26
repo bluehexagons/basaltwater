@@ -381,6 +381,23 @@ def _transfer_pending(guest: dict[str, Any], plan: dict[str, Any], phase: str) -
     return False
 
 
+def _check_guest_identity_compatibility(source: ProxmoxHost, plan: dict[str, Any], workspace: str) -> None:
+    path = f"/nodes/{plan['source_node']}/{plan['kind']}/{plan['vmid']}/migrate"
+    data = _api(source, path, workspace)
+    field = "not_allowed_nodes" if plan["kind"] == "qemu" else "not-allowed-nodes"
+    blocked = data.get(field) if isinstance(data, dict) else None
+    reasons = blocked.get(plan["target_node"], {}) if isinstance(blocked, dict) else None
+    if not isinstance(reasons, dict):
+        raise ProxmoxMigrateError(f"Invalid native migration preconditions on {plan['source_node']}")
+    # Other native preconditions can assume the current storage will be retained.
+    # Basaltwater checks storage separately, including an explicit target pool.
+    if "guest-identity-unsupported" in reasons:
+        raise ProxmoxMigrateError(
+            f"Proxmox reports that destination {plan['target_node']} cannot preserve this guest's identity. "
+            "Upgrade the destination node before migrating this guest."
+        )
+
+
 def _verify_destination(source: ProxmoxHost, target: ProxmoxHost, plan: dict[str, Any], workspace: str) -> None:
     _no_tasks(source, target, plan, workspace)
     if _location(target, plan, workspace)["node"] != plan["target_node"]:
@@ -394,9 +411,8 @@ def _verify_destination(source: ProxmoxHost, target: ProxmoxHost, plan: dict[str
 
 
 def _execute(source: ProxmoxHost, target: ProxmoxHost, plan: dict[str, Any], workspace: str,
-             store: OperationStateStore, operation_id: str, phase: str) -> None:
-    guest = _location(target, plan, workspace)
-    if _transfer_pending(guest, plan, phase):
+             store: OperationStateStore, operation_id: str, phase: str, *, pending: bool) -> None:
+    if pending:
         _verify_config(_config(source, plan["source_node"], plan["kind"], plan["vmid"], workspace), plan, destination=False)
         if phase == "prepared" and (_status(source, plan["source_node"], plan, workspace) == "running") != plan["was_running"]:
             raise ProxmoxMigrateError("Guest power state changed after inspection; inspect it before resuming")
@@ -528,6 +544,7 @@ def migrate_guest(
             if pending:
                 _verify_config(_config(src_host, plan["source_node"], plan["kind"], plan["vmid"], workspace),
                                plan, destination=False)
+                _check_guest_identity_compatibility(src_host, plan, workspace)
                 state = _status(src_host, plan["source_node"], plan, workspace)
                 if phase == "prepared" and (state == "running") != plan["was_running"]:
                     raise ProxmoxMigrateError("Guest power state changed after inspection; inspect it before resuming")
@@ -557,14 +574,17 @@ def migrate_guest(
                     host.address, host.user, _ssh(host, workspace)[1:-1],
                     resources, wait=False, description=f"guest {plan['vmid']} migration",
                 ))
+            _no_tasks(src_host, target_host, plan, workspace)
+            _check_conflicts(target_host, plan, workspace)
+            pending = _transfer_pending(_location(target_host, plan, workspace), plan, phase)
+            if pending:
+                _check_guest_identity_compatibility(src_host, plan, workspace)
             if record is None:
                 record = store.begin("proxmox-migration", str(plan["vmid"]), "prepared", context=plan)
             else:
                 record = store.transition(record.operation_id, phase, expected_record=record)
             operation_id = record.operation_id
-            _no_tasks(src_host, target_host, plan, workspace)
-            _check_conflicts(target_host, plan, workspace)
-            _execute(src_host, target_host, plan, workspace, store, operation_id, phase)
+            _execute(src_host, target_host, plan, workspace, store, operation_id, phase, pending=pending)
         store.complete(operation_id)
     except (ProxmoxMigrateError, ProvisionError, ResourceBusyError, CommandTimeoutError, OSError, ValueError,
             KeyError, TypeError, AttributeError, KeyboardInterrupt) as exc:

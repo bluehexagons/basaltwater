@@ -100,10 +100,14 @@ Both hosts must belong to the same Proxmox cluster, with quorum and working
 node-to-node SSH. Inspection verifies matching cluster CA identities and
 reciprocal online node membership. HA-managed guests, templates, guest locks,
 active native guest tasks, and pending configuration changes block the move
-before shutdown. A destination guest with the same name or declared primary
-address also blocks the move. Proxmox retains its native migration checks and
-guest locks; Basaltwater also holds guest, name, and configured IPv4 leases on
-both nodes, sharing identity locks with its provisioning workflow.
+before shutdown. Dry runs and transfers use Proxmox's migration preconditions
+to check whether the destination can preserve the guest identity introduced in
+Proxmox VE 9.3. During a mixed-version rollout, upgrade an incompatible
+destination before moving the guest there. A destination guest with the same
+name or declared primary address also blocks the move. Proxmox retains its
+native migration checks and guest locks. Basaltwater also holds guest, name,
+and configured IPv4 leases on both nodes, sharing identity locks with its
+provisioning workflow.
 
 Offline migration is the default. A running VM or LXC receives a graceful
 shutdown with a 180-second default, configurable with `--shutdown-timeout`.
