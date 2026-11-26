@@ -9,7 +9,10 @@ from portal keyboard/pointer delivery. No Steam or global mapping is changed.
 ## Prerequisites
 
 Run the adapter as the existing non-root desktop account. The read-only check
-does not open uinput, create a controller, start a helper or change permission:
+does not open uinput, create a controller, start a helper or change permission.
+If it reports that the supervisor is unavailable, check `desktop --native status`
+on CachyOS or `desktop status` on Debian and follow the selected desktop's
+startup procedure.
 
 ```sh
 basaltw desktop --native gamepad doctor --json  # CachyOS
@@ -119,9 +122,11 @@ fresh-capture recovery. Device/persistence failures end the bridge. Stop/status
 need no screenshot; the watchdog also closes the device after blocked control.
 When no socket exists, status returns `running: false` and stop is idempotent;
 unsafe sockets and failed connections still report errors. Idle lifetime expiry
-is successful closeout with reason `lifetime-expired`. Expiry during a held
-action retains its uncertain delivery/error and release evidence. `closed.json`
-records the close reason and successful neutralization or a cleanup error.
+is successful closeout with reason `lifetime-expired`. A dispatch failure,
+failed release, or expiry during a held action makes the supervised adapter task
+exit nonzero even if final neutralization succeeds. `closed.json` records the
+close reason, overall `ok`, and successful neutralization or a cleanup error.
+Inspect the individual action receipts for delivery and release evidence.
 
 ## Qualification scope
 

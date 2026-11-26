@@ -116,6 +116,19 @@ class GamepadTests(unittest.TestCase):
         self.assertFalse(stopped["session"]["ready"])
         self.assertEqual(stopped["session"]["error"], "desktop stopped")
 
+    def test_doctor_points_to_the_selected_supervisor_when_its_socket_is_unavailable(self):
+        for native, error, command in (
+            (True, FileNotFoundError("/private/control.sock"), "basaltw desktop --native status"),
+            (False, ConnectionRefusedError("/private/control.sock"), "basaltw desktop status"),
+        ):
+            with self.subTest(native=native), patch.object(qa.importlib.util, "find_spec"), \
+                    patch.object(qa.Path, "stat", side_effect=FileNotFoundError):
+                self.status.side_effect = error
+                result = qa.doctor(native)
+                self.assertFalse(result["ok"])
+                self.assertIn(command, result["session"]["error"])
+                self.assertNotIn("/private", result["session"]["error"])
+
     def test_public_cli_routes_backends_and_failure_exit_codes(self):
         from lib.desktop_cli import add_desktop_subparser, run_desktop_command
         parser = argparse.ArgumentParser()
@@ -250,7 +263,9 @@ class GamepadTests(unittest.TestCase):
                 patch.object(qa.signal, "signal"):
             result = qa.serve(str(self.folder / "expiry"), 60)
         self.assertEqual(result["reason"], "lifetime-expired")
+        self.assertTrue(result["ok"])
         closed = json.loads((self.folder / "expiry/closed.json").read_text())
+        self.assertTrue(closed["ok"])
         self.assertTrue(closed["neutralized"])
         self.pad.close.assert_called_once()
 
@@ -267,6 +282,71 @@ class GamepadTests(unittest.TestCase):
         closed = json.loads((self.folder / "failed-cleanup/closed.json").read_text())
         self.assertIn("cleanup_error", closed)
         self.assertNotIn("neutralized", closed)
+        self.assertFalse(closed["ok"])
+
+    def test_supervised_server_exits_nonzero_after_an_incomplete_action(self):
+        from lib.desktop_cli import add_desktop_subparser, run_desktop_command
+
+        parser = argparse.ArgumentParser()
+        add_desktop_subparser(parser.add_subparsers())
+        for reason in ("input-failed", "release-failed", "lifetime-expired"):
+            with self.subTest(reason=reason):
+                path = self.folder / "pad.sock"
+                output = self.folder / reason
+                ready = threading.Event()
+                results = []
+                self.pad.reset_mock()
+                self.pad.device.device = "/fixture/event1"
+                self.pad.device.name = "Fixture pad"
+                bridge = qa.Bridge(self.pad, output, 60, dict(self.current))
+                writer = qa.write_json_atomic
+
+                def write(path, value, **options):
+                    writer(path, value, **options)
+                    if Path(path).name == "device.json":
+                        ready.set()
+
+                def dispatch(_events):
+                    if reason == "input-failed":
+                        raise OSError("fixture dispatch failed")
+                    if reason == "lifetime-expired":
+                        bridge.until = 0
+
+                args = parser.parse_args(["desktop", "--native", "gamepad", "serve",
+                                          "--output", str(output), "--json"])
+                self.pad.write.side_effect = dispatch
+                self.pad.neutral.side_effect = ([None, OSError("fixture release failed")]
+                                                if reason == "release-failed" else None)
+                with patch.object(qa, "socket_path", return_value=path), \
+                        patch.object(qa, "Pad", return_value=self.pad), \
+                        patch.object(qa, "Bridge", return_value=bridge), \
+                        patch.object(qa.signal, "signal"), \
+                        patch.object(qa, "write_json_atomic", side_effect=write), \
+                        patch("sys.stdout", new_callable=io.StringIO):
+                    worker = threading.Thread(target=lambda: results.append(run_desktop_command(args)), daemon=True)
+                    worker.start()
+                    try:
+                        self.assertTrue(ready.wait(2), "server did not become ready")
+                        receipt = qa.call({**self.payload, "action": "press",
+                                           "hold_ms": 0 if reason == "release-failed" else 100})
+                    finally:
+                        if worker.is_alive() and not bridge.stopping:
+                            qa.call({"action": "stop"})
+                        worker.join(2)
+                self.assertFalse(worker.is_alive())
+                if reason == "release-failed":
+                    self.assertIn("release_error", receipt)
+                    self.assertFalse(receipt["neutralized"])
+                else:
+                    self.assertEqual(receipt["delivery"], "unknown")
+                    self.assertTrue(receipt["neutralized"])
+                self.assertEqual(results, [1])
+                closeout = json.loads((output / "closed.json").read_text())
+                self.assertEqual(closeout["reason"], reason)
+                self.assertFalse(closeout["ok"])
+                self.assertTrue(closeout["neutralized"])
+                self.assertFalse(path.exists())
+                self.pad.close.assert_called_once()
 
     def test_server_rejection_recapture_stop_and_owned_cleanup(self):
         self._server_roundtrip(True)

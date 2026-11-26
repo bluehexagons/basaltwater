@@ -39,10 +39,10 @@ See [local setup](cachyos.md) for T3 modes and package prompts, and
 
 `--game-dev` also supplies the existing KDE automation prerequisites for native
 desktop-authoring work. It starts no GUI, capture, input session, or service.
-Packages come from the configured repositories, with their normal headers and distro
-versions; setup neither synchronizes pacman databases nor replaces installed
-packages. Run CachyOS's normal full update first. Project-native bootstrap
-commands remain available independently of Basaltwater.
+Setup and refresh run a full `pacman -Syu` against the configured repositories
+before installing missing development packages. Save work before applying the
+plan. Project-native bootstrap commands remain independent of Basaltwater.
+[Workstation package behavior](cachyos-profile-reference.md#package-and-repository-behavior)
 
 Xvfb and xauth allow optional project captures without using the personal
 desktop. The workstation's existing graphics stack supplies OpenGL/GBM and

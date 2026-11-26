@@ -90,6 +90,9 @@ def doctor(native: bool) -> dict:
         enabled(current, native)
         session = {"ready": True, "generation": current.get("generation"),
                    "control_revision": current.get("control_revision")}
+    except (FileNotFoundError, ConnectionRefusedError):
+        command = "basaltw desktop --native status" if native else "basaltw desktop status"
+        session = {"ready": False, "error": f"Desktop supervisor unavailable. Check {command} before starting a gamepad."}
     except (OSError, ValueError, RuntimeError) as exc:
         session = {"ready": False, "error": str(exc)}
     return {"ok": dependency and access and session["ready"], "backend": backend_name(native),
@@ -175,6 +178,7 @@ class Bridge:
         self.native = native
         self.used: set[str] = set()
         self.stopping = False
+        self.failed = False
         self.stop_reason = "stop-requested"
         self.checked = 0.0
 
@@ -228,6 +232,7 @@ class Bridge:
             receipt["delivery"] = "completed"
         except Exception as exc:
             self.stopping = True
+            self.failed = True
             if self.stop_reason != "lifetime-expired":
                 self.stop_reason = "input-failed"
             receipt["error"] = str(exc)
@@ -238,6 +243,7 @@ class Bridge:
                 receipt["released"] = stamp()
             except Exception as exc:
                 self.stopping = True
+                self.failed = True
                 self.stop_reason = "release-failed"
                 receipt["release_error"] = str(exc)
             write_json_atomic(str(path), receipt, mode=0o600)
@@ -276,6 +282,7 @@ def serve(output: str, lifetime: int, native: bool = True) -> dict:
     pad = None
     close_reason = "startup-failed"
     cleanup = {}
+    succeeded = False
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         if path.exists():
@@ -353,12 +360,19 @@ def serve(output: str, lifetime: int, native: bool = True) -> dict:
                             # never be mislabeled as a rejected input.
                             result = {"error": str(exc), "delivery": "unknown" if action == "press" else "not-sent"}
                             if action == "press":
+                                bridge.failed = True
+                                if not bridge.stopping and bridge.stop_reason != "lifetime-expired":
+                                    bridge.stop_reason = "input-failed"
                                 bridge.stopping = True
                         try:
                             connection.sendall(json.dumps(result).encode() + b"\n")
                         except OSError:
+                            if not bridge.stopping:
+                                bridge.failed = True
+                                bridge.stop_reason = "client-disconnected"
                             bridge.stopping = True
                 close_reason = bridge.stop_reason
+                succeeded = not bridge.failed
         finally:
             for signum, handler in previous.items():
                 signal.signal(signum, handler)
@@ -378,9 +392,10 @@ def serve(output: str, lifetime: int, native: bool = True) -> dict:
         finally:
             os.close(descriptor)
             write_json_atomic(str(folder / "closed.json"), {
-                "closed": stamp(), "reason": close_reason, **cleanup,
+                "closed": stamp(), "reason": close_reason,
+                "ok": succeeded and cleanup.get("neutralized") is True, **cleanup,
             }, mode=0o600)
-    return {"closed": True, "reason": close_reason, "output": str(folder)}
+    return {"closed": True, "ok": succeeded, "reason": close_reason, "output": str(folder)}
 
 
 def call(payload: dict) -> dict:
