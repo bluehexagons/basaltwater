@@ -147,6 +147,55 @@ class TestAgentVisualCheck(unittest.TestCase):
         self.assertFalse((bundle / ".godot").exists())
         self.assertEqual(run_import.call_args.kwargs["pass_fds"], self.execute.call_args.kwargs["pass_fds"])
 
+    def test_godot_preparation_blocks_new_and_cached_import_failures_with_zero_exit(self) -> None:
+        self.manifest["recipes"]["graphics"]["godot_prepare"] = {"project": ".", "asset_directories": []}
+        plan = {"project": str(self.project), "assets": {}, "import_argv": ["godot", "--headless", "--import"]}
+        asset = self.project / "broken.svg"
+        asset.write_text("invalid fixture")
+        sidecar = asset.with_suffix(".svg.import")
+        invalid_remap = '[remap]\nimporter="texture"\nvalid=false\n\n[deps]\n'
+        locks = self.root / "locks"
+        locks.mkdir(mode=0o700)
+        for name, marker in (("ignored", ".gdignore"), ("nested", "project.godot"), (".hidden", None)):
+            directory = self.project / name
+            directory.mkdir()
+            if marker:
+                (directory / marker).touch()
+            (directory / asset.name).write_text("invalid fixture")
+            (directory / sidecar.name).write_text(invalid_remap)
+        (self.project / "orphan.svg.import").write_text(invalid_remap)
+
+        def import_assets(argv, *, on_output, **kwargs):
+            on_output("\x1b[31mERROR:\x1b[0m Error importing 'res://broken.svg'.\n")
+            sidecar.write_text(invalid_remap)
+            return 0
+
+        with (patch("lib.agent_reservations._root", return_value=locks),
+              patch.object(godot_qa_prepare, "preparation_plan", return_value=plan),
+              patch.object(godot_qa_prepare, "run_streamed", side_effect=import_assets) as run_import):
+            cold = agent_visual_check.check_recipe(self.args("--prepare"))
+            self.assertIn("Error importing 'res://broken.svg'", cold["error"])
+            self.assertIn("Error importing", Path(cold["log"]).read_text())
+            self.execute.assert_not_called()
+
+            run_import.side_effect = None
+            run_import.return_value = 0
+            self.output = self.root / "warm"
+            warm = agent_visual_check.check_recipe(self.args("--prepare"))
+            self.assertIn("invalid import for res://broken.svg", warm["error"])
+            self.execute.assert_not_called()
+
+            for result in (cold, warm):
+                self.assertEqual(result["failure_stage"], "preparation")
+                preparation = json.loads(Path(result["preparation"]["report"]).read_text())
+                self.assertEqual((preparation["status"], preparation["returncode"]), ("failed", 0))
+                self.assertIsNone(result["returncode"])
+
+            sidecar.write_text('[remap]\nimporter="texture"\n\n[params]\nvalid=false\n')
+            self.output = self.root / "repaired"
+            self.assertTrue(agent_visual_check.check_recipe(self.args("--prepare"))["ok"])
+            self.execute.assert_called_once()
+
     def test_renderer_loss_surfaces_partial_case_results_after_log_truncation(self) -> None:
         image = self.output / "gameplay.png"
 

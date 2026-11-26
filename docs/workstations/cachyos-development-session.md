@@ -284,6 +284,10 @@ The report distinguishes planning, staging and importing. Follow `check_log`
 for Godot's live import output. `--timeout` applies separately to the import
 and recipe, and `develop wait` has its own wait deadline. A failed or timed-out
 import leaves evidence for inspection and prevents the GPU recipe from starting.
+Preparation checks both Godot's import diagnostics and retained invalid
+`.import` records for existing assets. These can indicate failure even when
+Godot exits zero. Correct the named asset and reimport it in Godot, or repeat
+the check in a fresh worktree with the corrected assets.
 
 ### Compare the native check across revisions
 

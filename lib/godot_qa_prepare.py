@@ -5,14 +5,20 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 import subprocess
 import tempfile
+import time
 
 from lib.atomic_io import write_json_atomic
 from lib.streamed_process import run_captured, run_streamed
 from lib.validation import validate_filesystem_path
+
+
+_ANSI_STYLE = re.compile(r"\x1b\[[0-9;]*m")
+_INVALID_IMPORT = re.compile(rb"valid\s*=\s*false(?:\s*;.*)?")
 
 
 def _relative(value: object, *, project: bool = False) -> Path:
@@ -140,6 +146,42 @@ def _stage_directory(source: Path, destination: Path) -> None:
             os.close(descriptor)
 
 
+def _failed_import(project: Path, deadline: float) -> str | None:
+    """Find a failed remap Godot may have skipped during a warm import."""
+    for directory, children, files in os.walk(project, followlinks=False):
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Godot import metadata check exceeded its deadline")
+        if directory != str(project) and (".gdignore" in files or "project.godot" in files):
+            children.clear()
+            continue
+        children[:] = [name for name in children if not name.startswith(".")]
+        names = set(files)
+        for name in files:
+            asset = name.removesuffix(".import")
+            if asset == name or asset not in names or name.startswith("."):
+                continue
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Godot import metadata check exceeded its deadline")
+            sidecar = Path(directory) / name
+            if not stat.S_ISREG(sidecar.lstat().st_mode):
+                continue
+            fd = os.open(sidecar, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(fd, "rb") as source:
+                if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+                    continue
+                lines = source.read(65536).splitlines()
+            in_remap = False
+            for line in lines:
+                line = line.strip()
+                if line.startswith(b"["):
+                    if in_remap:
+                        break
+                    in_remap = line == b"[remap]"
+                elif in_remap and _INVALID_IMPORT.fullmatch(line):
+                    return (Path(directory) / asset).relative_to(project).as_posix()
+    return None
+
+
 def prepare_godot(repository: Path, declaration: dict | None, bundle: Path | None, *,
                   report_path: str, timeout: int, environment: dict[str, str], on_output,
                   descriptors: tuple[int, ...]) -> dict:
@@ -161,13 +203,28 @@ def prepare_godot(repository: Path, declaration: dict | None, bundle: Path | Non
                 write_json_atomic(report_path, report)
         report["status"] = "importing"
         write_json_atomic(report_path, report)
+        diagnostic = None
+
+        def import_output(line: str) -> None:
+            nonlocal diagnostic
+            on_output(line)
+            if diagnostic is None:
+                message = _ANSI_STYLE.sub("", line).strip()
+                if message.startswith("ERROR: Error importing "):
+                    diagnostic = message.removeprefix("ERROR: ")[:512]
+
         on_output("Starting headless Godot import\n")
+        deadline = time.monotonic() + timeout
         report["returncode"] = run_streamed(
             report["import_argv"], cwd=report["project"], env=environment, timeout=timeout,
-            on_output=on_output, pass_fds=descriptors, cleanup_group_on_exit=True,
+            on_output=import_output, pass_fds=descriptors, cleanup_group_on_exit=True,
         )
         if report["returncode"] != 0:
             raise RuntimeError(f"Headless Godot import exited with status {report['returncode']}")
+        if diagnostic:
+            raise RuntimeError(f"Headless Godot reported an asset import failure: {diagnostic}")
+        if asset := _failed_import(Path(report["project"]), deadline):
+            raise RuntimeError(f"Headless Godot left an invalid import for res://{asset}; correct the asset and reimport it")
         on_output("Headless Godot import completed\n")
         report["status"] = "passed"
     except KeyboardInterrupt:
