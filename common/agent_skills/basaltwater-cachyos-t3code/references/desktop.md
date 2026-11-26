@@ -16,7 +16,7 @@ desktop setup/refresh queue a detached user worker. This keeps local and remote
 T3 terminals available for package-review and sudo prompts until completion.
 The worker disables the managed web service, then gracefully sends SIGTERM to a running same-user `t3code-bin`,
 waits for the app and its packaged child processes (including the embedded
-server) to exit, and relaunches the packaged app with its profile/launch flags.
+server) to exit, and runs the package launcher with the app's profile/launch flags.
 Consumed `t3code:` links are omitted, matching upstream relaunch behavior, so
 refresh does not replay pairing or create another thread from a startup link.
 The worker captures stable child process handles before shutdown so it still
@@ -53,8 +53,11 @@ The `desktop-mode` marker under `~/.local/share/basaltwater/cachyos-t3` records
 the selection. Do not launch another backend to repair a working desktop.
 
 Desktop setup enables KDE login startup through the managed
-`~/.config/autostart/basaltwater-cachyos-t3.desktop` entry (or absolute
-`$XDG_CONFIG_HOME`). It uses `/usr/bin/t3code` and skips an absent executable.
+`~/.config/autostart/t3code.desktop` entry (or absolute `$XDG_CONFIG_HOME`).
+Matching the packaged desktop ID prevents a duplicate launch by Plasma session
+restore. Desktop setup and refresh migrate the older
+`basaltwater-cachyos-t3.desktop` entry. The entry uses `/usr/bin/t3code` and
+skips an absent executable.
 Normal quit leaves it stopped for this session. KDE's Autostart settings can
 disable it; desktop setup/refresh re-enables it. Custom entries and symlinks at
 the managed destination are refused before changes. Doctor checks startup

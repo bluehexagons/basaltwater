@@ -102,11 +102,17 @@ basaltw refresh
 basaltw local cachyos-doctor
 ```
 
-The entry is `~/.config/autostart/basaltwater-cachyos-t3.desktop`, or
-`$XDG_CONFIG_HOME/autostart/basaltwater-cachyos-t3.desktop` for an absolute XDG
-override. It uses the package-owned `/usr/bin/t3code` and KDE's normal login
-environment. No user service or restart loop is added for the desktop app;
-quitting it leaves it stopped for that session. Setup/refresh queues a detached
+The entry is `~/.config/autostart/t3code.desktop`, or
+`$XDG_CONFIG_HOME/autostart/t3code.desktop` for an absolute XDG override.
+Plasma matches this filename to the package's application desktop ID and skips
+its duplicate session-restore launch. Setup and refresh migrate the old
+`basaltwater-cachyos-t3.desktop` entry. A successful switch to web mode
+removes either managed filename.
+[Plasma's session-restore implementation](https://github.com/KDE/plasma-workspace/blob/v6.8.3/startkde/session-restore/restore.cpp)
+
+The entry and completion worker use the package-owned `/usr/bin/t3code`
+launcher so T3 receives its packaged runtime environment. Quitting T3 leaves
+it stopped for that session. Setup and refresh queue a detached
 worker to gracefully close and relaunch a running app after all setup steps,
 saved state, and notifications finish. It starts a stopped app when KDE's
 graphical session and user-manager environment are available; otherwise its

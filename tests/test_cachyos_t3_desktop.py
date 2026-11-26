@@ -32,6 +32,7 @@ class DesktopAutostartTests(unittest.TestCase):
         path = desktop.autostart_path(self.home)
         self.assertFalse(path.parent.exists())
         desktop.enable_autostart(self.home)
+        self.assertEqual(path.name, "t3code.desktop")
         self.assertEqual(path.read_text(), desktop.AUTOSTART_ENTRY)
         self.assertIn("Exec=/usr/bin/t3code\n", path.read_text())
         self.assertIn("TryExec=/usr/bin/t3code\n", path.read_text())
@@ -39,6 +40,38 @@ class DesktopAutostartTests(unittest.TestCase):
         self.assertEqual(desktop.collect_autostart_health(self.home)[0], "available")
         desktop.disable_autostart(self.home)
         self.assertEqual(desktop.collect_autostart_health(self.home)[0], "failed")
+
+    def test_legacy_autostart_is_migrated_and_removed_on_web_switch(self):
+        path = desktop.autostart_path(self.home)
+        legacy = path.with_name(desktop.LEGACY_AUTOSTART_NAME)
+        path.parent.mkdir(parents=True)
+        legacy.write_text(desktop.AUTOSTART_ENTRY)
+        personal = path.with_name("personal.desktop")
+        personal.write_text("unrelated autostart entry")
+        state, reason = desktop.collect_autostart_health(self.home)
+        self.assertEqual(state, "deferred")
+        self.assertIn("rerun desktop setup or refresh", reason)
+        desktop.enable_autostart(self.home)
+        desktop.enable_autostart(self.home)
+        self.assertEqual(path.read_text(), desktop.AUTOSTART_ENTRY)
+        self.assertFalse(legacy.exists())
+        self.assertEqual(desktop.collect_autostart_health(self.home)[0], "available")
+
+        # A direct web switch or a retry with both names removes owned entries.
+        legacy.write_text(desktop.AUTOSTART_ENTRY)
+        desktop.disable_autostart(self.home)
+        self.assertEqual(list(path.parent.iterdir()), [personal])
+
+    def test_migration_preserves_legacy_entry_if_new_filename_is_unmanaged(self):
+        path = desktop.autostart_path(self.home)
+        legacy = path.with_name(desktop.LEGACY_AUTOSTART_NAME)
+        path.parent.mkdir(parents=True)
+        legacy.write_text(desktop.AUTOSTART_ENTRY)
+        path.write_text("[Desktop Entry]\nExec=personal-command\n")
+        with self.assertRaisesRegex(ValueError, "unmanaged T3 desktop autostart file"):
+            desktop.enable_autostart(self.home)
+        self.assertIn("personal-command", path.read_text())
+        self.assertEqual(legacy.read_text(), desktop.AUTOSTART_ENTRY)
 
     def test_custom_xdg_config_home_is_honored_and_relative_values_ignored(self):
         configured = self.home / "custom config"
@@ -297,8 +330,8 @@ class DesktopRefreshTests(unittest.TestCase):
         self.assertTrue(refresh.restart_running_desktop(self.QUEUED_BEFORE_NS, finish=lambda: events.append("finish")))
         self.assertEqual(events, ["terminate", "exited", "receipt", "finish", "launch"])
         self.terminate.assert_called_once_with(app.descriptor, signal.SIGTERM)
-        self.execute.assert_called_once_with(refresh.APP_EXECUTABLE,
-                                             [refresh.APP_EXECUTABLE,
+        self.execute.assert_called_once_with(refresh.APP_LAUNCHER,
+                                             [refresh.APP_LAUNCHER,
                                               "--user-data-dir=/private/profile", "--profile", "fixture"],
                                              {key: value for key, value in {
                                                  **os.environ, **app.environment,
@@ -398,9 +431,11 @@ class DesktopRefreshTests(unittest.TestCase):
         with patch.dict(os.environ, {"DISPLAY": ":1", "ELECTRON_RUN_AS_NODE": "1"}):
             self.assertTrue(refresh.restart_running_desktop(self.QUEUED_BEFORE_NS, self.home))
         self.assertEqual(self.package.call_args_list[0].args[0][-1], "graphical-session.target")
-        self.assertEqual(self.package.call_args_list[1].args[0],
-                         ["/usr/bin/pacman", "-Qqo", "--", refresh.APP_EXECUTABLE])
-        self.assertEqual(self.execute.call_args.args[:2], (refresh.APP_EXECUTABLE, [refresh.APP_EXECUTABLE]))
+        self.assertEqual([call.args[0] for call in self.package.call_args_list[1:]], [
+            ["/usr/bin/pacman", "-Qqo", "--", refresh.APP_LAUNCHER],
+            ["/usr/bin/pacman", "-Qqo", "--", refresh.APP_EXECUTABLE],
+        ])
+        self.assertEqual(self.execute.call_args.args[:2], (refresh.APP_LAUNCHER, [refresh.APP_LAUNCHER]))
         self.assertNotIn("ELECTRON_RUN_AS_NODE", self.execute.call_args.args[2])
         self.terminate.assert_not_called()
         self.close.assert_not_called()

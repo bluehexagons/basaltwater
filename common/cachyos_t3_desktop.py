@@ -18,7 +18,10 @@ if TYPE_CHECKING:
     from lib.config import SetupConfig
 
 
-AUTOSTART_NAME = "basaltwater-cachyos-t3.desktop"
+# Plasma's fallback session restore skips applications with a matching
+# desktop filename in autostart. Use the t3code-bin application desktop ID.
+AUTOSTART_NAME = "t3code.desktop"
+LEGACY_AUTOSTART_NAME = "basaltwater-cachyos-t3.desktop"
 AUTOSTART_ENTRY = (
     f"{_MARKER}\n[Desktop Entry]\nType=Application\nName=T3 Code\n"
     "Comment=Start T3 Code at KDE login\n"
@@ -27,39 +30,55 @@ AUTOSTART_ENTRY = (
 )
 
 
-def autostart_path(home: Path) -> Path:
-    """Inspect the managed destination without creating it or following links."""
-    configured = os.environ.get("XDG_CONFIG_HOME", "")
-    root = Path(configured) if configured and Path(configured).is_absolute() else home / ".config"
-    path = root / "autostart" / AUTOSTART_NAME
+def _validate_autostart_entry(path: Path) -> None:
     validate_filesystem_path(str(path))
-    for parent in (path.parent, *path.parent.parents):
-        if parent.is_symlink() or (parent.exists() and not parent.is_dir()):
-            raise ValueError("Unsafe T3 desktop autostart directory")
     if path.exists() or path.is_symlink():
         info = path.lstat()
         if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
                 or info.st_size > 16384 or info.st_mode & 0o022):
             raise ValueError("T3 desktop autostart must be an owned regular file without group/other write access")
         if not path.read_text().startswith(_MARKER + "\n"):
-            raise ValueError("Refusing unmanaged T3 desktop autostart file; inspect KDE's Autostart settings")
+            raise ValueError(f"Refusing unmanaged T3 desktop autostart file ({path.name}); "
+                             "inspect KDE's Autostart settings")
+
+
+def autostart_path(home: Path) -> Path:
+    """Inspect both managed destinations without creating them or following links."""
+    configured = os.environ.get("XDG_CONFIG_HOME", "")
+    root = Path(configured) if configured and Path(configured).is_absolute() else home / ".config"
+    path = root / "autostart" / AUTOSTART_NAME
+    for parent in (path.parent, *path.parent.parents):
+        if parent.is_symlink() or (parent.exists() and not parent.is_dir()):
+            raise ValueError("Unsafe T3 desktop autostart directory")
+    _validate_autostart_entry(path)
+    _validate_autostart_entry(path.with_name(LEGACY_AUTOSTART_NAME))
     return path
 
 
 def enable_autostart(home: Path) -> None:
     """Enable the desktop at the next KDE login without launching another app."""
-    _write_managed(autostart_path(home), AUTOSTART_ENTRY)
+    path = autostart_path(home)
+    legacy = path.with_name(LEGACY_AUTOSTART_NAME)
+    if not path.exists() and legacy.exists():
+        legacy.rename(path)
+    _write_managed(path, AUTOSTART_ENTRY)
+    legacy.unlink(missing_ok=True)
 
 
 def disable_autostart(home: Path) -> None:
-    """Remove only our entry after a successful switch to managed web mode."""
-    autostart_path(home).unlink(missing_ok=True)
+    """Remove managed desktop startup after a successful switch to web mode."""
+    path = autostart_path(home)
+    path.with_name(LEGACY_AUTOSTART_NAME).unlink(missing_ok=True)
+    path.unlink(missing_ok=True)
 
 
 def collect_autostart_health(home: Path) -> tuple[str, str]:
     """Observe configuration only; never launch Electron or expose file contents."""
     try:
         path = autostart_path(home)
+        if path.with_name(LEGACY_AUTOSTART_NAME).exists():
+            return "deferred", ("Legacy T3 desktop autostart may launch a duplicate when KDE restores the session; "
+                                "rerun desktop setup or refresh to migrate it.")
         if not path.exists():
             return "failed", "T3 desktop login startup missing; rerun setup with --t3code-desktop."
         content = path.read_text()

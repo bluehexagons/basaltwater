@@ -25,6 +25,7 @@ from lib.validation import validate_filesystem_path, validate_positive_integer
 
 
 APP_EXECUTABLE = "/opt/t3code-bin/t3code"
+APP_LAUNCHER = "/usr/bin/t3code"
 PROC = Path("/proc")
 MAX_PROCESS_DATA = 4 * 1024 * 1024
 
@@ -121,7 +122,9 @@ def _exec_desktop(arguments: list[str], environment: dict[str, str], finish: Cal
     print("Starting T3 desktop; verify the app and provider after launch.", flush=True)
     if finish is not None:
         finish()
-    os.execve(APP_EXECUTABLE, [APP_EXECUTABLE, *arguments], environment)
+    # The package launcher supplies AppImage runtime environment (including
+    # APPDIR for the embedded server's terminal/agent environment cleanup).
+    os.execve(APP_LAUNCHER, [APP_LAUNCHER, *arguments], environment)
 
 
 def _desktop_children(path: Path) -> list[int]:
@@ -215,13 +218,14 @@ def _running_desktop(queued_before_ns: int) -> RunningDesktop | None:
 
 
 def _validate_executable() -> None:
-    validate_filesystem_path(APP_EXECUTABLE, must_exist=True)
-    result = subprocess.run(
-        ["/usr/bin/pacman", "-Qqo", "--", APP_EXECUTABLE],
-        check=True, capture_output=True, text=True, timeout=15,
-    )
-    if result.stdout.strip() != "t3code-bin" or not os.access(APP_EXECUTABLE, os.X_OK):
-        raise RuntimeError("T3 desktop executable must belong to t3code-bin")
+    for executable in (APP_LAUNCHER, APP_EXECUTABLE):
+        validate_filesystem_path(executable, must_exist=True)
+        result = subprocess.run(
+            ["/usr/bin/pacman", "-Qqo", "--", executable],
+            check=True, capture_output=True, text=True, timeout=15,
+        )
+        if result.stdout.strip() != "t3code-bin" or not os.access(executable, os.X_OK):
+            raise RuntimeError("T3 desktop launcher and executable must belong to t3code-bin")
 
 
 def _launch_environment(previous: dict[str, str] | None = None) -> dict[str, str]:

@@ -60,8 +60,9 @@ mode does not require the separate Node/npm runtime used by the web service.
 
 Desktop setup enables T3 Code at KDE login using a managed
 [freedesktop autostart entry](https://specifications.freedesktop.org/autostart/latest/)
-at `~/.config/autostart/basaltwater-cachyos-t3.desktop` (or under an absolute
-`$XDG_CONFIG_HOME`). It launches the native `/usr/bin/t3code` only after login
+at `~/.config/autostart/t3code.desktop` (or under an absolute
+`$XDG_CONFIG_HOME`). The filename matches the package's application desktop ID
+so Plasma's session restore skips its own launch. It runs `/usr/bin/t3code` at login
 and skips startup if that executable has been uninstalled. After all setup steps,
 saved state and notifications finish, an independent worker gracefully reloads a
 running app or starts a stopped app using KDE's user-manager environment. Without
