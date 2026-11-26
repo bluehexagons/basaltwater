@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 import hashlib
 import http.client
 import json
@@ -10,12 +11,14 @@ import re
 import ssl
 import stat
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
 from lib.atomic_io import read_json_file, write_json_atomic
+from lib.streamed_process import run_streamed
 from lib.validation import validate_filesystem_path, validate_network_ip
 from lib.validators import validate_host
 
@@ -87,11 +90,20 @@ def artifact_hashes(root: str) -> dict[str, object]:
 
 def write_receipt(
     root: str, project: str | None, *, output: str | None, published_at: str, built: bool,
-) -> None:
+    source_before_build: dict[str, object] | None = None,
+) -> dict[str, object]:
     """Stage the receipt with its snapshot so both activate or roll back together."""
+    source = source_state(project) if project is not None else {"commit": None, "dirty": None}
+    if source_before_build is not None:
+        if source_before_build["commit"] != source["commit"]:
+            source = {"commit": None, "dirty": None}
+        elif source_before_build["dirty"] is True:
+            source = {**source, "dirty": True}
+        elif source_before_build["dirty"] is None and source["dirty"] is False:
+            source = {**source, "dirty": None}
     receipt = {
         "version": 1,
-        "source": source_state(project) if project is not None else {"commit": None, "dirty": None},
+        "source": source,
         "output": output,
         "published_at": published_at, "build_performed": built,
         "artifacts": artifact_hashes(root),
@@ -99,6 +111,7 @@ def write_receipt(
     if len((json.dumps(receipt, indent=2, sort_keys=True, allow_nan=False) + "\n").encode("utf-8")) > MAX_RECEIPT_BYTES:
         raise ReceiptLimitError("Publication receipt exceeds its size limit")
     write_json_atomic(os.path.join(root, RECEIPT_FILE), receipt, mode=0o600, sort_keys=True)
+    return receipt
 
 
 def read_receipt(root: str) -> dict[str, object]:
@@ -164,6 +177,53 @@ def _served_hash(url: str, size: int, deadline: float) -> dict[str, object]:
     return {"sha256": digest.hexdigest(), "size": received}
 
 
+def _served_hashes(url: str, artifacts: list[tuple[str, int]], deadline: float) -> Iterator[dict[str, object]]:
+    for path, size in artifacts:
+        try:
+            yield _served_hash(url.rstrip("/") + "/" + urllib.parse.quote(path, safe="/"), size, deadline)
+        except (OSError, ValueError, http.client.HTTPException) as exc:
+            yield {"error": str(exc)}
+            return
+
+
+def _verify_served(url: str, expected: dict[str, dict], timeout: int) -> tuple[int, list[dict]]:
+    artifacts = list(expected.items())
+    served, issues = 0, []
+    error = "HTTPS verification worker exited before reporting every artifact"
+
+    def collect(line: str) -> None:
+        nonlocal served, error
+        actual = json.loads(line)
+        if "error" in actual:
+            error = actual["error"]
+            return
+        path, record = artifacts[served]
+        if actual != record:
+            issues.append({"issue": "artifact_mismatch", "component": "served", "path": path,
+                           "remediation": "Check the route and publish the intended snapshot again."})
+        served += 1
+
+    # Socket timeouts bound inactivity. The supervisor also bounds DNS, TLS,
+    # headers and body reads that can stay active past the verification deadline.
+    request = {"url": url, "artifacts": [(path, record["size"]) for path, record in artifacts],
+               "deadline": time.monotonic() + timeout}
+    source_root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+    try:
+        run_streamed(
+            [sys.executable, "-P", "-m", "lib.static_publication"], timeout=timeout,
+            input_data=json.dumps(request).encode(), on_output=collect, discard_stderr=True,
+            env={**os.environ, "PYTHONPATH": source_root},
+        )
+    except TimeoutError:
+        error = "Publication verification deadline reached"
+    except (OSError, ValueError) as exc:
+        error = str(exc)
+    if served < len(artifacts):
+        issues.append({"issue": "served_artifact_unavailable", "component": "served", "path": artifacts[served][0],
+                       "error": error, "remediation": "Check HTTPS, routing and VM CA trust; preserve TLS verification."})
+    return served, issues
+
+
 def verify_receipt(root: str, *, url: str | None, local_output: str | None = None,
                    project: str | None = None, timeout: int = 60,
                    generated_gzip: tuple[str, ...] = (),
@@ -214,28 +274,21 @@ def verify_receipt(root: str, *, url: str | None, local_output: str | None = Non
             warnings.append("dirty_source_provenance_unverified")
         else:
             source_matches = True
-    deadline = time.monotonic() + timeout
     served = 0
     # Nginx rejects dot-prefixed path segments. Their hashes still belong to the
     # complete publication and local build inventories above.
     hidden = {path for path in expected if any(part.startswith(".") for part in path.split("/"))}
     if url:
-        for path, record in expected.items():
-            if path in hidden:
-                continue
-            try:
-                actual = _served_hash(url.rstrip("/") + "/" + urllib.parse.quote(path, safe="/"), record["size"], deadline)
-                if actual != record:
-                    issues.append({"issue": "artifact_mismatch", "component": "served", "path": path,
-                                   "remediation": "Check the route and publish the intended snapshot again."})
-                served += 1
-            except (OSError, ValueError, urllib.error.URLError, http.client.HTTPException) as exc:
-                issues.append({"issue": "served_artifact_unavailable", "component": "served", "path": path,
-                               "error": str(exc), "remediation": "Check HTTPS, routing and VM CA trust; preserve TLS verification."})
-                break
+        served, served_issues = _verify_served(url, {path: record for path, record in expected.items() if path not in hidden}, timeout)
+        issues.extend(served_issues)
     return {"ok": not issues, "issue": issues[0]["issue"] if issues else None,
             "remediation": issues[0]["remediation"] if issues else None,
             "issues": issues, "warnings": warnings, "source": receipt["source"],
             "source_matches": source_matches, "build_performed": receipt.get("build_performed"),
             "artifacts": len(expected), "hidden_artifacts": len(hidden), "served_artifacts_checked": served,
             "network_origin": "vm" if url else None, "rendering_verified": False}
+
+
+if __name__ == "__main__":
+    for result in _served_hashes(**json.load(sys.stdin)):
+        print(json.dumps(result), flush=True)

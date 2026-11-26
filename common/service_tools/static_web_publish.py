@@ -33,6 +33,7 @@ from lib.static_publication import (
     RESERVED_FILES,
     ReceiptLimitError,
     read_receipt,
+    source_state,
     verify_receipt,
     write_receipt,
 )
@@ -437,6 +438,7 @@ def publish(args: argparse.Namespace) -> dict[str, object]:
     destination_dir = os.path.join(user_root, site)
     started_at = time.monotonic()
     verification = None
+    catalog_error = None
 
     with _site_lock(user_root, site):
         replaced = os.path.lexists(destination_dir)
@@ -445,6 +447,7 @@ def publish(args: argparse.Namespace) -> dict[str, object]:
                 raise RuntimeError(f"Refusing unsafe site destination: {destination_dir}")
             if site_profile(destination_dir) != args.profile:
                 raise ValueError(f"Site {site} already exists with a different profile")
+        source_before_build = None if args.no_build else source_state(project_dir)
         if not godot and not args.no_build:
             _run_project_build(
                 project_dir, package, install=not args.no_install, json_output=args.json,
@@ -487,13 +490,18 @@ def publish(args: argparse.Namespace) -> dict[str, object]:
                                 debug=None if args.no_build else args.debug, replaced=replaced)
                 _write_godot_profile(staging_dir)
             write_json_atomic(os.path.join(staging_dir, METADATA_FILE), metadata, mode=0o644)
-            write_receipt(
+            receipt = write_receipt(
                 staging_dir, project_dir, output=output, published_at=published_at,
-                built=not args.no_build,
+                built=not args.no_build, source_before_build=source_before_build,
             )
             _make_tree_readable(staging_dir)
             _replace_site(staging_dir, destination_dir)
-            write_user_catalog(user_root, account.pw_name)
+            try:
+                write_user_catalog(user_root, account.pw_name)
+            except (OSError, RuntimeError, ValueError) as exc:
+                if not verify:
+                    raise
+                catalog_error = str(exc)
             if verify:
                 if not url:
                     verification = {
@@ -512,6 +520,8 @@ def publish(args: argparse.Namespace) -> dict[str, object]:
                             "ok": False, "issue": "verification_failed", "error": str(exc),
                             "remediation": "Inspect the publication and run site verify.",
                         }
+                verification.setdefault("source", receipt["source"])
+                verification.setdefault("build_performed", receipt["build_performed"])
         finally:
             shutil.rmtree(staging_dir, ignore_errors=True)
     result = {
@@ -524,7 +534,9 @@ def publish(args: argparse.Namespace) -> dict[str, object]:
         **godot_result,
     }
     if verification is not None:
-        result.update(published=True, ok=verification["ok"], verification=verification)
+        result.update(published=True, ok=verification["ok"] and catalog_error is None, verification=verification)
+    if catalog_error is not None:
+        result["catalog_error"] = catalog_error
     return result
 
 
@@ -533,6 +545,8 @@ def print_publish_result(result: dict[str, object], *, as_json: bool) -> None:
         print(json.dumps(result, sort_keys=True))
         return
     print(f"Published {result['site']} to {result['url']}")
+    if "catalog_error" in result:
+        print(f"Catalog update failed ({result['catalog_error']})")
     verification = result.get("verification")
     if verification is None:
         return

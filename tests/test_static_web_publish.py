@@ -17,6 +17,7 @@ from unittest.mock import Mock, patch
 from common.service_tools import static_web_publish
 from common.service_tools import basaltwater_web
 from lib import static_publication
+from lib.remote_utils import CommandTimeoutError
 
 
 def _args(project: str, **overrides: object) -> argparse.Namespace:
@@ -45,11 +46,20 @@ class TestStaticWebPublish(unittest.TestCase):
         source = patch("lib.static_publication.source_state", return_value={"commit": "a" * 40, "dirty": False})
         source.start()
         self.addCleanup(source.stop)
+        self.https_worker = self.enterContext(patch.object(
+            static_publication, "run_streamed", side_effect=self._run_https_worker,
+        ))
         self.environment = {"PATH": "/selected/node/bin:/usr/bin", "PROJECT_SETTING": "retained"}
         self.select_node = self.enterContext(patch.object(
             static_web_publish, "select_node",
             return_value=Mock(environment=Mock(return_value=self.environment)),
         ))
+
+    @staticmethod
+    def _run_https_worker(_command, *, input_data, on_output, **_kwargs):
+        for result in static_publication._served_hashes(**json.loads(input_data)):
+            on_output(json.dumps(result) + "\n")
+        return 0
 
     def test_successful_godot_command_with_incomplete_output_keeps_previous_site(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -177,12 +187,59 @@ class TestStaticWebPublish(unittest.TestCase):
                 (output / "index.html").write_text("replacement")
                 with contextlib.redirect_stdout(stream := io.StringIO()):
                     self.assertEqual(basaltwater_web.main(command), 1)
-            failed = json.loads(stream.getvalue())
+                failed = json.loads(stream.getvalue())
+                with (patch.object(static_web_publish, "_base_url", return_value=None),
+                      contextlib.redirect_stdout(stream := io.StringIO())):
+                    self.assertEqual(basaltwater_web.main(command), 1)
+                no_url = json.loads(stream.getvalue())
+                served.side_effect = served_hash
+                with (patch.object(static_web_publish, "write_user_catalog", side_effect=OSError("catalog unavailable")),
+                      contextlib.redirect_stdout(stream := io.StringIO())):
+                    self.assertEqual(basaltwater_web.main(command), 1)
+                catalog = json.loads(stream.getvalue())
             self.assertTrue(failed["published"])
             self.assertTrue(failed["replaced"])
             self.assertFalse(failed["ok"])
             self.assertEqual(failed["verification"]["issue"], "served_artifact_unavailable")
             self.assertEqual((destination / "index.html").read_text(), "replacement")
+            self.assertTrue(no_url["published"])
+            self.assertEqual(no_url["verification"]["issue"], "publication_url_unavailable")
+            self.assertEqual(no_url["verification"]["source"]["commit"], "a" * 40)
+            self.assertTrue(catalog["published"])
+            self.assertTrue(catalog["verification"]["ok"])
+            self.assertEqual(catalog["catalog_error"], "catalog unavailable")
+
+    def test_build_that_spans_a_revision_change_leaves_source_unverified(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / "project"
+            output = project / "dist"
+            output.mkdir(parents=True)
+            sites = root / "sites"
+            (sites / "agent").mkdir(parents=True)
+            account = SimpleNamespace(pw_name="agent", pw_uid=os.getuid())
+            with (
+                patch.object(static_web_publish, "SITES_ROOT", str(sites)),
+                patch.object(static_web_publish, "_current_account", return_value=account),
+                patch.object(static_web_publish, "_base_url", return_value=None),
+                patch.object(static_web_publish, "source_state", return_value={"commit": "a" * 40, "dirty": False}) as before,
+                patch.object(static_publication, "source_state") as after,
+            ):
+                def build(*_args, **_kwargs):
+                    before.assert_called_once_with(str(project))
+                    (output / "index.html").write_text("built during revision change")
+                    after.return_value = {"commit": "b" * 40, "dirty": False}
+
+                with patch.object(static_web_publish, "_run_project_build", side_effect=build):
+                    self.assertTrue(static_web_publish.publish(_args(str(project), no_build=False))["ok"])
+                result = static_web_publish.verify_site(argparse.Namespace(
+                    name="demo", project=str(project), output=None, local_only=True, timeout=60,
+                ))
+            self.assertTrue(result["ok"])
+            self.assertTrue(result["build_performed"])
+            self.assertIsNone(result["source"]["commit"])
+            self.assertIsNone(result["source_matches"])
+            self.assertIn("source_revision_unavailable", result["warnings"])
 
     def test_migration_retries_rename_and_keeps_existing_sites(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -556,6 +613,25 @@ class TestStaticWebPublish(unittest.TestCase):
                     result = static_publication.verify_receipt(str(publication), url="https://vm.test/site/")
                 self.assertEqual(result["issue"], "served_artifact_unavailable")
                 self.assertFalse(result["ok"])
+
+    def test_verification_deadline_keeps_completed_https_results(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            for name in ("index.html", "slow.js"):
+                (Path(directory) / name).write_text("site")
+            static_publication.write_receipt(directory, None, output=None, published_at="now", built=False)
+            record = static_publication.read_receipt(directory)["artifacts"]["index.html"]
+
+            def expire(_command, *, on_output, **_kwargs):
+                on_output(json.dumps(record) + "\n")
+                raise CommandTimeoutError("fixture", 1)
+
+            self.https_worker.side_effect = expire
+            result = static_publication.verify_receipt(directory, url="https://vm.test/site/", timeout=1)
+            self.assertEqual(self.https_worker.call_args.kwargs["timeout"], 1)
+            self.assertEqual(result["served_artifacts_checked"], 1)
+            self.assertEqual(result["issue"], "served_artifact_unavailable")
+            self.assertEqual(result["issues"][0]["path"], "slow.js")
+            self.assertEqual(result["issues"][0]["error"], "Publication verification deadline reached")
 
     def test_site_verify_prefers_recorded_build_output_with_explicit_override(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

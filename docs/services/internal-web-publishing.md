@@ -108,7 +108,9 @@ includes the recorded source commit and served artifact count. Use
 `--verify-timeout SECONDS` (1–300, default 60) to bound the HTTPS phase. The site
 remains published if verification fails. The result then records
 `published: true` and `ok: false`, and the command exits with status 1. After
-diagnosis, use `site verify` to retry the check.
+diagnosis, use `site verify` to retry the check. A catalog update failure after
+activation appears in `catalog_error` alongside the verification result and
+also returns status 1.
 
 Initialization, static builds, and automatic previews select npm, pnpm, or Yarn
 from the project's exact-version `packageManager` declaration and lockfiles.
@@ -159,7 +161,9 @@ result as `hidden_artifacts`. `--project PATH` also compares the Git revision
 and, when recorded, the build output directory inside that checkout. Use
 `--output DIR` with `--project` to select a different local output directory.
 Use `--local-only` to omit HTTP coverage, or `--timeout SECONDS` (1–300, default 60)
-to bound the HTTPS phase. Verification never builds or republishes.
+to bound the entire HTTPS phase. On timeout, the result keeps the count of
+completed checks and identifies the first unfinished artifact. Verification
+never builds or republishes.
 
 The mode-`0600` `.basaltwater-receipt.json` records the observed source commit,
 dirty state, output directory, publication time, build mode, and SHA-256/size
@@ -170,7 +174,9 @@ limit fails before activation. Older publications can return `receipt_missing`.
 An authorized publication within the limits generates their receipt.
 
 Dirty or unavailable Git metadata leaves `source_matches` unverified (`null`)
-with a warning. A different source commit or artifact inventory returns a
+with a warning. Builds sample Git before and after the build. If the sampled
+commit changes, the receipt records the source as unknown. A different source
+commit or artifact inventory during verification returns a
 nonzero exit code and structured issue/remediation. `--no-build` records existing
 output without proving it came from the observed source. Matching served bytes
 do not prove JavaScript rendering, client-side routing, or browser cache freshness.
