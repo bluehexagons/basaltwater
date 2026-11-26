@@ -79,6 +79,7 @@ basaltw proxmox probe-cluster 10.0.0.10 \
   --key ~/.ssh/proxmox_ed25519 --tag prod
 basaltw proxmox hosts
 basaltw proxmox audit pve1 pve2 pve3
+basaltw proxmox rolling-update pve1 pve2 pve3 --dry-run
 basaltw proxmox rolling-update pve1 pve2 pve3
 basaltw proxmox notifications install-webhook \
   pve1 https://notify.example/hook --send-test
@@ -96,7 +97,14 @@ local Ceph configuration, and RBD/CephFS storage require operator-managed
 maintenance and are rejected by this command. It does not automate evacuation,
 HA maintenance mode or Ceph flags. These configuration locations follow the
 [Proxmox administration guide](https://pve.proxmox.com/pve-docs/pve-admin-guide.pdf).
-Repository/major-upgrade suitability and backup recovery remain operator checks.
+
+Use `rolling-update` for point updates within Proxmox VE 9 and Debian 13.
+The dry run reports the installed `pve-manager` version and each node's cached
+APT candidate, even when maintenance checks block the update. The cache can be
+stale or missing. The actual update refreshes APT and validates repository
+selection and the candidate before installing packages. Verify backup recovery
+and follow [Proxmox's major-upgrade procedure](https://pve.proxmox.com/wiki/Upgrade_from_8_to_9)
+for a transition from Proxmox VE 8 and Debian 12.
 
 SSH policy/reboot commands have 30-second limits; reachability probes use at
 most 15 seconds and the remaining reboot budget. The first failure stops later

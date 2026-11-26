@@ -15,6 +15,9 @@ from lib.validation import validate_filesystem_path
 
 SUPPORTED_PVE_MAJOR = 9
 SUPPORTED_DEBIAN_CODENAME = "trixie"
+PROXMOX_PACKAGE_POLICY_COMMAND = (
+    "LC_ALL=C apt-cache -o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache= policy pve-manager"
+)
 
 
 def is_proxmox_host() -> bool:
@@ -97,25 +100,32 @@ def _read_config(path: str, *, required: bool = False) -> str:
     return "\n".join(line for line in content.splitlines() if not line.lstrip().startswith("#"))
 
 
+def parse_proxmox_package_policy(output: str) -> tuple[str | None, str | None]:
+    """Return the installed and candidate package versions from APT policy."""
+    versions = dict(re.findall(
+        r"^[ \t]*(Installed|Candidate):[ \t]+([0-9][0-9A-Za-z.+:~\-]*)[ \t]*$",
+        output,
+        re.MULTILINE,
+    ))
+    return versions.get("Installed"), versions.get("Candidate")
+
+
 def check_proxmox_upgrade_candidate(*, require_current: bool = False) -> None:
     """Validate the stable major and optionally require an up-to-date manager."""
-    result = run("LC_ALL=C apt-cache policy pve-manager", check=False, capture_output=True, timeout=60)
-    match = re.search(r"^\s*Candidate:\s*(\S+)\s*$", result.stdout or "", re.MULTILINE)
-    candidate = match.group(1).split(":")[-1] if match else ""
+    result = run(PROXMOX_PACKAGE_POLICY_COMMAND, check=False, capture_output=True, timeout=60)
+    installed, candidate = parse_proxmox_package_policy(result.stdout or "")
     if result.returncode != 0 or not re.match(
-        rf"^{SUPPORTED_PVE_MAJOR}\.[0-9]+(?:[.-]|$)", candidate,
+        rf"^{SUPPORTED_PVE_MAJOR}\.[0-9]+(?:[.-]|$)", (candidate or "").rsplit(":", 1)[-1],
     ):
         raise RuntimeError(
             f"APT pve-manager candidate is not supported Proxmox VE {SUPPORTED_PVE_MAJOR}.x; "
             "review repository selection and perform major release transitions manually"
         )
-    if require_current:
-        installed = re.search(r"^\s*Installed:\s*(\S+)\s*$", result.stdout or "", re.MULTILINE)
-        if installed is None or installed.group(1) != match.group(1):
-            raise RuntimeError(
-                "Proxmox pve-manager did not reach its APT candidate; "
-                "review package holds and dependency constraints"
-            )
+    if require_current and installed != candidate:
+        raise RuntimeError(
+            "Proxmox pve-manager did not reach its APT candidate; "
+            "review package holds and dependency constraints"
+        )
 
 
 def check_proxmox_package_state() -> None:

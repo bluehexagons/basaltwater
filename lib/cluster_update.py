@@ -18,6 +18,7 @@ from lib.remote_utils import CommandTimeoutError, run
 from lib.config import SetupConfig
 from lib.proxmox_hosts import ProxmoxHost
 from lib.proxmox_maintenance import ProxmoxMaintenanceReport, collect_maintenance_report
+from lib.proxmox_preflight import PROXMOX_PACKAGE_POLICY_COMMAND, parse_proxmox_package_policy
 from lib.setup_common import prepare_validated_runtime_config
 from lib.ssh_utils import build_ssh_command, ssh_batch_mode, ssh_process_timeout
 from lib.workspace import get_workspace_dir, set_workspace_dir
@@ -100,6 +101,21 @@ def _maintenance_report(target: str, config: SetupConfig) -> ProxmoxMaintenanceR
 
 def _maintenance_errors(report: ProxmoxMaintenanceReport) -> str:
     return "; ".join(report.errors) or "unknown maintenance preflight failure"
+
+
+def _print_package_preview(target: str, config: SetupConfig) -> None:
+    installed = candidate = None
+    try:
+        result = _ssh_result(config, PROXMOX_PACKAGE_POLICY_COMMAND)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    else:
+        if result.returncode == 0:
+            installed, candidate = parse_proxmox_package_policy(result.stdout or "")
+    print(
+        f"  {target} [{config.host}] pve-manager (cached APT) — "
+        f"installed {installed or 'unavailable'}, candidate {candidate or 'unavailable'}"
+    )
 
 
 _POLICY_PROBE = """import json, os, re, stat
@@ -217,6 +233,8 @@ def run_cluster_update(
             config.dry_run = dry_run
             fingerprint = hashlib.sha256(json.dumps(config.to_dict(), sort_keys=True).encode()).hexdigest()
             prepare_validated_runtime_config(config, workspace)
+            if dry_run:
+                _print_package_preview(target, config)
             _preflight(target, config, evacuated=not resume)
             prepared.append((target, config, fingerprint))
         except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as exc:

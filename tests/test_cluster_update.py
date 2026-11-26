@@ -58,6 +58,44 @@ class TestClusterUpdate(unittest.TestCase):
         policy.start()
         self.addCleanup(policy.stop)
 
+    def test_dry_run_reports_cached_package_versions_without_checkpointing(self) -> None:
+        configs = {"pve1": _config("192.0.2.10"), "pve2": _config("192.0.2.11")}
+        with patch("lib.cluster_update.load_setup_command", side_effect=configs.get), \
+             patch("lib.cluster_update.prepare_validated_runtime_config"), \
+             patch("lib.cluster_update._maintenance_report", return_value=_maintenance_report()), \
+             patch("lib.cluster_update._ssh_result", side_effect=[
+                 subprocess.CompletedProcess([], 0, "pve-manager:\n  Installed: 9.2.33\n  Candidate: 9.3.1\n"),
+                 subprocess.CompletedProcess([], 0, "pve-manager:\n  Installed: 9.3.1\n  Candidate: (none)\n"),
+             ]) as ssh, \
+             patch("basaltwater._execute_patch_config", return_value=0) as execute:
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(run_cluster_update(list(configs), dry_run=True), 0)
+        self.assertIn("installed 9.2.33, candidate 9.3.1", output.getvalue())
+        self.assertIn("installed 9.3.1, candidate unavailable", output.getvalue())
+        self.assertEqual(len(ssh.call_args_list), 2)
+        for call, config in zip(ssh.call_args_list, configs.values()):
+            self.assertEqual(call.args[0], config)
+            self.assertIn("apt-cache", call.args[1])
+            self.assertTrue(call.args[1].endswith("policy pve-manager"))
+        self.assertTrue(all(call.args[0].dry_run for call in execute.call_args_list))
+        self.assertEqual(execute.call_count, 2)
+        self.assertFalse(os.path.exists(os.path.join(self.workspace, "cluster-update.json")))
+
+    def test_dry_run_still_reports_maintenance_blockers_if_package_probe_fails(self) -> None:
+        with patch("lib.cluster_update.load_setup_command", return_value=_config("192.0.2.10")), \
+             patch("lib.cluster_update.prepare_validated_runtime_config"), \
+             patch("lib.cluster_update._maintenance_report",
+                   return_value=_maintenance_report(errors=["Cluster is not quorate"])), \
+             patch("lib.cluster_update._ssh_result", side_effect=TimeoutError), \
+             patch("basaltwater._execute_patch_config") as execute:
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(run_cluster_update(["pve1"], dry_run=True), 1)
+        self.assertIn("installed unavailable, candidate unavailable", output.getvalue())
+        self.assertIn("Cluster is not quorate", output.getvalue())
+        execute.assert_not_called()
+
     @patch("lib.cluster_update._maintenance_report", return_value=_maintenance_report())
     @patch("lib.cluster_update.prepare_validated_runtime_config")
     @patch("lib.cluster_update.load_setup_command")

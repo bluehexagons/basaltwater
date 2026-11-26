@@ -282,8 +282,9 @@ locked guests. After inspecting saved checkpoints, `--resume` continues the
 same ordered targets with unchanged setup, skips completed nodes, retries known
 failed patches, and refuses uncertain in-progress outcomes. See [Proxmox
 operations](../operations/proxmox.md) for manual recovery. Mutating subcommands
-accept `--dry-run` where supported; a rolling update dry run still performs the
-read-only preflight audits.
+accept `--dry-run` where supported. A rolling update dry run reports the
+installed `pve-manager` version and the cached APT candidate without refreshing
+package lists, then performs the read-only preflight audits.
 
 ### Interactive Shell
 
