@@ -14,6 +14,10 @@ interfaces. Bridge discovery identifies Linux bridge interfaces by type, so
 explicitly named Proxmox SDN bridges are supported alongside conventional
 `vmbr*` bridges.
 
+Automated VM and LXC creation requires an `amd64` Proxmox node. On `arm64`,
+create the guest in Proxmox and run Basaltwater setup against the guest's
+address.
+
 ## Choose a topic
 
 <a id="quick-setup-proxmox-host-to-coding-vm"></a>

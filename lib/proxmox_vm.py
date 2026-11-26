@@ -63,6 +63,7 @@ from lib.proxmox_guest import (
     enroll_provisioned_guest_host_keys,
     guest_provisioning_locks,
     remote_proxmox_locks,
+    require_amd64_guest_host,
 )
 from lib.proxmox_memory import (
     DEFAULT_BALLOON_TARGET_PERCENT,
@@ -2543,6 +2544,8 @@ def _provision_vm_locked(
         raise VMAlreadyExists(
             f"VM with IP {target_ip} already exists on {node_ip}", vmid=existing_vmid,
         )
+
+    require_amd64_guest_host(node_ip, user, ssh_opts, ssh_run=_ssh_run)
 
     root_pool = resolved_root_pool or _resolve_storage_pool(
         root_pool_arg, node_ip, user, ssh_opts, "images"

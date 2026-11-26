@@ -16,7 +16,13 @@ from lib.config import SetupConfig
 from lib.proxmox_guest import ProvisionError
 from lib.proxmox_lifecycle import LIFECYCLE_FIELD_FLAGS, reconcile_guest_lifecycle
 from lib.proxmox_node import ContainerAlreadyExists, _create_container, _provision_container_locked
-from lib.proxmox_vm import _ResolvedImage, _create_vm, _provision_vm_locked, _reconcile_existing_vm
+from lib.proxmox_vm import (
+    VMAlreadyExists,
+    _ResolvedImage,
+    _create_vm,
+    _provision_vm_locked,
+    _reconcile_existing_vm,
+)
 from lib.validation import validate_guest_lifecycle_settings, validate_hosted_flags
 
 
@@ -242,7 +248,7 @@ class TestLifecycleProvisioning(unittest.TestCase):
             "_resolve_template_name": "/tmp/template.tar.zst",
             "_resolve_public_key_path": "/tmp/test.pub",
             "_upload_pubkey_to_host": "/tmp/uploaded.pub", "_get_next_vmid": 101,
-            "_wait_for_container_ssh": None, "_ssh_run": _result(),
+            "_wait_for_container_ssh": None,
         }
         for name, value in defaults.items():
             self.enterContext(patch(f"lib.proxmox_node.{name}", return_value=value))
@@ -257,7 +263,12 @@ class TestLifecycleProvisioning(unittest.TestCase):
             "lib.proxmox_node.reconcile_guest_lifecycle",
             side_effect=lambda *a, **kw: events.append("policy"),
         ))
-        with patch("lib.proxmox_node._create_container") as create:
+
+        def run_ssh(node: str, user: str, opts: list[str], command: str, **kw: object) -> CompletedProcess[str]:
+            return _result("amd64\n") if command == "dpkg --print-architecture" else _result()
+
+        with patch("lib.proxmox_node._create_container") as create, \
+             patch("lib.proxmox_node._ssh_run", side_effect=run_ssh):
             _provision_container_locked(_config(
                 machine_type="unprivileged", guest_autostart=False,
                 guest_start_delay=0, guest_protection=True,
@@ -265,6 +276,19 @@ class TestLifecycleProvisioning(unittest.TestCase):
         self.assertIs(create.call_args.kwargs["autostart"], False)
         self.assertEqual(create.call_args.kwargs["startup"], "up=0")
         self.assertEqual(events, ["enroll pct 101", "policy"])
+
+    def test_new_lxc_rejects_arm64_before_staging_a_template(self) -> None:
+        config = _config(machine_type="unprivileged")
+        with patch("lib.proxmox_node.auto_detect_bridge", return_value="vmbr0"), \
+             patch("lib.proxmox_node.check_container_exists", return_value=False), \
+             patch("lib.proxmox_node._ssh_run", return_value=_result("arm64\n")) as run, \
+             patch("lib.proxmox_node._resolve_template_name") as template, \
+             patch("lib.proxmox_node._create_container") as create:
+            with self.assertRaisesRegex(ProvisionError, "requires an amd64.*reports arm64"):
+                _provision_container_locked(config)
+        self.assertEqual(run.call_args.args[3], "dpkg --print-architecture")
+        template.assert_not_called()
+        create.assert_not_called()
 
     def test_creating_vm_still_starts_it_when_future_autostart_is_disabled(self) -> None:
         with patch("lib.proxmox_vm._ssh_run", return_value=_result()) as run:
@@ -305,12 +329,14 @@ class TestLifecycleProvisioning(unittest.TestCase):
         with patch("lib.proxmox_node.auto_detect_bridge", return_value="vmbr0"), \
              patch("lib.proxmox_node.check_container_exists", return_value=True), \
              patch("lib.proxmox_node._ensure_container_running_locked", return_value=101) as verify, \
+             patch("lib.proxmox_node._ssh_run") as run, \
              patch("lib.proxmox_node.reconcile_guest_lifecycle") as reconcile:
             with self.assertRaises(ContainerAlreadyExists):
                 _provision_container_locked(config)
             verify.assert_called_once()
             self.assertEqual(reconcile.call_args.kwargs["vmid"], 101)
             self.assertEqual(reconcile.call_args.kwargs["tool"], "pct")
+            run.assert_not_called()
             verify.side_effect = ProvisionError("identity mismatch")
             reconcile.reset_mock()
             with self.assertRaisesRegex(ProvisionError, "identity mismatch"):
@@ -375,9 +401,34 @@ class TestProtectionBootstrap(unittest.TestCase):
 
     def run_ssh(self, node: str, user: str, opts: list[str], command: str, **kw: object) -> CompletedProcess[str]:
         self.events.append(command)
+        if command == "dpkg --print-architecture":
+            return _result("amd64\n")
         if command == "qm set 101 --protection 1":
             self.protected = True
         return _result(f"onboot: 1\nprotection: {int(self.protected)}\n")
+
+    def test_new_vm_requires_known_amd64_before_staging_an_image(self) -> None:
+        for response, expected in (
+            (_result("arm64\n"), "requires an amd64.*reports arm64"),
+            (_result(), "Could not determine the architecture"),
+            (_result("amd64\n", error="connection failed"), "Could not determine the architecture"),
+        ):
+            with self.subTest(response=response):
+                self.runner.side_effect = [response]
+                self.runner.reset_mock()
+                with patch("lib.proxmox_vm._resolve_storage_pool") as storage, \
+                     patch("lib.proxmox_vm._create_vm") as create:
+                    with self.assertRaisesRegex(ProvisionError, expected):
+                        _provision_vm_locked(self.config)
+                self.assertEqual(self.runner.call_args.args[3], "dpkg --print-architecture")
+                storage.assert_not_called()
+                create.assert_not_called()
+
+    def test_existing_vm_does_not_require_an_architecture_probe(self) -> None:
+        with patch("lib.proxmox_vm._reconcile_existing_vm", return_value=101):
+            with self.assertRaises(VMAlreadyExists):
+                _provision_vm_locked(self.config)
+        self.runner.assert_not_called()
 
     def test_protection_is_applied_and_verified_after_bootstrap(self) -> None:
         _provision_vm_locked(self.config)

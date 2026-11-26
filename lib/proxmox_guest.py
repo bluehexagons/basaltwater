@@ -245,6 +245,31 @@ def _ssh_run(
     return result
 
 
+def require_amd64_guest_host(
+    node_ip: str,
+    user: str,
+    ssh_opts: StrList,
+    *,
+    ssh_run: Callable[..., subprocess.CompletedProcess[str]],
+) -> None:
+    """Check the target's native package architecture before creating a guest."""
+    command = "dpkg --print-architecture"
+    failure = f"Could not determine the architecture of Proxmox host {node_ip} with {command}"
+    try:
+        result = ssh_run(node_ip, user, ssh_opts, command)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ProvisionError(failure) from exc
+    architecture = (result.stdout or "").strip()
+    if result.returncode or not re.fullmatch(r"[a-z0-9-]{1,32}", architecture):
+        raise ProvisionError(failure)
+    if architecture != "amd64":
+        raise ProvisionError(
+            f"Basaltwater guest provisioning requires an amd64 Proxmox host. "
+            f"{node_ip} reports {architecture}. Choose an amd64 node or create the "
+            "guest in Proxmox and run Basaltwater setup against its address."
+        )
+
+
 def _storage_pool_supports_content(
     pool: str,
     content_filter: str,
@@ -1282,6 +1307,7 @@ __all__ = [
     "ensure_guest_ipv4_route",
     "enroll_provisioned_guest_host_keys",
     "refresh_managed_guest_host_keys",
+    "require_amd64_guest_host",
     "_wait_for_guest_ssh",
     "auto_detect_bridge",
     "probe_proxmox_cluster",

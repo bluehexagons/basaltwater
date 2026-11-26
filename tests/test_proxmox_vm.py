@@ -793,6 +793,8 @@ class TestCloudInitBootstrap(unittest.TestCase):
 
     def _run(self, *args, **kwargs):
         command = args[3]
+        if command == "dpkg --print-architecture":
+            return subprocess.CompletedProcess([], 0, "amd64\n", "")
         self.events.append(command)
         failed = self.failed_command and self.failed_command in command
         return MagicMock(

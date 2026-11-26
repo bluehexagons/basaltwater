@@ -35,6 +35,7 @@ from lib.proxmox_guest import (
     enroll_provisioned_guest_host_keys,
     guest_provisioning_locks,
     remote_proxmox_locks,
+    require_amd64_guest_host,
 )
 from lib.types import NestedStrList, StrList
 from lib.proxmox_lifecycle import guest_startup, print_guest_lifecycle, reconcile_guest_lifecycle
@@ -688,6 +689,8 @@ def _provision_container_locked(config: SetupConfig) -> None:
     root_spec = _get_storage_spec(storage_specs, "root")
     if not root_spec:
         raise ProvisionError("Missing root storage specification")
+
+    require_amd64_guest_host(node_ip, user, ssh_opts, ssh_run=_ssh_run)
 
     template_spec = _get_storage_spec(storage_specs, "template")
 
