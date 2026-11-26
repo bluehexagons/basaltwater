@@ -166,26 +166,38 @@ class TestDevelopmentWorkflows(unittest.TestCase):
         self.probe.assert_not_called()
         self.assertFalse((self.home / ".local").exists())
 
-    def test_development_check_forwards_the_review_manifest(self):
+    def test_development_check_forwards_review_and_evidence_options(self):
         parser = argparse.ArgumentParser()
         development.add_development_parser(parser.add_subparsers(dest="command"))
-        args = parser.parse_args(["develop", "check", "smoke", "--project", str(self.project),
-                                  "--review-manifest", "captures/review file.json", "--dry-run"])
-        args.native = True
-        with redirect_stdout(output := StringIO()):
-            self.assertEqual(development.run_development_command(args), 0)
-        command = json.loads(output.getvalue())["argv"]
-        self.assertEqual(command[-1], "--review-manifest=captures/review file.json")
+        base = ["develop", "check", "smoke", "--project", str(self.project),
+                "--review-manifest", "captures/review file.json", "--dry-run"]
         generation = "a" * 32
         status = {"state": "running", "generation": generation, "control_revision": "b" * 32,
                   "capabilities": ["supervised-development"]}
         with (
             patch.object(debian_development.session_runtime, "status", return_value=status),
             patch.object(debian_development.session_runtime, "request",
-                         side_effect=lambda payload: debian_development.handle_task(payload, generation)),
+                         side_effect=lambda payload: debian_development.handle_task(payload, generation)) as request,
             patch.object(development, "_environment", return_value=({"DISPLAY": ":12"}, "available")),
         ):
-            self.assertEqual(debian_development.request_task(args)["argv"], command)
+            for flags, expected, wire in (
+                ([], [], {}),
+                (["--verify-evidence"], ["--verify-evidence"], {"verify_evidence": True}),
+                (["--require-artifact-kind", "native", "--require-artifact-kind", "shader-bundle"],
+                 ["--require-artifact-kind=native", "--require-artifact-kind=shader-bundle"],
+                 {"require_artifact_kind": ["native", "shader-bundle"]}),
+            ):
+                with self.subTest(flags=flags), redirect_stdout(output := StringIO()):
+                    args = parser.parse_args([*base, *flags])
+                    args.native = True
+                    self.assertEqual(development.run_development_command(args), 0)
+                    command = json.loads(output.getvalue())["argv"]
+                    self.assertEqual(command[command.index("--json") + 1:],
+                                     ["--review-manifest=captures/review file.json", *expected])
+                    self.assertEqual(debian_development.request_task(args)["argv"], command)
+                    options = request.call_args.args[0]["options"]
+                    self.assertEqual({key: options[key] for key in ("verify_evidence", "require_artifact_kind")
+                                      if key in options}, wire)
         self.probe.assert_not_called()
         self.assertFalse((self.home / ".local").exists())
 
@@ -194,10 +206,19 @@ class TestDevelopmentWorkflows(unittest.TestCase):
         settings.write_text('{"exposure":NaN}')
         for kwargs in ({"timeout": 0}, {"timeout": 3601}, {"timeout": True},
                        {"settings": str(settings)}, {"argv": ["ignored"]},
-                       {"review_manifest": "../outside.json"}):
+                       {"review_manifest": "../outside.json"}, {"verify_evidence": "false"},
+                       {"require_artifact_kind": "asset"}, {"require_artifact_kind": ["--output"]},
+                       {"require_artifact_kind": [True]}):
             with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
                 self.launch("check", recipe="smoke", **kwargs)
         self.inspect.assert_not_called()
+        self.probe.assert_not_called()
+
+    def test_evidence_options_are_limited_to_check_tasks(self):
+        for options in ({"verify_evidence": True}, {"require_artifact_kind": ["asset"]}):
+            with self.subTest(options=options), self.assertRaisesRegex(ValueError, "require a check task"):
+                debian_development.handle_task({"operation": "exec", "project": str(self.project),
+                                                "options": options}, "a" * 32)
         self.probe.assert_not_called()
 
     def test_invalid_saved_recipe_identity_is_rejected(self):

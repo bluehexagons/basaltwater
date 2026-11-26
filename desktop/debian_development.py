@@ -65,7 +65,8 @@ def supervisor_environment(uid: int) -> tuple[dict[str, str], str]:
 
 
 OPTIONS = {"engine", "scene", "argv", "dry_run", "headless", "quit_after", "rendering_method",
-           "script", "manager", "recipe", "settings", "timeout", "export_check", "review_manifest"}
+           "script", "manager", "recipe", "settings", "timeout", "export_check", "review_manifest",
+           "verify_evidence", "require_artifact_kind"}
 
 
 def handle_task(payload: dict, generation: str) -> dict:
@@ -75,10 +76,12 @@ def handle_task(payload: dict, generation: str) -> dict:
     if not isinstance(options, dict) or set(options) - OPTIONS:
         raise ValueError("Unknown development task options")
     for key, value in options.items():
-        if key in ("dry_run", "headless", "export_check"):
+        if key in ("dry_run", "headless", "export_check", "verify_evidence"):
             valid = type(value) is bool
         elif key in ("quit_after", "timeout"):
             valid = type(value) is int or (key == "quit_after" and value is None)
+        elif key == "require_artifact_kind":
+            valid = isinstance(value, list) and all(isinstance(kind, str) for kind in value)
         elif key == "argv":
             valid = value is None or isinstance(value, list)
             if value:
@@ -103,6 +106,10 @@ def request_task(args: argparse.Namespace) -> dict:
     if current.get("state") != "running" or "supervised-development" not in current.get("capabilities", []):
         raise RuntimeError("Running desktop lacks supervised-development; refresh at a safe normal logout checkpoint")
     options = {key: getattr(args, key) for key in OPTIONS if hasattr(args, key)}
+    # Older running supervisors can still handle a check without evidence options.
+    for key in ("verify_evidence", "require_artifact_kind"):
+        if not options.get(key):
+            options.pop(key, None)
     if args.development_command != "doctor":
         options["dry_run"] = options.get("dry_run", False) or development.is_dry_run()
     payload = {"action": "development", "operation": args.development_command,

@@ -73,15 +73,22 @@ def node_command(project: Path, script: str, manager: str | None, arguments: lis
 
 
 def check_command(project: Path, recipe: str, settings: str | None, timeout: int,
-                  *, review_manifest: str | None = None) -> list[str]:
+                  *, review_manifest: str | None = None, verify_evidence: bool = False,
+                  require_artifact_kind: list[str] | None = None) -> list[str]:
     from lib.agent_environment import inspect_environment
     from lib.agent_visuals import _settings, validate_review_manifest
+    from lib.visual_evidence import validate_artifact_kind
 
     if not isinstance(recipe, str) or not 1 <= len(recipe) <= 256 or recipe.startswith("-"):
         raise ValueError("Recipe name must contain 1–256 characters and must not start with an option")
     validate_no_control_characters(recipe, "Recipe name")
     if type(timeout) is not int or not 1 <= timeout <= 3600:
         raise ValueError("Check timeout must be from 1 through 3600 seconds")
+    if type(verify_evidence) is not bool:
+        raise ValueError("Verify evidence must be a boolean")
+    if require_artifact_kind is not None and not isinstance(require_artifact_kind, list):
+        raise ValueError("Required artifact kinds must be a list")
+    required_kinds = [validate_artifact_kind(kind) for kind in require_artifact_kind or []]
     if settings is not None:
         validate_filesystem_path(settings)
         settings = str(Path(settings).expanduser().resolve())
@@ -103,4 +110,7 @@ def check_command(project: Path, recipe: str, settings: str | None, timeout: int
         command.extend(["--settings", settings])
     if review_manifest is not None:
         command.append(f"--review-manifest={review_manifest}")
+    if verify_evidence:
+        command.append("--verify-evidence")
+    command.extend(f"--require-artifact-kind={kind}" for kind in required_kinds)
     return command

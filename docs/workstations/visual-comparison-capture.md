@@ -60,7 +60,9 @@ state and inspect the check report for the recipe outcome. See the
 [remote development guide](cachyos-development.md) for preview, stopping,
 runtime selection and Godot/Electron/native harness conventions.
 
-The child inherits the caller's environment, including `SDL_VIDEODRIVER`.
+Direct checks inherit the caller's environment, including `SDL_VIDEODRIVER`.
+Queued checks use the user manager's environment with the existing desktop
+routing and the caller's `PATH` and optional `NVM_DIR`.
 `BASALTWATER_VISUAL_EVIDENCE` points to the new evidence directory and
 `BASALTWATER_VISUAL_SETTINGS` points to its private, read-only settings copy
 (an empty JSON object when `--settings` is omitted). Project scripts can use
@@ -160,20 +162,31 @@ run `visuals batch` on the retained manifest in a new output directory.
 
 ## Gate captures on runtime and build evidence
 
-Both `visuals check` and `visuals capture` accept `--verify-evidence`.
-Add `--require-artifact-kind native --require-artifact-kind typescript
---require-artifact-kind asset` for a game using all three build inputs. Each
-selector implies verification. The option also accepts project-defined kinds
-such as `shader-bundle`. Missing receipts, unapplied requested settings,
-wrong revisions, missing kinds or changed artifact bytes fail before creating
-a revision comparison. Without these options, verification is explicitly
-`unverified`; ordinary recipe exit-status checks remain available.
+Direct `visuals check`, `visuals capture` and queued `desktop develop check`
+accept `--verify-evidence`. Repeat `--require-artifact-kind` for each required
+kind, such as `native`, `typescript`, or `asset`. Each selector implies
+verification. The option also accepts project-defined kinds
+such as `shader-bundle`. Missing receipts, unapplied requested settings, wrong
+revisions, missing kinds or changed artifact bytes fail the check or capture.
+Ordinary recipe exit-status checks report `unverified` for the receipt.
 
-The harness receives the same environment contract in both commands:
-`BASALTWATER_VISUAL_SETTINGS`, `BASALTWATER_VISUAL_EVIDENCE`,
-`BASALTWATER_VISUAL_REVISION` and `BASALTWATER_VISUAL_RECEIPT`. The last path is
-new for each run (and each side of a revision capture). Write this receipt there
-after rendering, using actual renderer observations and retained build records.
+On CachyOS, queue a Godot recipe that checks its generated assets.
+
+```bash
+basaltw desktop --native develop check graphics-smoke --project ~/repos/my-game \
+  --settings ~/capture-settings.json --require-artifact-kind asset --json
+basaltw desktop --native develop wait TASK_ID --json
+```
+
+Read `verification` and any `error` in the queued task's `check_report`.
+A recipe exit code of zero can accompany a failed verification. On Debian, the
+running desktop supervisor must also support these options.
+
+All three routes pass `BASALTWATER_VISUAL_SETTINGS`,
+`BASALTWATER_VISUAL_EVIDENCE`, `BASALTWATER_VISUAL_REVISION` and
+`BASALTWATER_VISUAL_RECEIPT` to the harness. The receipt path is new for each run
+and each side of a revision capture. Write the receipt there after rendering,
+using actual renderer observations and retained build records.
 
 `BASALTWATER_VISUAL_VERIFY` is `1` when `--verify-evidence` or any required
 artifact kind is selected, otherwise `0`. It overrides an inherited value on

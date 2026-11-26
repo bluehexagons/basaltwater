@@ -23,6 +23,7 @@ from lib.cachyos import is_cachyos
 from lib.cachyos_doctor import _owned_socket, _probe
 from lib.remote_utils import is_dry_run
 from lib.validation import validate_filesystem_path, validate_no_control_characters
+from lib.visual_evidence import add_evidence_options
 
 
 LOG_LIMIT = 16 * 1024 * 1024
@@ -86,6 +87,7 @@ def add_development_parser(commands: argparse._SubParsersAction) -> None:
             action.add_argument("--timeout", type=int, default=600, help="Recipe process-group deadline in seconds (1–3600)")
             action.add_argument("--review-manifest", metavar="RELATIVE_JSON",
                                 help="Build a gallery from a batch manifest produced in the recipe evidence directory")
+            add_evidence_options(action)
     for name in ("status", "stop", "wait"):
         action = actions.add_parser(name)
         action.add_argument("task", help="Task ID returned by a development launch")
@@ -545,6 +547,7 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
            quit_after: int | None = None, rendering_method: str | None = None,
            script: str | None = None, manager: str | None = None, recipe: str | None = None,
            settings: str | None = None, timeout: int = 600, review_manifest: str | None = None,
+           verify_evidence: bool = False, require_artifact_kind: list[str] | None = None,
            session_generation: str | None = None, control_revision: str | None = None) -> dict:
     uid = _guard()
     if kind not in KINDS:
@@ -558,6 +561,8 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
         raise ValueError("Import and check tasks do not accept extra command arguments")
     if kind != "check" and review_manifest is not None:
         raise ValueError("--review-manifest requires a check task")
+    if kind != "check" and (verify_evidence or require_artifact_kind):
+        raise ValueError("Evidence verification options require a check task")
     if kind not in ("editor", "run") and (headless or quit_after is not None or rendering_method is not None):
         raise ValueError("Godot run options require editor or run")
     if quit_after is not None and (type(quit_after) is not int or not 1 <= quit_after <= 1000000):
@@ -569,7 +574,8 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
         arguments = node_command(path, script, manager, arguments)
     elif kind == "check":
         from desktop.development_workflows import check_command
-        arguments = check_command(path, recipe, settings, timeout, review_manifest=review_manifest)
+        arguments = check_command(path, recipe, settings, timeout, review_manifest=review_manifest,
+                                  verify_evidence=verify_evidence, require_artifact_kind=require_artifact_kind)
     elif kind == "exec":
         validate_argv(arguments)
         arguments[0] = _executable(arguments[0])
@@ -617,11 +623,11 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
                 "session": "existing-xrdp" if session_generation else "existing-kde-wayland"}
     revision = _honor_agent_control(control_revision)
     directory = _root(create=True) / secrets.token_hex(16)
-    directory.mkdir(mode=0o700)  # A collision must never replace an existing task.
-    _private_directory(directory)
     if kind == "check":
         arguments.extend(["--output", str(directory / "check")])
         validate_argv(arguments)
+    directory.mkdir(mode=0o700)  # A collision must never replace an existing task.
+    _private_directory(directory)
     task = {"schema_version": 1, "task": directory.name, "unit": f"{UNIT_PREFIX}{directory.name}.service",
             "kind": kind, "project": str(path), "argv": arguments, "owner_uid": uid,
             "created_at": datetime.now(timezone.utc).isoformat()}
@@ -683,7 +689,9 @@ def run_development_command(args: argparse.Namespace) -> int:
                 rendering_method=getattr(args, "rendering_method", None), script=getattr(args, "script", None),
                 manager=getattr(args, "manager", None), recipe=getattr(args, "recipe", None),
                 settings=getattr(args, "settings", None), timeout=getattr(args, "timeout", 600),
-                review_manifest=getattr(args, "review_manifest", None))
+                review_manifest=getattr(args, "review_manifest", None),
+                verify_evidence=getattr(args, "verify_evidence", False),
+                require_artifact_kind=getattr(args, "require_artifact_kind", None))
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         result = {"ok": False, "error": str(exc)}
     print(json.dumps(result, indent=2))

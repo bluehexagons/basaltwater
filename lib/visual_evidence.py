@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
@@ -11,6 +12,14 @@ import stat
 
 from lib.atomic_io import read_json_file
 from lib.validation import validate_filesystem_path
+
+
+def add_evidence_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--verify-evidence", action="store_true",
+                        help="Require a runtime settings and build artifact receipt")
+    parser.add_argument("--require-artifact-kind", action="append", default=[],
+                        type=validate_artifact_kind, metavar="KIND",
+                        help="Require a lowercase artifact kind such as native, asset, or shader-bundle (implies --verify-evidence)")
 
 
 def validate_artifact_kind(value: object) -> str:
