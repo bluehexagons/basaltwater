@@ -53,11 +53,12 @@ The [documentation index](../README.md) routes to feature procedures.
 <a id="github-maintenance"></a>
 <a id="recurring-host-maintenance"></a>
 <a id="network-inventory"></a>
+<a id="rolling-updates"></a>
 <a id="proxmox-management"></a>
 <a id="interactive-shell"></a>
 <a id="sysadmin-shortcuts"></a>
 <a id="testing-and-bootstrap"></a>
-- [Maintenance and host utilities](cli-maintenance.md) Firmware, network inventory, Proxmox, admin shortcuts, and testing.
+- [Maintenance and host utilities](cli-maintenance.md) Firmware, network inventory, rolling updates, Proxmox, admin shortcuts, and testing.
 
 ## Commands
 
@@ -116,6 +117,7 @@ basaltw kiosk <status|doctor|start|stop|restart> [--json]
 basaltw firmware <audit|update> [options]
 basaltw channel [CHANNEL]
 basaltw upgrade
+basaltw rolling-update <target> [<target> ...] [--dry-run | --resume] [--reboot-timeout SECONDS]
 basaltw refresh [--dry-run] [CACHYOS_SETUP_FLAGS...]
 basaltw user rename <host> <new_username> [options]
 basaltw agent manifest [REPOSITORY] [--json]

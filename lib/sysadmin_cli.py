@@ -435,6 +435,24 @@ def _add_reachable_parser(sub: argparse._SubParsersAction) -> None:
     p.set_defaults(_sysadmin_cmd="reachable")
 
 
+def _add_rolling_update_parser(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser(
+        "rolling-update",
+        help="Apply point updates to Debian and Proxmox targets one at a time",
+        description=(
+            "Preflight saved Debian and Proxmox targets, then update them in the supplied "
+            "order. Reboot when required and verify each target before advancing."
+        ),
+    )
+    p.add_argument("targets", nargs="+", help="Saved setup names or addresses, in update order")
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true", help="Check readiness and show cached APT updates")
+    mode.add_argument("--resume", action="store_true", help="Resume the workspace checkpoint with the same targets")
+    p.add_argument("--reboot-timeout", type=int, default=300, metavar="SECONDS",
+                   help="Time to wait for a new boot ID per target (default 300)")
+    p.set_defaults(_sysadmin_cmd="rolling-update")
+
+
 def _add_user_parser(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "user",
@@ -499,6 +517,7 @@ def add_sysadmin_subparsers(subparsers: argparse._SubParsersAction) -> None:
     _add_svc_parser(subparsers)
     _add_logs_parser(subparsers)
     _add_upgrade_parser(subparsers)
+    _add_rolling_update_parser(subparsers)
     _add_reachable_parser(subparsers)
     _add_user_parser(subparsers)
 
@@ -642,6 +661,18 @@ def run_sysadmin_command(args: argparse.Namespace) -> int:
             check_only=args.check,
             with_new_pkgs=getattr(args, "with_new_pkgs", False),
         )
+
+    if cmd == "rolling-update":
+        from lib.cluster_update import run_cluster_update
+        try:
+            return run_cluster_update(
+                args.targets, workspace=getattr(args, "workspace", None),
+                dry_run=args.dry_run, reboot_timeout=args.reboot_timeout,
+                resume=args.resume, include_debian=True,
+            )
+        except ValueError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
 
     if cmd == "reachable":
         from lib.sysadmin_reachable import run_reachable

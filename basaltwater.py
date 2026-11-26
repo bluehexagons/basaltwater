@@ -202,6 +202,7 @@ Sysadmin Shortcuts:
     svc <host> <unit> [action]  Manage a systemd service (status/restart/start/stop/…)
     logs <host> <unit>          Show or follow journalctl output for a service
     upgrade <host> [<host2>…]   Run apt upgrade in parallel; report reboot-required
+    rolling-update <target>…    Update Debian and Proxmox targets one at a time
     reachable [hosts|pattern]   Check which saved hosts are reachable via SSH
     user rename <host> <new>    Rename the configured remote target user
     ssh-key enroll <host>       Enroll and verify a workspace SSH host key
@@ -2761,7 +2762,7 @@ def _dispatch_command(args: argparse.Namespace, parser: argparse.ArgumentParser)
         return run_headscale_dns_command(args)
     elif args.command == "headscale-maintenance":
         return run_headscale_maintenance_command(args)
-    elif args.command in {"mount", "umount", "health", "ssh", "push", "pull", "key", "ssh-key", "df", "fan", "svc", "logs", "upgrade", "reachable", "user"}:
+    elif args.command in {"mount", "umount", "health", "ssh", "push", "pull", "key", "ssh-key", "df", "fan", "svc", "logs", "upgrade", "rolling-update", "reachable", "user"}:
         return run_sysadmin_command(args)
     elif args.command == "shell":
         return run_interactive_shell(getattr(args, "workspace", None))

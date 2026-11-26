@@ -5,11 +5,13 @@ from __future__ import annotations
 import io
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import nullcontext, redirect_stderr, redirect_stdout
+from types import ModuleType
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -17,15 +19,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from lib.cluster_update import run_cluster_update
 from lib import cluster_update
 from lib.config import SetupConfig
+from lib.debian_rolling_update import DEBIAN_UPDATE_BLOCKED, debian_update_command
 from lib.proxmox_maintenance import ProxmoxMaintenanceReport
 from lib.proxmox_manage import ContainerInfo
 
 
-def _config(host: str) -> SetupConfig:
+def _config(host: str, system_type: str = "server_proxmox") -> SetupConfig:
     return SetupConfig(
         host=host,
         username="admin",
-        system_type="server_proxmox",
+        system_type=system_type,
     )
 
 
@@ -319,6 +322,135 @@ class TestClusterUpdate(unittest.TestCase):
         with open(path) as stream:
             self.assertEqual(json.load(stream), newer)
 
+    @patch("lib.cluster_update._maintenance_report", return_value=_maintenance_report())
+    @patch("lib.cluster_update.prepare_validated_runtime_config")
+    @patch("lib.cluster_update.load_setup_command")
+    def test_unified_batch_reboots_and_verifies_guest_before_patching_node(self, load, _prepare, _report):
+        guest = _config("192.0.2.20", "server_lite")
+        pve = _config("192.0.2.10")
+        load.side_effect = {"app": guest, "pve1": pve}.get
+        events = []
+
+        def ssh(config, command, **_kwargs):
+            if config is pve:
+                self.assertIn("check_proxmox_installation", command)
+                events.append("pve-preflight")
+                return subprocess.CompletedProcess([], 0, "", "")
+            action, _ = shlex.split(command)[-2:]
+            events.append(action)
+            if action == "apply":
+                return subprocess.CompletedProcess([], 0, "", "")
+            payload = dict(codename="trixie", packages=2 if action == "plan" else None,
+                           reboot_required="apply" in events and "reboot" not in events)
+            return subprocess.CompletedProcess([], 0, json.dumps(payload), "")
+
+        with patch.object(cluster_update, "_ssh_result", side_effect=ssh), \
+             patch.object(cluster_update, "_reboot_and_wait", side_effect=lambda *_args, **_kwargs: events.append("reboot")) as reboot, \
+             patch("basaltwater._execute_patch_config", side_effect=lambda _: events.append("pve-apply") or 0) as apply:
+            self.assertEqual(run_cluster_update(["app", "pve1"], include_debian=True), 0)
+
+        self.assertEqual(events, ["plan", "pve-preflight", "health", "apply", "health", "reboot", "health", "pve-apply"])
+        reboot.assert_called_once_with(guest, 300)
+        apply.assert_called_once_with(pve)
+
+    @patch("lib.cluster_update.load_setup_command", return_value=_config("192.0.2.20", "server_lite"))
+    def test_debian_preview_reads_cached_plan_without_applying(self, _load):
+        with patch.object(cluster_update, "_debian_probe", return_value=("bookworm", 7, False)) as probe, \
+             patch.object(cluster_update, "_ssh_result") as ssh, patch("basaltwater._execute_patch_config") as pve:
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(run_cluster_update(["app"], include_debian=True, dry_run=True), 0)
+        self.assertIn("Debian 12 (bookworm), 7 package(s) from cached APT", output.getvalue())
+        self.assertEqual(probe.call_args.args[1], "plan")
+        ssh.assert_not_called()
+        pve.assert_not_called()
+        self.assertFalse(os.path.exists(os.path.join(self.workspace, "cluster-update.json")))
+
+    @patch("lib.cluster_update._maintenance_report", return_value=_maintenance_report())
+    @patch("lib.cluster_update.prepare_validated_runtime_config")
+    @patch("lib.cluster_update.load_setup_command")
+    def test_debian_update_failure_stops_later_node_and_requires_safe_resume(self, load, _prepare, _report):
+        load.side_effect = {"app": _config("192.0.2.20", "server_lite"), "pve1": _config("192.0.2.10")}.get
+        with patch.object(cluster_update, "_debian_probe", return_value=("trixie", 1, False)), \
+             patch.object(cluster_update, "_ssh_result", side_effect=[
+                 subprocess.CompletedProcess([], 0),
+                 subprocess.CompletedProcess([], DEBIAN_UPDATE_BLOCKED),
+                 subprocess.CompletedProcess([], 0),
+                 subprocess.CompletedProcess([], 255),
+                 subprocess.CompletedProcess([], 0),
+             ]), patch("basaltwater._execute_patch_config") as pve:
+            self.assertEqual(run_cluster_update(["app", "pve1"], include_debian=True), 1)
+            self.assertEqual(run_cluster_update(["app", "pve1"], include_debian=True, resume=True), 1)
+            with self.assertRaisesRegex(ValueError, "manual recovery"):
+                run_cluster_update(["app", "pve1"], include_debian=True, resume=True)
+        pve.assert_not_called()
+
+
+class TestDebianRollingCommand(unittest.TestCase):
+    def _run_command(self, action, *, sources, busy=False, proxmox=False):
+        _, _, _, program, *args = shlex.split(debian_update_command(action, "trixie"))
+        fake_runtime = ModuleType("lib.maintenance_lock")
+        fake_runtime.maintenance_lock = lambda: nullcontext(not busy)
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        def command(argv, **_kwargs):
+            name, *options = argv
+            if name == "apt-cache":
+                if options[-1] == "base-files":
+                    return subprocess.CompletedProcess(argv, 0, "  Candidate: 13.8\n", "")
+                return subprocess.CompletedProcess(argv, 0, next(sources), "")
+            if name == "systemd-detect-virt":
+                return subprocess.CompletedProcess(argv, 1, "none\n", "")
+            if name == "systemctl":
+                return subprocess.CompletedProcess(argv, 0, "running\n", "")
+            output = "Inst linux-image (new-version Debian:13/trixie [amd64])\n" if "--simulate" in options else ""
+            return subprocess.CompletedProcess(argv, 0, output, "")
+
+        with patch.object(sys, "argv", ["-c", *args]), patch.object(sys, "path", list(sys.path)), \
+             patch.dict(sys.modules, {"lib.maintenance_lock": fake_runtime}), patch.dict(os.environ), \
+             patch("platform.freedesktop_os_release", return_value={"ID": "debian", "VERSION_CODENAME": "trixie"}), \
+             patch("os.path.isdir", return_value=proxmox), patch("os.path.isfile", return_value=False), \
+             patch("shutil.which", return_value=None), patch("subprocess.run", side_effect=command) as run, \
+             redirect_stdout(stdout), redirect_stderr(stderr):
+            status = 0
+            try:
+                exec(program, {})
+            except SystemExit as exc:
+                status = exc.code
+        return status, stdout.getvalue(), stderr.getvalue(), [call.args[0] for call in run.call_args_list]
+
+    def test_plan_simulates_and_apply_refreshes_before_install(self):
+        policy = "release v=13.8,o=Debian,a=stable,n=trixie,l=Debian,c=main,b=amd64"
+        status, stdout, _, calls = self._run_command("plan", sources=iter([policy]))
+        self.assertEqual(status, 0)
+        self.assertEqual(json.loads(stdout), dict(codename="trixie", packages=1, reboot_required=False))
+        self.assertEqual([argv[-1] for argv in calls if argv[0] == "apt-get"], ["upgrade"])
+        self.assertIn("--simulate", calls[-1])
+
+        status, _, _, calls = self._run_command("apply", sources=iter([policy]))
+        self.assertEqual(status, 0)
+        apt = [argv for argv in calls if argv[0] == "apt-get"]
+        self.assertEqual([argv[-1] for argv in apt], ["update", "upgrade", "upgrade"])
+        self.assertIn("APT::Update::Error-Mode=any", apt[0])
+        self.assertIn("--with-new-pkgs", apt[-1])
+        self.assertIn("--no-remove", apt[-1])
+
+    def test_refreshed_cross_release_metadata_blocks_package_install(self):
+        policy = "release o=Debian,n=trixie\nrelease o=Debian,n=forky\n"
+        status, _, errors, calls = self._run_command("apply", sources=iter([policy]))
+        self.assertEqual(status, DEBIAN_UPDATE_BLOCKED)
+        self.assertIn("another Debian release", errors)
+        self.assertEqual([argv[-1] for argv in calls if argv[0] == "apt-get"], ["update"])
+
+    def test_busy_guest_and_misclassified_proxmox_fail_before_apt(self):
+        status, _, _, calls = self._run_command("apply", sources=iter([]), busy=True)
+        self.assertEqual(status, DEBIAN_UPDATE_BLOCKED)
+        self.assertEqual(calls, [])
+        status, _, _, calls = self._run_command("plan", sources=iter([]), proxmox=True)
+        self.assertIn("server_proxmox", status)
+        self.assertEqual(calls, [])
+
 
 class TestRollingPolicyAndDeadlines(unittest.TestCase):
     def test_policy_rejects_ha_ceph_unknown_and_command_failure(self):
@@ -341,15 +473,46 @@ class TestRollingPolicyAndDeadlines(unittest.TestCase):
 
     def test_poll_uses_remaining_budget_without_final_extra_probe(self):
         clock = [0.0]
+        boot_id = "d6668414-72a5-4e54-8e4a-4a5038b9ae2d"
+
         def probe(_config, timeout):
             self.assertEqual(timeout, 2)
-            clock[0] += 2
-            return False
-        with patch.object(cluster_update.time, "monotonic", side_effect=lambda: clock[0]), patch.object(cluster_update.time, "sleep"), patch.object(cluster_update, "_ssh_available", side_effect=probe) as available:
-            self.assertFalse(cluster_update._wait_for_ssh_state(_config("10.0.0.10"), available=True, timeout=2))
-        available.assert_called_once()
+            if ssh.called:
+                clock[0] += 2
+            return boot_id
+
+        with patch.object(cluster_update.time, "monotonic", side_effect=lambda: clock[0]), \
+             patch.object(cluster_update.time, "sleep"), \
+             patch.object(cluster_update, "_ssh_result", return_value=subprocess.CompletedProcess([], 0)) as ssh, \
+             patch.object(cluster_update, "_read_boot_id", side_effect=probe) as read:
+            with self.assertRaisesRegex(RuntimeError, "new boot ID"):
+                cluster_update._reboot_and_wait(_config("10.0.0.10"), 2)
+        self.assertEqual(read.call_count, 2)
 
     def test_failed_reboot_request_does_not_wait_for_fake_reboot(self):
-        with patch.object(cluster_update, "_ssh_result", return_value=subprocess.CompletedProcess([], 255)), patch.object(cluster_update, "_wait_for_ssh_state") as wait, self.assertRaisesRegex(RuntimeError, "rejected"):
+        with patch.object(cluster_update, "_ssh_result", return_value=subprocess.CompletedProcess([], 255)), \
+             patch.object(cluster_update, "_read_boot_id", return_value="old") as read, self.assertRaisesRegex(RuntimeError, "rejected"):
             cluster_update._reboot_and_wait(_config("10.0.0.10"), 30)
-        wait.assert_not_called()
+        read.assert_called_once()
+
+    def test_poll_requires_new_boot_id_after_losing_ssh(self):
+        with patch.object(cluster_update, "_ssh_result", return_value=subprocess.CompletedProcess([], 0)), \
+             patch.object(cluster_update.time, "sleep"), \
+             patch.object(cluster_update, "_read_boot_id", side_effect=["old", None, "old", "new"]) as read:
+            cluster_update._reboot_and_wait(_config("10.0.0.10"), 30)
+        self.assertEqual(read.call_count, 4)
+
+    def test_cluster_quorum_accounts_for_removing_local_votes(self):
+        report = _maintenance_report()
+        report.clustered = report.quorate = True
+        for quorate, total, error in (("No", 3, "no longer confirmed quorate"),
+                                      ("Yes", 2, "too few votes"), ("Yes", 3, None)):
+            status = f"Quorate: {quorate}\nTotal votes: {total}\nQuorum: 2\n\n   0x00000001 1 pve1 (local)\n"
+            with self.subTest(quorate=quorate, total=total), patch.object(cluster_update, "_maintenance_report", return_value=report), \
+                 patch.object(cluster_update, "_rolling_policy"), \
+                 patch.object(cluster_update, "_ssh_result", return_value=subprocess.CompletedProcess([], 0, status)):
+                if error:
+                    with self.assertRaisesRegex(RuntimeError, error):
+                        cluster_update._preflight("pve1", _config("10.0.0.10"))
+                else:
+                    self.assertIs(cluster_update._preflight("pve1", _config("10.0.0.10")), report)

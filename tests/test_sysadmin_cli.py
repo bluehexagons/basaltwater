@@ -41,6 +41,7 @@ class TestSysadminCliParsing(SysadminCliTestCase):
             (("svc", "server", "nginx", "restart"), {"_sysadmin_cmd": "svc", "host": "server", "unit": "nginx", "action": "restart"}),
             (("logs", "server", "nginx", "-n", "100", "-f"), {"_sysadmin_cmd": "logs", "host": "server", "unit": "nginx", "lines": 100, "follow": True}),
             (("upgrade", "server", "other", "--check"), {"_sysadmin_cmd": "upgrade", "hosts": ["server", "other"], "check": True}),
+            (("rolling-update", "app", "pve1", "--resume", "--reboot-timeout", "180"), {"_sysadmin_cmd": "rolling-update", "targets": ["app", "pve1"], "resume": True, "reboot_timeout": 180}),
             (("reachable", "server", "other", "--pattern", "*.example"), {"_sysadmin_cmd": "reachable", "hosts": ["server", "other"], "pattern": "*.example"}),
         )
 
@@ -324,6 +325,16 @@ class TestSysadminCliDispatch(SysadminCliTestCase):
         self.assertIn("--with-new-pkgs requires at least one remote host", output.getvalue())
         upgrade_tool.assert_not_called()
         upgrade_hosts.assert_not_called()
+
+    def test_unified_rolling_update_dispatches_through_main(self) -> None:
+        with (
+            patch("sys.argv", ["basaltw", "rolling-update", "app", "pve1", "--dry-run"]),
+            patch("basaltwater.argcomplete", None),
+            patch("lib.cluster_update.run_cluster_update", return_value=1) as run,
+        ):
+            self.assertEqual(main(), 1)
+        run.assert_called_once_with(["app", "pve1"], workspace=None, dry_run=True,
+                                    reboot_timeout=300, resume=False, include_debian=True)
 
     def test_unknown_dispatch_command_returns_error(self) -> None:
         error = io.StringIO()

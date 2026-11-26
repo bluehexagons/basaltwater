@@ -120,6 +120,35 @@ basaltw network plan-proxmox <profile> [--proxmox] [--json]
 `plan-proxmox` is read-only and requires at least one management source and
 one control-plane address before it will produce a non-error plan.
 
+### Rolling Updates
+
+```text
+basaltw rolling-update <target> [<target> ...] [--dry-run | --resume] [--reboot-timeout SECONDS]
+```
+
+Run from a controller outside the batch. Supply saved setup names or addresses
+in update order. The command uses saved root SSH access and the installed
+Basaltwater maintenance runtime. It handles point updates for Debian 12 and 13
+VMs and Proxmox VE 9 nodes on Debian 13. Debian upgrades can add dependencies
+and keep installed packages. Proxmox nodes use the existing Proxmox maintenance
+path.
+
+All targets must pass preflight. A dry run reports Debian package counts and
+Proxmox manager versions from cached APT data without refreshing it. A live run
+refreshes APT and checks package policy again. Basaltwater reboots when the
+target reports a pending reboot, verifies a new kernel boot ID and checks
+health before advancing. `--reboot-timeout` defaults to 300 seconds per target.
+The first failure stops the run. Use `--resume` with the original ordered
+targets and unchanged configurations after inspecting the workspace checkpoint.
+
+Evacuate or shut down guests on every selected Proxmox node before starting.
+Debian guest targets must be reachable throughout preflight. For a standalone
+node that still hosts its Debian guests, update the guests in one run and then
+shut them down before updating the node in a second run. See the [Proxmox
+runbook](../operations/proxmox-recovery.md#cluster-and-notifications) for quorum,
+HA, Ceph, and recovery details. Major release transitions follow the Debian
+and Proxmox release procedures.
+
 ### Proxmox Management
 
 ```text

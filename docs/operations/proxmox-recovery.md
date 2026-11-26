@@ -99,6 +99,20 @@ HA maintenance mode or Ceph flags. These configuration locations follow the
 [Proxmox administration guide](https://pve.proxmox.com/pve-docs/pve-admin-guide.pdf).
 
 Use `rolling-update` for point updates within Proxmox VE 9 and Debian 13.
+For a batch including Debian guests hosted on other nodes, use the top-level
+command with saved setup names in the desired order.
+
+```bash
+basaltw rolling-update app1 db1 pve1 --dry-run
+basaltw rolling-update app1 db1 pve1
+```
+
+Update Debian guests in a separate run if they must be shut down for a selected
+node's maintenance. Before updating a clustered node, Basaltwater checks that
+the currently available votes would still meet quorum with that node offline.
+See [rolling updates](../reference/cli-maintenance.md#rolling-updates) for Debian
+requirements. Both commands share the same checkpoint and recovery procedure.
+
 The dry run reports the installed `pve-manager` version and each node's cached
 APT candidate, even when maintenance checks block the update. The cache can be
 stale or missing. The actual update refreshes APT and validates repository
@@ -106,17 +120,19 @@ selection and the candidate before installing packages. Verify backup recovery
 and follow [Proxmox's major-upgrade procedure](https://pve.proxmox.com/wiki/Upgrade_from_8_to_9)
 for a transition from Proxmox VE 8 and Debian 12.
 
-SSH policy/reboot commands have 30-second limits; reachability probes use at
-most 15 seconds and the remaining reboot budget. The first failure stops later
+Reboot requests have a 30-second limit. Boot ID probes use at most 15 seconds
+and the remaining reboot budget. The first failure stops later
 nodes. The workspace `cluster-update.json` stores per-node phases/results under
 an exclusive lock. Inspect failed targets before resuming with the same ordered
 names and unchanged saved configuration:
 
 ```bash
 basaltw proxmox rolling-update pve1 pve2 pve3 --resume
+basaltw rolling-update app1 db1 pve1 --resume
 ```
 
-Completed nodes are skipped; known failed patch runs can be retried explicitly.
+Completed targets are skipped. Known failed patch runs and Debian attempts
+blocked before package installation can be retried explicitly.
 A crash during `patching` or `rebooting` has an uncertain outcome and refuses
 automatic replay. Confirm the old process has stopped, inspect target-side setup
 markers, and finish/verify that node manually. After successful manual patch
