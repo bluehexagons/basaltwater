@@ -75,6 +75,32 @@ try {
     for ($i = 0; $i -lt $literal.Count; $i++) { Assert-True ($plan.Argv[$i] -ceq $literal[$i]) 'Literal argv changed' }
     Assert-True (-not (Test-Path -LiteralPath (Get-DevelopmentRoot))) 'Dry run created task state'
     Assert-True (-not $plan.TrackChildren) 'Tracking was enabled without opt-in'
+    & {
+        $aliasRoot = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps'
+        $pwshAlias = Join-Path $aliasRoot 'pwsh.exe'
+        $otherAlias = Join-Path $aliasRoot 'fixture.exe'
+        $directShell = $shell
+        function Get-Command($Name, $CommandType, $ErrorAction) {
+            if ($Name -eq 'pwsh.exe') { return [pscustomobject]@{ Source = $pwshAlias } }
+            if ($Name -eq 'fixture.exe') { return [pscustomobject]@{ Source = $otherAlias } }
+            Microsoft.PowerShell.Core\Get-Command @PSBoundParameters
+        }
+        function Get-Item($LiteralPath, [switch]$Force, $ErrorAction) {
+            if ($LiteralPath -in @($pwshAlias, $otherAlias)) {
+                return [pscustomobject]@{ Attributes = [IO.FileAttributes]::ReparsePoint }
+            }
+            Microsoft.PowerShell.Management\Get-Item @PSBoundParameters
+        }
+        function Get-NativePowerShell7 { return $directShell }
+        $shellPlan = New-DevelopmentPlan (@('exec','--project',$project,'--dry-run','--','pwsh.exe') + $literal)
+        $expectedShell = if ($PSVersionTable.PSVersion.Major -ge 7) { Join-Path $PSHOME 'pwsh.exe' } else { $shell }
+        Assert-True ($shellPlan.Executable -ceq $expectedShell -and
+            $shellPlan.Argv[1] -ceq $unicode) 'PowerShell alias resolution lost the executable or literal argv'
+        Assert-Throws { New-DevelopmentPlan @('exec','--project',$project,'--','fixture.exe') } 'actual executable for task supervision'
+        $directShell = $pwshAlias
+        Assert-Throws { Invoke-NativeDevelopmentCli @('exec','--project',$project,'--',$shell) } 'actual stable PowerShell 7 executable'
+        Assert-True (-not (Test-Path -LiteralPath (Get-DevelopmentRoot))) 'Alias refusal created task state'
+    }
     $tracked = Invoke-NativeDevelopmentCli @('exec','--project',$project,'--track-children','--dry-run','--',$shell)
     Assert-True $tracked.TrackChildren 'Tracking option was not retained in the request'
     Assert-Throws { Invoke-NativeDevelopmentCli @('doctor','--project',$project,'--track-children') } 'requires exec/node/run'

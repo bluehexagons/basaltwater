@@ -80,9 +80,9 @@ Tasks return IDs and run through limited interactive Scheduled Task guardians,
 independently of the invoking T3 terminal. Project code starts only after its
 process has entered an owned Windows Job Object. Basaltwater helper shells use
 process-local execution-policy bypass without changing account or machine policy.
-Cancellation and timeout settle
-the process tree before a terminal receipt is published. Interrupted or uncertain
-cleanup blocks setup/reboot; inspect the task rather than blindly replaying it.
+Cancellation and timeout settle the Job Object's processes before a terminal
+receipt is published. Interrupted or uncertain cleanup blocks setup/reboot.
+Inspect the task before retrying.
 Failed dispatch never replaces a running or completed guardian receipt.
 Terminal publication includes verified Scheduler retirement and private-request
 removal. An unregister failure leaves `cleanup-uncertain` with no completed
@@ -115,11 +115,18 @@ cleanup failures remain visible and block maintenance.
 
 `exec` accepts a real executable followed by literal arguments after `--`.
 For a script, use `pwsh.exe -File script.ps1`; batch files require an explicit
-wrapper. `--env NAME=VALUE` applies to the task, and `--msvc` activates Visual
+wrapper. If `pwsh.exe` resolves to a Windows app execution alias, Basaltwater
+selects the installed stable PowerShell 7 executable. For other app aliases,
+supply the application's executable directly so its process stays in the task's
+Job Object. `--env NAME=VALUE` applies to the task, and `--msvc` activates Visual
 Studio only in its child. Environment snapshots are private and removed after
 confirmed cleanup. No artifact-upload credentials are needed. Tasks temporarily
 inhibit idle sleep while active and release that request afterward; they do not
 change the power plan or disable locking.
+
+MSIX PowerShell can launch a child outside the task's Job Object even when the
+script itself runs inside it. Submit the child's executable directly when its
+windows, diagnostic evidence or cancellation must be supervised.
 
 `node NPM_SCRIPT` names a script in `package.json`, such as `build`; it does not
 accept a JavaScript file path. Arguments after `--` go to that npm script.
