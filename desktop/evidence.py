@@ -111,6 +111,22 @@ class Recorder:
                 "closeout --previous is only for rechecking the same recording.")
         return result
 
+    def attach_playtest(self, task: dict) -> str:
+        if task["project"] != self.data["project"]:
+            raise ValueError("Active recorder belongs to another project")
+        attached = self.data.setdefault("attached_playtests", [])
+        if task["task"] in attached:
+            return str(self.path)
+        if len(attached) >= 50:
+            raise ValueError("Recorder has 50 attached playtests; finish it before launching another")
+        attached.append(task["task"])
+        try:
+            self.save()
+        except OSError:
+            attached.pop()
+            raise
+        return str(self.path)
+
     def event(self, payload: dict, result: dict | None):
         action = payload.get("action")
         if action not in ("input", "element", "exec", "screenshot", "launch-status", "control", "development"):
@@ -178,6 +194,10 @@ def _load_record(path: str) -> dict:
             or any(not isinstance(row, dict) or not isinstance(row.get("task"), str)
                    or not TASK_ID.fullmatch(row["task"]) for row in data["tasks"])):
         raise ValueError("Invalid or unsupported desktop evidence record")
+    playtests = data.get("attached_playtests", [])
+    if (not isinstance(playtests, list) or len(playtests) > 50
+            or any(not isinstance(task, str) or not TASK_ID.fullmatch(task) for task in playtests)):
+        raise ValueError("Invalid attached playtest identities")
     return data
 
 
@@ -372,7 +392,7 @@ def finalize(path: str, *, tasks: list[str], renderer: str | None) -> dict:
     listing = list_tasks(data["project"], since=data["started_at"], until=data["finished_at"])
     automatic = [row["task"] for row in listing["tasks"]]
     previous = [row["task"] for row in data["tasks"]]
-    selected = list(dict.fromkeys([*tasks, *previous, *automatic]))
+    selected = list(dict.fromkeys([*data.get("attached_playtests", []), *tasks, *previous, *automatic]))
     data["task_inventory_truncated"] = listing["truncated"] or len(selected) > 50
     data["task_inventory_scan_truncated"] = listing.get("scan_truncated", False)
     snapshots = []

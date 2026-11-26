@@ -66,6 +66,8 @@ does not request cancellation. Status/list work without the helper. Stop verifie
 only that task's transient unit/invocation and can remain `stopping` until cleanup
 finishes. A lost launch reply requires listing and reconciling tasks before retry.
 The supervisor's PATH selects tools; use absolute paths for a particular runtime.
+For manual game tests, use `desktop develop playtest PROFILE --project PATH`
+with a declared seed and an active recorder for the same project.
 See [Debian development tasks](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/debian-development.md)
 for environment checks, lifetime boundaries and post-refresh qualification.
 

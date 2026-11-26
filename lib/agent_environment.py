@@ -269,15 +269,19 @@ def _recipes(value: object, repository: str) -> dict[str, object]:
 
 def load_project_environment(repository: str) -> dict[str, object]:
     """Load only explicit non-secret declarations; never infer deployment targets."""
+    from desktop.playtest import declarations as playtest_declarations
+
     path = os.path.join(repository, PROJECT_FILE)
     try:
         data = read_json_file(path, max_bytes=64 * 1024)
     except FileNotFoundError:
-        return {"source": None, "deployments": {}, "artifact_directories": [], "required_tools": [], "recipes": {}, "container_engines": {}}
+        return {"source": None, "deployments": {}, "artifact_directories": [], "required_tools": [],
+                "recipes": {}, "container_engines": {}, "playtests": {}}
     if (
         not isinstance(data, dict) or type(data.get("version")) is not int
         or data["version"] != 1
-        or set(data) - {"version", "deployments", "artifact_directories", "required_tools", "recipes", "container_engines"}
+        or set(data) - {"version", "deployments", "artifact_directories", "required_tools",
+                       "recipes", "container_engines", "playtests"}
     ):
         raise ValueError(f"{PROJECT_FILE}: expected version 1 and known fields")
     deployments = data.get("deployments", {})
@@ -325,11 +329,11 @@ def load_project_environment(repository: str) -> dict[str, object]:
         "source": path, "deployments": deployments,
         "artifact_directories": list(dict.fromkeys(normalized)),
         "required_tools": _required_tools(data.get("required_tools", [])),
-        "recipes": recipes, "container_engines": engines,
+        "recipes": recipes, "container_engines": engines, "playtests": playtest_declarations(data.get("playtests", {})),
     }
 
 
-def _desktop_development(repository: str, *, native: bool) -> dict[str, object]:
+def _desktop_development(repository: str, *, native: bool, playtests: Iterable[str] = ()) -> dict[str, object]:
     """Advertise project-specific tasks using the existing bounded metadata reader."""
     from desktop.development import project_info
     from desktop.development_workflows import package_info
@@ -357,6 +361,7 @@ def _desktop_development(repository: str, *, native: bool) -> dict[str, object]:
         "godot_import_argv": [*prefix, "import", *target] if godot else None,
         "node_script_prefix_argv": [*prefix, "node", *target] if "node" in project else None,
         "recipe_check_prefix_argv": [*prefix, "check", *target],
+        "playtest_argv": {name: [*prefix, "playtest", name, *target] for name in sorted(playtests)},
         "application_prefix_argv": [*prefix, "exec", "--project", repository, "--"],
         "instructions": ("Launch explicitly in the owned logged-in KDE session from T3 or SSH. " if native else
                          "Launch through the running shared XRDP supervisor; do not guess display/bus variables. "
@@ -545,7 +550,7 @@ def inspect_environment(repository: str, *, project_runtime: bool = False,
         } if not scopes or "publishing" in scopes else None,
         "desktop_applications": desktop,
         "desktop_skills": desktop_skills,
-        "development": _desktop_development(root, native=native_desktop)
+        "development": _desktop_development(root, native=native_desktop, playtests=project.get("playtests", {}))
         if not wsl and include_development else None,
         "project_runtime": runtime,
         "workspace": workspace,
@@ -687,6 +692,8 @@ def run_manifest_command(args: argparse.Namespace) -> int:
     if development := result.get("development"):
         print(f"Development: {development['role']} (readiness unverified)")
         print(f"  Project check: {shlex.join(development['doctor_argv'])}")
+        for name, argv in development["playtest_argv"].items():
+            print(f"  Playtest {name}: {shlex.join(argv)}")
         print(f"  {development['instructions']}")
     publishing = result["publishing"]
     installed = [name for name, path in publishing["tools"].items() if path]

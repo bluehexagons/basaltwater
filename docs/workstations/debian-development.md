@@ -29,6 +29,10 @@ supervisor's PATH selects tools, rather than the invoking SSH shell's PATH.
 Use an absolute `--engine` or explicit executable path for a particular build.
 Project scripts and recipes still own application behavior and acceptance.
 
+For an isolated manual run, use [a declared playtest profile](cachyos-development-session.md#launch-a-recorded-playtest-profile).
+Start the recorder for the same project, then run `desktop develop playtest PROFILE --project PATH`
+through the updated supervisor. The task is attached before launch.
+
 ## Environment and ownership
 
 The actual shared-session supervisor supplies its local X11 display, validated

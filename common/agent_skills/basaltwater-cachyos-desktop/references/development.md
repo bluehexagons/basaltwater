@@ -30,6 +30,12 @@ snapshot plus log/report paths and worker duration after completion. Counts
 include threads; historical PIDs are not cleanup identities. Save changes before
 stopping an editor.
 
+For a manual game test, use a declared `develop playtest PROFILE --project PATH`.
+Start `evidence start --project PATH` first. Each launch seeds a fresh private
+profile and checkpoints the task ID in that recorder before submission. Validate
+with `--dry-run` and confirm the game uses the declared profile paths. See the
+[playtest profile declaration](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos-development-session.md#launch-a-recorded-playtest-profile).
+
 Use `develop list --project PATH --since ISO_TIME --until ISO_TIME --json` to
 find tasks created in one QA interval. Bounds are inclusive and require a
 timezone; comparison and ordering use UTC instants. Filtering precedes the

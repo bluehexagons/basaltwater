@@ -445,7 +445,7 @@ class DesktopSession:
             "pid": self.process.pid,
             "control_active": False,
             "input_capabilities": ["observation-input", "server-paced-text"],
-            "capabilities": ["supervised-development", "manual-evidence", "receipt-mapping"],
+            "capabilities": ["supervised-development", "manual-evidence", "receipt-mapping", "recorded-playtest"],
             "observation_id": self.observation.id if self.observation is not None and state == "running" else None,
             "capture_freshness": self.observation.freshness() if self.observation is not None and state == "running"
                                  else capture_freshness(),
@@ -628,6 +628,8 @@ class DesktopSession:
                 control_state.require_enabled(payload)
                 self.elements.clear()
                 self.observation = None
+            if payload.get("operation") == "playtest":
+                return handle_task(payload, self.generation, recorder=self.evidence)
             return handle_task(payload, self.generation)
         if action == "inspect":
             result = accessibility.worker_request({**payload, "operation": "inspect"})

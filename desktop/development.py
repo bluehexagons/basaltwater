@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 from datetime import datetime, timezone
 import json
 import math
@@ -29,7 +30,7 @@ from lib.visual_evidence import add_evidence_options
 LOG_LIMIT = 16 * 1024 * 1024
 TASK_ID = re.compile(r"[0-9a-f]{32}")
 UNIT_PREFIX = "basaltwater-development-"
-KINDS = ("editor", "run", "import", "exec", "node", "check")
+KINDS = ("editor", "run", "import", "exec", "node", "check", "playtest")
 
 
 class _DevelopmentArgumentParser(argparse.ArgumentParser):
@@ -88,6 +89,11 @@ def add_development_parser(commands: argparse._SubParsersAction) -> None:
             action.add_argument("--review-manifest", metavar="RELATIVE_JSON",
                                 help="Build a gallery from a batch manifest produced in the recipe evidence directory")
             add_evidence_options(action)
+    playtest = actions.add_parser("playtest", help="Launch a declared disposable profile and attach it to the active recorder")
+    playtest.add_argument("playtest", metavar="PROFILE")
+    playtest.add_argument("--project", required=True)
+    playtest.add_argument("--json", action="store_true")
+    playtest.add_argument("--dry-run", action="store_true", help="Validate the profile without creating state or launching")
     for name in ("status", "stop", "wait"):
         action = actions.add_parser(name)
         action.add_argument("task", help="Task ID returned by a development launch")
@@ -338,7 +344,8 @@ def parse_task_timestamp(value: str) -> datetime:
 def load_task(directory: Path) -> dict:
     _private_directory(directory)
     value = _private_json(directory / "task.json")
-    if (set(value) - {"schema_version", "task", "unit", "kind", "project", "argv", "owner_uid", "created_at", "invocation_id", "recipe", "control_revision", "session_generation"}
+    if (set(value) - {"schema_version", "task", "unit", "kind", "project", "argv", "owner_uid", "created_at",
+                      "invocation_id", "recipe", "control_revision", "session_generation", "playtest"}
             or type(value.get("schema_version")) is not int or value["schema_version"] != 1
             or value.get("task") != directory.name or not TASK_ID.fullmatch(directory.name)
             or value.get("unit") != f"{UNIT_PREFIX}{directory.name}.service"
@@ -361,6 +368,13 @@ def load_task(directory: Path) -> dict:
         validate_no_control_characters(recipe, "Recipe name")
     elif "recipe" in value:
         raise ValueError("Recipe metadata belongs only to a check task")
+    if value["kind"] == "playtest":
+        from desktop.playtest import NAME
+        name = value.get("playtest")
+        if not isinstance(name, str) or not NAME.fullmatch(name):
+            raise ValueError("Invalid development playtest identity")
+    elif "playtest" in value:
+        raise ValueError("Playtest metadata belongs only to a playtest task")
     validate_filesystem_path(value.get("project"))
     if not Path(value["project"]).is_absolute():
         raise ValueError("Task project must be absolute")
@@ -441,6 +455,8 @@ def task_status(task_id: str, *, stop: bool = False, dry_run: bool = False) -> d
     if task["kind"] == "check":
         result.update(recipe=task["recipe"], evidence=str(directory / "check"),
                       check_report=str(directory / "check" / "check.json"))
+    if task["kind"] == "playtest":
+        result.update(playtest=task["playtest"], profile=str(directory / "profile"))
     if (directory / "stop-requested.json").exists():
         request = _private_json(directory / "stop-requested.json")
         timestamp = request.get("requested_at")
@@ -548,7 +564,8 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
            script: str | None = None, manager: str | None = None, recipe: str | None = None,
            settings: str | None = None, timeout: int = 600, review_manifest: str | None = None,
            verify_evidence: bool = False, require_artifact_kind: list[str] | None = None,
-           session_generation: str | None = None, control_revision: str | None = None) -> dict:
+           session_generation: str | None = None, control_revision: str | None = None,
+           playtest: str | None = None, attach_playtest: Callable[[dict], str] | None = None) -> dict:
     uid = _guard()
     if kind not in KINDS:
         raise ValueError("Unknown development task kind")
@@ -559,6 +576,8 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
         arguments = arguments[1:]
     if kind in ("import", "check") and arguments:
         raise ValueError("Import and check tasks do not accept extra command arguments")
+    if kind == "playtest" and arguments:
+        raise ValueError("Playtest arguments must be declared in the project")
     if kind != "check" and review_manifest is not None:
         raise ValueError("--review-manifest requires a check task")
     if kind != "check" and (verify_evidence or require_artifact_kind):
@@ -569,7 +588,10 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
         raise ValueError("Godot quit-after must be from 1 through 1000000 iterations")
     if rendering_method is not None and rendering_method not in ("forward_plus", "mobile", "gl_compatibility"):
         raise ValueError("Unknown Godot rendering method")
-    if kind == "node":
+    if kind == "playtest":
+        from desktop.playtest import load_plan, seed_profile
+        arguments, seed = load_plan(path, playtest)
+    elif kind == "node":
         from desktop.development_workflows import node_command
         arguments = node_command(path, script, manager, arguments)
     elif kind == "check":
@@ -618,9 +640,15 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
     if kind == "node":
         environment["COREPACK_ENABLE_NETWORK"] = "0"
     if dry_run or is_dry_run():
-        return {"schema_version": 1, "ok": True, "dry_run": True, "kind": kind,
-                "project": str(path), "argv": arguments,
-                "session": "existing-xrdp" if session_generation else "existing-kde-wayland"}
+        result = {"schema_version": 1, "ok": True, "dry_run": True, "kind": kind,
+                  "project": str(path), "argv": arguments,
+                  "session": "existing-xrdp" if session_generation else "existing-kde-wayland"}
+        if kind == "playtest":
+            seed_profile(path, seed)
+            result.update(playtest=playtest, seed=seed, active_recorder_required=True)
+        return result
+    if kind == "playtest" and attach_playtest is None:
+        raise ValueError("An active desktop evidence recorder is required for playtest launch")
     revision = _honor_agent_control(control_revision)
     directory = _root(create=True) / secrets.token_hex(16)
     if kind == "check":
@@ -636,7 +664,19 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
         task["session_generation"] = session_generation
     if kind == "check":
         task["recipe"] = recipe
+    if kind == "playtest":
+        task["playtest"] = playtest
     write_json_atomic(str(directory / "task.json"), task, mode=0o600)
+    playtest_receipt = {}
+    if kind == "playtest":
+        profile = directory / "profile"
+        playtest_receipt = {"playtest": playtest, "profile": str(profile)}
+        try:
+            seed_profile(path, seed, profile)
+            playtest_receipt["recording"] = attach_playtest(task)
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+            return {**playtest_receipt, "schema_version": 1, "ok": False, "task": directory.name,
+                    "directory": str(directory), "state": "not-launched", "error": str(exc)}
     unset = ["PYTHONPATH", "PYTHONHOME", "AT_SPI_BUS_ADDRESS"]
     unset.extend(name for name in ("DISPLAY", "XAUTHORITY", "WAYLAND_DISPLAY", "XDG_CURRENT_DESKTOP") if name not in environment)
     command = ["/usr/bin/systemd-run", "--user", "--quiet", f"--unit={task['unit']}",
@@ -660,10 +700,10 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
             if re.fullmatch(r"[0-9a-f]{32}", unit.get("InvocationID", "")):
                 task["invocation_id"] = unit["InvocationID"]
                 write_json_atomic(str(directory / "task.json"), task, mode=0o600)
-            return task_status(directory.name)
+            return {**task_status(directory.name), **playtest_receipt}
         except (OSError, ValueError, RuntimeError) as exc:
             reason = f"Task was queued but its state could not be verified: {exc}"
-    return {"schema_version": 1, "ok": False, "task": directory.name, "unit": task["unit"],
+    return {**playtest_receipt, "schema_version": 1, "ok": False, "task": directory.name, "unit": task["unit"],
             "directory": str(directory), "log": str(directory / "output.log"), "state": "launch-unverified",
             "error": f"{reason}; inspect this task's status before retrying"}
 
@@ -682,6 +722,11 @@ def run_development_command(args: argparse.Namespace) -> int:
             result = task_status(args.task, stop=action == "stop", dry_run=getattr(args, "dry_run", False))
         elif action == "wait":
             result = wait_task(args.task, timeout=args.timeout)
+        elif action == "playtest":
+            from desktop.native_session import playtest_attachment
+            dry_run = args.dry_run or is_dry_run()
+            result = launch(args.project, action, playtest=args.playtest, dry_run=dry_run,
+                            attach_playtest=None if dry_run else playtest_attachment())
         else:
             result = launch(args.project, action, engine=getattr(args, "engine", None),
                 scene=getattr(args, "scene", None), argv=getattr(args, "argv", None), dry_run=args.dry_run,

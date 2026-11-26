@@ -18,7 +18,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from desktop import control_state, debian_development, development, development_worker, session_runtime
+from desktop import control_state, debian_development, development, development_worker, evidence, native_session, session_runtime
 from lib import desktop_cli
 from lib import agent_environment, agent_workspace
 from lib.atomic_io import write_json_atomic
@@ -67,6 +67,91 @@ class TestDevelopmentTasks(unittest.TestCase):
 
     def launch(self, **kwargs):
         return development.launch(str(self.project), kwargs.pop("kind", "run"), **kwargs)
+
+    def playtest_manifest(self, source="fixture.txt"):
+        (self.project / "basaltwater-agent.json").write_text(json.dumps({"version": 1, "playtests": {
+            "training": {"argv": [str(self.engine)], "seed": {"data/game/fixture.txt": source}},
+        }}))
+
+    def test_playtest_seeds_new_profiles_attaches_before_submit_and_passes_private_paths(self):
+        self.playtest_manifest()
+        (self.project / "fixture.txt").write_text("training")
+        self.engine.write_text(
+            "#!/usr/bin/python3\n"
+            "import os, pathlib\n"
+            "profile = pathlib.Path(os.environ['BASALTWATER_PLAYTEST_PROFILE'])\n"
+            "data = pathlib.Path(os.environ['XDG_DATA_HOME'])\n"
+            "assert data == profile / 'data'\n"
+            "print((data / 'game/fixture.txt').read_text())\n"
+        )
+        dry = self.launch(kind="playtest", playtest="training", dry_run=True)
+        self.assertEqual(dry["seed"], {"data/game/fixture.txt": "fixture.txt"})
+        self.assertFalse((self.home / ".local").exists())
+        self.probe.assert_not_called()
+
+        recorder = evidence.Recorder(str(self.project), "g")
+
+        def respond(command, uid):
+            if command[0] == "/usr/bin/systemd-run":
+                directory = Path(command[-1])
+                saved = json.loads(recorder.path.read_text())
+                self.assertIn(directory.name, saved["attached_playtests"])
+                fixture = directory / "profile/data/game/fixture.txt"
+                self.assertEqual(fixture.read_text(), "training")
+                self.assertEqual(stat.S_IMODE(fixture.stat().st_mode), 0o600)
+            return self.respond(command, uid)
+
+        self.probe.side_effect = respond
+        first, second = (self.launch(kind="playtest", playtest="training", attach_playtest=recorder.attach_playtest)
+                         for _ in range(2))
+        self.assertEqual(first["recording"], str(recorder.path))
+        self.assertNotEqual(first["profile"], second["profile"])
+        first_directory = Path(first["directory"])
+        with patch.object(development_worker.signal, "signal"), patch.object(development_worker, "_honor_agent_control"):
+            self.assertEqual(development_worker.run_task(first_directory), 0)
+        self.assertEqual((first_directory / "output.log").read_text(), "training\n")
+        self.assertEqual(json.loads((first_directory / "result.json").read_text())["returncode"], 0)
+        recorder.finish({})
+        with patch.object(development, "list_tasks", return_value={"tasks": [], "truncated": True}):
+            finalized = evidence.finalize(str(recorder.path), tasks=[], renderer=None)
+        self.assertEqual([item["task"] for item in finalized["tasks"]], [first["task"], second["task"]])
+
+    def test_playtest_refuses_symlink_seed_and_wrong_recorder_before_submit(self):
+        self.playtest_manifest()
+        linked = self.project / "fixture.txt"
+        outside = self.home / "outside"
+        outside.write_text("personal")
+        linked.symlink_to(outside)
+        with self.assertRaises(OSError):
+            self.launch(kind="playtest", playtest="training", dry_run=True)
+        with self.assertRaisesRegex(ValueError, "recorder"):
+            self.launch(kind="playtest", playtest="training")
+        recorder = evidence.Recorder(str(self.home), "g")
+        broken = self.launch(kind="playtest", playtest="training", attach_playtest=recorder.attach_playtest)
+        self.assertEqual(broken["state"], "not-launched")
+        linked.unlink()
+        linked.write_text("fixture")
+        wrong = self.launch(kind="playtest", playtest="training", attach_playtest=recorder.attach_playtest)
+        self.assertEqual(wrong["state"], "not-launched")
+        self.assertIn("another project", wrong["error"])
+        self.assertNotIn("attached_playtests", json.loads(recorder.path.read_text()))
+        self.probe.assert_not_called()
+
+    def test_playtest_recorder_identity_is_pinned_on_both_backends(self):
+        self.playtest_manifest()
+        recorder = evidence.Recorder(str(self.project), "g")
+        status = {"state": "running", "evidence_recording": True, "evidence": str(recorder.path), "generation": "g",
+                  "capabilities": ["recorded-playtest"]}
+        with patch.object(native_session, "status", return_value=status), \
+                patch.object(native_session, "request", return_value={"artifact": "another", "task": "task"}) as request:
+            attach = native_session.playtest_attachment()
+            with self.assertRaisesRegex(RuntimeError, "confirm"):
+                attach({"task": "task", "control_revision": "r"})
+        self.assertEqual(request.call_args.args[0]["artifact"], str(recorder.path))
+        with self.assertRaisesRegex(ValueError, "recorder changed"):
+            debian_development.handle_task({"operation": "playtest", "project": str(self.project),
+                "artifact": "another", "options": {"playtest": "training"}}, "g", recorder=recorder)
+        self.probe.assert_not_called()
 
     def test_doctor_reads_only_prerequisites_without_state_or_engine_execution(self):
         result = development.doctor(str(self.project))

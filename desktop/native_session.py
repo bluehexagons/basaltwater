@@ -138,6 +138,25 @@ def status(*, deadline=None):
                 "detail": receipt.get("detail") if receipt.get("last_failure") else "Run desktop start; KDE may request selected-monitor/input approval"}
 
 
+def playtest_attachment():
+    current = status()
+    if current.get("state") == "running" and "recorded-playtest" not in current.get("capabilities", []):
+        raise ValueError("Native helper lacks recorded-playtest; update and restart it at a safe checkpoint")
+    recording = current.get("evidence")
+    if current.get("state") != "running" or not current.get("evidence_recording") or not recording:
+        raise ValueError("Start an evidence recorder for this project before launching a playtest")
+
+    def attach(task: dict) -> str:
+        result = request({"action": "evidence", "operation": "attach-playtest", "task": task["task"],
+                          "artifact": recording, "generation": current["generation"],
+                          "control_revision": task["control_revision"]})
+        if result.get("artifact") != recording or result.get("task") != task["task"]:
+            raise RuntimeError("Recorder did not confirm the playtest attachment")
+        return recording
+
+    return attach
+
+
 def check_session():
     from lib.cachyos import is_cachyos
     from lib.cachyos_doctor import _owned_socket
@@ -394,6 +413,7 @@ class NativeSession:
                                                        and time.monotonic() < self.until else None, self.capture_max_age),
                 "observation_id": self.observation.id if self.observation is not None else None,
                 "evidence": str(self.evidence.path) if self.evidence else self.last_evidence,
+                "capabilities": ["recorded-playtest"],
                 "evidence_recording": self.evidence is not None,
                 "evidence_capacity": self.evidence.capacity() if self.evidence else None,
                 "image_origin": self.capture_region[:2] if self.capture_region else None,
@@ -621,7 +641,17 @@ class NativeSession:
                     self.evidence = None
                     self.record()
                     return result
-                raise ValueError("Evidence operation must be start or finish")
+                if operation == "attach-playtest":
+                    from desktop.development import _task, load_task
+                    control_state.require_enabled(payload)
+                    if self.evidence is None or str(self.evidence.path) != payload.get("artifact"):
+                        raise ValueError("Playtest recorder changed; inspect the active recording")
+                    task = load_task(_task(payload.get("task")))
+                    if (task["kind"] != "playtest" or "session_generation" in task
+                            or task.get("control_revision") != payload["control_revision"]):
+                        raise ValueError("Expected a native playtest task for the current control revision")
+                    return {"artifact": self.evidence.attach_playtest(task), "task": task["task"]}
+                raise ValueError("Unknown evidence operation")
             if action == "inspect":
                 pid = payload.get("pid")
                 accessibility.validate_query(payload)

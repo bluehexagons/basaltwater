@@ -66,10 +66,10 @@ def supervisor_environment(uid: int) -> tuple[dict[str, str], str]:
 
 OPTIONS = {"engine", "scene", "argv", "dry_run", "headless", "quit_after", "rendering_method",
            "script", "manager", "recipe", "settings", "timeout", "export_check", "review_manifest",
-           "verify_evidence", "require_artifact_kind"}
+           "verify_evidence", "require_artifact_kind", "playtest"}
 
 
-def handle_task(payload: dict, generation: str) -> dict:
+def handle_task(payload: dict, generation: str, *, recorder=None) -> dict:
     if not isinstance(payload.get("project"), str):
         raise ValueError("Development project must be an existing directory path")
     options = payload.get("options", {})
@@ -97,6 +97,10 @@ def handle_task(payload: dict, generation: str) -> dict:
         return development.doctor(payload.get("project"), **options, session_generation=generation)
     if action not in development.KINDS or "export_check" in options:
         raise ValueError("Unknown development launch operation")
+    if action == "playtest" and not options.get("dry_run"):
+        if recorder is None or str(recorder.path) != payload.get("artifact"):
+            raise ValueError("Playtest recorder changed; inspect the active recording")
+        options = {**options, "attach_playtest": recorder.attach_playtest}
     return development.launch(payload.get("project"), action, **options, session_generation=generation,
                               control_revision=payload.get("control_revision"))
 
@@ -105,6 +109,8 @@ def request_task(args: argparse.Namespace) -> dict:
     current = session_runtime.status()
     if current.get("state") != "running" or "supervised-development" not in current.get("capabilities", []):
         raise RuntimeError("Running desktop lacks supervised-development; refresh at a safe normal logout checkpoint")
+    if args.development_command == "playtest" and "recorded-playtest" not in current["capabilities"]:
+        raise RuntimeError("Running desktop lacks recorded-playtest; refresh at a safe normal logout checkpoint")
     options = {key: getattr(args, key) for key in OPTIONS if hasattr(args, key)}
     # Older running supervisors can still handle a check without evidence options.
     for key in ("verify_evidence", "require_artifact_kind"):
@@ -115,6 +121,10 @@ def request_task(args: argparse.Namespace) -> dict:
     payload = {"action": "development", "operation": args.development_command,
                "project": str(Path(args.project).expanduser().resolve()), "options": options,
                "generation": current["generation"], "control_revision": current["control_revision"]}
+    if args.development_command == "playtest" and not options["dry_run"]:
+        if not current.get("evidence_recording") or not current.get("evidence"):
+            raise ValueError("Start an evidence recorder for this project before launching a playtest")
+        payload["artifact"] = current["evidence"]
     try:
         return session_runtime.request(payload)
     except (OSError, RuntimeError, ValueError) as exc:

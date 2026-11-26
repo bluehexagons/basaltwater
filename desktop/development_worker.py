@@ -14,7 +14,7 @@ import time
 # A transient service launches this file by absolute path from any project.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from desktop.development import LOG_LIMIT, _honor_agent_control, load_task
+from desktop.development import LOG_LIMIT, _honor_agent_control, _private_directory, load_task
 from lib.atomic_io import write_json_atomic
 
 
@@ -47,8 +47,15 @@ def run_task(directory: Path) -> int:
             _honor_agent_control(task["control_revision"])
         descriptor = os.open(directory / "output.log", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         with os.fdopen(descriptor, "wb", buffering=0) as log:
+            environment = None
+            if task.get("kind") == "playtest":
+                from desktop.playtest import profile_environment
+                profile = profile_environment(directory / "profile")
+                for path in profile.values():
+                    _private_directory(Path(path))
+                environment = {**os.environ, **profile}
             process = subprocess.Popen(task["argv"], cwd=task["project"], stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=environment)
             write_json_atomic(str(directory / "started.json"), {"launch_pid": process.pid}, mode=0o600)
             remaining = LOG_LIMIT
             with selectors.DefaultSelector() as selector:

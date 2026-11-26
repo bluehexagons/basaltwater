@@ -29,8 +29,8 @@ basaltw desktop --native develop run --project /absolute/project \
   --scene res://scenes/playtest.tscn --json -- --fixture menu
 ```
 
-`develop` works from T3 or same-user SSH without a running portal helper. It
-reads the existing user manager's graphical environment and checks canonical,
+Most `develop` commands work from T3 or same-user SSH without a running portal helper. They
+read the existing user manager's graphical environment and check canonical,
 owned Wayland/user-bus sockets and the active graphical-session target.
 Unavailable or stale session state stops launch with a reason. It does not
 create a desktop, unlock KDE, request screen access, or change manager settings.
@@ -298,3 +298,45 @@ For native applications, use project-owned run/test commands and check file
 dialogs, keyboard navigation, scaling, fonts, and fullscreen behavior as needed.
 Asset workflows should retain editable sources and verify exported assets in
 the consuming Godot or client project.
+
+## Launch a recorded playtest profile
+
+Declare the command and any fixture files in the project's `basaltwater-agent.json`.
+`seed` maps paths in the disposable profile to regular files in the project.
+Use reviewed synthetic fixtures. Paths are relative and fixture symlinks are
+refused. A profile can seed up to 64 files totaling 16 MiB.
+
+```json
+{
+  "version": 1,
+  "playtests": {
+    "training": {
+      "argv": ["./bin/game", "--training"],
+      "seed": {"data/example-game/save.json": "tests/fixtures/training-save.json"}
+    }
+  }
+}
+```
+
+```bash
+basaltw desktop --native develop playtest training --project /absolute/project --dry-run
+basaltw desktop --native evidence start --project /absolute/project
+basaltw desktop --native develop playtest training --project /absolute/project
+```
+
+`agent manifest` exposes the commands under `development.playtest_argv`.
+Check `desktop status` for the running helper's `recorded-playtest` capability.
+Each launch gets a fresh private `profile` directory inside its supervised task
+directory. The command receives that path as `BASALTWATER_PLAYTEST_PROFILE` and
+gets its own `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME` and
+`XDG_STATE_HOME`. For games that use other paths, declare a reviewed launcher
+that passes the profile path to the game's own save/config flags. Verify that the
+game uses those paths before a real run. It runs with the desktop account's
+ordinary filesystem and network access.
+
+Enabled agent control and an active recorder for the same resolved project
+are required to launch. The recorder checkpoints the task ID before submission.
+Keep the returned task, profile and recording paths for closeout. The profile
+stays with the task records for retention and cleanup. A dry run validates the
+declaration, executable and fixtures without creating a task, profile or recorder
+entry. Debian XRDP uses the same declaration and commands without `--native`.
