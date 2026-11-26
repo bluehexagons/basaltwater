@@ -971,9 +971,12 @@ def serve(*, remember=False, session_seconds=SESSION_SECONDS, touch=False):
     loop = GLib.MainLoop()
 
     def portal_closed():
-        if not session.stopping.is_set():
-            session.fail("Portal session closed or permission revoked")
-        session.close()
+        with session.lock:
+            # Startup owns its failure receipt. Closing a failed request can
+            # also emit Session.Closed before the startup error is recorded.
+            if session.state == "running" and not session.stopping.is_set():
+                session.fail("Portal session closed or permission revoked")
+                session.close()
 
     def initialize():
         try:
@@ -994,6 +997,8 @@ def serve(*, remember=False, session_seconds=SESSION_SECONDS, touch=False):
             with session.lock:
                 if session.stopping.is_set():
                     return
+                if portal.cancelled.is_set():
+                    raise RuntimeError("Portal session closed before native control was ready")
                 session.node, session.logical_size = node, size
                 session.touchscreen_granted = touch
                 session.until = time.monotonic() + session_seconds if session_seconds else float("inf")
@@ -1002,9 +1007,10 @@ def serve(*, remember=False, session_seconds=SESSION_SECONDS, touch=False):
                 print(datetime.now(timezone.utc).isoformat(), session.detail, flush=True)
                 session.record()
         except Exception as exc:
-            if not session.stopping.is_set():
-                session.fail(exc)
-            session.close()
+            with session.lock:
+                if not session.stopping.is_set():
+                    session.fail(exc)
+                session.close()
         finally:
             session.initialization_done.set()
 

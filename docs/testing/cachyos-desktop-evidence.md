@@ -2,6 +2,30 @@
 
 [Topic index](cachyos.md)
 
+## Post-refresh development checks, 2026-11-26
+
+On the refreshed clean `d8e35ee9` installation, a disposable Godot 4.7.2 project
+ran a version-checked recipe through `desktop --native develop check`. Two
+headless runs agreed on the fixed-seed state. Two Xvfb runs reported X11 and
+Mesa llvmpipe, checked the center and four corner markers, and produced
+byte-identical 320×180 PNGs. An intentional state mismatch failed the
+supervised task and retained recipe exit code 7 in `check.json`.
+
+A separate disposable project imported and exported on the same installation
+using its existing Linux x86-64 release template. The executable loaded its
+separate PCK, reached the main scene, and exited zero headlessly. These runs
+qualify the development task, software-rendering and local Linux export paths
+for the fixtures. Target-game graphics, native Wayland GPU rendering, audio
+and input delivery remain open for this refresh.
+
+The saved KDE grant led to a fresh consent wait, which expired. The helper log
+recorded the timeout, then a portal close signal replaced it in the status
+receipt. Regression tests cover preserving the startup failure, surfacing its
+detail in desktop handoff, and stopping promptly when a running portal closes.
+The persistent agent-control setting stayed enabled. Live capture and input
+acceptance still require a selected-monitor grant. Raw logs, frames and build
+artifacts remain private.
+
 ## Native environment and navigation follow-up, 2026-11-02
 
 Continued Godot QA through the existing approved KDE Wayland helper, using

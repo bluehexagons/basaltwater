@@ -25,6 +25,9 @@ def describe_backend(status: dict) -> str:
     if "error" in status:
         return "Native desktop control unavailable: " + str(status["error"])
     if status.get("stopped") or status.get("state") == "stopped":
+        failure = status.get("last_failure")
+        if isinstance(failure, dict) and isinstance(failure.get("detail"), str):
+            return "Automation stopped after a failure\n" + failure["detail"]
         return "Automation stopped; KDE and applications are preserved"
     if status.get("state") == "awaiting-consent":
         seconds = status.get("consent_expires_in")

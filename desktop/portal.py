@@ -71,6 +71,8 @@ class Portal:
         self.pending.add(path)
         self.waiters.add(event)
         try:
+            if self.cancelled.is_set():
+                raise RuntimeError("Portal session closed before " + method)
             self.progress(method + ".request", False)
             options = {**options, "handle_token": self.GLib.Variant("s", token)}
             returned = self.call(interface, method, signature, (*values, options)).unpack()[0]
@@ -79,13 +81,12 @@ class Portal:
             self.progress(method + ".response", method == "Start")
             if not event.wait(RESPONSE_SECONDS):
                 raise RuntimeError(f"Portal {method} response timed out; inspect status before retrying")
+            if result and result[0][0]:
+                raise RuntimeError("Portal permission was cancelled or denied; no desktop control granted")
             if self.cancelled.is_set():
                 raise RuntimeError("Portal session closed while waiting for " + method)
-            code, fields = result[0]
-            if code:
-                raise RuntimeError("Portal permission was cancelled or denied; no desktop control granted")
             self.progress(method + ".complete", False)
-            return fields
+            return result[0][1]
         finally:
             self.bus.signal_unsubscribe(subscription)
             self.pending.discard(path)

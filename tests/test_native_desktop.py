@@ -316,6 +316,8 @@ class NativeHandoffTests(PrivateHomeTestCase):
             ({"state": "initializing", "portal_stage": "CreateSession.request"}, "Initializing native control: CreateSession.request"),
             ({"state": "failed", "detail": "Permission denied"}, "Native desktop control failed: Permission denied"),
             ({"state": "stopped"}, "Automation stopped; KDE and applications are preserved"),
+            ({"state": "stopped", "last_failure": {"detail": "Portal Start response timed out"}},
+             "Automation stopped after a failure\nPortal Start response timed out"),
             ({"stopped": True}, "Automation stopped; KDE and applications are preserved"),
             ({"state": "running", "expires_in": 0}, "Automation expired; start and inspect KDE permission status"),
             ({"state": "running", "expires_in": None}, "Native desktop backend running"),
@@ -585,6 +587,18 @@ class PortalContractTests(unittest.TestCase):
             self.portal.response(REMOTE,"Start","(osa{sv})",("session",""),{})
         self.portal.bus.signal_unsubscribe.assert_called_once()
         self.assertFalse(self.portal.pending)
+
+    def test_explicit_denial_survives_a_concurrent_session_close(self):
+        def call(*args, **kwargs):
+            subscription = self.portal.bus.signal_subscribe.call_args
+            path = subscription.args[3]
+            receive = subscription.args[-1]
+            receive(None, None, None, None, None, Mock(unpack=lambda: (1, {})))
+            self.portal.disconnected()
+            return Mock(unpack=lambda: (path,))
+
+        with patch.object(self.portal, "call", side_effect=call), self.assertRaisesRegex(RuntimeError, "denied"):
+            self.portal.response(REMOTE, "Start", "(osa{sv})", ("session", ""), {})
 
     def test_missing_response_is_closed_on_timeout(self):
         event = Mock()
@@ -1010,11 +1024,65 @@ class NativeReceiptTests(PrivateHomeTestCase):
             self.assertEqual(receipt["last_failure"]["stage"], "connecting")
             self.assertIn("Portal bus initialization failed", output.getvalue())
 
+    def test_close_signal_during_startup_preserves_the_start_result(self):
+        cases = (
+            ("timeout", "Start.response", "Portal Start response timed out"),
+            ("pipewire", "OpenPipeWireRemote", "Portal session closed before native control was ready"),
+            ("running", "ready", "Portal session closed or permission revoked"),
+        )
+        for scenario, stage, detail in cases:
+            with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as directory, redirect_stdout(StringIO()):
+                folder = Path(directory)
+                glib = Mock()
+                portal = Mock(restore_token=None, cancelled=threading.Event())
+                workers = []
+
+                def close_portal():
+                    portal.cancelled.set()
+                    constructor.call_args.args[0]()
+
+                def start(**kwargs):
+                    progress = constructor.call_args.kwargs["progress"]
+                    progress("Start.response", True)
+                    if scenario == "timeout":
+                        close_portal()  # Closing the timed-out request can emit Session.Closed.
+                        raise RuntimeError(detail)
+                    progress("OpenPipeWireRemote")
+                    if scenario == "pipewire":
+                        close_portal()
+                    return 17, [1280, 720]
+
+                def loop():
+                    workers[1]()
+                    if scenario == "running":
+                        self.assertEqual(json.loads((folder / "status.json").read_text())["state"], "running")
+                        close_portal()
+                    self.assertFalse(glib.timeout_add.call_args.args[1]())
+
+                def thread(*, target, **kwargs):
+                    return Mock(start=lambda: workers.append(target))
+
+                portal.start.side_effect = start
+                glib.MainLoop.return_value.run.side_effect = loop
+                with patch.object(native, "check_session"), patch.object(native, "runtime_directory", return_value=folder), \
+                        patch.dict(os.environ, {"WAYLAND_DISPLAY": "wayland-0"}), \
+                        patch.dict(sys.modules, {"gi.repository": SimpleNamespace(GLib=glib)}), \
+                        patch("desktop.portal.Portal", return_value=portal) as constructor, \
+                        patch("lib.cachyos_doctor._owned_socket", return_value=True), \
+                        patch.object(native.socket, "socket"), patch.object(native.signal, "signal"), \
+                        patch.object(native.os, "chmod"), patch.object(native.threading, "Thread", side_effect=thread):
+                    self.assertEqual(native.serve(), 0)
+                receipt = json.loads((folder / "status.json").read_text())
+                self.assertEqual(receipt["state"], "stopped")
+                self.assertEqual(receipt["last_failure"]["stage"], stage)
+                self.assertEqual(receipt["last_failure"]["detail"], detail)
+                self.assertIsNone(receipt["consent_expires_in"])
+
     def test_session_lifetime_starts_after_slow_consent_and_still_expires(self):
         with tempfile.TemporaryDirectory() as directory, redirect_stdout(StringIO()):
             folder = Path(directory)
             clock = [100.0]
-            glib, portal = Mock(), Mock(restore_token=None)
+            glib, portal = Mock(), Mock(restore_token=None, cancelled=threading.Event())
             workers = []
             def thread(*, target, **kwargs):
                 return Mock(start=lambda: workers.append(target))
