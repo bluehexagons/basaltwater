@@ -43,13 +43,19 @@ try {
     $testEvidence=Read-NativeHeldJson (Join-Path $state.TestSession.EvidencePath 'session-evidence.json') 262144
     Assert-Gpu ($null -ne $testEvidence.HostEnvironment.Power -and $testEvidence.HostEnvironment.Power.State -eq 'available') 'Session did not retain native power evidence'
     $info=Read-NativeHeldJson (Join-Path $state.TestSession.EvidencePath 'artifacts\window.json')
-    $inventory=Invoke-QualificationCli @('desktop','windows')
-    $window=@($inventory.result.windows | Where-Object id -eq $info.window)[0]
-    Assert-Gpu ($window.pid -eq $info.pid) 'Fixture window identity mismatch'
+    $inventory=Invoke-QualificationCli @('desktop','windows','--task',$task.Id)
+    $windowsInTask=@($inventory.result.windows)
+    Assert-Gpu ($inventory.result.task_id -ceq $task.Id -and $windowsInTask.Count -eq 1 -and
+        $windowsInTask[0].id -eq $info.window -and $windowsInTask[0].pid -eq $info.pid) 'Task-scoped window inventory did not isolate the fixture'
+    $window=$windowsInTask[0]
     $selectors=@('--window',[string]$window.id,'--identity',$window.identity,'--generation',$inventory.generation,'--width',[string]$window.width,'--height',[string]$window.height)
-    $capture=Invoke-QualificationCli (@('desktop','capture')+$selectors+@('--output',(Join-Path $directory 'capture'),'--milliseconds','2200','--frames','5','--interval-ms','400'))
+    $expectedFrames=5
+    $capture=Invoke-QualificationCli (@('desktop','capture')+$selectors+@('--output',(Join-Path $directory 'capture'),'--milliseconds','2200','--frames',[string]$expectedFrames,'--interval-ms','400'))
     Write-NativeHeldJson (Join-Path $directory 'capture-result.json') $capture 262144
-    Assert-Gpu ($capture.result.frames.Count -eq 5 -and $null -eq $capture.result.observation_id -and $capture.result.cleanup_confirmed) 'GPU capture lacks frames, cleanup or authority boundary'
+    Assert-Gpu $capture.result.cleanup_confirmed 'GPU capture helper cleanup was unconfirmed'
+    Assert-Gpu ($null -eq $capture.result.observation_id) 'GPU capture returned input authority'
+    $frameCount=@($capture.result.frames).Count
+    Assert-Gpu ($frameCount -eq $expectedFrames) "GPU fixture received $frameCount of $expectedFrames expected capture frames"
     Add-Type -AssemblyName System.Drawing
     $colors=@()
     foreach($frame in $capture.result.frames){

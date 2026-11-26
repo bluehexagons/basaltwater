@@ -42,7 +42,8 @@ int wmain(int argc, wchar_t** argv) {
         description.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
         description.SampleDesc.Count = 1; description.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
         description.BufferCount = 2; description.OutputWindow = hwnd; description.Windowed = TRUE;
-        description.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+        // Let the compositor observe successive presents for window capture.
+        description.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
         ComPtr<ID3D11Device> device; ComPtr<ID3D11DeviceContext> context; ComPtr<IDXGISwapChain> swap;
         check(D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
             nullptr, 0, D3D11_SDK_VERSION, &description, &swap, &device, nullptr, &context));
