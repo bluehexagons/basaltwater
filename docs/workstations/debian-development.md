@@ -57,8 +57,10 @@ also supported. Use `--dry-run` to validate a launch. The task reports its
 `profile`, `downloads`, and initial `launch_pid` once the worker starts.
 
 Use the window receipt and its current identity before capture or input. A
-file picker can appear in a separate window. Inspect `desktop windows` after
-opening it and confirm the dialog belongs to the test before targeting it.
+browser window that opens partly off-screen needs `desktop window move` or
+`desktop window resize` before a window-scoped capture. A file picker can appear
+in a separate window. Inspect `desktop windows` after opening it and confirm
+the dialog belongs to the test before targeting it.
 If AT-SPI provides no tree, capture the verified window and use the normal
 observation-bound input workflow. Verify the downloaded file in the task's
 `downloads` directory before ending the test.
@@ -132,14 +134,18 @@ can still report `stopping`. Inspect again until cleanup is verified; do not
 claim success from queue acknowledgement. The service's ten-second stop limit
 bounds escalation for its own cgroup. Identity changes refuse cleanup.
 
-A lost reply can leave a started task without a returned ID. Before another
-launch, use `develop list --project PATH` (optionally `--since`/`--until`) and
+A supervisor reply with `state: launch-unverified` carries the task ID. Use
+`develop status TASK_ID` to reconcile that task. A lost reply can leave a
+started task without a returned ID. Before another launch, use
+`develop list --project PATH` (optionally `--since`/`--until`) and
 inspect candidate task status/logs. Do not automatically relaunch. Listing is
 bounded to 500 scanned records and 50 returned matches; heed truncation.
 Records and logs are retained for explicit review, not automatically pruned.
 
 `desktop evidence start/finish` records supervised-launch task IDs and permits
-finalization against durable task status. [Manual evidence](desktop-automation.md#map-and-record-debian-observations)
+finalization against durable task status. Verification treats an explicit
+`not-launched` receipt as a refusal and flags `launch-unverified` as uncertain.
+[Manual evidence](desktop-automation.md#map-and-record-debian-observations)
 and task completion still do not establish that the application produced its
 intended result. Independently verify saved/exported files and UI state.
 

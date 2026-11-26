@@ -88,6 +88,10 @@ def recording_project(project: str) -> str:
     return str(path.resolve(strict=True))
 
 
+def _development_launch_refused(action: str | None, result: dict) -> bool:
+    return action == "development" and result.get("state") == "not-launched"
+
+
 class Recorder:
     def __init__(self, project: str, generation: str, *, launches: dict | None = None):
         project = recording_project(project)
@@ -167,7 +171,8 @@ class Recorder:
                         "capture_freshness",
                         "input_id", "reason", "dispatch_stage", "input_delivery") if key in result}
                 if "error" in result:
-                    row["outcome"] = "refused" if result.get("input_delivery") == "not-sent" else "uncertain"
+                    refused = result.get("input_delivery") == "not-sent" or _development_launch_refused(action, result)
+                    row["outcome"] = "refused" if refused else "uncertain"
                     row["result"]["failure_detail"] = str(result["error"])[:512]
             self.data["events"].append(row)
         self.save()
@@ -232,28 +237,30 @@ def _verify_captures(path: str, data: dict, *, retention: list[list[str]] | None
     from desktop import evidence_retention
     evictions, pins = evidence_retention.load(retention if retention is not None else [])
     counts = {"verified": 0, "expected_evicted": 0, "missing": 0, "mismatched": 0, "unverified": 0, "image_less": 0}
-    uncertain = sum(row.get("outcome") == "uncertain" for row in data["events"])
+    uncertain = 0
     uncertain_details = []
     uncertain_by_action = {}
     problems = []
     for index, row in enumerate(data["events"]):
-        if row.get("outcome") == "uncertain":
-            action = row.get("action")
-            if action not in ("input", "element", "exec", "screenshot", "launch-status", "control", "development"):
-                action = "unknown"
-            uncertain_by_action[action] = uncertain_by_action.get(action, 0) + 1
+        action = row.get("action")
+        result = row.get("result")
+        result = result if isinstance(result, dict) else {}
+        # Older recorders also labeled explicit pre-launch refusals as uncertain.
+        if row.get("outcome") == "uncertain" and not _development_launch_refused(action, result):
+            uncertain += 1
+            label = (
+                action if action in ("input", "element", "exec", "screenshot", "launch-status", "control", "development")
+                else "unknown"
+            )
+            uncertain_by_action[label] = uncertain_by_action.get(label, 0) + 1
             if len(uncertain_details) < 10:
-                result = row.get("result")
-                result = result if isinstance(result, dict) else {}
-                detail = {"event_index": index, "action": action}
+                detail = {"event_index": index, "action": label}
                 for key in ("reason", "dispatch_stage", "input_delivery"):
                     value = result.get(key)
                     detail[key] = value[:128] if isinstance(value, str) else None
                 uncertain_details.append(detail)
-        if row.get("action") != "screenshot":
+        if action != "screenshot":
             continue
-        result = row.get("result")
-        result = result if isinstance(result, dict) else {}
         output, expected = result.get("output"), result.get("artifact_sha256")
         state, detail = "unverified", "Capture has no valid PNG file hash or path (older or uncertain recording)"
         if not isinstance(output, str):

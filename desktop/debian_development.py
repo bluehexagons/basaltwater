@@ -141,6 +141,10 @@ def request_task(args: argparse.Namespace) -> dict:
         payload["artifact"] = current["evidence"]
     try:
         return session_runtime.request(payload)
+    except DesktopRequestError:
+        raise  # Keep the supervisor's error and any task identity for reconciliation.
     except (OSError, RuntimeError, ValueError) as exc:
+        if args.development_command == "doctor" or options.get("dry_run"):
+            raise RuntimeError(f"Development reply failed: {exc}") from exc
         raise RuntimeError(f"Development reply failed: {exc}. Inspect 'desktop develop list --project PATH' "
                            "and task status before retrying; a task may already have started") from exc

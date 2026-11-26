@@ -536,6 +536,26 @@ class NativeObservationTests(unittest.TestCase):
         recorder.save()
         self.assertFalse(verify(str(recorder.path))["healthy"])
 
+    def test_evidence_distinguishes_confirmed_development_refusals_from_unverified_launches(self):
+        recorder, _ = self.recorded_capture()
+        artifact = str(recorder.path)
+        payload = {"action": "development", "operation": "playtest"}
+        recorder.event(payload, {"error": "Recorder belongs to another project", "state": "not-launched"})
+        refusal = recorder.data["events"][-1]
+        self.assertEqual(refusal["outcome"], "refused")
+        self.assertTrue(verify(artifact)["healthy"])
+
+        refusal["outcome"] = "uncertain"  # Older recorders retain the same explicit state.
+        recorder.save()
+        before = recorder.path.read_bytes()
+        self.assertTrue(verify(artifact)["healthy"])
+        self.assertEqual(recorder.path.read_bytes(), before)
+
+        recorder.event(payload, {"error": "Launch was not acknowledged", "state": "launch-unverified"})
+        result = verify(artifact)
+        self.assertFalse(result["healthy"])
+        self.assertEqual(result["uncertain_by_action"], {"development": 1})
+
     def test_capture_digest_detects_a_concurrent_file_change(self):
         _, capture = self.recorded_capture()
         with capture.open("rb") as stream, patch("desktop.evidence.os.pread", return_value=b""):
@@ -765,14 +785,43 @@ class BoundCaptureTests(unittest.TestCase):
         args = SimpleNamespace(project=str(self.home), development_command="exec", argv=["/usr/bin/fixture"], dry_run=False)
         with patch.object(runtime, "status", side_effect=self.debian.snapshot_status), \
                 patch.object(runtime, "request", return_value={"ok": True}) as request, \
-                patch.object(development, "is_dry_run", return_value=True):
+                patch.object(development, "is_dry_run", return_value=True) as dry_run:
             debian_development.request_task(args)
             self.assertIs(request.call_args.args[0]["options"]["dry_run"], True)
             request.reset_mock()
             request.side_effect = TimeoutError("lost reply")
+            with self.assertRaisesRegex(RuntimeError, "^Development reply failed: lost reply$"):
+                debian_development.request_task(args)
+            request.assert_called_once()
+            request.reset_mock()
+            dry_run.return_value = False
             with self.assertRaisesRegex(RuntimeError, "task may already have started"):
                 debian_development.request_task(args)
             request.assert_called_once()
+
+    def test_debian_development_cli_preserves_supervisor_failure_receipts(self):
+        parser = argparse.ArgumentParser()
+        add_desktop_subparser(parser.add_subparsers())
+        args = parser.parse_args(["desktop", "develop", "exec", "--project", str(self.home),
+                                 "--json", "--", "/usr/bin/fixture"])
+        replies = (
+            {"error": "Command argument must not contain control characters"},
+            {"error": "Task was queued but its state could not be verified", "state": "launch-unverified",
+             "task": "a" * 32, "log": str(self.home / "output.log")},
+            {"error": "Could not attach the playtest", "state": "not-launched", "task": "b" * 32},
+        )
+        for reply in replies:
+            with (self.subTest(reply=reply),
+                  patch.object(runtime, "status", side_effect=self.debian.snapshot_status),
+                  patch.object(runtime, "configuration"),
+                  patch.object(runtime, "runtime_directory", return_value=self.home),
+                  patch.object(runtime.socket, "socket") as socket,
+                  patch("sys.stdout", new_callable=io.StringIO) as output):
+                connection = socket.return_value.__enter__.return_value
+                connection.recv.return_value = json.dumps(reply).encode() + b"\n"
+                self.assertEqual(run_desktop_command(args), 1)
+                self.assertEqual(json.loads(output.getvalue()), {**reply, "ok": False})
+                connection.sendall.assert_called_once()
 
     def test_debian_expired_frame_proves_no_dispatch_and_ignores_caller_receipt(self):
         observation = self.observe(self.debian)
