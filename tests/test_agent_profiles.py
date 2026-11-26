@@ -16,6 +16,7 @@ from lib.arg_parser import add_setup_arguments, create_setup_argument_parser
 from lib.config import SetupConfig
 from lib.plugin_registry import get_system_type_definition, get_system_type_names
 from lib.system_types import get_steps_for_system_type
+from lib.validation import validate_web_interface_settings
 
 
 def _setup_args(**overrides: object) -> Namespace:
@@ -153,6 +154,7 @@ class TestAgentProfiles(unittest.TestCase):
         for t3_flags, pairing in (
             ([], False),
             (["--web-interface", "t3code"], True),
+            (["--web-interface", "t3code", "--web-interface-source", "192.168.1.42/32"], True),
             (["--web-interface", "t3code", "--no-device-pairing"], False),
         ):
             with self.subTest(t3_flags=t3_flags):
@@ -171,6 +173,7 @@ class TestAgentProfiles(unittest.TestCase):
                 replay_args = parser.parse_args(shlex.split(" ".join(saved.to_setup_command()))[1:])
                 replay = SetupConfig.from_args(replay_args, replay_args.system_type)
                 for selected in (config, saved, remote, replay):
+                    validate_web_interface_settings(selected)
                     self.assertEqual(selected.selected_agent_tools(), ["codex"])
                     self.assertEqual(selected.effective_web_ports(), [8443] if pairing else [])
                     self.assertEqual(selected.publish_t3_https, pairing)
@@ -191,6 +194,8 @@ class TestAgentProfiles(unittest.TestCase):
                     self.assertEqual("Installing T3 Code web interface" in steps, bool(t3_flags))
                     if t3_flags:
                         self.assertEqual(selected.web_interface_host, "127.0.0.1")
+                    if "--web-interface-source" in t3_flags:
+                        self.assertEqual(selected.effective_web_interface_sources(), ["192.168.1.42/32"])
 
     def test_lite_vm_preserves_a_saved_t3_install_without_a_portal(self) -> None:
         config = SetupConfig.from_args(_setup_args(web_interfaces=["t3code"]), "agent_vm_lite")
@@ -228,7 +233,7 @@ class TestAgentProfiles(unittest.TestCase):
         cached = SetupConfig.from_args(_setup_args(), "agent_vm_lite")
         parser, _, _ = basaltwater.create_basaltwater_parser()
         args = parser.parse_args([
-            "patch", cached.host, cached.username, "--codex", "--web-interface", "t3code",
+            "patch", cached.host, cached.username, "--web-interface", "t3code",
         ])
         with (
             patch("basaltwater.load_setup_command", return_value=cached),
@@ -236,7 +241,33 @@ class TestAgentProfiles(unittest.TestCase):
         ):
             self.assertEqual(basaltwater.run_patch_command(args), 0)
         updated = apply.call_args.args[0]
+        self.assertEqual(updated.selected_agent_tools(), ["codex"])
         self.assertEqual(updated.device_pairing_providers, ["t3code"])
+
+    def test_lite_vm_patch_disables_a_saved_t3_service_and_portal(self) -> None:
+        import basaltwater
+
+        cached = SetupConfig.from_args(_setup_args(
+            web_interfaces=["t3code"], web_interface_host="0.0.0.0",
+            web_interface_sources=["192.168.1.42/32"], web_interface_port=7381,
+            device_pairing_port=7382,
+        ), "agent_vm_lite")
+        validate_web_interface_settings(cached)
+        parser, _, _ = basaltwater.create_basaltwater_parser()
+        args = parser.parse_args(["patch", cached.host, cached.username, "--no-web-interface"])
+        with (
+            patch("basaltwater.load_setup_command", return_value=cached),
+            patch("basaltwater._execute_patch_config", return_value=0) as apply,
+        ):
+            self.assertEqual(basaltwater.run_patch_command(args), 0)
+        updated = apply.call_args.args[0]
+        validate_web_interface_settings(updated)
+        self.assertIsNone(updated.web_interfaces)
+        self.assertIsNone(updated.device_pairing_providers)
+        self.assertEqual(updated.effective_web_ports(), [])
+        steps = {name for name, _ in get_steps_for_system_type(updated)}
+        self.assertIn("Disabling managed T3 Code", steps)
+        self.assertNotIn("Installing T3 Code web interface", steps)
 
     def test_lite_vm_allows_explicit_web_additions(self) -> None:
         config = SetupConfig.from_args(

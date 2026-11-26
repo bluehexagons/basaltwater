@@ -131,10 +131,10 @@ sudo basaltw setup workstation_dev localhost "$USER" \
 | `--no-agent-tool TOOL[,TOOL...]` | Disable one or more default or saved agent tools |
 | `--web-interface INTERFACE` | Install an explicit headless web interface; currently `t3code`; CachyOS uses its local user service |
 | `--t3code-desktop` | Latest CachyOS only: install or check/update `t3code-bin` through the default Shelly CLI (paru/yay if absent), preserving package-review prompts; disable the Basaltwater web service and preserve data; mutually exclusive with `--web-interface` |
-| `--web-interface-host IP` | Bind address for the selected web interface; managed VM/server defaults to loopback or `0.0.0.0` with a source, while CachyOS accepts loopback or an explicit private IPv4 |
+| `--web-interface-host IP` | Bind address for the selected web interface; `agent_vm_lite` defaults to loopback, other managed VM/server profiles default to loopback or `0.0.0.0` with a source, and CachyOS accepts loopback or an explicit private IPv4 |
 | `--web-interface-port PORT` | TCP port for the selected web interface; default `3773` |
-| `--web-interface-source IP_OR_CIDR` | Managed VM/server source restriction for direct web-interface access; repeatable; CachyOS uses `--web-interface-host` for direct LAN mode |
-| `--no-web-interface` | Disable profile-provided web interfaces |
+| `--web-interface-source IP_OR_CIDR` | Managed VM/server source restriction for HTTPS and any direct LAN access; repeatable; CachyOS uses `--web-interface-host` for direct LAN mode |
+| `--no-web-interface` | Disable profile-provided web interfaces; on `agent_vm_lite`, also stop the managed T3 service and remove its ingress while preserving T3 data |
 | `--no-web-interface-source` | Clear profile-provided web-interface source ranges |
 | `--web-port PORT` | Manage an additional TCP web port through guest UFW; repeatable and source-restricted when generic sources are set |
 | `--no-default-web-ports` | Disable the agent-VM defaults of TCP 80, 443, 8080, and 8081, already omitted by `agent_vm_lite` |

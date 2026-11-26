@@ -66,7 +66,9 @@ Code client**. If setup issues a VM-local certificate, enroll the
 [VM CA on the connecting device](../services/client-ca-trust.md).
 
 For SSH-only operation, omit both `--web-interface t3code` and
-`--web-interface-source`. Add `--no-device-pairing` to a T3 setup to use the
+`--web-interface-source` on a fresh VM. On a VM that already runs managed T3,
+rerun setup with `--no-web-interface` to stop T3 and remove its ingress and
+portal while preserving T3 data. Add `--no-device-pairing` to a T3 setup to use the
 loopback service through [the T3 app's SSH connection](https://github.com/pingdotgg/t3code/blob/v0.1.12/docs/user/remote-access.md#desktop-managed-ssh)
 or a manual tunnel. Without an allowed source, the gateway's HTTPS endpoints
 also accept loopback connections only. For a separately hosted HTTPS client, use

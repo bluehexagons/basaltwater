@@ -39,6 +39,7 @@ from lib.auth_failure_bans import (
 )
 from lib.config import SetupConfig
 from lib.local_http import open_loopback
+from lib.machine_state import can_manage_system_services
 from lib.node_toolchain import SUPPORTED_NODE_RANGE, is_supported_node
 from lib.remote_utils import install_package, is_dry_run, run
 from lib.setup_directories import directory_fd
@@ -662,11 +663,12 @@ def _user_systemctl(
     )
 
 
-def _ensure_user_manager(username: str, uid: int) -> None:
-    linger = run(["loginctl", "enable-linger", username], check=False, capture_output=True)
-    if linger.returncode != 0:
-        detail = (linger.stderr or linger.stdout or "").strip()
-        raise RuntimeError(f"Could not enable the T3 Code user service: {detail}")
+def _ensure_user_manager(username: str, uid: int, *, enable_linger: bool = True) -> None:
+    if enable_linger:
+        linger = run(["loginctl", "enable-linger", username], check=False, capture_output=True)
+        if linger.returncode != 0:
+            detail = (linger.stderr or linger.stdout or "").strip()
+            raise RuntimeError(f"Could not enable the T3 Code user service: {detail}")
     manager = run(
         ["systemctl", "start", f"user@{uid}.service"],
         check=False,
@@ -2115,6 +2117,34 @@ def remove_device_pairing(config: SetupConfig) -> None:
     _remove_t3_https(config, pairing_only=True)
 
 
+def disable_t3code_web(config: SetupConfig) -> None:
+    """Deactivate the managed T3 service and its ingress, preserving T3 data."""
+
+    if is_dry_run():
+        print("  [DRY-RUN] Would close T3 Code ingress and stop its managed user service")
+        return
+
+    home = _user_home(config)
+    _remove_t3_https(config)
+    _configure_firewall(config, config.web_interface_port, "127.0.0.1")
+    _remove_device_pairing()
+    _remove_connect_restart_units(os.path.join(home, ".t3"))
+    if not all(
+        os.path.isfile(path) and not os.path.islink(path)
+        for path in (_t3_service_drop_in(home), _t3_service_file(home))
+    ):
+        return
+    if not can_manage_system_services(config.machine_type):
+        raise RuntimeError("Could not disable T3 Code without a systemd service manager")
+    account = pwd.getpwnam(config.username)
+    with _t3_reconciliation_path(home, account.pw_uid, account.pw_gid):
+        _ensure_user_manager(config.username, account.pw_uid, enable_linger=False)
+        result = _user_systemctl(config.username, account.pw_uid, "disable", "--now", T3_SERVICE_NAME)
+        if result.returncode != 0:
+            detail = _t3_command_failure_detail(result)
+            raise RuntimeError(f"Could not disable the T3 Code user service:\n{detail}")
+
+
 def install_t3code_web(config: SetupConfig) -> None:
     """Install a boot-persistent T3 Code headless service for direct pairing."""
 
@@ -2224,4 +2254,4 @@ def install_t3code_web(config: SetupConfig) -> None:
         )
 
 
-__all__ = ["install_t3code_web", "remove_device_pairing"]
+__all__ = ["disable_t3code_web", "install_t3code_web", "remove_device_pairing"]

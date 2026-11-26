@@ -916,7 +916,9 @@ def validate_web_interface_settings(config: Any) -> None:
     loopback = normalized_host in {"127.0.0.1", "::1", "localhost"}
     if "t3code" in interfaces and normalized_host != "localhost":
         loopback = ipaddress.ip_address(normalized_host).is_loopback
-    if loopback and service_sources:
+    # Lite uses a service-specific allowlist for the managed HTTPS proxy even
+    # when both of its HTTP upstreams listen only on loopback.
+    if loopback and service_sources and getattr(config, "system_type", None) != "agent_vm_lite":
         raise ValueError(
             "--web-interface-source requires a non-loopback web interface bind"
         )

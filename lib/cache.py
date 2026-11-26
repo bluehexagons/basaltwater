@@ -665,6 +665,13 @@ def merge_setup_configs(
         merged_dict["disable_syncthing"] = True
         merged_dict["syncthing_admin"] = None
 
+    if new_config.system_type == "agent_vm_lite" and new_config.disable_web_interface:
+        for field in (
+            "web_interfaces", "web_interface_host", "web_interface_port",
+            "device_pairing_providers", "device_pairing_port",
+        ):
+            merged_dict[field] = new_dict[field]
+
     if new_config.disable_build_host:
         merged_dict["is_build_server"] = False
         merged_dict["build_host_enrollment"] = None

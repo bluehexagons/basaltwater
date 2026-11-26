@@ -28,6 +28,7 @@ from common.t3code_steps import (
     _t3_service_invocation,
     _wait_for_t3_service,
     _write_passthrough_wrapper,
+    disable_t3code_web,
     install_t3code_web,
     remove_device_pairing,
 )
@@ -221,6 +222,41 @@ class T3CodeWebTest(unittest.TestCase):
         config = self._config()
         self.assertEqual(config.web_interface_host, "0.0.0.0")
         validate_web_interface_settings(config)
+
+    def test_disable_lite_t3_closes_ingress_and_stops_only_a_managed_service(self) -> None:
+        config = self._config(system_type="agent_vm_lite", disable_web_interface=True)
+        account = SimpleNamespace(pw_uid=1000, pw_gid=1000)
+        ok = subprocess.CompletedProcess([], 0, "", "")
+        with tempfile.TemporaryDirectory() as home, ExitStack() as stack:
+            directory = os.path.join(home, ".config", "systemd", "user")
+            os.makedirs(os.path.join(directory, "t3code.service.d"))
+            service = os.path.join(directory, "t3code.service")
+            drop_in = os.path.join(directory, "t3code.service.d", "basaltwater.conf")
+            with open(service, "w", encoding="utf-8") as file_obj:
+                file_obj.write("T3 fixture\n")
+            stack.enter_context(patch("common.t3code_steps.is_dry_run", return_value=False))
+            stack.enter_context(patch("common.t3code_steps._user_home", return_value=home))
+            stack.enter_context(patch("common.t3code_steps.pwd.getpwnam", return_value=account))
+            stack.enter_context(patch("common.t3code_steps.can_manage_system_services", return_value=True))
+            stack.enter_context(patch("common.t3code_steps._t3_reconciliation_path"))
+            stack.enter_context(patch("common.t3code_steps._ensure_user_manager"))
+            stack.enter_context(patch("common.t3code_steps._remove_connect_restart_units"))
+            routes = stack.enter_context(patch("common.t3code_steps._remove_t3_https"))
+            firewall = stack.enter_context(patch("common.t3code_steps._configure_firewall"))
+            portal = stack.enter_context(patch("common.t3code_steps._remove_device_pairing"))
+            systemctl = stack.enter_context(patch("common.t3code_steps._user_systemctl", return_value=ok))
+
+            disable_t3code_web(config)
+            systemctl.assert_not_called()
+            with open(drop_in, "w", encoding="utf-8") as file_obj:
+                file_obj.write("# Managed by basaltwater\n")
+            disable_t3code_web(config)
+            systemctl.assert_called_once_with("agent", 1000, "disable", "--now", "t3code")
+            routes.assert_called_with(config)
+            firewall.assert_called_with(config, 3773, "127.0.0.1")
+            portal.assert_called_with()
+            self.assertTrue(os.path.isfile(service))
+            self.assertTrue(os.path.isfile(drop_in))
 
     def test_pairing_opt_out_plan_with_and_without_web_interface(self) -> None:
         for disable_web in (False, True):

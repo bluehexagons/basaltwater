@@ -296,4 +296,6 @@ maintain Ruby applications.
 
 For agentic coding targets, use the [headless terminal example](../workstations/workstations.md#headless-agentic-coding-host)
 when no desktop or RDP is wanted, or the [desktop/RDP example](../workstations/workstations.md#desktop-agentic-coding-workstation-with-rdp)
-for graphical work. For a Proxmox node, start with [Proxmox workflows](../operations/proxmox.md).
+for graphical work. For a 2 GiB Proxmox coding guest, see the
+[lite VM example](../agents/agentic-vms.md#a-low-memory-coding-vm).
+To enroll a node, start with [Proxmox workflows](../operations/proxmox.md).

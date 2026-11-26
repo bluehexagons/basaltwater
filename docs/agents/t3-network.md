@@ -16,6 +16,10 @@ Selecting T3 on the [`agent_vm_lite` profile](agentic-vms.md#a-low-memory-coding
 also enables the protected pairing portal and the HTTPS gateway. Use
 `--no-device-pairing` to run T3 without either component and connect through
 SSH, T3 Connect, or an existing external HTTPS endpoint.
+On this profile, `--web-interface-source` restricts access to HTTPS while
+the T3 and pairing HTTP listeners stay on loopback. To close direct HTTP on
+an existing lite VM, rerun setup with `--web-interface-host 127.0.0.1`
+and keep the trusted source selection for HTTPS.
 
 Other managed T3 setups publish an HTTPS endpoint through the shared gateway. Use
 direct HTTP only over localhost or in a controlled test environment. Direct

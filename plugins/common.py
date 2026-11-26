@@ -275,7 +275,7 @@ def extend_agent_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]]) -
     )
     from common.agent_security_steps import configure_codex_security_policy
     from common.agent_context_steps import configure_agent_context_defaults
-    from common.t3code_steps import install_t3code_web, remove_device_pairing
+    from common.t3code_steps import disable_t3code_web, install_t3code_web, remove_device_pairing
     from lib.agent_skill_bundles import SKILL_AGENT_TOOLS
 
     if config.has_agent_features():
@@ -345,6 +345,8 @@ def extend_agent_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]]) -
 
     if "t3code" in (config.web_interfaces or []):
         steps.append(("Installing T3 Code web interface", install_t3code_web))
+    elif config.system_type == "agent_vm_lite" and config.disable_web_interface:
+        steps.append(("Disabling managed T3 Code", disable_t3code_web))
     elif config.disable_device_pairing:
         steps.append(("Removing managed device-pairing portal", remove_device_pairing))
 

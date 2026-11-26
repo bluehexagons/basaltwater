@@ -2449,8 +2449,14 @@ def run_patch_command(args: argparse.Namespace) -> int:
     try:
         resolve_approval_panel_args(args, saved_port=cached_config.privilege_broker_port)
         resolve_cli_selection(args, cached_config)
-        new_config = SetupConfig.from_args(args, cached_config.system_type)
         preserve_keys = _patch_preserve_keys(args)
+        if (
+            cached_config.system_type == "agent_vm_lite"
+            and getattr(args, "web_interfaces", None)
+            and "agent_tools" in preserve_keys
+        ):
+            args.agent_tools = cached_config.selected_agent_tools()
+        new_config = SetupConfig.from_args(args, cached_config.system_type)
         if (
             cached_config.system_type == "agent_vm_lite"
             and not cached_config.web_interfaces
