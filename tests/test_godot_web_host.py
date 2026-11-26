@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 from common import godot_web_steps
 from common.agent_steps import BASE_AGENT_SKILL_NAMES
-from common.service_tools import basaltwater_web, godot_web_publish
+from common.service_tools import basaltwater_web, godot_web_publish, static_web_publish
 
 
 class TestGodotWebHost(unittest.TestCase):
@@ -24,8 +24,12 @@ class TestGodotWebHost(unittest.TestCase):
         )
 
         self.assertIn("listen 8443 ssl", content)
-        self.assertIn("Cross-Origin-Opener-Policy \"same-origin\"", content)
-        self.assertIn("Cross-Origin-Embedder-Policy \"require-corp\"", content)
+        self.assertIn("Cross-Origin-Opener-Policy $site_coop always", content)
+        self.assertIn('set $site_coop "same-origin"', content)
+        self.assertIn("Cross-Origin-Embedder-Policy $site_coep always", content)
+        self.assertIn('set $site_coep "require-corp"', content)
+        self.assertIn("/.basaltwater-godot", content)
+        self.assertIn('location ~ "^/games(?:/|$)" {\n        return 404;', content)
         self.assertIn("location /sites/", content)
         self.assertIn("application/x-x509-ca-cert", content)
         self.assertIn("autoindex on", content)
@@ -155,7 +159,7 @@ class TestGodotWebHost(unittest.TestCase):
             account = SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid())
             with (
                 patch.object(godot_web_steps, "GODOT_WEB_ROOT", web_root),
-                patch.object(godot_web_steps, "GODOT_WEB_GAMES_ROOT", games_root),
+                patch.object(godot_web_steps, "LEGACY_GAMES_ROOT", games_root),
                 patch.object(godot_web_steps, "INTERNAL_WEB_SITES_ROOT", sites_root),
                 patch.object(godot_web_steps, "GODOT_WEB_URL_FILE", url_file),
                 patch.object(godot_web_steps, "GODOT_WEB_CA_CERT", ca_cert),
@@ -192,14 +196,14 @@ class TestGodotWebHost(unittest.TestCase):
                 )
 
             self.assertTrue(changed)
-            self.assertTrue(os.path.isdir(os.path.join(games_root, "agent")))
+            self.assertFalse(os.path.exists(games_root))
             self.assertTrue(os.path.isdir(os.path.join(sites_root, "agent")))
             with open(os.path.join(web_root, "index.html"), encoding="utf-8") as page:
                 content = page.read()
-                self.assertIn("basaltwater-web publish godot", content)
+                self.assertIn("basaltwater-web publish site --profile godot", content)
                 self.assertIn("basaltwater-web publish site", content)
                 self.assertIn("agent sites", content)
-                self.assertIn(">games</a>", content)
+                self.assertNotIn("/games/", content)
             with open(url_file, encoding="utf-8") as base_url:
                 self.assertEqual(base_url.read(), "https://192.0.2.10:8443\n")
             certificate.assert_called_once_with(
@@ -207,6 +211,24 @@ class TestGodotWebHost(unittest.TestCase):
             )
             chromium_trust.assert_called_once_with(["agent"])
             nginx.assert_called_once()
+
+    def test_gateway_moves_legacy_exports_as_their_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            os.mkdir(os.path.join(directory, "agent"))
+            os.mkdir(os.path.join(directory, "root"))
+            with (
+                patch.object(godot_web_steps, "LEGACY_GAMES_ROOT", directory),
+                patch.object(godot_web_steps, "run", return_value=SimpleNamespace(stdout="migrated\n")) as run,
+                patch.object(godot_web_steps.pwd, "getpwnam",
+                             side_effect=lambda username: SimpleNamespace(pw_uid=0 if username == "root" else 1000)),
+                redirect_stdout(io.StringIO()),
+            ):
+                self.assertTrue(godot_web_steps._migrate_legacy_sites(["agent", "root", "other"]))
+            self.assertEqual(run.call_args.args[0], [
+                "runuser", "-u", "agent", "--", "/usr/bin/python3", "-I",
+                godot_web_steps.GODOT_WEB_UTILITY, "site", "migrate-legacy",
+            ])
+            self.assertEqual(run.call_count, 1)
 
     def test_web_policy_exposes_the_user_readable_ca_copy(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
@@ -518,9 +540,9 @@ class TestGodotWebPublisher(unittest.TestCase):
                     return SimpleNamespace(returncode=returncode)
 
                 with (
-                    patch.object(godot_web_publish, "GAMES_ROOT", games),
-                    patch.object(godot_web_publish, "_base_url", return_value=None),
-                    patch.object(godot_web_publish, "_current_account", return_value=SimpleNamespace(pw_name="agent", pw_uid=os.getuid())),
+                    patch.object(static_web_publish, "SITES_ROOT", games),
+                    patch.object(static_web_publish, "_base_url", return_value=None),
+                    patch.object(static_web_publish, "_current_account", return_value=SimpleNamespace(pw_name="agent", pw_uid=os.getuid())),
                     patch.object(godot_web_publish, "run", side_effect=export),
                     redirect_stdout(output),
                     redirect_stderr(errors),
@@ -548,12 +570,12 @@ class TestGodotWebPublisher(unittest.TestCase):
                 real_replace(source, destination)
 
             with patch.object(
-                godot_web_publish.os,
+                static_web_publish.os,
                 "replace",
                 side_effect=fail_activation,
             ):
                 with self.assertRaisesRegex(OSError, "activation failed"):
-                    godot_web_publish._replace_export(staging_dir, destination_dir)
+                    static_web_publish._replace_site(staging_dir, destination_dir)
 
             with open(previous_file, encoding="utf-8") as file_obj:
                 self.assertEqual(file_obj.read(), "previous")
@@ -584,16 +606,18 @@ class TestGodotWebPublisher(unittest.TestCase):
                 return SimpleNamespace(returncode=0)
 
             with (
-                patch.object(godot_web_publish, "GAMES_ROOT", games_root),
-                patch.object(godot_web_publish, "BASE_URL_FILE", url_file),
-                patch.object(godot_web_publish, "_current_account", return_value=account),
+                patch.object(static_web_publish, "SITES_ROOT", games_root),
+                patch.object(static_web_publish, "BASE_URL_FILE", url_file),
+                patch.object(static_web_publish, "_current_account", return_value=account),
                 patch.object(
                     godot_web_publish,
                     "run",
                     side_effect=create_export,
                 ) as run_export,
             ):
-                result = godot_web_publish.main(["demo", project_dir])
+                result = basaltwater_web.main([
+                    "publish", "site", "demo", project_dir, "--profile", "godot",
+                ])
 
             self.assertEqual(result, 0)
             published_file = os.path.join(user_root, "demo", "index.html")
@@ -610,7 +634,7 @@ class TestGodotWebPublisher(unittest.TestCase):
 
     def test_publish_rejects_unsafe_game_name_before_running_godot(self) -> None:
         with (
-            patch.object(godot_web_publish, "_current_account") as current_account,
+            patch.object(static_web_publish, "_current_account") as current_account,
             patch.object(godot_web_publish, "run") as run_export,
         ):
             result = godot_web_publish.main(["../escape"])
@@ -636,9 +660,9 @@ class TestGodotWebPublisher(unittest.TestCase):
                 return SimpleNamespace(returncode=0)
 
             with (
-                patch.object(godot_web_publish, "GAMES_ROOT", games_root),
-                patch.object(godot_web_publish, "BASE_URL_FILE", os.path.join(temporary_dir, "url")),
-                patch.object(godot_web_publish, "_current_account", return_value=account),
+                patch.object(static_web_publish, "SITES_ROOT", games_root),
+                patch.object(static_web_publish, "BASE_URL_FILE", os.path.join(temporary_dir, "url")),
+                patch.object(static_web_publish, "_current_account", return_value=account),
                 patch.object(godot_web_publish, "run", side_effect=create_export),
             ):
                 result = godot_web_publish.main(
@@ -672,9 +696,9 @@ class TestGodotWebPublisher(unittest.TestCase):
 
             results: list[dict[str, object]] = []
             with (
-                patch.object(godot_web_publish, "GAMES_ROOT", games_root),
-                patch.object(godot_web_publish, "BASE_URL_FILE", url_file),
-                patch.object(godot_web_publish, "_current_account", return_value=account),
+                patch.object(static_web_publish, "SITES_ROOT", games_root),
+                patch.object(static_web_publish, "BASE_URL_FILE", url_file),
+                patch.object(static_web_publish, "_current_account", return_value=account),
                 patch.object(godot_web_publish, "run", side_effect=create_export),
             ):
                 for _attempt in range(2):
@@ -693,7 +717,7 @@ class TestGodotWebPublisher(unittest.TestCase):
             self.assertGreater(results[0]["artifact_bytes"], 4096)
             self.assertGreater(results[0]["compressed_artifact_bytes"], 0)
             self.assertGreaterEqual(results[0]["elapsed_seconds"], 0)
-            self.assertEqual(results[0]["url"], "https://games.example:8443/games/agent/demo/")
+            self.assertEqual(results[0]["url"], "https://games.example:8443/sites/agent/demo/")
 
 
 if __name__ == "__main__":

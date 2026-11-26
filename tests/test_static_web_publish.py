@@ -21,6 +21,10 @@ from lib import static_publication
 
 def _args(project: str, **overrides: object) -> argparse.Namespace:
     values: dict[str, object] = {
+        "profile": "static",
+        "preset": None,
+        "debug": False,
+        "no_precompress": False,
         "json": False,
         "build_timeout": 3600,
         "build_script": "build",
@@ -46,6 +50,96 @@ class TestStaticWebPublish(unittest.TestCase):
             static_web_publish, "select_node",
             return_value=Mock(environment=Mock(return_value=self.environment)),
         ))
+
+    def test_godot_site_cli_publishes_prebuilt_export_and_verifies_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "project" / "web"
+            output.mkdir(parents=True)
+            for name, contents in {
+                "index.html": b"game", "index.js": b"loader",
+                "index.wasm": b"\x00asm", "index.pck": b"GDPC",
+            }.items():
+                (output / name).write_bytes(contents)
+            sites = root / "sites"
+            user_sites = sites / "agent"
+            user_sites.mkdir(parents=True)
+            account = SimpleNamespace(pw_name="agent", pw_uid=os.getuid())
+            with (
+                patch.object(static_web_publish, "SITES_ROOT", str(sites)),
+                patch.object(static_web_publish, "_current_account", return_value=account),
+                patch.object(basaltwater_web, "_site_account", return_value=account),
+                patch.object(static_web_publish, "_base_url", return_value="https://vm.test:8443"),
+                patch.object(static_web_publish.godot_web_publish, "run") as export,
+            ):
+                def invoke(*argv):
+                    stdout = io.StringIO()
+                    with contextlib.redirect_stdout(stdout):
+                        status = basaltwater_web.main([*argv, "--json"])
+                    self.assertEqual(status, 0, stdout.getvalue())
+                    return json.loads(stdout.getvalue())
+
+                result = invoke(
+                    "publish", "site", "demo", "--profile", "godot", "--project",
+                    str(output.parent), "--no-build", "--output", "web",
+                )
+                self.assertEqual(result["url"], "https://vm.test:8443/sites/agent/demo/")
+                self.assertEqual(result["metadata"]["profile"], "godot")
+                self.assertEqual(result["precompressed"], ["index.pck.gz", "index.wasm.gz"])
+                self.assertEqual(invoke("site", "list")["sites"][0]["profile"], "godot")
+                verified = invoke("site", "verify", "demo", "--local-only")
+                self.assertTrue(verified["ok"])
+                self.assertFalse(verified["build_performed"])
+                self.assertEqual(verified["artifacts"], 6)
+                self.assertTrue(invoke("site", "remove", "demo", "--yes")["removed"])
+                self.assertFalse((user_sites / "demo").exists())
+                export.assert_not_called()
+                self.select_node.assert_not_called()
+
+    def test_migration_retries_rename_and_keeps_existing_sites(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            legacy = root / "games" / "agent" / "demo"
+            legacy.mkdir(parents=True)
+            (legacy / "index.html").write_text("existing game")
+            (legacy / "index.wasm").write_bytes(b"\x00asm")
+            (legacy / static_web_publish.METADATA_FILE).write_text(json.dumps({
+                "game": "demo", "title": "Legacy game",
+                "published_at": "2026-01-01T00:00:00Z", "project": "/private/project",
+            }))
+            existing = root / "sites" / "agent" / "demo"
+            existing.mkdir(parents=True)
+            (existing / "index.html").write_text("existing site")
+            migrated = existing.with_name("demo-godot")
+            account = SimpleNamespace(pw_name="agent", pw_uid=os.getuid())
+            with (
+                patch.object(static_web_publish, "LEGACY_GAMES_ROOT", str(root / "games")),
+                patch.object(static_web_publish, "SITES_ROOT", str(root / "sites")),
+                patch.object(static_web_publish, "_current_account", return_value=account),
+                patch.object(static_web_publish, "_base_url", return_value="https://vm.test:8443"),
+            ):
+                with patch.object(os, "rename", side_effect=OSError("interrupted move")):
+                    with self.assertRaisesRegex(OSError, "interrupted move"):
+                        static_web_publish.migrate_legacy_sites()
+                self.assertTrue((legacy / "index.html").is_file())
+                self.assertFalse(migrated.exists())
+                self.assertEqual(static_web_publish.migrate_legacy_sites(), [
+                    "https://vm.test:8443/sites/agent/demo-godot/",
+                ])
+                self.assertEqual(static_web_publish.migrate_legacy_sites(), [])
+                records = static_web_publish.list_sites(account)
+            self.assertEqual((existing / "index.html").read_text(), "existing site")
+            self.assertEqual((migrated / "index.html").read_text(), "existing game")
+            self.assertFalse(legacy.exists())
+            self.assertEqual([(x["site"], x["profile"]) for x in records], [
+                ("demo", "static"), ("demo-godot", "godot"),
+            ])
+            self.assertNotIn("project", records[1])
+            self.assertEqual(records[1]["published_at"], "2026-01-01T00:00:00Z")
+            receipt = static_publication.read_receipt(str(migrated))
+            self.assertEqual(receipt["source"], {"commit": None, "dirty": None})
+            self.assertEqual(set(receipt["artifacts"]), {"index.html", "index.wasm"})
+            self.assertIn('href="demo-godot/"', (migrated.parent / "index.html").read_text())
 
     def test_publishes_existing_output_atomically_and_updates_catalog(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:

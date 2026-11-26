@@ -11,6 +11,7 @@ import unittest
 from unittest.mock import patch
 
 from common.service_tools import godot_web_publish as publisher
+from common.service_tools import static_web_publish as sites
 
 
 class TestGodotExportValidation(unittest.TestCase):
@@ -35,8 +36,8 @@ class TestGodotExportValidation(unittest.TestCase):
                 else:
                     os.mkfifo(lock)
                 with (
-                    patch.object(publisher, "GAMES_ROOT", str(games)),
-                    patch.object(publisher, "_current_account", return_value=SimpleNamespace(pw_name="agent", pw_uid=os.getuid())),
+                    patch.object(sites, "SITES_ROOT", str(games)),
+                    patch.object(sites, "_current_account", return_value=SimpleNamespace(pw_name="agent", pw_uid=os.getuid())),
                     patch.object(publisher, "run") as export,
                 ):
                     args = publisher._parser().parse_args(["test", "--project", str(project)])
@@ -64,15 +65,15 @@ class TestGodotExportValidation(unittest.TestCase):
                 patch.object(publisher.os, "chmod") as chmod,
             ):
                 with self.assertRaisesRegex(RuntimeError, "Could not validate"):
-                    publisher._make_export_readable(directory)
+                    publisher.validate_export_tree(directory)
                 chmod.assert_not_called()
 
     def test_unsafe_generated_files_are_rejected_before_writes(self) -> None:
         for name, kind, precompress in (
             ('game.wasm', 'symlink', True),
             ('game.wasm.gz', 'symlink', True),
-            (publisher.METADATA_FILE, 'symlink', False),
-            (publisher.METADATA_FILE, 'hardlink', False),
+            (sites.METADATA_FILE, 'symlink', False),
+            (sites.METADATA_FILE, 'hardlink', False),
             ('game.wasm.gz', 'hardlink', True),
             ('game.pck', 'fifo', True),
         ):
@@ -86,6 +87,7 @@ class TestGodotExportValidation(unittest.TestCase):
                 destination = user_root / 'test'
                 destination.mkdir(parents=True)
                 (destination / 'index.html').write_text('previous working game')
+                sites._write_godot_profile(str(destination))
                 outside = root / 'private'
                 outside.write_text('do not change')
                 outside.chmod(0o600)
@@ -105,8 +107,8 @@ class TestGodotExportValidation(unittest.TestCase):
                         os.mkfifo(target)
                     return SimpleNamespace(returncode=0, stderr='')
 
-                stack.enter_context(patch.object(publisher, 'GAMES_ROOT', str(games)))
-                stack.enter_context(patch.object(publisher, '_current_account', return_value=SimpleNamespace(pw_name='agent', pw_uid=os.getuid())))
+                stack.enter_context(patch.object(sites, 'SITES_ROOT', str(games)))
+                stack.enter_context(patch.object(sites, '_current_account', return_value=SimpleNamespace(pw_name='agent', pw_uid=os.getuid())))
                 stack.enter_context(patch.object(publisher, 'run', side_effect=export))
                 args = publisher._parser().parse_args(['test', '--project', str(project)])
                 args.precompress = precompress
@@ -116,7 +118,7 @@ class TestGodotExportValidation(unittest.TestCase):
                 self.assertEqual(outside.stat().st_mode & 0o777, 0o600)
                 self.assertEqual((destination / 'index.html').read_text(), 'previous working game')
 
-    def test_readability_pass_validates_every_file_before_chmod(self) -> None:
+    def test_export_validation_preserves_a_hardlinked_target(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             outside = root / 'private'
@@ -126,5 +128,5 @@ class TestGodotExportValidation(unittest.TestCase):
             export.mkdir()
             os.link(outside, export / 'linked.txt')
             with self.assertRaisesRegex(RuntimeError, 'unsafe'):
-                publisher._make_export_readable(str(export))
+                publisher.validate_export_tree(str(export))
             self.assertEqual(outside.stat().st_mode & 0o777, 0o600)

@@ -18,6 +18,7 @@ from common.agent_steps import BASE_AGENT_SKILL_NAMES, install_managed_agent_ski
 from lib.atomic_io import write_text_atomic
 from lib.config import GODOT_WEB_HTTPS_PORT
 from lib.remote_utils import install_package, is_package_installed, is_service_active, run
+from lib.static_publication import GODOT_PROFILE_FILE
 from lib.validation import (
     validate_filesystem_path,
     validate_network_ip_or_cidr,
@@ -27,7 +28,7 @@ from lib.validators import validate_host, validate_username
 
 
 GODOT_WEB_ROOT = "/srv/basaltwater/web"
-GODOT_WEB_GAMES_ROOT = f"{GODOT_WEB_ROOT}/games"
+LEGACY_GAMES_ROOT = f"{GODOT_WEB_ROOT}/games"
 INTERNAL_WEB_SITES_ROOT = f"{GODOT_WEB_ROOT}/sites"
 GODOT_WEB_CA_DOWNLOAD = f"{GODOT_WEB_ROOT}/basaltwater-ca.crt"
 GODOT_WEB_PKI_DIR = "/var/lib/basaltwater/internal-web-pki"
@@ -500,18 +501,25 @@ server {{
         try_files /index.html =404;
     }}
 
-    location /games/ {{
-        autoindex on;
-        try_files $uri $uri/ =404;
-        add_header Cross-Origin-Opener-Policy "same-origin" always;
-        add_header Cross-Origin-Embedder-Policy "require-corp" always;
-        add_header X-Content-Type-Options "nosniff" always;
-        add_header Cache-Control "no-cache" always;
+    location ~ "^/games(?:/|$)" {{
+        return 404;
     }}
 
     location /sites/ {{
         autoindex on;
+        set $site_coop "";
+        set $site_coep "";
+        set $site_profile_file "";
+        if ($uri ~ "^/sites/([a-z_][a-z0-9_-]*/[a-z0-9][a-z0-9_-]*)(?:/|$)") {{
+            set $site_profile_file "$document_root/sites/$1/{GODOT_PROFILE_FILE}";
+        }}
+        if (-f $site_profile_file) {{
+            set $site_coop "same-origin";
+            set $site_coep "require-corp";
+        }}
         try_files $uri $uri/ =404;
+        add_header Cross-Origin-Opener-Policy $site_coop always;
+        add_header Cross-Origin-Embedder-Policy $site_coep always;
         add_header X-Content-Type-Options "nosniff" always;
         add_header Cache-Control "no-cache" always;
     }}
@@ -540,8 +548,7 @@ def _landing_page(base_url: str, local_ca: bool, users: Sequence[str]) -> str:
     )
     user_items = "".join(
         f'<li><a href="/sites/{html.escape(username)}/">'
-        f"{html.escape(username)} sites</a> · "
-        f'<a href="/games/{html.escape(username)}/">games</a></li>'
+        f"{html.escape(username)} sites</a></li>"
         for username in users
     )
     catalogs = f"<ul>{user_items}</ul>" if user_items else ""
@@ -551,32 +558,12 @@ def _landing_page(base_url: str, local_ca: bool, users: Sequence[str]) -> str:
 <title>basaltwater internal web host</title>
 <style>body{{font:16px system-ui,sans-serif;max-width:48rem;margin:3rem auto;padding:0 1rem;line-height:1.5}}code{{background:#eef1f4;padding:.15rem .3rem;border-radius:.2rem}}</style>
 </head><body><main><h1>Internal web host</h1>
-<p>Static sites are available under <a href="/sites/">/sites/</a>.</p>
-<p>Godot exports are available under <a href="/games/">/games/</a>.</p>
+<p>Static sites and Godot exports are available under <a href="/sites/">/sites/</a>.</p>
 {catalogs}
 <p>Publish a static project with <code>basaltwater-web publish site</code>.</p>
-<p>Publish the current project with <code>basaltwater-web publish godot</code>.</p>
+<p>Publish a Godot project with <code>basaltwater-web publish site --profile godot</code>.</p>
 {trust_note}
 <p>Base URL: <code>{html.escape(base_url)}</code></p>
-</main></body></html>
-"""
-
-
-def _internal_landing_page(base_url: str, local_ca: bool) -> str:
-    trust_note = (
-        '<p>Install the <a href="/basaltwater-ca.crt">VM CA certificate</a> '
-        "on LAN clients before opening internal HTTPS services.</p>"
-        if local_ca
-        else "<p>This endpoint uses a publicly trusted certificate.</p>"
-    )
-    return f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>basaltwater internal web host</title>
-</head><body><main><h1>basaltwater internal web host</h1>
-<p>Static sites are available under <a href="/sites/">/sites/</a>.</p>
-<p>Publish the current project with <code>basaltwater-web publish site</code>.</p>
-{trust_note}<p>Base URL: <code>{html.escape(base_url)}</code></p>
 </main></body></html>
 """
 
@@ -660,25 +647,69 @@ def _configure_ca_download(local_ca: bool) -> bool:
 
 def _configure_user_roots(users: list[str]) -> bool:
     changed = False
-    _ensure_managed_directory(GODOT_WEB_GAMES_ROOT, 0o755)
     _ensure_managed_directory(INTERNAL_WEB_SITES_ROOT, 0o755)
     for username in users:
         if not validate_username(username):
             raise ValueError(f"Invalid internal web-host username: {username}")
         account = pwd.getpwnam(username)
-        for root in (GODOT_WEB_GAMES_ROOT, INTERNAL_WEB_SITES_ROOT):
-            user_root = os.path.join(root, username)
-            validate_filesystem_path(user_root, must_exist=False)
-            if os.path.lexists(user_root) and (
-                os.path.islink(user_root) or not os.path.isdir(user_root)
-            ):
-                raise RuntimeError(f"Refusing unsafe internal web root: {user_root}")
-            if not os.path.isdir(user_root):
-                os.mkdir(user_root, mode=0o755)
-                changed = True
-            os.chown(user_root, account.pw_uid, account.pw_gid)
-            os.chmod(user_root, 0o755)
+        user_root = os.path.join(INTERNAL_WEB_SITES_ROOT, username)
+        validate_filesystem_path(user_root, must_exist=False)
+        if os.path.lexists(user_root) and (
+            os.path.islink(user_root) or not os.path.isdir(user_root)
+        ):
+            raise RuntimeError(f"Refusing unsafe internal web root: {user_root}")
+        if not os.path.isdir(user_root):
+            os.mkdir(user_root, mode=0o755)
+            changed = True
+        os.chown(user_root, account.pw_uid, account.pw_gid)
+        os.chmod(user_root, 0o755)
     return changed
+
+
+def _migrate_legacy_sites(users: list[str]) -> bool:
+    if not os.path.lexists(LEGACY_GAMES_ROOT):
+        return False
+    if os.path.islink(LEGACY_GAMES_ROOT) or not os.path.isdir(LEGACY_GAMES_ROOT):
+        raise RuntimeError(f"Refusing unsafe legacy game root: {LEGACY_GAMES_ROOT}")
+    changed = False
+    for username in users:
+        if (not os.path.lexists(os.path.join(LEGACY_GAMES_ROOT, username))
+                or pwd.getpwnam(username).pw_uid == 0):
+            continue
+        # The legacy snapshots and destination are user-owned. Keep all
+        # inspection, locking, and file writes inside that user's authority.
+        result = run(
+            ["runuser", "-u", username, "--", "/usr/bin/python3", "-I",
+             GODOT_WEB_UTILITY, "site", "migrate-legacy"],
+            cwd="/", check=True, capture_output=True, timeout=3600,
+        )
+        if result.stdout.strip():
+            print(result.stdout.rstrip())
+            changed = True
+    return changed
+
+
+def _configure_landing_page(base_url: str, local_ca: bool, users: list[str]) -> bool:
+    path = os.path.join(GODOT_WEB_ROOT, "index.html")
+    if os.path.lexists(path):
+        if os.path.islink(path) or not os.path.isfile(path):
+            raise RuntimeError(f"Refusing unsafe internal web landing page: {path}")
+        with open(path, encoding="utf-8") as file_obj:
+            if "<title>basaltwater internal web host</title>" not in file_obj.read():
+                return False
+    return _write_if_changed(path, _landing_page(base_url, local_ca, users), 0o644)
+
+
+def _configure_site_host(
+    base_url: str, local_ca: bool, users: list[str],
+    cert_path: str, key_path: str, *, reload_required: bool,
+) -> bool:
+    changed = _configure_user_roots(users)
+    changed = _configure_landing_page(base_url, local_ca, users) or changed
+    changed = _configure_nginx_site(
+        render_nginx_config(cert_path, key_path), reload_required=reload_required,
+    ) or changed
+    return _migrate_legacy_sites(users) or changed
 
 
 def _install_managed_link(source: str, destination: str, label: str) -> bool:
@@ -908,16 +939,9 @@ def configure_godot_web_host(
         normalized_users,
         normalized_sources,
     )
-    changed = _configure_user_roots(normalized_users) or changed
     changed = certificate_changed or changed
-    changed = _write_if_changed(
-        os.path.join(GODOT_WEB_ROOT, "index.html"),
-        _landing_page(base_url, local_ca, normalized_users),
-        0o644,
-    ) or changed
-    changed = _write_if_changed(GODOT_WEB_URL_FILE, base_url + "\n", 0o644) or changed
-    changed = _configure_nginx_site(
-        render_nginx_config(cert_path, key_path),
+    changed = _configure_site_host(
+        base_url, local_ca, normalized_users, cert_path, key_path,
         reload_required=certificate_changed or not local_ca,
     ) or changed
     changed = _configure_web_policy(
@@ -933,7 +957,7 @@ def configure_godot_web_host(
     if local_ca:
         with open(GODOT_WEB_CA_CERT, "rb") as cert_file:
             fingerprint.update(cert_file.read())
-    print(f"  ✓ Godot web exports: {base_url}/games/")
+    print(f"  ✓ Internal sites and Godot web exports: {base_url}/sites/")
     if local_ca:
         print(
             "  ✓ VM-local CA installed on the VM; remote clients can enroll "
@@ -998,21 +1022,8 @@ def configure_internal_web_host(
     if install_utility:
         _install_basaltwater_web_link()
     if configure_static_site:
-        _configure_user_roots(normalized_users)
-        index_path = os.path.join(GODOT_WEB_ROOT, "index.html")
-        if os.path.lexists(index_path):
-            if os.path.islink(index_path) or not os.path.isfile(index_path):
-                raise RuntimeError(
-                    f"Refusing unsafe internal web landing page: {index_path}"
-                )
-        else:
-            _write_if_changed(
-                index_path,
-                _internal_landing_page(base_url, local_ca),
-                0o644,
-            )
-        _configure_nginx_site(
-            render_nginx_config(cert_path, key_path),
+        _configure_site_host(
+            base_url, local_ca, normalized_users, cert_path, key_path,
             reload_required=certificate_changed or not local_ca,
         )
     _configure_web_policy(
@@ -1032,7 +1043,6 @@ def configure_internal_web_host(
 
 __all__ = [
     "GODOT_WEB_CA_DOWNLOAD",
-    "GODOT_WEB_GAMES_ROOT",
     "INTERNAL_WEB_SITES_ROOT",
     "configure_godot_agent_skills",
     "configure_internal_web_host",

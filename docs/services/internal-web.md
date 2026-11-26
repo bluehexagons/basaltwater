@@ -1,6 +1,6 @@
 # Internal HTTPS sites and live previews
 
-`basaltwater-web` publishes static builds and explicit loopback development servers
+`basaltwater-web` publishes static builds, Godot web exports, and loopback development servers
 through the HTTPS gateway managed by basaltwater. The gateway reuses the VM's
 certificate and saved access-source policy; do not bind development servers to
 `0.0.0.0`, edit Nginx, or add UFW rules manually.
@@ -20,10 +20,11 @@ is missing, provision a gateway-capable feature before continuing; the
 
 <a id="try-a-plain-html-page"></a>
 <a id="publish-a-static-site"></a>
+<a id="publish-a-godot-site"></a>
 <a id="start-a-managed-live-preview"></a>
 <a id="forward-an-existing-loopback-service"></a>
 
-- [Internal web publishing](internal-web-publishing.md) Try a plain HTML page, publish a site, start a preview, or forward a service.
+- [Internal web publishing](internal-web-publishing.md) Publish a site or Godot export, start a preview, or forward a service.
 
 <a id="certificate-trust"></a>
 <a id="security-and-state"></a>

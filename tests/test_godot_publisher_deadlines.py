@@ -24,15 +24,14 @@ class TestPublisherDeadlines(unittest.TestCase):
         ))
 
     def test_gateway_forwards_godot_deadline(self):
-        with patch.object(godot, "main", return_value=0) as publish:
+        with patch.object(godot, "publish_legacy", return_value=0) as publish:
             self.assertEqual(basaltwater_web.main(["publish", "godot", "demo", "--build-timeout", "7"]), 0)
-            self.assertIn("--build-timeout", publish.call_args.args[0])
-            self.assertEqual(publish.call_args.args[0][-2:], ["--build-timeout", "7"])
+            self.assertEqual(publish.call_args.args[0].build_timeout, 7)
 
     def test_timeout_preserves_active_publication_and_cleans_staging(self):
-        for module, root_name, project_file, operation in (
-            (godot, "GAMES_ROOT", "project.godot", godot._publish),
-            (static, "SITES_ROOT", "package.json", static.publish),
+        for module, project_file, operation in (
+            (godot, "project.godot", godot._publish),
+            (static, "package.json", static.publish),
         ):
             with self.subTest(module=module.__name__), ExitStack() as stack:
                 root = Path(stack.enter_context(tempfile.TemporaryDirectory()))
@@ -43,8 +42,10 @@ class TestPublisherDeadlines(unittest.TestCase):
                 destination = published / "agent" / "demo"
                 destination.mkdir(parents=True)
                 (destination / "index.html").write_text("previous")
-                stack.enter_context(patch.object(module, root_name, str(published)))
-                stack.enter_context(patch.object(module, "_current_account", return_value=SimpleNamespace(pw_name="agent", pw_uid=os.getuid())))
+                if module is godot:
+                    static._write_godot_profile(str(destination))
+                stack.enter_context(patch.object(static, "SITES_ROOT", str(published)))
+                stack.enter_context(patch.object(static, "_current_account", return_value=SimpleNamespace(pw_name="agent", pw_uid=os.getuid())))
                 command = stack.enter_context(patch.object(module, "run", side_effect=CommandTimeoutError("build", 7)))
                 parser = godot._parser() if module is godot else argparse.ArgumentParser()
                 if module is static:

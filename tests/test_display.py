@@ -356,10 +356,10 @@ class TestRdpDisplay(unittest.TestCase):
 
         rendered = output.getvalue()
         self.assertIn(
-            "Godot web exports: https://192.168.0.42:8443/games/agent/",
+            "Godot web exports: https://192.168.0.42:8443/sites/agent/",
             rendered,
         )
-        self.assertIn("godot-web-publish GAME_NAME", rendered)
+        self.assertIn("basaltwater-web publish site --profile godot", rendered)
 
     def test_access_summary_lists_syncthing_admin_and_device_id(self) -> None:
         device_id = (

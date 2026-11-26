@@ -129,16 +129,16 @@ def print_service_access_summary(
         )
 
     if "web" in (config.godot_bundles or []):
-        game_root = _http_url(
+        sites_root = _http_url(
             config.host,
             GODOT_WEB_HTTPS_PORT,
             scheme="https",
-        ) + f"games/{config.username}/"
+        ) + f"sites/{config.username}/"
         lines.append(
             (
                 "Godot web exports",
-                game_root,
-                "publish games with godot-web-publish GAME_NAME",
+                sites_root,
+                "publish with basaltwater-web publish site --profile godot",
             )
         )
 

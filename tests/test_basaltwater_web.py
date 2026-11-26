@@ -275,8 +275,8 @@ class TestInfraWebForwarding(unittest.TestCase):
         account = SimpleNamespace(pw_name="agent")
         with tempfile.TemporaryDirectory() as games_root:
             with (
-                patch.object(basaltwater_web, "_game_account", return_value=account),
-                patch.object(basaltwater_web, "_user_root", return_value=games_root),
+                patch.object(basaltwater_web, "_site_account", return_value=account),
+                patch.object(basaltwater_web.static_web_publish, "SITES_ROOT", games_root),
                 patch.object(basaltwater_web, "_load_policy", return_value=_policy()),
                 patch.object(basaltwater_web, "_load_forwards", return_value=[route]),
                 patch.object(
@@ -302,8 +302,8 @@ class TestInfraWebForwarding(unittest.TestCase):
         account = SimpleNamespace(pw_name="agent")
         with tempfile.TemporaryDirectory() as games_root:
             with (
-                patch.object(basaltwater_web, "_game_account", return_value=account),
-                patch.object(basaltwater_web, "_user_root", return_value=games_root),
+                patch.object(basaltwater_web, "_site_account", return_value=account),
+                patch.object(basaltwater_web.static_web_publish, "SITES_ROOT", games_root),
                 patch.object(basaltwater_web, "_load_policy", return_value=_policy()),
                 patch.object(basaltwater_web, "_load_forwards", return_value=[route]),
                 patch.object(basaltwater_web, "_https_headers", return_value=(401, {})),
@@ -1304,15 +1304,15 @@ class TestInfraWebGames(unittest.TestCase):
             user_root = os.path.join(games_root, "agent")
             game_root = os.path.join(user_root, "demo")
             os.makedirs(game_root)
+            basaltwater_web.static_web_publish._write_godot_profile(game_root)
             with open(os.path.join(game_root, "index.html"), "w", encoding="utf-8"):
                 pass
             account = SimpleNamespace(pw_uid=os.getuid(), pw_name="agent")
             with (
-                patch.object(basaltwater_web, "GAMES_ROOT", games_root),
-                patch.object(basaltwater_web.godot_web_publish, "GAMES_ROOT", games_root),
-                patch.object(basaltwater_web, "_game_account", return_value=account),
+                patch.object(basaltwater_web.static_web_publish, "SITES_ROOT", games_root),
+                patch.object(basaltwater_web, "_site_account", return_value=account),
                 patch.object(
-                    basaltwater_web.godot_web_publish,
+                    basaltwater_web.static_web_publish,
                     "BASE_URL_FILE",
                     os.path.join(temporary_dir, "base-url"),
                 ),
@@ -1328,6 +1328,7 @@ class TestInfraWebGames(unittest.TestCase):
             games_root = os.path.join(temporary_dir, "games")
             game_root = os.path.join(games_root, "agent", "demo")
             os.makedirs(game_root)
+            basaltwater_web.static_web_publish._write_godot_profile(game_root)
             with open(os.path.join(game_root, "index.html"), "w", encoding="utf-8"):
                 pass
             with open(os.path.join(game_root, "demo.wasm"), "w", encoding="utf-8"):
@@ -1344,21 +1345,21 @@ class TestInfraWebGames(unittest.TestCase):
                 (206, {"content-type": "application/wasm"}),
             ]
             with (
-                patch.object(basaltwater_web, "GAMES_ROOT", games_root),
-                patch.object(basaltwater_web, "_game_account", return_value=account),
+                patch.object(basaltwater_web.static_web_publish, "SITES_ROOT", games_root),
+                patch.object(basaltwater_web, "_site_account", return_value=account),
                 patch.object(
-                    basaltwater_web.godot_web_publish,
+                    basaltwater_web.static_web_publish,
                     "BASE_URL_FILE",
                     os.path.join(temporary_dir, "base-url"),
                 ),
                 patch.object(
-                    basaltwater_web.godot_web_publish,
-                    "_published_url",
-                    return_value="https://games.example:8443/games/agent/demo/",
+                    basaltwater_web.static_web_publish,
+                    "published_url",
+                    return_value="https://games.example:8443/sites/agent/demo/",
                 ),
                 patch.object(basaltwater_web, "_https_headers", side_effect=response_headers),
             ):
-                result = basaltwater_web.main(["doctor", "demo", "--json"])
+                result = basaltwater_web.main(["site", "doctor", "demo", "--json"])
 
         self.assertEqual(result, 0)
 

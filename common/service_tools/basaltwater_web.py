@@ -53,7 +53,6 @@ MUTATION_LOCK_FILE = "/etc/basaltwater/internal-web/mutation.lock"
 FORWARD_STATE_FILE = "/etc/basaltwater/internal-web/forwards.json"
 FORWARD_NGINX_SITE = "/etc/nginx/sites-available/basaltwater-web-forwards"
 FORWARD_NGINX_LINK = "/etc/nginx/sites-enabled/basaltwater-web-forwards"
-GAMES_ROOT = "/srv/basaltwater/web/games"
 PREVIEW_STATE_FILE = "/etc/basaltwater/internal-web/previews.json"
 PREVIEW_RUNTIME_ROOT = "/var/lib/basaltwater/internal-web-previews"
 SYSTEMD_ROOT = "/etc/systemd/system"
@@ -134,22 +133,14 @@ def _parser() -> argparse.ArgumentParser:
     publish = commands.add_parser("publish", help="Publish static content")
     publish_commands = publish.add_subparsers(dest="publish_kind", required=True)
     godot = publish_commands.add_parser("godot", help="Export and publish a Godot game")
-    godot.add_argument("game", nargs="?")
-    godot.add_argument("project_positional", nargs="?")
-    godot.add_argument("--project", dest="project_option")
-    godot.add_argument("--preset", default="Web")
-    godot.add_argument("--debug", action="store_true")
-    godot.add_argument("--no-precompress", action="store_true")
-    godot.add_argument("--json", action="store_true")
-    godot.add_argument("--open", action="store_true")
-    godot.add_argument("--build-timeout", type=validate_positive_integer, default=3600)
+    godot_web_publish.add_legacy_arguments(godot)
     site_publish = publish_commands.add_parser(
         "site",
-        help="Build and publish a generic static site",
+        help="Build or publish a static site or Godot web export",
     )
     static_web_publish.add_publish_arguments(site_publish)
 
-    site = commands.add_parser("site", help="Manage published static sites")
+    site = commands.add_parser("site", help="Manage published sites and Godot web exports")
     site_commands = site.add_subparsers(dest="site_command", required=True)
     site_list = site_commands.add_parser("list", aliases=["ls"], help="List sites")
     site_list.add_argument("--json", action="store_true")
@@ -169,6 +160,7 @@ def _parser() -> argparse.ArgumentParser:
     site_remove.add_argument("name")
     site_remove.add_argument("--yes", action="store_true")
     site_remove.add_argument("--json", action="store_true")
+    site_commands.add_parser("migrate-legacy", help="Move the current user's legacy games into sites")
 
     list_command = commands.add_parser("list", aliases=["ls"], help="List published games")
     list_command.add_argument("--json", action="store_true")
@@ -983,48 +975,30 @@ def _select_listen_port(
     return port
 
 
-def _game_account() -> pwd.struct_passwd:
+def _site_account() -> pwd.struct_passwd:
     account = pwd.getpwuid(os.getuid())
     if account.pw_uid == 0:
-        raise RuntimeError("Run game commands as the configured non-root user")
+        raise RuntimeError("Run site commands as the configured non-root user")
     _validate_username(account.pw_name)
     return account
 
 
-def _user_root(account: pwd.struct_passwd) -> str:
-    root = os.path.join(GAMES_ROOT, account.pw_name)
-    if os.path.islink(root) or not os.path.isdir(root):
-        raise RuntimeError(f"Managed publishing directory is unavailable: {root}")
-    if os.stat(root).st_uid != account.pw_uid:
-        raise RuntimeError(f"Publishing directory is not owned by {account.pw_name}")
-    return root
-
-
 def _game_records(account: pwd.struct_passwd) -> list[dict[str, object]]:
-    root = _user_root(account)
-    records: list[dict[str, object]] = []
-    for name in sorted(os.listdir(root)):
-        if name.startswith(".") or name == godot_web_publish.CATALOG_FILE:
-            continue
-        path = os.path.join(root, name)
-        if os.path.islink(path) or not os.path.isdir(path):
-            continue
-        metadata = godot_web_publish._metadata_for_game(path)
-        records.append(
-            {
-                "debug": metadata.get("debug"),
-                "game": name,
-                "preset": metadata.get("preset"),
-                "published_at": metadata.get("published_at"),
-                "title": metadata.get("title") or name,
-                "url": godot_web_publish._published_url(account.pw_name, name),
-            }
-        )
-    return records
+    return [
+        {
+            "debug": record.get("debug"),
+            "game": record["site"],
+            "preset": record.get("preset"),
+            "published_at": record.get("published_at"),
+            "title": record.get("title") or record["site"],
+            "url": record["url"],
+        }
+        for record in static_web_publish.list_sites(account) if record["profile"] == "godot"
+    ]
 
 
 def _print_games(as_json: bool) -> int:
-    records = _game_records(_game_account())
+    records = _game_records(_site_account())
     if as_json:
         print(json.dumps({"games": records}, sort_keys=True))
     elif not records:
@@ -1035,38 +1009,14 @@ def _print_games(as_json: bool) -> int:
     return 0
 
 
-def _print_game_url(game: str) -> int:
-    _validate_name(game, "game")
-    account = _game_account()
-    path = os.path.join(_user_root(account), game)
-    if os.path.islink(path) or not os.path.isdir(path):
-        raise RuntimeError(f"Published game does not exist: {game}")
-    url = godot_web_publish._published_url(account.pw_name, game)
-    if not url:
-        raise RuntimeError("Internal-web base URL is unavailable")
-    print(url)
-    return 0
-
-
 def _remove_game(game: str, confirmed: bool) -> int:
-    _validate_name(game, "game")
-    if not confirmed:
-        raise ValueError("Removing a published game requires --yes")
-    account = _game_account()
-    root = _user_root(account)
-    path = os.path.join(root, game)
-    if os.path.islink(path) or not os.path.isdir(path):
-        raise RuntimeError(f"Published game does not exist: {game}")
-    if os.stat(path).st_uid != account.pw_uid:
-        raise RuntimeError(f"Published game is not owned by {account.pw_name}: {game}")
-    shutil.rmtree(path)
-    godot_web_publish.write_user_catalog(root, account.pw_name)
+    static_web_publish.remove_site(_site_account(), game, confirmed, profile="godot")
     print(f"Removed published game {game}")
     return 0
 
 
 def _print_sites(as_json: bool) -> int:
-    account = _game_account()
+    account = _site_account()
     records = static_web_publish.list_sites(account)
     if as_json:
         print(json.dumps({"sites": records}, sort_keys=True))
@@ -1078,21 +1028,33 @@ def _print_sites(as_json: bool) -> int:
     return 0
 
 
-def _print_site_url(name: str) -> int:
-    _validate_name(name, "site name")
-    account = _game_account()
-    path = os.path.join(static_web_publish.SITES_ROOT, account.pw_name, name)
-    if os.path.islink(path) or not os.path.isdir(path):
-        raise RuntimeError(f"Published site does not exist: {name}")
+def _site_path(account: pwd.struct_passwd, name: str) -> str:
+    return os.path.join(static_web_publish.SITES_ROOT, account.pw_name, name)
+
+
+def _site_exists(path: str) -> bool:
+    return os.path.isdir(path) and not os.path.islink(path)
+
+
+def _site_url(account: pwd.struct_passwd, name: str) -> str:
     url = static_web_publish.published_url(account.pw_name, name)
     if not url:
         raise RuntimeError("Internal-web base URL is unavailable")
-    print(url)
+    return url
+
+
+def _print_site_url(name: str, *, profile: str | None = None) -> int:
+    _validate_name(name, "site name")
+    account = _site_account()
+    path = _site_path(account, name)
+    if not _site_exists(path) or (profile is not None and static_web_publish.site_profile(path) != profile):
+        raise RuntimeError(f"Published site does not exist: {name}")
+    print(_site_url(account, name))
     return 0
 
 
 def _remove_site(name: str, confirmed: bool, as_json: bool) -> int:
-    account = _game_account()
+    account = _site_account()
     static_web_publish.remove_site(account, name, confirmed)
     if as_json:
         print(json.dumps({"name": name, "removed": True}, sort_keys=True))
@@ -1184,61 +1146,48 @@ def _open_url(url: str, username: str | None = None) -> None:
 
 def _site_doctor(name: str, as_json: bool) -> int:
     _validate_name(name, "site name")
-    account = _game_account()
-    site_path = os.path.join(static_web_publish.SITES_ROOT, account.pw_name, name)
-    if os.path.islink(site_path) or not os.path.isdir(site_path):
+    account = _site_account()
+    path = _site_path(account, name)
+    if not _site_exists(path):
         raise RuntimeError(f"Published site does not exist: {name}")
-    url = static_web_publish.published_url(account.pw_name, name)
-    if not url:
-        raise RuntimeError("Internal-web base URL is unavailable")
-    status, headers = _https_headers(url)
-    errors = [f"HTTPS endpoint returned {status}"] if status >= 400 else []
-    result = {
-        "errors": errors,
-        "headers": headers,
-        "name": name,
-        "ok": not errors,
-        "status": status,
-        "url": url,
-    }
-    if as_json:
-        print(json.dumps(result, sort_keys=True))
-    elif errors:
-        print(f"{name}: failed ({'; '.join(errors)})")
-    else:
-        print(f"{name}: healthy ({url})")
-    return 0 if not errors else 1
+    return _diagnose_site(account, name, path, as_json)
+
+
+def _diagnose_site(account: pwd.struct_passwd, name: str, path: str, as_json: bool) -> int:
+    url = _site_url(account, name)
+    profile = static_web_publish.site_profile(path)
+    wasm_url = None
+    if profile == "godot":
+        for current_dir, _dirs, files in os.walk(path):
+            wasm_name = next((file_name for file_name in files if file_name.endswith(".wasm")), None)
+            if wasm_name:
+                relative = os.path.relpath(os.path.join(current_dir, wasm_name), path)
+                wasm_url = urllib.parse.urljoin(url, urllib.parse.quote(relative))
+                break
+    return _diagnose_endpoint(name, as_json, url, profile, wasm_url)
 
 
 def _doctor(name: str, as_json: bool) -> int:
     _validate_name(name)
-    account = _game_account()
-    game_path = os.path.join(_user_root(account), name)
-    profile = "general"
-    wasm_url = None
-    if os.path.isdir(game_path) and not os.path.islink(game_path):
-        url = godot_web_publish._published_url(account.pw_name, name)
-        if not url:
-            raise RuntimeError("Internal-web base URL is unavailable")
-        profile = "godot"
-        for current_dir, _dirs, files in os.walk(game_path):
-            wasm_name = next((file_name for file_name in files if file_name.endswith(".wasm")), None)
-            if wasm_name:
-                relative = os.path.relpath(os.path.join(current_dir, wasm_name), game_path)
-                wasm_url = urllib.parse.urljoin(url, urllib.parse.quote(relative))
-                break
-    else:
-        policy = _load_policy()
-        routes = _load_forwards(policy)
-        route = next((item for item in routes if item["name"] == name), None)
-        if route is None:
-            raise RuntimeError(f"No published game or HTTPS forward named {name}")
-        if route["owner"] != account.pw_name:
-            raise RuntimeError(f"HTTPS forward is owned by another user: {name}")
-        listen = int(route["listen"])
-        url = _forward_route_url(policy, listen, _forward_access_sources(routes, policy)[listen])
-        profile = str(route["profile"])
+    account = _site_account()
+    path = _site_path(account, name)
+    if _site_exists(path) and static_web_publish.site_profile(path) == "godot":
+        return _diagnose_site(account, name, path, as_json)
+    policy = _load_policy()
+    routes = _load_forwards(policy)
+    route = next((item for item in routes if item["name"] == name), None)
+    if route is None:
+        raise RuntimeError(f"No published Godot site or HTTPS forward named {name}")
+    if route["owner"] != account.pw_name:
+        raise RuntimeError(f"HTTPS forward is owned by another user: {name}")
+    listen = int(route["listen"])
+    url = _forward_route_url(policy, listen, _forward_access_sources(routes, policy)[listen])
+    return _diagnose_endpoint(name, as_json, url, str(route["profile"]))
 
+
+def _diagnose_endpoint(
+    name: str, as_json: bool, url: str, profile: str, wasm_url: str | None = None,
+) -> int:
     status, headers = _https_headers(url)
     errors: list[str] = []
     if not http_status_is_healthy(status, headers):
@@ -2346,27 +2295,6 @@ def _preview_prune(confirmed: bool, as_json: bool) -> int:
     return 0
 
 
-def _publish_godot(args: argparse.Namespace) -> int:
-    forwarded: list[str] = []
-    if args.game:
-        forwarded.append(args.game)
-    if args.project_positional:
-        forwarded.append(args.project_positional)
-    if args.project_option:
-        forwarded.extend(["--project", args.project_option])
-    forwarded.extend(["--preset", args.preset])
-    forwarded.extend(["--build-timeout", str(args.build_timeout)])
-    if args.debug:
-        forwarded.append("--debug")
-    if args.no_precompress:
-        forwarded.append("--no-precompress")
-    if args.json:
-        forwarded.append("--json")
-    if args.open:
-        forwarded.append("--open")
-    return godot_web_publish.main(forwarded)
-
-
 def _publish_site(args: argparse.Namespace) -> int:
     result = static_web_publish.publish(args)
     if args.json:
@@ -2404,7 +2332,7 @@ def main(argv: list[str] | None = None) -> int:
                 return basaltwater_web_control.request(delegated_args)
         if args.command == "publish":
             if args.publish_kind == "godot":
-                return _publish_godot(args)
+                return godot_web_publish.publish_legacy(args)
             if args.publish_kind == "site":
                 return _publish_site(args)
         if args.command == "site":
@@ -2425,10 +2353,14 @@ def main(argv: list[str] | None = None) -> int:
                 return 0 if result["ok"] else 1
             if args.site_command == "remove":
                 return _remove_site(args.name, args.yes, args.json)
+            if args.site_command == "migrate-legacy":
+                for url in static_web_publish.migrate_legacy_sites():
+                    print(f"Migrated Godot site to {url}")
+                return 0
         if args.command in ("list", "ls"):
             return _print_games(args.json)
         if args.command == "url":
-            return _print_game_url(args.game)
+            return _print_site_url(args.game, profile="godot")
         if args.command == "remove":
             return _remove_game(args.game, args.yes)
         if args.command == "doctor":

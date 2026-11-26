@@ -180,6 +180,41 @@ not sent in the HTTP request; test the corresponding public file and then use a
 browser for the rendered route. A failed build or activation keeps the previous
 publication available.
 
+## Publish a Godot site
+
+From a Godot project with its engine, matching web export templates, and a Web
+export preset, run:
+
+```bash
+basaltwater-web publish site my-game --profile godot
+```
+
+Use `--preset NAME` for a different Web preset or `--debug` for a debug export.
+To publish an existing export with `index.html`, `index.js`, `index.wasm`, and
+`index.pck`, run:
+
+```bash
+basaltwater-web publish site my-game --profile godot --no-build --output exports/web
+```
+
+The game is published at `/sites/USERNAME/my-game/` and managed with the same
+`site list`, `site url`, `site doctor`, `site verify`, and `site remove` commands.
+The gateway adds cross-origin isolation headers to Godot sites, and
+`site doctor` checks those headers and the WebAssembly content type.
+`site verify` checks the published snapshot and its served bytes. When comparing
+an export directory with `site verify --project . --output exports/web`, use
+`--no-precompress` at publication time if that directory lacks the generated
+gzip files.
+
+Gateway setup and refresh move existing Godot snapshots from `/games/` to
+`/sites/` without re-exporting. If the site name is taken, the game gets
+`-godot`, then a numbered suffix if needed. Refresh prints each migrated URL.
+Use `basaltwater-web site list` to find the new links. Old `/games/` URLs expire
+when the gateway reloads.
+
+For a custom domain, deploy a repository with a
+[`godot-web` manifest component](deployments-manifests.md#godot-web-application).
+
 ## Start a managed live preview
 
 Use the [native T3 preview](../agents/browser-t3-preview.md#collaborative-preview-and-private-networks)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and atomically publish a static site to the internal HTTPS host."""
+"""Build and atomically publish sites to the internal HTTPS host."""
 
 from __future__ import annotations
 
@@ -19,14 +19,19 @@ import tempfile
 import time
 import webbrowser
 
+from common.service_tools import godot_web_publish
+from lib.atomic_io import read_json_file, write_json_atomic, write_text_atomic
+from lib.godot_deploy import validate_godot_export
 from lib.node_toolchain import select_node
 from lib.node_project import select_package_manager
 from lib.remote_utils import CommandTimeoutError, run
-from lib.static_publication import RECEIPT_FILE, RESERVED_FILES, verify_receipt, write_receipt
+from lib.static_publication import GODOT_PROFILE_FILE, RECEIPT_FILE, RESERVED_FILES, verify_receipt, write_receipt
 from lib.validation import validate_filesystem_path, validate_positive_integer
+from lib.validators import validate_username
 
 
 SITES_ROOT = "/srv/basaltwater/web/sites"
+LEGACY_GAMES_ROOT = "/srv/basaltwater/web/games"
 BASE_URL_FILE = "/etc/basaltwater/internal-web/base-url"
 METADATA_FILE = ".basaltwater.json"
 CATALOG_FILE = "index.html"
@@ -35,12 +40,12 @@ _OUTPUT_CANDIDATES = ("dist", "build", "out", "public")
 
 
 def add_publish_arguments(parser: argparse.ArgumentParser) -> None:
-    """Add generic static-site publication arguments to an existing parser."""
+    """Add site publication arguments to an existing parser."""
 
     parser.add_argument(
         "site",
         nargs="?",
-        help="URL-safe site name; defaults to package name or project directory",
+        help="URL-safe site name; defaults to the package, Godot project, or directory name",
     )
     parser.add_argument(
         "project_positional",
@@ -61,12 +66,16 @@ def add_publish_arguments(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Publish existing output without running a project build",
     )
-    parser.add_argument("--build-script", default="build", help="Package script to build the site (default: build)")
+    parser.add_argument("--profile", choices=("static", "godot"), default="static")
+    parser.add_argument("--build-script", help="Package script to build a static site (default: build)")
     parser.add_argument(
         "--no-install",
         action="store_true",
         help="Do not install missing JavaScript dependencies before building",
     )
+    parser.add_argument("--preset", help="Godot export preset (default: Web)")
+    parser.add_argument("--debug", action="store_true", help="Create a Godot debug export")
+    parser.add_argument("--no-precompress", action="store_true", help="Skip gzip copies of Godot WASM and PCK files")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--open", action="store_true")
     parser.add_argument("--build-timeout", type=validate_positive_integer, default=3600,
@@ -84,7 +93,9 @@ def _slugify(value: str) -> str:
 def _current_account() -> pwd.struct_passwd:
     account = pwd.getpwuid(os.getuid())
     if account.pw_uid == 0:
-        raise RuntimeError("Run static-site publishing as the configured non-root user")
+        raise RuntimeError("Run site publishing as the configured non-root user")
+    if not validate_username(account.pw_name):
+        raise ValueError("Invalid site publishing account name")
     return account
 
 
@@ -258,14 +269,17 @@ def published_url(username: str, site: str) -> str | None:
 
 def _metadata(site_dir: str) -> dict[str, object]:
     try:
-        with open(os.path.join(site_dir, METADATA_FILE), encoding="utf-8") as file_obj:
-            value = json.load(file_obj)
+        value = read_json_file(os.path.join(site_dir, METADATA_FILE))
     except (OSError, ValueError):
         return {}
     return value if isinstance(value, dict) else {}
 
 
-def write_user_catalog(user_root: str, username: str) -> None:
+def site_profile(site_dir: str) -> str:
+    return "godot" if os.path.isfile(os.path.join(site_dir, GODOT_PROFILE_FILE)) else "static"
+
+
+def _write_user_catalog(user_root: str, username: str) -> None:
     items: list[str] = []
     for name in sorted(os.listdir(user_root)):
         if name.startswith(".") or name == CATALOG_FILE:
@@ -316,13 +330,9 @@ def write_user_catalog(user_root: str, username: str) -> None:
             pass
 
 
-def _write_metadata(path: str, value: dict[str, object]) -> None:
-    with open(path, "w", encoding="utf-8") as file_obj:
-        json.dump(value, file_obj, indent=2, sort_keys=True)
-        file_obj.write("\n")
-        file_obj.flush()
-        os.fsync(file_obj.fileno())
-    os.chmod(path, 0o644)
+def write_user_catalog(user_root: str, username: str) -> None:
+    with _site_lock(user_root, ".catalog"):
+        _write_user_catalog(user_root, username)
 
 
 @contextmanager
@@ -343,6 +353,32 @@ def _site_lock(user_root: str, site: str) -> Iterator[None]:
         os.close(descriptor)
 
 
+def _owned_user_root(root: str, account: pwd.struct_passwd) -> str:
+    user_root = os.path.join(root, account.pw_name)
+    if os.path.islink(user_root) or not os.path.isdir(user_root):
+        raise RuntimeError(f"Managed publication directory is unavailable: {user_root}")
+    if os.stat(user_root).st_uid != account.pw_uid:
+        raise RuntimeError(f"Publication directory is not owned by {account.pw_name}: {user_root}")
+    return user_root
+
+
+def _validate_publication_files(path: str, godot: bool) -> None:
+    if godot:
+        godot_web_publish.validate_export_tree(path)
+    else:
+        _validate_output_tree(path)
+    if any(os.path.lexists(os.path.join(path, name)) for name in RESERVED_FILES):
+        raise ValueError("Output contains reserved Basaltwater publication metadata")
+
+
+def _write_godot_profile(path: str) -> None:
+    write_text_atomic(os.path.join(path, GODOT_PROFILE_FILE), "godot\n", mode=0o644)
+
+
+def _publication_time() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
 def publish(args: argparse.Namespace) -> dict[str, object]:
     """Build and publish one site, returning its structured publication record."""
 
@@ -359,46 +395,79 @@ def publish(args: argparse.Namespace) -> dict[str, object]:
     validate_filesystem_path(project_dir, must_exist=True)
     if os.path.islink(project_dir) or not os.path.isdir(project_dir):
         raise ValueError("Project must be a real directory")
-    package = _read_package(project_dir)
-    site = args.site or _slugify(_project_name(project_dir, package))
+    godot = args.profile == "godot"
+    if godot:
+        if args.build_script or args.no_install:
+            raise ValueError("--build-script and --no-install apply to static builds")
+        if args.output and not args.no_build:
+            raise ValueError("--output requires --no-build for the Godot profile")
+        if args.no_build and (args.preset is not None or args.debug):
+            raise ValueError("--preset and --debug require a Godot build")
+        package = None
+        title = godot_web_publish.project_display_name(project_dir)
+    else:
+        if args.preset is not None or args.debug or args.no_precompress:
+            raise ValueError("--preset, --debug and --no-precompress require --profile godot")
+        package = _read_package(project_dir)
+        title = _project_name(project_dir, package)
+    site = args.site or _slugify(title)
     account = _current_account()
-    user_root = os.path.join(SITES_ROOT, account.pw_name)
-    if os.path.islink(user_root) or not os.path.isdir(user_root):
-        raise RuntimeError(f"Managed site directory is unavailable: {user_root}")
-    if os.stat(user_root).st_uid != account.pw_uid:
-        raise RuntimeError(f"Site directory is not owned by {account.pw_name}")
+    user_root = _owned_user_root(SITES_ROOT, account)
+    destination_dir = os.path.join(user_root, site)
+    started_at = time.monotonic()
 
     with _site_lock(user_root, site):
-        if not args.no_build:
+        replaced = os.path.lexists(destination_dir)
+        if replaced:
+            if os.path.islink(destination_dir) or not os.path.isdir(destination_dir):
+                raise RuntimeError(f"Refusing unsafe site destination: {destination_dir}")
+            if site_profile(destination_dir) != args.profile:
+                raise ValueError(f"Site {site} already exists with a different profile")
+        if not godot and not args.no_build:
             _run_project_build(
                 project_dir, package, install=not args.no_install, json_output=args.json,
                 timeout=args.build_timeout,
-                script=args.build_script,
+                script=args.build_script or "build",
             )
-        output_dir = _resolve_output(project_dir, args.output)
-        _validate_output_tree(output_dir)
-        if any(os.path.lexists(os.path.join(output_dir, name)) for name in RESERVED_FILES):
-            raise ValueError("Static output contains reserved Basaltwater publication metadata")
+        output_dir = None
+        if not godot or args.no_build:
+            output_dir = _resolve_output(project_dir, args.output)
+            _validate_publication_files(output_dir, godot)
         staging_dir = tempfile.mkdtemp(prefix=f".{site}-", dir=user_root)
         try:
-            shutil.copytree(output_dir, staging_dir, dirs_exist_ok=True, symlinks=True)
-            _validate_output_tree(staging_dir)
-            published_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            output = None
+            if output_dir is None:
+                godot_web_publish.export_site(args, project_dir, staging_dir)
+            else:
+                shutil.copytree(output_dir, staging_dir, dirs_exist_ok=True, symlinks=True)
+                output = os.path.relpath(output_dir, project_dir)
+            _validate_publication_files(staging_dir, godot)
+            published_at = _publication_time()
             url = published_url(account.pw_name, site)
             metadata: dict[str, object] = {
-                "output": os.path.relpath(output_dir, project_dir),
+                "output": output,
+                "profile": args.profile,
                 "published_at": published_at,
                 "site": site,
-                "title": _project_name(project_dir, package),
+                "title": title,
                 "url": url,
             }
-            _write_metadata(os.path.join(staging_dir, METADATA_FILE), metadata)
+            godot_result = {}
+            if godot:
+                if args.no_build:
+                    validate_godot_export(staging_dir, staging_dir)
+                godot_result = godot_web_publish.prepare_site(
+                    staging_dir, precompress=not args.no_precompress,
+                )
+                metadata.update(godot_result, preset=None if args.no_build else args.preset or "Web",
+                                debug=None if args.no_build else args.debug, replaced=replaced)
+                _write_godot_profile(staging_dir)
+            write_json_atomic(os.path.join(staging_dir, METADATA_FILE), metadata, mode=0o644)
             write_receipt(
-                staging_dir, project_dir, output=str(metadata["output"]),
-                published_at=published_at, built=not args.no_build,
+                staging_dir, project_dir, output=output, published_at=published_at,
+                built=not args.no_build,
             )
             _make_tree_readable(staging_dir)
-            destination_dir = os.path.join(user_root, site)
             _replace_site(staging_dir, destination_dir)
             write_user_catalog(user_root, account.pw_name)
         finally:
@@ -408,7 +477,58 @@ def publish(args: argparse.Namespace) -> dict[str, object]:
         "ok": True,
         "site": site,
         "url": url or destination_dir,
+        "replaced": replaced,
+        "elapsed_seconds": round(time.monotonic() - started_at, 3),
+        **godot_result,
     }
+
+
+def migrate_legacy_sites() -> list[str]:
+    """Move existing game snapshots into the current user's site namespace."""
+    account = _current_account()
+    legacy_root = os.path.join(LEGACY_GAMES_ROOT, account.pw_name)
+    if not os.path.lexists(legacy_root):
+        return []
+    _owned_user_root(LEGACY_GAMES_ROOT, account)
+    user_root = _owned_user_root(SITES_ROOT, account)
+    migrated = []
+    for name in sorted(os.listdir(legacy_root)):
+        if not _SITE_NAME_PATTERN.fullmatch(name):
+            continue
+        source = os.path.join(legacy_root, name)
+        with _site_lock(legacy_root, name):
+            if not os.path.lexists(source):
+                continue
+            godot_web_publish.validate_export_tree(source)
+            if os.stat(source).st_uid != account.pw_uid or not os.path.isfile(os.path.join(source, "index.html")):
+                raise RuntimeError(f"Invalid legacy game snapshot: {source}")
+            metadata = _metadata(source)
+            published_at = metadata.get("published_at")
+            if not isinstance(published_at, str):
+                published_at = _publication_time()
+            site = name
+            version = 1
+            while True:
+                with _site_lock(user_root, site):
+                    destination = os.path.join(user_root, site)
+                    if not os.path.lexists(destination):
+                        # The legacy tree stays under its old name until all
+                        # site metadata and the receipt are ready.
+                        url = published_url(account.pw_name, site)
+                        metadata.pop("project", None)
+                        metadata.pop("game", None)
+                        metadata.update(profile="godot", site=site, url=url, published_at=published_at)
+                        write_json_atomic(os.path.join(source, METADATA_FILE), metadata, mode=0o644)
+                        _write_godot_profile(source)
+                        write_receipt(source, None, output=None, published_at=published_at, built=False)
+                        os.rename(source, destination)
+                        migrated.append(url or destination)
+                        break
+                suffix = "-godot" if version == 1 else f"-godot-{version}"
+                site = name[:63 - len(suffix)] + suffix
+                version += 1
+    write_user_catalog(user_root, account.pw_name)
+    return migrated
 
 
 def verify_site(args: argparse.Namespace) -> dict[str, object]:
@@ -416,19 +536,22 @@ def verify_site(args: argparse.Namespace) -> dict[str, object]:
     if not _SITE_NAME_PATTERN.fullmatch(args.name):
         raise ValueError("Invalid site name")
     account = _current_account()
-    user_root = os.path.join(SITES_ROOT, account.pw_name)
+    user_root = _owned_user_root(SITES_ROOT, account)
     site = os.path.join(user_root, args.name)
-    for path in (user_root, site):
-        if os.path.islink(path) or not os.path.isdir(path) or os.stat(path).st_uid != account.pw_uid:
-            raise ValueError("Publication directory must be real and owned by the current account")
     project = os.path.realpath(os.path.abspath(os.path.expanduser(args.project))) if args.project else None
+    if project and not os.path.isdir(project):
+        raise ValueError("--project must be an existing directory")
     if args.output and project is None:
         raise ValueError("--output requires --project")
-    output = _resolve_output(project, args.output) if project else None
     url = None if args.local_only else published_url(account.pw_name, args.name)
     if not args.local_only and not url:
         raise RuntimeError("Internal-web base URL is unavailable")
     with _site_lock(user_root, args.name):
+        if os.path.islink(site) or not os.path.isdir(site) or os.stat(site).st_uid != account.pw_uid:
+            raise ValueError("Publication directory must be real and owned by the current account")
+        output = None
+        if project and (args.output or site_profile(site) == "static"):
+            output = _resolve_output(project, args.output)
         try:
             result = verify_receipt(site, url=url, local_output=output, project=project, timeout=args.timeout)
         except FileNotFoundError:
@@ -439,9 +562,7 @@ def verify_site(args: argparse.Namespace) -> dict[str, object]:
 
 
 def list_sites(account: pwd.struct_passwd) -> list[dict[str, object]]:
-    user_root = os.path.join(SITES_ROOT, account.pw_name)
-    if os.path.islink(user_root) or not os.path.isdir(user_root):
-        raise RuntimeError(f"Managed site directory is unavailable: {user_root}")
+    user_root = _owned_user_root(SITES_ROOT, account)
     records: list[dict[str, object]] = []
     for name in sorted(os.listdir(user_root)):
         path = os.path.join(user_root, name)
@@ -451,6 +572,7 @@ def list_sites(account: pwd.struct_passwd) -> list[dict[str, object]]:
             records.append(
                 {
                     **_metadata(path),
+                    "profile": site_profile(path),
                     "site": name,
                     "url": published_url(account.pw_name, name),
                 }
@@ -458,22 +580,22 @@ def list_sites(account: pwd.struct_passwd) -> list[dict[str, object]]:
     return records
 
 
-def remove_site(account: pwd.struct_passwd, site: str, confirmed: bool) -> None:
+def remove_site(
+    account: pwd.struct_passwd, site: str, confirmed: bool, *, profile: str | None = None,
+) -> None:
     if not _SITE_NAME_PATTERN.fullmatch(site):
         raise ValueError("Invalid site name")
     if not confirmed:
         raise ValueError("Removing a published site requires --yes")
-    user_root = os.path.join(SITES_ROOT, account.pw_name)
-    if os.path.islink(user_root) or not os.path.isdir(user_root):
-        raise RuntimeError(f"Managed site directory is unavailable: {user_root}")
-    if os.stat(user_root).st_uid != account.pw_uid:
-        raise RuntimeError(f"Site directory is not owned by {account.pw_name}")
+    user_root = _owned_user_root(SITES_ROOT, account)
     with _site_lock(user_root, site):
         path = os.path.join(user_root, site)
         if os.path.islink(path) or not os.path.isdir(path):
             raise RuntimeError(f"Published site does not exist: {site}")
         if os.stat(path).st_uid != account.pw_uid:
             raise RuntimeError(f"Published site is not owned by {account.pw_name}: {site}")
+        if profile is not None and site_profile(path) != profile:
+            raise RuntimeError(f"No published {profile} site named {site}")
         shutil.rmtree(path)
         write_user_catalog(user_root, account.pw_name)
 

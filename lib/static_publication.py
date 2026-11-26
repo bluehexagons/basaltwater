@@ -21,7 +21,8 @@ from lib.validators import validate_host
 
 
 RECEIPT_FILE = ".basaltwater-receipt.json"
-RESERVED_FILES = {RECEIPT_FILE, ".basaltwater.json"}
+GODOT_PROFILE_FILE = ".basaltwater-godot"
+RESERVED_FILES = {RECEIPT_FILE, ".basaltwater.json", GODOT_PROFILE_FILE}
 MAX_ARTIFACTS = 10000
 MAX_RECEIPT_BYTES = 4 * 1024 * 1024
 
@@ -80,10 +81,14 @@ def artifact_hashes(root: str) -> dict[str, object]:
     return dict(sorted(result.items()))
 
 
-def write_receipt(root: str, project: str, *, output: str, published_at: str, built: bool) -> None:
+def write_receipt(
+    root: str, project: str | None, *, output: str | None, published_at: str, built: bool,
+) -> None:
     """Stage the receipt with its snapshot so both activate or roll back together."""
     receipt = {
-        "version": 1, "source": source_state(project), "output": output,
+        "version": 1,
+        "source": source_state(project) if project is not None else {"commit": None, "dirty": None},
+        "output": output,
         "published_at": published_at, "build_performed": built,
         "artifacts": artifact_hashes(root),
     }

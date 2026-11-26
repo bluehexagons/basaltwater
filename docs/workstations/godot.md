@@ -57,13 +57,13 @@ without writing a game-specific service or Nginx configuration:
 cd ~/repos/my-game
 # Complete resource imports on a fresh checkout or after asset changes:
 godot --headless --path . --import
-basaltwater-web publish godot --json
+basaltwater-web publish site --profile godot --json
 # Use another preset or create a debug export when needed:
-basaltwater-web publish godot my-game --preset "Web Threads" --debug --json
+basaltwater-web publish site my-game --profile godot --preset "Web Threads" --debug --json
 ```
 
 The resulting URL is
-`https://HOST:8443/games/USERNAME/my-game/`. The host sends the secure-context
+`https://HOST:8443/sites/USERNAME/my-game/`. The host sends the secure-context
 and cross-origin isolation headers required by threaded and web GDExtension
 exports:
 
@@ -75,7 +75,7 @@ Cross-Origin-Embedder-Policy: require-corp
 The same endpoint works for Godot's default single-threaded exports. The
 publisher derives a URL-safe name from `application/config/name` when a name is
 not supplied, creates deterministic gzip copies of `.wasm` and `.pck` files,
-and updates a per-user game catalog. Nginx serves those precompressed files
+and updates a shared per-user site catalog. Nginx serves those precompressed files
 when the browser accepts gzip. Published games are replaced only after Godot
 completes a new export, with a per-game lock so unrelated games may publish in
 parallel without conflicting updates. A failed build does not remove the last
@@ -96,18 +96,20 @@ must inspect the entire generated tree before permissions are changed.
 Export plugins must produce ordinary files and directories. Rejected exports
 leave the previous publication and files outside the staging directory intact.
 
-Use the same utility for inspection and cleanup:
+Use the site commands for inspection and cleanup:
 
 ```bash
-basaltwater-web list
-basaltwater-web url my-game
-basaltwater-web doctor my-game
-basaltwater-web remove my-game --yes
+basaltwater-web site list
+basaltwater-web site url my-game
+basaltwater-web site doctor my-game
+basaltwater-web site verify my-game
+basaltwater-web site remove my-game --yes
 ```
 
-`doctor` verifies trusted HTTPS, the secure-context and cross-origin isolation
-headers, and the `application/wasm` content type. `--json` is available on
-publish, list, and doctor for agent automation. Publication JSON sends Godot's
+`site doctor` verifies trusted HTTPS, the cross-origin isolation headers, and
+the `application/wasm` content type. `site verify` checks the stored and served
+artifact hashes. Publish, list, doctor, and verify support `--json`.
+Publication JSON sends Godot's
 progress and diagnostics directly to stderr without buffering the export log.
 Stdout reports elapsed time, exported artifact counts and sizes, and whether
 the prior snapshot was replaced. `--open` opens a successful
@@ -192,8 +194,8 @@ or browser check.
 The private CA key remains root-only. Re-running setup preserves the CA and
 renews the server certificate when its names change or it approaches expiry.
 The weekly Godot maintenance run also reconciles the certificate, Nginx site,
-publishing users, and export templates. No game-specific TLS renewal job is
-needed.
+publishing users, and export templates. Setup and refresh also
+[move existing game exports into sites](../services/internal-web-publishing.md#publish-a-godot-site).
 
 The publishing bundle installs verified Butler GitHub releases system-wide as
 `butler`. It also installs Valve's pinned SteamCMD bootstrap in the configured
@@ -264,7 +266,7 @@ See [Godot's pause behavior](https://docs.godotengine.org/en/stable/tutorials/sc
 Screenshots alone cannot quantify physics feel. When the project task includes
 physics investigation, add or reuse project-owned instrumentation, disabled by
 default and gated by `OS.is_debug_build()`. For web debugging, export with
-`basaltwater-web publish godot my-game-debug --debug --json` using a distinct chosen slug
+`basaltwater-web publish site my-game-debug --profile godot --debug --json` using a distinct chosen slug
 so the diagnostic build does not replace the normal game. A debug export alone
 does not add telemetry or expose Godot scene objects to the browser.
 

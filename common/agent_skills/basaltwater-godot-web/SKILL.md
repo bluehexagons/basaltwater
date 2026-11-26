@@ -25,16 +25,16 @@ unless that setup work is explicitly requested.
    export preset in `export_presets.cfg`.
 3. Run `godot --headless --path . --import` when imports need to be completed
    before export; it waits for resource imports before quitting.
-4. From the project root, run `basaltwater-web publish godot --json`. It derives a
+4. From the project root, run `basaltwater-web publish site --profile godot --json`. It derives a
    stable game slug from the project and sends Godot progress and diagnostics
    to stderr, leaving stdout as JSON. Pass an explicit slug, `--preset`, or `--debug` only when
    the task requires them. The result reports the URL, elapsed time, artifact
    sizes, and whether it replaced an earlier publication.
-5. Replace `GAME` below with the lowercase `game` value returned by `publish`:
+5. Replace `GAME` below with the lowercase `site` value returned by `publish`:
 
    ```bash
-   basaltwater-web url GAME
-   basaltwater-web doctor GAME
+   basaltwater-web site url GAME
+   basaltwater-web site doctor GAME
    ```
 
    Treat the returned URL as authoritative. Do not substitute a local port or
@@ -47,8 +47,8 @@ unless that setup work is explicitly requested.
    game canvas initializes without browser console errors.
 
 Published games are independent and remain available under their stable URLs.
-Use `basaltwater-web list` to inspect them. Remove one only when explicitly requested,
-using `basaltwater-web remove GAME --yes`.
+Use `basaltwater-web site list` to inspect them. Remove one only when explicitly requested,
+using `basaltwater-web site remove GAME --yes`.
 
 Setup enrolls the VM-local CA in the managed user's system and VM-local
 Chromium trust stores. A collaborative T3 preview may run on the connected
