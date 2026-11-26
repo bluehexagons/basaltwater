@@ -78,25 +78,24 @@ For Moonlight connection failures while the monitor sleeps, see
 KDE session, even while the helper is stopped or agents are blocked. Keep
 `--native` before `handoff`; the bare command addresses Debian XRDP. Opening the
 window neither stops an agent's loop nor transfers ownership or changes permission.
-Relinquish your own action loop separately; only the human's UI choice or an
-explicitly authorized control request changes persistent permission. Spawn success
+Relinquish your own action loop separately and leave permission changes to the
+operator in the KDE control window. Spawn success
 does not establish window visibility. See the
 [handoff distinction](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/desktop-control.md#handoff-is-not-a-permission-change).
 
 Check `status.agent_control`: `enabled` permits authorized task input without
 asking to unpause or obtaining a lease. `human-override` and `disabled` block
 launches, input and semantic mutations while observation remains available.
-Only explicit human approval or the human UI permits a state change; asking to
-use an application alone is insufficient. Never change the state to bypass a block.
+The operator can change permission in the control window when needed.
 
 The handoff window offers Take control (15 minutes by default, or indefinite),
 Enable agents, and Disable agents, with backend health shown separately.
 State survives helper restarts, logout and reboot. A timed override stores its
 original deadline and returns to enabled as approved by that human choice.
-Indefinite override and disabled never expire. For an explicitly approved CLI
-change, use `control enabled|human-override|disabled --human-approved`;
-override accepts `--seconds 900` or `--indefinite`. State controls work even while
-the helper is stopped. See [persistent control](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/desktop-control.md)
+Indefinite override and disabled never expire. The native CLI and helper socket
+refuse direct permission changes. Open the window with the KDE launcher or
+`basaltw desktop --native handoff` even while the helper is stopped.
+See [persistent control](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/desktop-control.md)
 for migration, storage, and the same-account authorization boundary.
 
 In-flight operations can finish before a human request is processed (bounded

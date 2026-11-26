@@ -65,8 +65,8 @@ session's bus/display, switch KDE to X11, or install global input daemons.
 
 When `status.agent_control` is `enabled`, use authorized desktop software without
 asking to unpause or acquiring a lease. `human-override` and `disabled` block
-agent mutations; change these states only with explicit human approval or the
-human control UI. A desktop task alone does not authorize a state change.
+agent mutations. The operator can change these states in the KDE control
+window opened with `basaltw desktop --native handoff`.
 Timed override returns automatically at its human-approved deadline.
 If the monitor is asleep or captures are black/frozen, try
 `basaltw desktop --native wake` while enabled, then recapture before input.

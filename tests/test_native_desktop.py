@@ -55,21 +55,23 @@ class NativeControlTests(PrivateHomeTestCase):
 
     def test_override_revokes_revision_and_references_without_stopping_desktop(self):
         self.session.elements["ref"] = {"pid":42, "observed_at":time.monotonic()}
-        self.session.handle({"action": "control", "mode": "human-override", "human_approved": True})
+        control_state.change("human-override", human_approved=True)
+        self.assertEqual(self.session.handle({"action": "status"})["agent_control"], "human-override")
         self.assertFalse(self.session.elements)
         with self.assertRaisesRegex(RuntimeError, "human-override"):
             self.session.handle({**self.payload, "action":"input", "kind":"key", "key":"Return"})
-        self.session.handle({"action": "control", "mode": "enabled", "human_approved": True})
+        control_state.change("enabled", human_approved=True)
         with self.assertRaisesRegex(ValueError, "control changed"):
             self.session.handle({**self.payload, "action":"input", "kind":"key", "key":"Return"})
         self.portal.notify.assert_not_called()
 
-    def test_control_changes_require_human_approval_and_legacy_actions_are_rejected(self):
+    def test_socket_refuses_control_changes_even_with_claimed_approval(self):
         before = control_state.status()
         for mode in control_state.MODES:
-            with self.subTest(mode=mode), self.assertRaises(PermissionError):
-                self.session.handle({"action": "control", "mode": mode})
-            self.assertEqual(control_state.status(), before)
+            for approved in (False, True):
+                with self.subTest(mode=mode, approved=approved), self.assertRaisesRegex(PermissionError, "KDE control window"):
+                    self.session.handle({"action": "control", "mode": mode, "human_approved": approved})
+                self.assertEqual(control_state.status(), before)
         for action in ("acquire", "release", "pause", "resume"):
             with self.subTest(action=action), self.assertRaises(ValueError):
                 self.session.handle({**self.payload, "action": action})
@@ -78,7 +80,7 @@ class NativeControlTests(PrivateHomeTestCase):
 
     def test_blocked_modes_keep_observations_available_and_never_deliver_mutations(self):
         for mode in ("human-override", "disabled"):
-            self.session.handle({"action": "control", "mode": mode, "human_approved": True})
+            control_state.change(mode, human_approved=True)
             with patch.object(native.accessibility, "worker_request", return_value={"windows": []}) as worker:
                 self.assertEqual(self.session.handle({**self.payload, "action": "windows"})["windows"], [])
                 worker.assert_called_once()
@@ -159,7 +161,7 @@ class NativeControlTests(PrivateHomeTestCase):
         worker.start()
         try:
             self.assertTrue(pressed.wait(1))
-            self.session.handle({"action": "control", "mode": "human-override", "human_approved": True})
+            control_state.change("human-override", human_approved=True)
             worker.join(1)
             self.assertFalse(worker.is_alive())
             self.assertIn("human-override", errors[0])
@@ -277,7 +279,7 @@ class NativeControlTests(PrivateHomeTestCase):
                 self.session.handle({**self.payload, "action": "renew", "seconds": seconds})
         with self.assertRaisesRegex(ValueError, "changed"):
             self.session.handle({**self.payload, "action": "renew", "generation": "old", "seconds": 900})
-        self.session.handle({"action": "control", "mode": "human-override", "human_approved": True})
+        control_state.change("human-override", human_approved=True)
         deadline = self.session.until
         with self.assertRaisesRegex(RuntimeError, "human-override"):
             self.session.handle({**self.payload, "action": "renew", "seconds": 900})
@@ -289,7 +291,7 @@ class NativeControlTests(PrivateHomeTestCase):
     def test_override_expiry_enables_fresh_input_without_another_control_request(self):
         clock = Mock(time=Mock(return_value=1000))
         with patch.object(control_state, "time", clock):
-            override = self.session.handle({"action": "control", "mode": "human-override", "human_approved": True})
+            override = control_state.change("human-override", human_approved=True)
             self.assertEqual(override["override_until"], 1900)
             clock.time.return_value = 1900
             current = self.session.handle({"action": "status"})
@@ -351,8 +353,11 @@ class NativeHandoffTests(PrivateHomeTestCase):
                 def thread(*, target, daemon):
                     return Mock(start=lambda: workers.append(target))
 
-                def change(mode, **options):
-                    return {"state": "running", "expires_in": None, **control_state.change(mode, **options)}
+                def query():
+                    permission = control_state.status()
+                    if seconds is None and permission["agent_control"] == "human-override":
+                        raise ConnectionResetError("Backend status unavailable")
+                    return {"state": "stopped" if seconds is None else "running", **permission}
 
                 def interact():
                     duration = gtk.ComboBoxText.return_value
@@ -364,9 +369,12 @@ class NativeHandoffTests(PrivateHomeTestCase):
                         button.connect.call_args.args[1](button)
                     self.assertEqual(len(workers), 1)
                     glib.timeout_add_seconds.call_args.args[1]()
-                    for _ in range(5):
+                    for index in range(5):
                         workers.pop(0)()
                         callback, result = responses.pop(0)
+                        if index == 1:
+                            self.assertEqual(result["agent_control"], "human-override")
+                            self.assertEqual("error" in result, seconds is None)
                         callback(result)
                     self.assertFalse(workers)
                     self.assertFalse(responses)
@@ -377,13 +385,12 @@ class NativeHandoffTests(PrivateHomeTestCase):
                 gtk.main.side_effect = interact
                 with patch.dict(sys.modules, {"gi": Mock(), "gi.repository": SimpleNamespace(Gtk=gtk, GLib=glib)}), \
                         patch.object(native_handoff.threading, "Thread", side_effect=thread), \
-                        patch.object(native, "status", return_value={"state": "running", "expires_in": None,
-                                                                    **control_state.status()}) as status, \
-                        patch.object(native, "set_control", side_effect=change) as set_control, \
+                        patch.object(native, "status", side_effect=query) as status, \
+                        patch.object(control_state, "change", wraps=control_state.change) as change, \
                         patch.object(native, "request", return_value={"stopped": True}) as request:
                     self.assertEqual(native_handoff.main(), 0)
-                status.assert_called_once_with()
-                self.assertEqual(set_control.call_args_list, [
+                self.assertEqual(status.call_count, 4)
+                self.assertEqual(change.call_args_list, [
                     call("human-override", seconds=seconds, human_approved=True),
                     call("enabled", seconds=seconds, human_approved=True),
                     call("disabled", seconds=seconds, human_approved=True)])
@@ -391,35 +398,46 @@ class NativeHandoffTests(PrivateHomeTestCase):
 
 
 class NativeCliTests(PrivateHomeTestCase):
-    def test_control_cli_routes_approved_states_and_override_durations_to_selected_backend(self):
+    def test_control_cli_routes_approved_states_and_override_durations_to_debian(self):
         parser = argparse.ArgumentParser()
         desktop_cli.add_desktop_subparser(parser.add_subparsers())
-        for backend, prefix in ((native, ["--native"]), (desktop_cli.runtime, [])):
-            for mode, duration, seconds in (("enabled", [], 900), ("disabled", [], 900),
-                                            ("human-override", [], 900),
-                                            ("human-override", ["--seconds", "60"], 60),
-                                            ("human-override", ["--indefinite"], None)):
-                with self.subTest(backend=backend.__name__, mode=mode, seconds=seconds), \
-                        patch.object(backend, "set_control", return_value={"state": "stopped", "agent_control": mode}) as change, \
-                        patch.object(backend, "start") as start, redirect_stdout(StringIO()):
-                    args = parser.parse_args(["desktop", *prefix, "control", mode, "--human-approved", *duration])
-                    self.assertEqual(desktop_cli.run_desktop_command(args), 0)
-                    change.assert_called_once_with(mode, seconds=seconds, human_approved=True)
-                    start.assert_not_called()
+        for mode, duration, seconds in (("enabled", [], 900), ("disabled", [], 900),
+                                        ("human-override", [], 900),
+                                        ("human-override", ["--seconds", "60"], 60),
+                                        ("human-override", ["--indefinite"], None)):
+            with self.subTest(mode=mode, seconds=seconds), \
+                    patch.object(desktop_cli.runtime, "set_control", return_value={"state": "stopped", "agent_control": mode}) as change, \
+                    patch.object(desktop_cli.runtime, "start") as start, redirect_stdout(StringIO()):
+                args = parser.parse_args(["desktop", "control", mode, "--human-approved", *duration])
+                self.assertEqual(desktop_cli.run_desktop_command(args), 0)
+                change.assert_called_once_with(mode, seconds=seconds, human_approved=True)
+                start.assert_not_called()
 
-    def test_control_cli_cannot_change_permission_without_approval_even_when_stopped(self):
+    def test_native_control_cli_cannot_change_permission_even_with_claimed_approval(self):
         parser = argparse.ArgumentParser()
         desktop_cli.add_desktop_subparser(parser.add_subparsers())
         before = control_state.change("disabled", human_approved=True)
-        for backend, prefix in ((native, ["--native"]), (desktop_cli.runtime, [])):
-            for mode in control_state.MODES:
-                with self.subTest(backend=backend.__name__, mode=mode), \
-                        patch.object(desktop_cli.runtime, "configuration"), \
-                        patch.object(backend, "request", side_effect=FileNotFoundError), redirect_stdout(output := StringIO()):
-                    args = parser.parse_args(["desktop", *prefix, "control", mode])
+        for mode in control_state.MODES:
+            for approval in ([], ["--human-approved"]):
+                with self.subTest(mode=mode, approval=approval), patch.object(native, "request") as request, \
+                        patch.object(native, "start") as start, redirect_stdout(output := StringIO()):
+                    duration = ["--indefinite"] if mode == "human-override" else []
+                    args = parser.parse_args(["desktop", "--native", "control", mode, *approval, *duration])
                     self.assertEqual(desktop_cli.run_desktop_command(args), 1)
-                    self.assertIn("explicit human approval", json.loads(output.getvalue())["error"])
+                    self.assertIn("--native handoff", json.loads(output.getvalue())["error"])
                     self.assertEqual(control_state.status(), before)
+                    request.assert_not_called()
+                    start.assert_not_called()
+
+    def test_debian_control_cli_requires_approval(self):
+        parser = argparse.ArgumentParser()
+        desktop_cli.add_desktop_subparser(parser.add_subparsers())
+        before = control_state.change("disabled", human_approved=True)
+        with patch.object(desktop_cli.runtime, "configuration"), redirect_stdout(output := StringIO()):
+            args = parser.parse_args(["desktop", "control", "enabled"])
+            self.assertEqual(desktop_cli.run_desktop_command(args), 1)
+            self.assertIn("explicit human approval", json.loads(output.getvalue())["error"])
+            self.assertEqual(control_state.status(), before)
 
     def test_control_cli_rejects_legacy_states_and_invalid_duration_combinations(self):
         parser = argparse.ArgumentParser()
@@ -428,8 +446,8 @@ class NativeCliTests(PrivateHomeTestCase):
             with self.subTest(mode=mode), patch("sys.stderr", new_callable=StringIO), self.assertRaises(SystemExit):
                 parser.parse_args(["desktop", "control", mode])
         for mode, duration in (("enabled", ["--indefinite"]), ("disabled", ["--seconds", "60"])):
-            with self.subTest(mode=mode), patch.object(native, "set_control") as change, redirect_stdout(StringIO()):
-                args = parser.parse_args(["desktop", "--native", "control", mode, "--human-approved", *duration])
+            with self.subTest(mode=mode), patch.object(desktop_cli.runtime, "set_control") as change, redirect_stdout(StringIO()):
+                args = parser.parse_args(["desktop", "control", mode, "--human-approved", *duration])
                 self.assertEqual(desktop_cli.run_desktop_command(args), 1)
                 change.assert_not_called()
 
@@ -525,38 +543,29 @@ class NativeCliTests(PrivateHomeTestCase):
 
 
 class BackendControlTests(PrivateHomeTestCase):
-    def test_stopped_backends_change_persistent_permission_without_starting(self):
-        for backend in (native, desktop_cli.runtime):
-            for error in (FileNotFoundError, ConnectionRefusedError):
-                with self.subTest(backend=backend.__name__, error=error.__name__), \
-                        patch.object(desktop_cli.runtime, "configuration"), \
-                        patch.object(backend, "request", side_effect=error) as request, \
-                        patch.object(backend, "start") as start:
-                    result = backend.set_control("human-override", seconds=None, human_approved=True)
-                    self.assertEqual(result["state"], "stopped")
-                    self.assertEqual(result["agent_control"], "human-override")
-                    self.assertIsNone(result["override_until"])
-                    self.assertEqual(result["control_revision"], control_state.status()["control_revision"])
-                    request.assert_called_once_with(
-                        {"action": "control", "mode": "human-override", "seconds": None, "human_approved": True}
-                        if backend is native else {"action": "status"})
-                    start.assert_not_called()
+    def test_stopped_debian_backend_changes_persistent_permission_without_starting(self):
+        backend = desktop_cli.runtime
+        for error in (FileNotFoundError, ConnectionRefusedError):
+            with self.subTest(error=error.__name__), patch.object(backend, "configuration"), \
+                    patch.object(backend, "request", side_effect=error) as request, \
+                    patch.object(backend, "start") as start:
+                result = backend.set_control("human-override", seconds=None, human_approved=True)
+                self.assertEqual(result["state"], "stopped")
+                self.assertEqual(result["agent_control"], "human-override")
+                self.assertIsNone(result["override_until"])
+                self.assertEqual(result["control_revision"], control_state.status()["control_revision"])
+                request.assert_called_once_with({"action": "status"})
+                start.assert_not_called()
 
     def test_lost_control_reply_does_not_replay_or_replace_persistent_choice(self):
-        before = control_state.status()
-        for backend in (native, desktop_cli.runtime):
-            with self.subTest(backend=backend.__name__), patch.object(desktop_cli.runtime, "configuration"), \
-                    patch.object(backend, "request", side_effect=ConnectionResetError("reply lost")) as request:
-                if backend is native:
-                    with self.assertRaises(ConnectionResetError):
-                        backend.set_control("disabled", human_approved=True)
-                    self.assertEqual(control_state.status(), before)
-                else:
-                    result = backend.set_control("disabled", human_approved=True)
-                    self.assertEqual(result["state"], "unknown")
-                    self.assertEqual(result["agent_control"], "disabled")
-                    self.assertEqual(result["control_revision"], control_state.status()["control_revision"])
-                request.assert_called_once()
+        backend = desktop_cli.runtime
+        with patch.object(backend, "configuration"), \
+                patch.object(backend, "request", side_effect=ConnectionResetError("reply lost")) as request:
+            result = backend.set_control("disabled", human_approved=True)
+            self.assertEqual(result["state"], "unknown")
+            self.assertEqual(result["agent_control"], "disabled")
+            self.assertEqual(result["control_revision"], control_state.status()["control_revision"])
+            request.assert_called_once()
 
 
 class PortalContractTests(unittest.TestCase):
@@ -730,7 +739,7 @@ class NativeGrantTests(PrivateHomeTestCase):
         native_grants.enable()
         native_grants.save_token("token")
         session = native.NativeSession(Mock(), remember=True)
-        session.handle({"action": "control", "mode": "human-override", "seconds": None, "human_approved": True})
+        control_state.change("human-override", seconds=None, human_approved=True)
         current = control_state.status()
         session.close()
         restored = native.NativeSession(Mock(), remember=True)
@@ -741,7 +750,7 @@ class NativeGrantTests(PrivateHomeTestCase):
             restored.handle({"action": "renew", "generation": restored.generation,
                              "control_revision": current["control_revision"]})
         self.assertEqual(control_state.status(), current)
-        restored.handle({"action": "control", "mode": "enabled", "human_approved": True})
+        control_state.change("enabled", human_approved=True)
         self.assertFalse(control_state.status()["paused"])
 
     def test_stop_retains_grant_but_revoke_deletes_portal_permission_and_saved_token(self):

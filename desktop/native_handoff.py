@@ -100,19 +100,23 @@ def main():
             backend_label.set_text("Updating desktop control…")
 
         def work():
+            permission = {}
             try:
                 if action == "status":
                     result = native_session.status()
                 elif action == "revoke":
                     result = native_session.revoke()
-                elif action in {"enabled", "human-override", "disabled"}:
-                    result = native_session.set_control(action, seconds=seconds, human_approved=True)
+                elif action in control_state.MODES:
+                    # Persist the human's choice before observing the helper.
+                    # The worker checks the shared revision during input.
+                    permission = control_state.change(action, seconds=seconds, human_approved=True)
+                    result = {**permission, **native_session.status()}
                 else:
                     result = native_session.request({"action": action})
                 if "agent_control" not in result:
                     result = {**control_state.status(), **result}
             except (OSError, ValueError, RuntimeError) as exc:
-                result = {"error": str(exc)}
+                result = {**permission, "error": str(exc)}
             GLib.idle_add(show, result)
 
         threading.Thread(target=work, daemon=True).start()

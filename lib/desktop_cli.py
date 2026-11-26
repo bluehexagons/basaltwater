@@ -166,7 +166,7 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     sequence.add_argument("--save-output", action="store_true", help="Retain all completion/failure/timing receipts privately and return their artifact path")
     sequence.add_argument("--json", action=_RecipeUsageError, nargs=0, help=argparse.SUPPRESS,
                          const="sequence already emits JSON; omit --json, or use --save-output to retain full receipts privately")
-    control = commands.add_parser("control")
+    control = commands.add_parser("control", help="Change Debian XRDP agent permission. KDE: desktop --native handoff")
     control.add_argument("operation", choices=("enabled", "human-override", "disabled"))
     control.add_argument("--human-approved", action="store_true", help="Confirm explicit human approval for this state change; a desktop task alone is insufficient")
     duration = control.add_mutually_exclusive_group()
@@ -335,9 +335,11 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                 raise RuntimeError("Stop closes a native portal session; use --native stop, or logout for a Debian desktop")
             result = backend.request({"action": "stop"})
         elif command == "control":
+            if backend is not runtime:
+                raise PermissionError(backend.CONTROL_WINDOW_REQUIRED)
             if args.operation != "human-override" and (args.indefinite or args.seconds != 900):
                 raise ValueError("Duration applies only to human-override")
-            result = backend.set_control(args.operation, seconds=None if args.indefinite else args.seconds,
+            result = runtime.set_control(args.operation, seconds=None if args.indefinite else args.seconds,
                                          human_approved=args.human_approved)
         elif command == "doctor":
             result = backend.doctor() if backend is not runtime else client.doctor()

@@ -29,6 +29,10 @@ from desktop.receipts import DesktopRequestError, input_failure, input_snapshot
 MAX_MESSAGE = 65536
 SESSION_SECONDS = 0
 MAX_SESSION_SECONDS = 28800
+CONTROL_WINDOW_REQUIRED = (
+    "Change native agent permission in the KDE control window "
+    "(basaltw desktop --native handoff)"
+)
 
 # These describe only our own pending injections, never the user's keyboard.
 KEYSYM_MODIFIERS = {0xffe1: "shift", 0xffe2: "shift", 0xffe3: "ctrl", 0xffe4: "ctrl",
@@ -130,13 +134,6 @@ def status(*, deadline=None):
                 "consent_expires_in": None,
                 "interactive_required": None if grant["grant_saved"] else True,
                 "detail": receipt.get("detail") if receipt.get("last_failure") else "Run desktop start; KDE may request selected-monitor/input approval"}
-
-
-def set_control(mode, *, seconds=control_state.DEFAULT_OVERRIDE_SECONDS, human_approved=False):
-    try:
-        return request({"action": "control", "mode": mode, "seconds": seconds, "human_approved": human_approved})
-    except (FileNotFoundError, ConnectionRefusedError):
-        return {"state": "stopped", **control_state.change(mode, seconds=seconds, human_approved=human_approved)}
 
 
 def check_session():
@@ -550,11 +547,7 @@ class NativeSession:
             if action == "status":
                 return self.snapshot_status()
             if action == "control":
-                control_state.change(payload.get("mode"), seconds=payload.get("seconds", 900),
-                                     human_approved=payload.get("human_approved", False))
-                self.elements.clear()
-                self.record()
-                return self.snapshot_status()
+                raise PermissionError(CONTROL_WINDOW_REQUIRED)
             if action == "stop":
                 self.close()
                 return {"stopped": True, "desktop_preserved": True}

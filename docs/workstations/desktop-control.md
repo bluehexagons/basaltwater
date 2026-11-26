@@ -35,8 +35,8 @@ These are three separate actions:
 2. Relinquish agent ownership by stopping your own action loop and handing over
    the current application/task/evidence state. Opening a window does not stop
    another worker or an already-running sequence.
-3. Change persistent agent permission only through the human's control-window
-   choice or an explicitly authorized `control ... --human-approved` request.
+3. On CachyOS, leave persistent agent permission to the human's choice in the
+   KDE control window.
 
 Use `basaltw desktop --native handoff --json` on CachyOS, with `--native` before
 `handoff`. Bare `basaltw desktop handoff` selects Debian XRDP even on KDE; “Shared
@@ -61,25 +61,27 @@ detect human activity automatically; use the control UI before intervening.
 Agents should inspect `agent_control` in `desktop status`. A request to use
 desktop software authorizes that task when enabled; it does not authorize a
 transition out of disabled or human override. In those states, report the block
-or wait for an existing timer. Ask to change the state only when it is needed
-and the human has not already explicitly approved that transition. Never add an
-approval flag simply to work around a blocked task.
+or wait for an existing timer. On CachyOS, the operator can select a different
+permission in the KDE control window if the task requires it.
 
-For an explicitly approved change, use the configured backend:
+On native CachyOS, both the CLI and the helper socket refuse permission changes.
+Open **Agent Desktop Control** from the KDE application menu or run
+`basaltw desktop --native handoff` and have the operator choose the state.
+The window works while the backend is stopped.
+
+On Debian XRDP, an explicitly approved change can still use the CLI.
 
 ```bash
-# CachyOS; omit --native on a shared Debian desktop.
-basaltw desktop --native control human-override --human-approved
-basaltw desktop --native control human-override --seconds 3600 --human-approved
-basaltw desktop --native control human-override --indefinite --human-approved
-basaltw desktop --native control enabled --human-approved
-basaltw desktop --native control disabled --human-approved
+basaltw desktop control human-override --human-approved
+basaltw desktop control human-override --seconds 3600 --human-approved
+basaltw desktop control human-override --indefinite --human-approved
+basaltw desktop control enabled --human-approved
+basaltw desktop control disabled --human-approved
 ```
 
-Timed overrides accept 60–86400 seconds. State controls work while the backend
-is stopped; enabling agents does not start a desktop or grant KDE portal access.
-Backend health and permission are displayed separately. Native portal consent
-still requires the owner's monitor/device approval when KDE requests it.
+Debian CLI timed overrides accept 60–86400 seconds. Backend health and
+permission are displayed separately. Enabling agents leaves backend startup
+and any required KDE portal approval as separate steps.
 Native helpers now run without a lifetime limit by default; an explicit
 `start --session-seconds 3600` or `renew --generation GEN --seconds 3600` can
 bound the backend lifetime. `0` removes that limit. Backend expiration leaves
@@ -94,9 +96,10 @@ Accessibility workers recheck this revision after lookup and immediately before
 invoking an action, replacing text, or requesting focus. Existing
 session, geometry, observed identity, and bounded-operation checks still apply.
 
-These controls coordinate trusted programs sharing the desktop account. The CLI
-approval flag records the caller's explicit human authorization; it cannot prove
-who typed a command or isolate hostile programs using the same UID. In-flight
+These controls coordinate trusted programs sharing the desktop account.
+The native control window prevents a command-line approval claim from changing
+permission through the native API. Programs that share the desktop user's
+identity are still in the same trust boundary. In-flight
 capture/accessibility operations can finish before a human request is processed;
 this is not compositor-level emergency isolation. Setup can request normal XRDP
 logout and block further input during maintenance without changing permission.

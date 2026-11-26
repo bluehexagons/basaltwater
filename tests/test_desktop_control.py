@@ -288,7 +288,8 @@ class ControlStateTests(unittest.TestCase):
 
         def interrupt(_seconds):
             def human():
-                session.handle({"action": "control", "mode": "disabled", "human_approved": True})
+                self.change("disabled")
+                session.handle({"action": "status"})
                 completed.set()
             worker = threading.Thread(target=human)
             worker.start()
