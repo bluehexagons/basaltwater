@@ -74,9 +74,11 @@ def node_command(project: Path, script: str, manager: str | None, arguments: lis
 
 def check_command(project: Path, recipe: str, settings: str | None, timeout: int,
                   *, review_manifest: str | None = None, verify_evidence: bool = False,
-                  require_artifact_kind: list[str] | None = None) -> list[str]:
+                  require_artifact_kind: list[str] | None = None, prepare: bool = False,
+                  asset_bundle: str | None = None, revisions: tuple[str, str] | None = None) -> list[str]:
     from lib.agent_environment import inspect_environment
-    from lib.agent_visuals import _settings, validate_review_manifest
+    from lib.agent_visuals import _settings, resolve_revision_pair, validate_review_manifest
+    from lib.godot_qa_prepare import bundle_path, preparation_plan
     from lib.visual_evidence import validate_artifact_kind
 
     if not isinstance(recipe, str) or not 1 <= len(recipe) <= 256 or recipe.startswith("-"):
@@ -95,17 +97,26 @@ def check_command(project: Path, recipe: str, settings: str | None, timeout: int
     _settings(settings)  # Validate before allocating a task or running project code.
     if review_manifest is not None:
         validate_review_manifest(review_manifest)
-    manifest = inspect_environment(str(project))
-    declared = manifest["recipes"].get(recipe)
-    if declared is None:
-        raise ValueError(f"Declare recipe {recipe!r} in basaltwater-agent.json before running it")
-    if declared["missing_tools"]:
-        raise ValueError("Missing recipe tools: " + ", ".join(declared["missing_tools"]))
-    cwd = (Path(manifest["workspace"]["repository"]) / declared["directory"]).resolve()
-    if not cwd.is_relative_to(Path(manifest["workspace"]["repository"]).resolve()) or not cwd.is_dir():
-        raise ValueError("Recipe working directory must be an existing directory within the repository")
-    command = [*cli_prefix(), "agent", "visuals", "check", recipe,
+    bundle = bundle_path(asset_bundle, prepare=prepare)
+    action = "check-revisions" if revisions is not None else "check"
+    command = [*cli_prefix(), "agent", "visuals", action, recipe,
                "--repository", str(project), "--timeout", str(timeout), "--json"]
+    if revisions is not None:
+        _, commits = resolve_revision_pair(str(project), *revisions)
+        command.extend(f"--{side}={commit}" for side, commit in commits.items())
+    else:
+        manifest = inspect_environment(str(project))
+        declared = manifest["recipes"].get(recipe)
+        if declared is None:
+            raise ValueError(f"Declare recipe {recipe!r} in basaltwater-agent.json before running it")
+        if declared["missing_tools"]:
+            raise ValueError("Missing recipe tools: " + ", ".join(declared["missing_tools"]))
+        root = Path(manifest["workspace"]["repository"]).resolve()
+        cwd = (root / declared["directory"]).resolve()
+        if not cwd.is_relative_to(root) or not cwd.is_dir():
+            raise ValueError("Recipe working directory must be an existing directory within the repository")
+        if prepare:
+            preparation_plan(root, declared.get("godot_prepare"), bundle)
     if settings is not None:
         command.extend(["--settings", settings])
     if review_manifest is not None:
@@ -113,4 +124,8 @@ def check_command(project: Path, recipe: str, settings: str | None, timeout: int
     if verify_evidence:
         command.append("--verify-evidence")
     command.extend(f"--require-artifact-kind={kind}" for kind in required_kinds)
+    if prepare:
+        command.append("--prepare")
+    if bundle is not None:
+        command.append(f"--asset-bundle={bundle}")
     return command

@@ -14,6 +14,7 @@ basaltw agent manifest --json
 basaltw agent blender smoke --json
 basaltw agent visuals compare before.png after.png --json
 basaltw agent visuals check pause-menu --review-manifest captures/review.json --json
+basaltw agent visuals check-revisions pause-menu --before main --after HEAD --settings ~/capture-settings.json --json
 basaltw agent visuals capture --before HEAD~1 --after HEAD --settings ~/capture-settings.json --json -- ./tools/capture-scene --settings '{settings}' --output '{output}'
 basaltw agent doctor
 basaltw agent doctor --tool codex --tool claude --json
@@ -91,6 +92,12 @@ before launch and records the result in `tool_version`. See
 When the recipe emits a batch manifest, `--review-manifest RELATIVE_JSON`
 also generates a gallery and links it in the check report. See
 [recipe gallery generation](../workstations/visual-comparison-capture.md#review-a-recipes-captures).
+`agent visuals check-revisions` runs the same named recipe in two pinned
+worktrees with identical requested settings and one case comparison report.
+Both commands support opt-in Godot preparation with `--prepare` and an
+explicit `--asset-bundle`. See
+[case checkpoints](../workstations/visual-comparison-capture.md#retain-case-results-and-captures)
+and [native worktree preparation](../workstations/cachyos-development-session.md#prepare-assets-in-a-fresh-worktree).
 
 The default doctor check covers GitHub CLI, Codex CLI, Claude Code, and OpenCode.
 Missing credential files are reported as sign-in reminders but do not make an

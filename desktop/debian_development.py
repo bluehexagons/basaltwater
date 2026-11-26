@@ -66,7 +66,7 @@ def supervisor_environment(uid: int) -> tuple[dict[str, str], str]:
 
 OPTIONS = {"engine", "scene", "argv", "dry_run", "headless", "quit_after", "rendering_method",
            "script", "manager", "recipe", "settings", "timeout", "export_check", "review_manifest",
-           "verify_evidence", "require_artifact_kind", "playtest"}
+           "verify_evidence", "require_artifact_kind", "playtest", "prepare", "asset_bundle", "before", "after"}
 
 
 def handle_task(payload: dict, generation: str, *, recorder=None) -> dict:
@@ -76,7 +76,7 @@ def handle_task(payload: dict, generation: str, *, recorder=None) -> dict:
     if not isinstance(options, dict) or set(options) - OPTIONS:
         raise ValueError("Unknown development task options")
     for key, value in options.items():
-        if key in ("dry_run", "headless", "export_check", "verify_evidence"):
+        if key in ("dry_run", "headless", "export_check", "verify_evidence", "prepare"):
             valid = type(value) is bool
         elif key in ("quit_after", "timeout"):
             valid = type(value) is int or (key == "quit_after" and value is None)
@@ -113,7 +113,7 @@ def request_task(args: argparse.Namespace) -> dict:
         raise RuntimeError("Running desktop lacks recorded-playtest; refresh at a safe normal logout checkpoint")
     options = {key: getattr(args, key) for key in OPTIONS if hasattr(args, key)}
     # Older running supervisors can still handle a check without evidence options.
-    for key in ("verify_evidence", "require_artifact_kind"):
+    for key in ("verify_evidence", "require_artifact_kind", "prepare", "asset_bundle"):
         if not options.get(key):
             options.pop(key, None)
     if args.development_command != "doctor":

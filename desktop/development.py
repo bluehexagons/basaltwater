@@ -24,13 +24,13 @@ from lib.cachyos import is_cachyos
 from lib.cachyos_doctor import _owned_socket, _probe
 from lib.remote_utils import is_dry_run
 from lib.validation import validate_filesystem_path, validate_no_control_characters
-from lib.visual_evidence import add_evidence_options
 
 
 LOG_LIMIT = 16 * 1024 * 1024
 TASK_ID = re.compile(r"[0-9a-f]{32}")
 UNIT_PREFIX = "basaltwater-development-"
-KINDS = ("editor", "run", "import", "exec", "node", "check", "playtest")
+CHECK_KINDS = ("check", "compare")
+KINDS = ("editor", "run", "import", "exec", "node", *CHECK_KINDS, "playtest")
 
 
 class _DevelopmentArgumentParser(argparse.ArgumentParser):
@@ -51,6 +51,8 @@ class _DevelopmentArgumentParser(argparse.ArgumentParser):
 
 
 def add_development_parser(commands: argparse._SubParsersAction) -> None:
+    from lib.agent_visuals import add_check_options, add_revision_options
+
     parser = commands.add_parser("develop", help="Check projects and supervise native development tasks without screen control")
     actions = parser.add_subparsers(dest="development_command", required=True,
                                    parser_class=_DevelopmentArgumentParser)
@@ -73,9 +75,11 @@ def add_development_parser(commands: argparse._SubParsersAction) -> None:
             action.add_argument("argv", nargs=argparse.REMAINDER, help="Project arguments following --")
         elif name == "exec":
             action.add_argument("argv", nargs=argparse.REMAINDER, help="Explicit application/project command following --")
-    for name in ("node", "check"):
-        action = actions.add_parser(name, script_arguments=(name == "node"),
-                                    help="Run a declared package script" if name == "node" else "Run a declared project rendering/test recipe in the existing desktop session")
+    workflows = {"node": "Run a declared package script",
+                 "check": "Run a declared project rendering/test recipe in the existing desktop session",
+                 "compare": "Compare the same declared recipe across two isolated revisions in the existing desktop session"}
+    for name, help_text in workflows.items():
+        action = actions.add_parser(name, script_arguments=(name == "node"), help=help_text)
         action.add_argument("script" if name == "node" else "recipe")
         action.add_argument("--project", required=True)
         action.add_argument("--json", action="store_true")
@@ -84,11 +88,9 @@ def add_development_parser(commands: argparse._SubParsersAction) -> None:
             action.add_argument("--manager", choices=("npm", "pnpm", "yarn"), help="Override packageManager; defaults to npm when undeclared")
             action.add_argument("argv", nargs="*", help="Script arguments following --")
         else:
-            action.add_argument("--settings", help="Existing non-secret JSON settings to record and pass to the recipe")
-            action.add_argument("--timeout", type=int, default=600, help="Recipe process-group deadline in seconds (1–3600)")
-            action.add_argument("--review-manifest", metavar="RELATIVE_JSON",
-                                help="Build a gallery from a batch manifest produced in the recipe evidence directory")
-            add_evidence_options(action)
+            add_check_options(action)
+            if name == "compare":
+                add_revision_options(action)
     playtest = actions.add_parser("playtest", help="Launch a declared disposable profile and attach it to the active recorder")
     playtest.add_argument("playtest", metavar="PROFILE")
     playtest.add_argument("--project", required=True)
@@ -361,13 +363,13 @@ def load_task(directory: Path) -> dict:
     if "session_generation" in value and (not isinstance(value["session_generation"], str)
                                           or not TASK_ID.fullmatch(value["session_generation"])):
         raise ValueError("Invalid development task session generation")
-    if value["kind"] == "check":
+    if value["kind"] in CHECK_KINDS:
         recipe = value.get("recipe")
         if not isinstance(recipe, str) or not 1 <= len(recipe) <= 256 or recipe.startswith("-"):
             raise ValueError("Invalid development recipe identity")
         validate_no_control_characters(recipe, "Recipe name")
     elif "recipe" in value:
-        raise ValueError("Recipe metadata belongs only to a check task")
+        raise ValueError("Recipe metadata belongs only to a check or comparison task")
     if value["kind"] == "playtest":
         from desktop.playtest import NAME
         name = value.get("playtest")
@@ -455,6 +457,12 @@ def task_status(task_id: str, *, stop: bool = False, dry_run: bool = False) -> d
     if task["kind"] == "check":
         result.update(recipe=task["recipe"], evidence=str(directory / "check"),
                       check_report=str(directory / "check" / "check.json"))
+        if "--prepare" in task["argv"]:
+            result.update(prepare_report=str(directory / "check" / "prepare.json"),
+                          check_log=str(directory / "check" / "check.log"))
+    elif task["kind"] == "compare":
+        result.update(recipe=task["recipe"], evidence=str(directory / "comparison"),
+                      comparison_report=str(directory / "comparison" / "comparison.json"))
     if task["kind"] == "playtest":
         result.update(playtest=task["playtest"], profile=str(directory / "profile"))
     if (directory / "stop-requested.json").exists():
@@ -564,6 +572,7 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
            script: str | None = None, manager: str | None = None, recipe: str | None = None,
            settings: str | None = None, timeout: int = 600, review_manifest: str | None = None,
            verify_evidence: bool = False, require_artifact_kind: list[str] | None = None,
+           prepare: bool = False, asset_bundle: str | None = None, before: str | None = None, after: str | None = None,
            session_generation: str | None = None, control_revision: str | None = None,
            playtest: str | None = None, attach_playtest: Callable[[dict], str] | None = None) -> dict:
     uid = _guard()
@@ -574,14 +583,20 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
     # The node parser already consumes its separator; remaining '--' is literal.
     if kind != "node" and arguments[:1] == ["--"]:
         arguments = arguments[1:]
-    if kind in ("import", "check") and arguments:
-        raise ValueError("Import and check tasks do not accept extra command arguments")
+    if kind in ("import", *CHECK_KINDS) and arguments:
+        raise ValueError("Import, check and comparison tasks do not accept extra command arguments")
     if kind == "playtest" and arguments:
         raise ValueError("Playtest arguments must be declared in the project")
-    if kind != "check" and review_manifest is not None:
+    if kind not in CHECK_KINDS and review_manifest is not None:
         raise ValueError("--review-manifest requires a check task")
-    if kind != "check" and (verify_evidence or require_artifact_kind):
+    if kind not in CHECK_KINDS and (verify_evidence or require_artifact_kind):
         raise ValueError("Evidence verification options require a check task")
+    if kind not in CHECK_KINDS and (prepare or asset_bundle is not None):
+        raise ValueError("Preparation options require a check or comparison task")
+    if kind == "compare" and (not before or not after):
+        raise ValueError("A revision comparison requires --before and --after")
+    if kind != "compare" and (before is not None or after is not None):
+        raise ValueError("--before and --after require a comparison task")
     if kind not in ("editor", "run") and (headless or quit_after is not None or rendering_method is not None):
         raise ValueError("Godot run options require editor or run")
     if quit_after is not None and (type(quit_after) is not int or not 1 <= quit_after <= 1000000):
@@ -594,10 +609,12 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
     elif kind == "node":
         from desktop.development_workflows import node_command
         arguments = node_command(path, script, manager, arguments)
-    elif kind == "check":
+    elif kind in CHECK_KINDS:
         from desktop.development_workflows import check_command
         arguments = check_command(path, recipe, settings, timeout, review_manifest=review_manifest,
-                                  verify_evidence=verify_evidence, require_artifact_kind=require_artifact_kind)
+                                  verify_evidence=verify_evidence, require_artifact_kind=require_artifact_kind,
+                                  prepare=prepare, asset_bundle=asset_bundle,
+                                  revisions=(before, after) if kind == "compare" else None)
     elif kind == "exec":
         validate_argv(arguments)
         arguments[0] = _executable(arguments[0])
@@ -651,8 +668,8 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
         raise ValueError("An active desktop evidence recorder is required for playtest launch")
     revision = _honor_agent_control(control_revision)
     directory = _root(create=True) / secrets.token_hex(16)
-    if kind == "check":
-        arguments.extend(["--output", str(directory / "check")])
+    if kind in CHECK_KINDS:
+        arguments.extend(["--output", str(directory / ("check" if kind == "check" else "comparison"))])
         validate_argv(arguments)
     directory.mkdir(mode=0o700)  # A collision must never replace an existing task.
     _private_directory(directory)
@@ -662,7 +679,7 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
     task["control_revision"] = revision
     if session_generation is not None:
         task["session_generation"] = session_generation
-    if kind == "check":
+    if kind in CHECK_KINDS:
         task["recipe"] = recipe
     if kind == "playtest":
         task["playtest"] = playtest
@@ -736,7 +753,9 @@ def run_development_command(args: argparse.Namespace) -> int:
                 settings=getattr(args, "settings", None), timeout=getattr(args, "timeout", 600),
                 review_manifest=getattr(args, "review_manifest", None),
                 verify_evidence=getattr(args, "verify_evidence", False),
-                require_artifact_kind=getattr(args, "require_artifact_kind", None))
+                require_artifact_kind=getattr(args, "require_artifact_kind", None),
+                prepare=getattr(args, "prepare", False), asset_bundle=getattr(args, "asset_bundle", None),
+                before=getattr(args, "before", None), after=getattr(args, "after", None))
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         result = {"ok": False, "error": str(exc)}
     print(json.dumps(result, indent=2))

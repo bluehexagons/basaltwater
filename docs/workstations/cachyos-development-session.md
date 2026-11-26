@@ -247,6 +247,70 @@ freeze a checkout being edited concurrently. The recipe inherits the task's
 recovered native environment and active toolchain; select a project runtime
 explicitly inside the harness when necessary.
 
+### Prepare assets in a fresh worktree
+
+Add `godot_prepare` to the recipe in `basaltwater-agent.json` to opt into
+reusing local assets and importing them before the native check. For example,
+a `playtest-smoke` recipe can declare these paths.
+
+```json
+"godot_prepare": {
+  "project": "game",
+  "asset_directories": ["assets/audio", "assets/models", "assets/textures", "assets/video"]
+}
+```
+
+`project` is relative to the repository and defaults to `.`.
+`asset_directories` are relative to that Godot project and must be separate,
+Git-ignored and untracked. Commit the ignore rules for them and for `.godot/`
+at both revisions. Supply an approved directory outside the checkout with the
+same asset layout. Keep the bundle path in the invocation so it can vary by
+workstation.
+
+```fish
+basaltw desktop --native develop check playtest-smoke --project /absolute/worktree \
+  --prepare --asset-bundle /absolute/local-qa-bundle --timeout 1200 --json
+```
+
+The preparation report lists present, staged and missing directories. A
+missing bundle entry blocks import and the recipe. An existing worktree
+directory is reused as a whole. The command copies only missing directories
+and refuses symlinked staging paths or bundle contents. Each worktree's
+headless import writes its own `.godot` cache. If all declared directories
+are already present, `--prepare` can run without `--asset-bundle`.
+
+Use `develop status TASK_ID --json` to find `prepare_report` and `check_log`.
+The report distinguishes planning, staging and importing. Follow `check_log`
+for Godot's live import output. `--timeout` applies separately to the import
+and recipe, and `develop wait` has its own wait deadline. A failed or timed-out
+import leaves evidence for inspection and prevents the GPU recipe from starting.
+
+### Compare the native check across revisions
+
+```fish
+basaltw desktop --native develop compare playtest-smoke --project /absolute/project \
+  --before main --after HEAD --settings /absolute/playtest-settings.json \
+  --prepare --asset-bundle /absolute/local-qa-bundle --timeout 1200 --json
+```
+
+This queues one desktop task. It pins both commits at submission and runs the
+declared recipe at each commit in a separate managed worktree, baseline first,
+with the same settings snapshot. The worktrees, import logs and checks are
+retained. Use `develop status TASK_ID --json` to find `comparison_report`,
+which links to each side's log and report as it runs. Match stable case IDs
+using the [case checkpoint format](visual-comparison-capture.md#retain-case-results-and-captures).
+Both revisions must declare the named recipe. Omit `--prepare` for a recipe
+that handles its own prerequisites.
+
+The comparison classifies `regressed`, `persisted`, `fixed`, and unchanged
+cases. Missing or unfinished cases remain `unverified`. Complete assertion
+failures on the baseline still provide comparison evidence. Incomplete runs,
+renderer failures and regressions make the comparison exit nonzero. A complete
+pair with persistent failures and no regressions can pass the comparison.
+Inspect both check reports for actual renderer, settings and test outcomes.
+
+### Exercise the desktop and collect evidence
+
 Use headless checks for the assertions they actually
 exercise; verify rendering, audio, focus, and controller behavior on the real
 desktop/GPU. Separate game frame times from streaming/encoding/client latency.

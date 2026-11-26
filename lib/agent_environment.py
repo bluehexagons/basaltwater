@@ -235,12 +235,14 @@ def _version_check(value: object) -> dict[str, str]:
 
 
 def _recipes(value: object, repository: str) -> dict[str, object]:
+    from lib.godot_qa_prepare import parse_declaration
+
     if not isinstance(value, dict) or len(value) > 100:
         raise ValueError("recipes must be an object of at most 100 named workflows")
     recipes = {}
     for name, recipe in value.items():
         _text(name, "recipe name")
-        if not isinstance(recipe, dict) or set(recipe) - {"description", "argv", "directory", "requires", "version_check"}:
+        if not isinstance(recipe, dict) or set(recipe) - {"description", "argv", "directory", "requires", "version_check", "godot_prepare"}:
             raise ValueError(f"Invalid recipe: {name}")
         description = _text(recipe.get("description"), "recipe description")
         argv = recipe.get("argv")
@@ -264,6 +266,8 @@ def _recipes(value: object, repository: str) -> dict[str, object]:
         }
         if "version_check" in recipe:
             recipes[name]["version_check"] = _version_check(recipe["version_check"])
+        if "godot_prepare" in recipe:
+            recipes[name]["godot_prepare"] = parse_declaration(recipe["godot_prepare"])
     return recipes
 
 

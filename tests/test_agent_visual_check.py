@@ -14,7 +14,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from lib import agent_cli, agent_environment, agent_visual_check
+from lib import agent_cli, agent_environment, agent_visual_check, agent_workspace, godot_qa_prepare
+from lib.atomic_io import write_json_atomic
 from lib.agent_probe import ProbeResult
 from lib.remote_utils import CommandTimeoutError
 from tests.test_agent_visuals import png_bytes
@@ -89,6 +90,130 @@ class TestAgentVisualCheck(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertIn("renderer could not initialize", (self.output / "check.log").read_text())
         self.assertTrue((self.output / "environment.json").is_file())
+
+    def test_godot_preparation_reports_missing_assets_then_imports_before_gpu_recipe(self) -> None:
+        subprocess.run(["git", "init", "-q", str(self.project)], check=True, timeout=5)
+        (self.project / ".gitignore").write_text(".godot/\nmodels/\naudio/\ntextures/\n")
+        (self.project / "project.godot").write_text("[application]\n")
+        (self.project / "audio").mkdir()
+        (self.project / "audio/local.ogg").write_bytes(b"keep worktree copy")
+        bundle = self.root / "approved bundle"
+        for asset in ("audio", "models"):
+            (bundle / asset).mkdir(parents=True)
+            (bundle / asset / "data").write_bytes(b"from approved bundle")
+        recipe = self.manifest["recipes"]["graphics"]
+        recipe["godot_prepare"] = godot_qa_prepare.parse_declaration({"asset_directories": ["models", "audio", "textures"]})
+        locks = self.root / "locks"
+        locks.mkdir(mode=0o700)
+        engine = self.root / "godot"
+        engine.write_text("mock engine")
+        engine.chmod(0o700)
+
+        def import_assets(argv, **kwargs):
+            self.assertEqual(argv, [str(engine), "--path", str(self.project), "--headless", "--import"])
+            self.assertEqual(kwargs["timeout"], 900)
+            self.assertEqual(json.loads((self.output / "prepare.json").read_text())["status"], "importing")
+            self.execute.assert_not_called()
+            self.assertEqual((self.project / "models/data").read_bytes(), b"from approved bundle")
+            (self.project / ".godot").mkdir()
+            kwargs["on_output"]("Importing assets: 85%\n")
+            return 0
+
+        def run_recipe(argv, **kwargs):
+            self.assertTrue((self.project / ".godot").is_dir())
+            self.assertEqual(json.loads((self.output / "prepare.json").read_text())["status"], "passed")
+            return 0
+
+        with (patch("lib.agent_reservations._root", return_value=locks),
+              patch.dict(os.environ, {"PATH": f"{self.root}{os.pathsep}{os.environ['PATH']}"}),
+              patch.object(godot_qa_prepare, "run_streamed", side_effect=import_assets) as run_import):
+            args = self.args("--prepare", "--asset-bundle", str(bundle), "--timeout", "900")
+            missing = agent_visual_check.check_recipe(args)
+            self.assertFalse(missing["ok"])
+            self.assertIn("textures", missing["error"])
+            self.assertFalse((self.project / "models").exists())
+            run_import.assert_not_called()
+            self.execute.assert_not_called()
+
+            (bundle / "textures").mkdir()
+            self.output = self.root / "retry"
+            args.output = str(self.output)
+            self.execute.side_effect = run_recipe
+            prepared = agent_visual_check.check_recipe(args)
+        self.assertTrue(prepared["ok"], prepared)
+        self.assertIn("Importing assets: 85%", (self.output / "check.log").read_text())
+        self.assertEqual((self.project / "audio/local.ogg").read_bytes(), b"keep worktree copy")
+        self.assertFalse((self.project / "audio/data").exists())
+        self.assertFalse((bundle / ".godot").exists())
+        self.assertEqual(run_import.call_args.kwargs["pass_fds"], self.execute.call_args.kwargs["pass_fds"])
+
+    def test_renderer_loss_surfaces_partial_case_results_after_log_truncation(self) -> None:
+        image = self.output / "gameplay.png"
+
+        def renderer_crash(argv, **kwargs):
+            image.write_bytes(png_bytes())
+            (self.output / "foreign.png").symlink_to(self.root / "foreign.png")
+            write_json_atomic(kwargs["env"]["BASALTWATER_VISUAL_CASES"], {"version": 1, "complete": False, "cases": [
+                {"id": "gameplay", "status": "passed", "captures": [image.name]},
+                {"id": "resize", "status": "incomplete"},
+            ]})
+            kwargs["on_output"]("Ordinary log output\n")
+            kwargs["on_output"]("ERROR: VK_ERROR_DEVICE_LOST\n")
+            return 7
+
+        self.execute.side_effect = renderer_crash
+        with patch.object(agent_visual_check, "LOG_LIMIT", 8):
+            result = agent_visual_check.check_recipe(self.args())
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["log_truncated"])
+        self.assertEqual(result["renderer_error"]["code"], "vulkan-device-lost")
+        self.assertEqual(result["case_results"]["status"], "partial")
+        self.assertEqual(result["case_results"]["last_completed_case"], "gameplay")
+        self.assertEqual(result["case_results"]["cases"][0]["captures"], [str(image)])
+        self.assertEqual(result["saved_captures"], [str(image)])
+
+    def test_pair_runs_both_pinned_checks_with_one_settings_snapshot_and_matches_cases(self) -> None:
+        args = self.parser.parse_args([
+            "agent", "visuals", "check-revisions", "graphics", "--repository", str(self.project),
+            "--before", "main", "--after", "candidate", "--settings", str(self.settings),
+            "--output", str(self.output), "--json",
+        ])
+        baseline, candidate = self.root / "baseline", self.root / "candidate"
+        baseline.mkdir()
+        candidate.mkdir()
+        revisions = {str(baseline): "a" * 40, str(candidate): "b" * 40}
+        self.inspect.side_effect = lambda repository: {
+            **self.manifest, "workspace": {"repository": repository, "commit": revisions[repository], "dirty": False},
+        }
+        observations = []
+
+        def execute(argv, *, cwd, env, **kwargs):
+            side = Path(cwd)
+            actual = json.loads(Path(env["BASALTWATER_VISUAL_SETTINGS"]).read_text())
+            observations.append((side, actual))
+            if side == baseline:
+                self.settings.write_text('{"frame":99}')
+            statuses = ("passed", "failed", "failed") if side == baseline else ("failed", "failed", "passed")
+            write_json_atomic(env["BASALTWATER_VISUAL_CASES"], {"version": 1, "complete": True, "cases": [
+                {"id": case, "status": status} for case, status in zip(("resume", "settings", "quit"), statuses)
+            ]})
+            return 1
+
+        self.execute.side_effect = execute
+        with (patch.object(agent_workspace, "_repository_root", return_value=str(self.project)),
+              patch.object(agent_workspace, "_validate_base", side_effect=list(revisions.values())),
+              patch.object(agent_workspace, "create_agent_worktree", side_effect=[{"path": str(baseline)}, {"path": str(candidate)}]) as create,
+              redirect_stdout(output := StringIO())):
+            self.assertEqual(agent_cli.run_agent_command(args), 1)
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["status"], "regressed")
+        self.assertEqual({case["id"]: case["outcome"] for case in result["cases"]},
+                         {"resume": "regressed", "settings": "persisted", "quit": "fixed"})
+        self.assertEqual([call.kwargs["base"] for call in create.call_args_list], list(revisions.values()))
+        self.assertEqual(observations, [(baseline, {"frame": 180, "resolution": [3840, 2160]}),
+                                        (candidate, {"frame": 180, "resolution": [3840, 2160]})])
+        self.assertTrue(all(Path(check["check_report"]).is_file() for check in result["checks"].values()))
+        self.assertEqual(json.loads(Path(result["comparison_report"]).read_text()), result)
 
     def test_pinned_executable_reaches_the_recipe_after_a_bounded_probe(self) -> None:
         version = {"executable": "blender", "expected": "Blender 4.5.2"}

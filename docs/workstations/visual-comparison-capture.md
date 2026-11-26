@@ -99,6 +99,48 @@ See [performance sessions](performance-sessions.md) for power preferences,
 clock/thermal/workload snapshots, reservations, cleanup and measurement scope.
 Project scripts retain all performance and image acceptance thresholds.
 
+## Retain case results and captures
+
+If the recipe runs multiple cases, write a checkpoint at
+`BASALTWATER_VISUAL_CASES` after each case and after any captures you want to
+retain from the current case. Use atomic replacement so a crash leaves the
+last valid checkpoint. Paths are relative to `BASALTWATER_VISUAL_EVIDENCE`.
+The last completed case is the last `passed` or `failed` entry in order.
+
+```json
+{
+  "version": 1,
+  "complete": false,
+  "cases": [
+    {"id": "gameplay", "status": "passed", "captures": ["captures/gameplay.png"]},
+    {"id": "resize", "status": "incomplete"}
+  ],
+  "renderer_error": {"code": "device-lost", "message": "Vulkan device was lost during resize"}
+}
+```
+
+Use `complete: true` only after the full case set is recorded. Case IDs must
+be unique and stable between revisions. Status values are `passed`, `failed`,
+`skipped` and `incomplete`. Cases may include an optional `message` and up to
+16 saved PNG or PFM files. A checkpoint can contain up to 128 cases. Report
+assertion failures with a nonzero recipe exit, even when every case ran.
+
+`check.json` retains the checkpoint alongside the process outcome and log,
+including after a crash or timeout. Report renderer failures with the optional
+`renderer_error` field. The checker also recognizes Vulkan device-loss reports
+in streamed logs and lists saved images from a bounded scan of the evidence
+directory. Existing recipes can get that diagnostic without case checkpoints.
+An image path establishes that a file was saved. Case coverage comes from the
+recipe's checkpoint.
+
+Run `basaltw agent visuals check-revisions RECIPE --before main --after HEAD`
+for a foreground comparison in the caller's environment. It retains separate
+check reports, one settings snapshot and `comparison.json`. To use the existing
+desktop session and a supervised task, see
+[native revision comparison](cachyos-development-session.md#compare-the-native-check-across-revisions).
+When optional receipt verification or gallery generation is requested, each
+side must satisfy those gates to complete the comparison.
+
 ## Check a recipe tool version
 
 Add an optional `version_check` object to the recipe in `basaltwater-agent.json`:

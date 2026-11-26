@@ -26,6 +26,23 @@ MAX_IMAGE_BYTES = 16 * 1024 * 1024
 MAX_IMAGE_PIXELS = 16 * 1024 * 1024
 
 
+def add_check_options(parser: argparse.ArgumentParser) -> None:
+    from lib.godot_qa_prepare import add_preparation_options
+
+    parser.add_argument("--settings", help="Non-secret JSON settings to retain and pass to the recipe")
+    parser.add_argument("--timeout", type=validate_positive_integer, default=600,
+                        help="Deadline in seconds per recipe and optional headless import (1–3600)")
+    parser.add_argument("--review-manifest", metavar="RELATIVE_JSON",
+                        help="Build a review gallery from a batch manifest produced in the recipe evidence directory")
+    add_preparation_options(parser)
+    add_evidence_options(parser)
+
+
+def add_revision_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--before", required=True, metavar="REVISION")
+    parser.add_argument("--after", required=True, metavar="REVISION")
+
+
 def add_visuals_parser(commands: argparse._SubParsersAction) -> None:
     parser = commands.add_parser("visuals", help="Check project rendering, compare PNG/PFM images or capture Git revisions")
     actions = parser.add_subparsers(dest="visuals_command", required=True)
@@ -41,24 +58,24 @@ def add_visuals_parser(commands: argparse._SubParsersAction) -> None:
     batch.add_argument("--allow-incompatible", action="store_true", help="Retain mismatched pairs for side-by-side inspection only")
     capture = actions.add_parser("capture", help="Run the same capture command in two managed worktrees")
     capture.add_argument("--repository", default=".")
-    capture.add_argument("--before", required=True, metavar="REVISION")
-    capture.add_argument("--after", required=True, metavar="REVISION")
+    add_revision_options(capture)
     capture.add_argument("--settings", required=True, metavar="JSON")
     capture.add_argument("--timeout", type=validate_positive_integer, default=600)
     capture.add_argument("capture_command", nargs=argparse.REMAINDER, metavar="COMMAND")
     check = actions.add_parser("check", help="Run a declared project recipe and retain environment evidence")
     check.add_argument("recipe", help="Recipe name in basaltwater-agent.json")
     check.add_argument("--repository", default=".")
-    check.add_argument("--settings", help="Non-secret JSON capture settings to retain with the check")
-    check.add_argument("--timeout", type=validate_positive_integer, default=600)
-    check.add_argument("--review-manifest", metavar="RELATIVE_JSON",
-                       help="Build a review gallery from a batch manifest produced in the recipe evidence directory")
+    pair = actions.add_parser("check-revisions", help="Run the same declared recipe in two isolated worktrees and compare case outcomes")
+    pair.add_argument("recipe", help="Recipe name declared at both revisions")
+    pair.add_argument("--repository", default=".")
+    add_revision_options(pair)
+    for action in (check, pair):
+        add_check_options(action)
     check.add_argument("--performance-session", action="store_true", help="Retain before/active/after power, temperature, clock and workload snapshots")
     check.add_argument("--power-profile", choices=("performance", "power-saver"),
                        help="Hold this profile for the recipe using powerprofilesctl launch; implies --performance-session")
-    for action in (capture, check):
-        add_evidence_options(action)
-    for action in (compare, batch, capture, check):
+    add_evidence_options(capture)
+    for action in (compare, batch, capture, check, pair):
         action.add_argument("--output", help="New artifact directory; default: private managed state")
         action.add_argument("--json", action="store_true")
 
@@ -156,6 +173,14 @@ def compare_captures(args: argparse.Namespace) -> dict:
     return result
 
 
+def resolve_revision_pair(repository: str, before: str, after: str) -> tuple[str, dict[str, str]]:
+    root = agent_workspace._repository_root(repository)
+    # Resolve both refs before creating anything. Branch changes during a build
+    # cannot change which commits the two runs use.
+    commits = {side: agent_workspace._validate_base(root, ref) for side, ref in (("before", before), ("after", after))}
+    return root, commits
+
+
 def capture_revisions(args: argparse.Namespace) -> dict:
     command = list(args.capture_command)
     if command and command[0] == "--":
@@ -169,13 +194,7 @@ def capture_revisions(args: argparse.Namespace) -> dict:
     if not 0 < args.timeout <= 3600:
         raise ValueError("Capture timeout must be from 1 through 3600 seconds")
     settings = _settings(args.settings)
-    repository = agent_workspace._repository_root(args.repository)
-    # Resolve both refs before creating anything. Branch changes during a build
-    # cannot change which commits the two captures use.
-    commits = {
-        side: agent_workspace._validate_base(repository, getattr(args, side))
-        for side in ("before", "after")
-    }
+    repository, commits = resolve_revision_pair(args.repository, args.before, args.after)
     run_id = "visual-" + uuid.uuid4().hex[:12]
     directory = _directory(args.output, run_id)
     settings_path = os.path.join(directory, "settings.json")
@@ -243,6 +262,10 @@ def run_visuals_command(args: argparse.Namespace) -> int:
             from lib.agent_visual_check import check_recipe
 
             result = check_recipe(args)
+        elif args.visuals_command == "check-revisions":
+            from lib.agent_visual_revision_check import check_revisions
+
+            result = check_revisions(args)
         elif args.visuals_command == "batch":
             from lib.agent_visual_batch import review_batch
 
@@ -255,6 +278,10 @@ def run_visuals_command(args: argparse.Namespace) -> int:
         print(json.dumps(result, indent=2))
     elif result.get("viewer"):
         print(result["viewer"])
+    elif result.get("comparison_report"):
+        print(f"{result['status']}: {result['comparison_report']}")
+        if result.get("error"):
+            print(result["error"])
     elif result.get("ok"):
         print(f"Project recipe passed: {result['recipe']} ({result['elapsed_seconds']}s)")
         print(f"Evidence: {result['directory']}")

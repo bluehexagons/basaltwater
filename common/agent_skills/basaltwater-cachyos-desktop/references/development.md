@@ -72,6 +72,19 @@ exit status alone does not verify GPU, audio, input or complete UI behavior.
 When the recipe produces a batch manifest, add `--review-manifest RELATIVE_JSON`
 and read `review.viewer` in the completed check report.
 
+For fresh worktrees, a recipe can declare `godot_prepare`. Opt in with
+`--prepare --asset-bundle PATH`, using an approved local bundle. Follow
+`prepare_report` and `check_log` from status to see missing assets and live
+import progress. Each worktree keeps its own `.godot` cache. Choose a timeout
+that allows the import to finish before the GPU recipe starts.
+
+Use `develop compare RECIPE --project PATH --before REV --after REV --settings
+SETTINGS.json` to queue the same case set sequentially in separate worktrees.
+Use `comparison_report` from status to find both reports and case outcomes.
+Ask the recipe to write checkpoints at `BASALTWATER_VISUAL_CASES` so failed
+or interrupted runs retain their last completed case and capture paths. See
+[native revision comparison](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos-development-session.md#compare-the-native-check-across-revisions).
+
 For local asset work, launch the active executable from the graphical session:
 
 ```fish

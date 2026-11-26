@@ -214,6 +214,32 @@ class TestDevelopmentWorkflows(unittest.TestCase):
         self.inspect.assert_not_called()
         self.probe.assert_not_called()
 
+    def test_comparison_pins_revisions_and_reports_the_private_output(self):
+        parser = argparse.ArgumentParser()
+        development.add_development_parser(parser.add_subparsers(dest="command"))
+        bundle = self.home / "assets"
+        bundle.mkdir()
+        args = parser.parse_args(["develop", "compare", "smoke", "--project", str(self.project),
+                                  "--before", "main", "--after", "candidate", "--prepare", "--asset-bundle", str(bundle)])
+        args.native = True
+        commits = {"before": "a" * 40, "after": "b" * 40}
+        with (patch("lib.agent_visuals.resolve_revision_pair", return_value=(str(self.project), commits)) as resolve,
+              redirect_stdout(output := StringIO())):
+            self.assertEqual(development.run_development_command(args), 0)
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["kind"], "compare")
+        self.assertEqual(result["recipe"], "smoke")
+        self.assertEqual(Path(result["comparison_report"]), Path(result["evidence"]) / "comparison.json")
+        command = self.record(result)["argv"]
+        self.assertIn("check-revisions", command)
+        self.assertIn(f"--before={commits['before']}", command)
+        self.assertIn(f"--after={commits['after']}", command)
+        self.assertIn("--prepare", command)
+        self.assertIn(f"--asset-bundle={bundle}", command)
+        self.assertEqual(command[-2:], ["--output", result["evidence"]])
+        resolve.assert_called_once_with(str(self.project), "main", "candidate")
+        self.inspect.assert_not_called()  # The primary checkout need not declare this recipe.
+
     def test_evidence_options_are_limited_to_check_tasks(self):
         for options in ({"verify_evidence": True}, {"require_artifact_kind": ["asset"]}):
             with self.subTest(options=options), self.assertRaisesRegex(ValueError, "require a check task"):

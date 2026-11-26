@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 from datetime import datetime, timezone
 import os
 from pathlib import Path
@@ -15,12 +16,14 @@ import uuid
 from lib.agent_environment import inspect_environment
 from lib.agent_graphics import graphics_environment
 from lib.agent_probe import run_probe
-from lib.agent_reservations import termination_cleanup
+from lib.agent_reservations import reserve, resource_keys, termination_cleanup
 from lib.agent_visuals import _directory, _settings, _settings_unchanged, validate_review_manifest
 from lib.atomic_io import read_json_file, write_json_atomic
+from lib.godot_qa_prepare import bundle_path, prepare_godot
 from lib.remote_utils import is_dry_run, run
 from lib.streamed_process import run_streamed
 from lib.validation import validate_filesystem_path, validate_no_control_characters
+from lib.visual_case_results import DEVICE_LOST, read_case_checkpoint, saved_captures
 
 
 ARCH_GRAPHICS_PACKAGES = (
@@ -118,7 +121,8 @@ def _check_tool_version(selection: dict[str, str], cwd: str, environment: dict[s
 
 
 @termination_cleanup()
-def check_recipe(args: argparse.Namespace) -> dict:
+def check_recipe(args: argparse.Namespace, *, expected_revision: str | None = None,
+                 settings_snapshot: dict | None = None) -> dict:
     """Execute one reviewed declaration and retain the requested evidence."""
     if type(args.timeout) is not int or not 1 <= args.timeout <= 3600:
         raise ValueError("Visual check timeout must be from 1 through 3600 seconds")
@@ -126,8 +130,13 @@ def check_recipe(args: argparse.Namespace) -> dict:
         raise ValueError("A visual check requires execution; dry-run cannot verify rendering")
     if args.review_manifest is not None:
         validate_review_manifest(args.review_manifest)
-    settings = _settings(args.settings)
+    prepare = getattr(args, "prepare", False)
+    bundle = bundle_path(getattr(args, "asset_bundle", None), prepare=prepare)
+    settings = _settings(args.settings) if settings_snapshot is None else settings_snapshot
     manifest = inspect_environment(args.repository)
+    if expected_revision is not None and (manifest["workspace"].get("commit") != expected_revision
+                                          or manifest["workspace"].get("dirty") is not False):
+        raise RuntimeError("Revision check requires the clean, pinned worktree")
     recipe = manifest["recipes"].get(args.recipe)
     if recipe is None:
         raise ValueError(f"Declare recipe {args.recipe!r} in basaltwater-agent.json before running it")
@@ -151,6 +160,8 @@ def check_recipe(args: argparse.Namespace) -> dict:
     environment["BASALTWATER_VISUAL_REVISION"] = revision or ""
     environment["BASALTWATER_VISUAL_RECEIPT"] = receipt_path
     environment["BASALTWATER_VISUAL_VERIFY"] = "1" if args.verify_evidence or args.require_artifact_kind else "0"
+    case_path = Path(directory) / "basaltwater-case-checkpoint.json"
+    environment["BASALTWATER_VISUAL_CASES"] = str(case_path)
     write_json_atomic(settings_path, settings, mode=0o400, indent=None)
     report = {
         "schema_version": 1, "ok": False, "status": "running", "recipe": args.recipe,
@@ -158,17 +169,21 @@ def check_recipe(args: argparse.Namespace) -> dict:
         "directory": directory, "report": report_path, "log": log_path,
         "environment": environment_path, "settings": settings_path,
         "started_at": datetime.now(timezone.utc).isoformat(), "timeout": args.timeout,
-        "returncode": None, "verification_scope": "project-recipe-exit-status",
+        "returncode": None, "revision": revision, "verification_scope": "project-recipe-exit-status",
         "gpu_readiness": "unverified", "ui_readiness": "unverified",
         "verification": {"status": "unverified"},
         "log_limit_bytes": LOG_LIMIT, "log_truncated": False,
     }
     if args.review_manifest is not None:
         report["review"] = {"manifest": os.path.join(directory, args.review_manifest)}
+    if prepare:
+        report["preparation"] = {"report": os.path.join(directory, "prepare.json"), "log": log_path}
     performance = None
     profile = getattr(args, "power_profile", None)
     write_json_atomic(report_path, report)
     started = time.monotonic()
+    phase = "preflight"
+    device_lost = False
     try:
         snapshot = {"manifest": manifest, "host": host_context(environment)}
         write_json_atomic(environment_path, snapshot)
@@ -199,7 +214,9 @@ def check_recipe(args: argparse.Namespace) -> dict:
             written = 0
 
             def record_output(chunk: str) -> None:
-                nonlocal written
+                nonlocal written, device_lost
+                if not device_lost and DEVICE_LOST.search(chunk):
+                    device_lost = True
                 encoded = chunk.encode("utf-8", errors="replace")
                 retained = encoded[:max(0, LOG_LIMIT - written)]
                 log.write(retained)
@@ -207,18 +224,37 @@ def check_recipe(args: argparse.Namespace) -> dict:
                 if len(retained) < len(encoded):
                     report["log_truncated"] = True
 
-            returncode = run_streamed(argv, cwd=cwd, env=environment, timeout=args.timeout,
-                                      on_output=record_output, cleanup_group_on_exit=performance is not None)
+            repository = Path(manifest["workspace"]["repository"])
+            reservation = nullcontext(({}, ()))
+            if prepare:
+                phase = "preparation"
+                reservation = reserve(resource_keys([], [str(repository)]), owner="Godot QA check", run_id=uuid.uuid4().hex)
+            with reservation as (_, descriptors):
+                if prepare:
+                    preparation = prepare_godot(
+                        repository, recipe.get("godot_prepare"), bundle,
+                        report_path=report["preparation"]["report"], timeout=args.timeout,
+                        environment=environment, on_output=record_output, descriptors=descriptors,
+                    )
+                    report["preparation"]["status"] = preparation["status"]
+                    write_json_atomic(report_path, report)
+                phase = "execution"
+                returncode = run_streamed(
+                    argv, cwd=cwd, env=environment, timeout=args.timeout, on_output=record_output, pass_fds=descriptors,
+                    cleanup_group_on_exit=prepare or expected_revision is not None or performance is not None,
+                )
         report["returncode"] = returncode
+        phase = "verification"
+        if not _settings_unchanged(settings_path, settings):
+            raise RuntimeError("Project recipe changed the recorded settings; refusing inconsistent evidence")
         if returncode != 0:
+            phase = "execution"
             raise RuntimeError(f"Project recipe exited with status {returncode}; inspect {log_path}")
         if performance is not None:
             active = read_json_file(performance["active_observation"], max_bytes=2 * 1024 * 1024)
             if (not isinstance(active, dict) or active.get("schema_version") != 1
                     or (profile and active.get("power_profile") != profile)):
                 raise ValueError("Performance session did not retain the expected active observation")
-        if not _settings_unchanged(settings_path, settings):
-            raise RuntimeError("Project recipe changed the recorded settings; refusing inconsistent evidence")
         if args.verify_evidence or args.require_artifact_kind:
             from lib.visual_evidence import verify_receipt
 
@@ -226,11 +262,14 @@ def check_recipe(args: argparse.Namespace) -> dict:
             report["verification_scope"] = "project-recipe-and-checked-receipt"
         report.update(ok=True, status="passed")
     except TimeoutError:
-        report.update(status="timed-out", error=f"Project recipe timed out after {args.timeout} seconds; inspect {log_path}")
+        operation = "Headless Godot import" if phase == "preparation" else "Project recipe"
+        report.update(status="timed-out", error=f"{operation} timed out after {args.timeout} seconds; inspect {log_path}")
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
         report.update(status="failed", error=str(exc))
     except KeyboardInterrupt:
         report.update(status="interrupted", error="Project visual check interrupted")
+    if not report["ok"]:
+        report["failure_stage"] = phase
     if performance is not None:
         from lib.agent_performance import performance_snapshot
 
@@ -238,9 +277,36 @@ def check_recipe(args: argparse.Namespace) -> dict:
             performance["after"] = performance_snapshot()
             write_json_atomic(report["performance"], performance)
         except (OSError, ValueError, RuntimeError) as exc:
-            report.update(ok=False, status="failed", error=f"Performance evidence failed: {exc}")
+            report.update(ok=False, status="failed", failure_stage="verification", error=f"Performance evidence failed: {exc}")
         except KeyboardInterrupt:
-            report.update(ok=False, status="interrupted", error="Performance evidence collection interrupted")
+            report.update(ok=False, status="interrupted", failure_stage="verification", error="Performance evidence collection interrupted")
+    if device_lost:
+        report["renderer_error"] = {"code": "vulkan-device-lost", "source": "log",
+                                    "message": "Vulkan reported device loss; inspect the check log"}
+    try:
+        cases = read_case_checkpoint(case_path)
+    except FileNotFoundError as exc:
+        # A missing checkpoint is normal for recipes that only report an exit status.
+        if case_path.exists() or case_path.is_symlink():
+            report["case_results"] = {"status": "invalid", "path": str(case_path), "error": str(exc)}
+    except (OSError, ValueError) as exc:
+        report["case_results"] = {"status": "invalid", "path": str(case_path), "error": str(exc)}
+    else:
+        if renderer_error := cases.pop("renderer_error", None):
+            report["renderer_error"] = renderer_error
+        report["case_results"] = {"status": "complete" if cases["complete"] else "partial", "path": str(case_path), **cases}
+    if report["ok"] and "case_results" in report:
+        cases = report["case_results"]
+        if (cases["status"] != "complete" or any(case["status"] == "failed" for case in cases.get("cases", []))
+                or report.get("renderer_error", {}).get("source") == "project"):
+            report.update(ok=False, status="failed", failure_stage="case-results",
+                          error=f"Recipe reported unsuccessful or invalid case results; inspect {case_path}")
+    if "renderer_error" in report:
+        try:
+            captures, truncated = saved_captures(Path(directory))
+            report.update(saved_captures=captures, saved_captures_truncated=truncated)
+        except OSError as exc:
+            report["saved_captures_error"] = str(exc)
     if report["ok"] and (review := report.get("review")):
         from lib.agent_visual_batch import review_batch
 
@@ -253,9 +319,9 @@ def check_recipe(args: argparse.Namespace) -> dict:
             review.update(viewer=gallery["viewer"], batch_id=gallery["batch_id"],
                           batch_report=os.path.join(gallery["directory"], "batch.json"))
         except (OSError, RuntimeError, ValueError) as exc:
-            report.update(ok=False, status="failed", error=f"Review gallery failed: {exc}")
+            report.update(ok=False, status="failed", failure_stage="review", error=f"Review gallery failed: {exc}")
         except KeyboardInterrupt:
-            report.update(ok=False, status="interrupted", error="Review gallery generation interrupted")
+            report.update(ok=False, status="interrupted", failure_stage="review", error="Review gallery generation interrupted")
     report["elapsed_seconds"] = round(time.monotonic() - started, 3)
     report["finished_at"] = datetime.now(timezone.utc).isoformat()
     write_json_atomic(report_path, report)
