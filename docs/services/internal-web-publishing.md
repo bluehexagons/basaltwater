@@ -173,13 +173,15 @@ with its snapshot. Receipts are limited to 4 MiB; exceeding the size or artifact
 limit fails before activation. Older publications can return `receipt_missing`.
 An authorized publication within the limits generates their receipt.
 
-Dirty or unavailable Git metadata leaves `source_matches` unverified (`null`)
-with a warning. Builds sample Git before and after the build. If the sampled
-commit changes, the receipt records the source as unknown. A different source
-commit or artifact inventory during verification returns a
-nonzero exit code and structured issue/remediation. `--no-build` records existing
-output without proving it came from the observed source. Matching served bytes
-do not prove JavaScript rendering, client-side routing, or browser cache freshness.
+If the receipt lacks a commit, the JSON result warns `source_revision_unavailable`
+even without `--project`. With `--project`, dirty or unavailable Git metadata
+leaves `source_matches` unverified (`null`) with a warning. Builds sample Git
+before and after the build. If the commit changes, the receipt records the
+source as unknown. A different source commit or artifact inventory during
+verification returns a nonzero exit code and structured issue/remediation.
+`--no-build` records existing output without proving it came from the observed
+source. Matching served bytes do not prove JavaScript rendering, client-side
+routing, or browser cache freshness.
 For older installations without the verification command, compare a public
 artifact manually:
 

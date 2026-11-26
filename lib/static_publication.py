@@ -262,15 +262,18 @@ def verify_receipt(root: str, *, url: str | None, local_output: str | None = Non
             issues.append({"issue": "artifact_mismatch", "component": component,
                            "remediation": "Rebuild the intended source and publish the final output again."})
     source_matches = None
-    if project is not None:
+    source = receipt["source"]
+    if source["commit"] is None:
+        warnings.append("source_revision_unavailable")
+    elif project is not None:
         current = source_state(project)
-        if current["commit"] is None or receipt["source"]["commit"] is None:
+        if current["commit"] is None:
             warnings.append("source_revision_unavailable")
-        elif current["commit"] != receipt["source"]["commit"]:
+        elif current["commit"] != source["commit"]:
             source_matches = False
             issues.append({"issue": "source_revision_mismatch", "component": "source",
                            "remediation": "Build and publish the intended source revision."})
-        elif current["dirty"] is not False or receipt["source"]["dirty"] is not False:
+        elif current["dirty"] is not False or source["dirty"] is not False:
             warnings.append("dirty_source_provenance_unverified")
         else:
             source_matches = True
@@ -283,7 +286,7 @@ def verify_receipt(root: str, *, url: str | None, local_output: str | None = Non
         issues.extend(served_issues)
     return {"ok": not issues, "issue": issues[0]["issue"] if issues else None,
             "remediation": issues[0]["remediation"] if issues else None,
-            "issues": issues, "warnings": warnings, "source": receipt["source"],
+            "issues": issues, "warnings": warnings, "source": source,
             "source_matches": source_matches, "build_performed": receipt.get("build_performed"),
             "artifacts": len(expected), "hidden_artifacts": len(hidden), "served_artifacts_checked": served,
             "network_origin": "vm" if url else None, "rendering_verified": False}

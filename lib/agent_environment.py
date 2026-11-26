@@ -553,7 +553,7 @@ def inspect_environment(repository: str, *, project_runtime: bool = False,
             "instructions": "Follow the active agent session's browser policy. When browser work is requested in T3 Code, use preview_status and preview_open as that policy permits before concluding the browser is unavailable.",
             "managed_playwright": {
                 "executable": tools["basaltwater-playwright-mcp"],
-                "engine": "chromium", "context": "managed", "network_origin": "host",
+                "engine": "chromium", "context": "managed-mcp", "network_origin": "host",
                 "readiness": "unverified" if tools["basaltwater-playwright-mcp"] else "not-on-path",
             },
             "contexts": browser_context_inventory(root),

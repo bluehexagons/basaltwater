@@ -132,6 +132,28 @@ class TestAgentEnvironment(unittest.TestCase):
         self.assertIn("Legacy browser artifacts:", output.getvalue())
         self.assertNotIn("Browser evidence:", output.getvalue())
 
+    def test_browser_manifest_labels_the_managed_mcp_launcher_context(self) -> None:
+        launcher = "/usr/local/bin/basaltwater-playwright-mcp"
+        parser = argparse.ArgumentParser()
+        agent_environment.add_manifest_parser(parser.add_subparsers())
+        args = parser.parse_args(["manifest", self.directory, "--capability", "browser", "--json"])
+        with (
+            patch.object(agent_workspace, "_repository_root", return_value=self.directory),
+            patch.object(agent_environment.shutil, "which",
+                         side_effect=lambda name: launcher if name == "basaltwater-playwright-mcp" else None),
+            patch("lib.agent_browser._runtime", return_value=None),
+            patch("lib.agent_browser.browser_registrations", return_value={}),
+            redirect_stdout(output := StringIO()),
+        ):
+            self.assertEqual(agent_environment.run_manifest_command(args), 0)
+        browser = json.loads(output.getvalue())["browser"]
+        summary = browser["managed_playwright"]
+        self.assertEqual(summary["executable"], launcher)
+        self.assertEqual(summary["context"], "managed-mcp")
+        context = next(item for item in browser["contexts"]
+                       if (item["engine"], item["context"]) == (summary["engine"], summary["context"]))
+        self.assertIn("managed-mcp", context["verification_argv"])
+
     def test_wsl_does_not_advertise_xrdp_or_debian_management(self) -> None:
         self.kernel.return_value = "6.6.87.2-microsoft-standard-WSL2"
         with (

@@ -65,12 +65,14 @@ optional Firefox, the separate managed MCP context, project-installed Playwright
 Firefox/Firefox ESR, and the connected client's collaborative preview.
 Discovery reports runtime presence and leaves launch/rendering readiness
 unverified; browser-cache directories do not prove that an engine works.
-Inventory separates `discovered` (the runtime or desktop installation),
-`launchable` (unknown until a launch check), `mcp_registered` (configuration,
-not session tool exposure), and `application_tested`. Desktop discovery probes
-native Firefox/Firefox ESR and `flatpak info org.mozilla.firefox`, including
-Flatpak-only installs, and reports versions when available. A connected preview
-has engine `unknown` until the session establishes it. Never infer Firefox
+For Playwright contexts, `discovered` reports the installed package. Run the
+context's `verification_argv` to check for the matching engine executable and
+test it. The `browser.managed_playwright` summary describes the `managed-mcp`
+launcher. Inventory also reports `launchable` (unknown until a launch check),
+`mcp_registered` (client configuration), and `application_tested`. Desktop
+discovery probes native Firefox/Firefox ESR and `flatpak info org.mozilla.firefox`,
+including Flatpak-only installs, and reports versions when available. A connected
+preview has engine `unknown` until the session establishes it. Never infer Firefox
 coverage from a viewport preset or an unknown preview.
 The ordinary browser capability doctor below qualifies managed Chromium and
 its MCP integration only. Its result includes the engine, context, and

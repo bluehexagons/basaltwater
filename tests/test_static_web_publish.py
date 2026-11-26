@@ -293,10 +293,16 @@ class TestStaticWebPublish(unittest.TestCase):
                 verified = static_web_publish.verify_site(argparse.Namespace(
                     name="demo-godot", project=directory, output=None, local_only=True, timeout=60,
                 ))
+                migrated_without_revision = static_web_publish.verify_site(argparse.Namespace(
+                    name="demo-godot-2", project=None, output=None, local_only=True, timeout=60,
+                ))
             self.assertTrue(verified["ok"])
             self.assertTrue(verified["source_matches"])
             self.assertTrue(verified["build_performed"])
             self.assertEqual(verified["source"], {"commit": "a" * 40, "dirty": False})
+            self.assertTrue(migrated_without_revision["ok"])
+            self.assertIsNone(migrated_without_revision["source_matches"])
+            self.assertEqual(migrated_without_revision["warnings"], ["source_revision_unavailable"])
             self.assertEqual(
                 (existing.with_name("demo-godot") / static_publication.RECEIPT_FILE).read_bytes(),
                 original_receipt,
