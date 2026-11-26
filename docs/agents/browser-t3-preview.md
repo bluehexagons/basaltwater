@@ -234,18 +234,27 @@ cssY = imageY × cssHeight / imageHeight
 ```
 
 For a 1280×768 image of an 800×480 viewport, image point (640, 384) maps to
-CSS point (400, 240). For a 750×1334 image of a 375×667 viewport, both
-coordinates halve. If measuring in a viewer, remove any margins and scale from
-the displayed image rectangle. Capture again after resize, zoom, or scroll.
+CSS point (400, 240). For a 1280×853 image of a 900×600 viewport, image point
+(640, 640) maps to about (450, 450.18). For a 750×1334 image of a 375×667
+viewport, both coordinates halve. If measuring in a viewer, remove any margins
+and scale from the displayed image rectangle. Capture again after resize, zoom,
+or scroll.
 [T3 snapshot contract](https://github.com/pingdotgg/t3code/blob/v0.1.12/packages/contracts/src/previewAutomation.ts#L502-L534)
 
 When the session permits a managed Playwright fallback, a viewport
 `browser_take_screenshot` with `scale: "css"` gives a CSS-sized image.
 
-When an expected game state appears in the canvas's accessible name, wait on
-the attribute or a role/name locator. The `text` condition checks body text,
-so combining it with the locator still requires a body-text match. For a
-canvas with an updated `aria-label`, use `preview_wait_for` with this selector.
+After a `preview_wait_for` text timeout, check whether the expected game state
+appears under the canvas's name in the accessibility tree. The `text` condition
+checks body text. Use a role/name locator if the snapshot reports a usable role.
+For example, a canvas exposed as `img "Board. Round ready"` can use this wait.
+
+```json
+{"tabId":"TAB_ID","locator":"role=img[name*=\"Round ready\"]","timeoutMs":2000}
+```
+
+If the canvas exposes the state via `aria-label`, this selector also works.
+Omit `text` from either call so the wait only checks the locator or selector.
 
 ```json
 {"tabId":"TAB_ID","selector":"canvas[aria-label*=\"Round ready\"]","timeoutMs":2000}
