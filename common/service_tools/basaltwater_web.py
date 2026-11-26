@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+from datetime import datetime
 import fcntl
 from functools import wraps
 import grp
@@ -34,6 +35,7 @@ if SOURCE_ROOT not in sys.path:
     sys.path.insert(0, SOURCE_ROOT)
 
 from common.service_tools import godot_web_publish, static_web_publish
+from lib.atomic_io import read_json_file
 from lib.validation import (
     validate_filesystem_path,
     validate_network_ip,
@@ -287,6 +289,9 @@ def _parser() -> argparse.ArgumentParser:
     preview_stop.add_argument("--json", action="store_true")
     preview_list = preview_commands.add_parser("list", aliases=["ls"], help="List previews")
     preview_list.add_argument("--json", action="store_true")
+    preview_status = preview_commands.add_parser("status", help="Check a preview's checkout, route and reported builds")
+    preview_status.add_argument("name")
+    preview_status.add_argument("--json", action="store_true")
     preview_url = preview_commands.add_parser("url", help="Print a preview URL")
     preview_url.add_argument("name")
     preview_logs = preview_commands.add_parser("logs", help="Show preview service logs")
@@ -1935,6 +1940,15 @@ def _preview_for_user(
     return record
 
 
+def _require_preview_route(record: dict[str, object], routes: list[dict[str, object]]) -> dict[str, object]:
+    route = next((item for item in routes if item["name"] == record["name"]), None)
+    if route is None:
+        raise RuntimeError("No HTTPS forward for this preview")
+    if any(route[key] != record[key] for key in ("owner", "target_host", "target_port", "listen", "profile")):
+        raise RuntimeError("HTTPS forward no longer matches its managed preview")
+    return route
+
+
 def _stop_preview_record(
     record: dict[str, object],
     policy: dict[str, object],
@@ -2085,12 +2099,7 @@ def _preview_restart(args: argparse.Namespace) -> int:
     record = _preview_for_user(args.name, _load_previews(policy), owner)
     _preview_project(str(record["project"]), pwd.getpwnam(owner))
     routes = _load_forwards(policy)
-    route = next((item for item in routes if item["name"] == args.name), None)
-    if route is None or any(
-        route[key] != record[key]
-        for key in ("owner", "target_host", "target_port", "listen", "profile")
-    ):
-        raise RuntimeError("Live-preview route no longer matches its managed service")
+    route = _require_preview_route(record, routes)
     unit = str(record["unit"])
     _run_checked(["systemctl", "restart", unit], "Restarting live preview")
     _wait_for_upstream(
@@ -2149,6 +2158,110 @@ def _preview_list(as_json: bool) -> int:
                 f"{'active' if preview['active'] else 'stopped'}"
             )
     return 0
+
+
+def _build_timestamp(value: object) -> datetime:
+    if not isinstance(value, str) or not re.fullmatch(
+        r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?(?:Z|\+00:00)", value,
+    ):
+        raise ValueError("Preview build timestamps must be ISO 8601 UTC")
+    return datetime.fromisoformat(value)
+
+
+def _preview_build_status(account: pwd.struct_passwd, project: str, name: str) -> dict[str, object]:
+    directory = os.path.join(account.pw_dir, ".local", "state", "basaltwater", "preview-builds")
+    path = os.path.join(directory, f"{name}.json")
+    result = {"status": "not-reported", "report": path, "last_success_at": None, "latest_error": None}
+    try:
+        try:
+            info = os.lstat(path)
+        except FileNotFoundError:
+            return result
+        parent = os.lstat(directory)
+        if (
+            os.path.realpath(directory) != directory or not stat.S_ISDIR(parent.st_mode)
+            or parent.st_uid != account.pw_uid or parent.st_mode & 0o077
+            or not stat.S_ISREG(info.st_mode) or info.st_uid != account.pw_uid or info.st_mode & 0o077
+        ):
+            raise ValueError("Build report and its directory must be private and owned by the preview account")
+        report = read_json_file(path, max_bytes=8192)
+        if (not isinstance(report, dict) or set(report) != {"version", "project", "last_success_at", "latest_error"}
+                or type(report["version"]) is not int or report["version"] != 1):
+            raise ValueError("Invalid version 1 preview build report")
+        if report["project"] != project:
+            raise ValueError("Build report belongs to a different checkout")
+        success, failure = report["last_success_at"], report["latest_error"]
+        success_at = _build_timestamp(success) if success is not None else None
+        failure_at = None
+        if failure is not None:
+            if not isinstance(failure, dict) or set(failure) != {"at", "message"}:
+                raise ValueError("Build error must contain at and message")
+            failure_at = _build_timestamp(failure["at"])
+            message = failure["message"]
+            if not isinstance(message, str) or not 1 <= len(message) <= 512 or not message.isprintable() or not message.strip():
+                raise ValueError("Build error must be a single printable line of up to 512 characters")
+        if failure_at is not None and (success_at is None or failure_at >= success_at):
+            result["status"] = "failed"
+        elif success_at is not None:
+            result["status"] = "succeeded"
+        result.update(last_success_at=success, latest_error=failure)
+    except (OSError, ValueError) as exc:
+        result.update(status="unavailable", error=str(exc))
+    return result
+
+
+def _preview_status(name: str, as_json: bool) -> int:
+    policy = _load_policy()
+    account = pwd.getpwuid(os.getuid())
+    record = _preview_for_user(name, _load_previews(policy), account.pw_name)
+    active = _preview_active(str(record["unit"]))
+    project = str(record["project"])
+    checkout_error = None
+    try:
+        if _preview_project(project, account) != project:
+            raise ValueError("Configured checkout path now resolves to another directory")
+    except (OSError, ValueError) as exc:
+        checkout_error = str(exc)
+    build = _preview_build_status(account, project, name)
+    url = None
+    https: dict[str, object] = {"ok": False, "status": None}
+    try:
+        routes = _load_forwards(policy)
+        route = _require_preview_route(record, routes)
+        listen = int(route["listen"])
+        url = _forward_route_url(policy, listen, _forward_access_sources(routes, policy)[listen])
+        status, headers = _https_headers(url.rstrip("/") + str(record["health"]))
+        https["status"] = status
+        if not http_status_is_healthy(status, headers):
+            raise RuntimeError(f"HTTPS endpoint returned {status}")
+        if record["profile"] == "godot" and not has_corp_isolation_headers(headers):
+            raise RuntimeError("HTTPS endpoint is missing Godot cross-origin isolation headers")
+        https["ok"] = True
+    except (OSError, RuntimeError, ValueError) as exc:
+        https["error"] = str(exc)
+    ok = bool(active and checkout_error is None and https["ok"] and build["status"] not in ("failed", "unavailable"))
+    result = {**record, "ok": ok, "active": active, "url": url, "https": https, "build": build,
+              "checkout_error": checkout_error}
+    if as_json:
+        print(json.dumps(result, sort_keys=True))
+    else:
+        print(f"{name}\t{project}")
+        if checkout_error:
+            print(f"Checkout unavailable ({checkout_error})")
+        print(f"Service {'active' if active else 'inactive'}")
+        if https["ok"]:
+            print(f"HTTPS {https['status']} at {url}")
+        else:
+            print(https["error"])
+        print(f"Reported build status {build['status']}")
+        if build["last_success_at"]:
+            print(f"Last successful rebuild at {build['last_success_at']}")
+        if latest_error := build["latest_error"]:
+            print(f"Latest build error at {latest_error['at']}")
+            print(latest_error["message"])
+        if build["status"] == "unavailable":
+            print(build["error"])
+    return 0 if ok else 1
 
 
 def _preview_upstream_headers(url: str) -> tuple[int, dict[str, str]]:
@@ -2413,6 +2526,8 @@ def main(argv: list[str] | None = None) -> int:
                 return _preview_stop(args.name, args.json)
             if args.preview_command in ("list", "ls"):
                 return _preview_list(args.json)
+            if args.preview_command == "status":
+                return _preview_status(args.name, args.json)
             if args.preview_command == "url":
                 return _preview_print_url(args.name)
             if args.preview_command == "logs":

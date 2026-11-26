@@ -298,6 +298,7 @@ Useful lifecycle commands are:
 
 ```bash
 basaltwater-web preview list
+basaltwater-web preview status my-project --json
 basaltwater-web preview url my-project
 basaltwater-web preview logs my-project
 basaltwater-web forward doctor my-project
@@ -329,6 +330,46 @@ sets the expectation across projects. The [gateway refresh guide](../../common/a
 covers checking hot reload, restarting live services, and republishing static
 and Godot snapshots. Agents verify a changed resource at the existing URL
 before handoff.
+
+### Inspect a live preview's build status
+
+Run `basaltwater-web preview status my-project` as the preview owner. The
+command shows the configured checkout, service activity, an HTTPS probe of the
+saved health path, and reported builds. Use `--json` for automation. Existing
+previews can use this command without a restart or a route change.
+
+To report rebuilds, have the project's build command or watcher atomically
+replace `$HOME/.local/state/basaltwater/preview-builds/my-project.json` after
+each completed attempt. Substitute the preview name for `my-project` and use
+the absolute checkout path from `preview list`. Keep the directory at mode
+`0700` and the file at `0600` under the preview account. Keep the report outside
+the served tree and use a short error summary without private values.
+
+```json
+{
+  "version": 1,
+  "project": "/home/agent/repos/my-project",
+  "last_success_at": "2026-01-01T10:00:00Z",
+  "latest_error": {
+    "at": "2026-01-01T10:02:00Z",
+    "message": "Bundling failed in game.ts"
+  }
+}
+```
+
+Use UTC timestamps with `Z` or `+00:00`. Set `last_success_at` or
+`latest_error` to `null` until that event has occurred. On failure update
+`latest_error` and retain the last successful time. On success update
+`last_success_at`. A newer success supersedes the error for the current build
+status, while both timestamps remain visible. Keep error messages to one
+printable line of up to 512 characters.
+
+An absent report yields `build.status` of `not-reported`. A reported build
+failure or unreadable report causes a nonzero exit even if `https.ok` is true.
+An unavailable checkout, stopped service, or failed HTTPS check also causes a
+nonzero exit. Build timestamps come from the project's reporting hook. To
+verify the code being served, fetch a changed resource at the existing preview
+URL and compare it with the expected output.
 
 ## Forward an existing loopback service
 

@@ -47,10 +47,15 @@ This preserves its ports, URL, saved command, profile, and upload limit. Build a
 precompiled executable first. See [refreshing a development site](refresh.md)
 for user services and freshness verification.
 
-Use `basaltwater-web preview list` and `basaltwater-web preview logs NAME` to
-inspect the service. `basaltwater-web forward doctor NAME` checks its HTTPS
-listener. See [forward checks](forwards.md) for older installations. Stop a
-preview only when explicitly requested:
+Use `basaltwater-web preview list` to find managed previews and
+`basaltwater-web preview status NAME --json` to inspect the checkout, service,
+HTTPS health, and any project-reported build results. `build.status` is
+`not-reported` until the project writes a build report. See the
+[build report format](https://github.com/bluehexagons/basaltwater/blob/main/docs/services/internal-web-publishing.md#inspect-a-live-previews-build-status)
+and verify a changed resource when testing hot reload. Use
+`basaltwater-web preview logs NAME` to inspect the service. See
+[forward checks](forwards.md) for older installations. Stop a preview only
+when explicitly requested:
 
 ```bash
 basaltwater-web preview stop NAME

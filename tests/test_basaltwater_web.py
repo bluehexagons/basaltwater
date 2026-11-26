@@ -7,6 +7,7 @@ import json
 from contextlib import nullcontext, redirect_stderr, redirect_stdout
 from io import StringIO
 import os
+from pathlib import Path
 import socket
 import ssl
 import tempfile
@@ -17,6 +18,7 @@ from unittest.mock import patch
 
 from common.service_tools import basaltwater_web, basaltwater_web_control
 from lib import t3_preview
+from lib.atomic_io import write_json_atomic
 
 
 def _policy() -> dict[str, object]:
@@ -631,7 +633,7 @@ class TestInfraWebPreviews(unittest.TestCase):
         write_state.assert_called_once_with([])
 
 
-class TestPreviewRestart(unittest.TestCase):
+class TestManagedPreviewCommands(unittest.TestCase):
     def setUp(self) -> None:
         project = self.enterContext(tempfile.TemporaryDirectory())
         self.record = {
@@ -648,8 +650,11 @@ class TestPreviewRestart(unittest.TestCase):
         self.enterContext(patch.object(basaltwater_web.os, "geteuid", return_value=0))
         self.enterContext(patch.object(basaltwater_web, "_load_policy", return_value=_policy()))
         self.enterContext(patch.object(basaltwater_web, "_requesting_username", return_value="agent"))
-        self.account = SimpleNamespace(pw_uid=os.getuid(), pw_name="agent")
+        self.account = SimpleNamespace(
+            pw_uid=os.getuid(), pw_name="agent", pw_dir=self.enterContext(tempfile.TemporaryDirectory()),
+        )
         self.enterContext(patch.object(basaltwater_web.pwd, "getpwnam", return_value=self.account))
+        self.enterContext(patch.object(basaltwater_web.pwd, "getpwuid", return_value=self.account))
         self.previews = self.enterContext(patch.object(basaltwater_web, "_load_previews", return_value=[self.record]))
         self.routes = self.enterContext(patch.object(basaltwater_web, "_load_forwards", return_value=[self.route]))
         self.run = self.enterContext(patch.object(basaltwater_web, "_run_checked"))
@@ -658,6 +663,8 @@ class TestPreviewRestart(unittest.TestCase):
         self.apply = self.enterContext(patch.object(basaltwater_web, "_apply_forwards"))
         self.write = self.enterContext(patch.object(basaltwater_web, "_write_preview_state"))
         self.remove = self.enterContext(patch.object(basaltwater_web, "_remove_preview_service"))
+        self.https = self.enterContext(patch.object(basaltwater_web, "_https_headers", return_value=(204, {})))
+        self.build_report = Path(self.account.pw_dir) / ".local/state/basaltwater/preview-builds/demo.json"
 
     def restart(self, *extra: str) -> tuple[int, dict[str, object]]:
         output = StringIO()
@@ -667,6 +674,100 @@ class TestPreviewRestart(unittest.TestCase):
         self.write.assert_not_called()
         self.remove.assert_not_called()
         return result, json.loads(output.getvalue())
+
+    def preview_status(self) -> tuple[int, dict[str, object]]:
+        with redirect_stdout(StringIO()) as output:
+            status = basaltwater_web.main(["preview", "status", "demo", "--json"])
+        self.run.assert_not_called()
+        self.apply.assert_not_called()
+        self.write.assert_not_called()
+        self.remove.assert_not_called()
+        return status, json.loads(output.getvalue())
+
+    def write_build(self, **updates) -> dict[str, object]:
+        self.build_report.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self.build_report.parent.chmod(0o700)
+        report = {"version": 1, "project": self.record["project"], "last_success_at": "2026-01-01T01:02:03Z",
+                  "latest_error": {"at": "2026-01-01T01:02:04.001Z", "message": "Bundling failed"}, **updates}
+        write_json_atomic(str(self.build_report), report)
+        return report
+
+    def test_status_reports_route_health_without_inventing_build_evidence(self) -> None:
+        policy = {**_policy(), "route_access_sources": {"demo": []}}
+        with patch.object(basaltwater_web, "_load_policy", return_value=policy):
+            status, result = self.preview_status()
+        self.assertEqual(status, 0)
+        self.assertEqual(result["project"], self.record["project"])
+        self.assertEqual(result["url"], "https://localhost:8444/")
+        self.assertEqual(result["https"], {"ok": True, "status": 204})
+        self.assertEqual(result["build"], {"status": "not-reported", "report": str(self.build_report),
+                                          "last_success_at": None, "latest_error": None})
+        self.https.assert_called_once_with("https://localhost:8444/ready")
+
+    def test_status_retains_last_success_and_error_across_rebuilds(self) -> None:
+        report = self.write_build()
+        status, result = self.preview_status()
+        self.assertEqual(status, 1)
+        self.assertTrue(result["https"]["ok"])
+        self.assertEqual(result["build"]["status"], "failed")
+        self.assertEqual(result["build"]["last_success_at"], report["last_success_at"])
+        self.assertEqual(result["build"]["latest_error"], report["latest_error"])
+
+        report = self.write_build(last_success_at="2026-01-01T01:02:04.002+00:00")
+        status, result = self.preview_status()
+        self.assertEqual(status, 0)
+        self.assertEqual(result["build"]["status"], "succeeded")
+        self.assertEqual(result["build"]["last_success_at"], report["last_success_at"])
+        self.assertEqual(result["build"]["latest_error"], report["latest_error"])
+
+    def test_status_reports_missing_checkout_even_if_the_route_responds(self) -> None:
+        self.record["project"] = os.path.join(str(self.record["project"]), "missing")
+        self.write_build(latest_error=None)
+        status, result = self.preview_status()
+        self.assertEqual(status, 1)
+        self.assertTrue(result["https"]["ok"])
+        self.assertEqual(result["build"]["status"], "succeeded")
+        self.assertIn("real directory", result["checkout_error"])
+
+    def test_status_reports_invalid_or_foreign_builds_without_discarding_https_health(self) -> None:
+        for updates, expected in (
+            ({"project": "/another/checkout"}, "different checkout"),
+            ({"last_success_at": "2026-01-01T01:02:03"}, "ISO 8601 UTC"),
+            ({"latest_error": {"at": "2026-01-01T01:02:04Z", "message": "secret\nline"}}, "single printable line"),
+        ):
+            with self.subTest(updates=updates):
+                self.write_build(**updates)
+                status, result = self.preview_status()
+                self.assertEqual(status, 1)
+                self.assertTrue(result["https"]["ok"])
+                self.assertEqual(result["build"]["status"], "unavailable")
+                self.assertIn(expected, result["build"]["error"])
+                self.assertIsNone(result["build"]["latest_error"])
+
+        self.write_build()
+        self.build_report.chmod(0o644)
+        status, result = self.preview_status()
+        self.assertEqual(status, 1)
+        self.assertIn("private", result["build"]["error"])
+        self.assertIsNone(result["build"]["latest_error"])
+
+    def test_status_skips_probe_of_drifted_routes_and_refuses_other_owners(self) -> None:
+        self.routes.return_value = [{**self.route, "target_port": 4174}]
+        self.write_build(latest_error=None)
+        status, result = self.preview_status()
+        self.assertEqual(status, 1)
+        self.assertIsNone(result["url"])
+        self.assertIn("no longer matches", result["https"]["error"])
+        self.assertEqual(result["build"]["status"], "succeeded")
+        self.https.assert_not_called()
+
+        self.previews.return_value = [{**self.record, "owner": "other"}]
+        with patch.object(basaltwater_web, "_preview_build_status") as build:
+            status, result = self.preview_status()
+        self.assertEqual(status, 1)
+        self.assertIn("does not exist", result["error"])
+        build.assert_not_called()
+        self.https.assert_not_called()
 
     def test_restart_reuses_command_ports_health_and_upload_policy(self) -> None:
         previous_record, previous_route = dict(self.record), dict(self.route)
@@ -685,10 +786,7 @@ class TestPreviewRestart(unittest.TestCase):
     def test_preview_commands_report_the_same_loopback_only_listener(self) -> None:
         policy = {**_policy(), "route_access_sources": {"demo": []}}
         url = "https://localhost:8444/"
-        with (
-            patch.object(basaltwater_web, "_load_policy", return_value=policy),
-            patch.object(basaltwater_web.pwd, "getpwuid", return_value=self.account),
-        ):
+        with patch.object(basaltwater_web, "_load_policy", return_value=policy):
             status, result = self.restart()
             self.assertEqual((status, result["url"]), (0, url))
             with redirect_stdout(StringIO()) as stdout:
