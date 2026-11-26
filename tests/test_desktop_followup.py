@@ -35,3 +35,28 @@ class DesktopFollowupTests(unittest.TestCase):
                         self.assertEqual(report["observation_failure"]["reason"], "input-superseded")
                     else:
                         self.assertEqual(report["observation"]["observation_id"], "new-capture")
+
+    def test_capture_response_failure_preserves_completed_input(self):
+        context = {"generation": "session", "control_revision": "revision"}
+        completed = {"input_id": "requested-input", "input_delivery": "completed"}
+        capture = {**context, "initial_frame_skipped": True, "observation_id": "next-capture"}
+        backend = SimpleNamespace(status=None, request=None)
+        for flags, message in (({"error": "Capture write failed", "reason": "capture-failed"}, "Capture write failed"),
+                               ({"ok": False, "error": None}, "Follow-up capture failed"),
+                               ({"ok": True, "error": None}, None)):
+            with (
+                self.subTest(flags=flags),
+                patch.object(backend, "status", return_value=context),
+                patch.object(backend, "request", return_value={**capture, **flags}),
+            ):
+                report = client.observe_after_input(completed, context, "/unused/after.png",
+                                                    settle_ms=0, backend=backend)
+                self.assertEqual(report["input_id"], "requested-input")
+                self.assertEqual(report["input_delivery"], "completed")
+                if message is None:
+                    self.assertEqual(report["observation"]["observation_id"], "next-capture")
+                else:
+                    self.assertNotIn("observation", report)
+                    self.assertEqual(report["dispatch_stage"], "post-input-observation")
+                    self.assertEqual(report["observation_failure"]["error"], message)
+                    self.assertEqual(report["observation_failure"].get("reason"), flags.get("reason"))

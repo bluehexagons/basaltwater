@@ -142,8 +142,9 @@ Native desktop commands (explicit actions use the current account's session):
   status|doctor|windows|environment [--json]
   worker start [--idle-seconds 120] [--session-seconds 1800] | worker status|stop
   inspect --pid PID [--name NAME] [--role ROLE] [--json]
-  screenshot --window HWND --identity TOKEN --generation GEN --output NEW.png [--max-age-seconds 60]
-  screenshot --monitor DEVICE --output NEW.png [--max-age-seconds 60]
+  screenshot --window HWND --identity TOKEN --generation GEN [--output NEW.png] [--max-age-seconds 60]
+  screenshot --monitor DEVICE [--output NEW.png] [--max-age-seconds 60]
+  screenshot ... [--compact]
   capture --window HWND --identity TOKEN --generation GEN --width W --height H --output NEW_DIRECTORY
   pacing --task ID --project PATH --output NEW_DIRECTORY [--seconds 5] [--member PID:FILETIME]
   audio --task ID --project PATH [--member PID:FILETIME] [--seconds 1]
@@ -156,8 +157,9 @@ Native desktop commands (explicit actions use the current account's session):
   input hold --timeline 0:W+J,200:J,400:- --milliseconds 500 (max 8 keys, 32 events)
   input hold --button left|right|middle --x X --y Y [--to-x X --to-y Y] --milliseconds 500
   input move --x X --y Y | input wheel --x X --y Y --delta 120 (same window selectors)
-  input ... [--observation ID] [--observe NEW.png]  Single-use capture and optional post-input capture
-  screenshot ... [--compact] | map-point --capture RECEIPT.json --view-width W --view-height H --x X --y Y
+  input ... [--observation ID] [--observe [--output NEW.png] [--settle-ms 120]]
+  map-point --capture RECEIPT.json --x X --y Y [--to-x X --to-y Y]
+    --image-coordinates or --view-width W --view-height H [--view-origin-x X] [--view-origin-y Y]
   input release|lease --lease ID          Cancel/read a finite keyboard lease
   control enabled|human-override|disabled --human-approved [--seconds N|--indefinite]
   open PATH [--reveal] | terminal --project PATH [--msvc]
@@ -165,6 +167,7 @@ Native desktop commands (explicit actions use the current account's session):
   develop doctor|exec|node|editor|run|import|status|logs|cancel|wait|ready|diagnose ...
   develop --help  Task options, npm-script examples and bounded waiting
 Observe windows/inspect before actions. Pixel capture does not prove rendered content or input outcome.
+Screenshot and input --observe choose a private PNG path by default. Read it from the receipt.
 Screenshot returns observation_id and capture_freshness, timed from capture admission
 with a monotonic clock. Max age is an integer 1-600 (default 60); increase it explicitly
 only for stable turn-based work. Tokens are single-use, consumed before input attempt.

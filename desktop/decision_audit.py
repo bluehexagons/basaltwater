@@ -36,11 +36,13 @@ def _input(receipt):
 
 
 def _capture(receipt):
-    if "error" in receipt or receipt.get("ok") is False:
+    if receipt.get("error") is not None or receipt.get("ok") is False:
         return {}
     result = _object(receipt.get("result", receipt))
+    if result.get("error") is not None or result.get("ok") is False:
+        return {}
     capture = _object(result.get("observation", result))
-    return {} if "error" in capture else capture
+    return capture if capture.get("error") is None and capture.get("ok") is not False else {}
 
 
 def _token(value):
@@ -70,6 +72,37 @@ def _dispatch_check(claim, actual, digest):
             "dispatch_stage": stage, "input_delivery": delivery}
 
 
+def _frame_check(capture, frames):
+    artifact = capture.get("artifact_sha256")
+    if artifact is None:
+        return ("unverified", "frame-digest-unavailable"), []
+    contract.digest(artifact)
+    if not frames:
+        return ("unverified", "frame-not-pinned"), []
+    candidates = [frame for frame in frames if frame["sha256"] == artifact]
+    if not candidates:
+        return ("mismatch", "frame-digest-differs"), []
+    metadata = {}
+    for key in ("geometry", "image_geometry", "image_origin"):
+        value = capture.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, list) or len(value) != 2:
+            raise ValueError(f"Capture {key} must be a coordinate pair")
+        for number in value:
+            contract.integer(number, 0 if key == "image_origin" else 1, 16384)
+        metadata[key] = value
+    matches = []
+    for frame in candidates:
+        expected = {"geometry": frame["geometry"], "image_geometry": [frame["width"], frame["height"]],
+                    "image_origin": frame["origin"]}
+        if all(expected[key] == value for key, value in metadata.items()):
+            matches.append(frame["id"])
+    if not matches:
+        return ("mismatch", "frame-geometry-differs"), []
+    return ("matched", None), matches
+
+
 def _capture_check(saved, digest, packet, actual, *, after=False):
     capture = _capture(saved)
     last = _object(capture.get("last_input"))
@@ -89,15 +122,8 @@ def _capture_check(saved, digest, packet, actual, *, after=False):
     else:
         checks.append(_identity_check(observation_id, _token(actual.get("observation_id")), "observation-id"))
 
-    artifact = capture.get("artifact_sha256")
-    matches = []
-    if artifact is None:
-        checks.append(("unverified", "frame-digest-unavailable"))
-    else:
-        contract.digest(artifact)
-        matches = [frame["id"] for frame in packet["frames"] if frame["sha256"] == artifact]
-        if not matches:
-            checks.append(("mismatch", "frame-digest-differs"))
+    frame_check, matches = _frame_check(capture, packet["frames"])
+    checks.append(frame_check)
     priority = ("mismatch", "unverified", "matched")
     status, reason = min(checks, key=lambda check: priority.index(check[0]))
     changed = capture.get("changed")

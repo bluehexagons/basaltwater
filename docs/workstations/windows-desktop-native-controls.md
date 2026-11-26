@@ -35,11 +35,13 @@ It captures no pixels and leaves control state and observation references
 untouched. Test sessions retain the same report automatically; unknown sections,
 per-window DPI and HDR remain explicit rather than implying qualification.
 
-For an explicit capture, substitute a freshly observed window identity and
-generation and choose a new PNG path in an existing directory:
+For a window capture, substitute a freshly observed identity and generation.
+The default PNG path is unique and private under `%LOCALAPPDATA%\Basaltwater\desktop\captures`.
+Read it from `result.output`, or use `--output` to choose a new PNG path in
+an existing directory.
 
 ```powershell
-basaltw desktop screenshot --window 123456 --identity 'OBSERVED_IDENTITY' --generation OBSERVED_GENERATION --output 'F:\reports\window.png'
+basaltw desktop screenshot --window 123456 --identity 'OBSERVED_IDENTITY' --generation OBSERVED_GENERATION
 ```
 
 Alternatively supply an explicit `--monitor DEVICE` instead of the window
@@ -96,7 +98,10 @@ Status exposes the current ID and freshness without renewing either. Discrete
 token input rechecks the capture deadline inside cold and warm native workers.
 Token-bound `hold` carries the deadline through preparation and watchdog
 startup to the first down. Both forms return an `input_id` and delivery state.
-Add `--observe NEW.png` to capture the same window after completed input.
+Add `--observe` to capture the same window after completed input. Read the
+chosen private PNG path from `result.observation.output`. Use
+`--observe --output NEW.png` to choose a path. The existing `--observe NEW.png`
+form also works.
 The capture waits 120 ms by default. Set `--settle-ms` to an integer from 0 to
 5000. If control changes, another input intervenes, or capture fails, the
 response preserves the completed input and reports the capture failure.

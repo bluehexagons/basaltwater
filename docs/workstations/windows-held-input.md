@@ -53,8 +53,9 @@ driver admission and is checked immediately before the first down. Expiry after
 an accepted first down does not renew or extend the finite lease. Monitoring
 captures during active/uncertain ownership have null IDs even if cleanup settles
 during capture. Only a new capture after confirmed cleanup can authorize input.
-Optional `--observe NEW.png` captures after successful input and cleanup; capture
-failure retains completed input and must never be repaired by replaying the hold.
+Optional `--observe [--output NEW.png]` captures after successful input and
+cleanup. Capture failure retains completed input. Use a fresh screenshot to
+recover the missing observation.
 
 Only one lease can own input at a time. Other mutations are refused while it is
 active or cleanup is uncertain. Observation, explicit human control transitions

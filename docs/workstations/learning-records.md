@@ -146,6 +146,9 @@ The report preserves the backend's stage and delivery separately. For example,
 completion stands even when a later capture failed. The before check compares
 the generation, observation ID and PNG hash. The after check compares the
 generation, the capture's reported last input and the follow-up PNG hash.
+The audit also compares the receipt's full geometry, image dimensions and image
+origin with the pinned frame when the receipt includes those fields. A packet
+without pinned frames leaves the capture unverified.
 A matched capture may show unchanged pixels. `changed`, when available,
 comes from the backend's capture comparison. Semantic effects stay with the
 controller and the report always sets `effect_assessment` to `not-evaluated`.

@@ -453,6 +453,10 @@ def observe_after_input(result: dict, payload: dict, output: str, *, settle_ms: 
                                    "control_revision": payload["control_revision"],
                                    "output": output, **({"window": window} if window is not None else {}),
                                    **({"next_frame": True} if backend is not runtime else {})})
+        if capture.get("error") is not None or capture.get("ok") is False:
+            failure = compact_capture(capture)
+            failure["error"] = failure.get("error") or "Follow-up capture failed"
+            raise DesktopRequestError(failure)
         if window is not None:
             captured_window = capture.get("window")
             if not isinstance(captured_window, dict) or captured_window.get("id") != window:

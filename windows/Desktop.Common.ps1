@@ -366,7 +366,7 @@ function ConvertTo-NativeDesktopRequest([string[]]$Arguments) {
         screenshot = @('window','identity','generation','output','monitor','max-age-seconds','compact');
         window = @('window','identity','generation','x','y','width','height');
         element = @('ref','generation','text','action-name');
-        input = @('window','identity','generation','width','height','x','y','text','key','keys','milliseconds','repeat-ms','lease','observation','timeline','button','to-x','to-y','delta','observe','settle-ms');
+        input = @('window','identity','generation','width','height','x','y','text','key','keys','milliseconds','repeat-ms','lease','observation','timeline','button','to-x','to-y','delta','observe','output','settle-ms');
         worker = @('idle-seconds','session-seconds')
         'map-point' = @('capture','view-width','view-height','view-origin-x','view-origin-y','image-coordinates','x','y','to-x','to-y')
     }
@@ -382,6 +382,10 @@ function ConvertTo-NativeDesktopRequest([string[]]$Arguments) {
         $key = $option.Substring(2)
         if ($request.ContainsKey($key)) { throw "Duplicate option: $option" }
         if ($key -in @('human-approved','indefinite','compact','image-coordinates')) { $request[$key] = $true; continue }
+        if ($key -eq 'observe' -and ($index -ge $Arguments.Count -or $Arguments[$index].StartsWith('--'))) {
+            $request.observe = $true
+            continue
+        }
         if ($index -ge $Arguments.Count) { throw "Missing value: $option" }
         $request[$key] = $Arguments[$index++]
     }
@@ -409,6 +413,13 @@ function ConvertTo-NativeDesktopRequest([string[]]$Arguments) {
 
 function Assert-NativeDesktopRequired($Request, [string[]]$Keys) {
     foreach ($key in $Keys) { if (-not $Request.ContainsKey($key) -or [string]$Request[$key] -eq '') { throw "Required option: --$key" } }
+}
+function New-NativeDesktopCapturePath {
+    $stateDirectory = Split-Path -Parent (Get-NativeDesktopStatePath)
+    New-NativeDesktopPrivateDirectory $stateDirectory
+    $directory = Join-Path $stateDirectory 'captures'
+    New-NativeDesktopPrivateDirectory $directory
+    return Join-Path $directory ([guid]::NewGuid().ToString('N') + '.png')
 }
 function Assert-NativeDesktopNewCapturePath([string]$Path) {
     Assert-NativeDesktopPath $Path
@@ -486,7 +497,7 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
     $lock = $null; $request=$null; $dispatchAttempted=$false; $inputReceipt=$null; $pendingInput=$false
     try {
         if ($Arguments.Count -eq 2 -and $Arguments[0] -eq 'input' -and $Arguments[1] -in @('--help','-h','help')) {
-            return @{ ok = $true; help = 'input key|chord|sequence|text|click|hold|release|lease|move|wheel. Input and hold require --window --identity --generation --width --height and accept --observation ID from the latest window screenshot. Optional --observe NEW.png [--settle-ms 120] captures after completed input, preserving completion on capture failure. release/lease require --lease ID. Use input OPERATION --help for keys, limits and lease behavior. Queue acceptance does not prove application delivery.' }
+            return @{ ok = $true; help = 'input key|chord|sequence|text|click|hold|release|lease|move|wheel. Input and hold require --window --identity --generation --width --height and accept --observation ID from the latest window screenshot. Optional --observe [--output NEW.png] [--settle-ms 120] captures after completed input, preserving completion on capture failure. release/lease require --lease ID. Use input OPERATION --help for keys, limits and lease behavior. Queue acceptance does not prove application delivery.' }
         }
         if($Arguments.Count -ge 2 -and $Arguments[0] -eq 'worker' -and
             (($Arguments.Count -eq 2 -and $Arguments[1] -eq '--help') -or
@@ -494,8 +505,8 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
             return @{ok=$true;help='worker start [--idle-seconds 120] [--session-seconds 1800]; worker status; worker stop. Idle 30-600 seconds, total idle..3600. Explicit limited interactive helper, fresh control/identity/deadline checks, no replay. Active or uncertain helpers block setup; stop reconciles cleanup. No autostart.'}
         }
         if ($Arguments.Count -eq 3 -and $Arguments[0] -eq 'input' -and $Arguments[1] -in @('hold','release','lease','key','chord','sequence','text','click','move','wheel') -and $Arguments[2] -eq '--help') {
-            if ($Arguments[1] -in @('hold','release','lease')) { return @{ ok = $true; help = 'input hold --milliseconds 500 with exactly one of --key W+J, --timeline 0:W+J,200:J,400:-, or --button left|right|middle --x X --y Y [--to-x X --to-y Y]. Pointer must already be at start; use input move first. Fresh --window --identity --generation --width --height required; --observation ID and --observe NEW.png supported. Duration 50-5000 ms, maximum 8 owned keys, 32 strictly ordered timeline events starting at 0 and ending before duration. --repeat-ms 50..duration applies only to final key of --key set. One lease/watchdog; never layer leases. input release --lease ID cancels that lease; input lease --lease ID reads evidence. Queue acceptance is not application verification.' } }
-            if($Arguments[1] -in @('move','wheel')){return @{ok=$true;help='input move --x X --y Y; input wheel --x X --y Y --delta N (nonzero multiples of 120, -1200..1200). Require observed window identity, generation and geometry. --observation ID and --observe NEW.png supported. Pointer target must be foreground and unoccluded; physical modifiers/buttons refuse input.'}}
+            if ($Arguments[1] -in @('hold','release','lease')) { return @{ ok = $true; help = 'input hold --milliseconds 500 with exactly one of --key W+J, --timeline 0:W+J,200:J,400:-, or --button left|right|middle --x X --y Y [--to-x X --to-y Y]. Pointer must already be at start; use input move first. Fresh --window --identity --generation --width --height required. Supports --observation ID and --observe [--output NEW.png]. Duration 50-5000 ms, maximum 8 owned keys, 32 strictly ordered timeline events starting at 0 and ending before duration. --repeat-ms 50..duration applies only to final key of --key set. One lease/watchdog; never layer leases. input release --lease ID cancels that lease; input lease --lease ID reads evidence. Queue acceptance is not application verification.' } }
+            if($Arguments[1] -in @('move','wheel')){return @{ok=$true;help='input move --x X --y Y; input wheel --x X --y Y --delta N (nonzero multiples of 120, -1200..1200). Require observed window identity, generation and geometry. Supports --observation ID and --observe [--output NEW.png]. Pointer target must be foreground and unoccluded; physical modifiers/buttons refuse input.'}}
             return @{ ok = $true; help = 'input key --key KEY | input chord --key CTRL+A (one/two distinct CTRL/SHIFT modifiers). input sequence --keys HOME,SHIFT+END: at most 32 chords and 1024 characters. Keys: A-Z 0-9 F1-F12 ENTER ESC TAB SPACE LEFT UP RIGHT DOWN BACKSPACE DELETE HOME END PAGEUP PAGEDOWN INSERT. input text --text TEXT: at most 1024 UTF-16 code units. input click --x X --y Y. All require --window --identity --generation --width --height from fresh windows, or matching window screenshot geometry with --observation ID. Observation is single-use and consumed before input attempt; status/windows never renew it. Queue acceptance only; inspect application afterward.' }
         }
         $request = ConvertTo-NativeDesktopRequest $Arguments
@@ -550,6 +561,12 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
             } else {
                 $inputReceipt = @{ input_id = [guid]::NewGuid().ToString('N'); generation = $request['generation'];
                     observation_id = $request['observation_id']; input_received_at = [DateTimeOffset]::UtcNow.ToString('o') }
+                if ($request.ContainsKey('output')) {
+                    if (-not $request.ContainsKey('observe')) { throw '--output requires --observe' }
+                    if ($request.observe -isnot [bool]) { throw 'Choose one post-input capture path' }
+                    $request.observe = $request.output
+                    $request.Remove('output')
+                }
                 if ($request.operation -eq 'hold') {
                     foreach ($key in $request.Keys) { if ($key -notin @('command','operation','window','identity','generation','width','height','key','milliseconds','repeat-ms','observation_id','timeline','button','x','y','to-x','to-y','observe','settle-ms')) { throw "Unsupported hold option: --$key" } }
                 } else {
@@ -653,12 +670,16 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
                     if($request.delta -eq 0 -or $request.delta -lt -1200 -or $request.delta -gt 1200 -or $request.delta%120 -ne 0){throw 'Wheel delta must be nonzero multiples of 120 within -1200..1200'}
                     $request.text=[string]$request.delta
                 } elseif($request.ContainsKey('delta')){throw '--delta requires wheel'}
-                if($request.ContainsKey('observe')){Assert-NativeDesktopNewCapturePath $request.observe}
                 if ($request.operation -eq 'text') { Assert-NativeDesktopRequired $request @('text'); if ($request.text.Length -gt 1024) { throw 'Text limit is 1024' } }
                 if ($request.operation -in @('key','chord')) { Assert-NativeDesktopRequired $request @('key'); $request.text = $request.key }
                 if ($request.operation -eq 'sequence') {
                     Assert-NativeDesktopRequired $request @('keys'); $request.text = $request['keys']
                     if ($request.text.Length -gt 1024 -or $request.text.Split(',').Count -gt 32) { throw 'Sequence limit is 32 chords and 1024 characters' }
+                }
+                if ($request.ContainsKey('observe')) {
+                    if ($request.observe -is [bool]) { $request.observe = New-NativeDesktopCapturePath }
+                    Assert-NativeDesktopNewCapturePath $request.observe
+                    $request.observe = [IO.Path]::GetFullPath($request.observe)
                 }
             }
             $request.record = $null
@@ -676,8 +697,8 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
             }
             if ($request.command -eq 'inspect') { Assert-NativeDesktopRequired $request @('pid') }
             if ($request.command -eq 'screenshot') {
-                Assert-NativeDesktopRequired $request @('output')
                 if ($request.ContainsKey('window') -eq $request.ContainsKey('monitor')) { throw 'Choose exactly one explicit --window or --monitor' }
+                if (-not $request.ContainsKey('output')) { $request.output = New-NativeDesktopCapturePath }
                 Assert-NativeDesktopPath $request.output
                 $request.output = [IO.Path]::GetFullPath($request.output)
                 if ([IO.Path]::GetExtension($request.output) -ine '.png' -or (Test-Path -LiteralPath $request.output) -or -not (Test-Path -LiteralPath (Split-Path -Parent $request.output) -PathType Container)) { throw 'Output must be a NEW .png in an existing directory' }

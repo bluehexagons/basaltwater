@@ -18,8 +18,8 @@ Windows PowerShell 5.1.
 
 Use `desktop windows` for handles, identities, generation and physical geometry.
 `desktop inspect --pid PID` returns bounded UI Automation controls and references.
-Only explicit screenshot commands capture pixels; choose a new PNG path and
-observed window selectors or an explicit monitor device. PrintWindow may not
+Choose observed window selectors or an explicit monitor device for a screenshot.
+Omit `--output` to use a unique private PNG path. PrintWindow may not
 capture hardware-rendered content correctly. Inspect the artifact before claiming
 visual success; an API or process exit alone does not prove rendering/audio/input.
 
@@ -31,7 +31,8 @@ selectors and capture dimensions. New captures, mutations and control/session
 changes invalidate the token; status/windows never renew it. Monitor captures
 cannot authorize window input. Token-bound holds preserve the absolute capture
 deadline through watchdog startup and first-down admission. Post-input
-`--observe NEW.png` retains completed input if the later capture fails. Compact
+`--observe [--output NEW.png]` retains completed input if the later capture fails.
+Read the PNG path from `result.output` or `result.observation.output`. Compact
 receipts support `map-point --capture RECEIPT.json --view-width W --view-height H`.
 See the shared [observation contract](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/desktop-observations.md).
 During an active or uncertain keyboard lease, captures return a null observation

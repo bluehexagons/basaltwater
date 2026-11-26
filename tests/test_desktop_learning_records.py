@@ -252,11 +252,13 @@ class LearningRecordTests(unittest.TestCase):
         input_path, before_path = self.root / "submitted.json", self.root / "before.json"
         receipt = {"input_id": "input-1", "generation": "session-1", "observation_id": "capture-1",
                    "dispatch_stage": "input-completed", "input_delivery": "completed"}
+        screenshot = {"geometry": [4, 4], "image_geometry": [2, 2], "image_origin": [1, 1],
+                      "artifact_sha256": frame["sha256"]}
         before_path.write_text(json.dumps({"generation": "session-1", "observation_id": "capture-1",
-                                           "artifact_sha256": frame["sha256"]}))
+                                           **screenshot}))
         receipt["observation"] = {"generation": "session-1", "observation_id": "capture-2",
                                   "last_input": {"input_id": "input-1", "input_delivery": "completed"},
-                                  "artifact_sha256": frame["sha256"], "changed": False}
+                                  **screenshot, "changed": False}
         parser = argparse.ArgumentParser()
         add_desktop_subparser(parser.add_subparsers(dest="command"))
         args = parser.parse_args(["desktop", "evidence", "records", "audit", artifact, "decision-1",
@@ -284,18 +286,33 @@ class LearningRecordTests(unittest.TestCase):
         for key, value, reason in (("last_input", {"input_id": "different"}, "last-input-id-differs"),
                                    ("generation", "new-session", "generation-differs"),
                                    ("observation_id", "capture-1", "reused-input-observation"),
-                                   ("artifact_sha256", "a" * 64, "frame-digest-differs")):
+                                   ("artifact_sha256", "a" * 64, "frame-digest-differs"),
+                                   ("image_origin", [0, 0], "frame-geometry-differs"),
+                                   ("image_geometry", [2, 1], "frame-geometry-differs"),
+                                   ("geometry", [5, 4], "frame-geometry-differs")):
             with self.subTest(key=key), patch.dict(receipt["observation"], {key: value}):
                 report = run(1)
                 self.assertEqual(report["dispatch"]["status"], "matched")
                 self.assertEqual(report["after"]["reason"], reason)
                 self.assertIsNone(report["after"]["changed"])
-        windows_before = {"ok": True, "generation": "session-1", "result": json.loads(before_path.read_text())}
+        windows_before = {"ok": True, "error": None, "generation": "session-1",
+                          "result": json.loads(before_path.read_text())}
         before_path.write_text(json.dumps(windows_before), encoding="utf-16")
         windows_after = {"ok": True, "generation": "session-1", "result": receipt}
         report = run(0, windows_after, encoding="utf-16")
         self.assertEqual(report["status"], "matched")
         self.assertEqual(report["after"]["frame_ids"], ["frame-2"])
+        with patch.dict(receipt["observation"], {"ok": False}):
+            report = run(0)
+            self.assertEqual(report["dispatch"]["status"], "matched")
+            self.assertEqual(report["after"]["status"], "unverified")
+            self.assertEqual(report["after"]["frame_ids"], [])
+        before_packet.update(frames=[], fields=[])
+        unpinned = self.create("unpinned", {"frame-2": str(path)})["artifact"]
+        with patch.object(args, "artifact", unpinned):
+            report = run(0)
+            self.assertEqual(report["before"]["status"], "unverified")
+            self.assertEqual(report["before"]["reason"], "frame-not-pinned")
         (Path(artifact).parent / "frame-1.png").write_bytes(b"tampered")
         self.assertEqual(run(1)["validation"], "invalid")
 

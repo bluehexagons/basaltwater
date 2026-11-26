@@ -44,14 +44,15 @@ Add `--native` before the subcommand on CachyOS. Windows retains its explicit
 window selectors:
 
 ```powershell
-basaltw desktop screenshot --window HWND --identity IDENTITY --generation GEN --output 'F:\reports\turn.png' --max-age-seconds 180
-basaltw desktop input click --window HWND --identity IDENTITY --generation GEN --width W --height H --observation OBSERVATION_ID --x X --y Y
+basaltw desktop screenshot --window HWND --identity IDENTITY --generation GEN --max-age-seconds 180
+basaltw desktop input click --window HWND --identity IDENTITY --generation GEN --width W --height H --observation OBSERVATION_ID --x X --y Y --observe
 ```
 
-Windows also accepts `input ... --observe NEW.png [--settle-ms 120]`, preserving
-completed input when a later capture fails. Holds capture after confirmed
-release and cleanup. The settle delay accepts 0–5000 ms on all three platforms.
-The output must be new; its parent and write access are checked before input.
+Windows preserves completed input when a later capture fails. Holds capture
+after confirmed release and cleanup. Use `--observe --output NEW.png` to
+choose the path. The older `--observe NEW.png` form also works on Windows.
+The settle delay accepts 0–5000 ms on all three platforms. The output must be
+new, and the CLI checks its parent and write access before input.
 `screenshot --compact` retains the existing small JSON geometry/origin receipt.
 Save that JSON and use `map-point --capture frame.json --view-width 1200
 --view-height 800 --x 600 --y 400` for a resized, full window image. Supply
@@ -104,7 +105,8 @@ Inspect the PNG in its nested `observation`, then pass the full receipt to
 input token is consumed and is never a fallback. A missing, failed or stale nested
 frame requires another capture and inspection, never replay of the completed input.
 Omit `--output` on screenshots and `input --observe` to generate a unique private
-PNG path. Retain the returned path rather than reusing a round-based filename.
+PNG path. On Windows, read `result.output` or `result.observation.output`.
+On Linux, read `output` or `observation.output`.
 
 On Debian, keep unrelated desktop content out of the follow-up image by selecting
 the application's window explicitly:
@@ -301,7 +303,8 @@ Linux `input --observe` retains the input completion receipt, settles, and
 captures again. It checks the output path before input, refusing existing files,
 dangling symlinks and invalid/unwritable parent directories. The precheck does
 not reserve a path; a later filesystem change can still cause post-input capture
-failure, which retains completed input and never replays it.
+failure, which retains completed input and never replays it. The response
+details the capture failure in `observation_failure`.
 Without `--observe-window`, Debian captures the desktop and CachyOS captures the
 selected monitor, regardless of the scope of the preceding screenshot.
 Completion receipts retain the geometry admitted for input;

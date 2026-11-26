@@ -43,7 +43,7 @@ function Invoke-NativeDesktopWorker($Request, [int]$TimeoutSeconds=8) {
             # Match the real serialized worker response, including PSCustomObject properties.
             return [pscustomobject]@{geometry=@(640,480);image_geometry=@(640,480);image_origin=@(0,0);desktop_origin=@(-640,-20);
                 coordinate_space=$(if($Request.ContainsKey('monitor')){'monitor'}else{'window'});captured_at='2026-01-01T00:00:00Z';
-                artifact_sha256=('b'*64)}
+                artifact_sha256=('b'*64);output=$Request.output}
         }
         default {
             if ($Request.command -eq 'input') { $script:ObservationInputs++;$script:ObservationLastInput = $Request | ConvertTo-Json -Depth 10 | ConvertFrom-Json }
@@ -103,14 +103,31 @@ try {
     Assert-ObservationFailure (Invoke-NativeDesktopCli @('input','key','--observation','bad')) 'Invalid observation'
     Assert-ObservationFailure (Invoke-NativeDesktopCli @('screenshot','--max-age-seconds','1','--max-age-seconds','2')) 'Duplicate'
     Assert-ObservationFailure (Invoke-NativeDesktopCli @('screenshot','--max-age-seconds')) 'Missing value'
+    $captureDirectory=Join-Path $script:ObservationRoot 'captures'
+    $automatic=Invoke-NativeDesktopCli @('screenshot','--monitor','fixture-monitor','--compact')
+    $secondAutomatic=Invoke-NativeDesktopCli @('screenshot','--monitor','fixture-monitor')
+    Assert-Observation ($automatic.ok -and $secondAutomatic.ok -and $automatic.result.output -cne $secondAutomatic.result.output -and
+        (Split-Path -Parent $automatic.result.output) -eq $captureDirectory -and $automatic.result.output -match '\.png$') 'Default screenshot did not select a unique private PNG path'
+    Assert-NativeDesktopPrivatePath $captureDirectory
+    $first=New-ObservationCapture
+    $post=Invoke-ObservationInput $first @('--settle-ms','0','--observe')
+    Assert-Observation ($post.ok -and $post.result.observation.last_input.input_id -ceq $post.result.input_id -and
+        (Split-Path -Parent $post.result.observation.output) -eq $captureDirectory -and $post.result.observation.output -match '\.png$') 'Bare --observe did not return a private follow-up path'
     $first=New-ObservationCapture
     $postPath=Join-Path $script:ObservationRoot 'post.png'
+    $before=$script:ObservationInputs
+    Assert-ObservationFailure (Invoke-ObservationInput $first @('--output',$postPath)) 'requires --observe'
+    Assert-ObservationFailure (Invoke-ObservationInput $first @('--observe',$postPath,'--output',$postPath)) 'Choose one'
+    Assert-Observation ($script:ObservationInputs -eq $before) 'Conflicting output options reached input'
+    $post=Invoke-ObservationInput $first @('--observe','--output',$postPath,'--settle-ms','0')
+    Assert-Observation ($post.ok -and $post.result.observation.output -ceq $postPath) '--output did not select the follow-up path'
+    $first=New-ObservationCapture
     $post=Invoke-ObservationInput $first @('--observe',$postPath,'--settle-ms','0')
     Assert-Observation ($post.ok -and $post.result.input_delivery -eq 'completed' -and $post.result.observation.observation_id -cmatch '\A[0-9a-f]{32}\z') 'Post capture lost completed input or fresh authority'
     Assert-Observation ($post.result.input_id -cmatch '\A[0-9a-f]{32}\z' -and $post.result.input.input_id -ceq $post.result.input_id -and
         $post.result.observation.last_input.input_id -ceq $post.result.input_id -and $post.result.observation_id -ceq $first.result.observation_id -and
         $post.result.observation.generation -ceq $first.result.generation -and $post.result.observation.artifact_sha256 -ceq ('b'*64) -and
-        $post.result.settle_ms -eq 0) 'Windows receipt cannot link the original capture, input and follow-up'
+        $post.result.observation.output -ceq $postPath -and $post.result.settle_ms -eq 0) 'Windows receipt cannot link the original capture, input and follow-up'
     $first=New-ObservationCapture
     Assert-Observation ($first.result.last_input.input_id -ceq $post.result.input_id) 'A separate capture lost the completed input summary'
     $before=$script:ObservationInputs
