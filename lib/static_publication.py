@@ -216,8 +216,13 @@ def verify_receipt(root: str, *, url: str | None, local_output: str | None = Non
             source_matches = True
     deadline = time.monotonic() + timeout
     served = 0
+    # Nginx rejects dot-prefixed path segments. Their hashes still belong to the
+    # complete publication and local build inventories above.
+    hidden = {path for path in expected if any(part.startswith(".") for part in path.split("/"))}
     if url:
         for path, record in expected.items():
+            if path in hidden:
+                continue
             try:
                 actual = _served_hash(url.rstrip("/") + "/" + urllib.parse.quote(path, safe="/"), record["size"], deadline)
                 if actual != record:
@@ -232,5 +237,5 @@ def verify_receipt(root: str, *, url: str | None, local_output: str | None = Non
             "remediation": issues[0]["remediation"] if issues else None,
             "issues": issues, "warnings": warnings, "source": receipt["source"],
             "source_matches": source_matches, "build_performed": receipt.get("build_performed"),
-            "artifacts": len(expected), "served_artifacts_checked": served,
+            "artifacts": len(expected), "hidden_artifacts": len(hidden), "served_artifacts_checked": served,
             "network_origin": "vm" if url else None, "rendering_verified": False}

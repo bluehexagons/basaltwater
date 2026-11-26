@@ -531,6 +531,38 @@ class TestStaticWebPublish(unittest.TestCase):
             self.assertEqual(result["served_artifacts_checked"], 1)
             self.assertEqual(fetch.call_args.args[0], url + "index.html")
 
+    def test_verification_checks_hidden_artifacts_on_disk_only(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            public = ("index.html", "assets/icon.svg")
+            hidden = (".metadata", "assets/.cache/manifest.json", "assets/.marker")
+            for name in (*public, *hidden):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(name, encoding="utf-8")
+            static_publication.write_receipt(directory, None, output=None, published_at="now", built=False)
+            receipt = static_publication.read_receipt(directory)
+            url = "https://vm.test/sites/agent/demo/"
+            served = {url + name: receipt["artifacts"][name] for name in public}
+
+            def fetch_artifact(artifact_url, _size, _deadline):
+                if artifact_url not in served:
+                    raise PermissionError("Hidden artifact is blocked by the gateway")
+                return served[artifact_url]
+
+            with patch.object(static_publication, "_served_hash", side_effect=fetch_artifact) as fetch:
+                result = static_publication.verify_receipt(directory, url=url)
+            self.assertTrue(result["ok"], result["issues"])
+            self.assertEqual(result["artifacts"], 5)
+            self.assertEqual(result["hidden_artifacts"], 3)
+            self.assertEqual(result["served_artifacts_checked"], 2)
+            self.assertCountEqual([call.args[0] for call in fetch.call_args_list], served)
+
+            (root / hidden[1]).write_text("changed", encoding="utf-8")
+            result = static_publication.verify_receipt(directory, url=None)
+            self.assertEqual(result["issue"], "artifact_mismatch")
+            self.assertEqual(result["issues"][0]["component"], "publication")
+
     def test_served_hash_reads_bounded_bytes_with_tls_and_identity_encoding(self) -> None:
         response = io.BytesIO(b"site")
         response.status = 200

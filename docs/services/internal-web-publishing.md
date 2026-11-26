@@ -144,7 +144,9 @@ regular files with no symbolic or additional hard links.
 
 `site doctor` verifies directory and root HTTP readiness. `site verify` checks
 all artifact hashes against a private receipt activated with the snapshot,
-then checks served HTTPS bytes. `--project PATH` also compares the Git revision
+then checks served HTTPS bytes for paths that Nginx serves. Any file with a
+dot-prefixed path segment is checked on disk only and counted in the JSON
+result as `hidden_artifacts`. `--project PATH` also compares the Git revision
 and, when recorded, the build output directory inside that checkout. Use
 `--output DIR` with `--project` to select a different local output directory.
 Use `--local-only` to omit HTTP coverage, or `--timeout SECONDS` (1–300, default 60)
