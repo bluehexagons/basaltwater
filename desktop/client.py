@@ -462,6 +462,12 @@ def observe_after_input(result: dict, payload: dict, output: str, *, settle_ms: 
         if (capture.get("generation") != payload["generation"] or
                 capture.get("control_revision") != payload["control_revision"]):
             raise RuntimeError("Desktop control changed during capture; observe before further input")
+        last_input = capture.get("last_input")
+        captured_input_id = last_input.get("input_id") if isinstance(last_input, dict) else None
+        input_id = result.get("input_id")
+        if input_id and captured_input_id and captured_input_id != input_id:
+            raise DesktopRequestError({"error": "Follow-up capture reported a different input",
+                                       "reason": "input-superseded", "last_input_id": captured_input_id})
         return {**result, "observation": compact_capture(capture), "settle_ms": settle_ms}
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         return {**result, "error": f"Input completed; observation failed: {exc}. Do not replay input.",

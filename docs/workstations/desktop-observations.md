@@ -308,9 +308,10 @@ Completion receipts retain the geometry admitted for input;
 take a new capture to observe current dimensions. Debian records completion
 without a final geometry query that could obscure successfully submitted input.
 CachyOS skips the stream's initial sample; Debian performs a
-new scrot capture without claiming compositor frame timing. Windows rechecks the
-latest input ID and control state after the settle delay. It carries capture
-deadlines through held-input preparation and watchdog startup to the first down.
+new scrot capture without claiming compositor frame timing. Linux rejects a
+follow-up when the capture explicitly reports a different input ID. Windows
+rechecks the latest input ID and control state after the settle delay. Held
+input carries capture deadlines through watchdog startup to the first down.
 PrintWindow captures reflect the application's Win32 capture support. A capture
 failure does not replay input.
 Debian observation-bound ASCII text uses one unpaced request; `--delay-ms`
