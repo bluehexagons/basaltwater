@@ -15,7 +15,7 @@ import unittest
 from unittest.mock import patch
 import zlib
 
-from desktop import learning_records as records, record_bundles as bundles
+from desktop import decision_audit, learning_records as records, record_bundles as bundles
 from lib.atomic_io import parse_json
 from lib.desktop_cli import add_desktop_subparser, run_desktop_command
 
@@ -237,6 +237,110 @@ class LearningRecordTests(unittest.TestCase):
         result = request(["evidence", "records", "create", str(source), "--media", "same", "a", "--media", "same", "b"], 1)
         self.assertEqual(result["validation"], "invalid")
         self.assertFalse(result["partial"])
+
+    def test_audit_links_exact_receipts_and_unchanged_frames(self):
+        path, frame = self.frame()
+        before_packet, decision = self.document["records"][:2]
+        decision.update(dispatch={"id": "input-1", "stage": "completed", "delivery": "sent"},
+                        observed_effect={"description": "private effect"})
+        after_packet = copy.deepcopy(before_packet)
+        after_packet.update(id="packet-2", phase="gameplay", monotonic_ns=200)
+        after_packet["frames"][0]["id"] = "frame-2"
+        after_packet["fields"][0]["sources"][0]["frame_id"] = "frame-2"
+        self.document["records"].append(after_packet)
+        artifact = self.create(media={"frame-1": str(path), "frame-2": str(path)})["artifact"]
+        input_path, before_path = self.root / "submitted.json", self.root / "before.json"
+        receipt = {"input_id": "input-1", "generation": "session-1", "observation_id": "capture-1",
+                   "dispatch_stage": "input-completed", "input_delivery": "completed"}
+        before_path.write_text(json.dumps({"generation": "session-1", "observation_id": "capture-1",
+                                           "artifact_sha256": frame["sha256"]}))
+        receipt["observation"] = {"generation": "session-1", "observation_id": "capture-2",
+                                  "last_input": {"input_id": "input-1", "input_delivery": "completed"},
+                                  "artifact_sha256": frame["sha256"], "changed": False}
+        parser = argparse.ArgumentParser()
+        add_desktop_subparser(parser.add_subparsers(dest="command"))
+        args = parser.parse_args(["desktop", "evidence", "records", "audit", artifact, "decision-1",
+                                  "--input", str(input_path), "--before", str(before_path),
+                                  "--after", "packet-2", str(input_path), "--json"])
+
+        def run(expected):
+            input_path.write_text(json.dumps(receipt))
+            output = StringIO()
+            with patch("sys.stdout", output):
+                self.assertEqual(run_desktop_command(args), expected)
+            self.assertNotIn("private effect", output.getvalue())
+            return json.loads(output.getvalue())
+
+        report = run(0)
+        self.assertEqual(report["status"], "matched")
+        self.assertEqual(report["before"]["frame_ids"], ["frame-1"])
+        self.assertEqual(report["after"]["frame_ids"], ["frame-2"])
+        self.assertEqual(report["dispatch"]["receipt_sha256"], hashlib.sha256(input_path.read_bytes()).hexdigest())
+        self.assertEqual(report["dispatch"]["receipt_sha256"], report["after"]["receipt_sha256"])
+        self.assertIs(report["after"]["changed"], False)
+        self.assertTrue(report["effect_declared"])
+        self.assertEqual(report["effect_assessment"], "not-evaluated")
+        self.assertFalse(report["input_authority"])
+        for key, value, reason in (("last_input", {"input_id": "different"}, "last-input-id-differs"),
+                                   ("generation", "new-session", "generation-differs"),
+                                   ("observation_id", "capture-1", "reused-input-observation"),
+                                   ("artifact_sha256", "a" * 64, "frame-digest-differs")):
+            with self.subTest(key=key), patch.dict(receipt["observation"], {key: value}):
+                report = run(1)
+                self.assertEqual(report["dispatch"]["status"], "matched")
+                self.assertEqual(report["after"]["reason"], reason)
+                self.assertIsNone(report["after"]["changed"])
+        (Path(artifact).parent / "frame-1.png").write_bytes(b"tampered")
+        self.assertEqual(run(1)["validation"], "invalid")
+
+    def test_audit_preserves_dispatch_reports_and_missing_evidence(self):
+        input_path = self.root / "receipt.json"
+        decision = self.document["records"][1]
+        decision["dispatch"]["id"] = "input-1"
+
+        def check(artifact, saved, encoding="utf-8"):
+            input_path.write_text(json.dumps(saved), encoding=encoding)
+            return decision_audit.audit(artifact, "decision-1", input_path)["dispatch"]
+
+        for delivery, stage, claim in (
+                ("not-sent", "before-input", ("refused", "not-sent")),
+                ("partial", "between-characters", ("attempted", "unknown")),
+                ("unknown", "transport", ("attempted", "unknown")),
+                ("completed", "post-input-observation", ("completed", "sent"))):
+            with self.subTest(delivery=delivery):
+                decision["dispatch"].update(stage=claim[0], delivery=claim[1])
+                artifact = self.create(delivery)["artifact"]
+                saved = {"input_id": "input-1", "input_delivery": delivery, "dispatch_stage": stage,
+                         "error": "private backend failure"}
+                report = check(artifact, saved)
+                self.assertEqual(report["status"], "matched")
+                self.assertEqual(report["input_delivery"], delivery)
+                self.assertEqual(report["dispatch_stage"], stage)
+                self.assertEqual(check(artifact, {**saved, "input_id": "other"})["reason"], "input-id-differs")
+                self.assertEqual(check(artifact, {**saved, "dispatch_stage": None})["status"], "unverified")
+        self.assertEqual(check(artifact, {**saved, "input_delivery": "unknown"})["reason"], "dispatch-claim-differs")
+        legacy = {"ok": True, "generation": "session-1", "result": {"submitted": True, "observation": {},
+                  "input_delivery": "completed", "dispatch_stage": "input-completed"}}
+        report = check(artifact, legacy, encoding="utf-16")
+        self.assertEqual(report["reason"], "input-id-unavailable")
+        self.assertEqual(report["input_delivery"], "completed")
+        del legacy["result"]["input_delivery"]
+        self.assertIsNone(check(artifact, legacy)["input_delivery"])
+
+    def test_audit_rejects_unrelated_or_older_followup_packets(self):
+        packet = self.document["records"][0]
+        input_path = self.root / "receipt.json"
+        input_path.write_text("{}")
+        followup = copy.deepcopy(packet)
+        followup.update(id="followup", match_id="different")
+        self.document["records"].append(followup)
+        artifact = self.create("wrong-match")["artifact"]
+        with self.assertRaisesRegex(ValueError, "share the original run"):
+            decision_audit.audit(artifact, "decision-1", input_path, after=("followup", input_path))
+        followup.update(match_id=packet["match_id"], monotonic_ns=packet["monotonic_ns"] - 1)
+        artifact = self.create("old")["artifact"]
+        with self.assertRaisesRegex(ValueError, "predates"):
+            decision_audit.audit(artifact, "decision-1", input_path, after=("followup", input_path))
 
 
 if __name__ == "__main__":

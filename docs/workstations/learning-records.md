@@ -11,6 +11,7 @@ effect on these offline commands):
 ```text
 basaltw desktop evidence records create SOURCE [--media FRAME_ID PNG]... [--output NEW_DIRECTORY] [--json]
 basaltw desktop evidence records validate MANIFEST [--current-state REVISION --at UTC] [--json]
+basaltw desktop evidence records audit MANIFEST DECISION_ID --input INPUT_JSON [--before CAPTURE_JSON] [--after PACKET_ID CAPTURE_JSON] [--json]
 ```
 
 `SOURCE` is strict UTF-8 JSON with exactly `schema_version: 1` and `records`,
@@ -119,6 +120,49 @@ record, so does not itself change exit status. Exit 1 has `error`,
 use exit 2. If creation fails after reserving output, `partial: true` includes
 `bundle`; retain it for inspection and choose a different output next time.
 A manifest is the completion marker. Never treat a partial directory as valid.
+
+## Auditing one decision
+
+Build a bundle with the decision and its observation packet. Retain the exact
+input result JSON, including any structured failure. To check the visual links,
+pin the exact PNG bytes in the appropriate packets and save the capture result
+JSON for each. The audit uses `--before` for the decision's observation packet.
+Pass a distinct follow-up packet with `--after`. It must share the run, match,
+clock scope and conditions and be at least as recent as the decision packet.
+The phase and state revision can change. If input was issued with `--observe`,
+the same JSON file can supply both `--input` and the follow-up capture.
+
+The audit rechecks the bundle pins and compares the decision's dispatch ID with
+the backend's input ID. The backend must report an explicit dispatch stage and
+one of the following delivery values.
+
+| Receipt delivery | Required decision stage | Required decision delivery |
+| --- | --- | --- |
+| `not-sent` | `refused` | `not-sent` |
+| `completed` | `completed` | `sent` |
+| `partial` or `unknown` | `attempted` | `unknown` |
+
+The report preserves the backend's stage and delivery separately. For example,
+completion stands even when a later capture failed. The before check compares
+the generation, observation ID and PNG hash. The after check compares the
+generation, the capture's reported last input and the follow-up PNG hash.
+A matched capture may show unchanged pixels. `changed`, when available,
+comes from the backend's capture comparison. Semantic effects stay with the
+controller and the report always sets `effect_assessment` to `not-evaluated`.
+
+The output includes the records hash and the exact JSON file hashes for each
+requested check. A check reports `matched`, `mismatch` or `unverified`.
+An unrequested capture check is null. Exit 0 allows both matched and
+unverified results. Check `status` for `matched` when a caller requires every
+requested check to agree. A contradiction or invalid artifact exits 1.
+The command reads saved files offline and grants no input authority.
+
+Run the audit where the Basaltwater CLI manages private evidence bundles.
+The comparisons use fields shared by the CachyOS and Debian desktop receipts.
+The reader also accepts Windows result envelopes and BOM-marked UTF-16
+PowerShell exports. Legacy receipts lacking a stable input ID or a capture
+digest remain unverified. A `submitted` flag alone supplies no delivery
+evidence. Keep saved receipts and reports with private evidence.
 
 The synthetic [accepted](../examples/learning-records/accepted.json) and
 [stale/rejected](../examples/learning-records/rejected.json) graphs demonstrate

@@ -77,8 +77,8 @@ def create(source, media, output=None):
             "schema_version": 1, "records": len(document["records"]), "input_authority": False}
 
 
-def validate(artifact, *, current_state_revision=None, at=None):
-    """Verify pinned files and report freshness using explicitly supplied context."""
+def load_verified(artifact):
+    """Read the manifest and record graph after verifying all private pins."""
     path = Path(artifact).absolute()
     if path.name != "manifest.json":
         raise ValueError("Expected bundle manifest.json")
@@ -114,6 +114,12 @@ def validate(artifact, *, current_state_revision=None, at=None):
         raise ValueError("Manifest frame set differs from packets")
     for index, (identifier, declaration) in enumerate(frames.items()):
         _frame(pinned(manifest["frames"][identifier], f"frame-{index}.png", declaration["bytes"]), declaration)
+    return path, manifest, document
+
+
+def validate(artifact, *, current_state_revision=None, at=None):
+    """Verify pinned files and report freshness using explicitly supplied context."""
+    path, _, document = load_verified(artifact)
     if (at is None) != (current_state_revision is None):
         raise ValueError("Supply --at and --current-state together; use 'unknown' for unknown state")
     replies = []

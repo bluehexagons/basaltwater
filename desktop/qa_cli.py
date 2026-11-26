@@ -54,7 +54,14 @@ def add_qa_parser(commands: argparse._SubParsersAction, evidence: argparse._SubP
     validate.add_argument("artifact", help="Private manifest.json returned by create")
     validate.add_argument("--current-state", help="Explicit current revision, or unknown")
     validate.add_argument("--at", help="Explicit evaluation UTC; pair with --current-state")
-    for operation in (create, validate):
+    audit = record_ops.add_parser("audit", help="Compare a saved decision with input and capture receipts")
+    audit.add_argument("artifact", help="Private manifest.json returned by create")
+    audit.add_argument("decision_id")
+    audit.add_argument("--input", required=True, help="Saved input result JSON")
+    audit.add_argument("--before", metavar="CAPTURE_JSON", help="Capture used to make the decision")
+    audit.add_argument("--after", nargs=2, metavar=("PACKET_ID", "CAPTURE_JSON"),
+                       help="Follow-up packet and capture receipt; may reuse input JSON with a nested observation")
+    for operation in (create, validate, audit):
         operation.add_argument("--json", action="store_true")
     run = evidence.add_parser("run", help="Offline controller-written match clocks/checkpoints; no watcher or input")
     operations = run.add_subparsers(dest="run_command", required=True)
@@ -187,6 +194,9 @@ def run_qa_command(args: argparse.Namespace, *, backend=None) -> dict:
                 if len(media) != len(args.media):
                     raise ValueError("Duplicate media frame ID")
                 return record_bundles.create(args.source, media, args.output)
+            if args.records_command == "audit":
+                from desktop.decision_audit import audit
+                return audit(args.artifact, args.decision_id, args.input, before=args.before, after=args.after)
             return record_bundles.validate(args.artifact, current_state_revision=args.current_state, at=args.at)
         except (OSError, ValueError, RuntimeError) as exc:
             return getattr(exc, "receipt", {"error": str(exc), "validation": "invalid",
