@@ -512,6 +512,56 @@ def observe_task_after_input(result: dict, task_id: str, *, timeout: int) -> dic
     return observed
 
 
+def validate_followup_processes(selected: list[str], timeout: int) -> list[tuple[int, str]]:
+    from desktop.qa_artifacts import clock, load_process_identity, observe_process_identity
+
+    if not 1 <= timeout <= 60:
+        raise ValueError("Process observation timeout must be from 1 through 60 seconds")
+    if len(selected) > 16:
+        raise ValueError("Inspect at most 16 exact process identities")
+    boot_id = clock()["boot_id"]
+    identities = [load_process_identity(path, boot_id=boot_id) for path in selected]
+    if len({pid for pid, _ in identities}) != len(identities):
+        raise ValueError("Specify each process PID only once")
+    for pid, ticks in identities:
+        observed = observe_process_identity(pid, ticks)
+        if observed["state"] != "running-preserve":
+            raise ValueError(f"Expected a running process matching PID {pid}; observed {observed['state']}")
+    return identities
+
+
+def observe_processes_after_input(result: dict, identities: list[tuple[int, str]], *, timeout: int) -> dict:
+    """Poll the original Linux identities without requesting a desktop capture."""
+    from desktop.qa_artifacts import clock, observe_process_identity, stamp
+
+    if result.get("input_delivery") != "completed":
+        return {"input_delivery": "unknown", **result,
+                "error": "Input completion was not confirmed. Inspect the processes before further input.",
+                "reason": "input-completion-unverified"}
+    started = stamp()
+    deadline = time.monotonic() + timeout
+    pending = dict(identities)
+    processes = {pid: {"pid": pid, "expected_start_ticks": ticks, "normal_exit": "unknown", "state": "unavailable"}
+                 for pid, ticks in identities}
+    while pending and time.monotonic() < deadline:
+        for pid, ticks in tuple(pending.items()):
+            observed = observe_process_identity(pid, ticks)
+            observed["checked_at"] = stamp()
+            processes[pid] = observed
+            if observed["state"] in ("identity-not-present", "identity-replaced"):
+                del pending[pid]
+        remaining = deadline - time.monotonic()
+        if pending and remaining > 0:
+            time.sleep(min(0.25, remaining))
+    observed = {**result, "process_observation": {"ok": not pending, "wait_timed_out": bool(pending),
+                "clock": clock(), "started": started, "observed": stamp(), "timeout_seconds": timeout,
+                "processes": list(processes.values())}}
+    if pending:
+        observed.update(error="Input completed; process observation reached its deadline. Do not replay input.",
+                        reason="process-observation-failed", dispatch_stage="post-input-process-observation")
+    return observed
+
+
 def run_sequence(path: str, generation: str, *, backend=runtime) -> dict[str, Any]:
     validate_filesystem_path(path, must_exist=True)
     if Path(path).stat().st_size > backend.MAX_MESSAGE:

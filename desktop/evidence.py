@@ -276,31 +276,11 @@ def closeout(path: str, *, extras: list[str], derivatives: list[str], output: st
              previous: str | None = None, processes: list[list[str]] | None = None,
              retention: list[list[str]] | None = None) -> dict:
     """Save a new inventory receipt; never repair a journal, move media or stop apps."""
-    from desktop.qa_artifacts import file_digest, new_bundle, process_identity
+    from desktop.qa_artifacts import file_digest, new_bundle, observe_process_identity, parse_process_identities
 
     if len(extras) > 50 or len(derivatives) > 16:
         raise ValueError("Closeout accepts at most 50 extra PNGs and 16 derivative manifests")
-    selected = processes or []
-    if len(selected) > 16:
-        raise ValueError("Inspect at most 16 exact process identities")
-    resources = []
-    for identity in selected:
-        if (not isinstance(identity, list) or len(identity) != 2
-                or any(not isinstance(n, str) or not re.fullmatch(r"[0-9]{1,24}", n) for n in identity)):
-            raise ValueError("Processes require PID START_TICKS from a prior exact identity receipt")
-        pid, ticks = identity
-        if not 0 < int(pid) <= 2147483647:
-            raise ValueError("Process PID is out of range")
-        resource = {"pid": int(pid), "expected_start_ticks": ticks, "normal_exit": "unknown"}
-        try:
-            current = process_identity(int(pid))
-            resource.update(state="running-preserve" if current["start_ticks"] == ticks else "identity-replaced",
-                            observed=current)
-        except FileNotFoundError:
-            resource["state"] = "identity-not-present"
-        except (OSError, ValueError) as exc:
-            resource.update(state="unavailable", detail=str(exc)[:300])
-        resources.append(resource)
+    resources = [observe_process_identity(pid, ticks) for pid, ticks in parse_process_identities(processes or [])]
     data = _load_record(path)
     checked = _verify_captures(path, data, retention=retention)
     captures = [row.get("result", {}).get("output") for row in data["events"]

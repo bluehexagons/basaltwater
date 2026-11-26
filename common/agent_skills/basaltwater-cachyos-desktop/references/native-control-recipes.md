@@ -168,6 +168,11 @@ preserves input completion: inspect and recapture; never replay the input.
 For a Quit action on a running development task, use `--observe-task TASK_ID`
 in place of `--observe`. It preserves input delivery and returns a task exit
 receipt without capturing the screen. Save the terminal game image before Quit.
+For Steam or other externally launched games, pass the same-boot receipt from
+`desktop evidence process` to `--observe-process /absolute/private/process.json`.
+Repeat the flag for the wrapper if it should also exit. The receipt reports
+absence or replacement of each identity after confirmed delivery, with a shared
+`--process-timeout` (default 10 seconds). This check also captures no pixels.
 Use `screenshot --next-frame --compact` for a separate bounded observation.
 For one inspected input and two delayed captures, use the tested
 [short observation recipe](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/short-observation-sequences.md).

@@ -152,6 +152,30 @@ to reconcile the same task after uncertainty. Task exit records do not establish
 that the intended button received the input. For a real follow-up image, use
 `--observe` separately.
 
+### Observe external Linux processes after Quit
+
+For a game launched outside `desktop develop`, take a terminal game capture before
+Quit and record the game and wrapper identities using
+[`desktop evidence process`](native-qa-evidence.md#retain-process-identities).
+Pass the saved JSON receipt for each process to the input command:
+
+```bash
+basaltw desktop --native input --generation GENERATION --geometry WIDTH HEIGHT \
+  --observation OBSERVATION_ID click --x X --y Y \
+  --observe-process /absolute/private/game/process.json \
+  --observe-process /absolute/private/wrapper/process.json --process-timeout 10
+```
+
+The CLI checks that each of up to 16 distinct processes still matches and that
+the receipts came from the current Linux boot. After confirmed delivery it polls
+all original identities under one deadline of 1–60 seconds (default 10) without
+taking a screenshot. Exit zero requires every original identity to be absent
+or replaced. `process_observation` retains the last timestamped result for each
+PID, including completed checks if the deadline expires. A timeout returns
+nonzero and preserves the completed input
+receipt. `normal_exit` remains `unknown` because these processes are externally
+managed. Recheck their identities separately if needed.
+
 ### Capture a selected Debian window after input
 
 On Debian, keep unrelated desktop content out of the follow-up image by selecting
@@ -287,6 +311,7 @@ failures retain the observed `capture_freshness` in both CLI and journal.
 | `input-completed` | `completed` | All intended input and release calls returned. Game effect remains unverified. |
 | `post-input-observation` | `completed` | Input retained, subsequent observation failed. Capture again, never replay automatically. |
 | `post-input-task-observation` | `completed` | Input retained, task exit check failed or timed out. Recheck the same task. |
+| `post-input-process-observation` | `completed` | Input retained, one or more original process identities could not be resolved by the deadline. |
 
 On Debian, local failures before attempting to send the socket request also
 prove `not-sent`. Once sending is attempted, a transport failure remains

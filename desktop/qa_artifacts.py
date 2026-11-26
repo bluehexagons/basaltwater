@@ -91,14 +91,66 @@ def snapshot(source: str, destination: Path) -> dict:
 def process_identity(pid: int) -> dict:
     if type(pid) is not int or not 0 < pid <= 2147483647:
         raise ValueError("A positive application PID is required")
-    root = Path(f"/proc/{pid}")
-    if root.stat().st_uid != os.getuid():
-        raise ValueError("Application must belong to the current account")
-    # comm can contain spaces and parentheses. Fields after its LAST ')' start at 3.
-    fields = (root / "stat").read_text()[:8192].rsplit(")", 1)[1].split()
-    if len(fields) < 20 or not fields[19].isdigit() or fields[0] == "Z":
+    directory = os.open(f"/proc/{pid}", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        if os.fstat(directory).st_uid != os.getuid():
+            raise ValueError("Application must belong to the current account")
+        # Read through the pinned directory so PID reuse cannot mix ownership and start ticks.
+        fd = os.open("stat", os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
+        with os.fdopen(fd, "rb") as info:
+            # comm can contain spaces and parentheses. Fields after its last ')' start at 3.
+            _, separator, tail = info.read(8192).rpartition(b")")
+            fields = tail.split()
+    finally:
+        os.close(directory)
+    if not separator or len(fields) < 20 or not fields[19].isdigit() or fields[0] == b"Z":
         raise ValueError("Application process identity is unavailable")
-    return {"pid": pid, "start_ticks": fields[19]}
+    return {"pid": pid, "start_ticks": fields[19].decode("ascii")}
+
+
+def parse_process_identities(selected: list[list[str]]) -> list[tuple[int, str]]:
+    if len(selected) > 16:
+        raise ValueError("Inspect at most 16 exact process identities")
+    identities = []
+    for identity in selected:
+        if (not isinstance(identity, list) or len(identity) != 2
+                or any(not isinstance(n, str) or not re.fullmatch(r"[0-9]{1,24}", n) for n in identity)):
+            raise ValueError("Processes require PID START_TICKS from a prior exact identity receipt")
+        pid, ticks = identity
+        if not 0 < int(pid) <= 2147483647:
+            raise ValueError("Process PID is out of range")
+        identities.append((int(pid), ticks))
+    return identities
+
+
+def observe_process_identity(pid: int, ticks: str) -> dict:
+    resource = {"pid": pid, "expected_start_ticks": ticks, "normal_exit": "unknown"}
+    try:
+        current = process_identity(pid)
+        resource.update(state="running-preserve" if current["start_ticks"] == ticks else "identity-replaced",
+                        observed=current)
+    except (FileNotFoundError, ProcessLookupError):
+        resource["state"] = "identity-not-present"
+    except (OSError, ValueError) as exc:
+        resource.update(state="unavailable", detail=str(exc)[:300])
+    return resource
+
+
+def load_process_identity(path: str, *, boot_id: str | None) -> tuple[int, str]:
+    from lib.atomic_io import read_json_file
+
+    receipt = read_json_file(path, max_bytes=8192)
+    if (not isinstance(receipt, dict) or receipt.get("kind") != "process-identity"
+            or type(receipt.get("schema_version")) is not int or receipt["schema_version"] != 1
+            or not isinstance(receipt.get("process"), dict)):
+        raise ValueError("Expected a process.json from desktop evidence process")
+    receipt_clock = receipt.get("clock")
+    if not boot_id or not isinstance(receipt_clock, dict) or receipt_clock.get("boot_id") != boot_id:
+        raise ValueError("Process receipt must come from the current Linux boot")
+    pid, ticks = receipt["process"].get("pid"), receipt["process"].get("start_ticks")
+    if type(pid) is not int or not 0 < pid <= 2147483647 or not isinstance(ticks, str) or not re.fullmatch(r"[0-9]{1,24}", ticks):
+        raise ValueError("Process receipt has an invalid PID or start ticks")
+    return pid, ticks
 
 
 def process_snapshot(pid: int, output: str | None = None) -> dict:

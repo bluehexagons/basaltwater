@@ -221,7 +221,10 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     observation = action.add_mutually_exclusive_group()
     observation.add_argument("--observe", action="store_true", help="After completed input, settle and capture again; native skips the initial sample; never replay on capture failure")
     observation.add_argument("--observe-task", metavar="TASK", help="After completed input, wait for this running development task to exit without capturing")
+    observation.add_argument("--observe-process", action="append", metavar="PROCESS_JSON",
+                             help="After completed input, wait for the identity in an evidence process.json to disappear without capturing; repeat for up to 16 PIDs")
     action.add_argument("--task-timeout", type=int, help="Task observation deadline in seconds (1–60, default: 10)")
+    action.add_argument("--process-timeout", type=int, help="Shared process observation deadline in seconds (1–60, default: 10)")
     action.add_argument("--observe-window", help="Debian: capture only this window ID after input (requires --observe); never falls back to the desktop")
     action.add_argument("--settle-ms", type=int, default=120, help="Settling delay for --observe, 0–5000 ms (default: 120)")
     action.add_argument("--output", help="New PNG path for --observe; defaults to private artifact storage")
@@ -484,6 +487,11 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                     if args.observe_task is not None:
                         task_timeout = 10 if args.task_timeout is None else args.task_timeout
                         client.validate_followup_task(args.observe_task, task_timeout, args.generation, backend=backend)
+                    if args.process_timeout is not None and args.observe_process is None:
+                        raise ValueError("--process-timeout requires --observe-process")
+                    if args.observe_process is not None:
+                        process_timeout = 10 if args.process_timeout is None else args.process_timeout
+                        processes = client.validate_followup_processes(args.observe_process, process_timeout)
                     observation_window = client.validate_followup_window(args.observe_window, backend=backend)
                     observation_output = None
                     if args.observe:
@@ -522,6 +530,8 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                         result = with_preview(result, args.preview_width, followup=True)
                 if command == "input" and args.observe_task is not None and "error" not in result:
                     result = client.observe_task_after_input(result, args.observe_task, timeout=task_timeout)
+                if command == "input" and args.observe_process is not None and "error" not in result:
+                    result = client.observe_processes_after_input(result, processes, timeout=process_timeout)
                 if wait_title:
                     result["window_baseline"] = baseline
                     try:

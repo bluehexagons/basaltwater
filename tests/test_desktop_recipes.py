@@ -352,6 +352,8 @@ class RecipeTransportTests(unittest.TestCase):
 
 
 class WindowFollowupRecipeTests(unittest.TestCase):
+    process_clock = {"boot_id": "11111111-1111-1111-1111-111111111111", "monotonic_scope": "linux-boot"}
+
     def setUp(self):
         self.home = Path(self.enterContext(tempfile.TemporaryDirectory()))
         self.parser = argparse.ArgumentParser()
@@ -370,6 +372,13 @@ class WindowFollowupRecipeTests(unittest.TestCase):
         return self.parser.parse_args(["desktop", *(["--native"] if native else []), "input",
             "--generation", "g", "--geometry", "800", "600", "--observation", "a" * 32,
             "click", "--x", "120", "--y", "110", *extra])
+
+    def process_receipt(self, pid, ticks, *, clock=None):
+        path = self.home / f"{pid}.json"
+        path.write_text(json.dumps({"schema_version": 1, "kind": "process-identity",
+                                    "clock": self.process_clock if clock is None else clock,
+                                    "process": {"pid": pid, "start_ticks": ticks}}))
+        return str(path)
 
     def test_quit_waits_for_the_task_on_both_backends_without_a_capture(self):
         for backend, generation in ((client.runtime, "g"), (native_session, None)):
@@ -405,6 +414,104 @@ class WindowFollowupRecipeTests(unittest.TestCase):
         self.assertEqual(json.loads(out.getvalue())["input_delivery"], "not-sent")
         request.assert_not_called()
         wait.assert_not_called()
+
+    def test_process_quit_observes_both_identities_after_one_input_without_capture(self):
+        for backend in (client.runtime, native_session):
+            with self.subTest(backend=backend), patch.object(backend, "status", return_value=self.current), \
+                    patch.object(backend, "request", return_value=self.completed) as request, \
+                    patch.object(qa_artifacts, "clock", return_value=self.process_clock), \
+                    patch.object(qa_artifacts, "process_identity") as identity, \
+                    patch.object(client, "artifact_path") as allocate, redirect_stdout(out := StringIO()):
+                def sample(pid):
+                    if not request.called:
+                        return {"pid": pid, "start_ticks": str(pid * 10)}
+                    if pid == 123:
+                        raise ProcessLookupError
+                    return {"pid": pid, "start_ticks": "9999"}
+
+                identity.side_effect = sample
+                args = self.args("--observe-process", self.process_receipt(123, "1230"),
+                                 "--observe-process", self.process_receipt(234, "2340"),
+                                 native=backend is native_session)
+                self.assertEqual(desktop_cli.run_desktop_command(args), 0)
+                result = json.loads(out.getvalue())
+                self.assertEqual({key: result[key] for key in self.completed}, self.completed)
+                observation = result["process_observation"]
+                self.assertTrue(observation["ok"])
+                self.assertEqual(observation["timeout_seconds"], 10)
+                self.assertEqual([(row["pid"], row["state"], row["normal_exit"]) for row in observation["processes"]],
+                                 [(123, "identity-not-present", "unknown"), (234, "identity-replaced", "unknown")])
+                request.assert_called_once()
+                self.assertEqual(request.call_args.args[0]["action"], "input")
+                allocate.assert_not_called()
+                self.assertNotIn("observation", result)
+
+    def test_process_quit_timeout_retains_completed_input_and_partial_observation(self):
+        now = [100.0]
+
+        def advance(delay):
+            now[0] += delay
+
+        with patch.object(native_session, "status", return_value=self.current), \
+                patch.object(native_session, "request", return_value=self.completed) as request, \
+                patch.object(qa_artifacts, "clock", return_value=self.process_clock), \
+                patch.object(qa_artifacts, "process_identity") as identity, \
+                patch.object(client.time, "monotonic", side_effect=lambda: now[0]), \
+                patch.object(client.time, "sleep", side_effect=advance), \
+                redirect_stdout(out := StringIO()):
+            def sample(pid):
+                if request.called and pid == 123:
+                    raise FileNotFoundError
+                if request.called and pid == 345:
+                    raise PermissionError("proc stat unreadable")
+                return {"pid": pid, "start_ticks": str(pid * 10)}
+
+            identity.side_effect = sample
+            args = self.args("--observe-process", self.process_receipt(123, "1230"),
+                             "--observe-process", self.process_receipt(234, "2340"),
+                             "--observe-process", self.process_receipt(345, "3450"),
+                             "--process-timeout", "1", native=True)
+            self.assertEqual(desktop_cli.run_desktop_command(args), 1)
+        result = json.loads(out.getvalue())
+        self.assertEqual({key: result[key] for key in self.completed}, self.completed)
+        self.assertEqual(result["dispatch_stage"], "post-input-process-observation")
+        observation = result["process_observation"]
+        self.assertTrue(observation["wait_timed_out"])
+        self.assertEqual([row["state"] for row in observation["processes"]],
+                         ["identity-not-present", "running-preserve", "unavailable"])
+        self.assertEqual(now[0], 101.0)
+        self.assertEqual([call.args for call in identity.call_args_list].count((123,)), 2)
+        request.assert_called_once()
+        self.assertEqual(request.call_args.args[0]["action"], "input")
+
+    def test_process_quit_refuses_a_stale_identity_and_skips_the_wait_on_unconfirmed_delivery(self):
+        with patch.object(native_session, "status", return_value=self.current), \
+                patch.object(native_session, "request", return_value={"input_delivery": "unknown"}) as request, \
+                patch.object(qa_artifacts, "clock", return_value=self.process_clock), \
+                patch.object(qa_artifacts, "process_identity", return_value={"pid": 123, "start_ticks": "1230"}) as identity:
+            with redirect_stdout(out := StringIO()):
+                path = self.process_receipt(123, "old")
+                self.assertEqual(desktop_cli.run_desktop_command(self.args("--observe-process", path, native=True)), 1)
+            self.assertEqual(json.loads(out.getvalue())["input_delivery"], "not-sent")
+            with redirect_stdout(out := StringIO()):
+                path = self.process_receipt(123, "1230", clock={"boot_id": "22222222-2222-2222-2222-222222222222"})
+                self.assertEqual(desktop_cli.run_desktop_command(self.args("--observe-process", path, native=True)), 1)
+            self.assertIn("current Linux boot", json.loads(out.getvalue())["error"])
+            with redirect_stdout(out := StringIO()):
+                path = self.process_receipt(123, "1229")
+                self.assertEqual(desktop_cli.run_desktop_command(self.args("--observe-process", path, native=True)), 1)
+            self.assertEqual(json.loads(out.getvalue())["input_delivery"], "not-sent")
+            request.assert_not_called()
+            identity.assert_called_once_with(123)
+            identity.reset_mock()
+            with redirect_stdout(out := StringIO()):
+                path = self.process_receipt(123, "1230")
+                self.assertEqual(desktop_cli.run_desktop_command(self.args("--observe-process", path, native=True)), 1)
+            result = json.loads(out.getvalue())
+            self.assertEqual(result["reason"], "input-completion-unverified")
+            self.assertNotIn("process_observation", result)
+            request.assert_called_once()
+            identity.assert_called_once_with(123)
 
     @unittest.skipUnless(Path("/usr/bin/ffmpeg").is_file(), "ffmpeg is unavailable")
     def test_preview_retains_original_and_maps_odd_size_window_from_receipt(self):
