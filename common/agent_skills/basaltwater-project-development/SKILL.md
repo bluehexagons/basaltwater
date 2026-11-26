@@ -1,6 +1,6 @@
 ---
 name: basaltwater-project-development
-description: Plan, implement, review, verify and iterate on project work using the project's own conventions.
+description: Plan, implement, review, verify and iterate on project work, including keeping configured development previews current.
 metadata:
   managed-by: basaltwater
 ---
@@ -43,6 +43,22 @@ Reconcile uncertain mutations before retrying. See the [handoff templates](https
 | Return images or other visual evidence in T3 | [Visual replies](references/t3-visual-replies.md) |
 
 Verify actual tool exposure in the live session.
+
+## Keep development previews current
+
+When edits affect a web app, website, or browser game, check the project's
+instructions for its development preview. If the project already has an
+authorized Basaltwater preview for the active checkout, keep it current as
+part of the edit. Follow the project's build and launch commands. Use the
+installed `basaltwater-web-gateway` skill for managed live previews, forwards,
+and published development snapshots, including Godot exports.
+
+Verify a changed resource or behavior at the preview URL before handoff.
+Check hot reload, rebuild and restart, or rebuild and republish the same
+development snapshot as appropriate. Leave the preview ready for the user
+and report its URL or any refresh failure. Keep the existing route and access
+settings. New exposure and production deployment require their own scope.
+Use browser tools only as allowed by the active session.
 
 ## Iterate on the outcome
 

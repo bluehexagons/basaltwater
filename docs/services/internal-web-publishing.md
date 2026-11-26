@@ -306,14 +306,12 @@ The default readiness deadline is 30 seconds; `--wait` accepts more than zero
 and at most 300 seconds. A failed restart or readiness check returns a nonzero
 status, retains the route, and can be investigated with `preview logs`.
 
-During agent development, keeping an already configured local site current is
-part of editing that project. The managed gateway skill instructs agents to
-perform needed restarts and verify the changed resource themselves. Vite hot
-reload usually needs no restart; servers using compiled or embedded assets do.
-For an existing user service behind a low-level forward, retain its environment
-and data paths and restart the owning unit, then run `basaltwater-web doctor`
-and check the changed page. Static publications require another publication
-after the final build. These refreshes do not authorize production deployment.
+During agent development, keeping a configured preview current is part of
+editing its checkout. The [project development skill](../../common/agent_skills/basaltwater-project-development/SKILL.md#keep-development-previews-current)
+sets the expectation across projects. The [gateway refresh guide](../../common/agent_skills/basaltwater-web-gateway/references/refresh.md)
+covers checking hot reload, restarting live services, and republishing static
+and Godot snapshots. Agents verify a changed resource at the existing URL
+before handoff.
 
 ## Forward an existing loopback service
 

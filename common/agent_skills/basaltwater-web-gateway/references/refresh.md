@@ -6,9 +6,14 @@ publication, or restart yourself instead of asking the user to run it. A
 read-only review does not authorize a refresh, and this does not authorize
 production deployment or exposing another project.
 
-Inspect `preview list --json` and `forward list --json` to identify the site's
-owner, project, and route. Preserve its URL, ports, upload limit, environment,
-database, and other runtime data. Follow the project's development instructions:
+Use `basaltwater-web preview list --json`, `basaltwater-web forward list --json`,
+or `basaltwater-web site list --json` to find the existing route. Check the
+project's instructions and service configuration to confirm the route belongs
+to the checkout you are editing. For a static snapshot, confirm its site name,
+profile, and build or export settings from the project and site record. A
+matching name alone is insufficient, especially with multiple worktrees.
+Preserve its URL, ports, upload limit, environment, database, and other runtime
+data. Follow the project's development instructions:
 
 - With working hot reload, verify the changed page or resource through the
   existing HTTPS route; source edits alone do not prove it refreshed.
@@ -24,8 +29,9 @@ database, and other runtime data. Follow the project's development instructions:
   unit name rather than assuming one from another installation.
   Keep environment output private. Do not restart the gateway, T3 Code, or
   another project's service to refresh this application.
-- For a copied static publication, rebuild and publish the same site after
-  the final source edits, then use `site verify` as described in [static publications](static-sites.md).
+- For a copied static publication, rebuild and publish the same site after the
+  final source edits, keeping its `static` or `godot` profile. Use `site verify`
+  as described in [static publications](static-sites.md).
 
 After a restart, check service activity, run `basaltwater-web doctor NAME`, and
 verify a changed public resource or behavior through HTTPS. Health alone does

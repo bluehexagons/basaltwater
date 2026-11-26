@@ -42,6 +42,9 @@ for the division between shared environment support and project-owned behavior.
 - Keep `AGENTS.md` concise: record project-specific setup, canonical checks,
   meaningful constraints, and pointers to deeper docs. Add or update it only
   when it improves discovery or correct work.
+- For a project with a Basaltwater development preview, include a pointer in
+  `AGENTS.md` to its build, refresh, and verification commands so fresh threads
+  know which preview to keep current. Keep private route details outside Git.
 - Document native prerequisites and commands once, then reference the shared
   Basaltwater skills for environment setup, browser/deployment support, cleanup
   and agent coordination. Keep project-specific adapters; avoid copying shared
