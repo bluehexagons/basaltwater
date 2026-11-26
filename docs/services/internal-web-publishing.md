@@ -90,6 +90,7 @@ basaltwater-web publish site docs --project ~/repos/product --no-build --output 
 basaltwater-web publish site docs --no-install
 basaltwater-web publish site docs --json
 basaltwater-web publish site docs --open
+basaltwater-web publish site docs --verify --json
 ```
 
 `--no-build` requires an existing output directory. `--no-install` skips the
@@ -100,6 +101,14 @@ publication before activation and leaves the previous site intact.
 `--build-script NAME` selects an existing package script; it defaults to `build`.
 Projects can keep separate web and desktop commands such as `build:web` without
 adding aliases for the gateway.
+
+Add `--verify` to check the published snapshot, the source checkout, and the
+bytes served over HTTPS in the same command. The nested `verification` result
+includes the recorded source commit and served artifact count. Use
+`--verify-timeout SECONDS` (1–300, default 60) to bound the HTTPS phase. The site
+remains published if verification fails. The result then records
+`published: true` and `ok: false`, and the command exits with status 1. After
+diagnosis, use `site verify` to retry the check.
 
 Initialization, static builds, and automatic previews select npm, pnpm, or Yarn
 from the project's exact-version `packageManager` declaration and lockfiles.

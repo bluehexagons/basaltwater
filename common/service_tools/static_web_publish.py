@@ -90,6 +90,10 @@ def add_publish_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--open", action="store_true")
     parser.add_argument("--build-timeout", type=validate_positive_integer, default=3600,
                         help="Total install/build deadline in seconds (default: 3600)")
+    parser.add_argument("--verify", action="store_true",
+                        help="Verify the published snapshot, checkout and served HTTPS artifacts after activation")
+    parser.add_argument("--verify-timeout", type=validate_positive_integer, default=60,
+                        help="HTTPS verification deadline in seconds (1–300, default: 60)")
 
 
 def _slugify(value: str) -> str:
@@ -395,6 +399,10 @@ def _publication_time() -> str:
 def publish(args: argparse.Namespace) -> dict[str, object]:
     """Build and publish one site, returning its structured publication record."""
 
+    verify = getattr(args, "verify", False)
+    verify_timeout = getattr(args, "verify_timeout", 60)
+    if verify and not 1 <= verify_timeout <= 300:
+        raise ValueError("Verification timeout must be from 1 through 300 seconds")
     if args.site is not None and not _SITE_NAME_PATTERN.fullmatch(args.site):
         raise ValueError(
             "site must use lowercase letters, digits, '-' or '_' and start "
@@ -428,6 +436,7 @@ def publish(args: argparse.Namespace) -> dict[str, object]:
     user_root = _owned_user_root(SITES_ROOT, account)
     destination_dir = os.path.join(user_root, site)
     started_at = time.monotonic()
+    verification = None
 
     with _site_lock(user_root, site):
         replaced = os.path.lexists(destination_dir)
@@ -485,9 +494,27 @@ def publish(args: argparse.Namespace) -> dict[str, object]:
             _make_tree_readable(staging_dir)
             _replace_site(staging_dir, destination_dir)
             write_user_catalog(user_root, account.pw_name)
+            if verify:
+                if not url:
+                    verification = {
+                        "ok": False, "issue": "publication_url_unavailable",
+                        "remediation": "Configure the internal-web base URL, then run site verify.",
+                    }
+                else:
+                    try:
+                        # Hold the same lock so the verifier reads the snapshot just activated.
+                        verification = verify_receipt(
+                            destination_dir, url=url, local_output=output_dir, project=project_dir,
+                            timeout=verify_timeout, generated_gzip=tuple(godot_result.get("precompressed", [])),
+                        )
+                    except (OSError, ValueError, RuntimeError) as exc:
+                        verification = {
+                            "ok": False, "issue": "verification_failed", "error": str(exc),
+                            "remediation": "Inspect the publication and run site verify.",
+                        }
         finally:
             shutil.rmtree(staging_dir, ignore_errors=True)
-    return {
+    result = {
         "metadata": metadata,
         "ok": True,
         "site": site,
@@ -496,6 +523,29 @@ def publish(args: argparse.Namespace) -> dict[str, object]:
         "elapsed_seconds": round(time.monotonic() - started_at, 3),
         **godot_result,
     }
+    if verification is not None:
+        result.update(published=True, ok=verification["ok"], verification=verification)
+    return result
+
+
+def print_publish_result(result: dict[str, object], *, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(result, sort_keys=True))
+        return
+    print(f"Published {result['site']} to {result['url']}")
+    verification = result.get("verification")
+    if verification is None:
+        return
+    if verification["ok"]:
+        print(f"Verified {verification['served_artifacts_checked']} served HTTPS artifacts")
+    else:
+        print(f"Verification failed ({verification['issue']})")
+    if source := verification.get("source"):
+        print(f"Recorded source commit {source['commit'] or 'unavailable'}")
+    for warning in verification.get("warnings", []):
+        print(f"Verification warning ({warning})")
+    if verification.get("remediation"):
+        print(verification["remediation"])
 
 
 def migrate_legacy_sites() -> list[str]:
@@ -654,13 +704,10 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(f"Error: {exc}")
         return 2 if isinstance(exc, ValueError) else 1
-    if args.json:
-        print(json.dumps(result, sort_keys=True))
-    else:
-        print(f"Published {result['site']} to {result['url']}")
+    print_publish_result(result, as_json=args.json)
     if args.open:
         webbrowser.open(str(result["url"]))
-    return 0
+    return 0 if result["ok"] else 1
 
 
 if __name__ == "__main__":

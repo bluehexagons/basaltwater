@@ -137,6 +137,53 @@ class TestStaticWebPublish(unittest.TestCase):
                 export.assert_not_called()
                 self.select_node.assert_not_called()
 
+    def test_publish_can_verify_the_activated_site_and_report_a_served_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "project" / "dist"
+            output.mkdir(parents=True)
+            (output / "index.html").write_text("demo")
+            (output / "script.js").write_text("console.log('demo')")
+            sites = root / "sites"
+            (sites / "agent").mkdir(parents=True)
+            destination = sites / "agent" / "demo"
+            account = SimpleNamespace(pw_name="agent", pw_uid=os.getuid())
+            url = "https://vm.test:8443/sites/agent/demo/"
+
+            def served_hash(artifact_url, _size, _deadline):
+                self.assertTrue(artifact_url.startswith(url))
+                self.assertTrue((destination / static_publication.RECEIPT_FILE).is_file())
+                return static_publication._hash_file(str(destination / artifact_url.removeprefix(url)))
+
+            command = ["publish", "site", "demo", "--project", str(output.parent), "--no-build", "--verify", "--json"]
+            with (
+                patch.object(static_web_publish, "SITES_ROOT", str(sites)),
+                patch.object(static_web_publish, "_current_account", return_value=account),
+                patch.object(static_web_publish, "_base_url", return_value="https://vm.test:8443"),
+                patch.object(static_publication, "_served_hash", side_effect=served_hash) as served,
+            ):
+                with contextlib.redirect_stdout(stream := io.StringIO()):
+                    self.assertEqual(basaltwater_web.main([*command, "--verify-timeout", "301"]), 2)
+                self.assertFalse(destination.exists())
+                served.assert_not_called()
+                with contextlib.redirect_stdout(stream := io.StringIO()):
+                    self.assertEqual(basaltwater_web.main(command), 0)
+                verified = json.loads(stream.getvalue())
+                self.assertTrue(verified["published"])
+                self.assertEqual(verified["verification"]["served_artifacts_checked"], 2)
+                self.assertEqual(verified["verification"]["source"]["commit"], "a" * 40)
+                self.assertTrue(verified["verification"]["source_matches"])
+                served.side_effect = OSError("fixture unavailable")
+                (output / "index.html").write_text("replacement")
+                with contextlib.redirect_stdout(stream := io.StringIO()):
+                    self.assertEqual(basaltwater_web.main(command), 1)
+            failed = json.loads(stream.getvalue())
+            self.assertTrue(failed["published"])
+            self.assertTrue(failed["replaced"])
+            self.assertFalse(failed["ok"])
+            self.assertEqual(failed["verification"]["issue"], "served_artifact_unavailable")
+            self.assertEqual((destination / "index.html").read_text(), "replacement")
+
     def test_migration_retries_rename_and_keeps_existing_sites(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

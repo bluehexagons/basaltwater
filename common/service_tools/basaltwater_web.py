@@ -2430,13 +2430,10 @@ def _preview_prune(confirmed: bool, as_json: bool) -> int:
 
 def _publish_site(args: argparse.Namespace) -> int:
     result = static_web_publish.publish(args)
-    if args.json:
-        print(json.dumps(result, sort_keys=True))
-    else:
-        print(f"Published {result['site']} to {result['url']}")
+    static_web_publish.print_publish_result(result, as_json=args.json)
     if args.open:
         _open_url(str(result["url"]))
-    return 0
+    return 0 if result["ok"] else 1
 
 
 def main(argv: list[str] | None = None) -> int:
