@@ -965,6 +965,8 @@ class NativeReceiptTests(PrivateHomeTestCase):
                 result = native.status()
             self.assertEqual(result["state"], "stopped")
             self.assertFalse(result["helper_running"])
+            self.assertIsNone(result["portal_stage"])
+            self.assertEqual(result["last_portal_stage"], "CreateSession.request")
             self.assertEqual(result["last_failure"]["stage"], "CreateSession.request")
             self.assertEqual(result["last_failure"]["detail"], "Bus unavailable")
             self.assertIn("Bus unavailable", output.getvalue())
@@ -1007,7 +1009,21 @@ class NativeReceiptTests(PrivateHomeTestCase):
                 result = native.status()
             self.assertEqual(result["state"], "stopped")
             self.assertEqual(result["last_state"], "awaiting-consent")
+            self.assertIsNone(result["portal_stage"])
+            self.assertEqual(result["last_portal_stage"], "Start.response")
             self.assertIsNone(result["consent_expires_in"])
+
+    def test_legacy_ready_stage_is_historical_when_helper_is_stopped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, "status.json")
+            path.write_text(json.dumps({"state": "stopped", "portal_stage": "ready"}))
+            path.chmod(0o600)
+            with patch.object(native, "runtime_directory", return_value=Path(directory)), \
+                    patch.object(native, "request", side_effect=FileNotFoundError):
+                result = native.status()
+            self.assertIsNone(result["portal_stage"])
+            self.assertEqual(result["last_portal_stage"], "ready")
+            self.assertFalse(result["helper_running"])
 
     def test_helper_constructor_failure_is_logged_and_retained_before_any_consent(self):
         with tempfile.TemporaryDirectory() as directory, redirect_stdout(output := StringIO()):

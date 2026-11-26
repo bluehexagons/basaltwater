@@ -11,8 +11,10 @@ are missing, use the workstation setup skill rather than replacing system Python
 accepted Start and a response is pending, not that a visible dialog is verified.
 `consent_expires_in` shows the approximate seconds left in the two-minute wait;
 it is separate from session lifetime and also appears in the handoff window.
-After helper exit, `status.last_failure` retains the stage, timestamp and detail.
-Stages/errors also remain in the private runtime `helper.log` across restarts.
+A stopped helper reports a null `portal_stage` and retains the prior stage in
+`last_portal_stage`. After a failure, `last_failure` retains its stage, timestamp
+and detail. The private runtime `helper.log` keeps stage and error messages
+across restarts.
 
 The helper uses a private same-user Unix socket, no network listener,
 privileged input daemon, systemd service or login autostart. It has no default
