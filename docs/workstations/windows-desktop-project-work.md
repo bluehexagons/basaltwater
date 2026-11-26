@@ -115,10 +115,7 @@ cleanup failures remain visible and block maintenance.
 
 `exec` accepts a real executable followed by literal arguments after `--`.
 For a script, use `pwsh.exe -File script.ps1`; batch files require an explicit
-wrapper. If `pwsh.exe` resolves to a Windows app execution alias, Basaltwater
-selects the installed stable PowerShell 7 executable. For other app aliases,
-supply the application's executable directly so its process stays in the task's
-Job Object. `--env NAME=VALUE` applies to the task, and `--msvc` activates Visual
+wrapper. `--env NAME=VALUE` applies to the task, and `--msvc` activates Visual
 Studio only in its child. Environment snapshots are private and removed after
 confirmed cleanup. No artifact-upload credentials are needed. Tasks temporarily
 inhibit idle sleep while active and release that request afterward; they do not

@@ -32,7 +32,9 @@ still fail, and actions always revalidate their target immediately before use.
 
 Use `windows --task TASK_ID` with the ID from a running `desktop develop`
 task. It returns windows owned by live members of that task's Windows Job
-Object, including a game process started by a PowerShell or npm wrapper.
+Object, including descendants that stay in the job. MSIX PowerShell can launch
+a child outside that job. If its window is missing from task-scoped discovery,
+submit the application executable directly.
 Use the returned window identity and generation for capture or input.
 This lookup works without `--track-children`.
 

@@ -219,25 +219,11 @@ function Assert-NativeDevelopmentIdle {
         if (-not $record.CompletedUtc) { throw "Development task $($record.Id) is $($record.State). Use basaltw desktop develop status/logs/cancel $($record.Id); cleanup must settle before setup/reboot." }
     }
 }
-function Test-DevelopmentExecutionAlias([string]$Path) {
-    $aliasRoot = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\'
-    if (-not $Path.StartsWith($aliasRoot, [StringComparison]::OrdinalIgnoreCase)) { return $false }
-    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
-    return [bool]($item.Attributes -band [IO.FileAttributes]::ReparsePoint)
-}
 function Resolve-DevelopmentExecutable([string]$Name) {
     $command = Get-Command $Name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $command) { throw "Executable '$Name' is unavailable in the provider PATH. Install it explicitly and restart the provider shell." }
     if ([IO.Path]::GetExtension($command.Source) -in @('.cmd', '.bat')) {
         throw 'Batch launchers are not literal executable argv. Use exec -- pwsh.exe -File SCRIPT.ps1, or node NPM_SCRIPT for package scripts.'
-    }
-    if (Test-DevelopmentExecutionAlias $command.Source) {
-        # App activation can start the real process outside the task Job Object.
-        if ([IO.Path]::GetFileName($command.Source) -eq 'pwsh.exe') {
-            $shell = if ($PSVersionTable.PSVersion.Major -ge 7) { Join-Path $PSHOME 'pwsh.exe' } else { Get-NativePowerShell7 }
-            if ($shell -and -not (Test-DevelopmentExecutionAlias $shell)) { return $shell }
-        }
-        throw "Executable '$Name' resolves to a Windows app execution alias. Supply the actual executable for task supervision."
     }
     return $command.Source
 }
@@ -543,11 +529,9 @@ function Invoke-NativeDevelopmentCli([string[]]$Arguments) {
             Git = $git; Checkout = (Get-DevelopmentCheckout $request.Project $git); Godot = $godot; MissingRequirements = @($missing);
             GodotOverride = @($env:BASALTWATER_GODOT_EXE, $env:GODOT_BIN); Message = 'Read-only discovery. Use exec -- literal argv; node NPM_SCRIPT selects installed fnm/npm. Tasks return IDs for status/logs/wait/cancel. No upload credentials required.' }
     }
-    if ($request.Plan) { return $request }
     $powershell = Get-NativePowerShell7
-    if (-not $powershell -or (Test-DevelopmentExecutionAlias $powershell)) {
-        throw 'The actual stable PowerShell 7 executable is required for task supervision; reapply native setup'
-    }
+    if ($request.Plan) { return $request }
+    if (-not $powershell) { throw 'Stable PowerShell 7 is required; reapply native setup' }
     $setupDirectory = Join-Path $env:LOCALAPPDATA 'Basaltwater'
     Assert-DevelopmentPath $setupDirectory
     New-Item -ItemType Directory -Path $setupDirectory -Force | Out-Null
