@@ -147,7 +147,7 @@ Automatic wake before a Sunshine connection is not configured. As checked on
 normal application/global preparation commands. If the sleeping output makes
 that probe fail, a wake command in `global_prep_cmd` never runs. See upstream
 [issue #4971](https://github.com/LizardByte/Sunshine/issues/4971) and the open
-[pre-display preparation proposal #5808](https://github.com/LizardByte/Sunshine/pull/5808).
+[pre-display preparation proposal #5808](https://github.com/SunshineStream/Sunshine/pull/5808).
 The tested CachyOS `2026.1123.40502-1` binary still lacks the proposed
 `pre_display_prep_cmd` option. Once supported, that earlier hook could run
 `/usr/bin/kscreen-doctor --dpms on` before probing; verify release support and
@@ -168,10 +168,11 @@ journalctl --user -u app-dev.lizardbyte.app.Sunshine.service --since '10 minutes
 Use the configured GameStream HTTP port if it differs. `SUNSHINE_SERVER_BUSY`
 can appear while a client is streaming or after an application launch that never
 produced a stream. Compare `Executing [Desktop]` with subsequent
-`CLIENT CONNECTED` and `CLIENT DISCONNECTED` events. If the display is awake and
-the owner has confirmed that nobody is streaming, quit the running application
-from Moonlight if offered and retry. If it stays busy, restart the user service
-once from a separate terminal or SSH connection, then reconnect in Moonlight:
+`CLIENT CONNECTED` and `CLIENT DISCONNECTED` events. Use the following manual
+recovery only when the display is awake and the owner confirms nobody is
+streaming. Quit the running application from Moonlight if offered and retry.
+If it stays busy, restart the user service once from a separate terminal or SSH
+connection, then reconnect in Moonlight:
 
 ```fish
 systemctl --user restart app-dev.lizardbyte.app.Sunshine.service
