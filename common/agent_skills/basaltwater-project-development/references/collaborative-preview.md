@@ -105,8 +105,12 @@ server-browser pass does not establish client reachability or trust.
 
 Verify rendered state and inspect the page before repeating an uncertain
 submission or toggle. Scope logs to the active tab, URL, and navigation time.
-Use the [browser guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/browser-automation.md#collaborative-preview-and-private-networks)
-for canvas timing, input acknowledgments, recordings and stalled presentation.
+For canvas games, map the returned image pixels to the measured CSS viewport
+before clicking. Wait on a canvas name via a locator when the label appears
+only in the accessibility snapshot. Inspect pointer lock when a click is
+acknowledged and the game shows no expected response. Viewport presets test
+layout. Touch and relative pointer input need a browser path that supports
+those events. See the [canvas workflow](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/browser-t3-preview.md#canvas-input-and-viewport-emulation).
 Use the [offline-cache check](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/browser-automation.md#offline-cache-freshness)
 for stale builds. Keep recordings short and verify the transferred artifact
 before linking it.

@@ -172,13 +172,9 @@ errors, and preserve uncertain attribution when no URL or timestamp proves
 which navigation produced a message. Basaltwater provides this reporting
 workflow; native tool error schemas and snapshot tagging are owned by T3.
 
-Viewport presets change CSS layout dimensions while preserving T3's desktop
-browser user agent; they are breakpoint checks, not full mobile-device
-emulation. Re-snapshot after resizing or scrolling before using coordinates,
-and account for a scroll position that persists across viewport changes. Light,
-dark, and system appearance emulation changes `prefers-color-scheme`; restore
-the system setting after a bounded comparison unless the user asked to leave an
-override.
+Light, dark, and system appearance emulation changes `prefers-color-scheme`.
+Restore the system setting after a bounded comparison unless the user asked
+to leave an override.
 
 The current `preview_recording_stop` tool transfers a compressed collaborative
 recording once, up to 50 MiB, into an evidence file in the agent environment.
@@ -220,6 +216,106 @@ precede runtime initialization. A snapshot containing only a splash screen or
 progress bar confirms document rendering but not application readiness. Wait
 one bounded startup interval and capture the expected application frame once;
 do not turn ordinary runtime startup into an unbounded polling loop.
+
+## Canvas input and viewport emulation
+
+Preview coordinate clicks use viewport-relative CSS pixels. When a full
+viewport screenshot has been scaled, use the pixel dimensions of the image
+you are measuring and the CSS dimensions of that same capture. Get the CSS
+viewport from `preview_resize`'s measured `viewport` or inspect
+`[innerWidth, innerHeight]` with `preview_evaluate` on an agent-controlled tab.
+Convert each axis separately.
+
+```text
+cssX = imageX × cssWidth  / imageWidth
+cssY = imageY × cssHeight / imageHeight
+```
+
+For a 1280×768 image of an 800×480 viewport, image point (640, 384) maps to
+CSS point (400, 240). For a 750×1334 image of a 375×667 viewport, both
+coordinates halve. Use the actual PNG size, including when a saved capture and
+the inline image differ. If measuring in a viewer, remove any margins and
+scale from the displayed image rectangle. Capture again after resize, zoom,
+or scroll. [T3 snapshot contract](https://github.com/pingdotgg/t3code/blob/main/packages/contracts/src/previewAutomation.ts)
+
+When the session permits a managed Playwright fallback, a viewport
+`browser_take_screenshot` with `scale: "css"` gives a CSS-sized image.
+
+When an expected game state appears in the canvas's accessible name, wait on
+the attribute or a role/name locator. The `text` condition checks body text,
+so combining it with the locator still requires a body-text match. For a
+canvas with an updated `aria-label`, use `preview_wait_for` with this selector.
+
+```json
+{"tabId":"TAB_ID","selector":"canvas[aria-label*=\"Round ready\"]","timeoutMs":2000}
+```
+
+Inspect the result visually if the test also depends on what the game drew.
+[T3 wait implementation](https://github.com/pingdotgg/t3code/blob/main/apps/server/src/preview/ServerBrowserPage.ts)
+
+If a coordinate click is acknowledged but the expected target has no effect,
+check pointer lock before repeating it. On an agent-controlled tab,
+`preview_evaluate` can read
+`({ locked: document.pointerLockElement !== null, target: document.pointerLockElement?.localName ?? null })`.
+For an embedded game, check the document that owns the canvas where the
+runtime permits it. While locked, pointer events can keep targeting the
+locked element. Use the game's unlock control or the browser's unlock gesture,
+then verify the lock status and recapture before another absolute click.
+Relative camera movement needs a browser path that delivers and verifies
+relative deltas while locked. Use an attended browser or the project's
+input test harness and check the observed `movementX` and `movementY`.
+
+T3's `press` is a tap. Its locator drag takes `source` and `target`. The
+`Missing key at ["source"]` error means the drag expects a locator. For a
+right-button coordinate drag on an unlocked canvas, an authorized Playwright
+fallback can run the whole sequence in one call. Focus the game first and
+substitute points and a key for its bindings.
+
+```js
+async (page) => {
+  await page.mouse.move(160, 140);
+  try {
+    await page.keyboard.down("w");
+    await page.mouse.down({ button: "right" });
+    await page.mouse.move(250, 200, { steps: 8 });
+    await page.waitForFunction(
+      () => new Promise(resolve =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)))
+      ),
+      undefined,
+      { timeout: 750 },
+    );
+  } finally {
+    try {
+      await page.mouse.up({ button: "right" });
+    } finally {
+      await page.keyboard.up("w");
+    }
+  }
+}
+```
+
+The wait gives the game a chance to draw a frame. Verify the resulting game
+state afterward. For precise timing, use the project's test harness.
+[Playwright frame polling](https://playwright.dev/docs/api/class-page#page-wait-for-function)
+
+A device preset in `preview_resize` is viewport emulation for layout checks.
+Before a touch pass, inspect `navigator.maxTouchPoints` and
+`matchMedia("(pointer: coarse)").matches`. Use a touch-enabled device or a
+project browser test with a touch-enabled context for touch input. Playwright
+supports taps with `hasTouch: true`. Panning needs a gesture with touch start,
+move, and end events. Verify that the game received touch input and panned.
+[Playwright touch input](https://playwright.dev/docs/api/class-touchscreen) · [Chromium touch gestures](https://chromedevtools.github.io/devtools-protocol/tot/Input/#method-dispatchTouchEvent)
+
+Native support for these gaps belongs in T3 Preview. Qualification should
+check a per-image CSS transform or a CSS-sized capture at both capped and 2×
+scales. It should also verify visible lock state, relative deltas while locked,
+and a bounded right-button coordinate drag with overlapping key hold and a
+frame wait. Check key and button release on cancellation. Exercise an
+accessible-name wait and its timeout message, and qualify a touch-enabled
+session independently of the viewport presets.
+
+## Diagnose private URLs
 
 For private-URL failures, verify the exact URL and a non-sensitive artifact
 from the VM with normal TLS verification, then inspect the attached preview's
