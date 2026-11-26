@@ -20,6 +20,7 @@ import sys
 import time
 
 from desktop.browser_session import BROWSERS, browser_command, create_browser_profile, validate_browser_url
+from desktop.receipts import DesktopRequestError
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.cachyos import is_cachyos
 from lib.cachyos_doctor import _owned_socket, _probe
@@ -825,6 +826,8 @@ def run_development_command(args: argparse.Namespace) -> int:
                 prepare=getattr(args, "prepare", False), asset_bundle=getattr(args, "asset_bundle", None),
                 before=getattr(args, "before", None), after=getattr(args, "after", None),
                 browser=getattr(args, "browser", None), url=getattr(args, "url", None))
+    except DesktopRequestError as exc:
+        result = {**exc.receipt, "ok": False}
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         result = {"ok": False, "error": str(exc)}
     print(json.dumps(result, indent=2))

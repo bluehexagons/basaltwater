@@ -2,9 +2,12 @@
 
 Use plain `basaltw desktop develop` on the configured shared XRDP desktop.
 `--native` selects the CachyOS KDE backend. Run as the configured desktop owner,
-without sudo. A refreshed running supervisor must advertise
-`supervised-development` in `desktop status`; save work and use a normal logout
-checkpoint to load it. These source changes do not restart the shared desktop.
+without sudo. `desktop_session_unavailable` reports the desktop state and a
+`remediation_argv` command. For a stopped session, run `basaltw desktop start`.
+If a running supervisor reports `desktop_capability_missing`, check the
+`required_capability` field. Load the refreshed supervisor at a normal logout
+checkpoint after saving work. Setup can refresh source while the existing
+supervisor remains in use.
 
 ```bash
 basaltw desktop develop doctor --project /absolute/project --json

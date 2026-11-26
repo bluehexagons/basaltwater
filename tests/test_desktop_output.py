@@ -734,6 +734,32 @@ class BoundCaptureTests(unittest.TestCase):
                                                    self.debian.generation)
             launch.assert_not_called()
 
+    def test_debian_browser_preflight_distinguishes_missing_and_old_supervisors(self):
+        parser = argparse.ArgumentParser()
+        add_desktop_subparser(parser.add_subparsers())
+        args = parser.parse_args(["desktop", "develop", "browser", "--project", str(self.home),
+                                 "--browser", "firefox-esr", "--dry-run", "--json"])
+        cases = (
+            ({"state": "stopped"}, "desktop_session_unavailable", "start", None),
+            ({"state": "starting", "capabilities": []}, "desktop_session_unavailable", "status", None),
+            ({"state": "running", "capabilities": ["supervised-development"]},
+             "desktop_capability_missing", None, "disposable-browser"),
+        )
+        for desktop, issue, next_action, capability in cases:
+            with (self.subTest(state=desktop["state"]),
+                  patch.object(runtime, "status", return_value=desktop),
+                  patch.object(runtime, "request") as request,
+                  patch("sys.stdout", new_callable=io.StringIO) as output):
+                self.assertEqual(run_desktop_command(args), 1)
+                result = json.loads(output.getvalue())
+                self.assertFalse(result["ok"])
+                self.assertEqual(result["issue"], issue)
+                self.assertEqual(result["state"], desktop["state"])
+                self.assertEqual(result.get("remediation_argv"),
+                                 ["basaltw", "desktop", next_action] if next_action else None)
+                self.assertEqual(result.get("required_capability"), capability)
+                request.assert_not_called()
+
     def test_debian_development_forwards_global_preview_and_never_retries_lost_reply(self):
         from desktop import debian_development, development
         args = SimpleNamespace(project=str(self.home), development_command="exec", argv=["/usr/bin/fixture"], dry_run=False)

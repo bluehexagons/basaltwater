@@ -12,6 +12,7 @@ import stat
 import struct
 
 from desktop import development, session_runtime
+from desktop.receipts import DesktopRequestError
 from lib.validation import validate_filesystem_path, validate_no_control_characters
 
 
@@ -108,12 +109,22 @@ def handle_task(payload: dict, generation: str, *, recorder=None) -> dict:
 
 def request_task(args: argparse.Namespace) -> dict:
     current = session_runtime.status()
-    if current.get("state") != "running" or "supervised-development" not in current.get("capabilities", []):
-        raise RuntimeError("Running desktop lacks supervised-development; refresh at a safe normal logout checkpoint")
-    if args.development_command == "playtest" and "recorded-playtest" not in current["capabilities"]:
-        raise RuntimeError("Running desktop lacks recorded-playtest; refresh at a safe normal logout checkpoint")
-    if args.development_command == "browser" and "disposable-browser" not in current["capabilities"]:
-        raise RuntimeError("Running desktop lacks disposable-browser; refresh at a safe normal logout checkpoint")
+    state = current.get("state", "unknown")
+    if state != "running":
+        next_action = "start" if state == "stopped" else "status"
+        raise DesktopRequestError({
+            "issue": "desktop_session_unavailable", "state": state,
+            "error": f"Shared desktop state is {state}; run 'basaltw desktop {next_action}' before retrying",
+            "remediation_argv": ["basaltw", "desktop", next_action],
+        })
+    capabilities = current.get("capabilities", [])
+    requested = {"playtest": "recorded-playtest", "browser": "disposable-browser"}.get(args.development_command)
+    for required in ("supervised-development", requested):
+        if required and required not in capabilities:
+            raise DesktopRequestError({
+                "issue": "desktop_capability_missing", "state": state, "required_capability": required,
+                "error": f"Running desktop lacks {required}; load the refreshed supervisor at a safe normal logout checkpoint",
+            })
     options = {key: getattr(args, key) for key in OPTIONS if hasattr(args, key)}
     # Older running supervisors can still handle a check without evidence options.
     for key in ("verify_evidence", "require_artifact_kind", "prepare", "asset_bundle"):
