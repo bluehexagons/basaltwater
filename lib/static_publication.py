@@ -155,13 +155,10 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         raise urllib.error.URLError("Publication verification refuses redirects")
 
 
-def _served_hash(url: str, size: int, deadline: float) -> dict[str, object]:
+def _served_hash(url: str, size: int, deadline: float, *, opener: urllib.request.OpenerDirector) -> dict[str, object]:
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise TimeoutError("Publication verification deadline reached")
-    opener = urllib.request.build_opener(
-        _NoRedirect(), urllib.request.HTTPSHandler(context=ssl.create_default_context()),
-    )
     request = urllib.request.Request(url, headers={"Accept-Encoding": "identity", "Cache-Control": "no-cache"})
     with opener.open(request, timeout=min(15, remaining)) as response:
         if response.status != 200 or response.headers.get("Content-Encoding", "identity") != "identity":
@@ -178,12 +175,15 @@ def _served_hash(url: str, size: int, deadline: float) -> dict[str, object]:
 
 
 def _served_hashes(url: str, artifacts: list[tuple[str, int]], deadline: float) -> Iterator[dict[str, object]]:
-    for path, size in artifacts:
-        try:
-            yield _served_hash(url.rstrip("/") + "/" + urllib.parse.quote(path, safe="/"), size, deadline)
-        except (OSError, ValueError, http.client.HTTPException) as exc:
-            yield {"error": str(exc)}
-            return
+    try:
+        opener = urllib.request.build_opener(
+            _NoRedirect(), urllib.request.HTTPSHandler(context=ssl.create_default_context()),
+        )
+        for path, size in artifacts:
+            artifact_url = url.rstrip("/") + "/" + urllib.parse.quote(path, safe="/")
+            yield _served_hash(artifact_url, size, deadline, opener=opener)
+    except (OSError, ValueError, http.client.HTTPException) as exc:
+        yield {"error": str(exc)}
 
 
 def _verify_served(url: str, expected: dict[str, dict], timeout: int) -> tuple[int, list[dict]]:

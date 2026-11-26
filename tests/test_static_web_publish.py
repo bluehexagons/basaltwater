@@ -57,8 +57,9 @@ class TestStaticWebPublish(unittest.TestCase):
 
     @staticmethod
     def _run_https_worker(_command, *, input_data, on_output, **_kwargs):
-        for result in static_publication._served_hashes(**json.loads(input_data)):
-            on_output(json.dumps(result) + "\n")
+        with patch.object(static_publication.ssl, "create_default_context"):
+            for result in static_publication._served_hashes(**json.loads(input_data)):
+                on_output(json.dumps(result) + "\n")
         return 0
 
     def test_successful_godot_command_with_incomplete_output_keeps_previous_site(self) -> None:
@@ -160,7 +161,7 @@ class TestStaticWebPublish(unittest.TestCase):
             account = SimpleNamespace(pw_name="agent", pw_uid=os.getuid())
             url = "https://vm.test:8443/sites/agent/demo/"
 
-            def served_hash(artifact_url, _size, _deadline):
+            def served_hash(artifact_url, _size, _deadline, *, opener):
                 self.assertTrue(artifact_url.startswith(url))
                 self.assertTrue((destination / static_publication.RECEIPT_FILE).is_file())
                 return static_publication._hash_file(str(destination / artifact_url.removeprefix(url)))
@@ -684,7 +685,7 @@ class TestStaticWebPublish(unittest.TestCase):
             url = "https://vm.test/sites/agent/demo/"
             served = {url + name: receipt["artifacts"][name] for name in public}
 
-            def fetch_artifact(artifact_url, _size, _deadline):
+            def fetch_artifact(artifact_url, _size, _deadline, *, opener):
                 if artifact_url not in served:
                     raise PermissionError("Hidden artifact is blocked by the gateway")
                 return served[artifact_url]
@@ -702,22 +703,30 @@ class TestStaticWebPublish(unittest.TestCase):
             self.assertEqual(result["issue"], "artifact_mismatch")
             self.assertEqual(result["issues"][0]["component"], "publication")
 
-    def test_served_hash_reads_bounded_bytes_with_tls_and_identity_encoding(self) -> None:
-        response = io.BytesIO(b"site")
-        response.status = 200
-        response.headers = {}
+    def test_served_hashes_share_tls_context_and_read_bounded_identity_bytes(self) -> None:
+        responses = [io.BytesIO(b"site"), io.BytesIO(b"script")]
+        for response in responses:
+            response.status = 200
+            response.headers = {}
         opener = Mock()
-        opener.open.return_value = response
+        opener.open.side_effect = responses
         with (
-            patch.object(static_publication.urllib.request, "build_opener", return_value=opener),
+            patch.object(static_publication.urllib.request, "build_opener", return_value=opener) as build_opener,
             patch.object(static_publication.ssl, "create_default_context") as tls,
             patch.object(static_publication.time, "monotonic", return_value=10),
         ):
-            record = static_publication._served_hash("https://vm.test/index.html", 4, 20)
-        self.assertEqual(record, {"size": 4, "sha256": hashlib.sha256(b"site").hexdigest()})
-        self.assertEqual(opener.open.call_args.args[0].get_header("Accept-encoding"), "identity")
-        self.assertEqual(opener.open.call_args.kwargs["timeout"], 10)
+            records = list(static_publication._served_hashes(
+                "https://vm.test/", [("index.html", 4), ("a script.js", 6)], 20,
+            ))
+        self.assertEqual(records, [{"size": len(body), "sha256": hashlib.sha256(body).hexdigest()}
+                                  for body in (b"site", b"script")])
+        build_opener.assert_called_once()
         tls.assert_called_once_with()
+        self.assertEqual([call.args[0].full_url for call in opener.open.call_args_list],
+                         ["https://vm.test/index.html", "https://vm.test/a%20script.js"])
+        for call in opener.open.call_args_list:
+            self.assertEqual(call.args[0].get_header("Accept-encoding"), "identity")
+            self.assertEqual(call.kwargs["timeout"], 10)
 
     def test_receipt_failure_does_not_activate_an_unverified_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
