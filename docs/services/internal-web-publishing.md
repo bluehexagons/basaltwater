@@ -190,6 +190,8 @@ basaltwater-web publish site my-game --profile godot
 ```
 
 Use `--preset NAME` for a different Web preset or `--debug` for a debug export.
+The publisher checks the exported HTML, JavaScript, WASM, and PCK before
+replacing the previous snapshot, even if Godot reports a successful build.
 To publish an existing export with `index.html`, `index.js`, `index.wasm`, and
 `index.pck`, run:
 
@@ -286,7 +288,6 @@ basaltwater-web preview list
 basaltwater-web preview url my-project
 basaltwater-web preview logs my-project
 basaltwater-web preview restart my-project --wait 60 --json
-basaltwater-web doctor my-project
 basaltwater-web preview stop my-project
 basaltwater-web preview prune --yes
 ```
@@ -356,7 +357,6 @@ basaltwater-web forward add api-preview \
 
 basaltwater-web forward list
 basaltwater-web forward url api-preview
-basaltwater-web doctor api-preview
 basaltwater-web forward remove api-preview
 ```
 

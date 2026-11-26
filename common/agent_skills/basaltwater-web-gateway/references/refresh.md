@@ -33,8 +33,9 @@ data. Follow the project's development instructions:
   final source edits, keeping its `static` or `godot` profile. Use `site verify`
   as described in [static publications](static-sites.md).
 
-After a restart, check service activity, run `basaltwater-web doctor NAME`, and
-verify a changed public resource or behavior through HTTPS. Health alone does
-not prove freshness. Inspect the scoped service logs on failure and repair the
-cause within the development task. Report any unresolved failure instead of
-claiming the updated site is ready. Leave a working development site running.
+After a restart, check service activity and use `basaltwater-web preview url NAME`
+or `basaltwater-web forward url NAME` for the exact live HTTPS address. Verify
+a changed resource or behavior there. A Godot snapshot can share the same name
+on a different URL. Inspect the scoped service logs on failure and repair the
+cause within the development task. Report any unresolved refresh failure.
+Leave a working development site running.

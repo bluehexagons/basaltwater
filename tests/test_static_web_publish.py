@@ -51,6 +51,38 @@ class TestStaticWebPublish(unittest.TestCase):
             return_value=Mock(environment=Mock(return_value=self.environment)),
         ))
 
+    def test_successful_godot_command_with_incomplete_output_keeps_previous_site(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "project.godot").write_text("[application]\n", encoding="utf-8")
+            sites = root / "sites"
+            destination = sites / "agent" / "demo"
+            destination.mkdir(parents=True)
+            (destination / "index.html").write_text("previous game", encoding="utf-8")
+            static_web_publish._write_godot_profile(str(destination))
+
+            def export(command, **_kwargs):
+                entrypoint = Path(command[-1])
+                entrypoint.write_text("partial build", encoding="utf-8")
+                return SimpleNamespace(returncode=0)
+
+            with (
+                patch.object(static_web_publish, "SITES_ROOT", str(sites)),
+                patch.object(static_web_publish, "_base_url", return_value=None),
+                patch.object(static_web_publish, "_current_account", return_value=SimpleNamespace(
+                    pw_name="agent", pw_uid=os.getuid(),
+                )),
+                patch.object(static_web_publish.godot_web_publish, "run", side_effect=export),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "Godot export missing index.js"):
+                    static_web_publish.publish(_args(
+                        directory, profile="godot", no_build=False, output=None, build_script=None,
+                    ))
+            self.assertEqual((destination / "index.html").read_text(encoding="utf-8"), "previous game")
+            self.assertEqual(sorted(path.name for path in destination.parent.iterdir()), [
+                ".basaltwater-demo.lock", "demo",
+            ])
+
     def test_godot_site_cli_publishes_prebuilt_export_and_verifies_it(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -428,6 +460,18 @@ class TestStaticWebPublish(unittest.TestCase):
                     result = static_publication.verify_receipt(str(publication), url="https://vm.test/site/")
                 self.assertEqual(result["issue"], "served_artifact_unavailable")
                 self.assertFalse(result["ok"])
+
+    def test_verification_accepts_a_gateway_ipv6_address(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "index.html").write_bytes(b"site")
+            static_publication.write_receipt(directory, None, output=None, published_at="now", built=False)
+            record = static_publication.read_receipt(directory)["artifacts"]["index.html"]
+            url = "https://[2001:db8::10]:8443/sites/agent/demo/"
+            with patch.object(static_publication, "_served_hash", return_value=record) as fetch:
+                result = static_publication.verify_receipt(directory, url=url)
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["served_artifacts_checked"], 1)
+            self.assertEqual(fetch.call_args.args[0], url + "index.html")
 
     def test_served_hash_reads_bounded_bytes_with_tls_and_identity_encoding(self) -> None:
         response = io.BytesIO(b"site")

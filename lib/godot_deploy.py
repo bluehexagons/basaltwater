@@ -39,6 +39,11 @@ def validate_godot_export(output: str, staging_root: str) -> None:
                 total += item.stat().st_size
             if count > MAX_FILES or total > MAX_BYTES:
                 raise RuntimeError("Godot export exceeds deployment limits")
+    validate_godot_web_entrypoint(path)
+
+
+def validate_godot_web_entrypoint(path: Path) -> None:
+    """Check the required Web export files after validating the staged tree."""
     for name in REQUIRED_FILES:
         file = path / name
         if not file.is_file() or file.stat().st_size == 0:

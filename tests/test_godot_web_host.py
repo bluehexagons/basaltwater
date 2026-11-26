@@ -574,6 +574,14 @@ class TestGodotWebHost(unittest.TestCase):
 
 
 class TestGodotWebPublisher(unittest.TestCase):
+    @staticmethod
+    def _write_web_export(html: str) -> None:
+        path = Path(html)
+        path.write_text("game", encoding="utf-8")
+        path.with_suffix(".js").write_text("loader", encoding="utf-8")
+        path.with_suffix(".wasm").write_bytes(b"\x00asm" * 1024)
+        path.with_suffix(".pck").write_bytes(b"GDPC")
+
     def test_json_export_streams_logs_without_buffering_or_polluting_result(self) -> None:
         for returncode in (0, 1):
             with self.subTest(returncode=returncode), tempfile.TemporaryDirectory() as directory:
@@ -590,8 +598,7 @@ class TestGodotWebPublisher(unittest.TestCase):
                     self.assertIs(kwargs["stdout"], errors)
                     print("export diagnostic", file=kwargs["stdout"])
                     if returncode == 0:
-                        with open(command[-1], "w", encoding="utf-8") as exported:
-                            exported.write("game")
+                        self._write_web_export(command[-1])
                     return SimpleNamespace(returncode=returncode)
 
                 with (
@@ -651,13 +658,7 @@ class TestGodotWebPublisher(unittest.TestCase):
             account = SimpleNamespace(pw_uid=os.getuid(), pw_name="agent")
 
             def create_export(command: list[str], **_kwargs: object) -> SimpleNamespace:
-                export_path = command[-1]
-                with open(export_path, "w", encoding="utf-8") as export_file:
-                    export_file.write("game")
-                with open(os.path.join(os.path.dirname(export_path), "demo.wasm"), "wb") as wasm:
-                    wasm.write(b"wasm" * 1024)
-                with open(os.path.join(os.path.dirname(export_path), "demo.pck"), "wb") as pack:
-                    pack.write(b"pack" * 1024)
+                self._write_web_export(command[-1])
                 return SimpleNamespace(returncode=0)
 
             with (
@@ -679,7 +680,7 @@ class TestGodotWebPublisher(unittest.TestCase):
             self.assertTrue(os.path.isfile(published_file))
             self.assertEqual(os.stat(os.path.dirname(published_file)).st_mode & 0o777, 0o755)
             self.assertEqual(os.stat(published_file).st_mode & 0o777, 0o644)
-            self.assertTrue(os.path.isfile(os.path.join(user_root, "demo", "demo.wasm.gz")))
+            self.assertTrue(os.path.isfile(os.path.join(user_root, "demo", "index.wasm.gz")))
             self.assertTrue(os.path.isfile(os.path.join(user_root, "demo", ".basaltwater.json")))
             self.assertTrue(os.path.isfile(os.path.join(user_root, "index.html")))
             command = run_export.call_args.args[0]
@@ -710,8 +711,7 @@ class TestGodotWebPublisher(unittest.TestCase):
             account = SimpleNamespace(pw_uid=os.getuid(), pw_name="agent")
 
             def create_export(command: list[str], **_kwargs: object) -> SimpleNamespace:
-                with open(command[-1], "w", encoding="utf-8") as export_file:
-                    export_file.write("game")
+                self._write_web_export(command[-1])
                 return SimpleNamespace(returncode=0)
 
             with (
@@ -742,11 +742,7 @@ class TestGodotWebPublisher(unittest.TestCase):
             account = SimpleNamespace(pw_uid=os.getuid(), pw_name="agent")
 
             def create_export(command: list[str], **_kwargs: object) -> SimpleNamespace:
-                export_dir = os.path.dirname(command[-1])
-                with open(command[-1], "w", encoding="utf-8") as export_file:
-                    export_file.write("game")
-                with open(os.path.join(export_dir, "demo.wasm"), "wb") as wasm:
-                    wasm.write(b"wasm" * 1024)
+                self._write_web_export(command[-1])
                 return SimpleNamespace(returncode=0)
 
             results: list[dict[str, object]] = []
@@ -767,8 +763,8 @@ class TestGodotWebPublisher(unittest.TestCase):
 
             self.assertFalse(results[0]["replaced"])
             self.assertTrue(results[1]["replaced"])
-            self.assertEqual(results[0]["artifact_count"], 3)
-            self.assertEqual(results[0]["compressed_artifact_count"], 1)
+            self.assertEqual(results[0]["artifact_count"], 6)
+            self.assertEqual(results[0]["compressed_artifact_count"], 2)
             self.assertGreater(results[0]["artifact_bytes"], 4096)
             self.assertGreater(results[0]["compressed_artifact_bytes"], 0)
             self.assertGreaterEqual(results[0]["elapsed_seconds"], 0)

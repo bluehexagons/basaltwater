@@ -52,6 +52,8 @@ authorized Basaltwater preview for the active checkout, keep it current as
 part of the edit. Follow the project's build and launch commands. Use the
 installed `basaltwater-web-gateway` skill for managed live previews, forwards,
 and published development snapshots, including Godot exports.
+For a native T3 preview, keep the project's loopback development server current
+and verify the changed resource on its configured port.
 
 Verify a changed resource or behavior at the preview URL before handoff.
 Check hot reload, rebuild and restart, or rebuild and republish the same

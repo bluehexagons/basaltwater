@@ -11,6 +11,7 @@ import html
 from itertools import count
 import json
 import os
+from pathlib import Path
 import pwd
 import re
 import shutil
@@ -22,7 +23,7 @@ import webbrowser
 
 from common.service_tools import godot_web_publish
 from lib.atomic_io import read_json_file, write_json_atomic, write_text_atomic
-from lib.godot_deploy import validate_godot_export
+from lib.godot_deploy import validate_godot_export, validate_godot_web_entrypoint
 from lib.node_toolchain import select_node
 from lib.node_project import select_package_manager
 from lib.remote_utils import CommandTimeoutError, run
@@ -460,6 +461,8 @@ def publish(args: argparse.Namespace) -> dict[str, object]:
             if godot:
                 if args.no_build:
                     validate_godot_export(staging_dir, staging_dir)
+                else:
+                    validate_godot_web_entrypoint(Path(staging_dir))
                 godot_result = godot_web_publish.prepare_site(
                     staging_dir, precompress=not args.no_precompress,
                 )

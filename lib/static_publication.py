@@ -16,7 +16,7 @@ import urllib.parse
 import urllib.request
 
 from lib.atomic_io import read_json_file, write_json_atomic
-from lib.validation import validate_filesystem_path
+from lib.validation import validate_filesystem_path, validate_network_ip
 from lib.validators import validate_host
 
 
@@ -160,8 +160,14 @@ def verify_receipt(root: str, *, url: str | None, local_output: str | None = Non
         raise ValueError("Verification timeout must be from 1 through 300 seconds")
     if url:
         parsed = urllib.parse.urlsplit(url)
-        if parsed.scheme != "https" or not validate_host(parsed.hostname or "") or parsed.username is not None or parsed.password is not None or parsed.query or parsed.fragment:
+        host = parsed.hostname or ""
+        if (
+            parsed.scheme != "https" or not host or parsed.username is not None
+            or parsed.password is not None or parsed.query or parsed.fragment
+        ):
             raise ValueError("Verification requires a credential-free HTTPS publication URL")
+        if not validate_host(host):
+            validate_network_ip(host, "publication host")
         _ = parsed.port
     receipt = read_receipt(root)
     expected = receipt["artifacts"]
