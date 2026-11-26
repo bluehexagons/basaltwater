@@ -9,6 +9,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows.Automation;
 
@@ -16,6 +17,11 @@ namespace Basaltwater.Desktop {
 public sealed class Window {
     public long id; public int pid; public string identity; public string title;
     public int x, y, width, height; public bool active, minimized, maximized;
+    internal long processStarted;
+}
+public sealed class RequestRejected : Exception {
+    public string Code { get; private set; }
+    public RequestRejected(string code,string message) : base(message) { Code=code; }
 }
 public sealed class Element {
     public string reference, name, role, runtime; public bool enabled, focused;
@@ -56,6 +62,8 @@ public static partial class Native {
     [DllImport("user32.dll")] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
     [DllImport("advapi32.dll",SetLastError=true)] static extern bool OpenProcessToken(IntPtr p,uint a,out IntPtr t);
     [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+    [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr OpenJobObject(uint access,bool inherit,string name);
+    [DllImport("kernel32.dll",SetLastError=true)] static extern bool IsProcessInJob(IntPtr process,IntPtr job,out bool member);
     [DllImport("user32.dll")] static extern bool GetCursorPos(out Point p);
     [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr h,IntPtr dc,uint flags);
     [StructLayout(LayoutKind.Sequential)] struct Input { public uint type; public InputUnion data; }
@@ -80,7 +88,8 @@ public static partial class Native {
             if(p.SessionId!=Process.GetCurrentProcess().SessionId || Owner(p)!=WindowsIdentity.GetCurrent().User.Value) throw new Exception("Target is outside current account/session");
             var b=new StringBuilder(513); GetWindowText(h,b,b.Capacity); var c=new StringBuilder(256); GetClassName(h,c,c.Capacity);
             Rect r; if(!GetWindowRect(h,out r)) throw new Exception("Window geometry unavailable");
-            return new Window { id=id,pid=pid,identity=pid+":"+p.StartTime.ToUniversalTime().Ticks+":"+c+":"+b,
+            long started=p.StartTime.ToUniversalTime().Ticks;
+            return new Window { id=id,pid=pid,identity=pid+":"+started+":"+c+":"+b,processStarted=started,
                 title=b.ToString(),x=r.left,y=r.top,width=r.right-r.left,height=r.bottom-r.top,
                 active=h==GetForegroundWindow(), minimized=IsIconic(h),maximized=IsZoomed(h) };
         }
@@ -89,6 +98,30 @@ public static partial class Native {
         Ready(); var result=new List<Window>();
         if(!EnumWindows(delegate(IntPtr h,IntPtr unused) { if(IsWindowVisible(h)) { try { result.Add(Observe(h.ToInt64())); } catch { /* inaccessible/other-account windows are not inventory */ } } return true; },IntPtr.Zero)) throw new Exception("Window enumeration failed");
         return result;
+    }
+    public static List<Window> TaskWindows(string jobName) {
+        if(String.IsNullOrEmpty(jobName) || !Regex.IsMatch(jobName,@"\ALocal\\BasaltwaterDevelopment-[a-f0-9]{32}-job\z"))
+            throw new Exception("Invalid development task Job Object");
+        var observed=Windows();
+        var job=OpenJobObject(4,false,jobName); // JOB_OBJECT_QUERY
+        if(job==IntPtr.Zero) throw new Exception("Development task Job Object unavailable; check task status");
+        try {
+            var result=new List<Window>();
+            foreach(var window in observed) {
+                try {
+                    using(var process=Process.GetProcessById(window.pid)) {
+                        // Use the same process handle for the identity and membership checks.
+                        var handle=process.Handle;
+                        if(process.StartTime.ToUniversalTime().Ticks!=window.processStarted || process.HasExited) continue;
+                        bool member;
+                        if(IsProcessInJob(handle,job,out member) && member) result.Add(window);
+                    }
+                } catch(ArgumentException) { /* Process exited since enumeration. */ }
+                  catch(InvalidOperationException) { /* Process exited since enumeration. */ }
+                  catch(System.ComponentModel.Win32Exception) { /* Inaccessible process. */ }
+            }
+            return result;
+        } finally { CloseHandle(job); }
     }
     public static List<Monitor> Monitors() {
         Ready(); var result=new List<Monitor>();
@@ -119,7 +152,10 @@ public static partial class Native {
         var before=Check(id,identity); var w=before; var h=new IntPtr(id); bool requested=true;
         InputPermit(guard);
         switch(operation) {
-            case "focus": requested=SetForegroundWindow(h); break;
+            case "focus":
+                if(!SetForegroundWindow(h)) throw new RequestRejected("foreground_denied",
+                    "Windows denied the focus request. Bring the window to the foreground in this session, then refresh the window inventory.");
+                break;
             case "move": requested=SetWindowPos(h,IntPtr.Zero,x,y,0,0,0x15); break;
             case "resize": requested=SetWindowPos(h,IntPtr.Zero,0,0,width,height,0x16); break;
             case "maximize": ShowWindowAsync(h,3); break;
@@ -317,9 +353,15 @@ public static partial class Native {
         bool cleaned=releases.Count==0 || send(releases.ToArray())==releases.Count;
         throw new Exception("Input rejected or partial; key release " + (cleaned ? "submitted" : "unconfirmed") + "; observe before retrying");
     }
+    static void AssertInputWindow(Window w,int width,int height) {
+        if(!w.active || w.minimized) throw new RequestRejected("foreground_required",
+            "Input requires a visible foreground window. Bring the target to the foreground, then observe it again.");
+        if(w.width!=width || w.height!=height) throw new RequestRejected("geometry_changed",
+            "Window geometry changed before input. Observe the window again.");
+    }
     public static void InputAction(long id,string identity,string kind,string text,int x,int y,int width,int height,Func<string> guard) {
         InputPermit(guard);
-        var w=Check(id,identity); if(!w.active || w.minimized || w.width!=width || w.height!=height) throw new Exception("Target must remain foreground with observed geometry");
+        var w=Check(id,identity); AssertInputWindow(w,width,height);
         foreach(int key in new [] {16,17,18,91,92,1,2,4}) if((GetAsyncKeyState(key)&0x8000)!=0) throw new Exception("Physical modifier or mouse button held; input refused");
         if(kind=="click" || kind=="move" || kind=="wheel") {
             int delta=0;
@@ -345,7 +387,7 @@ public static partial class Native {
             } else SendPair(ClickInputs(),delegate(Input[] batch) {return SendInput((uint)batch.Length,batch,Marshal.SizeOf(typeof(Input)));});
         } else if(kind=="text") {
             var items=UnicodeInputs(text);w=Check(id,identity);
-            if(!w.active || w.minimized || w.width!=width || w.height!=height) throw new Exception("Foreground or geometry changed");
+            AssertInputWindow(w,width,height);
             foreach(int key in new [] {16,17,18,91,92,1,2,4}) if((GetAsyncKeyState(key)&0x8000)!=0) throw new Exception("Physical modifier or mouse button held; input refused");
             InputPermit(guard);
             if(items.Length>0) SendKeys(items,delegate(Input[] batch) {return SendInput((uint)batch.Length,batch,Marshal.SizeOf(typeof(Input)));});
@@ -354,7 +396,7 @@ public static partial class Native {
             if(kind=="chord" && (text==null || text.IndexOf('+')<0)) throw new Exception("Chord requires CTRL/SHIFT modifiers");
             var items=KeyInputs(text,kind=="sequence",delegate(ushort vk) { return MapVirtualKeyEx(vk,4,layout); });
             w=Check(id,identity);
-            if(!w.active || w.minimized || w.width!=width || w.height!=height) throw new Exception("Foreground or geometry changed");
+            AssertInputWindow(w,width,height);
             foreach(int key in new [] {16,17,18,91,92,1,2,4}) if((GetAsyncKeyState(key)&0x8000)!=0) throw new Exception("Physical modifier or mouse button held; input refused");
             InputPermit(guard);SendKeys(items,delegate(Input[] batch) { return SendInput((uint)batch.Length,batch,Marshal.SizeOf(typeof(Input))); });
         } else throw new Exception("Unsupported input kind");

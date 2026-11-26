@@ -255,6 +255,31 @@ function Invoke-NativeDesktopWorkerBody($Request) {
     Assert-Failure (Invoke-NativeDesktopCli @('control','human-override','--human-approved','--seconds','59')) '60-86400'
     Assert-Failure (Invoke-NativeDesktopCli @('control','human-override','--human-approved','--seconds','60','--indefinite')) 'Choose seconds'
     $generation = Observe-Window
+    & {
+        $script:DesktopTestSession = '7:logon:boot'
+        $taskId = 'a' * 32
+        $taskRecord = [pscustomobject]@{ State='running'; CompletedUtc=$null; OwnerSid=$script:DesktopTestSid;
+            SessionId=7; JobName=('Local\BasaltwaterDevelopment-' + ('b' * 32) + '-job'); ChildPid=100 }
+        function Get-DevelopmentStatus([string]$Id) {
+            Assert-True ($Id -ceq $taskId) 'Desktop window lookup lost the selected task'
+            return $taskRecord
+        }
+        function Invoke-NativeDesktopWorker($Request,[int]$TimeoutSeconds=8) {
+            if ($Request.command -eq 'window') { return @{outcome_verified=$true} }
+            Assert-True ($Request.command -eq 'windows' -and $Request.job -ceq $taskRecord.JobName) 'Desktop lookup lost the verified Job scope'
+            return @{ windows = @([pscustomobject]@{id=123L;pid=42;identity='42:birth:class:title'}) }
+        }
+        $inventory = Invoke-NativeDesktopCli @('windows','--task',$taskId,'--json')
+        Assert-True ($inventory.ok -and $inventory.result.task_id -ceq $taskId -and
+            $inventory.result.windows[0].pid -ne $taskRecord.ChildPid) 'Task lookup omitted child window identity'
+        Assert-True (Window-Action $inventory.generation).ok 'Task inventory did not authorize the observed window'
+        $taskRecord.SessionId = 8
+        Assert-Failure (Invoke-NativeDesktopCli @('windows','--task',$taskId)) 'current Windows account and session'
+        $taskRecord.SessionId = 7; $taskRecord.State = 'complete'
+        Assert-Failure (Invoke-NativeDesktopCli @('windows','--task',$taskId)) 'running development task'
+        Assert-Failure (Invoke-NativeDesktopCli @('windows','--task',('A' * 32))) 'lowercase hex'
+    }
+    $generation = Observe-Window
     $calls = $script:DesktopTestCalls.Count
     Assert-Failure (Window-Action 'wrong') 'Stale session generation'
     Assert-Failure (Window-Action $generation 'different') 'not recently observed'

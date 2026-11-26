@@ -8,6 +8,7 @@
 basaltw desktop doctor
 basaltw desktop status
 basaltw desktop windows
+basaltw desktop windows --task TASK_ID --json
 basaltw desktop environment --json
 basaltw desktop inspect --pid 1234
 ```
@@ -28,6 +29,12 @@ If an element disappears while its window is being inspected, the observed
 prefix is returned with `truncated: true`. This is incomplete evidence; observe
 again when needed. Explicit stale root references and other provider errors
 still fail, and actions always revalidate their target immediately before use.
+
+Use `windows --task TASK_ID` with the ID from a running `desktop develop`
+task. It returns windows owned by live members of that task's Windows Job
+Object, including a game process started by a PowerShell or npm wrapper.
+Use the returned window identity and generation for capture or input.
+This lookup works without `--track-children`.
 
 `desktop environment` returns a bounded, read-only [host environment report](windows-environment.md)
 with GPU/driver and display geometry, desktop-mode refresh and API scaling.
@@ -97,7 +104,9 @@ paths retain their existing guards and reference lifetimes.
 Status exposes the current ID and freshness without renewing either. Discrete
 token input rechecks the capture deadline inside cold and warm native workers.
 Token-bound `hold` carries the deadline through preparation and watchdog
-startup to the first down. Both forms return an `input_id` and delivery state.
+startup to the first down. Both forms return an `input_id`, delivery state, and
+`observation_consumed` to show whether the supplied token was cleared before
+the attempt. A rejection before that point reports `observation_consumed: false`.
 Add `--observe` to capture the same window after completed input. Read the
 chosen private PNG path from `result.observation.output`. Use
 `--observe --output NEW.png` to choose a path. The existing `--observe NEW.png`
@@ -127,6 +136,12 @@ Window actions verify their observed outcome; `invoke` and raw input explicitly
 require application-specific verification. Raw input requires the window to
 remain foreground with the observed geometry. Click coordinates are relative
 to that window; multi-monitor origins and DPI scaling are handled by the worker.
+If Windows denies `window focus`, the reply reports `foreground_denied`.
+If discrete input finds a background or minimized window before sending
+events, it reports `foreground_required`, `submitted: false`, and
+`input_delivery: not-sent`. Bring the target to the foreground in the
+Windows session, refresh the window inventory, and take a fresh screenshot
+for token-bound input.
 Input supports scan-code keys, atomic Ctrl/Shift chords, Unicode text and clicks.
 Named keys include ENTER, ESC, TAB, SPACE, arrows, BACKSPACE, DELETE, HOME, END,
 PAGEUP, PAGEDOWN, INSERT and F1–F12, plus A–Z and 0–9. For example, use

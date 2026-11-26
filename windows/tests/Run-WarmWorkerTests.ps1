@@ -33,7 +33,15 @@ try {
     Write-NativeHeldJson (Get-NativeDesktopStatePath) $state
     $source=Join-Path $temporary 'source';New-NativeDesktopPrivateDirectory $source
     foreach($name in Get-NativeWarmSources){Copy-Item -LiteralPath (Join-Path $originalSource $name) -Destination (Join-Path $source $name)}
-    [IO.File]::WriteAllText((Join-Path $source 'Desktop.Native.cs'),'namespace Basaltwater.Desktop { public static class Native { public static void Ready() {} public static void Dpi() {} } }')
+    [IO.File]::WriteAllText((Join-Path $source 'Desktop.Native.cs'),@'
+namespace Basaltwater.Desktop {
+    public static class Native { public static void Ready() {} public static void Dpi() {} }
+    public sealed class RequestRejected : System.Exception {
+        public string Code { get { return "foreground_denied"; } }
+        public RequestRejected() : base("Fixture focus denial") { }
+    }
+}
+'@)
     $rootLiteral=$temporary.Replace("'","''")
     [IO.File]::AppendAllText((Join-Path $source 'Desktop.Common.ps1'),@"
 
@@ -46,6 +54,10 @@ function Invoke-NativeDesktopWorkerBody(`$Request) {
     if(`$Request.PSObject.Properties['delay_ms']){Start-Sleep -Milliseconds ([int]`$Request.delay_ms)}
     `$guardReason=`$script:NativeDesktopInputGuard.Invoke()
     if(`$guardReason){throw `$guardReason}
+    if(`$Request.command -eq 'window'){
+        if(-not('Basaltwater.Desktop.RequestRejected' -as [type])){Add-Type -Path (Join-Path `$PSScriptRoot 'Desktop.Native.cs')}
+        throw [Basaltwater.Desktop.RequestRejected]::new()
+    }
     if(`$Request.command -eq 'input'){[IO.File]::AppendAllText((Join-Path '$rootLiteral' 'effects'),'1')}
     return @{worker_pid=`$PID;echo=`$Request.text}
 }
@@ -91,6 +103,10 @@ function Invoke-NativeDesktopWorkerBody(`$Request) {
     $caught=$null;try{Invoke-NativeWarmRequest $worker @{command='input';text='blocked'} 8}catch{$caught=$_}
     Assert-Warm ($caught.Exception.Message -match 'not enabled' -and -not(Test-Path -LiteralPath (Join-Path $temporary 'effects'))) 'Disabled control dispatched input'
     $state.mode='enabled';Write-NativeHeldJson (Get-NativeDesktopStatePath) $state
+    $caught=$null
+    try{Invoke-NativeWarmRequest $worker @{command='window';operation='focus'} 8}catch{$caught=$_}
+    $denial=$caught.Exception.Data['desktop_failure']
+    Assert-Warm ($denial.code -ceq 'foreground_denied' -and -not $denial.submitted -and $denial.input_delivery -ceq 'not-sent') 'Warm worker lost the typed focus denial'
     # Direct, already-expired request: no native action and no reply replay.
     $id=[guid]::NewGuid().ToString('N');$mailbox=Join-Path (Join-Path $worker.directory 'requests') $id
     New-NativeDesktopPrivateDirectory $mailbox
@@ -161,6 +177,10 @@ function Invoke-NativeDesktopWorkerBody(`$Request) {
     $cold=Invoke-NativeDesktopWorker @{command='input';text='cold-envelope'} 8
     Assert-Warm ($cold.echo -eq 'cold-envelope' -and [IO.File]::ReadAllText((Join-Path $temporary 'effects')) -eq '1') 'Cold transport lost its envelope or dispatched more than once'
     Remove-Item -LiteralPath (Join-Path $temporary 'effects')
+    $caught=$null
+    try{Invoke-NativeDesktopWorker @{command='window';operation='focus'} 8}catch{$caught=$_}
+    $denial=$caught.Exception.Data['desktop_failure']
+    Assert-Warm ($denial.code -ceq 'foreground_denied' -and -not $denial.submitted -and $denial.input_delivery -ceq 'not-sent') 'Cold worker lost the typed focus denial'
     $state.mode='disabled';Write-NativeHeldJson (Get-NativeDesktopStatePath) $state
     $caught=$null;try{Invoke-NativeDesktopWorker @{command='input';text='cold-refused'} 8}catch{$caught=$_}
     Assert-Warm ($null -ne $caught -and $caught.Exception.Data['desktop_failure'].input_delivery -eq 'not-sent' -and -not(Test-Path -LiteralPath (Join-Path $temporary 'effects'))) 'Cold control refusal lost structured not-sent evidence'

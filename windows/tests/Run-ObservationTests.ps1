@@ -73,6 +73,11 @@ try {
     catch [IO.IOException] { $existingFileRejected = $true }
     Assert-Observation ($existingFileRejected -and [IO.File]::ReadAllBytes($privateFile)[0] -eq 1) 'Private creation overwrote an existing file'
     Initialize-NativeDesktopTypes
+    $verifyForeground = [Basaltwater.Desktop.Native].GetMethod('AssertInputWindow', [Reflection.BindingFlags]'Static,NonPublic')
+    $background = [Basaltwater.Desktop.Window]@{width=640;height=480}
+    $caught = $null
+    try { $verifyForeground.Invoke($null, @($background,640,480)) } catch { $caught = $_ }
+    Assert-Observation ($caught -and (Get-NativeRejectionCode $caught.Exception) -ceq 'foreground_required') 'Native foreground guard lost its typed rejection'
     $expiredGuard = [Basaltwater.Desktop.Native]::ObservationGuard($null, 0L)
     Assert-Observation ($expiredGuard.Invoke() -match 'observation expired') 'Cold/warm capture guard accepted expired input'
     $guard = [Basaltwater.Desktop.Native]::ObservationGuard([Func[string]]{return 'fixture control changed'}, [long]::MaxValue)
@@ -255,6 +260,20 @@ try {
     $script:ObservationFail=$false
     Assert-Observation (Invoke-ObservationInput $capture).ok 'Failed capture replaced old receipt'
     $capture=New-ObservationCapture
+    & {
+        function Invoke-NativeDesktopWorker($Request,[int]$TimeoutSeconds=8) {
+            throw (New-NativeWorkerFailure 'Fixture foreground rejection' $false -Code 'foreground_required')
+        }
+        $denied = Invoke-ObservationInput $capture
+        Assert-Observation (-not $denied.ok -and $denied.code -ceq 'foreground_required' -and -not $denied.submitted -and
+            $denied.input_delivery -ceq 'not-sent' -and $denied.observation_consumed) 'Foreground denial conflated input delivery and token consumption'
+    }
+    $next=New-ObservationCapture
+    Assert-Observation ($next.result.last_input.observation_consumed -and $next.result.last_input.input_delivery -ceq 'not-sent') 'Capture lost the rejected input receipt'
+    $replayed=Invoke-ObservationInput $capture
+    Assert-ObservationFailure $replayed 'latest successful'
+    Assert-Observation (-not $replayed.observation_consumed) 'A refused replay claimed to consume an observation'
+    $capture=$next
     $script:ObservationFail=$true
     $unknown=Invoke-ObservationInput $capture
     Assert-ObservationFailure $unknown 'outcome unknown'

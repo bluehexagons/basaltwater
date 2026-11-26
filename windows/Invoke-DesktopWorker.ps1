@@ -33,7 +33,7 @@ try {
             try{Assert-NativeDesktopPrivatePath $path}catch{if(-not(Test-Path -LiteralPath $path)){continue};throw}
             $requestPath=Join-Path $path 'request.json';$output=Join-Path $path 'response.json';$claim=Join-Path $path 'claimed'
             if(-not(Test-Path -LiteralPath $requestPath) -or (Test-Path -LiteralPath $claim) -or (Test-Path -LiteralPath $output)){continue}
-            $peer=$null;$submitted=$false;$result=$null;$dispatchError=$null;$request=$null
+            $peer=$null;$submitted=$false;$result=$null;$dispatchError=$null;$rejection=$null;$request=$null
             try {
                 $request=Read-NativeHeldJson $requestPath
                 if($request.version -ne 1 -or $request.id -cne $mailbox.Name -or $request.session -cne $record.session){throw 'Invalid worker request identity'}
@@ -56,10 +56,14 @@ try {
                 $warmGuardRecord=$record;$warmGuardEnvelope=$request;$warmGuardPeer=$peer
                 $script:NativeDesktopInputGuard=[Func[string]]{Get-NativeWarmInputGuardReason $warmGuardRecord $warmGuardEnvelope $warmGuardPeer}
                 $submitted=$true;$result=Invoke-NativeDesktopWorkerBody $body
-            } catch {$dispatchError=$_.Exception.Message}
+            } catch {
+                $dispatchError=$_.Exception.Message
+                $rejection=Get-NativeRejectionCode $_.Exception
+                if($rejection){$submitted=$false}
+            }
             finally {
                 $script:NativeDesktopInputGuard=$null
-                Write-NativeHeldJson $output @{version=1;id=$mailbox.Name;ok=($null -eq $dispatchError);submitted=$submitted;result=$result;error=$dispatchError} 2097152
+                Write-NativeHeldJson $output @{version=1;id=$mailbox.Name;ok=($null -eq $dispatchError);submitted=$submitted;result=$result;error=$dispatchError;rejection=$rejection} 2097152
                 $busy=Join-Path $Directory 'busy.json';if(Test-Path -LiteralPath $busy){Assert-NativeDesktopPrivatePath $busy;Remove-Item -LiteralPath $busy}
                 if($peer){$peer.Dispose()}
             }

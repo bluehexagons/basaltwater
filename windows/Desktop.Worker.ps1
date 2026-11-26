@@ -1,10 +1,22 @@
 <# Explicit finite warm workers. Mailboxes are private, single-use and never replayed. #>
 if(-not(Get-Variable -Name NativeDesktopWorkerServing -Scope Script -ErrorAction SilentlyContinue)){$script:NativeDesktopWorkerServing=$false}
 if(-not(Get-Variable -Name NativeDesktopInputGuard -Scope Script -ErrorAction SilentlyContinue)){$script:NativeDesktopInputGuard=$null}
-function New-NativeWorkerFailure([string]$Message,[bool]$Submitted,[string]$Stage='input-dispatch') {
+function New-NativeWorkerFailure([string]$Message,[bool]$Submitted,[string]$Stage='input-dispatch',[string]$Code='') {
     $exception=[InvalidOperationException]::new($Message)
     $exception.Data['desktop_failure']=@{submitted=$Submitted;dispatch_stage=$(if($Submitted){$Stage}else{'before-input'});input_delivery=$(if($Submitted){'unknown'}else{'not-sent'})}
+    if($Code){$exception.Data['desktop_failure'].code=$Code}
     return $exception
+}
+function Get-NativeRejectionCode([Exception]$Failure) {
+    while($Failure){
+        if($Failure.GetType().FullName -eq 'Basaltwater.Desktop.RequestRejected'){return $Failure.Code}
+        $Failure=$Failure.InnerException
+    }
+}
+function New-NativeWorkerReplyFailure($Response,[string]$Suffix='') {
+    $code=$null
+    if($Response.PSObject.Properties['rejection']){$code=$Response.rejection}
+    return New-NativeWorkerFailure ($Response.error+$Suffix) ([bool]$Response.submitted) -Code $code
 }
 function Invoke-NativeColdEnvelope($Envelope) {
     $peer=$null;$submitted=$false;$id=$null
@@ -32,7 +44,10 @@ function Invoke-NativeColdEnvelope($Envelope) {
         if($peer.HasExited -or [Diagnostics.Stopwatch]::GetTimestamp() -ge [long]$Envelope.deadline){throw 'Cold caller exited or request expired before dispatch'}
         $submitted=$true
         return @{version=1;id=$id;ok=$true;result=(Invoke-NativeDesktopWorkerBody $Envelope.request);error=$null;submitted=$true}
-    } catch {return @{version=1;id=$id;ok=$false;result=$null;error=$_.Exception.Message;submitted=$submitted}}
+    } catch {
+        $code=Get-NativeRejectionCode $_.Exception
+        return @{version=1;id=$id;ok=$false;result=$null;error=$_.Exception.Message;submitted=($submitted -and -not $code);rejection=$code}
+    }
     finally {$script:NativeDesktopInputGuard=$null;if($peer){$peer.Dispose()}}
 }
 function Get-NativeWarmInputGuardReason($Record,$Request,$Peer){
@@ -251,7 +266,7 @@ function Invoke-NativeWarmRequest($Record,$Request,[int]$TimeoutSeconds) {
             throw 'Desktop worker response identity/schema mismatch; outcome unknown; do not replay'
         }
         $responseOwned=$true
-        if(-not $response.ok){throw (New-NativeWorkerFailure $response.error ([bool]$response.submitted))}
+        if(-not $response.ok){throw (New-NativeWorkerReplyFailure $response)}
     } catch {$failure=$_}
     finally {
         $process.Dispose()
@@ -262,7 +277,7 @@ function Invoke-NativeWarmRequest($Record,$Request,[int]$TimeoutSeconds) {
         }
     }
     if($failure){
-        if($cleanupError){throw (New-NativeWorkerFailure ($failure.Exception.Message+'; mailbox cleanup unconfirmed; inspect retained evidence; do not replay') $(if($responseOwned){[bool]$response.submitted}else{$true}))}
+        if($cleanupError){throw (New-NativeWorkerReplyFailure $response '; mailbox cleanup unconfirmed; inspect retained evidence; do not replay')}
         if($failure.Exception.Data.Contains('desktop_failure')){throw $failure}
         throw (New-NativeWorkerFailure $failure.Exception.Message $true 'transport')
     }

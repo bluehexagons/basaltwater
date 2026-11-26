@@ -139,7 +139,8 @@ function Invoke-NativeCli([string[]]$Arguments) {
         if (-not $options.Count -or $options[0] -in @('--help','help','-h')) {
             Write-Host @'
 Native desktop commands (explicit actions use the current account's session):
-  status|doctor|windows|environment [--json]
+  status|doctor|environment [--json]
+  windows [--task ID] [--json]
   worker start [--idle-seconds 120] [--session-seconds 1800] | worker status|stop
   inspect --pid PID [--name NAME] [--role ROLE] [--json]
   screenshot --window HWND --identity TOKEN --generation GEN [--output NEW.png] [--max-age-seconds 60]
@@ -181,6 +182,9 @@ Tokens do not prove semantic or scene validity. Input without a token keeps its 
         $source = Get-NativeCliSource
         . (Join-Path $source 'windows\AgentWorkstation.Common.ps1')
         . (Join-Path $source 'windows\Desktop.Common.ps1')
+        if ($options.Count -and $options[0] -eq 'windows' -and $options -contains '--task') {
+            . (Join-Path $source 'windows\Development.Common.ps1')
+        }
         if ($options.Count -and $options[0] -eq 'develop') {
             . (Join-Path $source 'windows\Development.Common.ps1')
             $result = Invoke-NativeDevelopmentCli @($options | Select-Object -Skip 1)

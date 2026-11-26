@@ -247,7 +247,14 @@ function Invoke-NativeDesktopWorkerBody($Request) {
             # Keep the receipt's nullable error separate from transport errors.
             return @{ held = Invoke-NativeHeldDriver $Request }
         }
-        'windows' { return @{ windows = @([Basaltwater.Desktop.Native]::Windows()); monitors = @([Basaltwater.Desktop.Native]::Monitors()); coverage = 'Visible accessible windows in current account/session; inaccessible windows omitted' } }
+        'windows' {
+            $coverage = 'Visible accessible windows in current account/session; inaccessible windows omitted'
+            if ($Request.PSObject.Properties['job']) {
+                return @{ windows = @([Basaltwater.Desktop.Native]::TaskWindows($Request.job)); monitors = @([Basaltwater.Desktop.Native]::Monitors());
+                    coverage = "Live members of the development task Job Object. $coverage" }
+            }
+            return @{ windows = @([Basaltwater.Desktop.Native]::Windows()); monitors = @([Basaltwater.Desktop.Native]::Monitors()); coverage = $coverage }
+        }
         'inspect' { return [Basaltwater.Desktop.Native]::Inspect([int]$Request.pid, $Request.record, $Request.name, $Request.role) }
         'window' { return @{ window = [Basaltwater.Desktop.Native]::Change([long]$Request.window, $Request.identity, $Request.operation, [int]$Request.x, [int]$Request.y, [int]$Request.width, [int]$Request.height,$script:NativeDesktopInputGuard); outcome_verified = $true } }
         'element' {
@@ -322,7 +329,7 @@ New-NativeDesktopPrivateFile '$escapedOutput' ([Text.Encoding]::UTF8.GetBytes((`
             if(-not $result.PSObject.Properties['version'] -or $result.version -ne 1 -or -not $result.PSObject.Properties['id'] -or $result.id -cne $payload.id -or
                 -not $result.PSObject.Properties['ok'] -or $result.ok -isnot [bool] -or -not $result.PSObject.Properties['submitted'] -or $result.submitted -isnot [bool] -or
                 -not $result.PSObject.Properties['result'] -or -not $result.PSObject.Properties['error']){throw (New-NativeWorkerFailure 'Cold worker response schema mismatch; do not replay' $true 'transport')}
-            if(-not $result.ok){throw (New-NativeWorkerFailure $result.error ([bool]$result.submitted))}
+            if(-not $result.ok){throw (New-NativeWorkerReplyFailure $result)}
             return $result.result
         }
         if ($result.PSObject.Properties['error']) { throw $result.error }
@@ -337,7 +344,7 @@ New-NativeDesktopPrivateFile '$escapedOutput' ([Text.Encoding]::UTF8.GetBytes((`
         } catch {
             $cleanupError=$_.Exception.Message
             if($result -and $enveloped -and $result.PSObject.Properties['ok']){
-                if(-not $result.ok){throw (New-NativeWorkerFailure ($result.error+'; cold mailbox cleanup unconfirmed; do not replay') ([bool]$result.submitted))}
+                if(-not $result.ok){throw (New-NativeWorkerReplyFailure $result '; cold mailbox cleanup unconfirmed; do not replay')}
                 if($Request.command -eq 'hold-plan'){throw (New-NativeWorkerFailure 'Hold preparation completed but cold mailbox cleanup is unconfirmed; no held input started' $false)}
                 $result.result|Add-Member NoteProperty worker_cleanup @{confirmed=$false;directory=$directory;error=$cleanupError;message='Action receipt retained; do not replay to repair mailbox cleanup'} -Force
             } else {throw}
@@ -361,7 +368,7 @@ function ConvertTo-NativeDesktopRequest([string[]]$Arguments) {
     if (-not $Arguments.Count) { throw 'Expected desktop command' }
     $request = @{ command = $Arguments[0] }; $index = 1
     $allowed = @{
-        status = @(); doctor = @(); windows = @(); environment = @();
+        status = @(); doctor = @(); windows = @('task'); environment = @();
         control = @('human-approved','seconds','indefinite'); inspect = @('pid','root','generation','name','role');
         screenshot = @('window','identity','generation','output','monitor','max-age-seconds','compact');
         window = @('window','identity','generation','x','y','width','height');
@@ -407,6 +414,7 @@ function ConvertTo-NativeDesktopRequest([string[]]$Arguments) {
         if ($request.observation -cnotmatch '\A[0-9a-f]{32}\z') { throw 'Invalid observation ID' }
         $request.observation_id = $request.observation; $request.Remove('observation')
     }
+    if ($request.ContainsKey('task') -and $request.task -cnotmatch '\A[0-9a-f]{32}\z') { throw 'Expected a development task ID (32 lowercase hex characters)' }
     if ($request.command -eq 'screenshot' -and -not $request.ContainsKey('max-age-seconds')) { $request['max-age-seconds'] = 60 }
     return $request
 }
@@ -620,6 +628,15 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
                 observation_id = $(if ($state.observation) { $state.observation.observation_id } else { $null });
                 capture_freshness = Get-NativeCaptureFreshness $state.observation; input_capabilities = @('observation-input') }
         } else {
+            if ($request.command -eq 'windows' -and $request.ContainsKey('task')) {
+                $taskRecord = Get-DevelopmentStatus $request.task
+                if ($taskRecord.State -ne 'running' -or $taskRecord.CompletedUtc -or
+                    $taskRecord.OwnerSid -cne $context.Sid -or [string]$taskRecord.SessionId -cne $context.Session.Split(':')[0] -or
+                    -not $taskRecord.PSObject.Properties['JobName'] -or $taskRecord.JobName -cnotmatch '\ALocal\\BasaltwaterDevelopment-[a-f0-9]{32}-job\z') {
+                    throw 'Window lookup requires a running development task in the current Windows account and session'
+                }
+                $request.job = $taskRecord.JobName
+            }
             $mutation = $request.command -in @('window','element','input')
             if ($mutation -and $state.mode -ne 'enabled') { throw "Agent desktop control is $($state.mode)" }
             if ($mutation) { Assert-NativeHeldIdle }
@@ -708,10 +725,12 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
                 $state.elements = @(); $state.windows = @(); $state.observation = $null
                 if ($inputReceipt) {
                     $inputReceipt.generation = $state.generation
-                    $state.last_input = $inputReceipt + @{ dispatch_stage = 'transport'; input_delivery = 'unknown' }
+                    $state.last_input = $inputReceipt + @{ dispatch_stage = 'transport'; input_delivery = 'unknown';
+                        observation_consumed = $request.ContainsKey('observation_id') }
                 }
                 Write-NativeDesktopState $state
                 $pendingInput = $null -ne $inputReceipt
+                if ($pendingInput) { $inputReceipt.observation_consumed = $state.last_input.observation_consumed }
             }
             if ($request.command -eq 'input' -and $request.operation -eq 'hold') {
                 $lease = Start-NativeHeldLease $request $context $state
@@ -775,7 +794,10 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
                 }
                 return @{ ok = $true; generation = $state.generation; control_revision = $state.revision; result = $result }
             }
-            if ($request.command -eq 'windows') { $state.windows = @($result.windows); $state.elements = @(); $state.window_observed = Get-NativeDesktopTime }
+            if ($request.command -eq 'windows') {
+                if ($request.ContainsKey('task')) { Add-NativeDesktopFields $result @{ task_id = $request.task } }
+                $state.windows = @($result.windows); $state.elements = @(); $state.window_observed = Get-NativeDesktopTime
+            }
             if ($request.command -eq 'inspect') {
                 $workerCleanup=$result.PSObject.Properties['worker_cleanup']
                 $state.elements = @($result.elements); $state.element_observed = Get-NativeDesktopTime
@@ -804,6 +826,7 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
             $failure=$failure.InnerException
         }
         if ($inputReceipt) {
+            if (-not $inputReceipt.ContainsKey('observation_consumed')) { $inputReceipt.observation_consumed = $false }
             $inputReceipt.dispatch_stage = $reply.dispatch_stage; $inputReceipt.input_delivery = $reply.input_delivery
             Add-NativeDesktopFields $reply $inputReceipt
             if ($pendingInput) {
