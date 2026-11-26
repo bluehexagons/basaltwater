@@ -215,7 +215,8 @@ class TestAgentVisualCheck(unittest.TestCase):
             write_json_atomic(env["BASALTWATER_VISUAL_CASES"], {"version": 1, "complete": True, "cases": [
                 {"id": case, "status": status} for case, status in zip(("resume", "settings", "quit"), statuses)
             ]})
-            return 1
+            # The candidate records complete assertion results before exiting normally.
+            return 1 if side == baseline else 0
 
         self.execute.side_effect = execute
         with (patch.object(agent_workspace, "_repository_root", return_value=str(self.project)),
@@ -225,6 +226,7 @@ class TestAgentVisualCheck(unittest.TestCase):
             self.assertEqual(agent_cli.run_agent_command(args), 1)
         result = json.loads(output.getvalue())
         self.assertEqual(result["status"], "regressed")
+        self.assertEqual(result["checks"]["after"]["returncode"], 0)
         self.assertEqual({case["id"]: case["outcome"] for case in result["cases"]},
                          {"resume": "regressed", "settings": "persisted", "quit": "fixed"})
         self.assertEqual([call.kwargs["base"] for call in create.call_args_list], list(revisions.values()))

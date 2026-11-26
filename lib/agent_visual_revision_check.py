@@ -37,9 +37,11 @@ def _comparable(result: dict, *, assertions_only: bool) -> bool:
         return False
     # A complete assertion failure is valid comparison evidence. With extra
     # gates, only accept a check that actually passed those gates.
+    stage = result.get("failure_stage")
+    returncode = result["returncode"]
     return result["ok"] or (
-        assertions_only and isinstance(result["returncode"], int) and result["returncode"] > 0
-        and result.get("failure_stage") == "execution"
+        assertions_only and type(returncode) is int
+        and ((returncode == 0 and stage == "case-results") or (returncode > 0 and stage == "execution"))
         and any(case["status"] == "failed" for case in cases["cases"])
     )
 
