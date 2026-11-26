@@ -206,8 +206,8 @@ The game is published at `/sites/USERNAME/my-game/` and managed with the same
 `site list`, `site url`, `site doctor`, `site verify`, and `site remove` commands.
 The gateway adds cross-origin isolation headers to Godot sites, and
 `site doctor` checks those headers and the WebAssembly content type.
-`site verify` checks the published snapshot and its served bytes, including
-generated gzip files. When comparing the original export with
+`site verify` checks the published snapshot and the bytes served over HTTPS,
+including generated gzip files. When comparing the original export with
 `site verify my-game --project .`, it uses the recorded output path for a
 prebuilt export and excludes generated gzip copies from the local comparison.
 For exports built directly by the publisher, pass `--output DIR` to compare
@@ -216,7 +216,8 @@ a separately exported local build.
 Gateway setup and refresh move existing Godot snapshots from `/games/` to
 `/sites/` without re-exporting. If the site name is taken, the game gets
 `-godot`, then a numbered suffix if needed. Refresh prints each migrated URL.
-Use `basaltwater-web site list` to find the new links. On an older gateway,
+Use `basaltwater-web site list` to find the new links and pass the migrated site
+name explicitly when publishing a later build. On an older gateway,
 an interrupted refresh leaves unmoved games reachable at their original URLs.
 It retires the old `/games/` route once migration succeeds. A legacy snapshot
 that exceeds the receipt limits still moves, with a warning. `site doctor`
@@ -294,17 +295,17 @@ Useful lifecycle commands are:
 basaltwater-web preview list
 basaltwater-web preview url my-project
 basaltwater-web preview logs my-project
+basaltwater-web forward doctor my-project
 basaltwater-web preview restart my-project --wait 60 --json
 basaltwater-web preview stop my-project
 basaltwater-web preview prune --yes
 ```
 
-Use `--replace` to deliberately replace an existing same-named preview. A
-missing or invalid automatic script or conflicting package-manager metadata
-fails before the existing preview is stopped. A
-startup, readiness, route, or state-write failure rolls back both the service
-and route. `preview prune` removes stopped services and their routes; it does
-not touch another user's previews.
+Use `--replace` to deliberately replace an existing same-named preview. The
+gateway validates automatic script and package-manager metadata, stops the old
+preview, and launches the replacement. If startup or activation fails, it
+attempts to remove the new service and route. Use `preview prune` to remove
+your stopped services and their routes.
 
 `preview restart` reruns the existing service's saved command and waits for its
 recorded HTTP health path. It preserves the loopback port, HTTPS URL, profile,
@@ -313,6 +314,9 @@ or rebuild a precompiled executable. Build that executable first when needed.
 The default readiness deadline is 30 seconds; `--wait` accepts more than zero
 and at most 300 seconds. A failed restart or readiness check returns a nonzero
 status, retains the route, and can be investigated with `preview logs`.
+
+Preview and forward commands report the URL selected by the gateway policy,
+including a localhost HTTPS URL for loopback-only listeners with the VM CA.
 
 During agent development, keeping a configured preview current is part of
 editing its checkout. The [project development skill](../../common/agent_skills/basaltwater-project-development/SKILL.md#keep-development-previews-current)
@@ -364,10 +368,13 @@ basaltwater-web forward add api-preview \
 
 basaltwater-web forward list
 basaltwater-web forward url api-preview
+basaltwater-web forward doctor api-preview
 basaltwater-web forward remove api-preview
 ```
 
-The forward list reports whether each upstream TCP port is ready. Use
+The forward list checks upstream TCP readiness. `forward doctor` checks the
+named HTTPS listener, including listeners created by `preview start`.
+`site doctor` checks the published snapshot when both use the same name. Use
 `basaltwater-web forward prune --yes` only for unmanaged dead forwards; managed
 preview services should be cleaned up through `preview prune`.
 

@@ -1,6 +1,6 @@
 ---
 name: basaltwater-godot-web
-description: Export, publish, and browser-test Godot web games on a Basaltwater-managed VM.
+description: Export Godot browser games, publish them as managed Basaltwater sites, and verify the served build or browser behavior.
 metadata:
   managed-by: basaltwater
 ---
@@ -25,21 +25,34 @@ unless that setup work is explicitly requested.
    export preset in `export_presets.cfg`.
 3. Run `godot --headless --path . --import` when imports need to be completed
    before export; it waits for resource imports before quitting.
-4. From the project root, run `basaltwater-web publish site --profile godot --json`. It derives a
-   stable game slug from the project and sends Godot progress and diagnostics
-   to stderr, leaving stdout as JSON. Pass an explicit slug, `--preset`, or `--debug` only when
-   the task requires them. The result reports the URL, elapsed time, artifact
-   sizes, and whether it replaced an earlier publication.
+4. From the project root, run `basaltwater-web publish site --profile godot --json`.
+   For an existing publication, pass its recorded site name explicitly. Check
+   `basaltwater-web site list --json` when a migrated game may have received a
+   new name. Reuse the configured preset and build mode for a development
+   refresh. Godot progress goes to stderr and the JSON result includes the
+   site name, URL, artifact sizes, and whether it replaced a snapshot.
+
+   To publish an already exported build containing `index.html`, `index.js`,
+   `index.wasm`, and `index.pck`, supply the export directory instead:
+
+   ```bash
+   basaltwater-web publish site GAME --profile godot --no-build --output exports/web --json
+   ```
+
 5. Replace `GAME` below with the lowercase `site` value returned by `publish`:
 
    ```bash
    basaltwater-web site url GAME
    basaltwater-web site doctor GAME
+   basaltwater-web site verify GAME --project . --json
    ```
 
-   Treat the returned URL as authoritative. Do not substitute a local port or
-   bypass certificate verification with `curl -k` or an equivalent option.
-6. Use the capability-specific browser skill installed on the VM and follow the
+   The doctor checks HTTPS, isolation headers, and WASM MIME type. Verification
+   compares the snapshot and served bytes and uses the recorded directory when
+   checking a prebuilt export. For a separate local export of a site built by
+   the publisher, add `--output DIR`. Use the returned URL and keep TLS
+   verification enabled.
+6. For rendered verification, use the capability-specific browser skill and the
    active session's browser policy. In T3 sessions with `preview_*` tools, use
    status/open and that skill's fallback conditions before selecting Playwright.
    Outside those sessions, VM-local Playwright suits repeatable canvas and console

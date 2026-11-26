@@ -107,8 +107,9 @@ basaltwater-web site remove my-game --yes
 ```
 
 `site doctor` verifies trusted HTTPS, the cross-origin isolation headers, and
-the `application/wasm` content type. `site verify` checks the stored and served
-artifact hashes. Publish, list, doctor, and verify support `--json`.
+the `application/wasm` content type. `site verify` checks stored artifact hashes
+and compares served files over HTTPS. Dot-prefixed paths are checked on disk.
+Publish, list, doctor, and verify support `--json`.
 Publication JSON sends Godot's
 progress and diagnostics directly to stderr without buffering the export log.
 Stdout reports elapsed time, exported artifact counts and sizes, and whether
@@ -127,7 +128,7 @@ basaltwater-web preview start my-preview --project . --profile godot -- \
   my-preview-server --host '{host}' --port '{port}'
 
 basaltwater-web preview list
-basaltwater-web doctor my-preview
+basaltwater-web forward doctor my-preview
 basaltwater-web preview stop my-preview
 ```
 
@@ -145,7 +146,7 @@ basaltwater-web forward add my-preview \
   --profile godot
 
 basaltwater-web forward list
-basaltwater-web doctor my-preview
+basaltwater-web forward doctor my-preview
 basaltwater-web forward remove my-preview
 ```
 
@@ -229,13 +230,11 @@ when exported games need browser smoke tests. The origin and publisher are
 system-wide, so browser-capable agents can test the same URL shown after
 publishing without a separate server process.
 
-When Codex or OpenCode is selected on the target, the web bundle adds the
-`basaltwater-godot-web` and `basaltwater-web-gateway` capability skills under
-`~/.agents/skills`, alongside the base workflow set. Both agents discover that
-shared standard location. The skills teach agents to publish and diagnose the
-managed origin, use loopback for live servers, and avoid direct Nginx/UFW edits
-or TLS verification bypasses. They contain no credentials and are not installed
-for a profile that selects neither agent. See
+The web bundle adds the `basaltwater-godot-web` and `basaltwater-web-gateway`
+skills to the selected providers' catalogs. Codex and OpenCode use
+`~/.agents/skills` and Claude Code uses `~/.claude/skills`. The skills cover
+site publication and verification, live previews, and the existing gateway
+access policy. See
 [Managed agent workflow skills](../agents/agent-skills.md) for the full catalog.
 
 ## Browser and physics testing

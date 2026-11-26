@@ -34,9 +34,11 @@ Treat the two ports as distinct: `--to` is the private loopback HTTP upstream;
 listener receives a managed UFW rule. Use the URL printed by `basaltwater-web`
 instead of substituting the upstream port or scheme.
 
-Use `basaltwater-web forward list`, `basaltwater-web doctor NAME`, and `basaltwater-web ca` for
-inspection. Remove a route when the associated service is no longer intended
-to be reachable:
+Use `basaltwater-web forward list`, `basaltwater-web forward doctor NAME`, and
+`basaltwater-web ca` for inspection. The forward doctor tests its exact listener
+even when a Godot snapshot has the same name. On an older gateway without that
+command, check the HTTPS URL from `basaltwater-web forward url NAME`.
+Remove a route when the associated service is no longer intended to be reachable:
 
 ```bash
 basaltwater-web forward remove NAME

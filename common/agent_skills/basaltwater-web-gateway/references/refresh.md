@@ -30,12 +30,15 @@ data. Follow the project's development instructions:
   Keep environment output private. Do not restart the gateway, T3 Code, or
   another project's service to refresh this application.
 - For a copied static publication, rebuild and publish the same site after the
-  final source edits, keeping its `static` or `godot` profile. Use `site verify`
-  as described in [static publications](static-sites.md).
+  final source edits. Reuse the exact site name, profile, and build or export
+  settings from the project. Verify the updated snapshot and its served files
+  with `site verify` as described in [static publications](static-sites.md).
 
 After a restart, check service activity and use `basaltwater-web preview url NAME`
 or `basaltwater-web forward url NAME` for the exact live HTTPS address. Verify
 a changed resource or behavior there. A Godot snapshot can share the same name
-on a different URL. Inspect the scoped service logs on failure and repair the
-cause within the development task. Report any unresolved refresh failure.
+on a different URL. Use [forward checks](forwards.md) for listener readiness
+and `basaltwater-web site doctor NAME` for snapshot readiness.
+Inspect the scoped service logs on failure and repair the cause within the
+development task. Report the verified URL or any unresolved refresh failure.
 Leave a working development site running.

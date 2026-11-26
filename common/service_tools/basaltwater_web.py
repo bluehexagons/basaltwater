@@ -172,7 +172,7 @@ def _parser() -> argparse.ArgumentParser:
     remove.add_argument("game")
     remove.add_argument("--yes", action="store_true", help="Confirm permanent removal")
 
-    doctor = commands.add_parser("doctor", help="Verify a managed HTTPS endpoint")
+    doctor = commands.add_parser("doctor", help="Legacy check for a Godot site or HTTPS forward")
     doctor.add_argument("name")
     doctor.add_argument("--json", action="store_true")
 
@@ -226,6 +226,9 @@ def _parser() -> argparse.ArgumentParser:
     forward_list.add_argument("--json", action="store_true")
     forward_url = forward_commands.add_parser("url", help="Print a forward URL")
     forward_url.add_argument("name")
+    forward_doctor = forward_commands.add_parser("doctor", help="Verify a named HTTPS forward")
+    forward_doctor.add_argument("name")
+    forward_doctor.add_argument("--json", action="store_true")
     forward_prune = forward_commands.add_parser(
         "prune",
         help="Remove confirmed dead forwards owned by the requesting user",
@@ -1158,26 +1161,33 @@ def _diagnose_site(account: pwd.struct_passwd, name: str, path: str, as_json: bo
     profile = static_web_publish.site_profile(path)
     wasm_url = None
     if profile == "godot":
-        wasm_url = urllib.parse.urljoin(url, "index.wasm")
-        for current_dir, _dirs, files in os.walk(path):
-            wasm_name = next((file_name for file_name in files if file_name.endswith(".wasm")), None)
-            if wasm_name:
-                relative = os.path.relpath(os.path.join(current_dir, wasm_name), path)
-                wasm_url = urllib.parse.urljoin(url, urllib.parse.quote(relative))
-                break
+        wasm_path = "index.wasm"
+        if not os.path.isfile(os.path.join(path, wasm_path)):
+            # Some older snapshots used a different name. Nginx blocks hidden paths.
+            for current_dir, directories, files in os.walk(path):
+                directories[:] = sorted(name for name in directories if not name.startswith("."))
+                wasm_name = next((name for name in sorted(files)
+                                  if not name.startswith(".") and name.endswith(".wasm")), None)
+                if wasm_name:
+                    wasm_path = os.path.relpath(os.path.join(current_dir, wasm_name), path)
+                    break
+        wasm_url = urllib.parse.urljoin(url, urllib.parse.quote(wasm_path))
     return _diagnose_endpoint(name, as_json, url, profile, wasm_url)
 
 
-def _doctor(name: str, as_json: bool) -> int:
+def _doctor(name: str, as_json: bool, *, forward_only: bool = False) -> int:
     _validate_name(name)
     account = _site_account()
-    path = _site_path(account, name)
-    if _site_exists(path) and static_web_publish.site_profile(path) == "godot":
-        return _diagnose_site(account, name, path, as_json)
+    if not forward_only:
+        path = _site_path(account, name)
+        if _site_exists(path) and static_web_publish.site_profile(path) == "godot":
+            return _diagnose_site(account, name, path, as_json)
     policy = _load_policy()
     routes = _load_forwards(policy)
     route = next((item for item in routes if item["name"] == name), None)
     if route is None:
+        if forward_only:
+            raise RuntimeError(f"HTTPS forward does not exist: {name}")
         raise RuntimeError(f"No published Godot site or HTTPS forward named {name}")
     if route["owner"] != account.pw_name:
         raise RuntimeError(f"HTTPS forward is owned by another user: {name}")
@@ -2007,7 +2017,8 @@ def _preview_start(args: argparse.Namespace) -> int:
         }
         if body_size is not None:
             route["max_body_size"] = body_size
-        _apply_forwards([*routes, route], policy)
+        updated_routes = [*routes, route]
+        _apply_forwards(updated_routes, policy)
         route_applied = True
         record = {
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -2044,7 +2055,7 @@ def _preview_start(args: argparse.Namespace) -> int:
             except FileNotFoundError:
                 pass
         raise
-    url = _forward_url(str(policy["base_url"]), listen)
+    url = _forward_route_url(policy, listen, _forward_access_sources(updated_routes, policy)[listen])
     result = {
         "listen": listen,
         "name": name,
@@ -2073,7 +2084,8 @@ def _preview_restart(args: argparse.Namespace) -> int:
     owner = _requesting_username(policy)
     record = _preview_for_user(args.name, _load_previews(policy), owner)
     _preview_project(str(record["project"]), pwd.getpwnam(owner))
-    route = next((item for item in _load_forwards(policy) if item["name"] == args.name), None)
+    routes = _load_forwards(policy)
+    route = next((item for item in routes if item["name"] == args.name), None)
     if route is None or any(
         route[key] != record[key]
         for key in ("owner", "target_host", "target_port", "listen", "profile")
@@ -2087,7 +2099,8 @@ def _preview_restart(args: argparse.Namespace) -> int:
     )
     if not _preview_active(unit):
         raise RuntimeError(f"Live-preview service is not active; inspect preview logs {args.name}")
-    url = _forward_url(str(policy["base_url"]), int(record["listen"]))
+    listen = int(route["listen"])
+    url = _forward_route_url(policy, listen, _forward_access_sources(routes, policy)[listen])
     if args.json:
         print(json.dumps({"name": args.name, "ok": True, "unit": unit, "url": url}, sort_keys=True))
     else:
@@ -2115,11 +2128,12 @@ def _preview_stop(name: str, as_json: bool) -> int:
 def _preview_list(as_json: bool) -> int:
     policy = _load_policy()
     account = pwd.getpwuid(os.getuid())
+    sources = _forward_access_sources(_load_forwards(policy), policy)
     previews = [
         {
             **preview,
             "active": _preview_active(str(preview["unit"])),
-            "url": _forward_url(str(policy["base_url"]), int(preview["listen"])),
+            "url": _forward_route_url(policy, int(preview["listen"]), sources.get(int(preview["listen"]))),
         }
         for preview in _load_previews(policy)
         if os.geteuid() == 0 or preview["owner"] == account.pw_name
@@ -2210,7 +2224,10 @@ def _preview_resolve(args: argparse.Namespace) -> int:
                 url = _forward_route_url(policy, listen, _forward_access_sources(routes, policy)[listen])
                 result.update(
                     component="gateway", url=url, name=route["name"],
-                    remediation="Check the HTTPS listener, VM routing and saved access-source policy; run basaltwater-web doctor " + str(route["name"]) + ".",
+                    remediation=(
+                        "Check the HTTPS listener, VM routing and saved access-source policy. "
+                        f"Run basaltwater-web forward doctor {route['name']}."
+                    ),
                 )
                 status, headers = _https_headers(url)
                 result["gateway_status"] = status
@@ -2249,7 +2266,9 @@ def _preview_print_url(name: str) -> int:
             raise RuntimeError(f"Live preview does not exist: {name}")
     else:
         record = _preview_for_user(name, previews, account.pw_name)
-    print(_forward_url(str(policy["base_url"]), int(record["listen"])))
+    listen = int(record["listen"])
+    sources = _forward_access_sources(_load_forwards(policy), policy)
+    print(_forward_route_url(policy, listen, sources.get(listen)))
     return 0
 
 
@@ -2377,6 +2396,8 @@ def main(argv: list[str] | None = None) -> int:
                 return _forward_list(args.json)
             if args.forward_command == "url":
                 return _forward_print_url(args.name)
+            if args.forward_command == "doctor":
+                return _doctor(args.name, args.json, forward_only=True)
             if args.forward_command == "prune":
                 return _forward_prune(args.yes, args.json)
             if args.forward_command == "reconcile":

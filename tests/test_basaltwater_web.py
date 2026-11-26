@@ -313,6 +313,35 @@ class TestInfraWebForwarding(unittest.TestCase):
 
         self.assertEqual(result, 1)
 
+    def test_forward_doctor_checks_the_named_listener_when_a_godot_site_shares_its_name(self) -> None:
+        route = {
+            "listen": 8444, "name": "demo", "owner": "agent", "profile": "general",
+            "target_host": "127.0.0.1", "target_port": 3000,
+        }
+        base = "https://games.example:8443/sites/agent/demo/"
+        listener = "https://localhost:8444/"
+        policy = {**_policy(), "route_access_sources": {"demo": []}}
+        with tempfile.TemporaryDirectory() as directory:
+            site = os.path.join(directory, "agent", "demo")
+            os.makedirs(site)
+            basaltwater_web.static_web_publish._write_godot_profile(site)
+            with (
+                patch.object(basaltwater_web.static_web_publish, "SITES_ROOT", directory),
+                patch.object(basaltwater_web.static_web_publish, "published_url", return_value=base),
+                patch.object(basaltwater_web, "_site_account", return_value=SimpleNamespace(pw_name="agent")),
+                patch.object(basaltwater_web, "_load_policy", return_value=policy),
+                patch.object(basaltwater_web, "_load_forwards", return_value=[route]),
+                patch.object(basaltwater_web, "_https_headers", return_value=(502, {})) as fetch,
+                redirect_stdout(StringIO()) as output,
+            ):
+                self.assertEqual(basaltwater_web.main(["forward", "doctor", "demo", "--json"]), 1)
+                fetch.assert_called_once_with(listener)
+                result = json.loads(output.getvalue())
+                self.assertEqual((result["url"], result["status"]), (listener, 502))
+                fetch.reset_mock()
+                self.assertEqual(basaltwater_web.main(["doctor", "demo", "--json"]), 1)
+                self.assertEqual([call.args[0] for call in fetch.call_args_list], [base, base + "index.wasm"])
+
 
 class TestInfraWebPreviews(unittest.TestCase):
     def setUp(self):
@@ -475,9 +504,10 @@ class TestInfraWebPreviews(unittest.TestCase):
                 pw_name="agent",
                 pw_uid=os.getuid(),
             )
+            policy = {**_policy(), "route_access_sources": {"demo": []}}
             with (
                 patch.object(basaltwater_web.os, "geteuid", return_value=0),
-                patch.object(basaltwater_web, "_load_policy", return_value=_policy()),
+                patch.object(basaltwater_web, "_load_policy", return_value=policy),
                 patch.object(basaltwater_web, "_requesting_username", return_value="agent"),
                 patch.object(basaltwater_web.pwd, "getpwnam", return_value=account),
                 patch.object(basaltwater_web, "_load_forwards", return_value=[]),
@@ -497,6 +527,7 @@ class TestInfraWebPreviews(unittest.TestCase):
                 patch.object(basaltwater_web, "_wait_for_upstream") as wait,
                 patch.object(basaltwater_web, "_apply_forwards") as apply_forwards,
                 patch.object(basaltwater_web, "_write_preview_state") as write_state,
+                redirect_stdout(StringIO()) as stdout,
             ):
                 result = basaltwater_web.main(
                     [
@@ -515,6 +546,7 @@ class TestInfraWebPreviews(unittest.TestCase):
                 )
 
         self.assertEqual(result, 0)
+        self.assertEqual(json.loads(stdout.getvalue())["url"], "https://localhost:8444/")
         wait.assert_called_once_with("127.0.0.1", 4173, "/", 30)
         routes = apply_forwards.call_args.args[0]
         self.assertEqual(routes[0]["target_port"], 4173)
@@ -649,6 +681,22 @@ class TestPreviewRestart(unittest.TestCase):
         self.active.assert_called_once_with(self.record["unit"])
         self.assertEqual(self.record, previous_record)
         self.assertEqual(self.route, previous_route)
+
+    def test_preview_commands_report_the_same_loopback_only_listener(self) -> None:
+        policy = {**_policy(), "route_access_sources": {"demo": []}}
+        url = "https://localhost:8444/"
+        with (
+            patch.object(basaltwater_web, "_load_policy", return_value=policy),
+            patch.object(basaltwater_web.pwd, "getpwuid", return_value=self.account),
+        ):
+            status, result = self.restart()
+            self.assertEqual((status, result["url"]), (0, url))
+            with redirect_stdout(StringIO()) as stdout:
+                self.assertEqual(basaltwater_web.main(["preview", "list", "--json"]), 0)
+            self.assertEqual(json.loads(stdout.getvalue())["previews"][0]["url"], url)
+            with redirect_stdout(StringIO()) as stdout:
+                self.assertEqual(basaltwater_web.main(["preview", "url", "demo"]), 0)
+            self.assertEqual(stdout.getvalue().strip(), url)
 
     def test_restart_refuses_another_owners_service(self) -> None:
         self.previews.return_value = [{**self.record, "owner": "other"}]
@@ -854,7 +902,7 @@ class TestPreviewResolution(unittest.TestCase):
         _, result = self.resolve()
         self.assertEqual(result["issue"], "http_error")
         self.assertEqual(result["gateway_status"], 502)
-        self.assertIn("basaltwater-web doctor game", result["remediation"])
+        self.assertIn("basaltwater-web forward doctor game", result["remediation"])
         self.assertEqual(result["url"], "https://games.example:8444/")
 
     def test_authenticated_forward_can_be_navigated(self) -> None:
@@ -1364,6 +1412,8 @@ class TestInfraWebGames(unittest.TestCase):
                 pass
             with open(os.path.join(game_root, "demo.wasm"), "w", encoding="utf-8"):
                 pass
+            with open(os.path.join(game_root, ".hidden.wasm"), "w", encoding="utf-8"):
+                pass
             account = SimpleNamespace(pw_uid=os.getuid(), pw_name="agent")
             response_headers = [
                 (
@@ -1388,11 +1438,14 @@ class TestInfraWebGames(unittest.TestCase):
                     "published_url",
                     return_value="https://games.example:8443/sites/agent/demo/",
                 ),
-                patch.object(basaltwater_web, "_https_headers", side_effect=response_headers),
+                patch.object(basaltwater_web, "_https_headers", side_effect=response_headers * 2) as fetch,
             ):
-                result = basaltwater_web.main(["site", "doctor", "demo", "--json"])
-
-        self.assertEqual(result, 0)
+                self.assertEqual(basaltwater_web.main(["site", "doctor", "demo", "--json"]), 0)
+                self.assertEqual(fetch.call_args.args[0], "https://games.example:8443/sites/agent/demo/demo.wasm")
+                with open(os.path.join(game_root, "index.wasm"), "w", encoding="utf-8"):
+                    pass
+                self.assertEqual(basaltwater_web.main(["site", "doctor", "demo", "--json"]), 0)
+                self.assertEqual(fetch.call_args.args[0], "https://games.example:8443/sites/agent/demo/index.wasm")
 
 
 if __name__ == "__main__":

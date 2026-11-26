@@ -55,7 +55,9 @@ and published development snapshots, including Godot exports.
 For a native T3 preview, keep the project's loopback development server current
 and verify the changed resource on its configured port.
 
-Verify a changed resource or behavior at the preview URL before handoff.
+Confirm that the route belongs to the active checkout. A copied publication
+and a live preview can share a name. Verify a changed resource or behavior at
+the exact URL for the route you refreshed before handoff.
 Check hot reload, rebuild and restart, or rebuild and republish the same
 development snapshot as appropriate. Leave the preview ready for the user
 and report its URL or any refresh failure. Keep the existing route and access

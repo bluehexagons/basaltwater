@@ -55,8 +55,10 @@ just because it contains an `index.html`; it can also contain development files
 that the native packager deliberately excludes.
 
 `site doctor` checks directory and root HTTP readiness. For freshness, use
-`site verify NAME --project PATH --output dist --json`: it compares the private
-receipt with the publication, local build inventory, and served HTTPS bytes.
+`site verify NAME --project PATH --json` to compare the private receipt with
+the publication, the recorded build output, and served HTTPS bytes. Pass
+`--output DIR` to select another build directory inside the project. Hidden
+path segments are checked on disk only and counted in `hidden_artifacts`.
 Publication stages the receipt with the snapshot, recording the observed source
 commit, dirty state, build mode, and artifact hashes. The mode-`0600` receipt is
 not public site metadata. `--local-only` omits HTTPS coverage.
@@ -68,7 +70,8 @@ unverified even when artifact bytes match. `--no-build` does not establish that
 the output was built from the recorded source. Verification does not execute
 JavaScript, follow client-side routes, or inspect service-worker caches.
 
-For an older gateway without the verifier, compare a changed public artifact:
+If an older gateway lacks the verifier or reports HTTP 403 for a hidden path,
+you can still check a changed public artifact:
 
 ```bash
 set -o pipefail

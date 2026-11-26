@@ -47,8 +47,10 @@ This preserves its ports, URL, saved command, profile, and upload limit. Build a
 precompiled executable first. See [refreshing a development site](refresh.md)
 for user services and freshness verification.
 
-Use `basaltwater-web preview list`, `basaltwater-web preview logs NAME`, and `basaltwater-web
-doctor NAME` for inspection. Stop a preview only when explicitly requested:
+Use `basaltwater-web preview list` and `basaltwater-web preview logs NAME` to
+inspect the service. `basaltwater-web forward doctor NAME` checks its HTTPS
+listener. See [forward checks](forwards.md) for older installations. Stop a
+preview only when explicitly requested:
 
 ```bash
 basaltwater-web preview stop NAME

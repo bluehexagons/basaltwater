@@ -20,6 +20,7 @@ See [project standards](docs/agents/project-standards.md) and
 | Change repository code or run checks | [Contributor guide](docs/agents/contributing/README.md) |
 | Find operator commands or setup procedures | [Documentation index](docs/README.md) |
 | Operate a managed coding VM or workstation | [Agent systems](docs/agents/README.md) |
+| Refresh an existing development preview | [Preview refresh workflow](common/agent_skills/basaltwater-project-development/SKILL.md#keep-development-previews-current) |
 | Delegate work or select a model | [Subagent workflows](docs/agents/agent-subagents.md) and the live session catalog |
 
 For requests to iterate or keep improving, use the
@@ -27,6 +28,15 @@ For requests to iterate or keep improving, use the
 to run successive review and improvement passes within the request's scope.
 Use the [publication checks](common/agent_skills/basaltwater-project-development/SKILL.md#publish-authorized-work)
 when asked to commit or push.
+
+## Development previews
+
+When editing a website, web app, or browser game, check for an existing
+authorized preview for the active checkout. Refresh it, verify a changed
+resource at its existing URL, and leave it running. Follow the preview refresh
+workflow for the project's loopback server, live gateway route, or published
+site snapshot. Keep the existing access settings and report the verified URL
+or any refresh failure.
 
 ## Before Editing
 

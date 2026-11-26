@@ -17,8 +17,8 @@ Verify the printed fingerprint before installing the public CA. See
 [Client CA trust](client-ca-trust.md) for safe transfer, desktop, ChromeOS, and
 mobile enrollment, application-specific trust limitations, and removal.
 
-Do not disable TLS verification. `site doctor` and the general `doctor`
-command verify the same trusted HTTPS endpoints that browsers should use. For
+Keep TLS verification enabled. Use `site doctor` for a published snapshot and
+`forward doctor` for a named HTTPS listener, including supervised previews. For
 an authenticated forward, a `401` response with a `WWW-Authenticate` challenge
 confirms that the protected endpoint is reachable; other error responses still
 fail the check.
@@ -103,4 +103,4 @@ policy. T3 and pairing authentication still apply.
   address-family limits.
 
 Use `basaltwater-web forward reconcile` after repairing managed state, and
-`basaltwater-web doctor NAME` to validate a reachable forwarded endpoint.
+`basaltwater-web forward doctor NAME` to validate a reachable forwarded endpoint.

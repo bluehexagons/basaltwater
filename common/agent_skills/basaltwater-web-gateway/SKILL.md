@@ -13,11 +13,11 @@ Nginx/firewall changes. Run as the configured owner without sudo.
 
 | Task | Read |
 | --- | --- |
-| Publish or verify a built snapshot | [Static sites](references/static-sites.md) |
+| Publish or verify a copied site snapshot | [Static sites](references/static-sites.md) |
 | Start or restart a supervised live project | [Managed previews](references/previews.md) |
 | Provide a separate HTTPS URL for an existing service | [Live forwards](references/forwards.md) |
 | Keep an already configured development site current after edits | [Refresh](references/refresh.md) |
-| Godot exports | Installed Godot web skill |
+| Build or publish a Godot export with the `godot` site profile | Installed Godot web skill |
 
 When editing a project with an already authorized local site, handle its needed
 build, publication, or restart yourself; do not leave the user a manual restart.
