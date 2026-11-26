@@ -122,7 +122,7 @@ def _check_tool_version(selection: dict[str, str], cwd: str, environment: dict[s
 
 @termination_cleanup()
 def check_recipe(args: argparse.Namespace, *, expected_revision: str | None = None,
-                 settings_snapshot: dict | None = None) -> dict:
+                 settings_snapshot: dict | None = None, baseline_recipe: dict | None = None) -> dict:
     """Execute one reviewed declaration and retain the requested evidence."""
     if type(args.timeout) is not int or not 1 <= args.timeout <= 3600:
         raise ValueError("Visual check timeout must be from 1 through 3600 seconds")
@@ -142,6 +142,10 @@ def check_recipe(args: argparse.Namespace, *, expected_revision: str | None = No
         raise ValueError(f"Declare recipe {args.recipe!r} in basaltwater-agent.json before running it")
     if recipe["missing_tools"]:
         raise ValueError("Missing recipe tools: " + ", ".join(recipe["missing_tools"]))
+    recipe_definition = {"argv": recipe["argv"], "directory": recipe["directory"],
+                         "requires": sorted(recipe["requires"]), "version_check": recipe.get("version_check")}
+    if prepare:
+        recipe_definition["godot_prepare"] = recipe.get("godot_prepare")
     cwd = os.path.normpath(os.path.join(manifest["workspace"]["repository"], recipe["directory"]))
     validate_filesystem_path(cwd, must_exist=True)
     if not os.path.isdir(cwd):
@@ -165,6 +169,7 @@ def check_recipe(args: argparse.Namespace, *, expected_revision: str | None = No
     write_json_atomic(settings_path, settings, mode=0o400, indent=None)
     report = {
         "schema_version": 1, "ok": False, "status": "running", "recipe": args.recipe,
+        "recipe_definition": recipe_definition,
         "description": recipe["description"], "command": recipe["argv"], "cwd": cwd,
         "directory": directory, "report": report_path, "log": log_path,
         "environment": environment_path, "settings": settings_path,
@@ -187,6 +192,11 @@ def check_recipe(args: argparse.Namespace, *, expected_revision: str | None = No
     try:
         snapshot = {"manifest": manifest, "host": host_context(environment)}
         write_json_atomic(environment_path, snapshot)
+        if baseline_recipe is not None:
+            different = [field for field, value in recipe_definition.items() if value != baseline_recipe.get(field)]
+            if different:
+                report["recipe_differences"] = different
+                raise ValueError("Recipe declaration differs from the baseline: " + ", ".join(different))
         if selection := recipe.get("version_check"):
             environment.pop("BASALTWATER_VISUAL_TOOL", None)
             version = _check_tool_version(selection, cwd, environment)
@@ -212,11 +222,15 @@ def check_recipe(args: argparse.Namespace, *, expected_revision: str | None = No
         descriptor = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "wb", buffering=0) as log:
             written = 0
+            log_line_tail = ""
 
             def record_output(chunk: str) -> None:
-                nonlocal written, device_lost
-                if not device_lost and DEVICE_LOST.search(chunk):
-                    device_lost = True
+                nonlocal written, device_lost, log_line_tail
+                if not device_lost:
+                    output = log_line_tail + chunk
+                    device_lost = bool(DEVICE_LOST.search(output))
+                    # Streaming may split a long line in the middle of the diagnostic.
+                    log_line_tail = output.rsplit("\n", 1)[-1][-256:]
                 encoded = chunk.encode("utf-8", errors="replace")
                 retained = encoded[:max(0, LOG_LIMIT - written)]
                 log.write(retained)
@@ -238,6 +252,9 @@ def check_recipe(args: argparse.Namespace, *, expected_revision: str | None = No
                     )
                     report["preparation"]["status"] = preparation["status"]
                     write_json_atomic(report_path, report)
+                    if device_lost:
+                        raise RuntimeError(f"Vulkan reported device loss during Godot import; inspect {log_path}")
+                    log_line_tail = ""
                 phase = "execution"
                 returncode = run_streamed(
                     argv, cwd=cwd, env=environment, timeout=args.timeout, on_output=record_output, pass_fds=descriptors,
@@ -295,10 +312,11 @@ def check_recipe(args: argparse.Namespace, *, expected_revision: str | None = No
         if renderer_error := cases.pop("renderer_error", None):
             report["renderer_error"] = renderer_error
         report["case_results"] = {"status": "complete" if cases["complete"] else "partial", "path": str(case_path), **cases}
+    if report["ok"] and (renderer_error := report.get("renderer_error")):
+        report.update(ok=False, status="failed", failure_stage="renderer", error=renderer_error["message"])
     if report["ok"] and "case_results" in report:
         cases = report["case_results"]
-        if (cases["status"] != "complete" or any(case["status"] == "failed" for case in cases.get("cases", []))
-                or report.get("renderer_error", {}).get("source") == "project"):
+        if cases["status"] != "complete" or any(case["status"] == "failed" for case in cases.get("cases", [])):
             report.update(ok=False, status="failed", failure_stage="case-results",
                           error=f"Recipe reported unsuccessful or invalid case results; inspect {case_path}")
     if "renderer_error" in report:

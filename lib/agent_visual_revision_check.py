@@ -16,14 +16,14 @@ from lib.godot_qa_prepare import bundle_path
 from lib.remote_utils import is_dry_run
 
 
-def _case_differences(before: dict, after: dict) -> list[dict]:
+def _case_differences(before: dict, after: dict, *, comparable: bool) -> list[dict]:
     outcomes = {
         ("passed", "passed"): "passed",
         ("failed", "failed"): "persisted",
         ("passed", "failed"): "regressed",
         ("failed", "passed"): "fixed",
         ("skipped", "skipped"): "skipped",
-    }
+    } if comparable else {}
     baseline = {case["id"]: case["status"] for case in before.get("cases", [])}
     candidate = {case["id"]: case["status"] for case in after.get("cases", [])}
     return [{"id": case, "before": baseline.get(case), "after": candidate.get(case),
@@ -62,6 +62,7 @@ def check_revisions(args: argparse.Namespace) -> dict:
               "comparison_report": report_path, "settings": settings_path, "directory": directory,
               "checks": {}, "cases": []}
     checkpoints = {}
+    baseline_recipe = None
     assertions_only = not (args.verify_evidence or args.require_artifact_kind or args.review_manifest)
     try:
         for side, commit in commits.items():
@@ -69,6 +70,9 @@ def check_revisions(args: argparse.Namespace) -> dict:
             record = {"revision": commit, "requested_revision": getattr(args, side), "status": "creating-worktree",
                       "check_report": os.path.join(output, "check.json"), "log": os.path.join(output, "check.log")}
             report["checks"][side] = record
+            if side == "after" and baseline_recipe is None:
+                record.update(status="not-run", comparable=False, error="Baseline recipe declaration was unavailable")
+                continue
             write_json_atomic(report_path, report)
             try:
                 worktree = agent_workspace.create_agent_worktree(repository, f"{run_id}-{side}", base=commit)
@@ -77,11 +81,13 @@ def check_revisions(args: argparse.Namespace) -> dict:
                 result = check_recipe(argparse.Namespace(
                     **{**vars(args), "repository": worktree["path"], "settings": settings_path,
                        "output": output, "asset_bundle": str(bundle) if bundle is not None else None},
-                ), expected_revision=commit, settings_snapshot=settings)
+                ), expected_revision=commit, settings_snapshot=settings, baseline_recipe=baseline_recipe)
+                if side == "before":
+                    baseline_recipe = result["recipe_definition"]
                 checkpoints[side] = result.get("case_results", {})
                 record.update(status=result["status"], returncode=result["returncode"],
                               comparable=_comparable(result, assertions_only=assertions_only))
-                for field in ("error", "renderer_error", "preparation"):
+                for field in ("error", "renderer_error", "preparation", "recipe_differences"):
                     if field in result:
                         record[field] = result[field]
                 if result["status"] == "interrupted":
@@ -92,10 +98,12 @@ def check_revisions(args: argparse.Namespace) -> dict:
                 write_json_atomic(report_path, report)
             if not _settings_unchanged(settings_path, settings):
                 raise RuntimeError("The recipe changed the shared settings; comparison is inconsistent")
-        report["cases"] = _case_differences(checkpoints.get("before", {}), checkpoints.get("after", {}))
+        comparable = all(record["comparable"] for record in report["checks"].values())
+        report["cases"] = _case_differences(
+            checkpoints.get("before", {}), checkpoints.get("after", {}), comparable=comparable,
+        )
         outcomes = {case["outcome"] for case in report["cases"]}
-        if (not all(record["comparable"] for record in report["checks"].values())
-                or "unverified" in outcomes or not outcomes - {"skipped"}):
+        if not comparable or "unverified" in outcomes or not outcomes - {"skipped"}:
             report.update(status="incomplete", error="Case comparison is incomplete; inspect each check report")
         elif "regressed" in outcomes:
             report.update(status="regressed", error="One or more cases regressed")
@@ -106,5 +114,7 @@ def check_revisions(args: argparse.Namespace) -> dict:
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
         report.update(status="incomplete", error=str(exc))
     finally:
+        if not report["cases"]:
+            report["cases"] = _case_differences(checkpoints.get("before", {}), checkpoints.get("after", {}), comparable=False)
         write_json_atomic(report_path, report)
     return report

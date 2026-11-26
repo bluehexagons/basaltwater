@@ -299,13 +299,17 @@ with the same settings snapshot. The worktrees, import logs and checks are
 retained. Use `develop status TASK_ID --json` to find `comparison_report`,
 which links to each side's log and report as it runs. Match stable case IDs
 using the [case checkpoint format](visual-comparison-capture.md#retain-case-results-and-captures).
-Both revisions must declare the named recipe. Omit `--prepare` for a recipe
+Both revisions must declare the named recipe with matching argv, working
+directory, tool requirements, and tool version check. With `--prepare`, the
+Godot preparation declaration must also match. A declaration mismatch is
+reported before launching the candidate recipe. Omit `--prepare` for a recipe
 that handles its own prerequisites.
 
 The comparison classifies `regressed`, `persisted`, `fixed`, and unchanged
-cases. Missing or unfinished cases remain `unverified`. Complete assertion
-failures on the baseline still provide comparison evidence. Incomplete runs,
-renderer failures and regressions make the comparison exit nonzero. A complete
+cases. An incomplete run or renderer failure leaves case comparisons `unverified`
+while preserving the observed status from each side. Complete assertion failures
+on the baseline still provide comparison evidence. Incomplete runs, renderer
+failures and regressions make the comparison exit nonzero. A complete
 pair with persistent failures and no regressions can pass the comparison.
 Inspect both check reports for actual renderer, settings and test outcomes.
 

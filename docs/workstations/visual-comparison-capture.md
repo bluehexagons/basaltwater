@@ -129,7 +129,8 @@ assertion failures with a nonzero recipe exit, even when every case ran.
 including after a crash or timeout. Report renderer failures with the optional
 `renderer_error` field. The checker also recognizes Vulkan device-loss reports
 in streamed logs and lists saved images from a bounded scan of the evidence
-directory. Existing recipes can get that diagnostic without case checkpoints.
+directory. A renderer error fails the check even when the process exited zero.
+Existing recipes can get that diagnostic without case checkpoints.
 An image path establishes that a file was saved. Case coverage comes from the
 recipe's checkpoint.
 

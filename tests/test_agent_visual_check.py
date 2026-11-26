@@ -158,7 +158,8 @@ class TestAgentVisualCheck(unittest.TestCase):
                 {"id": "resize", "status": "incomplete"},
             ]})
             kwargs["on_output"]("Ordinary log output\n")
-            kwargs["on_output"]("ERROR: VK_ERROR_DEVICE_LOST\n")
+            kwargs["on_output"]("ERROR: VK_ERROR_")
+            kwargs["on_output"]("DEVICE_LOST\n")
             return 7
 
         self.execute.side_effect = renderer_crash
@@ -170,6 +171,23 @@ class TestAgentVisualCheck(unittest.TestCase):
         self.assertEqual(result["case_results"]["status"], "partial")
         self.assertEqual(result["case_results"]["last_completed_case"], "gameplay")
         self.assertEqual(result["case_results"]["cases"][0]["captures"], [str(image)])
+        self.assertEqual(result["saved_captures"], [str(image)])
+
+    def test_renderer_loss_overrides_zero_exit_and_keeps_saved_captures(self) -> None:
+        image = self.output / "before-resize.png"
+
+        def execute(argv, **kwargs):
+            image.write_bytes(png_bytes())
+            kwargs["on_output"]("Vulkan: device was lost during resize\n")
+            return 0
+
+        self.execute.side_effect = execute
+        result = agent_visual_check.check_recipe(self.args())
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["returncode"], 0)
+        self.assertEqual(result["failure_stage"], "renderer")
+        self.assertEqual(result["renderer_error"]["source"], "log")
         self.assertEqual(result["saved_captures"], [str(image)])
 
     def test_pair_runs_both_pinned_checks_with_one_settings_snapshot_and_matches_cases(self) -> None:
@@ -214,6 +232,77 @@ class TestAgentVisualCheck(unittest.TestCase):
                                         (candidate, {"frame": 180, "resolution": [3840, 2160]})])
         self.assertTrue(all(Path(check["check_report"]).is_file() for check in result["checks"].values()))
         self.assertEqual(json.loads(Path(result["comparison_report"]).read_text()), result)
+
+    def test_pair_marks_cases_unverified_after_a_renderer_failure_or_recipe_change(self) -> None:
+        baseline, candidate = self.root / "baseline", self.root / "candidate"
+        baseline.mkdir()
+        candidate.mkdir()
+        for reason in ("renderer", "declaration"):
+            with self.subTest(reason=reason):
+                pair_output = self.root / reason
+                args = self.parser.parse_args([
+                    "agent", "visuals", "check-revisions", "graphics", "--repository", str(self.project),
+                    "--before", "main", "--after", "candidate", "--output", str(pair_output), "--json",
+                ])
+
+                def inspect(repository):
+                    after = repository == str(candidate)
+                    recipe = self.manifest["recipes"]["graphics"]
+                    if after and reason == "declaration":
+                        recipe = {**recipe, "argv": [*recipe["argv"], "--another-fixture"]}
+                    return {"workspace": {"repository": repository, "commit": ("b" if after else "a") * 40,
+                                          "dirty": False}, "recipes": {"graphics": recipe}}
+
+                def execute(argv, *, cwd, env, on_output, **kwargs):
+                    after = Path(cwd) == candidate
+                    if after:
+                        on_output("ERROR: VK_ERROR_DEVICE_LOST\n")
+                    write_json_atomic(env["BASALTWATER_VISUAL_CASES"], {"version": 1, "complete": not after, "cases": [
+                        {"id": "gameplay", "status": "failed" if after else "passed"},
+                    ]})
+                    return 1 if after else 0
+
+                self.inspect.side_effect = inspect
+                self.execute.side_effect = execute
+                self.execute.reset_mock()
+                with (patch.object(agent_workspace, "_repository_root", return_value=str(self.project)),
+                      patch.object(agent_workspace, "_validate_base", side_effect=["a" * 40, "b" * 40]),
+                      patch.object(agent_workspace, "create_agent_worktree", side_effect=[{"path": str(baseline)},
+                                   {"path": str(candidate)}]), redirect_stdout(output := StringIO())):
+                    self.assertEqual(agent_cli.run_agent_command(args), 1)
+                report = json.loads(output.getvalue())
+                self.assertEqual(report["status"], "incomplete")
+                self.assertTrue(report["checks"]["before"]["comparable"])
+                after = report["checks"]["after"]
+                self.assertFalse(after["comparable"])
+                self.assertEqual(report["cases"], [{"id": "gameplay", "before": "passed",
+                    "after": "failed" if reason == "renderer" else None, "outcome": "unverified"}])
+                if reason == "renderer":
+                    self.assertEqual(after["renderer_error"]["code"], "vulkan-device-lost")
+                    self.assertEqual(self.execute.call_count, 2)
+                else:
+                    self.assertEqual(after["recipe_differences"], ["argv"])
+                    self.execute.assert_called_once()
+
+    def test_pair_skips_candidate_when_baseline_declaration_is_unavailable(self) -> None:
+        args = self.parser.parse_args([
+            "agent", "visuals", "check-revisions", "graphics", "--repository", str(self.project),
+            "--before", "main", "--after", "candidate", "--output", str(self.output), "--json",
+        ])
+        self.inspect.return_value = {
+            "workspace": {"repository": str(self.project), "commit": "a" * 40, "dirty": False},
+            "recipes": {},
+        }
+        with (patch.object(agent_workspace, "_repository_root", return_value=str(self.project)),
+              patch.object(agent_workspace, "_validate_base", side_effect=["a" * 40, "b" * 40]),
+              patch.object(agent_workspace, "create_agent_worktree", return_value={"path": str(self.project)}) as create,
+              redirect_stdout(output := StringIO())):
+            self.assertEqual(agent_cli.run_agent_command(args), 1)
+        report = json.loads(output.getvalue())
+        self.assertEqual(report["status"], "incomplete")
+        self.assertEqual(report["checks"]["after"]["status"], "not-run")
+        create.assert_called_once()
+        self.execute.assert_not_called()
 
     def test_pinned_executable_reaches_the_recipe_after_a_bounded_probe(self) -> None:
         version = {"executable": "blender", "expected": "Blender 4.5.2"}
