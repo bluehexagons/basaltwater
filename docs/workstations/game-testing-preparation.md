@@ -62,6 +62,13 @@ Refresh affected assumptions only. For each changed premise, record old/new
 versions or unknown, the source, checks needed and their state: reviewed,
 live check pending, verified, or blocked. A documentation update is no live retest.
 
+An auto-updating launcher can install a different build when starting a game.
+After each launcher start, record the installed build ID once updates finish and
+confirm the running version from the title screen or startup log when available.
+Record the packaged build ID and digest separately for runs using a staged
+export. If the launcher and staged export differ, report their results under
+their respective builds and repeat comparisons that require matching builds.
+
 Retest a known finding under its original trigger when safe, then check nearby
 normal behavior. Declare repetition/time limits first and report reproduction
 as X/Y. If the trigger is unreachable, conditions differ or visual media is
