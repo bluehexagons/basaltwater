@@ -190,6 +190,31 @@ class TestAgentBrowser(unittest.TestCase):
         self.assertFalse(result["rendering_verified"])
         self.assertEqual(self.execute.call_count, 1)
 
+    def test_doctor_reports_missing_payload_and_native_firefox_together(self) -> None:
+        self.package(self.project, "1.57.2")
+        self.which.side_effect = lambda name: "/usr/bin/firefox-esr" if name == "firefox-esr" else None
+        self.execute.side_effect = [
+            subprocess.CompletedProcess([], 1, "", "Browser executable missing: /cache/firefox\n" + "x" * 2500),
+            subprocess.CompletedProcess([], 0, "Mozilla Firefox 140.0esr", ""),
+        ]
+        args = argparse.Namespace(engine="firefox", context="project", project=str(self.project),
+                                  browser_command="doctor", json=True)
+        with redirect_stdout(output := StringIO()), patch.object(agent_browser, "is_cachyos", return_value=False):
+            self.assertEqual(agent_browser.run_browser_command(args), 1)
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["issue"], "browser_payload_missing")
+        self.assertEqual(result["provisioning_argv"], [
+            "basaltw", "agent", "browser", "install", "--engine", "firefox", "--context",
+            "project", "--project", str(self.project), "--json",
+        ])
+        native = result["desktop"][0]
+        self.assertEqual(native["browser_version"], "Mozilla Firefox 140.0esr")
+        self.assertIsNone(native["launchable"])
+        self.assertEqual(native["test_argv"], [
+            "basaltw", "desktop", "develop", "browser", "--browser", "firefox-esr", "--project", str(self.project),
+        ])
+        self.assertEqual(self.execute.call_count, 2)
+
     def test_missing_runtime_does_not_fall_back_to_managed_or_global_modules(self) -> None:
         self.package(self.managed, "1.60.0")
         result = agent_browser.check_browser("firefox", "project", str(self.project), install=True)

@@ -73,6 +73,75 @@ class TestDevelopmentTasks(unittest.TestCase):
             "training": {"argv": [str(self.engine)], "seed": {"data/game/fixture.txt": source}},
         }}))
 
+    def test_disposable_browser_launch_uses_debian_supervisor_and_private_downloads(self):
+        generation = "b" * 32
+        self.which.side_effect = {"firefox-esr": str(self.engine)}.get
+        parser = argparse.ArgumentParser()
+        desktop_cli.add_desktop_subparser(parser.add_subparsers())
+        argv = ["desktop", "develop", "browser", "--project", str(self.project),
+                "--url", "https://example.test/upload"]
+        current = {"state": "running", "generation": generation, "control_revision": "c" * 32,
+                   "capabilities": ["supervised-development", "disposable-browser"]}
+        with (
+            patch.object(debian_development, "supervisor_environment", return_value=({"DISPLAY": ":9"}, "ready")),
+            patch.object(session_runtime, "status", return_value=current),
+            patch.object(session_runtime, "request",
+                         side_effect=lambda payload: debian_development.handle_task(payload, generation)),
+        ):
+            preview = debian_development.request_task(parser.parse_args([*argv, "--dry-run"]))
+            self.assertEqual(preview["argv"][1:4], ["-no-remote", "-profile", "<task>/profile"])
+            self.assertFalse((self.home / ".local").exists())
+            self.probe.assert_not_called()
+            results = [debian_development.request_task(parser.parse_args(argv)) for _ in range(2)]
+        first, second = results
+        self.assertNotEqual(first["profile"], second["profile"])
+        self.assertNotEqual(first["downloads"], second["downloads"])
+        self.assertEqual(first["session_generation"], generation)
+        task = development.load_task(Path(first["directory"]))
+        self.assertEqual(task["argv"], [
+            str(self.engine), "-no-remote", "-profile", first["profile"], "-url", "https://example.test/upload",
+        ])
+        for name in ("profile", "downloads"):
+            self.assertEqual(stat.S_IMODE(Path(first[name]).stat().st_mode), 0o700)
+        prefs = Path(first["profile"]) / "user.js"
+        self.assertIn(f'user_pref("browser.download.dir", {json.dumps(first["downloads"])});', prefs.read_text())
+
+    def test_browser_cleanup_requires_verified_exit_and_retains_downloads_by_default(self):
+        self.which.side_effect = {"chromium": str(self.engine)}.get
+        result = self.launch(kind="browser", browser="chromium", url="http://127.0.0.1:8080/")
+        task_id = result["task"]
+        profile, downloads = Path(result["profile"]), Path(result["downloads"])
+        preferences = json.loads((profile / "Default" / "Preferences").read_text())
+        self.assertEqual(preferences["download"]["default_directory"], str(downloads))
+        (downloads / "evidence.txt").write_text("downloaded")
+        with self.assertRaisesRegex(RuntimeError, "exit is unverified"):
+            development.cleanup_browser(task_id)
+        write_json_atomic(result["report"], {"returncode": 0, "log_truncated": False})
+        with patch.object(development, "_unit", return_value={
+            "LoadState": "loaded", "ActiveState": "inactive", "MainPID": "0", "ControlGroup": "/active",
+        }):
+            with self.assertRaisesRegex(RuntimeError, "may still have processes"):
+                development.cleanup_browser(task_id)
+        with patch.object(development, "_unit", return_value={"LoadState": "not-found"}):
+            self.assertTrue(development.cleanup_browser(task_id, dry_run=True)["dry_run"])
+            self.assertTrue(profile.exists())
+            development.cleanup_browser(task_id)
+            self.assertFalse(profile.exists())
+            self.assertTrue((downloads / "evidence.txt").exists())
+            self.assertEqual(development.cleanup_browser(task_id, include_downloads=True)["paths"], [str(downloads)])
+            self.assertEqual(development.cleanup_browser(task_id, include_downloads=True)["paths"], [])
+        self.assertTrue(Path(result["report"]).is_file())
+
+    def test_browser_refuses_option_like_urls_and_unknown_applications_before_state_creation(self):
+        for browser, url in (
+            ("firefox", "--profile"), ("firefox", "https://person@example.test/"),
+            ("firefox", "https://example.test:0/"), ("arbitrary", "about:blank"),
+        ):
+            with self.subTest(browser=browser, url=url), self.assertRaises(ValueError):
+                self.launch(kind="browser", browser=browser, url=url)
+        self.assertFalse((self.home / ".local").exists())
+        self.probe.assert_not_called()
+
     def test_playtest_seeds_new_profiles_attaches_before_submit_and_passes_private_paths(self):
         self.playtest_manifest()
         (self.project / "fixture.txt").write_text("training")

@@ -33,6 +33,43 @@ For an isolated manual run, use [a declared playtest profile](cachyos-developmen
 Start the recorder for the same project, then run `desktop develop playtest PROFILE --project PATH`
 through the updated supervisor. The task is attached before launch.
 
+## Test with a disposable browser
+
+Use `develop browser` for a fresh native browser profile and a private download
+directory. On Debian the running supervisor must advertise `disposable-browser`.
+On CachyOS use `basaltw desktop --native develop browser` in the existing KDE
+session and follow the usual portal rules for screen control.
+
+```bash
+basaltw agent manifest --application firefox-esr --json
+basaltw desktop develop browser --browser firefox-esr --project /absolute/project \
+  --url https://example.test/ --json
+basaltw desktop develop status TASK_ID --json
+basaltw desktop wait --pid LAUNCH_PID --generation GENERATION
+```
+
+`--browser firefox` tries Firefox first and accepts Firefox ESR when only the
+ESR command is installed. Native Chromium, Chrome and Brave executables are
+also supported. Use `--dry-run` to validate a launch. The task reports its
+`profile`, `downloads`, and initial `launch_pid` once the worker starts.
+
+Use the window receipt and its current identity before capture or input. A
+file picker can appear in a separate window. Inspect `desktop windows` after
+opening it and confirm the dialog belongs to the test before targeting it.
+If AT-SPI provides no tree, capture the verified window and use the normal
+observation-bound input workflow. Verify the downloaded file in the task's
+`downloads` directory before ending the test.
+
+```bash
+basaltw desktop develop wait TASK_ID --timeout 30 --json
+basaltw desktop develop cleanup-browser TASK_ID --json
+```
+
+Close the owned browser normally before waiting, or use the task-specific stop
+command. Cleanup requires verified exit and removes the private profile.
+Collect any required files before adding `--include-downloads` to remove the
+download directory too. Task records and logs remain available.
+
 ## Environment and ownership
 
 The actual shared-session supervisor supplies its local X11 display, validated

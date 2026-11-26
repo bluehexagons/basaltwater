@@ -445,7 +445,8 @@ class DesktopSession:
             "pid": self.process.pid,
             "control_active": False,
             "input_capabilities": ["observation-input", "server-paced-text"],
-            "capabilities": ["supervised-development", "manual-evidence", "receipt-mapping", "recorded-playtest"],
+            "capabilities": ["supervised-development", "manual-evidence", "receipt-mapping", "recorded-playtest",
+                             "disposable-browser"],
             "observation_id": self.observation.id if self.observation is not None and state == "running" else None,
             "capture_freshness": self.observation.freshness() if self.observation is not None and state == "running"
                                  else capture_freshness(),

@@ -113,6 +113,26 @@ class ManifestOutputTests(unittest.TestCase):
         self.assertNotIn("skills", result)
         self.assertNotIn("browser", result)
 
+    def test_firefox_esr_selector_reports_the_supervised_browser_command(self) -> None:
+        parser = argparse.ArgumentParser()
+        add_manifest_parser(parser.add_subparsers())
+        with (tempfile.TemporaryDirectory() as root,
+              patch("lib.agent_workspace._repository_root", return_value=root),
+              patch("lib.agent_environment.is_cachyos", return_value=False),
+              patch("lib.agent_environment.platform.release", return_value="6.12-debian"),
+              patch("lib.agent_environment.inspect_installation_provenance", return_value={}),
+              patch("lib.agent_environment.inspect_skill_catalogs", return_value={"catalogs": []}),
+              patch("lib.agent_environment.shutil.which",
+                    side_effect={"firefox-esr": "/usr/bin/firefox-esr"}.get),
+              patch("sys.stdout", new_callable=io.StringIO) as output):
+            args = parser.parse_args(["manifest", "--application", "firefox-esr", "--json"])
+            self.assertEqual(run_manifest_command(args), 0)
+        apps = json.loads(output.getvalue())["desktop_applications"]
+        self.assertEqual(list(apps), ["firefox-esr"])
+        self.assertEqual(apps["firefox-esr"]["launch_argv"], [
+            "basaltw", "desktop", "develop", "browser", "--browser", "firefox-esr", "--project", root,
+        ])
+
     def test_desktop_scope_and_repeated_applications(self) -> None:
         result = self.run_cli("--capability", "desktop")
         self.assertEqual(set(result["desktop_applications"]), {"blender", "inkscape"})

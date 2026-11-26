@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import urllib.parse
 
+from desktop.browser_session import BROWSER_APPLICATIONS, supervised_browser_argv
 from lib import agent_workspace
 from lib.agent_browser import browser_context_inventory
 from lib.agent_skill_catalog import inspect_skill_catalogs
@@ -123,6 +124,16 @@ DESKTOP_APPLICATIONS = {
         "workflows": ["remote desktop connections"],
         "instructions": ["Use the project's intended connection and native protocol plugin. Test connectivity and Secret Service integration without copying credentials; installation does not create a remote desktop server."],
     },
+    **{
+        name: {
+            "workflows": ["native browser tests", "file picker and download checks"],
+            "instructions": [
+                "Use the supervised browser launch with --url URL to test with a private profile and downloads.",
+                "Use the task status and fresh window observations with the desktop skill before capture or input.",
+            ],
+        }
+        for name in BROWSER_APPLICATIONS["firefox"]
+    },
 }
 TOOLS = (
     "git", "gh", "codex", "claude", "opencode", "node", "npm", "yarn",
@@ -134,7 +145,7 @@ TOOLS = (
     "sox", "soxi", "arecord", "aplay", "amidi", "aconnect", "pactl", "paplay", "parecord",
     "aseqdump", "pw-cli", "pw-dump", "pw-top", "pw-play", "pw-record", "wpctl",
     *MUSESCORE_EXECUTABLES,
-    "rg", "jq", "aws", "basaltwater-web", "basaltwater-playwright-mcp", "firefox", "firefox-esr", "butler", "steamcmd", *DESKTOP_APPLICATIONS,
+    "rg", "jq", "aws", "basaltwater-web", "basaltwater-playwright-mcp", "butler", "steamcmd", *DESKTOP_APPLICATIONS,
 )
 DESKTOP_GUIDE = "https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/desktop-development.md"
 PUBLISHING_GUIDE = "https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/game-publishing.md"
@@ -448,7 +459,11 @@ def inspect_environment(repository: str, *, project_runtime: bool = False,
         name: {**guidance,
                "instructions": [instruction.format(launch_prefix=launch_prefix, executable=tools[name])
                                 for instruction in guidance.get("instructions", [])],
-               "launch_argv": ([tools[name]] if native_desktop or wsl else ["basaltw", "desktop", "exec", "--", tools[name]]),
+               "launch_argv": (
+                   supervised_browser_argv(name, root, native=native_desktop)
+                   if name in BROWSER_APPLICATIONS["firefox"] and not wsl
+                   else [tools[name]] if native_desktop or wsl else ["basaltw", "desktop", "exec", "--", tools[name]]
+               ),
                "desktop_backend": "wslg-unverified" if wsl else "native-session" if native_desktop else "shared-xrdp",
                "automation_command": None if wsl else "basaltw desktop --native" if native_desktop else "basaltw desktop",
                "executable": tools[name], "readiness": "unverified", "guide": DESKTOP_GUIDE}

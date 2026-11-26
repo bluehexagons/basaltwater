@@ -84,8 +84,16 @@ basaltw agent browser doctor --engine firefox --context project \
   --project /home/agent/repos/example --json
 ```
 
-If that runtime reports `browser_payload_missing`, explicitly install its
-matching Firefox payload and repeat the check:
+The engine doctor includes a `desktop` inventory for the selected engine. For a
+native installation, `test_argv` opens a supervised browser with a disposable
+profile and private downloads. Append `--url URL` to test a page. It requires an
+active, configured desktop. Use the [desktop browser workflow](../workstations/debian-development.md#test-with-a-disposable-browser)
+for window checks and cleanup. Use
+`basaltw agent manifest --application firefox-esr --json` or
+`--application firefox` to discover one named application.
+
+If the selected runtime reports `browser_payload_missing`, run its exact
+`provisioning_argv` to install and test the matching payload:
 
 ```bash
 basaltw agent browser install --engine firefox --context project \

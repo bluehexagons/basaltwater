@@ -19,6 +19,7 @@ import subprocess
 import sys
 import time
 
+from desktop.browser_session import BROWSERS, browser_command, create_browser_profile, validate_browser_url
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.cachyos import is_cachyos
 from lib.cachyos_doctor import _owned_socket, _probe
@@ -30,7 +31,7 @@ LOG_LIMIT = 16 * 1024 * 1024
 TASK_ID = re.compile(r"[0-9a-f]{32}")
 UNIT_PREFIX = "basaltwater-development-"
 CHECK_KINDS = ("check", "compare")
-KINDS = ("editor", "run", "import", "exec", "node", *CHECK_KINDS, "playtest")
+KINDS = ("editor", "run", "import", "exec", "node", *CHECK_KINDS, "playtest", "browser")
 
 
 class _DevelopmentArgumentParser(argparse.ArgumentParser):
@@ -96,6 +97,17 @@ def add_development_parser(commands: argparse._SubParsersAction) -> None:
     playtest.add_argument("--project", required=True)
     playtest.add_argument("--json", action="store_true")
     playtest.add_argument("--dry-run", action="store_true", help="Validate the profile without creating state or launching")
+    browser = actions.add_parser("browser", help="Launch a native browser with a private profile and download directory")
+    browser.add_argument("--project", required=True, help="Tag the task with an existing project or worktree")
+    browser.add_argument("--browser", choices=BROWSERS, default="firefox")
+    browser.add_argument("--url", default="about:blank", help="Initial HTTP(S) URL")
+    browser.add_argument("--json", action="store_true")
+    browser.add_argument("--dry-run", action="store_true", help="Validate without creating a profile or launching")
+    cleanup = actions.add_parser("cleanup-browser", help="Remove the profile of a finished browser task")
+    cleanup.add_argument("task", help="Task ID returned by develop browser")
+    cleanup.add_argument("--include-downloads", action="store_true", help="Also remove the task's private download directory")
+    cleanup.add_argument("--dry-run", action="store_true")
+    cleanup.add_argument("--json", action="store_true")
     for name in ("status", "stop", "wait"):
         action = actions.add_parser(name)
         action.add_argument("task", help="Task ID returned by a development launch")
@@ -465,6 +477,8 @@ def task_status(task_id: str, *, stop: bool = False, dry_run: bool = False) -> d
                       comparison_report=str(directory / "comparison" / "comparison.json"))
     if task["kind"] == "playtest":
         result.update(playtest=task["playtest"], profile=str(directory / "profile"))
+    elif task["kind"] == "browser":
+        result.update(profile=str(directory / "profile"), downloads=str(directory / "downloads"))
     if (directory / "stop-requested.json").exists():
         request = _private_json(directory / "stop-requested.json")
         timestamp = request.get("requested_at")
@@ -566,6 +580,33 @@ def list_tasks(project: str | None = None, *, since: str | None = None, until: s
             "scan_truncated": truncated, "matches_truncated": len(records) > 50}
 
 
+def cleanup_browser(task_id: str, *, include_downloads: bool = False, dry_run: bool = False) -> dict:
+    uid = _guard()
+    directory = _task(task_id)
+    task = load_task(directory)
+    if task["kind"] != "browser":
+        raise ValueError("Profile cleanup requires a browser development task")
+    status = task_status(task_id)
+    if status["state"] not in ("completed", "failed", "stopped") or (
+        status["returncode"] is None and status["state"] != "stopped"
+    ):
+        raise RuntimeError("Browser task exit is unverified; inspect task status before cleanup")
+    unit = _unit(task, uid)
+    if unit.get("LoadState") != "not-found" and (
+        unit.get("ActiveState") not in ("inactive", "failed")
+        or unit.get("ControlGroup") or unit.get("MainPID") != "0"
+    ):
+        raise RuntimeError("Browser task service may still have processes; wait before cleanup")
+    names = ("profile", "downloads") if include_downloads else ("profile",)
+    paths = [_private_directory(directory / name) for name in names if os.path.lexists(directory / name)]
+    preview = dry_run or is_dry_run()
+    if not preview:
+        for path in paths:
+            shutil.rmtree(path)
+    return {"schema_version": 1, "ok": True, "task": task_id, "dry_run": preview,
+            "paths": [str(path) for path in paths]}
+
+
 def launch(project: str, kind: str, *, engine: str | None = None, scene: str | None = None,
            argv: list[str] | None = None, dry_run: bool = False, headless: bool = False,
            quit_after: int | None = None, rendering_method: str | None = None,
@@ -574,7 +615,8 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
            verify_evidence: bool = False, require_artifact_kind: list[str] | None = None,
            prepare: bool = False, asset_bundle: str | None = None, before: str | None = None, after: str | None = None,
            session_generation: str | None = None, control_revision: str | None = None,
-           playtest: str | None = None, attach_playtest: Callable[[dict], str] | None = None) -> dict:
+           playtest: str | None = None, attach_playtest: Callable[[dict], str] | None = None,
+           browser: str | None = None, url: str | None = None) -> dict:
     uid = _guard()
     if kind not in KINDS:
         raise ValueError("Unknown development task kind")
@@ -587,6 +629,8 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
         raise ValueError("Import, check and comparison tasks do not accept extra command arguments")
     if kind == "playtest" and arguments:
         raise ValueError("Playtest arguments must be declared in the project")
+    if kind != "browser" and (browser is not None or url is not None):
+        raise ValueError("Browser options require a browser task")
     if kind not in CHECK_KINDS and review_manifest is not None:
         raise ValueError("--review-manifest requires a check task")
     if kind not in CHECK_KINDS and (verify_evidence or require_artifact_kind):
@@ -606,6 +650,14 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
     if kind == "playtest":
         from desktop.playtest import load_plan, seed_profile
         arguments, seed = load_plan(path, playtest)
+    elif kind == "browser":
+        if arguments or browser not in BROWSERS:
+            raise ValueError("Select a supported native browser without extra arguments")
+        validate_browser_url(url)
+        executable = _executable(browser, required=browser != "firefox")
+        if executable is None:
+            executable = _executable("firefox-esr")
+        arguments = browser_command(browser, executable, url, "<task>/profile")
     elif kind == "node":
         from desktop.development_workflows import node_command
         arguments = node_command(path, script, manager, arguments)
@@ -663,6 +715,8 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
         if kind == "playtest":
             seed_profile(path, seed)
             result.update(playtest=playtest, seed=seed, active_recorder_required=True)
+        elif kind == "browser":
+            result.update(profile="<task>/profile", downloads="<task>/downloads")
         return result
     if kind == "playtest" and attach_playtest is None:
         raise ValueError("An active desktop evidence recorder is required for playtest launch")
@@ -673,6 +727,14 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
         validate_argv(arguments)
     directory.mkdir(mode=0o700)  # A collision must never replace an existing task.
     _private_directory(directory)
+    if kind == "browser":
+        try:
+            arguments = browser_command(browser, executable, url, str(directory / "profile"))
+            validate_argv(arguments)
+            create_browser_profile(browser, directory)
+        except (OSError, ValueError):
+            shutil.rmtree(directory)
+            raise
     task = {"schema_version": 1, "task": directory.name, "unit": f"{UNIT_PREFIX}{directory.name}.service",
             "kind": kind, "project": str(path), "argv": arguments, "owner_uid": uid,
             "created_at": datetime.now(timezone.utc).isoformat()}
@@ -684,6 +746,10 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
     if kind == "playtest":
         task["playtest"] = playtest
     write_json_atomic(str(directory / "task.json"), task, mode=0o600)
+    browser_receipt = (
+        {"profile": str(directory / "profile"), "downloads": str(directory / "downloads")}
+        if kind == "browser" else {}
+    )
     playtest_receipt = {}
     if kind == "playtest":
         profile = directory / "profile"
@@ -720,7 +786,7 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
             return {**task_status(directory.name), **playtest_receipt}
         except (OSError, ValueError, RuntimeError) as exc:
             reason = f"Task was queued but its state could not be verified: {exc}"
-    return {**playtest_receipt, "schema_version": 1, "ok": False, "task": directory.name, "unit": task["unit"],
+    return {**playtest_receipt, **browser_receipt, "schema_version": 1, "ok": False, "task": directory.name, "unit": task["unit"],
             "directory": str(directory), "log": str(directory / "output.log"), "state": "launch-unverified",
             "error": f"{reason}; inspect this task's status before retrying"}
 
@@ -728,7 +794,7 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
 def run_development_command(args: argparse.Namespace) -> int:
     try:
         action = args.development_command
-        if not getattr(args, "native", False) and action not in ("list", "status", "stop", "wait"):
+        if not getattr(args, "native", False) and action not in ("list", "status", "stop", "wait", "cleanup-browser"):
             from desktop.debian_development import request_task
             result = request_task(args)
         elif action == "doctor":
@@ -739,6 +805,8 @@ def run_development_command(args: argparse.Namespace) -> int:
             result = task_status(args.task, stop=action == "stop", dry_run=getattr(args, "dry_run", False))
         elif action == "wait":
             result = wait_task(args.task, timeout=args.timeout)
+        elif action == "cleanup-browser":
+            result = cleanup_browser(args.task, include_downloads=args.include_downloads, dry_run=args.dry_run)
         elif action == "playtest":
             from desktop.native_session import playtest_attachment
             dry_run = args.dry_run or is_dry_run()
@@ -755,7 +823,8 @@ def run_development_command(args: argparse.Namespace) -> int:
                 verify_evidence=getattr(args, "verify_evidence", False),
                 require_artifact_kind=getattr(args, "require_artifact_kind", None),
                 prepare=getattr(args, "prepare", False), asset_bundle=getattr(args, "asset_bundle", None),
-                before=getattr(args, "before", None), after=getattr(args, "after", None))
+                before=getattr(args, "before", None), after=getattr(args, "after", None),
+                browser=getattr(args, "browser", None), url=getattr(args, "url", None))
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         result = {"ok": False, "error": str(exc)}
     print(json.dumps(result, indent=2))

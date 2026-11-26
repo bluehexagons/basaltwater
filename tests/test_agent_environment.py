@@ -93,7 +93,11 @@ class TestAgentEnvironment(unittest.TestCase):
         ])
         for name, application in result["desktop_applications"].items():
             with self.subTest(application=name):
-                self.assertEqual(application["launch_argv"], [application["executable"]])
+                expected = [application["executable"]]
+                if name in ("firefox", "firefox-esr"):
+                    expected = ["basaltw", "desktop", "--native", "develop", "browser",
+                                "--browser", name, "--project", self.directory]
+                self.assertEqual(application["launch_argv"], expected)
                 self.assertEqual(application["desktop_backend"], "native-session")
                 self.assertEqual(application["readiness"], "unverified")
                 self.assertTrue(application["instructions"])

@@ -66,7 +66,8 @@ def supervisor_environment(uid: int) -> tuple[dict[str, str], str]:
 
 OPTIONS = {"engine", "scene", "argv", "dry_run", "headless", "quit_after", "rendering_method",
            "script", "manager", "recipe", "settings", "timeout", "export_check", "review_manifest",
-           "verify_evidence", "require_artifact_kind", "playtest", "prepare", "asset_bundle", "before", "after"}
+           "verify_evidence", "require_artifact_kind", "playtest", "prepare", "asset_bundle", "before", "after",
+           "browser", "url"}
 
 
 def handle_task(payload: dict, generation: str, *, recorder=None) -> dict:
@@ -111,6 +112,8 @@ def request_task(args: argparse.Namespace) -> dict:
         raise RuntimeError("Running desktop lacks supervised-development; refresh at a safe normal logout checkpoint")
     if args.development_command == "playtest" and "recorded-playtest" not in current["capabilities"]:
         raise RuntimeError("Running desktop lacks recorded-playtest; refresh at a safe normal logout checkpoint")
+    if args.development_command == "browser" and "disposable-browser" not in current["capabilities"]:
+        raise RuntimeError("Running desktop lacks disposable-browser; refresh at a safe normal logout checkpoint")
     options = {key: getattr(args, key) for key in OPTIONS if hasattr(args, key)}
     # Older running supervisors can still handle a check without evidence options.
     for key in ("verify_evidence", "require_artifact_kind", "prepare", "asset_bundle"):

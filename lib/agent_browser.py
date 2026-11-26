@@ -13,8 +13,10 @@ import sys
 from common.browser_automation_steps import (
     PLAYWRIGHT_ROOT, PLAYWRIGHT_STABLE_ROOT, PLAYWRIGHT_VERSION, PLAYWRIGHT_MCP_PLAYWRIGHT_VERSION,
 )
+from desktop.browser_session import BROWSER_APPLICATIONS, supervised_browser_argv
 from lib.atomic_io import read_json_file
 from lib.browser_registration import browser_registrations, register_browser_agent, registration_status
+from lib.cachyos import is_cachyos
 from lib.remote_utils import CommandTimeoutError, run as run_command
 from lib.node_toolchain import select_node
 from lib.service_node import SERVICE_NODE, verify_service_node
@@ -27,8 +29,12 @@ _SMOKE_SCRIPT = """
 const [modulePath, engine] = process.argv.slice(1);
 (async () => {
   const browserType = require(modulePath)[engine];
+  const executablePath = browserType.executablePath();
+  if (!require('node:fs').existsSync(executablePath)) {
+    throw new Error(`Browser executable missing: ${executablePath}`);
+  }
   const browser = await browserType.launch({headless: true, timeout: 60000,
-    executablePath: browserType.executablePath(),
+    executablePath,
     args: engine === 'chromium' ? ['--disable-features=NativeNotifications'] : []});
   try {
     const page = await browser.newPage();
@@ -116,14 +122,19 @@ def browser_context_inventory(project: str) -> list[dict[str, object]]:
 
 
 def desktop_firefox_inventory() -> list[dict[str, object]]:
-    """Discover native and Flatpak Firefox without opening a desktop profile."""
+    return _desktop_inventory("firefox")
+
+
+def _desktop_inventory(engine: str) -> list[dict[str, object]]:
+    """Discover desktop installations without opening a browser profile."""
     found = []
-    for name in ("firefox-esr", "firefox"):
+    for name in BROWSER_APPLICATIONS[engine]:
         executable = shutil.which(name)
         if executable and not any(item["executable"] == os.path.realpath(executable) for item in found):
-            found.append({"installation": "native", "channel": "esr" if name == "firefox-esr" else "unknown",
+            found.append({"installation": "native", "application": name,
+                          "channel": "esr" if name == "firefox-esr" else "unknown",
                           "executable": os.path.realpath(executable), "version_argv": [executable, "--version"]})
-    flatpak = shutil.which("flatpak")
+    flatpak = shutil.which("flatpak") if engine == "firefox" else None
     if flatpak:
         try:
             with redirect_stdout(sys.stderr):
@@ -144,11 +155,11 @@ def desktop_firefox_inventory() -> list[dict[str, object]]:
                 item["browser_version"] = info.stdout.strip()[:120] if info.returncode == 0 else None
             except (OSError, CommandTimeoutError):
                 item["browser_version"] = None
-    return [{"engine": "firefox", "context": "interactive-desktop", "headless": False,
+    return [{"engine": engine, "context": "interactive-desktop", "headless": False,
              "network_origin": "host", "readiness": "unverified" if found else "not-found",
              "discovered": bool(found), "launchable": None, "mcp_registered": False,
              "application_tested": False, "browser_version": None,
-             "instructions": "Verify in the active desktop session; native Firefox is separate from Playwright's patched Firefox.",
+             "instructions": "Verify in the active desktop session. Playwright uses its own browser payload.",
              **item} for item in (found or [{"installation": None, "executable": None}])]
 
 
@@ -211,11 +222,11 @@ def check_browser(engine: str, context: str, project: str | None, *, install: bo
             if isinstance(smoke, dict) and smoke.get("healthy") is True and smoke.get("engine") == engine:
                 return {**result, "ok": True, "healthy": True, "launchable": True, "rendering_verified": True,
                         "browser_version": smoke.get("browser_version"), "issue": None, "remediation": None}
-        error = (tested.stderr or tested.stdout or "Browser smoke test failed")[-2000:]
+        error = tested.stderr or tested.stdout or "Browser smoke test failed"
         issue, remediation = "browser_smoke_failed", "inspect_browser_runtime_and_system_dependencies"
-        if "Executable doesn't exist" in error:
+        if "Browser executable missing:" in error or "Executable doesn't exist" in error:
             issue, remediation = "browser_payload_missing", "install_selected_browser_payload"
-        return {**result, "issue": issue, "remediation": remediation, "error": error}
+        return {**result, "issue": issue, "remediation": remediation, "error": error[-2000:]}
     except CommandTimeoutError:
         return {**result, "issue": "browser_timeout", "remediation": "inspect_host_capacity_and_browser_runtime"}
     except (OSError, ValueError) as exc:
@@ -228,13 +239,44 @@ def add_browser_parser(commands: argparse._SubParsersAction) -> None:
     preview = actions.add_parser("resolve-preview", help="Check a loopback service for native T3 preview")
     add_t3_preview_arguments(preview)
     for name in ("doctor", "install", "register"):
-        action = actions.add_parser(name)
+        action = actions.add_parser(name, help={
+            "doctor": "Test the chosen Playwright runtime and discover native browsers for its engine",
+            "install": "Install and check the engine payload for an existing Playwright runtime",
+            "register": "Register a checked managed engine with an agent client",
+        }[name])
         action.add_argument("--engine", choices=("chromium", "firefox"), default="chromium")
         action.add_argument("--context", choices=("managed", "managed-mcp", "project"), default="managed")
         action.add_argument("--project")
         action.add_argument("--json", action="store_true")
         if name == "register":
             action.add_argument("--agent-tool", choices=("codex", "opencode"), required=True)
+
+
+def _doctor_options(result: dict[str, object], project: str | None) -> None:
+    engine, context = result["engine"], result["context"]
+    native = is_cachyos()
+    desktop = _desktop_inventory(engine)
+    for installation in desktop:
+        if installation["installation"] == "native":
+            installation["test_argv"] = supervised_browser_argv(
+                installation["application"], project or ".", native=native,
+            )
+        elif installation["installation"] == "flatpak" and not native:
+            installation["test_argv"] = ["basaltw", "desktop", "exec", "--", *installation["launch_argv"]]
+    result["desktop"] = desktop
+    if result["issue"] == "browser_payload_missing":
+        command = ["basaltw", "agent", "browser", "install", "--engine", engine, "--context", context]
+        if context == "project":
+            command.extend(("--project", project))
+        result["provisioning_argv"] = [*command, "--json"]
+    elif result["remediation"] == "rerun_setup_with_browser_automation":
+        result["provisioning"] = "Rerun the saved VM setup with --browser-automation playwright and a compatible agent tool."
+    elif result["remediation"] == "install_project_dependencies_from_its_lockfile":
+        result["provisioning"] = "Install the project's locked dependencies, then run this doctor again."
+    if not native and not any(item["discovered"] for item in desktop):
+        result["desktop_provisioning_argv"] = [
+            "basaltw", "local", "browser", "firefox" if engine == "firefox" else "brave", "--no-default",
+        ]
 
 
 def run_browser_command(args: argparse.Namespace) -> int:
@@ -248,6 +290,8 @@ def run_browser_command(args: argparse.Namespace) -> int:
                 raise ValueError("MCP registration requires a managed context")
             context = "managed-mcp"
         result = check_browser(args.engine, context, args.project, install=args.browser_command == "install")
+        if args.browser_command == "doctor":
+            _doctor_options(result, args.project)
         if args.browser_command == "register" and result["ok"]:
             from lib.agent_cli import _browser_launchers_secure
             from common.browser_automation_steps import PLAYWRIGHT_MCP_WRAPPER
