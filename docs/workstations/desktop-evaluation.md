@@ -200,7 +200,8 @@ basaltw desktop --native evidence finish --json
 basaltw desktop --native evidence verify /absolute/private/segment-a.json --json
 basaltw desktop --native evidence closeout /absolute/private/segment-a.json \
   --output /absolute/private/segment-a-closeout --json
-basaltw desktop --native evidence start --project /absolute/project --json
+basaltw desktop --native evidence start \
+  --project-from-recording /absolute/private/segment-a.json --json
 basaltw desktop evidence run checkpoint /absolute/private/run/run.json \
   --artifact /absolute/private/segment-a.json \
   --artifact /absolute/private/segment-a-closeout/closeout.json \
@@ -213,11 +214,14 @@ journal; if its collection fails, retain the artifact and use `evidence finalize
 on that same path. Verification failure is retained evidence, never a reason to
 replay input or rewrite history. A closeout receipt is saved even when verification
 is unhealthy. Record the failure and, if continuing is within scope, the explicit
-rotation gap and uncertainty in the ledger. `start` returns the new segment's real
-artifact; link that path after confirming it started. Finish/verify/closeout that
-segment at its own safe endpoint. Rotation preserves original match clocks and
-does not stop the application, restart the helper or change permission. It is
-manual, with an observation gap rather than an atomic recorder replacement.
+rotation gap and uncertainty in the ledger. `--project-from-recording` reuses the
+finished segment's project directory, even when finalization needs a separate
+retry. The CLI checks that directory before contacting the helper. Use
+`--project PATH` for the initial segment. Confirm the new `project` and
+`artifact` in the start receipt, then link the new artifact to the existing run
+ledger. Finish, verify, and close out that segment at its own safe endpoint.
+The manual rotation leaves a recording gap and preserves the match clocks and
+the running helper.
 
 ### Recheck the same recording
 

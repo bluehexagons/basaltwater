@@ -260,6 +260,53 @@ class RecorderHeadroomTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "SAME recording.*checkpoint --artifact"):
                 evidence.closeout(str(second.path), extras=[], derivatives=[], previous=a["artifact"])
 
+    def test_start_reuses_finished_recording_project_with_current_helper_generation(self):
+        project = self.new_folder("project with spaces")
+        previous = evidence.Recorder(str(project), "previous-generation")
+        previous.finish({})
+        original = previous.path.read_bytes()
+        parser = argparse.ArgumentParser()
+        desktop_cli.add_desktop_subparser(parser.add_subparsers())
+        for backend, flag in ((desktop_cli.runtime, []), (native_session, ["--native"])):
+            with (self.subTest(backend=backend.__name__),
+                  patch.object(backend, "status", return_value={"generation": "current"}) as status,
+                  patch.object(backend, "request", return_value={"artifact": "/private/next.json", "recording": True}) as request,
+                  redirect_stdout(output := StringIO())):
+                args = parser.parse_args(["desktop", *flag, "evidence", "start",
+                                          "--project-from-recording", str(previous.path), "--json"])
+                self.assertEqual(desktop_cli.run_desktop_command(args), 0)
+                status.assert_called_once_with()
+                request.assert_called_once_with({"action": "evidence", "operation": "start",
+                                                 "generation": "current", "project": str(project)})
+                self.assertEqual(json.loads(output.getvalue())["project"], str(project))
+        self.assertEqual(previous.path.read_bytes(), original)
+
+    def test_start_rejects_unusable_project_before_contacting_helper(self):
+        project = self.new_folder("project")
+        previous = evidence.Recorder(str(project), "g")
+        parser = argparse.ArgumentParser()
+        desktop_cli.add_desktop_subparser(parser.add_subparsers())
+        base = ["desktop", "--native", "evidence", "start"]
+        inherit = ["--project-from-recording", str(previous.path)]
+        with (patch.object(native_session, "status") as status, patch.object(native_session, "request") as request):
+            def refuse(options, detail):
+                with redirect_stdout(output := StringIO()):
+                    self.assertEqual(desktop_cli.run_desktop_command(parser.parse_args([*base, *options])), 1)
+                self.assertIn(detail, json.loads(output.getvalue())["error"])
+
+            refuse(inherit, "Finish the previous recording")
+            previous.finish({})
+            project.rmdir()
+            refuse(inherit, str(project))
+            refuse(["--project", str(project)], str(project))
+            refuse(["--project", ""], "non-empty")
+            project.symlink_to(self.new_folder("other project"), target_is_directory=True)
+            refuse(inherit, "resolves to a different location")
+            status.assert_not_called()
+            request.assert_not_called()
+        with redirect_stderr(StringIO()), self.assertRaises(SystemExit):
+            parser.parse_args([*base, *inherit, "--project", str(project)])
+
     def new_folder(self, name):
         folder = self.home / name
         folder.mkdir()

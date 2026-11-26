@@ -77,18 +77,26 @@ def revision(project: str) -> dict:
     return result
 
 
+def recording_project(project: str) -> str:
+    """Resolve an existing project directory shared by controller and recorder."""
+    if not isinstance(project, str):
+        raise ValueError("Evidence project must be an absolute existing directory")
+    validate_filesystem_path(project, must_exist=True)
+    path = Path(project)
+    if not path.is_absolute() or not path.is_dir():
+        raise ValueError(f"Evidence project must be an absolute existing directory: {path}")
+    return str(path.resolve(strict=True))
+
+
 class Recorder:
     def __init__(self, project: str, generation: str, *, launches: dict | None = None):
-        validate_filesystem_path(project, must_exist=True)
-        path = Path(project)
-        if not path.is_absolute() or not path.is_dir():
-            raise ValueError("Evidence project must be an absolute existing directory")
+        project = recording_project(project)
         self.path = _directory() / f"{secrets.token_hex(16)}.json"
         self.launch_baseline = set(launches or {})
-        self.data = {"schema_version": 1, "project": str(path.resolve()), "generation": generation,
+        self.data = {"schema_version": 1, "project": project, "generation": generation,
                      "started_at": _now(), "finished_at": None, "finalized": False,
                      "clock": clock(), "started_monotonic_ns": stamp()["monotonic_ns"],
-                     "revision_start": revision(str(path)), "revision_end": None,
+                     "revision_start": revision(project), "revision_end": None,
                      "events": [], "events_truncated": False, "renderer": None,
                      "tasks": [], "task_inventory_truncated": False}
         self.save()
@@ -199,6 +207,20 @@ def _load_record(path: str) -> dict:
             or any(not isinstance(task, str) or not TASK_ID.fullmatch(task) for task in playtests)):
         raise ValueError("Invalid attached playtest identities")
     return data
+
+
+def project_from_recording(path: str) -> str:
+    """Reuse the project path from a finished, owned recorder artifact."""
+    from desktop.development import parse_task_timestamp
+
+    data = _load_record(path)
+    if data["finished_at"] is None:
+        raise ValueError("Finish the previous recording before reusing its project")
+    parse_task_timestamp(data["finished_at"])
+    project = recording_project(data["project"])
+    if project != data["project"]:
+        raise ValueError("The recorded project path now resolves to a different location")
+    return project
 
 
 def verify(path: str, *, retention: list[list[str]] | None = None) -> dict:

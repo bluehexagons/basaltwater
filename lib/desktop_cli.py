@@ -55,7 +55,10 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     from desktop.accessibility_recording import add_recording_parser
     add_recording_parser(commands)
     recording = evidence_commands.add_parser("start")
-    recording.add_argument("--project", required=True)
+    recording_project = recording.add_mutually_exclusive_group(required=True)
+    recording_project.add_argument("--project", help="Existing project or worktree directory")
+    recording_project.add_argument("--project-from-recording", metavar="ARTIFACT",
+                                   help="Reuse the project directory from a finished recording JSON")
     finishing = evidence_commands.add_parser("finish", help="Stop and finalize recording; does not close the application",
         description="Stop and finalize recording. This does not close applications or prove their exit. "
                     "When recording cleanup, quit the owned application normally and verify its window and launch status first. "
@@ -301,18 +304,27 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                                             crop=args.crop, to_x=args.to_x, to_y=args.to_y,
                                             image_coordinates=args.image_coordinates)
         elif command == "evidence":
-            from desktop.evidence import finalize, verify
+            from desktop.evidence import finalize, project_from_recording, recording_project, verify
             operation = args.evidence_command
             if operation == "verify":
                 result = verify(args.artifact, retention=args.retention)
             elif operation == "finalize":
                 result = finalize(args.artifact, tasks=args.task, renderer=args.renderer)
             else:
+                project = None
+                if operation == "start":
+                    if args.project_from_recording is not None:
+                        project = project_from_recording(args.project_from_recording)
+                    else:
+                        validate_filesystem_path(args.project)
+                        project = recording_project(str(Path(args.project).expanduser().resolve()))
                 current = backend.status()
                 payload = {"action": "evidence", "operation": operation, "generation": current.get("generation")}
-                if operation == "start":
-                    payload["project"] = str(Path(args.project).expanduser().resolve())
+                if project is not None:
+                    payload["project"] = project
                 result = backend.request(payload)
+                if project is not None:
+                    result = {**result, "project": project}
                 if operation == "finish":
                     artifact = result["artifact"]
                     try:
