@@ -826,6 +826,11 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
             $failure=$failure.InnerException
         }
         if ($inputReceipt) {
+            if ($request.operation -eq 'hold' -and -not $dispatchAttempted -and $reply.submitted) {
+                # A lost planning reply cannot start the held-input driver.
+                $reply.submitted = $false; $reply.dispatch_stage = 'before-input'; $reply.input_delivery = 'not-sent'
+                $reply.error = "No held input started. Preparation worker reported '$($reply.error)'"
+            }
             if (-not $inputReceipt.ContainsKey('observation_consumed')) { $inputReceipt.observation_consumed = $false }
             $inputReceipt.dispatch_stage = $reply.dispatch_stage; $inputReceipt.input_delivery = $reply.input_delivery
             Add-NativeDesktopFields $reply $inputReceipt

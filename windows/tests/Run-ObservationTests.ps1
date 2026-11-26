@@ -319,11 +319,16 @@ try {
     $null=Invoke-NativeDesktopCli @('window','focus','--window','123','--identity','fixture-identity','--generation',$capture.generation)
     Assert-ObservationFailure (Invoke-ObservationInput $capture) 'latest successful'
     & {
-        function Start-NativeHeldLease($Request,$Context,$State) { throw 'fixture hold attempt failed' }
+        function Start-NativeHeldLease($Request,$Context,$State) {
+            throw (New-NativeWorkerFailure 'fixture hold plan reply lost' $true 'transport')
+        }
         $heldCapture=New-ObservationCapture
         $hold=@('input','hold','--key','W','--milliseconds','500','--window','123','--identity','fixture-identity','--generation',$heldCapture.generation,
             '--width','640','--height','480','--observation',$heldCapture.result.observation_id)
-        Assert-ObservationFailure (Invoke-NativeDesktopCli $hold) 'fixture hold attempt failed'
+        $failed = Invoke-NativeDesktopCli $hold
+        Assert-ObservationFailure $failed 'fixture hold plan reply lost'
+        Assert-Observation (-not $failed.submitted -and $failed.input_delivery -eq 'not-sent' -and
+            $failed.dispatch_stage -eq 'before-input' -and $failed.observation_consumed) 'Hold planning loss obscured delivery or consumption'
         Assert-ObservationFailure (Invoke-ObservationInput $heldCapture) 'latest successful'
     }
     $heldCapture=New-ObservationCapture

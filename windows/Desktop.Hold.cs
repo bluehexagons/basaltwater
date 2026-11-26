@@ -267,14 +267,22 @@ public static partial class Native {
     public static void RetireHeldAfterBoot(string directory,string name) {
         using(var store=new HeldStore(directory,name)) store.Locked<int>(delegate(HeldStore.State s) { s.mask=0; s.transferred=0; s.phase=2; return 0; });
     }
+    static void PrepareHoldGuard(HeldPlan plan) {
+        try { HoldGuard(plan,true); }
+        catch(HeldGuardFailure error) {
+            if(error.field!="foreground") throw;
+            throw new RequestRejected("foreground_required",
+                "Held input requires a visible foreground window. Bring the target to the foreground, then observe it again.");
+        }
+    }
     public static HeldPlan PrepareHold(long id,string identity,string text,int width,int height) {
         var plan=new HeldPlan {window=id,identity=identity,width=width,height=height};
-        HoldGuard(plan,true);
+        PrepareHoldGuard(plan);
         int pid; var thread=GetWindowThreadProcessId(new IntPtr(id),out pid); var layout=GetKeyboardLayout(thread);
         plan.keys=BuildHeldKeys(text,delegate(ushort vk) { return MapVirtualKeyEx(vk,4,layout); });
         plan.layout=layout.ToInt64();
         var target=Check(id,identity);plan.origin_x=target.x;plan.origin_y=target.y;plan.position_bound=true;
-        HoldGuard(plan,true); return plan;
+        PrepareHoldGuard(plan); return plan;
     }
     static HeldKey[] BuildHeldKeys(string text,Func<ushort,uint> map) {
         if(String.IsNullOrEmpty(text) || text.Length>64) throw new Exception("Hold key set exceeds bound");
@@ -296,7 +304,7 @@ public static partial class Native {
         var plan=BuildHeldTimeline(timeline,duration,delegate(ushort vk) {return MapVirtualKeyEx(vk,4,layout);});
         plan.window=id;plan.identity=identity;plan.width=width;plan.height=height;plan.layout=layout.ToInt64();
         var target=Check(id,identity);plan.origin_x=target.x;plan.origin_y=target.y;plan.position_bound=true;
-        HoldGuard(plan,true);return plan;
+        PrepareHoldGuard(plan);return plan;
     }
     static HeldPlan BuildHeldTimeline(string timeline,int duration,Func<ushort,uint> map) {
         if(String.IsNullOrEmpty(timeline) || timeline.Length>2048 || duration<50 || duration>5000) throw new Exception("Invalid timeline bounds");
@@ -322,9 +330,9 @@ public static partial class Native {
         switch(button) {case "left":vk=1;flags=2;break;case "right":vk=2;flags=8;break;case "middle":vk=4;flags=32;break;default:throw new Exception("Button must be left, right or middle");}
         if(x<0 || y<0 || x>=width || y>=height || toX<0 || toY<0 || toX>=width || toY>=height) throw new Exception("Pointer endpoint outside window");
         var plan=new HeldPlan {window=id,identity=identity,width=width,height=height,x=x,y=y,to_x=toX,to_y=toY,drag=drag,keys=new [] {new HeldKey {vk=vk,mouse=true,flags=flags}}};
-        HoldGuard(plan,true);var w=Check(id,identity);plan.origin_x=w.x;plan.origin_y=w.y;
+        PrepareHoldGuard(plan);var w=Check(id,identity);plan.origin_x=w.x;plan.origin_y=w.y;
         Point current;if(!GetCursorPos(out current) || current.x!=w.x+x || current.y!=w.y+y) throw new Exception("Place pointer at observed start with discrete input before hold");
-        plan.pointer=true;HoldGuard(plan,true);return plan;
+        plan.pointer=true;PrepareHoldGuard(plan);return plan;
     }
     public static void HoldGuard(HeldPlan plan,bool initial) {
         Window w;

@@ -137,11 +137,14 @@ require application-specific verification. Raw input requires the window to
 remain foreground with the observed geometry. Click coordinates are relative
 to that window; multi-monitor origins and DPI scaling are handled by the worker.
 If Windows denies `window focus`, the reply reports `foreground_denied`.
-If discrete input finds a background or minimized window before sending
-events, it reports `foreground_required`, `submitted: false`, and
+If the discrete input guard rejects a background or minimized window, or
+hold preparation rejects a background window, the reply reports
+`foreground_required`, `submitted: false`, and
 `input_delivery: not-sent`. Bring the target to the foreground in the
 Windows session, refresh the window inventory, and take a fresh screenshot
-for token-bound input.
+for token-bound input. A lost hold-planning reply also reports
+`input_delivery: not-sent`. Check `observation_consumed` to tell whether
+the attempt used the screenshot token.
 Input supports scan-code keys, atomic Ctrl/Shift chords, Unicode text and clicks.
 Named keys include ENTER, ESC, TAB, SPACE, arrows, BACKSPACE, DELETE, HOME, END,
 PAGEUP, PAGEDOWN, INSERT and F1–F12, plus A–Z and 0–9. For example, use
