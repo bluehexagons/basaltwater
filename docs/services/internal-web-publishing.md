@@ -144,9 +144,10 @@ regular files with no symbolic or additional hard links.
 
 `site doctor` verifies directory and root HTTP readiness. `site verify` checks
 all artifact hashes against a private receipt activated with the snapshot,
-then checks served HTTPS bytes. Optional `--project PATH` and `--output DIR`
-also compare the local build inventory and observed Git revision. Use
-`--local-only` to omit HTTP coverage, or `--timeout SECONDS` (1–300, default 60)
+then checks served HTTPS bytes. `--project PATH` also compares the Git revision
+and, when recorded, the build output directory inside that checkout. Use
+`--output DIR` with `--project` to select a different local output directory.
+Use `--local-only` to omit HTTP coverage, or `--timeout SECONDS` (1–300, default 60)
 to bound the HTTPS phase. Verification never builds or republishes.
 
 The mode-`0600` `.basaltwater-receipt.json` records the observed source commit,
@@ -154,8 +155,8 @@ dirty state, output directory, publication time, build mode, and SHA-256/size
 inventory of at most 10,000 artifacts. It is excluded from public metadata and
 Nginx denies dotfile requests. Failed activation retains the previous receipt
 with its snapshot. Receipts are limited to 4 MiB; exceeding the size or artifact
-limit fails before activation. Older publications return `receipt_missing`; publish again
-within an authorized hosting task to generate their receipt.
+limit fails before activation. Older publications can return `receipt_missing`.
+An authorized publication within the limits generates their receipt.
 
 Dirty or unavailable Git metadata leaves `source_matches` unverified (`null`)
 with a warning. A different source commit or artifact inventory returns a
@@ -205,15 +206,19 @@ The gateway adds cross-origin isolation headers to Godot sites, and
 `site doctor` checks those headers and the WebAssembly content type.
 `site verify` checks the published snapshot and its served bytes, including
 generated gzip files. When comparing the original export with
-`site verify --project . --output exports/web`, it compares the project's files
-without requiring the publisher's generated gzip copies.
+`site verify my-game --project .`, it uses the recorded output path for a
+prebuilt export and excludes generated gzip copies from the local comparison.
+For exports built directly by the publisher, pass `--output DIR` to compare
+a separately exported local build.
 
 Gateway setup and refresh move existing Godot snapshots from `/games/` to
 `/sites/` without re-exporting. If the site name is taken, the game gets
 `-godot`, then a numbered suffix if needed. Refresh prints each migrated URL.
 Use `basaltwater-web site list` to find the new links. On an older gateway,
 an interrupted refresh leaves unmoved games reachable at their original URLs.
-It retires the old `/games/` route once migration succeeds.
+It retires the old `/games/` route once migration succeeds. A legacy snapshot
+that exceeds the receipt limits still moves, with a warning. `site doctor`
+can check that snapshot, and `site verify` reports `receipt_missing`.
 
 For a custom domain, deploy a repository with a
 [`godot-web` manifest component](deployments-manifests.md#godot-web-application).

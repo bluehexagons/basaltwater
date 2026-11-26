@@ -27,6 +27,10 @@ MAX_ARTIFACTS = 10000
 MAX_RECEIPT_BYTES = 4 * 1024 * 1024
 
 
+class ReceiptLimitError(ValueError):
+    """The artifact inventory exceeds the supported receipt limits."""
+
+
 def source_state(project: str) -> dict[str, object]:
     """Observe Git metadata without recording file names or patch contents."""
     try:
@@ -77,7 +81,7 @@ def artifact_hashes(root: str) -> dict[str, object]:
             validate_filesystem_path(relative)
             result[relative] = _hash_file(os.path.join(current, name))
             if len(result) > MAX_ARTIFACTS:
-                raise ValueError(f"Publication exceeds the {MAX_ARTIFACTS}-artifact receipt limit")
+                raise ReceiptLimitError(f"Publication exceeds the {MAX_ARTIFACTS}-artifact receipt limit")
     return dict(sorted(result.items()))
 
 
@@ -93,7 +97,7 @@ def write_receipt(
         "artifacts": artifact_hashes(root),
     }
     if len((json.dumps(receipt, indent=2, sort_keys=True, allow_nan=False) + "\n").encode("utf-8")) > MAX_RECEIPT_BYTES:
-        raise ValueError("Publication receipt exceeds its size limit")
+        raise ReceiptLimitError("Publication receipt exceeds its size limit")
     write_json_atomic(os.path.join(root, RECEIPT_FILE), receipt, mode=0o600, sort_keys=True)
 
 
@@ -105,6 +109,14 @@ def read_receipt(root: str) -> dict[str, object]:
     value = read_json_file(path, max_bytes=MAX_RECEIPT_BYTES)
     if not isinstance(value, dict) or type(value.get("version")) is not int or value["version"] != 1:
         raise ValueError("Unsupported publication receipt")
+    output = value.get("output")
+    if output is not None:
+        if (
+            not isinstance(output, str) or os.path.isabs(output)
+            or os.path.normpath(output) != output or output == ".." or output.startswith("../")
+        ):
+            raise ValueError("Unsafe publication output path")
+        validate_filesystem_path(output)
     artifacts, source = value.get("artifacts"), value.get("source")
     if not isinstance(artifacts, dict) or not 1 <= len(artifacts) <= MAX_ARTIFACTS or "index.html" not in artifacts:
         raise ValueError("Invalid publication artifact inventory")
@@ -154,7 +166,8 @@ def _served_hash(url: str, size: int, deadline: float) -> dict[str, object]:
 
 def verify_receipt(root: str, *, url: str | None, local_output: str | None = None,
                    project: str | None = None, timeout: int = 60,
-                   generated_gzip: tuple[str, ...] = ()) -> dict[str, object]:
+                   generated_gzip: tuple[str, ...] = (),
+                   receipt: dict[str, object] | None = None) -> dict[str, object]:
     """Compare stored, local, and served bytes; never rebuild or republish."""
     if type(timeout) is not int or not 1 <= timeout <= 300:
         raise ValueError("Verification timeout must be from 1 through 300 seconds")
@@ -169,7 +182,8 @@ def verify_receipt(root: str, *, url: str | None, local_output: str | None = Non
         if not validate_host(host):
             validate_network_ip(host, "publication host")
         _ = parsed.port
-    receipt = read_receipt(root)
+    if receipt is None:
+        receipt = read_receipt(root)
     expected = receipt["artifacts"]
     # Compare the project's own files against the published export. Generated
     # gzip siblings remain part of both the on-disk and served verification.

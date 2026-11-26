@@ -220,12 +220,16 @@ class TestGodotWebHost(unittest.TestCase):
             os.mkdir(os.path.join(directory, "root"))
             with (
                 patch.object(godot_web_steps, "LEGACY_GAMES_ROOT", directory),
-                patch.object(godot_web_steps, "run", return_value=SimpleNamespace(stdout="migrated\n")) as run,
+                patch.object(godot_web_steps, "run", return_value=SimpleNamespace(
+                    stdout="migrated\n", stderr="receipt limit warning\n",
+                )) as run,
                 patch.object(godot_web_steps.pwd, "getpwnam",
                              side_effect=lambda username: SimpleNamespace(pw_uid=0 if username == "root" else 1000)),
                 redirect_stdout(io.StringIO()),
+                redirect_stderr(io.StringIO()) as stderr,
             ):
                 self.assertTrue(godot_web_steps._migrate_legacy_sites(["agent", "root", "other"]))
+            self.assertEqual(stderr.getvalue(), "receipt limit warning\n")
             self.assertEqual(run.call_args.args[0], [
                 "runuser", "-u", "agent", "--", "/usr/bin/python3", "-I",
                 godot_web_steps.GODOT_WEB_UTILITY, "site", "migrate-legacy",

@@ -11,6 +11,7 @@ import pwd
 import secrets
 import shlex
 import socket
+import sys
 import tempfile
 from collections.abc import Mapping, Sequence
 
@@ -697,6 +698,8 @@ def _migrate_legacy_sites(users: list[str]) -> bool:
         if result.stdout.strip():
             print(result.stdout.rstrip())
             changed = True
+        if result.stderr:
+            print(result.stderr.rstrip(), file=sys.stderr)
     return changed
 
 

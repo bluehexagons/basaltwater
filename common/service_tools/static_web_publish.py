@@ -27,7 +27,15 @@ from lib.godot_deploy import validate_godot_export, validate_godot_web_entrypoin
 from lib.node_toolchain import select_node
 from lib.node_project import select_package_manager
 from lib.remote_utils import CommandTimeoutError, run
-from lib.static_publication import GODOT_PROFILE_FILE, RECEIPT_FILE, RESERVED_FILES, verify_receipt, write_receipt
+from lib.static_publication import (
+    GODOT_PROFILE_FILE,
+    RECEIPT_FILE,
+    RESERVED_FILES,
+    ReceiptLimitError,
+    read_receipt,
+    verify_receipt,
+    write_receipt,
+)
 from lib.validation import validate_filesystem_path, validate_positive_integer
 from lib.validators import validate_username
 
@@ -531,7 +539,12 @@ def migrate_legacy_sites() -> list[str]:
                         metadata.update(profile="godot", site=site, url=url, published_at=published_at)
                         write_json_atomic(os.path.join(source, METADATA_FILE), metadata, mode=0o644)
                         _write_godot_profile(source)
-                        write_receipt(source, None, output=None, published_at=published_at, built=False)
+                        try:
+                            write_receipt(source, None, output=None, published_at=published_at, built=False)
+                        except ReceiptLimitError as exc:
+                            if os.path.lexists(os.path.join(source, RECEIPT_FILE)):
+                                raise
+                            print(f"Warning: No verification receipt for {site}. {exc}", file=sys.stderr)
                         os.rename(source, destination)
                         migrated.append(url or destination)
                         break
@@ -558,25 +571,31 @@ def verify_site(args: argparse.Namespace) -> dict[str, object]:
     with _site_lock(user_root, args.name):
         if os.path.islink(site) or not os.path.isdir(site) or os.stat(site).st_uid != account.pw_uid:
             raise ValueError("Publication directory must be real and owned by the current account")
+        try:
+            receipt = read_receipt(site)
+        except FileNotFoundError:
+            if os.path.lexists(os.path.join(site, RECEIPT_FILE)):
+                raise
+            return {
+                "ok": False,
+                "issue": "receipt_missing",
+                "remediation": "Publish a build within the receipt limits to create a private verification receipt.",
+            }
         metadata = _metadata(site)
         profile = site_profile(site, metadata)
+        selected_output = args.output or receipt.get("output")
         output = None
-        if project and (args.output or profile == "static"):
-            output = _resolve_output(project, args.output)
+        if project and (selected_output or profile == "static"):
+            output = _resolve_output(project, selected_output)
         precompressed = metadata.get("precompressed")
         generated = (
             tuple(path for path in precompressed if isinstance(path, str))
             if profile == "godot" and isinstance(precompressed, list) else ()
         )
-        try:
-            result = verify_receipt(
-                site, url=url, local_output=output, project=project, timeout=args.timeout,
-                generated_gzip=generated,
-            )
-        except FileNotFoundError:
-            if os.path.lexists(os.path.join(site, RECEIPT_FILE)):
-                raise
-            return {"ok": False, "issue": "receipt_missing", "remediation": "Publish this site again to create a private verification receipt."}
+        result = verify_receipt(
+            site, url=url, local_output=output, project=project, timeout=args.timeout,
+            generated_gzip=generated, receipt=receipt,
+        )
     return {**result, "site": args.name, "url": url}
 
 

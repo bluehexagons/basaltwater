@@ -120,7 +120,7 @@ class TestStaticWebPublish(unittest.TestCase):
                 self.assertEqual(result["precompressed"], ["index.pck.gz", "index.wasm.gz"])
                 self.assertEqual(invoke("site", "list")["sites"][0]["profile"], "godot")
                 verify_args = ("site", "verify", "demo", "--local-only",
-                               "--project", str(output.parent), "--output", "web")
+                               "--project", str(output.parent))
                 verified = invoke(*verify_args)
                 self.assertTrue(verified["ok"])
                 self.assertFalse(verified["build_performed"])
@@ -193,6 +193,39 @@ class TestStaticWebPublish(unittest.TestCase):
             self.assertEqual(receipt["source"], {"commit": None, "dirty": None})
             self.assertEqual(set(receipt["artifacts"]), {"index.html", "index.wasm"})
             self.assertIn('href="demo-godot-2/"', (migrated.parent / "index.html").read_text())
+
+    def test_migration_retains_snapshot_above_receipt_limits(self) -> None:
+        for limit, value in (("MAX_ARTIFACTS", 1), ("MAX_RECEIPT_BYTES", 100)):
+            with self.subTest(limit=limit), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                legacy = root / "games" / "agent" / "demo"
+                legacy.mkdir(parents=True)
+                (legacy / "index.html").write_bytes(b"game")
+                (legacy / "index.wasm").write_bytes(b"\x00asm")
+                destination = root / "sites" / "agent" / "demo"
+                destination.parent.mkdir(parents=True)
+                account = SimpleNamespace(pw_name="agent", pw_uid=os.getuid())
+                stderr = io.StringIO()
+                with (
+                    patch.object(static_web_publish, "LEGACY_GAMES_ROOT", str(root / "games")),
+                    patch.object(static_web_publish, "SITES_ROOT", str(root / "sites")),
+                    patch.object(static_web_publish, "_current_account", return_value=account),
+                    patch.object(static_web_publish, "_base_url", return_value="https://vm.test:8443"),
+                    patch.object(static_publication, limit, value),
+                    contextlib.redirect_stderr(stderr),
+                ):
+                    self.assertEqual(static_web_publish.migrate_legacy_sites(), [
+                        "https://vm.test:8443/sites/agent/demo/",
+                    ])
+                    result = static_web_publish.verify_site(argparse.Namespace(
+                        name="demo", project=None, output=None, local_only=True, timeout=60,
+                    ))
+                self.assertEqual(result["issue"], "receipt_missing")
+                self.assertIn("No verification receipt for demo", stderr.getvalue())
+                self.assertFalse(legacy.exists())
+                self.assertEqual((destination / "index.html").read_bytes(), b"game")
+                self.assertEqual((destination / "index.wasm").read_bytes(), b"\x00asm")
+                self.assertEqual(static_web_publish.site_profile(str(destination)), "godot")
 
     def test_publishes_existing_output_atomically_and_updates_catalog(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
@@ -461,6 +494,31 @@ class TestStaticWebPublish(unittest.TestCase):
                 self.assertEqual(result["issue"], "served_artifact_unavailable")
                 self.assertFalse(result["ok"])
 
+    def test_site_verify_prefers_recorded_build_output_with_explicit_override(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / "project"
+            recorded = project / "web" / "dist"
+            recorded.mkdir(parents=True)
+            (recorded / "index.html").write_bytes(b"published")
+            default = project / "dist"
+            default.mkdir()
+            (default / "index.html").write_bytes(b"unrelated")
+            (root / "sites" / "agent").mkdir(parents=True)
+            account = SimpleNamespace(pw_name="agent", pw_uid=os.getuid())
+            with (
+                patch.object(static_web_publish, "SITES_ROOT", str(root / "sites")),
+                patch.object(static_web_publish, "_current_account", return_value=account),
+                patch.object(static_web_publish, "_base_url", return_value=None),
+            ):
+                static_web_publish.publish(_args(str(project), output="web/dist"))
+                args = argparse.Namespace(name="demo", project=str(project), output=None,
+                                          local_only=True, timeout=60)
+                self.assertTrue(static_web_publish.verify_site(args)["ok"])
+                args.output = "dist"
+                result = static_web_publish.verify_site(args)
+                self.assertEqual([issue["component"] for issue in result["issues"]], ["local_build"])
+
     def test_verification_accepts_a_gateway_ipv6_address(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             (Path(directory) / "index.html").write_bytes(b"site")
@@ -555,6 +613,9 @@ class TestStaticWebPublish(unittest.TestCase):
                 modified = {**receipt, "artifacts": {**receipt["artifacts"], unsafe: receipt["artifacts"]["index.html"]}}
                 path.write_text(json.dumps(modified), encoding="utf-8")
                 with self.subTest(unsafe=unsafe), self.assertRaises(ValueError):
+                    static_publication.read_receipt(directory)
+                path.write_text(json.dumps({**receipt, "output": unsafe}), encoding="utf-8")
+                with self.subTest(output=unsafe), self.assertRaisesRegex(ValueError, "Unsafe publication output"):
                     static_publication.read_receipt(directory)
             path.write_text(json.dumps(receipt), encoding="utf-8")
             path.chmod(0o644)
