@@ -134,6 +134,9 @@ function Read-NativeDesktopState($Context) {
     $state.observation = $null
     if ($null -ne $record -and $record.PSObject.Properties['observation']) { $state.observation = $record.observation }
     if ($state.observation -and ($state.observation.session -cne $state.session -or $state.observation.generation -cne $state.generation -or $state.observation.revision -cne $state.revision)) { $state.observation = $null }
+    $state.last_input = $null
+    if ($null -ne $record -and $record.PSObject.Properties['last_input'] -and $record.last_input -and
+        $record.last_input.generation -ceq $state.generation) { $state.last_input = $record.last_input }
     return $state
 }
 
@@ -255,7 +258,7 @@ function Invoke-NativeDesktopWorkerBody($Request) {
         'input' { return Invoke-NativeDesktopInput $Request }
         'screenshot' {
             $capture = [Basaltwater.Desktop.Native]::Capture([long]$Request.window, $Request.identity, $Request.monitor, $Request.output)
-            return @{ output = $Request.output; bytes = (Get-Item -LiteralPath $Request.output).Length; capture_method = 'PrintWindow for window; CopyFromScreen for explicit monitor'; outcome_verified = $true; content_verified = $false;
+            return @{ output = $Request.output; bytes = $capture.bytes; artifact_sha256 = $capture.artifact_sha256; capture_method = 'PrintWindow for window; CopyFromScreen for explicit monitor'; outcome_verified = $true; content_verified = $false;
                 geometry = $capture.geometry; image_geometry = $capture.image_geometry; image_origin = $capture.image_origin; desktop_origin = $capture.desktop_origin; coordinate_space = $capture.coordinate_space; captured_at = $capture.captured_at } }
         default { throw 'Unsupported native worker request' }
     }
@@ -363,9 +366,9 @@ function ConvertTo-NativeDesktopRequest([string[]]$Arguments) {
         screenshot = @('window','identity','generation','output','monitor','max-age-seconds','compact');
         window = @('window','identity','generation','x','y','width','height');
         element = @('ref','generation','text','action-name');
-        input = @('window','identity','generation','width','height','x','y','text','key','keys','milliseconds','repeat-ms','lease','observation','timeline','button','to-x','to-y','delta','observe');
+        input = @('window','identity','generation','width','height','x','y','text','key','keys','milliseconds','repeat-ms','lease','observation','timeline','button','to-x','to-y','delta','observe','settle-ms');
         worker = @('idle-seconds','session-seconds')
-        'map-point' = @('capture','view-width','view-height','x','y')
+        'map-point' = @('capture','view-width','view-height','view-origin-x','view-origin-y','image-coordinates','x','y','to-x','to-y')
     }
     if (-not $allowed.ContainsKey($request.command)) { throw "Unsupported Windows desktop command: $($request.command)" }
     if ($request.command -in @('control','window','element','input','worker')) {
@@ -378,17 +381,19 @@ function ConvertTo-NativeDesktopRequest([string[]]$Arguments) {
         if (-not $option.StartsWith('--') -or $option.Substring(2) -notin $allowed[$request.command]) { throw "Unsupported option: $option" }
         $key = $option.Substring(2)
         if ($request.ContainsKey($key)) { throw "Duplicate option: $option" }
-        if ($key -in @('human-approved','indefinite','compact')) { $request[$key] = $true; continue }
+        if ($key -in @('human-approved','indefinite','compact','image-coordinates')) { $request[$key] = $true; continue }
         if ($index -ge $Arguments.Count) { throw "Missing value: $option" }
         $request[$key] = $Arguments[$index++]
     }
-    foreach ($key in @('pid','window','x','y','to-x','to-y','delta','view-width','view-height','width','height','seconds','milliseconds','repeat-ms','idle-seconds','session-seconds','max-age-seconds')) {
+    foreach ($key in @('pid','window','x','y','to-x','to-y','delta','view-width','view-height','view-origin-x','view-origin-y','width','height','seconds','milliseconds','repeat-ms','idle-seconds','session-seconds','max-age-seconds','settle-ms')) {
         if ($request.ContainsKey($key)) {
             $number = 0L
             if ($request[$key] -notmatch '\A-?[0-9]+\z' -or -not [long]::TryParse($request[$key], [ref]$number)) { throw "Invalid integer: $key" }
             if ($key -in @('pid','width','height','seconds') -and ($number -le 0 -or $number -gt [int]::MaxValue)) { throw "Invalid positive integer: $key" }
             if ($key -eq 'window' -and $number -le 0) { throw 'Invalid window handle' }
             if ($key -eq 'max-age-seconds' -and ($number -lt 1 -or $number -gt 600)) { throw 'Max age must be 1-600 seconds' }
+            if ($key -eq 'settle-ms' -and ($number -lt 0 -or $number -gt 5000)) { throw 'Settle time must be 0-5000 milliseconds' }
+            if ($key -in @('view-origin-x','view-origin-y') -and ($number -lt 0 -or $number -gt 16384)) { throw 'View origin must be 0-16384 pixels' }
             if ($key -in @('x','y','to-x','to-y') -and ($number -lt -100000 -or $number -gt 100000)) { throw 'Coordinate out of bounds' }
             if ($key -in @('width','height') -and $number -gt 16384) { throw 'Geometry out of bounds' }
             $request[$key] = $number
@@ -412,31 +417,76 @@ function Assert-NativeDesktopNewCapturePath([string]$Path) {
     $probe=Join-Path (Split-Path -Parent $Path) ([guid]::NewGuid().ToString('N')+'.probe')
     try{$stream=[IO.File]::Open($probe,'CreateNew','Write','None');$stream.Dispose()}finally{if(Test-Path -LiteralPath $probe){Remove-Item -LiteralPath $probe}}
 }
-function Invoke-NativePostInputCapture($Request,$InputResult,$State) {
-    try {
-        Assert-NativeHeldIdle
-        $current=Read-NativeDesktopState (Get-NativeDesktopContext)
-        if($current.mode -ne 'enabled' -or $current.revision -cne $State.revision -or $current.generation -cne $State.generation){throw 'Desktop control changed before post-input capture'}
-        $post=@{command='screenshot';window=$Request.window;identity=$Request.identity;output=$Request.observe}
-        $admitted=Get-NativeDesktopMonotonic
-        $capture=Invoke-NativeDesktopWorker $post
-        $receipt=@{observation_id=[guid]::NewGuid().ToString('N');admitted=$admitted;max_age_seconds=60;session=$State.session;generation=$State.generation;revision=$State.revision;
-            coordinate_space=$capture.coordinate_space;window=$Request.window;identity=$Request.identity;width=$capture.geometry[0];height=$capture.geometry[1]}
-        $State.observation=$receipt
-        if($capture -is [Collections.IDictionary]){$capture.observation_id=$receipt.observation_id;$capture.capture_freshness=Get-NativeCaptureFreshness $receipt}
-        else{$capture|Add-Member NoteProperty observation_id $receipt.observation_id -Force;$capture|Add-Member NoteProperty capture_freshness (Get-NativeCaptureFreshness $receipt) -Force}
-        Write-NativeDesktopState $State -KeepObservation
-        return @{ok=$true;generation=$State.generation;control_revision=$State.revision;result=@{input=$InputResult;observation=$capture;dispatch_stage='input-completed';input_delivery='completed'}}
-    } catch {
-        return @{ok=$false;error=$_.Exception.Message;dispatch_stage='post-input-observation';input_delivery='completed';submitted=$true;result=$InputResult}
+function Add-NativeDesktopFields($Result, [hashtable]$Fields) {
+    foreach ($key in $Fields.Keys) {
+        if ($Result -is [Collections.IDictionary]) { $Result[$key] = $Fields[$key] }
+        else { $Result | Add-Member NoteProperty $key $Fields[$key] -Force }
     }
 }
 
+function Set-NativeCaptureReceipt($Result,$Request,$State,[long]$Admitted,[int]$MaxAge,$Unavailable) {
+    $receipt = @{ observation_id = $null; admitted = $Admitted; max_age_seconds = $MaxAge;
+        session = $State.session; generation = $State.generation; revision = $State.revision;
+        coordinate_space = $Result.coordinate_space; window = $Request['window']; identity = $Request['identity'];
+        width = $Result.geometry[0]; height = $Result.geometry[1] }
+    $State.observation = $null
+    if (-not $Unavailable) {
+        $receipt.observation_id = [guid]::NewGuid().ToString('N')
+        $State.observation = $receipt
+    }
+    Add-NativeDesktopFields $Result @{ observation_id = $receipt.observation_id; generation = $State.generation;
+        control_revision = $State.revision; last_input = $State.last_input;
+        capture_freshness = Get-NativeCaptureFreshness $receipt; observation_unavailable_reason = $Unavailable }
+}
+
+function New-NativePostCaptureFailure($InputResult,$Receipt,[string]$Message) {
+    $reply = $Receipt.Clone()
+    $reply.ok = $false; $reply.error = $Message; $reply.result = $InputResult
+    $reply.dispatch_stage = 'post-input-observation'; $reply.submitted = $true
+    if ($InputResult -is [Collections.IDictionary] -and $InputResult.Contains('lease')) { $reply.lease = $InputResult.lease }
+    return $reply
+}
+
+function Invoke-NativePostInputCapture($Request,$InputResult,$Receipt,$State) {
+    $lock = $null
+    try {
+        Start-Sleep -Milliseconds $Request['settle-ms']
+        $context = Get-NativeDesktopContext
+        $lock = Enter-NativeDesktopLock $context
+        Assert-NativeHeldIdle
+        $current=Read-NativeDesktopState $context
+        if ($current.mode -ne 'enabled' -or $current.revision -cne $State.revision -or
+            $current.generation -cne $State.generation -or -not $current.last_input -or
+            $current.last_input.input_id -cne $Receipt.input_id) {
+            throw 'Desktop control or latest input changed before post-input capture'
+        }
+        $post=@{command='screenshot';window=$Request.window;identity=$Request.identity;output=$Request.observe}
+        $admitted=Get-NativeDesktopMonotonic
+        $capture=Invoke-NativeDesktopWorker $post
+        $current.last_input = $Receipt
+        Set-NativeCaptureReceipt $capture $post $current $admitted 60 $null
+        Write-NativeDesktopState $current -KeepObservation
+        $result = $Receipt.Clone()
+        $result.input = $InputResult; $result.observation = $capture; $result.settle_ms = $Request['settle-ms']
+        $reply = @{ok=$true;generation=$State.generation;control_revision=$State.revision;result=$result}
+        if ($InputResult -is [Collections.IDictionary] -and $InputResult.Contains('lease')) { $reply.lease = $InputResult.lease }
+        return $reply
+    } catch {
+        return New-NativePostCaptureFailure $InputResult $Receipt $_.Exception.Message
+    } finally { if ($lock) { Exit-NativeDesktopLock $lock } }
+}
+
+function ConvertFrom-NativeViewPoint([long]$X,[long]$Y,[long[]]$View,[long[]]$Origin,[long[]]$Image) {
+    $X -= $Origin[0]; $Y -= $Origin[1]
+    if ($X -lt 0 -or $Y -lt 0 -or $X -ge $View[0] -or $Y -ge $View[1]) { throw 'Point outside displayed image' }
+    return @([int][Math]::Floor($X*[double]$Image[0]/$View[0]), [int][Math]::Floor($Y*[double]$Image[1]/$View[1]))
+}
+
 function Invoke-NativeDesktopCli([string[]]$Arguments) {
-    $lock = $null; $request=$null; $dispatchAttempted=$false
+    $lock = $null; $request=$null; $dispatchAttempted=$false; $inputReceipt=$null; $pendingInput=$false
     try {
         if ($Arguments.Count -eq 2 -and $Arguments[0] -eq 'input' -and $Arguments[1] -in @('--help','-h','help')) {
-            return @{ ok = $true; help = 'input key|chord|sequence|text|click|hold|release|lease|move|wheel. Input and hold require --window --identity --generation --width --height and accept --observation ID from the latest window screenshot. Optional --observe NEW.png captures after completed input, preserving completion on capture failure. release/lease require --lease ID. Use input OPERATION --help for keys, limits and lease behavior. Queue acceptance does not prove application delivery.' }
+            return @{ ok = $true; help = 'input key|chord|sequence|text|click|hold|release|lease|move|wheel. Input and hold require --window --identity --generation --width --height and accept --observation ID from the latest window screenshot. Optional --observe NEW.png [--settle-ms 120] captures after completed input, preserving completion on capture failure. release/lease require --lease ID. Use input OPERATION --help for keys, limits and lease behavior. Queue acceptance does not prove application delivery.' }
         }
         if($Arguments.Count -ge 2 -and $Arguments[0] -eq 'worker' -and
             (($Arguments.Count -eq 2 -and $Arguments[1] -eq '--help') -or
@@ -450,34 +500,63 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
         }
         $request = ConvertTo-NativeDesktopRequest $Arguments
         if($request.command -eq 'map-point'){
-            Assert-NativeDesktopRequired $request @('capture','view-width','view-height','x','y')
+            Assert-NativeDesktopRequired $request @('capture','x','y')
+            if ($request.ContainsKey('to-x') -ne $request.ContainsKey('to-y')) { throw 'Drag mapping requires both endpoints' }
+            $imageCoordinates = $request.ContainsKey('image-coordinates')
+            $origin = @([long]$request['view-origin-x'], [long]$request['view-origin-y'])
+            if ($imageCoordinates) {
+                foreach ($key in @('view-width','view-height','view-origin-x','view-origin-y')) {
+                    if ($request.ContainsKey($key)) { throw 'Source image coordinates do not use view dimensions or margins' }
+                }
+            } else { Assert-NativeDesktopRequired $request @('view-width','view-height') }
             Assert-NativeDesktopPath $request.capture
             if((Get-Item -LiteralPath $request.capture).Length -gt 2097152){throw 'Capture receipt exceeds bound'}
             $capture=Get-Content -LiteralPath $request.capture -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($capture.PSObject.Properties['error'] -or ($capture.PSObject.Properties['ok'] -and -not $capture.ok)) { throw 'Capture receipt failed; capture again' }
+            $source = 'capture'
             if($capture.PSObject.Properties['result']){$capture=$capture.result}
-            if($capture.PSObject.Properties['observation']){$capture=$capture.observation}
+            if($capture.PSObject.Properties['observation']){$capture=$capture.observation;$source='observation'}
             if($capture.coordinate_space -ne 'window' -or $capture.image_geometry.Count -ne 2 -or $capture.geometry.Count -ne 2){throw 'Expected window capture receipt'}
             if($capture.image_origin.Count -ne 2 -or $capture.image_origin[0] -ne 0 -or $capture.image_origin[1] -ne 0 -or
                 $capture.image_geometry[0] -ne $capture.geometry[0] -or $capture.image_geometry[1] -ne $capture.geometry[1]){throw 'Windows mapping requires an unchanged full-window capture'}
-            $vw=[long]$request['view-width'];$vh=[long]$request['view-height']
-            if($vw -lt 1 -or $vh -lt 1 -or $vw -gt 16384 -or $vh -gt 16384 -or $request.x -lt 0 -or $request.y -lt 0 -or $request.x -ge $vw -or $request.y -ge $vh){throw 'Point outside displayed image'}
-            $x=[int][Math]::Floor($request.x*[double]$capture.image_geometry[0]/$vw)+[int]$capture.image_origin[0]
-            $y=[int][Math]::Floor($request.y*[double]$capture.image_geometry[1]/$vh)+[int]$capture.image_origin[1]
-            if($x -lt 0 -or $y -lt 0 -or $x -ge $capture.geometry[0] -or $y -ge $capture.geometry[1]){throw 'Mapped point outside input geometry'}
             $mapState=Read-NativeDesktopState (Get-NativeDesktopContext)
-            if(-not $mapState.observation -or $capture.observation_id -cne $mapState.observation.observation_id -or -not (Get-NativeCaptureFreshness $mapState.observation).fresh -or
+            if(-not $mapState.observation -or $mapState.observation.coordinate_space -cne 'window' -or
+                $capture.observation_id -cne $mapState.observation.observation_id -or -not (Get-NativeCaptureFreshness $mapState.observation).fresh -or
+                ($capture.PSObject.Properties['generation'] -and $capture.generation -cne $mapState.generation) -or
+                ($capture.PSObject.Properties['control_revision'] -and $capture.control_revision -cne $mapState.revision) -or
                 $capture.geometry[0] -ne $mapState.observation.width -or $capture.geometry[1] -ne $mapState.observation.height){throw 'Capture receipt is stale or changed; capture again'}
-            return @{ok=$true;x=$x;y=$y;coordinate_space='window';geometry=$capture.geometry;observation_id=$capture.observation_id;authority_renewed=$false;
+            $view = $capture.image_geometry
+            $pointSpace = 'source-image'
+            if (-not $imageCoordinates) {
+                $view = @($request['view-width'], $request['view-height'])
+                if ($view[0] -lt 1 -or $view[1] -lt 1 -or $view[0] -gt 16384 -or $view[1] -gt 16384) { throw 'View dimensions must be 1-16384 pixels' }
+                $pointSpace = 'presented-view'
+            }
+            $x,$y = ConvertFrom-NativeViewPoint $request.x $request.y $view $origin $capture.image_geometry
+            $mapped = @{ok=$true;x=$x;y=$y;coordinate_space='window';geometry=$capture.geometry;observation_id=$capture.observation_id;authority_renewed=$false;
+                capture_source=$source;point_space=$pointSpace;
                 input_context_args=@('--window',[string]$mapState.observation.window,'--identity',$mapState.observation.identity,'--generation',$mapState.generation,'--width',[string]$capture.geometry[0],'--height',[string]$capture.geometry[1],'--observation',$capture.observation_id);input_args=@('--x',[string]$x,'--y',[string]$y)}
+            if ($request.ContainsKey('to-x')) {
+                $tx,$ty = ConvertFrom-NativeViewPoint $request['to-x'] $request['to-y'] $view $origin $capture.image_geometry
+                $mapped.to_x=$tx; $mapped.to_y=$ty
+                $mapped.input_args += @('--to-x',[string]$tx,'--to-y',[string]$ty)
+            }
+            return $mapped
         }
         if ($request.command -eq 'input') {
             $leaseOptions=@('milliseconds','repeat-ms','lease','timeline','button','to-x','to-y')
             if ($request.operation -in @('release','lease')) {
                 foreach ($key in $request.Keys) { if ($key -notin @('command','operation','lease')) { throw "Unsupported lease option: --$key" } }
-            } elseif ($request.operation -eq 'hold') {
-                foreach ($key in $request.Keys) { if ($key -notin @('command','operation','window','identity','generation','width','height','key','milliseconds','repeat-ms','observation_id','timeline','button','x','y','to-x','to-y','observe')) { throw "Unsupported hold option: --$key" } }
             } else {
-                foreach ($key in $leaseOptions) { if ($request.ContainsKey($key)) { throw "Unsupported input option: --$key" } }
+                $inputReceipt = @{ input_id = [guid]::NewGuid().ToString('N'); generation = $request['generation'];
+                    observation_id = $request['observation_id']; input_received_at = [DateTimeOffset]::UtcNow.ToString('o') }
+                if ($request.operation -eq 'hold') {
+                    foreach ($key in $request.Keys) { if ($key -notin @('command','operation','window','identity','generation','width','height','key','milliseconds','repeat-ms','observation_id','timeline','button','x','y','to-x','to-y','observe','settle-ms')) { throw "Unsupported hold option: --$key" } }
+                } else {
+                    foreach ($key in $leaseOptions) { if ($request.ContainsKey($key)) { throw "Unsupported input option: --$key" } }
+                }
+                if ($request.ContainsKey('settle-ms') -and -not $request.ContainsKey('observe')) { throw '--settle-ms requires --observe' }
+                if ($request.ContainsKey('observe') -and -not $request.ContainsKey('settle-ms')) { $request['settle-ms'] = 120 }
             }
         }
         if($request.command -eq 'worker'){
@@ -604,20 +683,45 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
                 if ([IO.Path]::GetExtension($request.output) -ine '.png' -or (Test-Path -LiteralPath $request.output) -or -not (Test-Path -LiteralPath (Split-Path -Parent $request.output) -PathType Container)) { throw 'Output must be a NEW .png in an existing directory' }
             }
             # Invalidate references durably BEFORE a possibly timed-out mutation.
-            if ($mutation) { $state.elements = @(); $state.windows = @(); $state.observation = $null; Write-NativeDesktopState $state }
+            if ($mutation) {
+                $state.elements = @(); $state.windows = @(); $state.observation = $null
+                if ($inputReceipt) {
+                    $inputReceipt.generation = $state.generation
+                    $state.last_input = $inputReceipt + @{ dispatch_stage = 'transport'; input_delivery = 'unknown' }
+                }
+                Write-NativeDesktopState $state
+                $pendingInput = $null -ne $inputReceipt
+            }
             if ($request.command -eq 'input' -and $request.operation -eq 'hold') {
-                $dispatchAttempted=$true
                 $lease = Start-NativeHeldLease $request $context $state
                 # Control handoff and lease cancellation must remain available
                 # while the driver waits; the active lease blocks other mutations.
-                Exit-NativeDesktopLock $lock; $lock = $null
-                $held=Wait-NativeHeldLease $lease
-                if($request.ContainsKey('observe') -and $held.ok){
-                    try {
-                        $lock=Enter-NativeDesktopLock $context
-                        $post=Invoke-NativePostInputCapture $request $held $state
-                        $post.lease=$held.lease;return $post
-                    } catch {return @{ok=$false;lease=$held.lease;error=$_.Exception.Message;dispatch_stage='post-input-observation';input_delivery='completed';submitted=$true;result=$held}}
+                if ($lock) { Exit-NativeDesktopLock $lock; $lock = $null }
+                $pendingInput = $false; $dispatchAttempted = $true
+                $held = Wait-NativeHeldLease $lease
+                if ($held.ok) {
+                    $inputReceipt.dispatch_stage = 'input-completed'; $inputReceipt.input_delivery = 'completed'
+                    $inputReceipt.input_completed_at = [DateTimeOffset]::UtcNow.ToString('o')
+                } else {
+                    $inputReceipt.dispatch_stage = 'input-dispatch'; $inputReceipt.input_delivery = 'unknown'
+                }
+                Add-NativeDesktopFields $held $inputReceipt
+                try {
+                    $lock = Enter-NativeDesktopLock $context
+                    $current = Read-NativeDesktopState $context
+                    if ($current.last_input -and $current.last_input.input_id -ceq $inputReceipt.input_id) {
+                        $current.last_input = $inputReceipt
+                        Write-NativeDesktopState $current -KeepObservation
+                    }
+                } catch {
+                    if ($held.ok -and $request.ContainsKey('observe')) {
+                        return New-NativePostCaptureFailure $held $inputReceipt $_.Exception.Message
+                    }
+                    $held.receipt_state_error = $_.Exception.Message
+                }
+                if ($held.ok -and $request.ContainsKey('observe')) {
+                    if ($lock) { Exit-NativeDesktopLock $lock; $lock = $null }
+                    return Invoke-NativePostInputCapture $request $held $inputReceipt $state
                 }
                 return $held
             }
@@ -633,27 +737,22 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
             $dispatchAttempted=$true
             $result = Invoke-NativeDesktopWorker $request
             if ($request.command -eq 'screenshot') {
-                $receipt = @{ observation_id = [guid]::NewGuid().ToString('N'); admitted = $admitted; max_age_seconds = $request['max-age-seconds'];
-                    session = $state.session; generation = $state.generation; revision = $state.revision; coordinate_space = $result.coordinate_space;
-                    window = $request['window']; identity = $request['identity']; width = $result.geometry[0]; height = $result.geometry[1] }
-                if ($observationUnavailable) { $receipt.observation_id = $null; $state.observation = $null }
-                else { $state.observation = $receipt }
-                $freshness = Get-NativeCaptureFreshness $receipt
-                if ($result -is [Collections.IDictionary]) {
-                    $result.observation_id = $receipt.observation_id; $result.capture_freshness = $freshness
-                    $result.observation_unavailable_reason = $observationUnavailable
-                } else {
-                    $result | Add-Member NoteProperty observation_id $receipt.observation_id
-                    $result | Add-Member NoteProperty capture_freshness $freshness
-                    $result | Add-Member NoteProperty observation_unavailable_reason $observationUnavailable
+                Set-NativeCaptureReceipt $result $request $state $admitted $request['max-age-seconds'] $observationUnavailable
+            }
+            if ($inputReceipt) {
+                $inputReceipt.dispatch_stage = 'input-completed'; $inputReceipt.input_delivery = 'completed'
+                $inputReceipt.input_completed_at = [DateTimeOffset]::UtcNow.ToString('o')
+                Add-NativeDesktopFields $result $inputReceipt
+                $state.last_input = $inputReceipt
+                try { Write-NativeDesktopState $state -KeepObservation }
+                catch {
+                    Add-NativeDesktopFields $result @{ receipt_state_error = $_.Exception.Message }
                 }
-            }
-            if ($request.command -eq 'input' -and $request.ContainsKey('observation_id')) {
-                if ($result -is [Collections.IDictionary]) { $result.observation_id = $request.observation_id }
-                else { $result | Add-Member NoteProperty observation_id $request.observation_id }
-            }
-            if($request.command -eq 'input' -and $request.ContainsKey('observe')){
-                return Invoke-NativePostInputCapture $request $result $state
+                if ($request.ContainsKey('observe')) {
+                    if ($lock) { Exit-NativeDesktopLock $lock; $lock = $null }
+                    return Invoke-NativePostInputCapture $request $result $inputReceipt $state
+                }
+                return @{ ok = $true; generation = $state.generation; control_revision = $state.revision; result = $result }
             }
             if ($request.command -eq 'windows') { $state.windows = @($result.windows); $state.elements = @(); $state.window_observed = Get-NativeDesktopTime }
             if ($request.command -eq 'inspect') {
@@ -682,6 +781,15 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
         while($failure){
             if($failure.Data.Contains('desktop_failure')){foreach($key in $failure.Data['desktop_failure'].Keys){$reply[$key]=$failure.Data['desktop_failure'][$key]};break}
             $failure=$failure.InnerException
+        }
+        if ($inputReceipt) {
+            $inputReceipt.dispatch_stage = $reply.dispatch_stage; $inputReceipt.input_delivery = $reply.input_delivery
+            Add-NativeDesktopFields $reply $inputReceipt
+            if ($pendingInput) {
+                $state.last_input = $inputReceipt
+                try { Write-NativeDesktopState $state -KeepObservation }
+                catch { $reply.receipt_state_error = $_.Exception.Message }
+            }
         }
         return $reply
     }

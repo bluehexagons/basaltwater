@@ -33,6 +33,10 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Test desktop observation and input receipts
+        shell: powershell
+        run: .\windows\tests\Run-ObservationTests.ps1
+
       - name: Test Windows PowerShell setup and native jobs
         shell: powershell
         run: .\windows\tests\Run-NativeTests.ps1

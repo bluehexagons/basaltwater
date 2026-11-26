@@ -157,12 +157,13 @@ unverified results. Check `status` for `matched` when a caller requires every
 requested check to agree. A contradiction or invalid artifact exits 1.
 The command reads saved files offline and grants no input authority.
 
-Run the audit where the Basaltwater CLI manages private evidence bundles.
-The comparisons use fields shared by the CachyOS and Debian desktop receipts.
-The reader also accepts Windows result envelopes and BOM-marked UTF-16
-PowerShell exports. Legacy receipts lacking a stable input ID or a capture
-digest remain unverified. A `submitted` flag alone supplies no delivery
-evidence. Keep saved receipts and reports with private evidence.
+Run the audit on Linux where the Basaltwater CLI manages private evidence
+bundles. The comparisons use fields shared by CachyOS, Debian and the current
+Windows desktop backend. For Windows runs, bring the saved PNGs and JSON
+receipts into your private Linux evidence directory. The audit accepts Windows
+result envelopes and BOM-marked UTF-16 PowerShell exports. Legacy receipts
+lacking a stable input ID or a capture digest remain unverified. Keep saved
+receipts and reports with private evidence.
 
 The synthetic [accepted](../examples/learning-records/accepted.json) and
 [stale/rejected](../examples/learning-records/rejected.json) graphs demonstrate

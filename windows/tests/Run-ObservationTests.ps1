@@ -42,7 +42,8 @@ function Invoke-NativeDesktopWorker($Request, [int]$TimeoutSeconds=8) {
             if ($script:ObservationCaptureHook) { & $script:ObservationCaptureHook }
             # Match the real serialized worker response, including PSCustomObject properties.
             return [pscustomobject]@{geometry=@(640,480);image_geometry=@(640,480);image_origin=@(0,0);desktop_origin=@(-640,-20);
-                coordinate_space=$(if($Request.ContainsKey('monitor')){'monitor'}else{'window'});captured_at='2026-01-01T00:00:00Z'}
+                coordinate_space=$(if($Request.ContainsKey('monitor')){'monitor'}else{'window'});captured_at='2026-01-01T00:00:00Z';
+                artifact_sha256=('b'*64)}
         }
         default {
             if ($Request.command -eq 'input') { $script:ObservationInputs++;$script:ObservationLastInput = $Request | ConvertTo-Json -Depth 10 | ConvertFrom-Json }
@@ -104,14 +105,39 @@ try {
     Assert-ObservationFailure (Invoke-NativeDesktopCli @('screenshot','--max-age-seconds')) 'Missing value'
     $first=New-ObservationCapture
     $postPath=Join-Path $script:ObservationRoot 'post.png'
-    $post=Invoke-ObservationInput $first @('--observe',$postPath)
+    $post=Invoke-ObservationInput $first @('--observe',$postPath,'--settle-ms','0')
     Assert-Observation ($post.ok -and $post.result.input_delivery -eq 'completed' -and $post.result.observation.observation_id -cmatch '\A[0-9a-f]{32}\z') 'Post capture lost completed input or fresh authority'
+    Assert-Observation ($post.result.input_id -cmatch '\A[0-9a-f]{32}\z' -and $post.result.input.input_id -ceq $post.result.input_id -and
+        $post.result.observation.last_input.input_id -ceq $post.result.input_id -and $post.result.observation_id -ceq $first.result.observation_id -and
+        $post.result.observation.generation -ceq $first.result.generation -and $post.result.observation.artifact_sha256 -ceq ('b'*64) -and
+        $post.result.settle_ms -eq 0) 'Windows receipt cannot link the original capture, input and follow-up'
     $first=New-ObservationCapture
+    Assert-Observation ($first.result.last_input.input_id -ceq $post.result.input_id) 'A separate capture lost the completed input summary'
+    $before=$script:ObservationInputs
+    $refused=Invoke-ObservationInput $first @('--settle-ms','1')
+    Assert-ObservationFailure $refused 'requires --observe'
+    Assert-Observation ($refused.input_id -cmatch '\A[0-9a-f]{32}\z' -and $refused.input_delivery -eq 'not-sent' -and
+        $refused.observation_id -ceq $first.result.observation_id -and $script:ObservationInputs -eq $before) 'Preflight refusal lost input identity or attempted dispatch'
+    Assert-ObservationFailure (Invoke-ObservationInput $first @('--observe',$postPath,'--settle-ms','5001')) '0-5000'
     $script:ObservationPostFail=$true;$before=$script:ObservationInputs
     $post=Invoke-ObservationInput $first @('--observe',$postPath)
     $script:ObservationPostFail=$false
-    Assert-Observation (-not $post.ok -and $post.input_delivery -eq 'completed' -and $post.dispatch_stage -eq 'post-input-observation' -and $post.result.submitted -and $script:ObservationInputs -eq $before+1) 'Failed post capture lost completion or replayed input'
+    Assert-Observation (-not $post.ok -and $post.input_delivery -eq 'completed' -and $post.dispatch_stage -eq 'post-input-observation' -and
+        $post.input_id -ceq $post.result.input_id -and $post.result.submitted -and $script:ObservationInputs -eq $before+1) 'Failed post capture lost completion or replayed input'
     Assert-ObservationFailure (Invoke-ObservationInput $first) 'latest successful'
+    & {
+        function Start-Sleep([int]$Milliseconds) {
+            Assert-Observation ($Milliseconds -eq 120) 'Default settle time differs from Linux'
+            $state=Read-NativeDesktopState (Get-NativeDesktopContext)
+            $state.last_input.input_id='a'*32
+            Write-NativeDesktopState $state -KeepObservation
+        }
+        $first=New-ObservationCapture
+        $before=$script:ObservationCalls
+        $post=Invoke-ObservationInput $first @('--observe',$postPath)
+        Assert-ObservationFailure $post 'latest input changed'
+        Assert-Observation ($post.input_delivery -eq 'completed' -and $script:ObservationCalls -eq $before+1) 'A superseded input triggered capture or lost completion'
+    }
     $first=New-ObservationCapture
     [IO.File]::WriteAllText($postPath,'preserve')
     $before=$script:ObservationInputs
@@ -124,11 +150,22 @@ try {
     [IO.File]::WriteAllText($mapPath,($first|ConvertTo-Json -Depth 12))
     $mapped=Invoke-NativeDesktopCli @('map-point','--capture',$mapPath,'--view-width','320','--view-height','240','--x','160','--y','120')
     Assert-Observation ($mapped.ok -and $mapped.x -eq 320 -and $mapped.y -eq 240 -and -not $mapped.authority_renewed) 'Map aid lost scale or renewed authority'
+    $mapped=Invoke-NativeDesktopCli @('map-point','--capture',$mapPath,'--view-width','320','--view-height','240','--view-origin-x','20','--view-origin-y','30',
+        '--x','180','--y','150','--to-x','339','--to-y','269')
+    Assert-Observation ($mapped.ok -and $mapped.point_space -eq 'presented-view' -and $mapped.x -eq 320 -and $mapped.y -eq 240 -and
+        ($mapped.input_args -join ' ') -ceq '--x 320 --y 240 --to-x 638 --to-y 478') 'View margins or drag endpoint were mapped incorrectly'
+    $sourceArgs=@('map-point','--capture',$mapPath,'--image-coordinates','--x','639','--y','479')
+    $mapped=Invoke-NativeDesktopCli $sourceArgs
+    Assert-Observation ($mapped.ok -and $mapped.point_space -eq 'source-image' -and $mapped.x -eq 639 -and $mapped.y -eq 479) 'Source pixels were scaled or offset'
+    Assert-ObservationFailure (Invoke-NativeDesktopCli ($sourceArgs+@('--view-origin-x','1'))) 'dimensions or margins'
+    Assert-ObservationFailure (Invoke-NativeDesktopCli ($sourceArgs+@('--to-x','100'))) 'both endpoints'
+    Assert-ObservationFailure (Invoke-NativeDesktopCli ($sourceArgs+@('--to-x','640','--to-y','0'))) 'outside displayed image'
     Assert-Observation ($first.result.observation_id -cmatch '\A[0-9a-f]{32}\z' -and $first.result.capture_freshness.max_age_seconds -eq 60) 'Default receipt missing'
     Assert-Observation (($first.result.geometry -join ',') -eq '640,480') 'Capture geometry is not a shared dimension pair'
     $status = Invoke-NativeDesktopCli @('status')
     Assert-Observation ($status.observation_id -ceq $first.result.observation_id -and $status.capture_freshness.fresh) 'Status lost capture authority'
     $second=New-ObservationCapture
+    Assert-ObservationFailure (Invoke-NativeDesktopCli $sourceArgs) 'stale or changed'
     Assert-ObservationFailure (Invoke-ObservationInput $first) 'latest successful'
     # Use real lease admission/receipt validation; mock only its ownership
     # mutex boundary. A monitoring image must not outlive later lease input.
@@ -202,8 +239,12 @@ try {
     Assert-Observation (Invoke-ObservationInput $capture).ok 'Failed capture replaced old receipt'
     $capture=New-ObservationCapture
     $script:ObservationFail=$true
-    Assert-ObservationFailure (Invoke-ObservationInput $capture) 'outcome unknown'
+    $unknown=Invoke-ObservationInput $capture
+    Assert-ObservationFailure $unknown 'outcome unknown'
     $script:ObservationFail=$false
+    $next=New-ObservationCapture
+    Assert-Observation ($unknown.input_delivery -eq 'unknown' -and $next.result.last_input.input_id -ceq $unknown.input_id -and
+        $next.result.last_input.input_delivery -eq 'unknown' -and -not $next.result.last_input.PSObject.Properties['error']) 'Capture lost the uncertain input summary or exposed its error'
     Assert-ObservationFailure (Invoke-ObservationInput $capture) 'latest successful'
     $capture=New-ObservationCapture -Monitor
     Assert-ObservationFailure (Invoke-ObservationInput $capture) 'window capture required'
@@ -228,6 +269,7 @@ try {
     $script:ObservationSession='fixture-session-2'
     Assert-ObservationFailure (Invoke-ObservationInput $capture) 'Stale session generation'
     $capture=New-ObservationCapture
+    Assert-Observation ($null -eq $capture.result.last_input) 'A new session inherited input evidence'
     $before=$script:ObservationCalls
     $script:ObservationUtc--
     Assert-ObservationFailure (Invoke-NativeDesktopCli @('window','focus','--window','123','--identity','fixture-identity','--generation',$capture.generation)) 'not recently observed'
@@ -261,8 +303,10 @@ try {
     # Version-1 files without the optional receipt remain supported.
     $state=Read-NativeDesktopState (Get-NativeDesktopContext)
     $state.Remove('observation')
+    $state.Remove('last_input')
     [IO.File]::WriteAllText((Get-NativeDesktopStatePath), ($state | ConvertTo-Json -Depth 40))
-    Assert-Observation ($null -eq (Read-NativeDesktopState (Get-NativeDesktopContext)).observation) 'Legacy state rejected'
+    $legacy=Read-NativeDesktopState (Get-NativeDesktopContext)
+    Assert-Observation ($null -eq $legacy.observation -and $null -eq $legacy.last_input) 'Legacy state rejected'
     Write-Host 'Observation offline contract tests passed (mocked desktop).'
 } finally {
     Assert-NativeDesktopPrivatePath $script:ObservationRoot

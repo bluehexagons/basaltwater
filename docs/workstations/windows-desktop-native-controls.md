@@ -51,8 +51,10 @@ are never overwritten. Monitor captures can include other visible applications.
 See the shared [observation contract](desktop-observations.md) for the same
 lifecycle on Debian XFCE and CachyOS KDE Plasma and the platform-validation backlog.
 A successful screenshot normally returns `result.observation_id` (32 lowercase
-hex characters), `captured_at`, `geometry` (input width/height), `image_geometry`
-(actual PNG width/height), `image_origin`, `desktop_origin` and `coordinate_space`.
+hex characters), `captured_at`, `artifact_sha256`, `geometry` (input width/height),
+`image_geometry` (actual PNG width/height), `image_origin`, `desktop_origin` and
+`coordinate_space`. It includes the session generation, control revision and
+content-free `last_input` summary when one is available.
 Both geometry fields are `[width, height]` pairs, as on Linux.
 Image origin is `[0,0]` in `window` or `monitor` coordinates; desktop origin is
 separate and can be negative. Window identity and its entire rectangle are
@@ -92,9 +94,19 @@ the token. Input without `--observation` and existing UI Automation/window-actio
 paths retain their existing guards and reference lifetimes.
 Status exposes the current ID and freshness without renewing either. Discrete
 token input rechecks the capture deadline inside cold and warm native workers.
-Token-bound `hold` is explicitly unsupported pending watchdog deadline plumbing;
-use the existing window-inventory hold route. Windows post-input capture remains
-follow-up work rather than an implemented `--observe` option.
+Token-bound `hold` carries the deadline through preparation and watchdog
+startup to the first down. Both forms return an `input_id` and delivery state.
+Add `--observe NEW.png` to capture the same window after completed input.
+The capture waits 120 ms by default. Set `--settle-ms` to an integer from 0 to
+5000. If control changes, another input intervenes, or capture fails, the
+response preserves the completed input and reports the capture failure.
+
+Use `map-point --capture FRAME.json --image-coordinates --x X --y Y` to map
+exact PNG pixels. For points in a resized view, supply `--view-width`,
+`--view-height` and optional `--view-origin-x` and `--view-origin-y` margins.
+Add `--to-x` and `--to-y` to map the second point for a drag. The command
+checks the current observation and returns arguments for a separately
+authorized input.
 
 ## Act on observed controls
 

@@ -6,6 +6,7 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 using System.Threading;
@@ -26,7 +27,8 @@ public sealed class Monitor { public string id; public int x,y,width,height; }
 public sealed class CaptureReceipt {
     public int[] geometry,image_geometry;
     public int[] image_origin,desktop_origin;
-    public string coordinate_space,captured_at;
+    public string coordinate_space,captured_at,artifact_sha256;
+    public long bytes;
 }
 public static partial class Native {
     [StructLayout(LayoutKind.Sequential)] public struct Rect { public int left, top, right, bottom; }
@@ -224,12 +226,18 @@ public static partial class Native {
                 else { var dc=g.GetHdc(); try { CheckCaptureRectangle(Check(id,identity),rect); if(!PrintWindow(new IntPtr(id),dc,2)) throw new Exception("Application does not support window capture"); } finally { g.ReleaseHdc(dc); } }
             }
             if(monitor==null) CheckCaptureRectangle(Check(id,identity),rect);
-            using(var file=new FileStream(output,FileMode.CreateNew,FileAccess.Write,FileShare.None)) { created=true; bitmap.Save(file,ImageFormat.Png); }
-            if(monitor==null) CheckCaptureRectangle(Check(id,identity),rect);
-            return new CaptureReceipt { geometry=new [] {rect.Width,rect.Height},
-                image_geometry=new [] {bitmap.Width,bitmap.Height},image_origin=new [] {0,0},
-                desktop_origin=new [] {rect.X,rect.Y},coordinate_space=monitor==null ? "window" : "monitor",
-                captured_at=DateTimeOffset.UtcNow.ToString("o") };
+            using(var file=new FileStream(output,FileMode.CreateNew,FileAccess.ReadWrite,FileShare.None)) {
+                created=true;
+                bitmap.Save(file,ImageFormat.Png);
+                file.Position=0;
+                string digest;
+                using(var sha=SHA256.Create()) digest=BitConverter.ToString(sha.ComputeHash(file)).Replace("-","").ToLowerInvariant();
+                if(monitor==null) CheckCaptureRectangle(Check(id,identity),rect);
+                return new CaptureReceipt { geometry=new [] {rect.Width,rect.Height},
+                    image_geometry=new [] {bitmap.Width,bitmap.Height},image_origin=new [] {0,0},
+                    desktop_origin=new [] {rect.X,rect.Y},coordinate_space=monitor==null ? "window" : "monitor",
+                    captured_at=DateTimeOffset.UtcNow.ToString("o"),artifact_sha256=digest,bytes=file.Length };
+            }
         }
         } catch { if(created) File.Delete(output); throw; }
     }

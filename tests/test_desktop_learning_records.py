@@ -263,8 +263,8 @@ class LearningRecordTests(unittest.TestCase):
                                   "--input", str(input_path), "--before", str(before_path),
                                   "--after", "packet-2", str(input_path), "--json"])
 
-        def run(expected):
-            input_path.write_text(json.dumps(receipt))
+        def run(expected, saved=receipt, encoding="utf-8"):
+            input_path.write_text(json.dumps(saved), encoding=encoding)
             output = StringIO()
             with patch("sys.stdout", output):
                 self.assertEqual(run_desktop_command(args), expected)
@@ -290,6 +290,12 @@ class LearningRecordTests(unittest.TestCase):
                 self.assertEqual(report["dispatch"]["status"], "matched")
                 self.assertEqual(report["after"]["reason"], reason)
                 self.assertIsNone(report["after"]["changed"])
+        windows_before = {"ok": True, "generation": "session-1", "result": json.loads(before_path.read_text())}
+        before_path.write_text(json.dumps(windows_before), encoding="utf-16")
+        windows_after = {"ok": True, "generation": "session-1", "result": receipt}
+        report = run(0, windows_after, encoding="utf-16")
+        self.assertEqual(report["status"], "matched")
+        self.assertEqual(report["after"]["frame_ids"], ["frame-2"])
         (Path(artifact).parent / "frame-1.png").write_bytes(b"tampered")
         self.assertEqual(run(1)["validation"], "invalid")
 

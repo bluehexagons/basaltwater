@@ -51,7 +51,10 @@ function Get-ProbeInputArgs {
 function Save-ProbeReply($Reply){[IO.File]::AppendAllText((Join-Path $EvidenceDirectory 'receipts.jsonl'),(($Reply|ConvertTo-Json -Depth 20 -Compress)+"`n"))}
 function New-ProbeCapture([int]$Age=60){
     $target=Get-ProbeTarget
-    return Invoke-Probe @('screenshot','--window',[string]$target.window.id,'--identity',$target.window.identity,'--generation',$target.generation,'--output',(Join-Path $EvidenceDirectory ([guid]::NewGuid().ToString('N')+'.png')),'--max-age-seconds',[string]$Age)
+    $reply = Invoke-Probe @('screenshot','--window',[string]$target.window.id,'--identity',$target.window.identity,'--generation',$target.generation,'--output',(Join-Path $EvidenceDirectory ([guid]::NewGuid().ToString('N')+'.png')),'--max-age-seconds',[string]$Age)
+    $actual = (Get-FileHash -LiteralPath $reply.result.output -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($reply.result.artifact_sha256 -cne $actual) { throw 'Capture receipt does not match the saved PNG hash' }
+    return $reply
 }
 function Get-CapturedKeyArgs($Capture){
     $w=$target.window
@@ -101,7 +104,13 @@ try {
     $saved=Join-Path $EvidenceDirectory 'mapped-capture.json';Write-NativeHeldJson $saved $capture 65536
     $mapped=Invoke-Probe @('map-point','--capture',$saved,'--view-width','320','--view-height','240','--x','160','--y','120')
     if($mapped.x -ne 320 -or $mapped.y -ne 240 -or $mapped.authority_renewed){throw 'Native receipt mapping differs from the presented image'}
-    $null=Invoke-Probe (Get-CapturedKeyArgs $capture)
+    $afterPath = Join-Path $EvidenceDirectory 'mapped-follow-up.png'
+    $post=Invoke-Probe ((Get-CapturedKeyArgs $capture)+@('--observe',$afterPath))
+    if ($post.result.observation_id -cne $capture.result.observation_id -or
+        $post.result.input_id -cne $post.result.observation.last_input.input_id -or
+        $post.result.observation.artifact_sha256 -cne (Get-FileHash -LiteralPath $afterPath -Algorithm SHA256).Hash.ToLowerInvariant()) {
+        throw 'Live input or follow-up receipt lost the inspected capture or exact PNG'
+    }
     Assert-ProbeRefusal (Get-CapturedKeyArgs $capture) 'latest successful'
     $old=New-ProbeCapture;$capture=New-ProbeCapture
     Assert-ProbeRefusal (Get-CapturedKeyArgs $old) 'latest successful'

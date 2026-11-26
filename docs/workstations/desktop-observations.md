@@ -48,17 +48,19 @@ basaltw desktop screenshot --window HWND --identity IDENTITY --generation GEN --
 basaltw desktop input click --window HWND --identity IDENTITY --generation GEN --width W --height H --observation OBSERVATION_ID --x X --y Y
 ```
 
-Windows also accepts `input ... --observe NEW.png`, preserving completed input
-when a later capture fails. Holds capture only after confirmed release/cleanup.
+Windows also accepts `input ... --observe NEW.png [--settle-ms 120]`, preserving
+completed input when a later capture fails. Holds capture after confirmed
+release and cleanup. The settle delay accepts 0–5000 ms on all three platforms.
 The output must be new; its parent and write access are checked before input.
 `screenshot --compact` retains the existing small JSON geometry/origin receipt.
 Save that JSON and use `map-point --capture frame.json --view-width 1200
---view-height 800 --x 600 --y 400` for a resized, full window image. Coordinates
-are relative to the image content, with no viewer margins. Windows mapping also
-accepts the nested post-input observation, checks the current receipt and age,
-and returns `input_context_args` plus `input_args`. It does not renew authority,
-recognize content or support monitor-token input. Cropped Windows acquisition
-is not implemented. Native source qualification remains separate.
+--view-height 800 --x 600 --y 400` for a resized, full window image. Supply
+`--view-origin-x` and `--view-origin-y` for viewer margins, or use
+`--image-coordinates` alone for source-PNG pixels. Supply both `--to-x` and
+`--to-y` to map a drag endpoint in the same coordinate system. Windows mapping
+also accepts the nested post-input observation, checks the current receipt and
+age, and returns `input_context_args` plus `input_args`. The command is
+read-only and uses full-window captures.
 
 `--observation` binds input to the latest successfully published screenshot.
 An admitted mutation consumes or invalidates the token, including an uncertain
@@ -269,11 +271,15 @@ The recorder retains refused events separately from uncertain ones. Verification
 counts `image_less` capture events separately from `missing` saved paths and
 includes uncertain events in health. PNG hashes alone cannot certify journal
 health. Older errors/journals have no proven dispatch stage; they remain
-uncertain and are never rewritten. Windows cold and warm workers now retain
-structured `submitted`, `dispatch_stage` and `input_delivery` failures. Entering
-the worker body is conservatively unknown even if a later native guard refuses;
-only an envelope refusal proves not-sent. A new client cannot infer stages from
-old Linux or Windows strings. Restart a
+uncertain and are never rewritten. Windows input receipts include a stable ID,
+generation, observation ID when supplied, dispatch stage and delivery. Windows
+captures include the exact PNG's SHA-256 and a content-free `last_input` for
+the latest session input admitted for dispatch. A refusal before admission keeps
+the preceding observation and input summary. Cold and warm envelope refusals
+report `not-sent`. Once the worker body is entered, a failure may report
+`unknown` even when a native guard refused. Use the saved receipts for the
+[offline decision audit](learning-records.md#auditing-one-decision).
+Restart a
 Debian desktop session normally after installing updated worker code; updating
 the client alone cannot add stages to an already running old worker.
 
@@ -302,10 +308,11 @@ Completion receipts retain the geometry admitted for input;
 take a new capture to observe current dimensions. Debian records completion
 without a final geometry query that could obscure successfully submitted input.
 CachyOS skips the stream's initial sample; Debian performs a
-new scrot capture without claiming compositor frame timing. A capture failure
-does not replay input. Windows now supports post-input observation and carries
-capture deadlines through held-input preparation and watchdog startup to the
-first down. Its PrintWindow capture does not claim GPU frame synchronization.
+new scrot capture without claiming compositor frame timing. Windows rechecks the
+latest input ID and control state after the settle delay. It carries capture
+deadlines through held-input preparation and watchdog startup to the first down.
+PrintWindow captures reflect the application's Win32 capture support. A capture
+failure does not replay input.
 Debian observation-bound ASCII text uses one unpaced request; `--delay-ms`
 requires server-paced text support for a single-use token. Non-ASCII text
 defaults to separate character requests with 10 ms pacing because rapid X11
