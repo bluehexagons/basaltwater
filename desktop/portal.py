@@ -13,6 +13,13 @@ SCREENCAST = "org.freedesktop.portal.ScreenCast"
 RESPONSE_SECONDS = 120
 
 
+class PortalRequestError(RuntimeError):
+    def __init__(self, outcome, detail, *, response_code=None):
+        super().__init__(detail)
+        self.outcome = outcome
+        self.response_code = response_code
+
+
 class Portal:
     def __init__(self, closed, *, progress=None):
         import gi
@@ -72,7 +79,7 @@ class Portal:
         self.waiters.add(event)
         try:
             if self.cancelled.is_set():
-                raise RuntimeError("Portal session closed before " + method)
+                raise PortalRequestError("portal-closed", "Portal session closed before " + method)
             self.progress(method + ".request", False)
             options = {**options, "handle_token": self.GLib.Variant("s", token)}
             returned = self.call(interface, method, signature, (*values, options)).unpack()[0]
@@ -80,11 +87,14 @@ class Portal:
                 raise RuntimeError("Portal returned an unexpected request handle")
             self.progress(method + ".response", method == "Start")
             if not event.wait(RESPONSE_SECONDS):
-                raise RuntimeError(f"Portal {method} response timed out; inspect status before retrying")
+                raise PortalRequestError("timed-out", f"Portal {method} response timed out; inspect status before retrying")
             if result and result[0][0]:
-                raise RuntimeError("Portal permission was cancelled or denied; no desktop control granted")
+                code = result[0][0]
+                detail = ("Portal request was cancelled; no desktop control granted" if code == 1
+                          else "Portal request was denied or otherwise ended; no desktop control granted")
+                raise PortalRequestError("cancelled" if code == 1 else "portal-rejected", detail, response_code=code)
             if self.cancelled.is_set():
-                raise RuntimeError("Portal session closed while waiting for " + method)
+                raise PortalRequestError("portal-closed", "Portal session closed while waiting for " + method)
             self.progress(method + ".complete", False)
             return result[0][1]
         finally:
@@ -97,18 +107,21 @@ class Portal:
                 except Exception:
                     pass
 
-    def start(self, *, remember=False, restore_token=None, save_token=None, touch=False):
+    def start(self, *, remember=False, restore_token=None, save_token=None, discard_token=None, touch=False):
         v = self.GLib.Variant
         if type(touch) is not bool:
             raise ValueError("Touch selection must be boolean")
         if touch:
+            self.progress("RemoteDesktop.AvailableDeviceTypes", False)
             available = self.call("org.freedesktop.DBus.Properties", "Get", "(ss)",
                                   (REMOTE, "AvailableDeviceTypes")).unpack()[0]
+            self.progress("RemoteDesktop.AvailableDeviceTypes.complete", False)
             if type(available) is not int or available & 4 != 4:
                 raise RuntimeError("This portal does not offer touchscreen control; pointer input is a separate route")
         if remember:
             self.progress("RemoteDesktop.version", False)
             version = self.call("org.freedesktop.DBus.Properties", "Get", "(ss)", (REMOTE, "version")).unpack()[0]
+            self.progress("RemoteDesktop.version.complete", False)
             if version < 2:
                 raise RuntimeError("This portal does not support persistent RemoteDesktop grants; use revoke to remove the opt-in, then start without --remember")
         created = self.response(REMOTE, "CreateSession", "(a{sv})", (),
@@ -135,20 +148,26 @@ class Portal:
         if self.restore_token and save_token:
             save_token(self.restore_token)
         if started.get("devices", 0) & required_devices != required_devices or len(started.get("streams", [])) != 1:
-            self.revoke_token(self.restore_token)
             access = "keyboard, pointer and touchscreen" if touch else "keyboard and pointer"
-            raise RuntimeError(f"Select one monitor and grant {access} access to use automation")
+            self.reject_grant(f"Select one monitor and grant {access} access to use automation", discard_token)
         node, properties = started["streams"][0]
         size = properties.get("logical_size", properties.get("size"))
         if not isinstance(size, (tuple, list)) or len(size) != 2 or any(type(n) is not int or n <= 0 for n in size):
-            self.revoke_token(self.restore_token)
-            raise RuntimeError("Portal did not report the selected monitor's logical size")
+            self.reject_grant("Portal did not report the selected monitor's logical size", discard_token)
         self.progress("OpenPipeWireRemote", False)
         reply, descriptors = self.bus.call_with_unix_fd_list_sync(BUS_NAME, OBJECT, SCREENCAST,
             "OpenPipeWireRemote", v("(oa{sv})", (self.session, {})), None,
             self.Gio.DBusCallFlags.NO_AUTO_START, 3000, None, None)
         self.fd = descriptors.get(reply.unpack()[0])
+        self.progress("OpenPipeWireRemote.complete", False)
         return node, list(size)
+
+    def reject_grant(self, detail, discard_token):
+        token = self.restore_token
+        self.revoke_token(token)
+        if token and discard_token:
+            discard_token(token)
+        raise PortalRequestError("incomplete-grant", detail)
 
     def notify(self, method, signature, *values, timeout_ms=3000):
         self.call(REMOTE, method, "(oa{sv}" + signature + ")", (self.session, {}, *values),

@@ -22,7 +22,7 @@ from unittest.mock import Mock, call, patch
 from desktop import native_session as native
 from desktop import control_state, native_grants, native_handoff
 from desktop import client
-from desktop.portal import Portal, REMOTE, SCREENCAST
+from desktop.portal import Portal, PortalRequestError, REMOTE, SCREENCAST
 from lib import desktop_cli
 
 
@@ -590,14 +590,15 @@ class PortalContractTests(unittest.TestCase):
             subscription = self.portal.bus.signal_subscribe.call_args
             path = subscription.args[3]
             callback = subscription.args[-1]
-            callback(None,None,None,None,None,Mock(unpack=lambda:(1,{})))
+            callback(None,None,None,None,None,Mock(unpack=lambda:(2,{})))
             return Mock(unpack=lambda:(path,))
-        with patch.object(self.portal,"call",side_effect=call), self.assertRaisesRegex(RuntimeError,"denied"):
+        with patch.object(self.portal,"call",side_effect=call), self.assertRaisesRegex(PortalRequestError,"denied") as error:
             self.portal.response(REMOTE,"Start","(osa{sv})",("session",""),{})
+        self.assertEqual((error.exception.outcome, error.exception.response_code), ("portal-rejected", 2))
         self.portal.bus.signal_unsubscribe.assert_called_once()
         self.assertFalse(self.portal.pending)
 
-    def test_explicit_denial_survives_a_concurrent_session_close(self):
+    def test_explicit_cancellation_survives_a_concurrent_session_close(self):
         def call(*args, **kwargs):
             subscription = self.portal.bus.signal_subscribe.call_args
             path = subscription.args[3]
@@ -606,8 +607,9 @@ class PortalContractTests(unittest.TestCase):
             self.portal.disconnected()
             return Mock(unpack=lambda: (path,))
 
-        with patch.object(self.portal, "call", side_effect=call), self.assertRaisesRegex(RuntimeError, "denied"):
+        with patch.object(self.portal, "call", side_effect=call), self.assertRaisesRegex(PortalRequestError, "cancelled") as error:
             self.portal.response(REMOTE, "Start", "(osa{sv})", ("session", ""), {})
+        self.assertEqual((error.exception.outcome, error.exception.response_code), ("cancelled", 1))
 
     def test_missing_response_is_closed_on_timeout(self):
         event = Mock()
@@ -615,8 +617,10 @@ class PortalContractTests(unittest.TestCase):
         def call(*args, **kwargs):
             path = self.portal.bus.signal_subscribe.call_args.args[3]
             return Mock(unpack=lambda:(path,))
-        with patch.object(self.portal,"call",side_effect=call) as calls, patch("desktop.portal.threading.Event",return_value=event), self.assertRaisesRegex(RuntimeError,"timed out"):
+        with patch.object(self.portal,"call",side_effect=call) as calls, patch("desktop.portal.threading.Event",return_value=event), self.assertRaisesRegex(PortalRequestError,"timed out") as error:
             self.portal.response(REMOTE,"Start","(osa{sv})",("session",""),{})
+        self.assertEqual((error.exception.outcome, error.exception.response_code), ("timed-out", None))
+        self.assertEqual(calls.call_count, 2)  # One Start and its cleanup, without another request for consent.
         self.assertEqual(calls.call_args.args[:2],("org.freedesktop.portal.Request","Close"))
         self.assertFalse(self.portal.pending)
 
@@ -684,7 +688,8 @@ class PortalContractTests(unittest.TestCase):
                             {**fields, "restore_token": "replacement-token"}]), \
                         patch.object(self.portal, "revoke_token", side_effect=RuntimeError("Store unavailable")), \
                         self.assertRaisesRegex(RuntimeError, "Store unavailable"):
-                    self.portal.start(remember=True, restore_token="old-token", save_token=native_grants.save_token)
+                    self.portal.start(remember=True, restore_token="old-token", save_token=native_grants.save_token,
+                                      discard_token=native_grants.discard_token)
                 self.assertEqual(native_grants.load()["token"], "replacement-token")
                 self.portal.bus.call_with_unix_fd_list_sync.assert_not_called()
                 retry = Mock()
@@ -694,6 +699,25 @@ class PortalContractTests(unittest.TestCase):
                     native.revoke()
                 retry.revoke_token.assert_called_once_with("replacement-token")
                 self.assertIsNone(native_grants.load())
+
+    def test_incomplete_grant_discards_the_replacement_after_portal_revocation(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(native_grants.Path, "home", return_value=Path(directory)):
+            native_grants.enable()
+            session = native.NativeSession(self.portal, remember=True)
+            session.restore_attempted = True
+            with patch.object(self.portal, "call", return_value=Mock(unpack=lambda: (2,))), \
+                    patch.object(self.portal, "response", side_effect=[{"session_handle": "session"}, {}, {},
+                        {"devices": 1, "streams": [], "restore_token": "replacement-token"}]), \
+                    patch.object(self.portal, "revoke_token") as revoke, \
+                    self.assertRaises(PortalRequestError) as error:
+                self.portal.start(remember=True, restore_token="old-token", save_token=session.save_restore_token,
+                                  discard_token=session.discard_restore_token)
+            self.assertEqual(error.exception.outcome, "incomplete-grant")
+            revoke.assert_called_once_with("replacement-token")
+            result = session.snapshot_status()
+            self.assertFalse(result["grant_saved"])
+            self.assertEqual(result["consent"]["token_disposition"], "revoked")
+            self.assertEqual(native_grants.metadata(), {"remember_requested": True, "grant_saved": False, "paused": False})
 
     def test_revocation_targets_only_its_grant_and_retains_state_on_store_errors(self):
         class StoreError(Exception):
@@ -1025,6 +1049,22 @@ class NativeReceiptTests(PrivateHomeTestCase):
             self.assertEqual(result["last_portal_stage"], "ready")
             self.assertFalse(result["helper_running"])
 
+    def test_start_reuses_active_helper_and_returns_a_new_failure_receipt(self):
+        active = {"state": "running", "generation": "active"}
+        with patch.object(native, "status", return_value=active), patch.object(native.subprocess, "Popen") as launch:
+            self.assertEqual(native.start(), active)
+        launch.assert_not_called()
+
+        stopped = {"state": "stopped", "generation": "old"}
+        failure = {"state": "stopped", "generation": "new", "last_failure": {"detail": "Bus unavailable"}}
+        with tempfile.TemporaryDirectory() as directory, patch.object(native, "check_session"), \
+                patch.object(native, "runtime_directory", return_value=Path(directory)), \
+                patch.object(native, "status", side_effect=[stopped, stopped, stopped, failure]), \
+                patch.object(native.subprocess, "Popen") as launch:
+            launch.return_value.poll.return_value = 1
+            self.assertEqual(native.start(), failure)
+        launch.assert_called_once()
+
     def test_helper_constructor_failure_is_logged_and_retained_before_any_consent(self):
         with tempfile.TemporaryDirectory() as directory, redirect_stdout(output := StringIO()):
             folder = Path(directory)
@@ -1040,6 +1080,7 @@ class NativeReceiptTests(PrivateHomeTestCase):
                     patch.dict(os.environ, {"WAYLAND_DISPLAY": "wayland-0"}, clear=True), \
                     patch("lib.cachyos_doctor._owned_socket", return_value=True), \
                     patch.dict(sys.modules, {"gi.repository": SimpleNamespace(GLib=glib)}), \
+                    patch("desktop.display_power.display_power", return_value={"state": "off", "observed_at": "sample"}), \
                     patch("desktop.portal.Portal", side_effect=RuntimeError("Portal bus initialization failed")), \
                     patch.object(native.socket, "socket"), patch.object(native.signal, "signal"), \
                     patch.object(native.os, "chmod"), patch.object(native.threading, "Thread", side_effect=thread):
@@ -1047,20 +1088,25 @@ class NativeReceiptTests(PrivateHomeTestCase):
             receipt = json.loads((folder / "status.json").read_text())
             self.assertEqual(receipt["state"], "stopped")
             self.assertEqual(receipt["last_failure"]["stage"], "connecting")
+            self.assertEqual(receipt["consent"]["display_power"], {"state": "off", "observed_at": "sample"})
             self.assertIn("Portal bus initialization failed", output.getvalue())
 
     def test_close_signal_during_startup_preserves_the_start_result(self):
         cases = (
-            ("timeout", "Start.response", "Portal Start response timed out"),
-            ("pipewire", "OpenPipeWireRemote", "Portal session closed before native control was ready"),
-            ("running", "ready", "Portal session closed or permission revoked"),
+            ("timeout", "Start.response", "Portal Start response timed out", "timed-out"),
+            ("pipewire", "OpenPipeWireRemote", "Portal session closed before native control was ready", "portal-closed"),
+            ("running", "ready", "Portal session closed or permission revoked", "ready"),
         )
-        for scenario, stage, detail in cases:
+        for scenario, stage, detail, outcome in cases:
             with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as directory, redirect_stdout(StringIO()):
                 folder = Path(directory)
                 glib = Mock()
                 portal = Mock(restore_token=None, cancelled=threading.Event())
                 workers = []
+                restore = scenario == "timeout"
+                if restore:
+                    native_grants.enable()
+                    native_grants.save_token("private-token")
 
                 def close_portal():
                     portal.cancelled.set()
@@ -1068,10 +1114,13 @@ class NativeReceiptTests(PrivateHomeTestCase):
 
                 def start(**kwargs):
                     progress = constructor.call_args.kwargs["progress"]
+                    progress("SelectSources.complete")
                     progress("Start.response", True)
                     if scenario == "timeout":
                         close_portal()  # Closing the timed-out request can emit Session.Closed.
-                        raise RuntimeError(detail)
+                        self.assertEqual(kwargs["restore_token"], "private-token")
+                        raise PortalRequestError("timed-out", detail)
+                    progress("Start.complete")
                     progress("OpenPipeWireRemote")
                     if scenario == "pipewire":
                         close_portal()
@@ -1092,16 +1141,25 @@ class NativeReceiptTests(PrivateHomeTestCase):
                 with patch.object(native, "check_session"), patch.object(native, "runtime_directory", return_value=folder), \
                         patch.dict(os.environ, {"WAYLAND_DISPLAY": "wayland-0"}), \
                         patch.dict(sys.modules, {"gi.repository": SimpleNamespace(GLib=glib)}), \
+                        patch("desktop.display_power.display_power", return_value={"state": "on", "observed_at": "sample"}), \
                         patch("desktop.portal.Portal", return_value=portal) as constructor, \
                         patch("lib.cachyos_doctor._owned_socket", return_value=True), \
                         patch.object(native.socket, "socket"), patch.object(native.signal, "signal"), \
                         patch.object(native.os, "chmod"), patch.object(native.threading, "Thread", side_effect=thread):
-                    self.assertEqual(native.serve(), 0)
+                    self.assertEqual(native.serve(remember=restore), 0)
                 receipt = json.loads((folder / "status.json").read_text())
                 self.assertEqual(receipt["state"], "stopped")
                 self.assertEqual(receipt["last_failure"]["stage"], stage)
                 self.assertEqual(receipt["last_failure"]["detail"], detail)
                 self.assertIsNone(receipt["consent_expires_in"])
+                self.assertEqual(receipt["consent"], {
+                    "attempt": "restore" if restore else "fresh", "outcome": outcome,
+                    "prompt_visibility": "unknown", "display_power": {"state": "on", "observed_at": "sample"},
+                    "last_completed_stage": "SelectSources.complete" if restore else "Start.complete",
+                    "response_code": None, "token_disposition": "consumed" if restore else "not-requested",
+                })
+                self.assertNotIn("private-token", json.dumps(receipt))
+                portal.start.assert_called_once()
 
     def test_session_lifetime_starts_after_slow_consent_and_still_expires(self):
         with tempfile.TemporaryDirectory() as directory, redirect_stdout(StringIO()):
@@ -1131,6 +1189,7 @@ class NativeReceiptTests(PrivateHomeTestCase):
             with patch.object(native, "check_session"), patch.object(native, "runtime_directory", return_value=folder), \
                     patch.dict(os.environ, {"WAYLAND_DISPLAY": "wayland-0"}), \
                     patch.dict(sys.modules, {"gi.repository": SimpleNamespace(GLib=glib)}), \
+                    patch("desktop.display_power.display_power", return_value={"state": "unknown", "observed_at": "sample"}), \
                     patch("desktop.portal.Portal", return_value=portal) as constructor, \
                     patch("lib.cachyos_doctor._owned_socket", return_value=True), \
                     patch.object(native.time, "monotonic", side_effect=lambda: clock[0]), \

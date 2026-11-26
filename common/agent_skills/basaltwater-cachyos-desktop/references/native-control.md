@@ -8,13 +8,23 @@ cancelled or incomplete consent grants no usable automation. If dependencies
 are missing, use the workstation setup skill rather than replacing system Python.
 
 `initializing` reports the current `portal_stage`. `awaiting-consent` means KDE
-accepted Start and a response is pending, not that a visible dialog is verified.
+accepted Start and a response is pending.
 `consent_expires_in` shows the approximate seconds left in the two-minute wait;
 it is separate from session lifetime and also appears in the handoff window.
 A stopped helper reports a null `portal_stage` and retains the prior stage in
 `last_portal_stage`. After a failure, `last_failure` retains its stage, timestamp
 and detail. The private runtime `helper.log` keeps stage and error messages
 across restarts.
+
+`consent` records the fresh or restore attempt, its outcome, the last completed
+portal stage, and the token disposition. `display_power` is a read-only DPMS
+sample taken before the portal request. `prompt_visibility` is `unknown` because
+the portal does not report it. `response_code` is available for a nonzero portal
+response. Code `1` means cancellation, and code `2` covers other unsuccessful
+responses. A `timed-out` outcome means the response deadline elapsed. Inspect
+`status` after a timeout. The helper closes the pending request and leaves any
+next consent attempt to an explicit `start`. Calling `start` on a running
+approved helper reuses its current session.
 
 The helper uses a private same-user Unix socket, no network listener,
 privileged input daemon, systemd service or login autostart. It has no default
@@ -29,6 +39,11 @@ explicitly approving one monitor, keyboard, pointer
 and KDE's persistence option. This requires RemoteDesktop version 2. Later
 `start` calls use the saved token; KDE may decline restoration or require a new
 prompt. `grant_saved` and `restore_attempted` do not verify prompt-free access.
+`consent.token_disposition` reports `consumed` when the restore token is retained
+solely for revocation, `saved` or `replacement-saved` when a new token is stored,
+and `revoked` when the portal confirms removal. This describes the attempt at the
+time of its receipt. Check the current `grant_saved` for whether a token is
+available to try on the next start.
 The private grant record lives in `~/.local/state/basaltwater/native-desktop`
 (0700 directory, 0600 file), outside projects and logs. Tokens are single-use;
 the returned replacement is saved without exposing it in status or arguments.

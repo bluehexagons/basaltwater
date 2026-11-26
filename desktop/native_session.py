@@ -125,6 +125,9 @@ def status(*, deadline=None):
                 raise ValueError("Invalid native status receipt")
         except FileNotFoundError:
             pass
+        consent = receipt.get("consent")
+        if isinstance(consent, dict) and consent.get("outcome") in ("initializing", "awaiting-response"):
+            receipt["consent"] = {**consent, "outcome": "interrupted"}
         grant = native_grants.metadata()
         return {**receipt, **grant, "last_state": receipt.get("state"), "state": "stopped",
                 "worker_provenance": receipt.get("worker_provenance"),
@@ -215,6 +218,7 @@ def start(*, remember=False, session_seconds=SESSION_SECONDS, touch=False):
             if touch and "touchscreen" not in current.get("input_capabilities", []):
                 raise ValueError("Native session lacks touchscreen consent; finish active work, then stop/start --touch")
             return current
+        previous_generation = current.get("generation")
         helper_fd = os.open(folder / "session.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
         try:
             try:
@@ -244,7 +248,12 @@ def start(*, remember=False, session_seconds=SESSION_SECONDS, touch=False):
             current = status()
             if current["state"] != "stopped":
                 return current
-            if process.poll() is not None:
+            exited = process.poll() is not None
+            if exited:
+                current = status()  # A failure receipt may have landed after the status probe.
+            if current.get("generation") not in (None, previous_generation) and current.get("last_failure"):
+                return current
+            if exited:
                 raise RuntimeError(f"Native helper failed; inspect {folder / 'helper.log'}")
             time.sleep(0.05)
         raise RuntimeError("Native helper start is pending; inspect desktop status before retrying")
@@ -360,6 +369,10 @@ class NativeSession:
         self.state = "initializing"
         self.portal_stage = "connecting"
         self.consent_until = None
+        self.consent = {"attempt": "unknown" if remember else "fresh", "outcome": "initializing",
+                        "prompt_visibility": "unknown", "display_power": {"state": "unknown", "observed_at": None},
+                        "last_completed_stage": None, "response_code": None,
+                        "token_disposition": "unknown" if remember else "not-requested"}
         self.detail = "Initializing the portal; no consent request has been confirmed"
         self.last_failure = None
         self.receipt = receipt
@@ -401,6 +414,7 @@ class NativeSession:
                 "worker_provenance": self.worker_provenance,
                 "backend": "portal", "origin": "portal", **permission,
                 "helper_running": True, "last_failure": self.last_failure,
+                "consent": self.consent.copy(),
                 "portal_stage": self.portal_stage if self.state != "stopped" else None,
                 "last_portal_stage": self.portal_stage if self.state == "stopped" else None,
                 "consent_expires_in": (max(0, int(self.consent_until - time.monotonic()))
@@ -453,6 +467,9 @@ class NativeSession:
                 raise RuntimeError("Native initialization was stopped")
             self.portal_stage = stage
             self.state = "awaiting-consent" if pending else "initializing"
+            self.consent["outcome"] = "awaiting-response" if pending else "initializing"
+            if stage.endswith(".complete"):
+                self.consent["last_completed_stage"] = stage
             self.consent_until = time.monotonic() + RESPONSE_SECONDS if pending else None
             self.detail = ("KDE accepted Start; waiting for its response. A visible dialog is unverified; "
                            "inspect KDE if approval is requested." if pending else "Initializing portal stage: " + stage)
@@ -460,11 +477,18 @@ class NativeSession:
             self.record()
 
     def fail(self, error):
+        from desktop.portal import PortalRequestError
+
         with self.lock:
             detail = str(error)
             token = self.portal.restore_token if self.portal else None
             if isinstance(token, str) and token:
                 detail = detail.replace(token, "[redacted grant]")
+            if self.consent["outcome"] in ("initializing", "awaiting-response"):
+                if isinstance(error, PortalRequestError):
+                    self.consent.update(outcome=error.outcome, response_code=error.response_code)
+                else:
+                    self.consent["outcome"] = "failed"
             self.state, self.detail = "failed", detail[:2048]
             self.last_failure = {"stage": self.portal_stage, "detail": self.detail,
                                  "at": datetime.now(timezone.utc).isoformat()}
@@ -474,6 +498,8 @@ class NativeSession:
     def close(self):
         with self.lock:
             self.state = "stopped"
+            if self.consent["outcome"] in ("initializing", "awaiting-response"):
+                self.consent["outcome"] = "interrupted"
             self.elements.clear()
             self.observation = None
             self.stopping.set()
@@ -493,6 +519,14 @@ class NativeSession:
             # A late replacement must remain available if deletion fails.
             native_grants.save_token(token)
             self.grant_saved = True
+            self.consent["token_disposition"] = "replacement-saved" if self.restore_attempted else "saved"
+            self.record()
+
+    def discard_restore_token(self, token):
+        with self.lock:
+            native_grants.discard_token(token)
+            self.grant_saved = False
+            self.consent["token_disposition"] = "revoked"
             self.record()
 
     def guard(self, payload):
@@ -603,6 +637,8 @@ class NativeSession:
                         portal.close()
                 native_grants.forget()
                 self.remember, self.grant_saved = False, False
+                if any(tokens):
+                    self.consent["token_disposition"] = "revoked"
                 self.record()
                 return {"stopped": True, "grant_saved": False, "remember_requested": False, "desktop_preserved": True}
             if time.monotonic() >= payload.get("deadline", float("inf")):
@@ -986,7 +1022,8 @@ def serve(*, remember=False, session_seconds=SESSION_SECONDS, touch=False):
     session.initialization_done.clear()
     session.record()
     try:
-        from desktop.portal import Portal
+        from desktop.display_power import display_power
+        from desktop.portal import Portal, PortalRequestError
         from gi.repository import GLib
     except Exception as exc:
         session.fail(exc)
@@ -1007,6 +1044,12 @@ def serve(*, remember=False, session_seconds=SESSION_SECONDS, touch=False):
 
     def initialize():
         try:
+            power = display_power()
+            with session.lock:
+                if session.stopping.is_set():
+                    return
+                session.consent["display_power"] = {key: power[key] for key in ("state", "observed_at")}
+                session.record()
             portal = Portal(portal_closed, progress=session.progress)
             with session.lock:
                 session.portal = portal
@@ -1015,22 +1058,38 @@ def serve(*, remember=False, session_seconds=SESSION_SECONDS, touch=False):
                     return
             if remember:
                 previous = native_grants.load()
+                with session.lock:
+                    session.grant_saved = bool(previous and previous["token"])
+                    session.consent["token_disposition"] = ("available" if session.grant_saved else
+                        "consumed" if previous and previous["consumed"] else "absent")
+                    session.record()
                 if previous and previous["consumed"]:
                     portal.revoke_token(previous["consumed"])
-            token = native_grants.consume() if remember else None
-            session.restore_attempted = token is not None
+                    native_grants.discard_token(previous["consumed"])
+            with session.lock:
+                if session.stopping.is_set():
+                    return
+                token = native_grants.consume() if remember else None
+                session.restore_attempted = token is not None
+                session.grant_saved = False
+                session.consent["attempt"] = "restore" if session.restore_attempted else "fresh"
+                if remember:
+                    session.consent["token_disposition"] = "consumed" if session.restore_attempted else "absent"
+                session.record()
             node, size = portal.start(remember=remember, restore_token=token, save_token=session.save_restore_token,
+                                      discard_token=session.discard_restore_token,
                                       **({"touch": True} if touch else {}))
             with session.lock:
                 if session.stopping.is_set():
                     return
                 if portal.cancelled.is_set():
-                    raise RuntimeError("Portal session closed before native control was ready")
+                    raise PortalRequestError("portal-closed", "Portal session closed before native control was ready")
                 session.node, session.logical_size = node, size
                 session.touchscreen_granted = touch
                 session.until = time.monotonic() + session_seconds if session_seconds else float("inf")
                 session.state, session.detail = "running", "User-approved selected-monitor capture and input"
                 session.portal_stage = "ready"
+                session.consent["outcome"] = "ready"
                 print(datetime.now(timezone.utc).isoformat(), session.detail, flush=True)
                 session.record()
         except Exception as exc:

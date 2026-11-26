@@ -101,6 +101,18 @@ def save_token(token):
         write_json_atomic(str(path), {**data, "token": token, "consumed": None})
 
 
+def discard_token(token):
+    """Remove a matching local token after confirmed portal revocation."""
+    validate_token(token)
+    with locked() as path:
+        data = load()
+        if data and token in (data["token"], data["consumed"]):
+            for key in ("token", "consumed"):
+                if data[key] == token:
+                    data[key] = None
+            write_json_atomic(str(path), data)
+
+
 def forget():
     with locked() as path:
         load()  # Reject unsafe state before deletion.
