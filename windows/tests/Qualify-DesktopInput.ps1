@@ -2,7 +2,7 @@
 Run only on the parent's authorized interactive desktop. Not an offline test.
 No setup, control transitions, installed-source refresh or permission changes.
 #>
-param([Parameter(Mandatory=$true)][string]$EvidenceDirectory,[switch]$Warm,[switch]$ObservationsOnly,[switch]$RealAges,[switch]$TightTimeline)
+param([Parameter(Mandatory=$true)][string]$EvidenceDirectory,[switch]$Warm,[switch]$ObservationsOnly,[switch]$RealAges,[switch]$TightTimeline,[switch]$RefusalsOnly)
 $ErrorActionPreference='Stop'
 if($PSVersionTable.PSVersion.Major -eq 5){$env:PSModulePath=[Environment]::GetEnvironmentVariable('PSModulePath','Machine')}
 . (Join-Path $PSScriptRoot '..\Desktop.Common.ps1')
@@ -12,12 +12,14 @@ New-NativeDesktopPrivateDirectory $EvidenceDirectory
 $fixture=Join-Path $EvidenceDirectory 'fixture.ps1'
 $events=Join-Path $EvidenceDirectory 'events.txt'
 $literal=$events.Replace("'","''")
+$presentation=if($RefusalsOnly){'$form.WindowState = [Windows.Forms.FormWindowState]::Minimized'}
 [IO.File]::WriteAllText($fixture,@"
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 `$form=New-Object Windows.Forms.Form
 `$form.Text='Basaltwater disposable input probe'
 `$form.Width=640;`$form.Height=480;`$form.KeyPreview=`$true
+$presentation
 `$held=New-Object 'Collections.Generic.HashSet[string]'
 `$form.Add_KeyDown({param(`$s,`$e) `$null=`$held.Add([string]`$e.KeyCode);[IO.File]::AppendAllText('$literal',('down:'+`$e.KeyCode+"``n"))})
 `$form.Add_KeyUp({param(`$s,`$e) `$null=`$held.Remove([string]`$e.KeyCode);[IO.File]::AppendAllText('$literal',('up:'+`$e.KeyCode+"``n"))})
@@ -80,6 +82,34 @@ try {
         try{$target=Get-ProbeTarget}catch{Start-Sleep -Milliseconds 100}
     }
     if(-not $target){throw 'Fixture window startup timed out'}
+    if($RefusalsOnly){
+        $before=(Invoke-Probe @('status')).input_lease
+        $cases=[ordered]@{
+            key=@('key','--key','B')
+            hold=@('hold','--key','W','--milliseconds','400')
+            timeline=@('hold','--timeline','0:W,200:-','--milliseconds','400')
+            button=@('hold','--button','left','--x','0','--y','0','--milliseconds','400')
+        }
+        foreach($case in $cases.Keys){
+            $target=Get-ProbeTarget
+            $window=$target.window
+            if(-not $window.minimized -or $window.active){throw 'Refusal fixture must remain minimized and in the background'}
+            $selectors=@('--window',[string]$window.id,'--identity',$window.identity,'--generation',$target.generation,
+                '--width',[string]$window.width,'--height',[string]$window.height)
+            $reply=Invoke-NativeDesktopCli (@('input')+$cases[$case]+$selectors)
+            Save-ProbeReply $reply
+            if($reply.ok -ne $false -or $reply.code -cne 'foreground_required' -or $reply.submitted -ne $false -or
+                $reply.dispatch_stage -cne 'before-input' -or $reply.input_delivery -cne 'not-sent' -or
+                $reply.observation_consumed -ne $false){throw "Unexpected input refusal for $case"}
+        }
+        $after=(Invoke-Probe @('status')).input_lease
+        if(($before|ConvertTo-Json -Compress) -cne ($after|ConvertTo-Json -Compress) -or (Test-Path -LiteralPath $events)){
+            throw 'Refused input created a lease or produced fixture events'
+        }
+        Write-NativeHeldJson (Join-Path $EvidenceDirectory 'qualification.json') @{complete=$true;warm=[bool]$Warm;scope='Foreground refusal before discrete or held input';cases=@($cases.Keys)}
+        Write-Host 'WinForms foreground refusals passed before input.'
+        return
+    }
     $null=Invoke-Probe @('window','focus','--window',[string]$target.window.id,'--identity',$target.window.identity,'--generation',$target.generation)
     if(-not $ObservationsOnly){
     $null=Invoke-Probe (@('input','hold')+(Get-ProbeInputArgs)+@('--key','W+J','--milliseconds','400'))

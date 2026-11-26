@@ -168,6 +168,9 @@ Repeat with `-Warm` and another new evidence directory to exercise an owned
 warm worker; the runner stops only the worker it starts. `-ObservationsOnly`
 skips gestures; `-RealAges` additionally waits for real default expiry and a
 successful action after 90 seconds with an explicit 180-second capture.
+`-RefusalsOnly` keeps the fixture minimized and verifies that discrete input
+and all three hold selectors report `foreground_required` before sending input
+or starting a lease. It also works with `-Warm`.
 `-TightTimeline` selects the shorter 450 ms timeline; this passed once with cold
 workers, but safely refused under concurrent test load. The default probe uses
 300 ms event spacing. Record actual send times rather than assuming that an
