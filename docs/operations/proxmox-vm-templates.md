@@ -27,14 +27,14 @@ On the Proxmox node, create the VM and import the verified image without
 starting it:
 
 ```bash
-qm create 9000 --name debian13-20260803 \
+qm create 9000 --name debian13-20261123 \
   --memory 1024 --cores 2 --cpu host --onboot 0 \
   --scsihw virtio-scsi-single --net0 virtio,bridge=vmbr0,firewall=1 \
   --serial0 socket --vga serial0 \
   --agent enabled=1,freeze-fs-on-backup=1 --rng0 source=/dev/urandom
 
 qm set 9000 \
-  --scsi0 local-lvm:0,import-from=local:import/debian-13-genericcloud-amd64-20260803-2559.qcow2,discard=on,ssd=1,iothread=1 \
+  --scsi0 local-lvm:0,import-from=local:import/debian-13-genericcloud-amd64-20261123-2671.qcow2,discard=on,ssd=1,iothread=1 \
   --ide2 local-lvm:cloudinit --boot order=scsi0
 ```
 
@@ -170,8 +170,8 @@ neither is an independent backup.
 
 ## Qualification and remaining work
 
-On a Proxmox VE 9.2 lab node with LVM-thin and the pinned Debian 13 image, two
-full clones and one linked clone completed independent cloud-init bootstraps.
+On a Proxmox VE 9.2 lab node with LVM-thin and Debian 13 image `20260803-2559`,
+two full clones and one linked clone completed independent cloud-init bootstraps.
 Qualification checks compare MAC addresses, SMBIOS UUIDs, machine IDs, cloud-init
 instance IDs, and SSH host keys between guests. After snippet detachment, reboot
 each clone and require its identities, intended networking, and strict SSH

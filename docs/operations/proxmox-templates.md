@@ -27,12 +27,12 @@ storage names and unused IDs. Verify the locally staged image against the
 catalog checksum before running these commands on the Proxmox node.
 
 ```bash
-qm create 9000 --name debian13-20260803-template \
+qm create 9000 --name debian13-20261123-template \
   --memory 768 --cores 1 --cpu host --onboot 0 --ostype l26 \
   --scsihw virtio-scsi-single --net0 virtio,bridge=vmbr0 \
   --serial0 socket --vga serial0 --agent enabled=1
 qm disk import 9000 \
-  /mnt/pve/image-store/import/debian-13-genericcloud-amd64-20260803-2559.qcow2 \
+  /mnt/pve/image-store/import/debian-13-genericcloud-amd64-20261123-2671.qcow2 \
   local-lvm --format raw
 qm config 9000
 # Use the actual imported unused0 volume from the output above.
@@ -114,7 +114,7 @@ and the [clean command](https://docs.cloud-init.io/en/latest/reference/cli.html)
 
 ## Qualification and future Basaltwater support
 
-The PVE 9 qualification used a never-booted Debian 13 vendor template,
+The PVE 9 qualification used a never-booted Debian 13 `20260803-2559` template,
 two full clones on separate thin pools, and a linked clone. Qualification
 checks include concurrent first boot, guest-agent and cloud-init completion,
 correct static networking, unique identities, independent writes, root growth,
