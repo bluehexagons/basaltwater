@@ -221,7 +221,9 @@ do not turn ordinary runtime startup into an unbounded polling loop.
 
 Preview coordinate clicks use viewport-relative CSS pixels. For the inline
 image, use `screenshot.width` and `screenshot.height` from `preview_snapshot`
-when those fields are exposed. For a saved capture, read the PNG's dimensions.
+when those fields are exposed. If you requested `fullScreenshot` and use the
+larger image, use that image's dimensions. For a saved capture, read the PNG's
+dimensions.
 Use the measured `viewport.width` and `viewport.height` from `preview_status`
 on the same tab at capture time, or from `preview_resize` if the viewport has
 stayed the same since resizing. If the tool omits them, read
@@ -255,13 +257,14 @@ For example, a canvas exposed as `img "Board. Round ready"` can use this wait.
 
 If the canvas exposes the state via `aria-label`, this selector also works.
 Omit `text` from either call so the wait only checks the locator or selector.
+The wait succeeds when a matching element exists in the page.
 
 ```json
 {"tabId":"TAB_ID","selector":"canvas[aria-label*=\"Round ready\"]","timeoutMs":2000}
 ```
 
 Inspect the result visually if the test also depends on what the game drew.
-[T3 wait implementation](https://github.com/pingdotgg/t3code/blob/main/apps/server/src/preview/ServerBrowserPage.ts)
+[T3 wait implementation](https://github.com/pingdotgg/t3code/blob/v0.1.12/apps/server/src/preview/ServerBrowserPage.ts#L1154-L1193)
 
 If a coordinate click is acknowledged but the expected target has no effect,
 check pointer lock before repeating it. On an agent-controlled tab,
@@ -275,11 +278,14 @@ Relative camera movement needs a browser path that delivers and verifies
 relative deltas while locked. Use an attended browser or the project's
 input test harness and check the observed `movementX` and `movementY`.
 
-T3's `press` is a tap. Its locator drag takes `source` and `target`. The
-`Missing key at ["source"]` error means the drag expects a locator. For a
-right-button coordinate drag on an unlocked canvas, an authorized Playwright
-fallback can run the whole sequence in one call. Focus the game first and
-substitute points and a key for its bindings.
+T3's `press` is a tap. Its locator drag takes `source` and `target`. T3 v0.1.12
+sends intermediate mouse moves during server-browser locator drags. The
+`Missing key at ["source"]` error means the drag expects a locator.
+[T3 drag implementation](https://github.com/pingdotgg/t3code/blob/v0.1.12/apps/server/src/preview/ServerBrowserPage.ts#L1035-L1055)
+
+For a right-button coordinate drag on an unlocked canvas, an authorized
+Playwright fallback can run the whole sequence in one call. Focus the game
+first and substitute points and a key for its bindings.
 
 ```js
 async (page) => {

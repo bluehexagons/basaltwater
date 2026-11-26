@@ -145,9 +145,9 @@ desktop or change login policy to make this command work.
 Automatic wake before a Sunshine connection is not configured. As checked on
 2026-10-24, Sunshine's current launch path probes capture/encoders before its
 normal application/global preparation commands. If the sleeping output makes
-that probe fail, a wake command in `global_prep_cmd` never runs. See upstream
-[issue #4971](https://github.com/LizardByte/Sunshine/issues/4971) and the open
-[pre-display preparation proposal #5808](https://github.com/SunshineStream/Sunshine/pull/5808).
+that probe fail, a wake command in `global_prep_cmd` never runs. Track the
+[upstream launch issue #4461](https://github.com/SunshineStream/Sunshine/issues/4461)
+and [pre-display preparation proposal #5808](https://github.com/SunshineStream/Sunshine/pull/5808).
 The tested CachyOS `2026.1123.40502-1` binary still lacks the proposed
 `pre_display_prep_cmd` option. Once supported, that earlier hook could run
 `/usr/bin/kscreen-doctor --dpms on` before probing; verify release support and
