@@ -219,10 +219,12 @@ do not turn ordinary runtime startup into an unbounded polling loop.
 
 ## Canvas input and viewport emulation
 
-Preview coordinate clicks use viewport-relative CSS pixels. When a full
-viewport screenshot has been scaled, use the pixel dimensions of the image
-you are measuring and the CSS dimensions of that same capture. Get the CSS
-viewport from `preview_resize`'s measured `viewport` or inspect
+Preview coordinate clicks use viewport-relative CSS pixels. For the inline
+image, use `screenshot.width` and `screenshot.height` from `preview_snapshot`
+when those fields are exposed. For a saved capture, read the PNG's dimensions.
+Use the measured `viewport.width` and `viewport.height` from `preview_status`
+on the same tab at capture time, or from `preview_resize` if the viewport has
+stayed the same since resizing. If the tool omits them, read
 `[innerWidth, innerHeight]` with `preview_evaluate` on an agent-controlled tab.
 Convert each axis separately.
 
@@ -233,10 +235,9 @@ cssY = imageY × cssHeight / imageHeight
 
 For a 1280×768 image of an 800×480 viewport, image point (640, 384) maps to
 CSS point (400, 240). For a 750×1334 image of a 375×667 viewport, both
-coordinates halve. Use the actual PNG size, including when a saved capture and
-the inline image differ. If measuring in a viewer, remove any margins and
-scale from the displayed image rectangle. Capture again after resize, zoom,
-or scroll. [T3 snapshot contract](https://github.com/pingdotgg/t3code/blob/main/packages/contracts/src/previewAutomation.ts)
+coordinates halve. If measuring in a viewer, remove any margins and scale from
+the displayed image rectangle. Capture again after resize, zoom, or scroll.
+[T3 snapshot contract](https://github.com/pingdotgg/t3code/blob/v0.1.12/packages/contracts/src/previewAutomation.ts#L502-L534)
 
 When the session permits a managed Playwright fallback, a viewport
 `browser_take_screenshot` with `scale: "css"` gives a CSS-sized image.
