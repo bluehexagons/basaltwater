@@ -108,6 +108,52 @@ Omit `--output` on screenshots and `input --observe` to generate a unique privat
 PNG path. On Windows, read `result.output` or `result.observation.output`.
 On Linux, read `output` or `observation.output`.
 
+### Map points from a saved Linux capture preview
+
+Use `screenshot --preview-width N` or `input --observe --preview-width N` to
+retain a private resized PNG alongside the original. The client uses FFmpeg,
+accepts widths from 1 through 2048, never enlarges the image and rounds the
+proportional height down to a minimum of one pixel. The returned `preview`
+contains the path, exact pixel dimensions, coordinate transform and both file
+hashes. The receipt keeps the original PNG, its geometry/origin and the same
+observation token.
+When using a preview's actual PNG pixels, read its geometry from that receipt.
+
+```bash
+basaltw desktop --native screenshot --compact --preview-width 1200 > /absolute/private/frame.json
+basaltw desktop --native map-point --capture /absolute/private/frame.json \
+  --preview-coordinates --x X --y Y
+```
+
+Open `preview.output` for that view. Scaling maps preview coordinates to original
+image coordinates by integer division, then adds the original image origin.
+For a viewer that further resizes the preview, use the displayed content's actual
+`--view-geometry` and any margins. `preview_error` means the derivative failed
+and the command exits nonzero. The original is still available for inspection
+and mapping while its token remains valid. Keep needed previews in durable private
+storage. Preview rendering and mapping do not renew the observation lifetime.
+
+### Observe a supervised task's exit after input
+
+Capture the terminal game state first. For an input expected to quit a game
+with a verified running `desktop develop` task, use `--observe-task TASK_ID`.
+The command checks the task before sending input and returns the independent
+`task_observation` after confirmed delivery. It takes no screenshot.
+
+```bash
+basaltw desktop --native input --generation GENERATION --geometry WIDTH HEIGHT \
+  --observation OBSERVATION_ID click --x X --y Y --observe-task TASK_ID --task-timeout 10
+```
+
+The deadline is 1–60 seconds (default 10). Exit zero requires a verified
+successful task exit. A failed, stopped or unverified task or an expired wait
+returns nonzero and preserves the completed input. Use `develop status TASK_ID`
+to reconcile the same task after uncertainty. Task exit records do not establish
+that the intended button received the input. For a real follow-up image, use
+`--observe` separately.
+
+### Capture a selected Debian window after input
+
 On Debian, keep unrelated desktop content out of the follow-up image by selecting
 the application's window explicitly:
 
@@ -125,6 +171,8 @@ observation ID. A closed, hidden or otherwise uncapturable window fails that
 observation, preserving completed input without a full-desktop fallback. Inspect
 dialogs separately when they are outside the selected window. This option requires
 `--observe`; native monitor capture rejects it before sending input.
+
+### Map image points to input coordinates
 
 `--view-geometry` is the presented image content size; `--view-origin` is its
 top-left offset inside the viewer (default zero). Points include that offset.
@@ -238,6 +286,7 @@ failures retain the observed `capture_freshness` in both CLI and journal.
 | `transport` | `unknown` | No authoritative worker response; delivery cannot be inferred. |
 | `input-completed` | `completed` | All intended input and release calls returned. Game effect remains unverified. |
 | `post-input-observation` | `completed` | Input retained, subsequent observation failed. Capture again, never replay automatically. |
+| `post-input-task-observation` | `completed` | Input retained, task exit check failed or timed out. Recheck the same task. |
 
 On Debian, local failures before attempting to send the socket request also
 prove `not-sent`. Once sending is attempted, a transport failure remains

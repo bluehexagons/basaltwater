@@ -101,6 +101,7 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     screenshot.add_argument("--output", help="New PNG path; defaults to private Pictures/basaltwater artifact storage")
     screenshot.add_argument("--json", action="store_true")
     screenshot.add_argument("--compact", action="store_true", help="Return capture metadata without the status envelope; use status/doctor for diagnostics")
+    screenshot.add_argument("--preview-width", type=int, help="Also retain a private preview up to this width (1–2048)")
     screenshot.add_argument("--max-age-seconds", type=int, default=60,
                             help="Observation lifetime, 1–600 seconds (default: 60); longer ages suit stable, untimed scenes")
     screenshot.add_argument("--next-frame", action="store_true", help="Native: skip the initial PipeWire sample and await a subsequent sample (8-second frame budget)")
@@ -116,6 +117,8 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
                              help="Dimensions of the entire PNG as presented, excluding viewer margins")
     point_space.add_argument("--image-coordinates", action="store_true",
                              help="Points are pixels in the source PNG, e.g. a verified crop center; no viewer transform is claimed")
+    point_space.add_argument("--preview-coordinates", action="store_true",
+                             help="Use exact preview PNG pixels from the saved capture receipt")
     mapping.add_argument("--crop", nargs=4, type=int, metavar=("X", "Y", "WIDTH", "HEIGHT"),
                          help="Same monitor-pixel crop used for the screenshot; omit for a full capture")
     mapping.add_argument("--x", required=True, type=int, help="Local x in the selected source-image or presented-view space")
@@ -215,10 +218,14 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     action.add_argument("--duration-ms", type=int, help="Native drag duration, 1–5000 ms (default: 300)")
     action.add_argument("--button", type=int, choices=range(1, 10), default=1,
                         help="1 left, 2 middle, 3 right, 4/5 vertical wheel, 6/7 horizontal wheel; native 8 side/9 extra; drag uses 1–3")
-    action.add_argument("--observe", action="store_true", help="After completed input, settle and capture again; native skips the initial sample; never replay on capture failure")
+    observation = action.add_mutually_exclusive_group()
+    observation.add_argument("--observe", action="store_true", help="After completed input, settle and capture again; native skips the initial sample; never replay on capture failure")
+    observation.add_argument("--observe-task", metavar="TASK", help="After completed input, wait for this running development task to exit without capturing")
+    action.add_argument("--task-timeout", type=int, help="Task observation deadline in seconds (1–60, default: 10)")
     action.add_argument("--observe-window", help="Debian: capture only this window ID after input (requires --observe); never falls back to the desktop")
     action.add_argument("--settle-ms", type=int, default=120, help="Settling delay for --observe, 0–5000 ms (default: 120)")
     action.add_argument("--output", help="New PNG path for --observe; defaults to private artifact storage")
+    action.add_argument("--preview-width", type=int, help="Retain a preview with --observe (1–2048 pixels)")
 
 
 def run_desktop_command(args: argparse.Namespace) -> int:
@@ -268,10 +275,23 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                     raise ValueError("map-point --capture needs the saved JSON receipt (frame.json), not the PNG or a directory") from exc
                 if not isinstance(capture, dict):
                     raise ValueError("Expected a screenshot JSON receipt")
-                result = map_observation_points(capture, backend.status(), args.view_geometry, args.x, args.y,
+                view_geometry = args.view_geometry
+                if args.preview_coordinates:
+                    if args.view_origin is not None:
+                        raise ValueError("Preview coordinates use PNG pixels without viewer margins")
+                    observation = capture.get("observation", capture)
+                    preview = observation.get("preview") if isinstance(observation, dict) else None
+                    if not isinstance(preview, dict) or not isinstance(preview.get("geometry"), list):
+                        raise ValueError("Capture receipt has no preview geometry")
+                    view_geometry = preview["geometry"]
+                result = map_observation_points(capture, backend.status(), view_geometry, args.x, args.y,
                     view_origin=args.view_origin, to_x=args.to_x, to_y=args.to_y,
                     image_coordinates=args.image_coordinates)
+                if args.preview_coordinates:
+                    result["point_space"] = "preview-image"
             else:
+                if args.preview_coordinates:
+                    raise ValueError("--preview-coordinates requires --capture")
                 if args.view_origin is not None:
                     raise ValueError("--view-origin requires --capture")
                 result = map_capture_points(args.geometry, args.view_geometry, args.x, args.y,
@@ -412,6 +432,9 @@ def run_desktop_command(args: argparse.Namespace) -> int:
             elif command == "screenshot":
                 from desktop.observations import validate_capture_max_age
                 validate_capture_max_age(args.max_age_seconds)
+                if args.preview_width is not None:
+                    from desktop.capture_preview import validate_width, with_preview
+                    validate_width(args.preview_width)
                 if args.max_age_seconds != 60:
                     payload["max_age_seconds"] = args.max_age_seconds
                 if args.crop is not None:
@@ -430,6 +453,8 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                 if args.compact:
                     from desktop.observations import compact_capture
                     result = compact_capture(result)
+                if args.preview_width is not None:
+                    result = with_preview(result, args.preview_width)
             else:
                 if command == "exec":
                     payload["argv"] = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
@@ -451,11 +476,20 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                         payload["observation_id"] = args.observation
                     if not 0 <= args.settle_ms <= 5000:
                         raise ValueError("Observation settling delay must be 0–5000 ms")
-                    if not args.observe and (args.output is not None or args.settle_ms != 120 or args.observe_window is not None):
-                        raise ValueError("Observation output, window and settling delay require --observe")
+                    if not args.observe and (args.output is not None or args.settle_ms != 120
+                            or args.observe_window is not None or args.preview_width is not None):
+                        raise ValueError("Observation output, preview, window and settling delay require --observe")
+                    if args.task_timeout is not None and args.observe_task is None:
+                        raise ValueError("--task-timeout requires --observe-task")
+                    if args.observe_task is not None:
+                        task_timeout = 10 if args.task_timeout is None else args.task_timeout
+                        client.validate_followup_task(args.observe_task, task_timeout, args.generation, backend=backend)
                     observation_window = client.validate_followup_window(args.observe_window, backend=backend)
                     observation_output = None
                     if args.observe:
+                        if args.preview_width is not None:
+                            from desktop.capture_preview import validate_width
+                            validate_width(args.preview_width)
                         observation_output = str(Path(args.output).absolute()) if args.output else client.artifact_path()
                         client.validate_capture_output(observation_output, backend=backend)
                     payload.update({name: getattr(args, name) for name in ("generation", "geometry", "kind", "key", "text", "x", "y", "button")})
@@ -483,6 +517,11 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                 if command == "input" and args.observe and "error" not in result:
                     result = client.observe_after_input(result, payload, observation_output,
                                                         settle_ms=args.settle_ms, backend=backend, window=observation_window)
+                    if args.preview_width is not None:
+                        from desktop.capture_preview import with_preview
+                        result = with_preview(result, args.preview_width, followup=True)
+                if command == "input" and args.observe_task is not None and "error" not in result:
+                    result = client.observe_task_after_input(result, args.observe_task, timeout=task_timeout)
                 if wait_title:
                     result["window_baseline"] = baseline
                     try:
@@ -498,6 +537,8 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                                                            if previous is not None else None),
                                       window_association="title substring; inspect PID/class before acting")
         exit_code = int("error" in result or result.get("ok") is False or result.get("healthy") is False or result.get("state") == "failed"
+                        or "preview_error" in result
+                        or (isinstance(result.get("observation"), dict) and "preview_error" in result["observation"])
                         or (result.get("state") == "stopped" and bool(result.get("last_failure"))))
         if getattr(args, "save_output", False):
             from desktop.observations import save_observation

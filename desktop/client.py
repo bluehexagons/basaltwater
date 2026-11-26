@@ -480,6 +480,38 @@ def observe_after_input(result: dict, payload: dict, output: str, *, settle_ms: 
                 "observation_failure": getattr(exc, "receipt", {"error": str(exc)})}
 
 
+def validate_followup_task(task_id: str, timeout: int, generation: str, *, backend=runtime) -> None:
+    from desktop.development import task_status
+
+    if not 1 <= timeout <= 60:
+        raise ValueError("Task observation timeout must be from 1 through 60 seconds")
+    task = task_status(task_id)
+    if task.get("session_generation") != (generation if backend is runtime else None):
+        raise ValueError("Development task belongs to another desktop session")
+    if task["state"] != "running" or not task.get("ok"):
+        raise ValueError("Task observation requires a verified running development task")
+
+
+def observe_task_after_input(result: dict, task_id: str, *, timeout: int) -> dict:
+    """Observe task lifecycle only, so a quit cannot capture the exposed desktop."""
+    from desktop.development import wait_task
+
+    if result.get("input_delivery") != "completed":
+        return {"input_delivery": "unknown", **result,
+                "error": "Input completion was not confirmed. Inspect the task before further input.",
+                "reason": "input-completion-unverified"}
+    try:
+        task = wait_task(task_id, timeout=timeout)
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        task = {"task": task_id, "state": "unverified", "ok": False, "error": str(exc)}
+    observed = {**result, "task_observation": task}
+    if not task["ok"]:
+        detail = "deadline reached" if task.get("wait_timed_out") else task["state"]
+        observed.update(error=f"Input completed; task exit check reported {detail}. Do not replay input.",
+                        reason="task-observation-failed", dispatch_stage="post-input-task-observation")
+    return observed
+
+
 def run_sequence(path: str, generation: str, *, backend=runtime) -> dict[str, Any]:
     validate_filesystem_path(path, must_exist=True)
     if Path(path).stat().st_size > backend.MAX_MESSAGE:

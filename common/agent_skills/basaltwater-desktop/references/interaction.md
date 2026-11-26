@@ -165,6 +165,10 @@ Debian also supports `desktop map-point --capture /absolute/frame.json
 image origin and checks current observation identity and freshness without
 injecting input or renewing the token. Presented-view coordinates require the
 actual image display dimensions via `--view-geometry WIDTH HEIGHT`.
+For exact preview pixels, request `screenshot --preview-width 1200`, open
+`preview.output` and map with `--preview-coordinates` and the saved receipt.
+For Quit on a running development task, use `--observe-task TASK_ID` to wait
+for the task exit without capturing. Retain the final game image before input.
 
 Use `desktop evidence start --project /absolute/project` before a bounded manual
 run. When cleanup is part of the run, capture the terminal application state,

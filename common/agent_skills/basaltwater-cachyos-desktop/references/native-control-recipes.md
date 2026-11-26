@@ -75,6 +75,12 @@ returning `input_context_args` and `input_args` to copy. It makes a read-only
 status request and never recaptures or sends input. A changed/recentered target
 requires fresh inspection even when the token remains valid.
 
+For a known-size view, use `screenshot --compact --preview-width 1200`.
+Open `preview.output` and pass its exact pixels to `map-point --capture
+RECEIPT.json --preview-coordinates --x X --y Y`. The receipt keeps the original
+and the same token. For a viewer that resizes the preview, use its actual
+presentation dimensions.
+
 Native failures preserve `reason`, `dispatch_stage` and `input_delivery`.
 `not-sent` proves a guard refused before dispatch; `completed` preserves input
 when observation fails; `unknown` requires inspection without replay. Older
@@ -159,6 +165,9 @@ It returns input completion and frame receipt UTC/monotonic timestamps plus
 stream-relative PTS; receipt/PTS are not compositor presentation or proof of
 application readiness. A stalled/static stream may time out. Capture failure
 preserves input completion: inspect and recapture; never replay the input.
+For a Quit action on a running development task, use `--observe-task TASK_ID`
+in place of `--observe`. It preserves input delivery and returns a task exit
+receipt without capturing the screen. Save the terminal game image before Quit.
 Use `screenshot --next-frame --compact` for a separate bounded observation.
 For one inspected input and two delayed captures, use the tested
 [short observation recipe](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/short-observation-sequences.md).

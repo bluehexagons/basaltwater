@@ -14,7 +14,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from desktop import client, control_state, evidence, native_session, observations, qa_artifacts
+from desktop import capture_preview, client, control_state, development, evidence, native_session, observations, png_regions, qa_artifacts
 from desktop.receipts import DesktopRequestError
 from lib import desktop_cli
 from scripts import desktop_observation_probe as probe
@@ -370,6 +370,89 @@ class WindowFollowupRecipeTests(unittest.TestCase):
         return self.parser.parse_args(["desktop", *(["--native"] if native else []), "input",
             "--generation", "g", "--geometry", "800", "600", "--observation", "a" * 32,
             "click", "--x", "120", "--y", "110", *extra])
+
+    def test_quit_waits_for_the_task_on_both_backends_without_a_capture(self):
+        for backend, generation in ((client.runtime, "g"), (native_session, None)):
+            for state, timed_out in (("completed", False), ("running", True), ("failed", False)):
+                with self.subTest(backend=backend, state=state), \
+                        patch.object(backend, "status", return_value=self.current), \
+                        patch.object(backend, "request", return_value=self.completed) as request, \
+                        patch.object(development, "task_status", return_value={
+                            "state": "running", "ok": True, "session_generation": generation}) as status, \
+                        patch.object(development, "wait_task", return_value={
+                            "state": state, "ok": state == "completed", "wait_timed_out": timed_out}) as wait, \
+                        patch.object(client, "artifact_path") as allocate, redirect_stdout(out := StringIO()):
+                    task_id = "1" * 32
+                    args = self.args("--observe-task", task_id, "--task-timeout", "3", native=backend is native_session)
+                    self.assertEqual(desktop_cli.run_desktop_command(args), int(state != "completed"))
+                    result = json.loads(out.getvalue())
+                    self.assertEqual(result["input_delivery"], "completed")
+                    self.assertEqual(result["task_observation"]["state"], state)
+                    self.assertNotIn("observation", result)
+                    request.assert_called_once()
+                    self.assertEqual(request.call_args.args[0]["action"], "input")
+                    status.assert_called_once_with(task_id)
+                    wait.assert_called_once_with(task_id, timeout=3)
+                    allocate.assert_not_called()
+
+    def test_other_desktop_task_is_refused_before_quit_input(self):
+        with patch.object(client.runtime, "status", return_value=self.current), \
+                patch.object(client.runtime, "request") as request, \
+                patch.object(development, "task_status", return_value={
+                    "state": "running", "ok": True, "session_generation": "other"}), \
+                patch.object(development, "wait_task") as wait, redirect_stdout(out := StringIO()):
+            self.assertEqual(desktop_cli.run_desktop_command(self.args("--observe-task", "1" * 32)), 1)
+        self.assertEqual(json.loads(out.getvalue())["input_delivery"], "not-sent")
+        request.assert_not_called()
+        wait.assert_not_called()
+
+    @unittest.skipUnless(Path("/usr/bin/ffmpeg").is_file(), "ffmpeg is unavailable")
+    def test_preview_retains_original_and_maps_odd_size_window_from_receipt(self):
+        original = Path(self.capture["output"])
+        body = png_regions.encode(13, 7, b"\xa0\xb0\xc0" * 13 * 7)
+        original.write_bytes(body)
+        capture = {**self.capture, "image_geometry": [13, 7], "artifact_sha256": qa_artifacts.file_digest(original)}
+        live = {**self.current, **capture, "capture_freshness": {"fresh": True}}
+        with patch.object(client.runtime, "status", return_value=live), \
+                patch.object(client.runtime, "request", return_value=capture) as request, \
+                patch.object(capture_preview, "new_bundle", side_effect=lambda: qa_artifacts.new_bundle(str(self.home / "preview"))):
+            args = self.parser.parse_args(["desktop", "screenshot", "--compact", "--preview-width", "5", "--output", str(original)])
+            with redirect_stdout(out := StringIO()):
+                self.assertEqual(desktop_cli.run_desktop_command(args), 0)
+            saved = self.home / "frame.json"
+            saved.write_text(out.getvalue())
+            receipt = json.loads(out.getvalue())
+            preview = receipt["preview"]
+            self.assertEqual(preview["geometry"], [5, 2])
+            self.assertEqual(png_regions.decode(Path(preview["output"]).read_bytes())[:2], (5, 2))
+            self.assertEqual(preview["source_sha256"], capture["artifact_sha256"])
+            self.assertEqual(preview["artifact_sha256"], qa_artifacts.file_digest(Path(preview["output"])))
+            self.assertEqual(original.read_bytes(), body)
+            args = self.parser.parse_args(["desktop", "map-point", "--capture", str(saved),
+                                           "--preview-coordinates", "--x", "3", "--y", "1"])
+            with redirect_stdout(out := StringIO()):
+                self.assertEqual(desktop_cli.run_desktop_command(args), 0)
+            mapping = json.loads(out.getvalue())
+        self.assertEqual(mapping["input_coordinates"], {"x": 107, "y": 83})
+        self.assertEqual(mapping["observation_id"], capture["observation_id"])
+        self.assertEqual(mapping["scale"], preview["mapping"]["scale"])
+        self.assertEqual(mapping["point_space"], "preview-image")
+        request.assert_called_once()
+
+    def test_failed_followup_preview_retains_original_observation_and_input(self):
+        with patch.object(client.runtime, "status", return_value=self.current), \
+                patch.object(client.runtime, "request", side_effect=[self.completed, self.capture]) as request, \
+                patch.object(client.time, "sleep"), \
+                patch.object(capture_preview, "make_preview", side_effect=RuntimeError("Resize failed")), \
+                redirect_stdout(out := StringIO()):
+            args = self.args("--observe", "--preview-width", "400", "--output", self.capture["output"])
+            self.assertEqual(desktop_cli.run_desktop_command(args), 1)
+        receipt = json.loads(out.getvalue())
+        self.assertEqual(receipt["input_delivery"], "completed")
+        self.assertEqual(receipt["observation"]["observation_id"], self.capture["observation_id"])
+        self.assertEqual(receipt["observation"]["output"], self.capture["output"])
+        self.assertEqual(receipt["observation"]["preview_error"], "Resize failed")
+        self.assertEqual([call.args[0]["action"] for call in request.call_args_list], ["input", "screenshot"])
 
     def test_selected_window_followup_keeps_mapping_and_completed_input(self):
         with patch.object(client.runtime, "status", return_value=self.current), \
