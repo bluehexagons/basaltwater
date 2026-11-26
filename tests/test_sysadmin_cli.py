@@ -281,10 +281,12 @@ class TestSysadminCliDispatch(SysadminCliTestCase):
             self.assertEqual(run_sysadmin_command(logs_args), 13)
         run_logs.assert_called_once_with("server", "nginx", lines=25, follow=True, username=None, ssh_key=None)
 
-        upgrade_args = self._parse("upgrade", "server", "--check")
+        upgrade_args = self._parse("upgrade", "server", "--with-new-pkgs", "--check")
         with patch("lib.sysadmin_upgrade.run_upgrade", return_value=14) as run_upgrade:
             self.assertEqual(run_sysadmin_command(upgrade_args), 14)
-        run_upgrade.assert_called_once_with(["server"], username=None, ssh_key=None, check_only=True)
+        run_upgrade.assert_called_once_with(
+            ["server"], username=None, ssh_key=None, check_only=True, with_new_pkgs=True,
+        )
 
         reachable_args = self._parse("reachable", "server", "--pattern", "*.example")
         with patch("lib.sysadmin_reachable.run_reachable", return_value=15) as run_reachable:
@@ -308,6 +310,20 @@ class TestSysadminCliDispatch(SysadminCliTestCase):
         with redirect_stderr(fan_error):
             self.assertEqual(run_sysadmin_command(fan_args), 1)
         self.assertIn("remote command is required", fan_error.getvalue())
+
+    def test_guest_upgrade_option_requires_explicit_target(self) -> None:
+        output = io.StringIO()
+        with (
+            patch("sys.argv", ["basaltw", "upgrade", "--with-new-pkgs"]),
+            patch("basaltwater.argcomplete", None),
+            patch("basaltwater.run_tool_upgrade_command") as upgrade_tool,
+            patch("lib.sysadmin_upgrade.run_upgrade") as upgrade_hosts,
+            redirect_stdout(output),
+        ):
+            self.assertEqual(main(), 1)
+        self.assertIn("--with-new-pkgs requires at least one remote host", output.getvalue())
+        upgrade_tool.assert_not_called()
+        upgrade_hosts.assert_not_called()
 
     def test_unknown_dispatch_command_returns_error(self) -> None:
         error = io.StringIO()

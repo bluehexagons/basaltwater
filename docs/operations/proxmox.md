@@ -38,6 +38,7 @@ address.
 <a id="resource-pressure-and-boot-recovery"></a>
 <a id="power-state-commands"></a>
 - [Operate and recover guests](proxmox-guest-lifecycle.md) Resource pressure, boot recovery, and power-state commands.
+- [Update Debian VMs](sysadmin-host-services.md#debian-vms-on-proxmox) Preview and apply package updates inside existing guests.
 
 <a id="placement-backups-and-migration"></a>
 - [Placement, backups, and migration](proxmox-placement.md) Placement policies and storage migration.

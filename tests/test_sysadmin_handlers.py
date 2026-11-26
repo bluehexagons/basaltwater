@@ -5,10 +5,12 @@ from __future__ import annotations
 import io
 import json
 import os
+import shlex
 import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -408,7 +410,7 @@ class TestSysadminUpgrade(unittest.TestCase):
             del username, ssh_key
             if host == "bad":
                 return host, 1, "", "apt failed"
-            return host, 0, "REBOOT_REQUIRED", ""
+            return host, 0, "BASALTWATER_DEBIAN_VERSION=13.8\nREBOOT_REQUIRED\n", ""
 
         stdout = io.StringIO()
         stderr = io.StringIO()
@@ -417,7 +419,7 @@ class TestSysadminUpgrade(unittest.TestCase):
                 result = sysadmin_upgrade.run_upgrade(["bad", "good"], max_workers=2)
 
         self.assertEqual(result, 1)
-        self.assertIn("[OK, REBOOT] good", stdout.getvalue())
+        self.assertIn("[OK, REBOOT] good (Debian 13.8)", stdout.getvalue())
         self.assertIn("Reboot required: good", stdout.getvalue())
         self.assertIn("[FAIL] bad: apt failed", stderr.getvalue())
 
@@ -425,7 +427,7 @@ class TestSysadminUpgrade(unittest.TestCase):
         def run_remote(host: str, command: str, username: str | None, ssh_key: str | None):
             del command, username, ssh_key
             if host == "good":
-                return host, 0, "Inst foo [1] (2)\nInst bar [3] (4)\n", ""
+                return host, 0, "BASALTWATER_DEBIAN_VERSION=13.7\nInst foo [1] (2)\nInst bar [3] (4)\n", ""
             return host, 100, "", "apt failed"
 
         stdout = io.StringIO()
@@ -435,8 +437,58 @@ class TestSysadminUpgrade(unittest.TestCase):
                 result = sysadmin_upgrade.run_upgrade(["good", "unknown"], check_only=True, max_workers=2)
 
         self.assertEqual(result, 1)
-        self.assertIn("good: 2 package(s) pending", stdout.getvalue())
+        self.assertIn("good: 2 package(s) pending (Debian 13.7)", stdout.getvalue())
         self.assertIn("[FAIL] unknown: apt failed", stderr.getvalue())
+
+    def test_guest_upgrade_preview_is_read_only_and_uses_the_same_package_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name, body in {
+                "id": "echo 0",
+                "cat": "echo 13.8",
+                "apt-get": (
+                    'printf "%s\\n" "$*" >> "$APT_TEST_LOG"\n'
+                    'if [ "$APT_TEST_FAIL_UPDATE" = yes ]; then\n'
+                    '    case " $* " in *" update ") exit 100 ;; esac\n'
+                    'fi'
+                ),
+            }.items():
+                executable = root / name
+                executable.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+                executable.chmod(0o700)
+            log = root / "apt.log"
+
+            def run_remote(host: str, command: str, username: str | None, ssh_key: str | None):
+                shell, *arguments = shlex.split(command)
+                self.assertEqual(shell, "sh")
+                process = subprocess.run(
+                    ["/bin/sh", *arguments], capture_output=True, text=True, check=False,
+                    env={"PATH": directory, "APT_TEST_LOG": str(log), "APT_TEST_FAIL_UPDATE": fail_update},
+                )
+                return host, process.returncode, process.stdout, process.stderr
+
+            with patch.object(sysadmin_upgrade, "_run_remote", side_effect=run_remote), \
+                 redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                fail_update = "no"
+                self.assertEqual(sysadmin_upgrade.run_upgrade(["guest"], check_only=True, with_new_pkgs=True), 0)
+                preview, = log.read_text(encoding="utf-8").splitlines()
+                self.assertIn("--simulate", shlex.split(preview))
+                self.assertTrue(preview.endswith(" upgrade"))
+
+                log.unlink()
+                self.assertEqual(sysadmin_upgrade.run_upgrade(["guest"], with_new_pkgs=True), 0)
+                update, apply = log.read_text(encoding="utf-8").splitlines()
+                self.assertIn("APT::Update::Error-Mode=any", update)
+                self.assertTrue(update.endswith(" update"))
+                for command in (preview, apply):
+                    self.assertIn("--with-new-pkgs", shlex.split(command))
+                    self.assertIn("--no-remove", shlex.split(command))
+                self.assertNotIn("--simulate", shlex.split(apply))
+
+                log.unlink()
+                fail_update = "yes"
+                self.assertEqual(sysadmin_upgrade.run_upgrade(["guest"], with_new_pkgs=True), 1)
+                self.assertEqual(log.read_text(encoding="utf-8").splitlines(), [update])
 
 
 if __name__ == "__main__":

@@ -2709,6 +2709,9 @@ def _dispatch_command(args: argparse.Namespace, parser: argparse.ArgumentParser)
         if getattr(args, "check", False):
             print("Error: --check requires at least one remote host")
             return 1
+        if getattr(args, "with_new_pkgs", False):
+            print("Error: --with-new-pkgs requires at least one remote host")
+            return 1
         return run_tool_upgrade_command(args)
     elif args.command == "network":
         return run_network_command(args)

@@ -391,13 +391,17 @@ def _add_upgrade_parser(sub: argparse._SubParsersAction) -> None:
             "Examples:\n"
             "  basaltw upgrade myserver\n"
             "  basaltw upgrade web1 web2 db1\n"
-            "  basaltw upgrade web1 --check"
+            "  basaltw upgrade web1 --with-new-pkgs --check"
         ),
     )
     p.add_argument("hosts", nargs="*", help="Remote hosts (IP or hostname)")
     p.add_argument("--username", "-u", help="SSH username (overrides saved config)")
     p.add_argument("--key", "-i", dest="ssh_key", help="SSH identity file")
-    p.add_argument("--check", action="store_true", help="Only report pending upgrade counts, do not upgrade")
+    p.add_argument("--check", action="store_true", help="Simulate using cached APT lists and report pending counts")
+    p.add_argument(
+        "--with-new-pkgs", action="store_true",
+        help="Allow new dependencies, such as kernel packages, without removing installed packages",
+    )
     p.set_defaults(_sysadmin_cmd="upgrade")
 
 
@@ -636,6 +640,7 @@ def run_sysadmin_command(args: argparse.Namespace) -> int:
             username=getattr(args, "username", None),
             ssh_key=getattr(args, "ssh_key", None),
             check_only=args.check,
+            with_new_pkgs=getattr(args, "with_new_pkgs", False),
         )
 
     if cmd == "reachable":

@@ -177,18 +177,44 @@ basaltw upgrade <host> [<host2> ...] [options]
 | Option | Description |
 |--------|-------------|
 | `hosts` | One or more remote hosts |
-| `--check` | Only count pending upgrades; do not install |
+| `--check` | Count pending upgrades by simulating with cached APT package lists |
+| `--with-new-pkgs` | Allow new packages required by upgrades, such as a new kernel package |
 | `-u, --username U` | SSH username (overrides saved config) |
 | `-i, --key PATH` | SSH identity file |
 
 ```bash
 basaltw upgrade myserver
 basaltw upgrade web1 web2 db1
-basaltw upgrade web1 web2 --check     # show pending counts only
+basaltw upgrade web1 web2 --check
 ```
 
-Requires `sudo` access on the remote host. Hosts that fail are reported and do
-not affect the result for other hosts.
+Package upgrades require root SSH or noninteractive `sudo` access in the
+target. The command stops on a failed APT refresh, prohibits package removal,
+and reports failures per target. It reports the installed Debian version when
+available and lists guests with a reboot-required marker. Schedule reboots
+separately.
+
+### Debian VMs on Proxmox
+
+Target the VM's saved setup name or guest address. For a point update such as
+Debian 13.7 to 13.8, keep the guest's APT sources on its installed codename. Use
+the same package options for preview and apply. The preview uses local package
+lists on the guest, which may be older than the lists fetched during apply.
+
+```bash
+basaltw upgrade debian-app --with-new-pkgs --check
+basaltw upgrade debian-app --with-new-pkgs
+basaltw vm health debian-app
+```
+
+For a saved Proxmox VM, `basaltw vm reboot debian-app` requests a guest reboot
+when you are ready. Use `basaltw proxmox rolling-update` for the hypervisors.
+
+For Debian 12 to 13, first bring Bookworm up to date, verify a recoverable VM
+backup, and test access to the Proxmox console. Follow Debian's release upgrade
+procedure inside the guest, including repository changes and the minimal and
+full upgrades. After reboot, check the guest version, SSH, and its services.
+[Debian 13 upgrade guide](https://www.debian.org/releases/trixie/release-notes/upgrading.en.html)
 
 ---
 
