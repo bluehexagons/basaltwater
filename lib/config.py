@@ -2305,11 +2305,9 @@ class SetupConfig:
             cmd_parts.append(f"--web-port {port}")
         if not self.default_web_ports:
             cmd_parts.append("--no-default-web-ports")
-        default_pairing_providers = list(
-            system_type_defaults.default_device_pairing_providers
-        )
+        default_pairing_providers = list(system_type_defaults.default_pairing_for(self.web_interfaces))
         if self.disable_device_pairing:
-            if default_pairing_providers:
+            if system_type_defaults.default_device_pairing_providers:
                 cmd_parts.append("--no-device-pairing")
         elif list(self.device_pairing_providers or []) != default_pairing_providers:
             for provider in self.device_pairing_providers or []:
@@ -2816,9 +2814,12 @@ class SetupConfig:
         if not data.get('disable_device_pairing') and not data.get(
             'device_pairing_providers'
         ):
-            data['device_pairing_providers'] = (
-                list(system_defaults.default_device_pairing_providers) or None
-            )
+            pairing_defaults = system_defaults.default_pairing_for(data.get('web_interfaces'))
+            if system_type == "agent_vm_lite" and pairing_defaults and 'device_pairing_providers' in data:
+                # Earlier lite setups could save T3 with no portal or credential.
+                data['disable_device_pairing'] = True
+            else:
+                data['device_pairing_providers'] = list(pairing_defaults) or None
         if 'git_access' not in data or data.get('git_access') is None:
             data['git_access'] = system_defaults.default_git_access
         if (
@@ -3228,7 +3229,7 @@ class SetupConfig:
             else (
                 raw_pairing_providers
                 if isinstance(raw_pairing_providers, list) and raw_pairing_providers
-                else list(system_type_definition.default_device_pairing_providers) or None
+                else list(system_type_definition.default_pairing_for(web_interfaces)) or None
             )
         )
         

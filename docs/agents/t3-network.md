@@ -12,10 +12,10 @@ The safe default is loopback:
 --web-interface-port 3773
 ```
 
-The [`agent_vm_lite` profile](agentic-vms.md#a-low-memory-coding-vm) runs
-the selected T3 service without the managed HTTPS gateway by default. Use
-an SSH tunnel, T3 Connect, or an existing external HTTPS endpoint. Explicitly
-selecting the protected pairing portal also installs the gateway.
+Selecting T3 on the [`agent_vm_lite` profile](agentic-vms.md#a-low-memory-coding-vm)
+also enables the protected pairing portal and the HTTPS gateway. Use
+`--no-device-pairing` to run T3 without either component and connect through
+SSH, T3 Connect, or an existing external HTTPS endpoint.
 
 Other managed T3 setups publish an HTTPS endpoint through the shared gateway. Use
 direct HTTP only over localhost or in a controlled test environment. Direct

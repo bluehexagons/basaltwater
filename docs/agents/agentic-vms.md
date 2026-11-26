@@ -50,30 +50,28 @@ basaltw setup agent_vm_lite 192.168.1.61/24 agent \
   --provision-on pve1 --name agent-lite-1 \
   --memory 2G --cores 2 --storage root 16G \
   --swap-file burst /swapfile 2G \
-  --codex --web-interface t3code
+  --codex --web-interface t3code \
+  --web-interface-source 192.168.1.42/32
 ```
 
-Omit `--web-interface t3code` for SSH-only operation. With it, setup installs
-the upstream T3 Code server, Node.js, and the systemd user D-Bus session.
-The T3 listener binds to guest loopback by default.
-In the [T3 desktop app](https://github.com/pingdotgg/t3code/blob/v0.1.12/docs/user/remote-access.md#desktop-managed-ssh),
-open **Settings → Environments → Add environment → SSH** and enter
-`agent@192.168.1.61` or an SSH alias with the matching key. Use the following
-commands to forward the loopback port and issue a one-time pairing URL manually.
+Replace `192.168.1.42/32` with the client IP or trusted subnet that should
+reach the portal and T3 HTTPS endpoints. Run from a terminal to provide the
+portal password and authorize Codex. For unattended setup supply a
+[pairing password file](../services/device-pairing.md#configure-it).
 
-```bash
-ssh -N -L 3773:127.0.0.1:3773 agent@192.168.1.61
-# In a second terminal on the same computer
-basaltw agent web pair 192.168.1.61 agent
-```
+Selecting T3 Code also installs the protected device-pairing portal and its
+HTTPS gateway. Follow the printed pairing HTTPS URL to enroll a browser. For
+the T3 app, open the portal's `/devices` page and choose **Pair another T3
+Code client**. If setup issues a VM-local certificate, enroll the
+[VM CA on the connecting device](../services/client-ca-trust.md).
 
-Paste the pairing URL into the app and keep the tunnel running while connected.
-For a separately hosted HTTPS client, use
+For SSH-only operation, omit both `--web-interface t3code` and
+`--web-interface-source`. Add `--no-device-pairing` to a T3 setup to use the
+loopback service through [the T3 app's SSH connection](https://github.com/pingdotgg/t3code/blob/v0.1.12/docs/user/remote-access.md#desktop-managed-ssh)
+or a manual tunnel. Without an allowed source, the gateway's HTTPS endpoints
+also accept loopback connections only. For a separately hosted HTTPS client, use
 [T3 Connect](../services/device-pairing.md#t3-connect-management) or an
-externally managed HTTPS endpoint that reaches the server. The lite profile
-skips Basaltwater's T3 HTTPS gateway and protected pairing portal by default.
-T3's bundled HTTP assets remain on its API listener. Keep browser runs and
-large builds on another machine when using the 2 GiB allocation.
+HTTPS endpoint that the client can reach and trust.
 
 ## A headless coding VM with browser-approved privileged actions
 

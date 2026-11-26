@@ -150,7 +150,11 @@ class TestAgentProfiles(unittest.TestCase):
 
         parser, _, _ = basaltwater.create_basaltwater_parser()
         remote_parser = create_setup_argument_parser("remote", for_remote=True)
-        for t3_flags in ([], ["--web-interface", "t3code"]):
+        for t3_flags, pairing in (
+            ([], False),
+            (["--web-interface", "t3code"], True),
+            (["--web-interface", "t3code", "--no-device-pairing"], False),
+        ):
             with self.subTest(t3_flags=t3_flags):
                 args = parser.parse_args([
                     "setup", "agent_vm_lite", "192.0.2.10", "agent", "--machine", "vm",
@@ -164,11 +168,13 @@ class TestAgentProfiles(unittest.TestCase):
                 remote_args = remote_parser.parse_args(shlex.split(" ".join(saved.to_remote_args())))
                 remote_args.host = config.host
                 remote = SetupConfig.from_args(remote_args, remote_args.system_type)
-                for selected in (config, saved, remote):
+                replay_args = parser.parse_args(shlex.split(" ".join(saved.to_setup_command()))[1:])
+                replay = SetupConfig.from_args(replay_args, replay_args.system_type)
+                for selected in (config, saved, remote, replay):
                     self.assertEqual(selected.selected_agent_tools(), ["codex"])
-                    self.assertEqual(selected.effective_web_ports(), [])
-                    self.assertFalse(selected.publish_t3_https)
-                    self.assertIsNone(selected.device_pairing_providers)
+                    self.assertEqual(selected.effective_web_ports(), [8443] if pairing else [])
+                    self.assertEqual(selected.publish_t3_https, pairing)
+                    self.assertEqual(selected.device_pairing_providers, ["t3code"] if pairing else None)
                     self.assertFalse(selected.include_desktop)
                     self.assertFalse(selected.enable_rdp)
                     self.assertEqual(bool(selected.install_node), bool(t3_flags))
@@ -185,6 +191,52 @@ class TestAgentProfiles(unittest.TestCase):
                     self.assertEqual("Installing T3 Code web interface" in steps, bool(t3_flags))
                     if t3_flags:
                         self.assertEqual(selected.web_interface_host, "127.0.0.1")
+
+    def test_lite_vm_preserves_a_saved_t3_install_without_a_portal(self) -> None:
+        config = SetupConfig.from_args(_setup_args(web_interfaces=["t3code"]), "agent_vm_lite")
+        previous = config.to_dict()
+        previous["device_pairing_providers"] = None
+        restored = SetupConfig.from_dict(config.host, config.system_type, previous)
+        self.assertTrue(restored.disable_device_pairing)
+        self.assertFalse(restored.publish_t3_https)
+        self.assertIn("--no-device-pairing", restored.to_setup_command())
+
+    def test_lite_vm_setup_prompts_for_default_portal_credentials_only_with_t3(self) -> None:
+        from lib.interactive_setup import prompt_for_missing_passwords
+
+        for interfaces, disable_pairing, expected in (
+            (None, False, None), (["t3code"], False, "fixture-password"),
+            (["t3code"], True, None),
+        ):
+            with self.subTest(interfaces=interfaces, disable_pairing=disable_pairing):
+                args = _setup_args(
+                    web_interfaces=interfaces, disable_device_pairing=disable_pairing,
+                    device_pairing_auth_password=None,
+                )
+                with (
+                    patch("lib.interactive_setup.sys.stdin.isatty", return_value=True),
+                    patch("lib.interactive_setup.sys.stdout.isatty", return_value=True),
+                    patch("builtins.input", return_value=""),
+                    patch("lib.interactive_setup.getpass.getpass", return_value="fixture-password"),
+                ):
+                    prompt_for_missing_passwords(args, "agent_vm_lite")
+                self.assertEqual(args.device_pairing_auth_password, expected)
+
+    def test_lite_vm_patch_enables_the_portal_with_a_new_t3_install(self) -> None:
+        import basaltwater
+
+        cached = SetupConfig.from_args(_setup_args(), "agent_vm_lite")
+        parser, _, _ = basaltwater.create_basaltwater_parser()
+        args = parser.parse_args([
+            "patch", cached.host, cached.username, "--codex", "--web-interface", "t3code",
+        ])
+        with (
+            patch("basaltwater.load_setup_command", return_value=cached),
+            patch("basaltwater._execute_patch_config", return_value=0) as apply,
+        ):
+            self.assertEqual(basaltwater.run_patch_command(args), 0)
+        updated = apply.call_args.args[0]
+        self.assertEqual(updated.device_pairing_providers, ["t3code"])
 
     def test_lite_vm_allows_explicit_web_additions(self) -> None:
         config = SetupConfig.from_args(

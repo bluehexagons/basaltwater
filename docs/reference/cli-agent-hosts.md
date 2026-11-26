@@ -14,9 +14,9 @@ pairing, read-write Git, active GitHub auth, and target-owned login when Codex i
 fallback through `--browser-automation playwright` for SSH-only or standalone
 Codex and OpenCode sessions.
 The [`agent_vm_lite` profile](../agents/agentic-vms.md#a-low-memory-coding-vm)
-targets 2 GiB with an SSH-first baseline and opt-in T3 Code. The other Debian
-agent profiles default to GitHub CLI. Select at least one coding provider explicitly
-with `--codex`, `--claude`, or `--opencode`.
+targets 2 GiB with an SSH-first baseline and opt-in T3 Code with device pairing.
+The other Debian agent profiles default to GitHub CLI. Select at least one
+coding provider explicitly with `--codex`, `--claude`, or `--opencode`.
 `--agent-tool` values add to those
 defaults and accept comma-separated lists; use `--no-agent-tool` to remove a
 default. The full profile does not choose Proxmox capacity. It installs Node.js

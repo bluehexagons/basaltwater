@@ -50,6 +50,13 @@ class SystemTypeDefinition:
     default_browser_automation: str | None = None
     step_builder: str | None = None
 
+    def default_pairing_for(self, web_interfaces: Sequence[str] | None) -> tuple[str, ...]:
+        """Select enrollment defaults for the enabled web interfaces."""
+        return tuple(
+            provider for provider in self.default_device_pairing_providers
+            if provider in (web_interfaces or ())
+        )
+
 
 @dataclass(frozen=True)
 class PluginDefinition:

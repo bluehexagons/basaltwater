@@ -2449,10 +2449,18 @@ def run_patch_command(args: argparse.Namespace) -> int:
         resolve_approval_panel_args(args, saved_port=cached_config.privilege_broker_port)
         resolve_cli_selection(args, cached_config)
         new_config = SetupConfig.from_args(args, cached_config.system_type)
+        preserve_keys = _patch_preserve_keys(args)
+        if (
+            cached_config.system_type == "agent_vm_lite"
+            and not cached_config.web_interfaces
+            and not cached_config.disable_device_pairing
+            and new_config.device_pairing_providers
+        ):
+            preserve_keys.difference_update({"device_pairing_providers", "disable_device_pairing"})
         merged_config = merge_setup_configs(
             cached_config,
             new_config,
-            preserve_keys=_patch_preserve_keys(args),
+            preserve_keys=preserve_keys,
         )
         if getattr(args, "web_panel_port", None) is WEB_PANEL_DEFAULT_PORT_SENTINEL:
             merged_config.web_panel_port = 443 if merged_config.enable_ssl else 80

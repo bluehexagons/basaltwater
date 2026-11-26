@@ -45,6 +45,7 @@ PLUGIN = PluginDefinition(
             description="Minimal headless agent coding VM with optional T3 Code",
             order=39,
             include_cli_tools=True,
+            default_device_pairing_providers=("t3code",),
             default_agent_auth_source="login",
             step_builder="plugins.server:build_server_steps",
         ),

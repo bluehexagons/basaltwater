@@ -93,7 +93,13 @@ def prompt_for_missing_passwords(args: Any, system_type: str) -> None:
     if getattr(args, "disable_device_pairing", False):
         pairing_providers = None
     elif not pairing_providers:
-        pairing_providers = system_defaults.default_device_pairing_providers
+        if getattr(args, "disable_web_interface", False):
+            web_interfaces = ()
+        elif getattr(args, "t3code_ready", False):
+            web_interfaces = ("t3code",)
+        else:
+            web_interfaces = getattr(args, "web_interfaces", None) or system_defaults.default_web_interfaces
+        pairing_providers = system_defaults.default_pairing_for(web_interfaces)
     pairing_auth_supplied = bool(
         getattr(args, "device_pairing_auth_file", None)
         or getattr(args, "device_pairing_auth_username", None)
@@ -160,8 +166,10 @@ def run_interactive_setup(args: Any) -> None:
         )
 
     web_interfaces = set(getattr(args, "web_interfaces", None) or [])
-    if "t3code" in web_interfaces and not getattr(
-        args, "device_pairing_providers", None
+    if (
+        "t3code" in web_interfaces
+        and not getattr(args, "device_pairing_providers", None)
+        and not getattr(args, "disable_device_pairing", False)
     ):
         pairing_choice = _prompt_choice(
             "Allow new browsers to request T3 Code pairing links",
@@ -170,6 +178,8 @@ def run_interactive_setup(args: Any) -> None:
         )
         if pairing_choice == "yes":
             args.device_pairing_providers = ["t3code"]
+        else:
+            args.disable_device_pairing = True
 
     if getattr(args, "dry_run", False):
         print("Dry-run: skipping credential prompts and secret staging.")
