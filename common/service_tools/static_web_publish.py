@@ -537,14 +537,17 @@ def migrate_legacy_sites() -> list[str]:
                         metadata.pop("project", None)
                         metadata.pop("game", None)
                         metadata.update(profile="godot", site=site, url=url, published_at=published_at)
+                        has_receipt = os.path.lexists(os.path.join(source, RECEIPT_FILE))
+                        if has_receipt:
+                            # The original receipt binds the recorded source to the original hashes.
+                            read_receipt(source)
                         write_json_atomic(os.path.join(source, METADATA_FILE), metadata, mode=0o644)
                         _write_godot_profile(source)
-                        try:
-                            write_receipt(source, None, output=None, published_at=published_at, built=False)
-                        except ReceiptLimitError as exc:
-                            if os.path.lexists(os.path.join(source, RECEIPT_FILE)):
-                                raise
-                            print(f"Warning: No verification receipt for {site}. {exc}", file=sys.stderr)
+                        if not has_receipt:
+                            try:
+                                write_receipt(source, None, output=None, published_at=published_at, built=False)
+                            except ReceiptLimitError as exc:
+                                print(f"Warning: No verification receipt for {site}. {exc}", file=sys.stderr)
                         os.rename(source, destination)
                         migrated.append(url or destination)
                         break

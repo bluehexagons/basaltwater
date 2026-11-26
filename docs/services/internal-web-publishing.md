@@ -220,8 +220,13 @@ Use `basaltwater-web site list` to find the new links and pass the migrated site
 name explicitly when publishing a later build. On an older gateway,
 an interrupted refresh leaves unmoved games reachable at their original URLs.
 It retires the old `/games/` route once migration succeeds. A legacy snapshot
-that exceeds the receipt limits still moves, with a warning. `site doctor`
-can check that snapshot, and `site verify` reports `receipt_missing`.
+keeps its private receipt, including the recorded commit and original hashes.
+For exports published without a receipt, migration records the artifact hashes
+and leaves the source revision unknown. Read `source.commit` with
+`basaltwater-web site verify NAME --json`; add `--project PATH` to compare
+against a checkout. A receiptless legacy snapshot that exceeds the receipt
+limits still moves with a warning. `site doctor` can check that snapshot, and
+`site verify` reports `receipt_missing`.
 
 For a custom domain, deploy a repository with a
 [`godot-web` manifest component](deployments-manifests.md#godot-web-application).

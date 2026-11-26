@@ -147,6 +147,10 @@ class TestStaticWebPublish(unittest.TestCase):
             second_legacy = legacy.with_name("demo-godot")
             second_legacy.mkdir()
             (second_legacy / "index.html").write_text("second game")
+            static_publication.write_receipt(
+                str(second_legacy), directory, output=None, published_at="2026-01-01T00:00:00Z", built=True,
+            )
+            original_receipt = (second_legacy / static_publication.RECEIPT_FILE).read_bytes()
             (legacy / static_web_publish.METADATA_FILE).write_text(json.dumps({
                 "game": "demo", "title": "Legacy game",
                 "published_at": "2026-01-01T00:00:00Z", "project": "/private/project",
@@ -173,6 +177,7 @@ class TestStaticWebPublish(unittest.TestCase):
                     with self.assertRaisesRegex(OSError, "interrupted move"):
                         static_web_publish.migrate_legacy_sites()
                 self.assertTrue(second_legacy.is_dir())
+                self.assertEqual((second_legacy / static_publication.RECEIPT_FILE).read_bytes(), original_receipt)
                 self.assertFalse(legacy.exists())
                 self.assertIn('href="demo-godot-2/"', (migrated.parent / "index.html").read_text())
                 self.assertEqual(static_web_publish.migrate_legacy_sites(), [
@@ -180,6 +185,17 @@ class TestStaticWebPublish(unittest.TestCase):
                 ])
                 self.assertEqual(static_web_publish.migrate_legacy_sites(), [])
                 records = static_web_publish.list_sites(account)
+                verified = static_web_publish.verify_site(argparse.Namespace(
+                    name="demo-godot", project=directory, output=None, local_only=True, timeout=60,
+                ))
+            self.assertTrue(verified["ok"])
+            self.assertTrue(verified["source_matches"])
+            self.assertTrue(verified["build_performed"])
+            self.assertEqual(verified["source"], {"commit": "a" * 40, "dirty": False})
+            self.assertEqual(
+                (existing.with_name("demo-godot") / static_publication.RECEIPT_FILE).read_bytes(),
+                original_receipt,
+            )
             self.assertEqual((existing / "index.html").read_text(), "existing site")
             self.assertEqual((migrated / "index.html").read_text(), "existing game")
             self.assertEqual((existing.with_name("demo-godot") / "index.html").read_text(), "second game")
