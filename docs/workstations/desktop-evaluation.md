@@ -246,8 +246,8 @@ original failed receipt without editing either receipt or the journal. No old
 uncertain/image-less event is erased by a later successful check.
 
 `--process PID START_TICKS` takes a prior observed Linux process identity and
-reports running-preserve, identity-replaced, identity-not-present or unavailable.
-Missing/replaced identities do not prove normal exit. Verify normal game exit
+reports `running-preserve`, `identity-exited`, `identity-replaced`,
+`identity-not-present`, or `unavailable`. Verify normal game exit
 using the exact game process/start identity AND its owned launch/task completion
 receipt; a launcher exit or result screenshot alone is insufficient. Unselected
 or ownership-uncertain resources remain outside the receipt's coverage. Preserve

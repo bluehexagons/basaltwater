@@ -6,6 +6,7 @@ import argparse
 from contextlib import redirect_stdout, redirect_stderr
 from io import StringIO
 import json
+import os
 from pathlib import Path
 import re
 import shlex
@@ -427,11 +428,14 @@ class WindowFollowupRecipeTests(unittest.TestCase):
                         return {"pid": pid, "start_ticks": str(pid * 10)}
                     if pid == 123:
                         raise ProcessLookupError
-                    return {"pid": pid, "start_ticks": "9999"}
+                    if pid == 234:
+                        return {"pid": pid, "start_ticks": "9999"}
+                    raise qa_artifacts.ProcessExited({"pid": pid, "start_ticks": "3450"})
 
                 identity.side_effect = sample
                 args = self.args("--observe-process", self.process_receipt(123, "1230"),
                                  "--observe-process", self.process_receipt(234, "2340"),
+                                 "--observe-process", self.process_receipt(345, "3450"),
                                  native=backend is native_session)
                 self.assertEqual(desktop_cli.run_desktop_command(args), 0)
                 result = json.loads(out.getvalue())
@@ -440,11 +444,33 @@ class WindowFollowupRecipeTests(unittest.TestCase):
                 self.assertTrue(observation["ok"])
                 self.assertEqual(observation["timeout_seconds"], 10)
                 self.assertEqual([(row["pid"], row["state"], row["normal_exit"]) for row in observation["processes"]],
-                                 [(123, "identity-not-present", "unknown"), (234, "identity-replaced", "unknown")])
+                                 [(123, "identity-not-present", "unknown"), (234, "identity-replaced", "unknown"),
+                                  (345, "identity-exited", "unknown")])
                 request.assert_called_once()
                 self.assertEqual(request.call_args.args[0]["action"], "input")
                 allocate.assert_not_called()
                 self.assertNotIn("observation", result)
+
+    def test_process_identity_checks_unreaped_process_start_ticks(self):
+        open_file = os.open
+        with tempfile.TemporaryDirectory() as folder:
+            process_stat = Path(folder) / "stat"
+            prefix = b"123 (game ) wrapper) Z " + b"0 " * 16
+            process_stat.write_bytes(prefix + b"1 0 1230\n")
+
+            def open_proc(path, flags, **kwargs):
+                return open_file(folder if path == "/proc/123" else path, flags, **kwargs)
+
+            with patch.object(qa_artifacts.os, "open", side_effect=open_proc):
+                self.assertEqual(qa_artifacts.observe_process_identity(123, "1230"), {
+                    "pid": 123, "expected_start_ticks": "1230", "normal_exit": "unknown", "state": "identity-exited",
+                    "observed": {"pid": 123, "start_ticks": "1230"},
+                })
+                self.assertEqual(qa_artifacts.observe_process_identity(123, "1229")["state"], "identity-replaced")
+                with self.assertRaises(ValueError):
+                    qa_artifacts.process_identity(123)
+                process_stat.write_bytes(prefix + b"2 0 1230\n")
+                self.assertEqual(qa_artifacts.observe_process_identity(123, "1230")["state"], "unavailable")
 
     def test_process_quit_timeout_retains_completed_input_and_partial_observation(self):
         now = [100.0]

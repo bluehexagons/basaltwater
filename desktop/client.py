@@ -548,7 +548,7 @@ def observe_processes_after_input(result: dict, identities: list[tuple[int, str]
             observed = observe_process_identity(pid, ticks)
             observed["checked_at"] = stamp()
             processes[pid] = observed
-            if observed["state"] in ("identity-not-present", "identity-replaced"):
+            if observed["state"] in ("identity-exited", "identity-not-present", "identity-replaced"):
                 del pending[pid]
         remaining = deadline - time.monotonic()
         if pending and remaining > 0:

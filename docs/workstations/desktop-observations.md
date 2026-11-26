@@ -169,12 +169,13 @@ basaltw desktop --native input --generation GENERATION --geometry WIDTH HEIGHT \
 The CLI checks that each of up to 16 distinct processes still matches and that
 the receipts came from the current Linux boot. After confirmed delivery it polls
 all original identities under one deadline of 1–60 seconds (default 10) without
-taking a screenshot. Exit zero requires every original identity to be absent
-or replaced. `process_observation` retains the last timestamped result for each
-PID, including completed checks if the deadline expires. A timeout returns
-nonzero and preserves the completed input
-receipt. `normal_exit` remains `unknown` because these processes are externally
-managed. Recheck their identities separately if needed.
+taking a screenshot. Exit zero requires every original identity to have exited,
+be absent, or be replaced. `identity-exited` identifies a process that Linux
+still lists because its parent has yet to reap it. `process_observation`
+retains the last timestamped result for each PID, including completed checks
+if the deadline expires. A timeout returns nonzero and preserves the completed
+input receipt. `normal_exit` remains `unknown` because these processes are
+externally managed. Recheck their identities separately if needed.
 
 ### Capture a selected Debian window after input
 

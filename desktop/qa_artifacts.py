@@ -16,6 +16,12 @@ from lib.validation import validate_filesystem_path
 MAX_MEDIA_BYTES = 128 * 1024 * 1024
 
 
+class ProcessExited(ValueError):
+    def __init__(self, identity: dict) -> None:
+        super().__init__("Application process has exited")
+        self.identity = identity
+
+
 def stamp() -> dict:
     return {"at": datetime.now(timezone.utc).isoformat(), "monotonic_ns": time.monotonic_ns()}
 
@@ -103,9 +109,15 @@ def process_identity(pid: int) -> dict:
             fields = tail.split()
     finally:
         os.close(directory)
-    if not separator or len(fields) < 20 or not fields[19].isdigit() or fields[0] == b"Z":
+    if not separator or len(fields) < 20 or not fields[19].isdigit():
         raise ValueError("Application process identity is unavailable")
-    return {"pid": pid, "start_ticks": fields[19].decode("ascii")}
+    identity = {"pid": pid, "start_ticks": fields[19].decode("ascii")}
+    if fields[0] in (b"Z", b"X"):
+        # Field 20 counts threads. A zombie leader can still have running threads.
+        if fields[17] == b"1":
+            raise ProcessExited(identity)
+        raise ValueError("Application process identity is unavailable")
+    return identity
 
 
 def parse_process_identities(selected: list[list[str]]) -> list[tuple[int, str]]:
@@ -129,6 +141,9 @@ def observe_process_identity(pid: int, ticks: str) -> dict:
         current = process_identity(pid)
         resource.update(state="running-preserve" if current["start_ticks"] == ticks else "identity-replaced",
                         observed=current)
+    except ProcessExited as exc:
+        resource.update(state="identity-exited" if exc.identity["start_ticks"] == ticks else "identity-replaced",
+                        observed=exc.identity)
     except (FileNotFoundError, ProcessLookupError):
         resource["state"] = "identity-not-present"
     except (OSError, ValueError) as exc:
