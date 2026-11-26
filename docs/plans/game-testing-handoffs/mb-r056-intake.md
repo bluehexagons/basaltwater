@@ -1,6 +1,7 @@
 # MB-R056 feedback intake, 2026-11-26
 
-**Recorded and triaged only; implementation and native qualification deferred.**
+**Original intake.** See the [implementation follow-up](#implementation-follow-up)
+below for the current status.
 An authorized consuming controller owns the shared desktop. This intake changes
 no runtime code, installed source, helper, service, permission, grant or live
 desktop state. It activates no maintenance, fixture, game or restoration test.
@@ -71,6 +72,20 @@ matched all three links. Preserve these as selected consuming observations; they
 do not establish general targeting accuracy or semantic correctness for other
 transactions. No mapping change or broader qualification follows from this intake.
 
-Both follow-ups remain proposed. Source review and documentation checks establish
-only this triage; the consuming controller retains exclusive ownership of live
-input, recordings and cleanup. Private evidence needs no action for this intake.
+The consuming controller retains ownership of live input, recordings and cleanup.
+
+## Implementation follow-up
+
+- Native `start` and `status` now retain the consent outcome, the prior completed
+  portal stage, a startup display-power sample and the token disposition. The
+  portal leaves prompt visibility unknown. Repeated `start` calls reuse a running
+  helper, and a timed-out request closes without a new attempt. See the
+  [KDE control reference](../../../common/agent_skills/basaltwater-cachyos-desktop/references/native-control.md).
+- `input --observe-process` accepts a saved `process.json` for each selected
+  same-boot identity. After confirmed delivery it records absence, replacement or
+  the last unresolved state for every process without taking a screenshot. See
+  [external process Quit observation](../../workstations/desktop-observations.md#observe-external-linux-processes-after-quit).
+
+Mocked consent and input receipts and a disposable Linux process cover the source
+changes. Live KDE grant restoration and Steam Quit qualification remain with the
+consuming controller.

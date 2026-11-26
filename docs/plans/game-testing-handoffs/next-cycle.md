@@ -6,9 +6,9 @@ helper refresh, permission change or new match. Reconcile any existing run and
 its owned resources before selecting a maintenance or testing window. Private
 current-run state belongs in the controller's checkpoint, not this repository.
 
-The [MB-R056 feedback intake](mb-r056-intake.md) records proposed portal-start
-diagnostics and capture-free external-process observation follow-ups. It is
-triage only and authorizes no implementation or live work.
+The [MB-R056 feedback intake](mb-r056-intake.md#implementation-follow-up) links the
+delivered portal-start diagnostics and capture-free external-process observation.
+Live qualification remains with the consuming controller.
 
 ## Delivered scope and remaining ownership
 
@@ -23,7 +23,7 @@ triage only and authorizes no implementation or live work.
 | NC-07 | Prospective trial/evaluation brief below | Consuming project: strategy, budgets and explicit restart authority |
 | NC-08 | [Timing coverage format](next-cycle-handoff-contract.md#results-session-closeout-and-timing-nc-050608) | Controller: small baseline; provider integration: actual usage receipts |
 
-No evidence schema, `basaltw` CLI, helper or installation contract changes are introduced.
+NC-01–08 introduced no evidence schema, `basaltw` CLI, helper or installation contract changes.
 The standalone probe adds the optional `--small-controls` switch. Do not
 refresh a healthy running helper for these recipe/probe changes alone.
 The existing generic contracts already support these manual recipes; defer new
