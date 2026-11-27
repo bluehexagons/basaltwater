@@ -28,6 +28,7 @@ def _make_setup_args() -> MagicMock:
     args = MagicMock()
     args.browser = None
     args.browsers = None
+    args.install_jupyterlab = None
     args.enable_webhook_builds = None
     args.enable_github_runner = None
     args.webhook_repositories = None

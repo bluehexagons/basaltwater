@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import threading
+import sys
 import unittest
 from unittest.mock import Mock, patch
 from urllib.request import urlopen
@@ -11,6 +12,7 @@ from urllib.request import urlopen
 from desktop.blocking_check import run_check
 
 
+@unittest.skipUnless(sys.platform.startswith("linux"), "Linux desktop browser check")
 class BrowserFilterTests(unittest.TestCase):
     def probe(self, routes):
         threads = []
