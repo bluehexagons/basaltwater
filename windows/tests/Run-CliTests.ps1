@@ -124,6 +124,15 @@ Get-Acl -LiteralPath $PSScriptRoot | Out-Null
             Assert-True ($env:PSModulePath -ceq ($moduleRoot + ';' + $savedModules)) 'Batch launcher changed its parent module environment'
         } finally { $env:PSModulePath = $savedModules }
     } finally { Set-Content -LiteralPath $receiptPath -Value $receiptText -Encoding UTF8 }
+    foreach ($bad in @('wait','status','cancel')) {
+        $response = & $launcher desktop develop $bad invalid-id --json | Out-String
+        $code = $LASTEXITCODE
+        $rejected = $response | ConvertFrom-Json
+        Assert-True ($code -eq 2 -and -not $rejected.ok -and $rejected.issue -eq 'invalid_input') "Wrong result for invalid development ID: $bad"
+        if ($bad -eq 'cancel') { Assert-True ($rejected.effect -eq 'none') 'Invalid cancellation ID advertised unknown effects' }
+    }
+    $response = & $launcher desktop develop wait ('a' * 32) --timeout 0 --json | Out-String
+    Assert-True ($LASTEXITCODE -eq 2 -and ($response | ConvertFrom-Json).issue -eq 'invalid_input') 'Invalid caller wait timeout was treated as a runtime failure'
     $developmentSource = Join-Path $temporary 'development CLI fixture'
     New-Item -ItemType Directory -Path (Join-Path $developmentSource 'windows') -Force | Out-Null
     foreach ($name in @('AgentWorkstation.Common.ps1','Desktop.Common.ps1')) {
@@ -137,8 +146,9 @@ function Invoke-NativeDevelopmentCli($Arguments) {
             TimedOut = ($env:BASALTWATER_TEST_WAIT_STATE -eq 'timed-out'); Receipt = $receipt }
     }
     if ($Arguments[0] -eq 'logs') {
-        return @{ Id = $Arguments[1]; State = $receipt.State;
-            Tails = @{ stdout = @{ Truncated = $false }; stderr = @{ Truncated = $true } }; Artifacts = @() }
+        return @{ Id = $Arguments[1]; State = $receipt.State; ExitCode = $receipt.ExitCode;
+            Streams = @{ stdout = @{ Truncated = $true }; stderr = @{ Truncated = $false } };
+            Tails = @{ stdout = @{ Truncated = $false }; stderr = @{ Truncated = $false } }; Artifacts = @() }
     }
     return $receipt
 }
@@ -175,7 +185,8 @@ function Invoke-NativeDevelopmentCli($Arguments) {
         $response = & $launcher desktop develop logs fixture-id --json | Out-String
         $logs = $response | ConvertFrom-Json
         Assert-True ($LASTEXITCODE -eq 0 -and $logs.ok -and $logs.job.id -eq 'fixture-id' -and
-            $logs.output_truncated -and $logs.artifacts.Count -eq 0) 'Development logs lost bounded result fields'
+            -not $logs.output_truncated -and $logs.log_truncated -and $logs.child_exit_code -eq 23 -and
+            $logs.artifacts.Count -eq 0) 'Development logs lost retention, excerpt or exit information'
     } finally {
         $env:BASALTWATER_TEST_TASK_STATE = $savedTaskState
         $env:BASALTWATER_TEST_WAIT_STATE = $savedWaitState

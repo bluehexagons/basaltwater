@@ -445,6 +445,22 @@ def _process_metadata(unit: dict[str, str]) -> dict:
             "tasks_current": int(count) if re.fullmatch(r"[0-9]{1,10}", count) else None}
 
 
+def _completion_record(directory: Path) -> dict:
+    try:
+        completion = _private_json(directory / "result.json")
+    except FileNotFoundError:
+        return {}
+    if (set(completion) - {"returncode", "log_truncated", "started_at", "finished_at", "elapsed_seconds", "error"}
+            or type(completion.get("returncode")) is not int or type(completion.get("log_truncated")) is not bool):
+        raise ValueError("Invalid development completion record")
+    if "elapsed_seconds" in completion:
+        elapsed = completion["elapsed_seconds"]
+        if (type(elapsed) not in (int, float) or elapsed < 0
+                or elapsed > sys.float_info.max or not math.isfinite(elapsed)):
+            raise ValueError("Invalid development completion duration")
+    return completion
+
+
 def task_status(task_id: str, *, stop: bool = False, dry_run: bool = False) -> dict:
     uid = _guard()
     directory = _task(task_id)
@@ -500,16 +516,7 @@ def task_status(task_id: str, *, stop: bool = False, dry_run: bool = False) -> d
         if type(started.get("launch_pid")) is not int or started["launch_pid"] <= 0:
             raise ValueError("Invalid development launch record")
         result["launch_pid"] = started["launch_pid"]  # Initial process only; not current window identity.
-    if (directory / "result.json").exists():
-        completion = _private_json(directory / "result.json")
-        if (set(completion) - {"returncode", "log_truncated", "started_at", "finished_at", "elapsed_seconds", "error"}
-                or type(completion.get("returncode")) is not int or type(completion.get("log_truncated")) is not bool):
-            raise ValueError("Invalid development completion record")
-        if "elapsed_seconds" in completion:
-            elapsed = completion["elapsed_seconds"]
-            if (type(elapsed) not in (int, float) or elapsed < 0
-                    or elapsed > sys.float_info.max or not math.isfinite(elapsed)):
-                raise ValueError("Invalid development completion duration")
+    if completion := _completion_record(directory):
         result.update(completion)
         successful = completion["returncode"] == 0 and not completion.get("error")
         result["state"] = "completed" if successful else "failed"
@@ -574,7 +581,16 @@ def task_logs(task_id: str, *, tail: int = 30, worker: bool = False) -> dict:
     # Count a trailing newline as part of the last line, including blank lines.
     lines = tail + body.endswith(b"\n")
     excerpt = b"\n".join(body.rsplit(b"\n", lines)[-lines:])[-65536:]
+    metadata = {}
+    try:
+        completion = _completion_record(directory)
+    except (OSError, ValueError) as exc:
+        completion = {}
+        metadata["completion_error"] = str(exc)
     return {"schema_version": 1, "ok": True, "task": task_id, "log": str(path),
+            **metadata,
+            "returncode": completion.get("returncode"),
+            "log_truncated": completion.get("log_truncated") if path == directory / "output.log" else None,
             "output": excerpt.decode("utf-8", errors="replace"), "output_truncated": len(excerpt) < len(body)}
 
 
@@ -830,20 +846,22 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
     command.extend(["--", sys.executable,
         str(Path(__file__).with_name("development_worker.py")), str(directory)])
     state, _ = _probe(command, uid)
+    receipt = {**playtest_receipt, **browser_receipt, "schema_version": 1, "task": directory.name, "unit": task["unit"],
+               "directory": str(directory), "log": str(directory / "output.log")}
     if state != "ok":
-        reason = "User-systemd launch was not acknowledged"
-    else:
-        try:
-            unit = _unit(task, uid)
-            if re.fullmatch(r"[0-9a-f]{32}", unit.get("InvocationID", "")):
-                task["invocation_id"] = unit["InvocationID"]
-                write_json_atomic(str(directory / "task.json"), task, mode=0o600)
-            return {**task_status(directory.name), **playtest_receipt}
-        except (OSError, ValueError, RuntimeError) as exc:
-            reason = f"Task was queued but its state could not be verified: {exc}"
-    return {**playtest_receipt, **browser_receipt, "schema_version": 1, "ok": False, "task": directory.name, "unit": task["unit"],
-            "directory": str(directory), "log": str(directory / "output.log"), "state": "launch-unverified",
-            "error": f"{reason}; inspect this task's status before retrying"}
+        return {**receipt, "ok": False, "state": "launch-unverified",
+                "error": "User-systemd launch was not acknowledged; inspect this task's status before retrying"}
+    try:
+        unit = _unit(task, uid)
+        if re.fullmatch(r"[0-9a-f]{32}", unit.get("InvocationID", "")):
+            task["invocation_id"] = unit["InvocationID"]
+            write_json_atomic(str(directory / "task.json"), task, mode=0o600)
+        observed = task_status(directory.name)
+    except (OSError, ValueError, RuntimeError) as exc:
+        observed = {"state": "unverified", "service_error": str(exc)}
+    if "error" in observed:
+        observed["child_error"] = observed.pop("error")
+    return {**receipt, **observed, "ok": True}
 
 
 _JOB_STATES = {"running": "running", "stopping": "running", "completed": "succeeded", "failed": "failed",

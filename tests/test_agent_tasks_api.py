@@ -10,11 +10,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from lib.agent_task_api import TaskAPI, worker_status
+from lib.agent_task_api import TASK_FIELDS, TaskAPI, worker_status
 from lib.agent_task_worker import run_worker
 from lib.agent_tasks import AgentTasks
 from lib.agent_tasks_cli import add_tasks_parser, run_tasks_command
-from lib.agent_tasks_mcp import TaskMCP, serve
+from lib.agent_tasks_mcp import TOOLS, TaskMCP, serve
 from lib.tool_results import success
 
 
@@ -36,6 +36,31 @@ class TaskAPITests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.api.call("create", {**arguments, "task": {**self.values, "prompt": "Different work"}})
 
+    def test_creation_key_records_disposition_and_original_settings(self) -> None:
+        request = {"task": self.values, "request_key": "draft-1"}
+        identifier = self.api.call("create", request)["id"]
+        for disposition in ({"draft": False}, {"run_now": True}):
+            result = self.api.result("create", {**request, **disposition})
+            self.assertEqual(result["issue"], "invalid_input")
+            self.assertEqual(result["effect"], "none")
+        self.api.call("update", {"id": identifier, "task": {"title": "Updated draft"}})
+        self.assertEqual(self.api.call("create", request)["id"], identifier)
+        tasks = self.api.call("list", {})["tasks"]
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0]["title"], "Updated draft")
+        self.assertTrue(tasks[0]["draft"])
+
+    def test_older_key_without_creation_digest_can_be_reconciled_by_id(self) -> None:
+        request = {"task": self.values, "request_key": "old-key"}
+        identifier = self.api.call("create", request)["id"]
+        state = json.loads(self.api.manager.path.read_text())
+        state["tasks"][0].pop("request_digest")
+        self.api.manager.path.write_text(json.dumps(state))
+        result = self.api.result("create", request)
+        self.assertEqual(result["issue"], "invalid_input")
+        self.assertEqual(result["id"], identifier)
+        self.assertEqual(self.api.call("show", {"id": result["id"]})["task"]["id"], identifier)
+
     def test_partial_update_preserves_other_settings_counters_and_activation(self) -> None:
         identifier = self.api.call("create", {"task": self.values})["id"]
         self.api.call("update", {"id": identifier, "task": {"persistence": "checkpoint", "timeout_minutes": 120}})
@@ -46,6 +71,37 @@ class TaskAPITests(unittest.TestCase):
         self.assertFalse(result["task"]["enabled"])
         self.assertEqual(result["context"]["checkpoint"], "")
         self.assertEqual(result["task"]["attempts"], 0)
+
+    def test_partial_update_can_repair_a_removed_working_directory(self) -> None:
+        old = Path(self.home) / "old"
+        old.mkdir()
+        identifier = self.api.call("create", {"task": {**self.values, "directory": str(old)}})["id"]
+        old.rmdir()
+        self.api.call("update", {"id": identifier, "task": {"directory": self.home}})
+        self.assertEqual(self.api.call("show", {"id": identifier})["task"]["directory"], self.home)
+
+    def test_out_of_range_epoch_is_a_typed_failure_from_cli_and_mcp(self) -> None:
+        parser = argparse.ArgumentParser()
+        add_tasks_parser(parser.add_subparsers())
+        task = {**self.values, "start_at": 10**400}
+        output = io.StringIO()
+        with patch("lib.agent_tasks_cli.TaskAPI", return_value=self.api), patch("sys.stdin", io.StringIO(json.dumps(task))), patch("sys.stdout", output):
+            self.assertEqual(run_tasks_command(parser.parse_args(["tasks", "create", "-"])), 2)
+        server = TaskMCP(self.api, allow_write=True)
+        server.request({"jsonrpc": "2.0", "id": 1, "method": "initialize"})
+        reply = server.request({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+            "name": "basaltwater_tasks_create", "arguments": {"task": task},
+        }})["result"]
+        self.assertTrue(reply["isError"])
+        self.assertEqual(reply["structuredContent"], json.loads(output.getvalue()))
+        self.assertEqual(reply["structuredContent"]["issue"], "invalid_input")
+        self.assertEqual(reply["structuredContent"]["effect"], "none")
+        self.assertFalse(self.api.manager.parent.exists())
+
+    def test_mcp_and_cli_accept_the_same_setting_names(self) -> None:
+        for action, expected in (("create", TASK_FIELDS), ("update", TASK_FIELDS | {"usage_repair_tokens_used"})):
+            properties = TOOLS["basaltwater_tasks_" + action][2]["properties"]["task"]["properties"]
+            self.assertEqual(set(properties), expected)
 
     def test_read_only_calls_do_not_create_storage_or_start_work(self) -> None:
         with patch("lib.agent_tasks.execute_prompt") as execute:

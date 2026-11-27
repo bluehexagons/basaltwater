@@ -55,8 +55,9 @@ checkout can be shared by other threads: inspect it and preserve unrelated work.
 
 Use [the recipes](recipes.md) for deferred checks and goals. Supply
 a stable `request_key` when creating work so an uncertain response can be
-retried without creating a second task. Keep the settings identical on retries,
-including any calculated `start_at`; inspect existing tasks after uncertainty.
+retried without creating a second task. Keep the creation mode and settings
+identical on retries, including any calculated `start_at`. If a saved key
+cannot be verified, pass the failure result's `id` to `show`.
 
 Creation defaults to an inactive draft. Activate an authorized schedule with
 MCP `draft: false` or CLI `--schedule`; `run_now: true` / `--run-now` also
@@ -93,6 +94,8 @@ basaltw agent tasks notify TASK_ID 'New verification evidence is available' --ke
 basaltw agent tasks pause TASK_ID --json
 basaltw agent tasks cancel TASK_ID --json
 ```
+
+Use the run `id` from `history` with `receipt` to read the full retained output.
 
 Event tasks wait for notifications, including event-only goals. Notifications
 are evidence and cannot expand permissions or reactivate paused work. Pause

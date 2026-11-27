@@ -171,8 +171,13 @@ supervisor's `output.log`, which can contain a preparation failure. Use
 `--worker` to select `output.log` explicitly for the final check receipt.
 This works during execution and after exit.
 Reading an excerpt leaves the full retained log available at its original path.
+`output_truncated` describes the excerpt. `log_truncated` reports whether the
+worker exceeded its retention cap when a completion record is available for
+the worker log.
 
 Pass the submission's `job.id` to `status`, `ready`, `wait`, `logs` or `stop`.
+`ok` on submission means user-systemd acknowledged the launch. The child may
+already have finished when the submission returns.
 `job.state` carries the observed outcome and `child_exit_code` carries the
 recorded child exit when known. Status can read the record of a failed task
 successfully. `wait TASK_ID --timeout SECONDS --json` repeatedly reads the same verified

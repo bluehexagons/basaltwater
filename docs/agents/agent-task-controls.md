@@ -149,8 +149,10 @@ changes only supplied settings, preserving activation and durable usage.
 Persistence changes reset the binding when the next invocation prepares its
 context. A failed settings write leaves the previous checkpoint intact;
 inspection reports a pending reset after a successful mode change.
-An idempotent creation key returns the same saved task for matching settings;
-different settings using that key are rejected.
+An idempotent creation key is scoped to this account and the saved task's
+lifetime. Retry with the original settings and creation mode to get the same
+ID. If the key was saved without the original request digest, the failure
+returns the existing task's `id`. Pass it to `show`.
 
 Create and update also accept `-` for strict JSON on stdin, bounded to 64 KiB.
 Duplicate keys, non-finite numbers, and excessive nesting are rejected in files,
@@ -171,7 +173,9 @@ for a detailed view and `--history-limit 0` to omit recent runs.
 The default and `--json` modes return one object with `schema_version` and
 `ok`. Match handled errors by `issue`. Use the returned IDs for history and
 receipts when `output_truncated` is true.
-`receipt` reads full retained settings, checkpoint and verification evidence.
+`history` returns run IDs, outcome summaries and private log paths when recorded.
+Pass a returned run ID to `receipt` for retained output, settings, checkpoint
+and verification evidence.
 History and receipts remain accessible after removing their task, using its
 saved ID; an absent receipt fails without creating storage or starting work.
 

@@ -116,6 +116,8 @@ existing process; inspect actual window/process identities.
 
 Task status/list/logs/wait work without the desktop helper.
 Pass the launch result's `job.id` to `status`, `logs`, `wait` or `stop`.
+`ok` on submission means user-systemd acknowledged the launch. The child may
+already have finished when the submission returns.
 `job.state` carries the observed outcome and `child_exit_code` carries the
 recorded exit when known. Status can read the record of a failed task
 successfully.
@@ -126,10 +128,12 @@ them privately and inspect before sharing.
 
 `develop logs TASK_ID` reads a private log directly, including live recipe
 output for `check` tasks. Use `--json` for a bounded excerpt and its `job_log`
-artifact, or `--worker` for supervisor output. A wait deadline while the task
-is still running or stopping returns `wait_timeout`, the same job handle, and
-exit 124. Successful completion
-exits 0 and failed or unverified completion exits 1.
+artifact, or `--worker` for supervisor output. `output_truncated` describes the
+excerpt. `log_truncated` reports whether the worker exceeded its retention cap
+when a completion record is available for the worker log. A wait deadline while
+the task is still running or stopping returns `wait_timeout`, the same job
+handle, and exit 124. Successful completion exits 0. Failed or unverified
+completion exits 1.
 
 ## Stop and reconcile
 

@@ -1612,6 +1612,7 @@ def _write_preview_state(previews: list[dict[str, object]]) -> None:
 
 
 def _preview_project(value: str, account: pwd.struct_passwd) -> str:
+    validate_filesystem_path(value)
     if value == "~":
         value = account.pw_dir
     elif value.startswith("~/"):
@@ -1633,12 +1634,14 @@ def _select_target_port(
     requested: str,
     routes: list[dict[str, object]],
     previews: list[dict[str, object]],
+    *,
+    replaceable_port: int | None = None,
 ) -> int:
     used = {int(route["target_port"]) for route in routes}
     used.update(int(preview["target_port"]) for preview in previews)
     if requested == "auto":
         for port in range(3000, 8000):
-            if port not in used and _port_available(port):
+            if port not in used and (port == replaceable_port or _port_available(port)):
                 return port
         raise RuntimeError("No private live-preview port is available")
     try:
@@ -1647,7 +1650,7 @@ def _select_target_port(
         raise ValueError("--port must be 'auto' or an integer") from exc
     if not 1024 <= port <= 65535:
         raise ValueError("--port must be an unprivileged TCP port")
-    if port in used or not _port_available(port):
+    if port in used or (port != replaceable_port and not _port_available(port)):
         raise ValueError(f"Private preview port {port} is already in use")
     return port
 
@@ -1769,7 +1772,7 @@ def _preview_command(raw: list[str], project: str, port: int, *, script: str | N
         any(ord(character) < 32 or ord(character) == 127 for character in argument)
         for argument in replaced
     ):
-        raise ValueError("Preview command arguments must be non-empty and contain no controls")
+        raise ValueError("Preview requires a non-empty executable and arguments without control characters")
     return replaced
 
 
@@ -2039,31 +2042,40 @@ def _preview_start(args: argparse.Namespace) -> int:
         ),
         None,
     )
-    if existing is not None:
-        if not args.replace:
-            raise RuntimeError(f"Live preview already exists: {name}; use --replace")
-        if not args.preview_argv:
-            _automatic_preview_workflow(project, args.script)
-        _stop_preview_record(existing, policy, routes, previews)
-    conflicting_route = next((route for route in routes if route["name"] == name), None)
-    if conflicting_route is not None:
-        raise RuntimeError(f"HTTPS forward already uses the preview name: {name}")
+    if existing is not None and not args.replace:
+        raise RuntimeError(f"Live preview already exists: {name}; use --replace")
+    named_route = next((route for route in routes if route["name"] == name), None)
+    if named_route is not None:
+        if existing is None:
+            raise RuntimeError(f"HTTPS forward already uses the preview name: {name}")
+        if not _preview_matches_route(existing, named_route):
+            raise RuntimeError("Live-preview route no longer matches its managed service")
 
-    port = _select_target_port(args.port, routes, previews)
+    other_routes = [route for route in routes if route is not named_route]
+    other_previews = [preview for preview in previews if preview is not existing]
+    replaceable_port = int(existing["target_port"]) if existing is not None else None
+    port = _select_target_port(args.port, other_routes, other_previews, replaceable_port=replaceable_port)
     command = _resolve_preview_executable(
         _preview_command(args.preview_argv, project, port, script=args.script),
         account,
         project,
     )
-    listen = _select_listen_port(args.listen, routes, policy, None)
+    listen = _select_listen_port(args.listen, routes, policy, named_route)
     if not args.preview_argv:
         _install_preview_dependencies(project, account)
+    if existing is not None:
+        _stop_preview_record(existing, policy, routes, previews)
     unit = ""
     launcher = ""
     route_applied = False
+    stage = "start_service"
     try:
+        if port == replaceable_port and not _port_available(port):
+            raise RuntimeError(f"Private preview port {port} is still in use after stopping the previous service")
         unit, launcher = _write_preview_service(account, name, project, command, port)
+        stage = "readiness"
         _wait_for_upstream("127.0.0.1", port, health, args.wait)
+        stage = "apply_route"
         route = {
             "listen": listen,
             "name": name,
@@ -2091,26 +2103,35 @@ def _preview_start(args: argparse.Namespace) -> int:
         }
         previews.append(record)
         previews.sort(key=lambda item: (str(item["owner"]), str(item["name"])))
+        stage = "save_preview"
         _write_preview_state(previews)
-    except Exception:
+    except Exception as exc:
+        cleanup_error = None
         if route_applied:
             try:
                 _apply_forwards(routes, policy)
-            except Exception:
-                pass
+            except Exception as cleanup:
+                cleanup_error = str(cleanup)
         if unit:
-            _remove_preview_service(
-                {
-                    "name": name,
-                    "owner": owner,
-                    "unit": unit,
-                }
-            )
+            try:
+                _remove_preview_service({"name": name, "owner": owner, "unit": unit})
+            except Exception as cleanup:
+                cleanup_error = str(cleanup)
         elif launcher:
             try:
                 os.unlink(launcher)
             except FileNotFoundError:
                 pass
+        if args.json and isinstance(exc, (OSError, RuntimeError, ValueError)):
+            fields = {"stage": stage, "effect": "unknown", "name": name}
+            if existing is not None:
+                fields["previous_preview_removed"] = True
+                if stage == "readiness" and cleanup_error is None:
+                    fields["effect"] = "partial"
+            if cleanup_error:
+                fields["cleanup_error"] = cleanup_error
+            issue = exception_issue(exc)
+            return write_result(failure("operation_failed" if issue == "invalid_input" else issue, str(exc), **fields))
         raise
     url = _forward_route_url(policy, listen, _forward_access_sources(updated_routes, policy)[listen])
     result = {
@@ -2479,7 +2500,8 @@ def _publish_site(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     raw_args = list(sys.argv[1:] if argv is None else argv)
     preview_argv: list[str] = []
-    if raw_args[:2] == ["preview", "start"] and "--" in raw_args:
+    explicit_preview_command = raw_args[:2] == ["preview", "start"] and "--" in raw_args
+    if explicit_preview_command:
         separator = raw_args.index("--")
         preview_argv = raw_args[separator + 1 :]
         raw_args = raw_args[:separator]
@@ -2487,6 +2509,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "preview" and args.preview_command == "start":
         args.preview_argv = preview_argv
     try:
+        if explicit_preview_command and not preview_argv:
+            raise ValueError("Supply a preview executable after --")
         if os.geteuid() != 0:
             from common.service_tools import basaltwater_web_control
 

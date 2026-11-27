@@ -247,6 +247,22 @@ class TestDevelopmentLogs(unittest.TestCase):
         with self.assertRaises(OSError):
             development.task_logs(self.task_id)
 
+    def test_logs_distinguish_capture_quota_from_the_excerpt_bound(self):
+        self.write_private(self.worker_log, b"all retained output\n")
+        self.write_private(self.directory / "result.json", b'{"returncode":7,"log_truncated":true}')
+        parser = argparse.ArgumentParser()
+        development.add_development_parser(parser.add_subparsers())
+        args = parser.parse_args(["develop", "logs", self.task_id, "--json"])
+        with redirect_stdout(output := StringIO()):
+            self.assertEqual(development.run_development_command(args), 0)
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["job"]["id"], self.task_id)
+        self.assertEqual(result["child_exit_code"], 7)
+        self.assertTrue(result["log_truncated"])
+        self.assertFalse(result["output_truncated"])
+        self.assertEqual(result["artifacts"][0]["path"], str(self.worker_log))
+        self.unit.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

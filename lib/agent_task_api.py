@@ -8,7 +8,7 @@ import stat
 from pathlib import Path
 from typing import Any
 
-from lib.agent_tasks import AgentTasks, MAX_FAILURE_LIMIT, MAX_REPEAT_MINUTES, MAX_TIMEOUT_MINUTES
+from lib.agent_tasks import AgentTasks, MAX_FAILURE_LIMIT, MAX_REPEAT_MINUTES, MAX_TIMEOUT_MINUTES, TaskCreationConflict
 from lib.agent_task_storage import STORAGE_OPERATIONS
 from lib.atomic_io import read_json_file
 from lib.t3code_runtime import is_t3_service_version
@@ -24,18 +24,27 @@ INTEGER_SETTINGS = {
     "max_runs": (0, 1_000_000), "token_budget": (0, 10**12), "daily_limit": (0, 1000),
     "backoff_minutes": (0, MAX_REPEAT_MINUTES), "history_limit": (1, 1000),
 }
+TASK_FIELDS = frozenset({
+    *INTEGER_SETTINGS, "title", "prompt", "directory", "mode", "model", "effort", "storage_operation",
+    "web_search", "session_history", "temporary_files", "interval", "network", "persistence", "workspace",
+    "executor", "initial_checkpoint", "writable_directories", "operator_requirements", "source_task_id",
+    "source_run_id", "keep", "continue_until_done", "completion_criteria", "deadline_at", "start_at",
+})
 
 
 def _settings(arguments: dict[str, Any], *, updating: bool = False) -> dict[str, Any]:
     settings = arguments.get("task")
     if not isinstance(settings, dict):
         raise ValueError("Task settings must be an object")
+    accepted = TASK_FIELDS | {"usage_repair_tokens_used"} if updating else TASK_FIELDS
+    if set(settings) - accepted:
+        raise ValueError("Unknown task settings")
     for name, (minimum, maximum) in INTEGER_SETTINGS.items():
         if name in settings and (type(settings[name]) is not int or not minimum <= settings[name] <= maximum):
             raise ValueError(f"{name} must be an integer from {minimum} through {maximum}")
     if "usage_repair_tokens_used" in settings:
         usage = settings["usage_repair_tokens_used"]
-        if not updating or usage is not None and (type(usage) is not int or not 0 <= usage <= 10**15):
+        if usage is not None and (type(usage) is not int or not 0 <= usage <= 10**15):
             raise ValueError("usage_repair_tokens_used may be set on update to an integer from 0 through 10^15")
     return settings
 
@@ -105,6 +114,11 @@ def task_capabilities(manager: AgentTasks) -> dict[str, Any]:
                    "reason": "Native T3 scheduling and thread APIs await stable-release qualification"}}
 
 
+def _history_summary(manager: AgentTasks, identifier: str, limit: int) -> dict[str, Any]:
+    runs = manager.contexts.history(identifier, limit=limit)
+    return {"runs": [{key: value for key, value in run.items() if key != "output"} for run in runs]}
+
+
 class TaskAPI:
     """Use the scheduler's transactions rather than editing its state directly."""
 
@@ -115,6 +129,8 @@ class TaskAPI:
         mutation = operation in TASK_MUTATIONS
         try:
             return success(**self.call(operation, arguments))
+        except TaskCreationConflict as exc:
+            return failure("invalid_input", str(exc), id=exc.identifier, stage="validation", effect="none")
         except (ValueError, TypeError) as exc:
             fields = {"stage": "validation", "effect": "none"} if mutation else {}
             return failure("invalid_input", str(exc), **fields)
@@ -173,10 +189,6 @@ class TaskAPI:
             return {**state, "output_truncated": output_truncated, "worker": worker_status(self.manager)}
         if operation == "create":
             task = _settings(arguments)
-            from lib.agent_tasks import validate_task
-
-            if set(task) - set(validate_task(task, self.manager.home, check_existing_workspace=False)):
-                raise ValueError("Unknown task settings")
             run_now = arguments.get("run_now", False)
             draft = arguments.get("draft", not run_now)
             if type(run_now) is not bool or type(draft) is not bool:
@@ -190,7 +202,7 @@ class TaskAPI:
         if operation == "receipt":
             return {"run": self.manager.contexts.receipt(identifier, arguments.get("run_id"))}
         if operation == "history" and self.manager.contexts.directory(identifier).is_dir():
-            return {"runs": self.manager.contexts.history(identifier, limit=arguments.get("limit", 40))}
+            return _history_summary(self.manager, identifier, arguments.get("limit", DEFAULT_HISTORY_LIMIT))
         state = self.manager.snapshot()
         task = next((item for item in state["tasks"] if item["id"] == identifier), None)
         if task is None:
@@ -199,17 +211,9 @@ class TaskAPI:
             return {"task": task, "context": self.manager.context_snapshot(identifier),
                     "worker": worker_status(self.manager)}
         if operation == "history":
-            return {"runs": self.manager.contexts.history(identifier, limit=arguments.get("limit", 40))}
+            return _history_summary(self.manager, identifier, arguments.get("limit", DEFAULT_HISTORY_LIMIT))
         if operation == "update":
-            settings = _settings(arguments, updating=True)
-            from lib.agent_tasks import validate_task
-
-            # This call discovers accepted setting names. AgentTasks.update
-            # validates the merged task strictly, allowing old unsafe tasks to
-            # be repaired without accepting an unsafe update.
-            if set(settings) - set(validate_task(task, self.manager.home, check_existing_workspace=False)):
-                raise ValueError("Unknown task settings")
-            self.manager.update(identifier, settings, partial=True)
+            self.manager.update(identifier, _settings(arguments, updating=True), partial=True)
         elif operation == "action":
             self.manager.action(identifier, arguments.get("action"))
         elif operation == "notify":

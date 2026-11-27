@@ -20,8 +20,10 @@ basaltw desktop develop wait TASK_ID --timeout 60
 
 Record `job.id` before waiting. Read `job.state` for the observed outcome and
 `child_exit_code` for the native child exit when available. `status` can read
-the record of a failed task successfully. Use `logs --json` for a bounded
-excerpt and its retained log artifacts, or `logs --follow` for text.
+the record of a failed task successfully. `logs` and `logs --json` return bounded
+excerpts and retained log artifacts. `output_truncated` describes the excerpts.
+`log_truncated` reports whether either stream exceeded its retention cap when
+the worker has recorded stream totals.
 Dry run validates the plan without
 creating directories, reserving a project or launching code. It does not
 evaluate whether the project actually honors isolation or readiness.

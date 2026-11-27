@@ -6,6 +6,8 @@ import argparse
 from contextlib import redirect_stdout
 from io import StringIO
 import json
+import sys
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -223,3 +225,20 @@ class PublishingJobTests(unittest.TestCase):
             self.assertEqual(cancelled["job"]["id"], job["id"])
             self.assertEqual(cancelled["cancellation"], "confirmed")
             start.assert_called_once_with()
+
+    def test_interactive_login_keeps_provider_dialogue_out_of_json_stdout(self):
+        parser = argparse.ArgumentParser()
+        add_publishing_subparser(parser.add_subparsers())
+        args = parser.parse_args(["publish", "auth", "login", "butler", "--json"])
+        output = StringIO()
+        with patch("lib.publishing_cli.Publishing", return_value=self.publisher), \
+                patch("lib.publishing_cli.os.geteuid", return_value=1000), \
+                patch("sys.stdin.isatty", return_value=True), patch.object(output, "isatty", return_value=True), \
+                patch("lib.publishing_cli.executable", return_value="/fixture/butler"), \
+                patch("lib.publishing_cli.subprocess.run", return_value=SimpleNamespace(returncode=0)) as launch, \
+                redirect_stdout(output):
+            self.assertEqual(run_publishing_command(args), 0)
+        self.assertIs(launch.call_args.kwargs["stdout"], sys.stderr)
+        result = json.loads(output.getvalue())
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["child_exit_code"], 0)

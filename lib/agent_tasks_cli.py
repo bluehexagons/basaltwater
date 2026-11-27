@@ -23,10 +23,10 @@ def add_tasks_parser(commands: argparse._SubParsersAction) -> None:
             detail.add_argument("--full", action="store_false", dest="summary", help="Include prompts, events and run output")
             command.add_argument("--history-limit", type=int, default=DEFAULT_HISTORY_LIMIT, help="Include 0–40 recent runs")
     for action in ("show", "history"):
-        command = actions.add_parser(action, help="Show task context" if action == "show" else "Read retained run receipts")
+        command = actions.add_parser(action, help="Show task context" if action == "show" else "List retained run summaries; use receipt for full output")
         command.add_argument("identifier", metavar="TASK_ID")
         if action == "history":
-            command.add_argument("--limit", type=int, default=40)
+            command.add_argument("--limit", type=int, default=DEFAULT_HISTORY_LIMIT, metavar="COUNT", help="Include 1–100 recent runs (default: 40)")
         add_json_option(command, default=True)
     create = actions.add_parser("create", help="Save task settings from JSON (file or - for stdin)")
     create.add_argument("file", metavar="TASK_JSON", help="JSON file or - for stdin; maximum 64 KiB")

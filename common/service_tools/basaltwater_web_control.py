@@ -49,7 +49,6 @@ def _validate_argv(value: object) -> list[str]:
         or not 2 <= len(value) <= 128
         or any(
             not isinstance(arg, str)
-            or not arg
             or len(arg) > 8192
             or any(ord(char) < 32 or ord(char) == 127 for char in arg)
             for arg in value
@@ -57,6 +56,9 @@ def _validate_argv(value: object) -> list[str]:
         or not is_delegated_mutation(value)
     ):
         raise ValueError("Unsupported HTTPS gateway mutation")
+    required = value.index("--") + 2 if value[:2] == ["preview", "start"] and "--" in value else len(value)
+    if any(not arg for arg in value[:required]):
+        raise ValueError("Gateway arguments and the preview executable must not be empty")
     return value
 
 
@@ -72,8 +74,8 @@ def _read_message(connection: socket.socket, limit: int = MAX_REQUEST_BYTES) -> 
     if len(data) > limit or not data.endswith(b"\n"):
         raise ValueError("Invalid HTTPS gateway request size")
     try:
-        return json.loads(data)
-    except (UnicodeDecodeError, ValueError) as exc:
+        return parse_json(bytes(data))
+    except ValueError as exc:
         raise ValueError("Invalid HTTPS gateway request") from exc
 
 
@@ -171,23 +173,46 @@ def serve() -> None:
 
 def request(argv: list[str], *, as_json: bool = False) -> int:
     _validate_argv(argv)
+    delivery_attempted = False
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
             connection.settimeout(COMMAND_TIMEOUT_SECONDS + 30)
             connection.connect(SOCKET_PATH)
+            delivery_attempted = True
             connection.sendall((json.dumps({"argv": argv}) + "\n").encode("utf-8"))
             response = _read_message(connection, 8 * MAX_OUTPUT_BYTES + 4096)
+    except TimeoutError:
+        message = ("Gateway control wait expired. Inspect the route before retrying."
+                   if delivery_attempted else "Gateway control connection timed out.")
+        if as_json:
+            return write_result(failure("wait_timeout", message, stage="transport",
+                                        effect="unknown" if delivery_attempted else "none"))
+        print(message, file=sys.stderr)
+        return 124
     except OSError as exc:
+        if delivery_attempted:
+            message = "Gateway control connection was lost. Inspect the route before retrying."
+            if as_json:
+                return write_result(failure("gateway_receipt_unavailable", message, stage="transport", effect="unknown"))
+            raise RuntimeError(message) from exc
+        if as_json:
+            return write_result(failure("gateway_unavailable", "HTTPS gateway control service is unavailable; rerun the saved VM setup",
+                                        stage="transport", effect="none"))
         raise RuntimeError(
             "HTTPS gateway control service is unavailable; rerun the saved VM setup"
         ) from exc
+    except ValueError:
+        response = None
     if (
         not isinstance(response, dict)
         or not isinstance(response.get("status"), int)
         or not isinstance(response.get("stdout"), str)
         or not isinstance(response.get("stderr"), str)
     ):
-        raise RuntimeError("Invalid HTTPS gateway control response")
+        message = "Invalid HTTPS gateway control response. Inspect the route before retrying."
+        if as_json:
+            return write_result(failure("gateway_receipt_unavailable", message, stage="reply", effect="unknown"))
+        raise RuntimeError(message)
     if as_json:
         if isinstance(response.get("failure"), dict):
             return write_result(response["failure"])

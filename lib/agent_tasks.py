@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import fcntl
+import hashlib
 import json
 import math
 import os
@@ -62,6 +63,12 @@ _INTERRUPTED_REVIEW_REQUIRED = "Interrupted run requires review before continuin
 _MAX_USAGE_REPAIRS = 100
 
 
+class TaskCreationConflict(ValueError):
+    def __init__(self, identifier: str) -> None:
+        self.identifier = identifier
+        super().__init__("Creation request key belongs to a different or unverifiable request. Inspect the existing task.")
+
+
 class _TaskExecutionRuntime(dict[str, Any]):
     """Per-invocation context with a non-persistent worker lease descriptor."""
 
@@ -99,7 +106,7 @@ def _deadline(value: object, *, label: str = "Deadline") -> float:
             raise ValueError(f"{label} must be an ISO date with a timezone") from exc
     elif value in ("", "0"):
         value = 0
-    if type(value) not in {int, float} or not math.isfinite(value) or not 0 <= value <= 253402300799:
+    if type(value) not in {int, float} or not 0 <= value <= 253402300799:
         raise ValueError(f"Invalid task {label.lower()}")
     return float(value)
 
@@ -857,6 +864,9 @@ class AgentTasks:
                 task.pop("usage_repair_tokens_used", None)
                 if not _ID.fullmatch(task["id"]) or task["id"] in ids:
                     raise ValueError("Invalid task ID")
+                if "request_digest" in task and (not task.get("request_key")
+                        or re.fullmatch(r"[a-f0-9]{64}", task["request_digest"]) is None):
+                    raise ValueError("Invalid task creation request digest")
                 ids.add(task["id"])
                 if "usage_uncertain" not in task:
                     legacy_usage_ids.add(task["id"])
@@ -1026,8 +1036,12 @@ class AgentTasks:
         interval = repeat_seconds(task)
         if not isinstance(request_key, str):
             raise ValueError("Creation request key must be text")
+        request_identity = {}
         if request_key:
             request_key = _text(request_key, "Creation request key", 120)
+            payload = json.dumps({"task": task, "run_now": run_now, "draft": draft},
+                                 sort_keys=True, separators=(",", ":"), allow_nan=False)
+            request_identity["request_digest"] = hashlib.sha256(payload.encode("utf-8")).hexdigest()
         if not interval and not run_now and not draft and task["interval"] != "event" and not task["start_at"]:
             raise ValueError("A one-time prompt needs Run now or an explicit first-run time")
         with self._transaction():
@@ -1035,10 +1049,8 @@ class AgentTasks:
             if request_key:
                 existing = next((saved for saved in state["tasks"] if saved.get("request_key") == request_key), None)
                 if existing is not None:
-                    existing_settings = validate_task(existing, self.home)
-                    existing_settings.pop("usage_repair_tokens_used")
-                    if existing_settings != task:
-                        raise ValueError("Creation request key already belongs to different task settings")
+                    if existing.get("request_digest") != request_identity["request_digest"]:
+                        raise TaskCreationConflict(existing["id"])
                     return existing["id"]
             if len(state["tasks"]) >= MAX_TASKS:
                 # Finished disposable one-shots already have durable receipts.
@@ -1055,7 +1067,7 @@ class AgentTasks:
                 raise ValueError(f"At most {MAX_TASKS} saved tasks are allowed; remove an unused task")
             identifier = uuid.uuid4().hex
             scheduled = bool(interval) or task["interval"] == "event" or bool(task["start_at"])
-            state["tasks"].append({**task, "id": identifier, "enabled": scheduled and not draft,
+            state["tasks"].append({**task, **request_identity, "id": identifier, "enabled": scheduled and not draft,
                                    "request_key": request_key,
                                    "queued": run_now, "draft": draft, "auto_paused": False, "consecutive_failures": 0,
                                    "cancel_requested": False, "attempts": 0, "tokens_used": 0,

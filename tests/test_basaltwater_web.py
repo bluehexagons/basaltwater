@@ -669,7 +669,9 @@ class TestInfraWebPreviews(unittest.TestCase):
                 patch.object(basaltwater_web.pwd, "getpwnam", return_value=account),
                 patch.object(basaltwater_web, "_stop_preview_record") as stop,
                 patch.object(basaltwater_web, "_write_preview_service") as start,
-                patch.object(basaltwater_web, "_load_previews", return_value=[{"name": "demo", "owner": "agent"}]),
+                patch.object(basaltwater_web, "_load_forwards", return_value=[]),
+                patch.object(basaltwater_web, "_load_previews", return_value=[{"name": "demo", "owner": "agent", "target_port": 4173}]),
+                patch.object(basaltwater_web, "_port_available", return_value=True),
                 patch("builtins.print"),
             ):
                 for options in (
@@ -678,6 +680,8 @@ class TestInfraWebPreviews(unittest.TestCase):
                     ['--script', 'dev:web', '--', '/usr/bin/true'],
                     ['--script', 'missing'], ['--script', ''], ['--script', 'empty'],
                     ['--script=--unsafe'], ['--script', 'dev\n'], [],
+                    ['--port', 'invalid', '--', '/usr/bin/true'], ['--listen', 'invalid', '--', '/usr/bin/true'],
+                    ['--', '/missing-preview-executable'], ['--'],
                 ):
                     with self.subTest(options=options):
                         if not options:
@@ -691,6 +695,36 @@ class TestInfraWebPreviews(unittest.TestCase):
                         ]), 2)
                 stop.assert_not_called()
                 start.assert_not_called()
+
+    def test_failed_replacement_readiness_reports_removed_preview(self) -> None:
+        route = {"name": "demo", "owner": "agent", "target_host": "127.0.0.1", "target_port": 4173,
+                 "listen": 8444, "profile": "general"}
+        record = {**route, "unit": "previous.service"}
+        with tempfile.TemporaryDirectory() as project:
+            account = SimpleNamespace(pw_uid=os.getuid(), pw_name="agent", pw_dir=project)
+            with (
+                patch.object(basaltwater_web, "_load_policy", return_value=_policy()),
+                patch.object(basaltwater_web, "_requesting_username", return_value="agent"),
+                patch.object(basaltwater_web.pwd, "getpwnam", return_value=account),
+                patch.object(basaltwater_web, "_load_forwards", return_value=[route]),
+                patch.object(basaltwater_web, "_load_previews", return_value=[record]),
+                patch.object(basaltwater_web, "_port_available", return_value=True) as available,
+                patch.object(basaltwater_web, "_apply_forwards"),
+                patch.object(basaltwater_web, "_remove_preview_service") as remove,
+                patch.object(basaltwater_web, "_write_preview_state"),
+                patch.object(basaltwater_web, "_write_preview_service", return_value=("replacement.service", "")) as start,
+                patch.object(basaltwater_web, "_wait_for_upstream", side_effect=TimeoutError("Preview was not ready")),
+                redirect_stdout(output := StringIO()),
+            ):
+                code = basaltwater_web.main(["preview", "start", "demo", "--project", project, "--replace",
+                                            "--port", "4173", "--json", "--", "/usr/bin/true", ""])
+        self.assertEqual(code, 124)
+        self.assertEqual(json.loads(output.getvalue()), {"schema_version": 1, "ok": False,
+            "issue": "wait_timeout", "error": "Preview was not ready", "stage": "readiness",
+            "effect": "partial", "name": "demo", "previous_preview_removed": True})
+        available.assert_called_once_with(4173)
+        self.assertEqual(start.call_args.args[-2:], ([os.path.realpath("/usr/bin/true"), ""], 4173))
+        self.assertEqual([call.args[0]["unit"] for call in remove.call_args_list], ["previous.service", "replacement.service"])
 
     def test_preview_stop_removes_route_service_and_state(self) -> None:
         record = {
@@ -1151,11 +1185,13 @@ class TestInfraWebControl(unittest.TestCase):
             patch.object(basaltwater_web.os, "geteuid", return_value=1000),
             patch.object(basaltwater_web_control, "request", return_value=0) as request,
         ):
-            result = basaltwater_web.main(
-                ["preview", "start", "demo", "--project", ".", "--", "./serve", "{port}"]
-            )
+            result = basaltwater_web.main([
+                "preview", "start", "demo", "--project", ".", "--", "./serve", "{port}", "", "--json",
+            ])
         self.assertEqual(result, 0)
-        self.assertEqual(request.call_args.args[0][-5:], ["--project", os.getcwd(), "--", "./serve", "{port}"])
+        delegated = basaltwater_web_control._validate_argv(request.call_args.args[0])
+        self.assertEqual(delegated[-7:], ["--project", os.getcwd(), "--", "./serve", "{port}", "", "--json"])
+        self.assertEqual(request.call_args.kwargs, {"as_json": False})
 
     def test_unprivileged_forward_delegates_without_sudo(self) -> None:
         argv = ["forward", "add", "demo", "--to", "127.0.0.1:3000"]
@@ -1179,6 +1215,33 @@ class TestInfraWebControl(unittest.TestCase):
         for argv in (["forward", "reconcile"], ["publish", "site"], ["preview", "logs"]):
             with self.subTest(argv=argv), self.assertRaises(ValueError):
                 basaltwater_web_control._validate_argv(argv)
+
+    def test_control_reports_whether_a_wait_timeout_preceded_dispatch(self) -> None:
+        for sent in (False, True):
+            with (
+                self.subTest(sent=sent),
+                patch.object(basaltwater_web_control.socket, "socket") as socket_factory,
+                patch.object(basaltwater_web_control, "_read_message", side_effect=TimeoutError),
+                redirect_stdout(output := StringIO()),
+            ):
+                connection = socket_factory.return_value.__enter__.return_value
+                if not sent:
+                    connection.connect.side_effect = TimeoutError
+                code = basaltwater_web_control.request(["forward", "remove", "demo", "--json"], as_json=True)
+            result = json.loads(output.getvalue())
+            self.assertEqual((code, result["issue"], result["stage"]), (124, "wait_timeout", "transport"))
+            self.assertEqual(result["effect"], "unknown" if sent else "none")
+
+    def test_control_does_not_treat_a_damaged_reply_as_rejected_input(self) -> None:
+        with (
+            patch.object(basaltwater_web_control.socket, "socket"),
+            patch.object(basaltwater_web_control, "_read_message", side_effect=ValueError("malformed reply")),
+            redirect_stdout(output := StringIO()),
+        ):
+            code = basaltwater_web_control.request(["forward", "remove", "demo", "--json"], as_json=True)
+        result = json.loads(output.getvalue())
+        self.assertEqual((code, result["issue"], result["stage"], result["effect"]),
+                         (1, "gateway_receipt_unavailable", "reply", "unknown"))
 
     def test_control_uses_socket_uid_and_policy_before_execution(self) -> None:
         client, server = socket.socketpair()

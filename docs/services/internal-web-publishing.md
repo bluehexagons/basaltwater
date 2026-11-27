@@ -325,10 +325,10 @@ basaltwater-web preview prune --yes
 ```
 
 Use `--replace` to deliberately replace an existing same-named preview. The
-gateway validates automatic script and package-manager metadata, stops the old
-preview, and launches the replacement. If startup or activation fails, it
-attempts to remove the new service and route. Use `preview prune` to remove
-your stopped services and their routes.
+gateway validates the command and port choices before stopping the existing
+preview. If startup or activation fails after the stop, it attempts to remove
+the new service and route and reports `previous_preview_removed` in the JSON
+failure. Use `preview prune` to remove your stopped services and their routes.
 
 `preview restart` reruns the existing service's saved command and waits for its
 recorded HTTP health path. It preserves the loopback port, HTTPS URL, profile,

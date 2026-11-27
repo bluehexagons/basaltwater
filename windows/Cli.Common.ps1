@@ -164,6 +164,8 @@ function Write-NativeDevelopmentResult([string]$Verb, $Result) {
     }
     if ($Verb -eq 'logs') {
         $fields['output_truncated'] = [bool]($fields['Tails'].stdout.Truncated -or $fields['Tails'].stderr.Truncated)
+        $streams = $fields['Streams']
+        $fields['log_truncated'] = if ($streams) { [bool]($streams.Stdout.Truncated -or $streams.Stderr.Truncated) } else { $null }
         $artifacts = $fields['Artifacts']
         $fields.Remove('Artifacts')
         $fields['artifacts'] = @($artifacts)

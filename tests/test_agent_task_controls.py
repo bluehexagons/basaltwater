@@ -164,7 +164,11 @@ class TaskControlsTests(unittest.TestCase):
         self.assertEqual(retained["evidence"], report()["evidence"])
         self.assertEqual(retained["checkpoint"], report()["checkpoint"])
         self.assertEqual(retained["task"]["prompt"], self.values["prompt"])
-        self.assertEqual(len(self.api.call("history", {"id": identifier})["runs"]), 2)
+        runs = self.api.call("history", {"id": identifier})["runs"]
+        self.assertEqual(len(runs), 2)
+        older = next(run for run in runs if run["id"] == run_id)
+        self.assertNotIn("output", older)
+        self.assertIn("output", self.api.call("receipt", {"id": identifier, "run_id": older["id"]})["run"])
 
     def test_receipt_queries_reject_path_traversal_mismatched_ids_and_symlinks(self) -> None:
         identifier = self.manager.create(self.values, run_now=True, now=0)

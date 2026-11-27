@@ -66,7 +66,7 @@ function Write-DevelopmentJson([string]$Path, $Value) {
     }
 }
 function Get-DevelopmentDirectory([string]$Id) {
-    if ($Id -notmatch '\A[a-f0-9]{32}\z') { throw 'Expected a development task ID (32 lowercase hex characters); use the ID returned by develop exec/node/editor/run/import.' }
+    if ($Id -notmatch '\A[a-f0-9]{32}\z') { throw [ArgumentException]::new('Expected a development task ID (32 lowercase hex characters); use the ID returned by develop exec/node/editor/run/import.') }
     $directory = Join-Path (Get-DevelopmentRoot) $Id
     Assert-DevelopmentPath $directory
     return $directory
@@ -151,7 +151,7 @@ function Wait-DevelopmentTask([string]$Id, [ValidateRange(1,86400)][int]$Timeout
     $clock = [Diagnostics.Stopwatch]::StartNew()
     while ($true) {
         $record = Get-DevelopmentStatus $Id
-        if ($UntilReady -and -not (Test-DevelopmentSession $record)) { throw 'Readiness waiting requires a --test-session task' }
+        if ($UntilReady -and -not (Test-DevelopmentSession $record)) { throw [ArgumentException]::new('Readiness waiting requires a --test-session task') }
         $state = if ($record.CompletedUtc) { 'completed' }
             elseif ($record.State -in @('cleanup-uncertain','launch-uncertain','interrupted')) { 'attention-required' }
             elseif ($UntilReady -and $record.TestSession.ReadyState -eq 'ready' -and $record.State -eq 'running') { 'ready' }
@@ -475,7 +475,7 @@ function Invoke-NativeDevelopmentCli([string[]]$Arguments) {
         $tree = $Arguments.Count -eq 3 -and $Arguments[2] -eq '--tree'
         $member = ''
         if ($Arguments.Count -eq 4 -and $Arguments[2] -eq '--member') { $member = $Arguments[3] }
-        if ($Arguments.Count -ne 2 -and -not $tree -and -not $member) { throw 'Usage: develop diagnose TASK_ID [--tree | --member PID:FILETIME]' }
+        if ($Arguments.Count -ne 2 -and -not $tree -and -not $member) { throw [ArgumentException]::new('Usage: develop diagnose TASK_ID [--tree | --member PID:FILETIME]') }
         . (Join-Path $PSScriptRoot 'Development.Diagnostics.ps1')
         return Get-DevelopmentDiagnostics $Arguments[1] -Tree:$tree -Member $member
     }
@@ -483,13 +483,13 @@ function Invoke-NativeDevelopmentCli([string[]]$Arguments) {
         if ($Arguments.Count -notin @(2,4) -or ($Arguments.Count -eq 4 -and
             ($Arguments[2] -ne '--timeout' -or $Arguments[3] -notmatch '\A\d{1,5}\z' -or
              [int]$Arguments[3] -lt 1 -or [int]$Arguments[3] -gt 86400))) {
-            throw 'Usage: develop wait|ready TASK_ID [--timeout SECONDS (1-86400)]'
+            throw [ArgumentException]::new('Usage: develop wait|ready TASK_ID [--timeout SECONDS (1-86400)]')
         }
         $timeout = if ($Arguments.Count -eq 4) { [int]$Arguments[3] } else { 60 }
         return Wait-DevelopmentTask $Arguments[1] $timeout -UntilReady:($Arguments[0] -eq 'ready')
     }
     if ($Arguments.Count -and $Arguments[0] -in @('status','logs','cancel')) {
-        if ($Arguments.Count -ne 2) { throw 'Usage: develop status|logs|cancel TASKID. Logs return the last 64 KiB of each stream.' }
+        if ($Arguments.Count -ne 2) { throw [ArgumentException]::new('Usage: develop status|logs|cancel TASK_ID. Logs return the last 64 KiB of each stream.') }
         $id = $Arguments[1]; $record = Get-DevelopmentStatus $id
         $directory = Get-DevelopmentDirectory $id
         if ($Arguments[0] -eq 'status') { return $record }
@@ -526,7 +526,7 @@ function Invoke-NativeDevelopmentCli([string[]]$Arguments) {
             }
         }
         $retention = if ($record.PSObject.Properties['Streams']) { $record.Streams } else { $null }
-        return [pscustomobject]@{ Id = $id; State = $record.State; Stdout = $logs.stdout; Stderr = $logs.stderr; MaximumBytesPerStream = 65536;
+        return [pscustomobject]@{ Id = $id; State = $record.State; ExitCode = $record.ExitCode; Stdout = $logs.stdout; Stderr = $logs.stderr; MaximumBytesPerStream = 65536;
             Tails = [pscustomobject]$tails; Streams = $retention; Artifacts = $artifacts }
     }
     try { $request = New-DevelopmentPlan $Arguments }

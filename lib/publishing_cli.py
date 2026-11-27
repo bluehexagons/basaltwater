@@ -79,7 +79,7 @@ def add_publishing_subparser(subparsers: argparse._SubParsersAction) -> None:
     command.add_argument("branch")
     command = commands.add_parser("beta-promote", help="Queue an explicitly prepared beta promotion")
     command.add_argument("release")
-    command = commands.add_parser("auth", help="Native terminal recovery; no passwords or tokens in arguments")
+    command = commands.add_parser("auth", help="Native terminal recovery; provider dialogue uses stderr and the final receipt uses stdout")
     command.add_argument("action", choices=("login", "logout"))
     command.add_argument("provider", choices=PROVIDERS)
     command.add_argument("--username", default="")
@@ -204,7 +204,8 @@ def run_publishing_command(args: argparse.Namespace) -> int:
                 binary = executable(args.provider, publisher.home)
                 command = [binary, "-i", str(native), "login"] if args.provider == "butler" else [binary, "+login", args.username, "+quit"]
                 with file_lock(private_directory(publisher.store.root) / (args.provider + ".lock")) as fd:
-                    completed = subprocess.run(command, cwd=str(publisher.home), env=environment(publisher.home, login=True), timeout=900, check=False, umask=0o077, pass_fds=(fd,))
+                    completed = subprocess.run(command, cwd=str(publisher.home), env=environment(publisher.home, login=True),
+                                               stdout=sys.stderr, timeout=900, check=False, umask=0o077, pass_fds=(fd,))
                 result = {"ok": completed.returncode == 0, "provider": args.provider,
                           "child_exit_code": completed.returncode}
         if name == "upload" and args.wait and result["job"]["state"] != "succeeded":

@@ -589,11 +589,39 @@ class TestDevelopmentTasks(unittest.TestCase):
             ]):
                 self.probe.reset_mock()
                 result = self.launch()
-            self.assertFalse(result["ok"])
-            self.assertEqual(result["state"], "unverified" if inspections else "launch-unverified")
-            self.assertIn("Inspection unavailable", result["service_error"] if inspections else result["error"])
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["state"], "unverified")
+            self.assertIn("Inspection unavailable", result["service_error"])
             self.assertEqual(sum(call.args[0][0] == "/usr/bin/systemd-run" for call in self.probe.call_args_list), 1)
             self.assertEqual(development.task_status(result["task"])["state"], "running")
+
+    def test_fast_child_failure_is_observed_separately_from_submission(self):
+        parser = argparse.ArgumentParser()
+        desktop_cli.add_desktop_subparser(parser.add_subparsers())
+        def run(expected, *argv):
+            with redirect_stdout(output := StringIO()):
+                self.assertEqual(desktop_cli.run_desktop_command(parser.parse_args(
+                    ["desktop", "--native", "develop", *argv])), expected)
+            return json.loads(output.getvalue())
+
+        def completed(task_id):
+            directory = development._task(task_id)
+            write_json_atomic(str(directory / "result.json"), {
+                "returncode": 7, "log_truncated": False, "error": "Fixture failed",
+            })
+            return status(task_id)
+
+        status = development.task_status
+        self.state, self.substate = "inactive", "dead"
+        with patch.object(development, "task_status", side_effect=completed):
+            submitted = run(0, "run", "--project", str(self.project))
+        self.assertEqual(submitted["job"]["state"], "failed")
+        self.assertEqual(submitted["child_error"], "Fixture failed")
+        self.assertNotIn("error", submitted)
+        self.assertEqual(submitted["child_exit_code"], 7)
+        identifier = submitted["job"]["id"]
+        self.assertEqual(run(0, "status", identifier)["job"], submitted["job"])
+        self.assertEqual(run(1, "wait", identifier)["child_exit_code"], 7)
 
     def test_task_collision_never_replaces_original_record(self):
         with patch.object(development.secrets, "token_hex", return_value="c" * 32):

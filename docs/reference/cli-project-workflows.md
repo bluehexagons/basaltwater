@@ -84,6 +84,7 @@ returns the same handle with `issue: wait_timeout` while the worker continues.
 The `projects`, `jobs` and `runs` list commands return named arrays.
 
 `auth` requires a human non-root terminal and accepts no secret arguments.
+Provider dialogue uses stderr, and the final JSON result uses stdout.
 The HTTPS panel provides guided login and the sole managed human approval
 action. `draft` cannot import approval fields. `export --handoff` respects the
 reviewed timing window and release gate; it never publishes remotely.
