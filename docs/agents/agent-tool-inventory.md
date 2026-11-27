@@ -118,43 +118,9 @@ and stdout JSON `{error}`. A live MCP capabilities call returned
 | Task CLI → task MCP | Pass one task object to CLI `create -` on stdin. Pass an object containing a `task` field to MCP, with scheduling controls alongside it. CLI `list` needs `--summary` for the compact result that MCP already defaults to. [CLI](../../lib/agent_tasks_cli.py), [MCP](../../lib/agent_tasks_mcp.py) |
 | Browser snapshot → interaction | T3 uses `locator: "aria-ref=…"`. Playwright uses `target` from its own snapshot or a unique selector. For evaluation, T3 takes `expression` and advertises a `{value}` result, while Playwright takes `function` and advertises text/file output. [Collaborative preview](../../common/agent_skills/basaltwater-project-development/references/collaborative-preview.md), [Playwright reference](../../common/agent_skills/basaltwater-browser-testing/references/playwright.md) |
 
-## Priorities for consistency
+## Shared contracts
 
-1. **Give JSON mode a shared CLI contract.** Pilot it on desktop, tasks and
-   browser resolution. Document whether the default is text or JSON. Accept
-   `--json` on JSON-by-default commands and make it select a stable machine
-   view on mixed-output commands. In that mode, emit one JSON value on stdout
-   for success and handled failure, with progress and child logs on stderr.
-   Document parser errors, foreground readiness streams and child-output
-   passthrough as explicit interfaces. Preserve existing callers through aliases
-   or additive fields and test both output streams.
-2. **Label each accepted input and returned artifact.** Help and skill examples
-   should say `PLAN.json`, `CAPTURE_RECEIPT.json`, `PNG`, `TASK_ID` or `ARGV`
-   as appropriate. Use the same names for equivalent arguments where practical.
-   For cross-platform workflows, put the Linux and Windows invocation side by
-   side and show the follow-up command consuming the actual returned field.
-   Apply this first to screenshot → map → input and develop → status → logs.
-3. **Expose task MCP results as structured data.** Add per-tool output schemas
-   for negotiated revisions that support them, and preserve the current
-   serialized text for existing clients. Test MCP and CLI against the same task
-   payloads, including list defaults and draft versus scheduled creation. The
-   protocol already defines fields for structured success and tool errors.
-   [MCP structured output reference](https://py.sdk.modelcontextprotocol.io/v2/servers/structured-output/)
-4. **Make lifecycle and partial effects observable.** Document whether a result
-   reports discovery, accepted work, readiness, completion, verification or
-   uncertainty. Keep job IDs, affected scope and evidence paths in failures after
-   an effect. Keep output truncation distinct from incomplete observation.
-   Use current desktop input receipts and supervised development waits as the
-   starting points for tests of retry and recovery behavior.
-5. **Put capability discovery and I/O notes where agents start.** Keep one short
-   contract next to each owning CLI or MCP definition. Link to it from the skill
-   and add only the relevant entry points to scoped discovery. Show PATH,
-   installed bundle, session exposure, running-helper revision and verified
-   readiness as independent observations. Start with desktop, browser and
-   tasks, then extend the convention across the rest of the inventory.
-
-For acceptance, exercise one success, one invalid input, one runtime failure,
-and any partial or timeout result through each selected CLI or MCP entry point.
-Assert the exit code or `isError`, stdout/stderr or MCP content type, schema
-shape, and whether a returned artifact can be consumed by the documented next
-step. Run native fixtures for backend-specific behavior and retain scoped evidence.
+The tables above record the interfaces observed at this snapshot. The shared
+contracts define the formats for a coordinated rollout, with acceptance cases
+for desktop capture and input, preview resolution, task CLI/MCP, and supervised
+development. [Contracts and rollout](contributing/tool-interface-contracts.md)

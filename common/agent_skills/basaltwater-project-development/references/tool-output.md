@@ -5,6 +5,9 @@ keep full evidence in private files outside Git and bring only the status,
 counts, actionable failure and artifact path into context. Do not suppress a
 failure to obtain a smaller reply.
 
+When adding or changing a Basaltwater tool, use the shared conventions for
+requests, results, job status and evidence handoffs. [Agent tool interface contracts](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/contributing/tool-interface-contracts.md)
+
 ## Capture and inspect
 
 With an existing Python 3.11+ interpreter, use the scripts shipped with this skill:

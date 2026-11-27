@@ -6,6 +6,7 @@ machine, start with the [agent systems index](../README.md).
 | Task | Open |
 | --- | --- |
 | Locate helpers, validators, and setup composition | [Contributor quick reference](quick-reference.md) |
+| Design or change an agent-facing CLI, MCP tool, or evidence handoff | [Agent tool interface contracts](tool-interface-contracts.md) |
 | Debug a failed setup or check | [Troubleshooting](troubleshooting.md) |
 | Change builder admission, delivery, or target activation | [Build implementation map](build-architecture.md) |
 | Change persistent state or managed systemd units | [Transaction safety](transaction-safety.md) |
