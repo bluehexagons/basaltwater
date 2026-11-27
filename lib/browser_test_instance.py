@@ -23,6 +23,9 @@ from lib.local_http import open_loopback
 from lib.validation import validate_filesystem_path, validate_network_port, validate_no_control_characters
 
 
+_PODMAN_CUTOFF_GRACE_SECONDS = 30
+
+
 def add_test_instance_parser(commands: argparse._SubParsersAction) -> None:
     parser = commands.add_parser("test-instance", help="Run a disposable loopback browser-test service")
     parser.add_argument("--image", required=True, help="Existing local Podman image")
@@ -65,20 +68,24 @@ def _podman(prefix: list[str], argv: list[str], step: str, *, timeout: float = 1
     return result.output.strip()
 
 
-def _wait_for_http(prefix: list[str], name: str, url: str) -> None:
-    deadline = time.monotonic() + 30
-    while time.monotonic() < deadline:
-        if _podman(prefix, ["inspect", "--format", "{{.State.Running}}", name], "Application startup") != "true":
+def _wait_for_http(prefix: list[str], name: str, url: str, deadline: float) -> None:
+    deadline = min(deadline, time.monotonic() + 30)
+    while (remaining := deadline - time.monotonic()) > 0:
+        if _podman(prefix, ["inspect", "--format", "{{.State.Running}}", name],
+                   "Application startup", timeout=min(15, remaining)) != "true":
             raise RuntimeError("Application exited before becoming ready")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
         try:
-            with open_loopback(url, timeout=1) as response:
+            with open_loopback(url, timeout=min(1, remaining)) as response:
                 if 200 <= response.status < 300:
                     return
         except urllib.error.HTTPError as exc:
             exc.close()
         except (OSError, http.client.HTTPException):
             pass
-        time.sleep(0.25)
+        time.sleep(max(0, min(0.25, deadline - time.monotonic())))
     raise RuntimeError("Loopback HTTP readiness timed out")
 
 
@@ -95,7 +102,8 @@ def _run_instance(args: argparse.Namespace, podman: list[str], data: Path) -> in
         network_created = True
         command = [
             "run", "--detach", "--rm", "--pull=never", "--http-proxy=false", "--image-volume=ignore",
-            "--network", name, "--name", name, "--timeout", str(args.seconds),
+            "--network", name, "--name", name,
+            "--timeout", str(args.seconds + _PODMAN_CUTOFF_GRACE_SECONDS),
             "--publish", f"127.0.0.1::{args.port}/tcp", "--userns=keep-id",
             "--user", f"{os.geteuid()}:{os.getegid()}",
         ]
@@ -104,19 +112,33 @@ def _run_instance(args: argparse.Namespace, podman: list[str], data: Path) -> in
                             "--env", f"{args.database_env}=/basaltwater-test/fixture.sqlite3"))
         start_attempted = True
         _podman(podman, [*command, "--", args.image, *args.argv[1:]], "Container startup", timeout=60)
-        binding = _podman(podman, ["port", name, f"{args.port}/tcp"], "Loopback port lookup")
+        deadline = time.monotonic() + args.seconds
+        binding = _podman(podman, ["port", name, f"{args.port}/tcp"], "Loopback port lookup",
+                          timeout=min(15, args.seconds))
         match = re.fullmatch(r"127\.0\.0\.1:([0-9]{1,5})", binding)
         if not match:
             raise RuntimeError("Podman did not report one IPv4 loopback port")
         validate_network_port(int(match[1]), "Published port")
         url = f"http://{binding}"
-        _wait_for_http(podman, name, url + args.health_path)
+        _wait_for_http(podman, name, url + args.health_path, deadline)
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Instance lifetime elapsed before readiness could be reported")
         if args.json:
             print(json.dumps({"url": url, "container": name, "network_origin": "vm",
                               "lifetime_seconds": args.seconds}), flush=True)
         else:
             print(f"Open {url} in the VM browser. Press Ctrl+C to stop {name}.", flush=True)
-        exit_code = _podman(podman, ["wait", name], "Container wait", timeout=args.seconds + 10)
+        # The wrapper owns the normal cutoff. Podman's later timeout caps the
+        # container lifetime if the wrapper dies before it can clean up.
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return 0
+        wait = run_probe([*podman, "wait", name], timeout=remaining, max_bytes=8192)
+        if wait.issue == "probe_timeout":
+            return 0
+        if wait.issue:
+            raise RuntimeError(f"Container wait failed ({wait.issue})")
+        exit_code = wait.output.strip()
         if exit_code != "0":
             raise RuntimeError(f"Container {name} exited with status {exit_code}")
         return 0

@@ -55,9 +55,11 @@ IPv4 loopback port, and no host credential or project mounts. Use the printed
 URL in managed Playwright on the same VM after checking browser readiness.
 The readiness request runs from the VM and requires HTTP 2xx.
 
-Leave the command running while testing. Ctrl+C or SIGTERM removes the
-container, network, and copied fixture. The container also has a lifetime
-limit. If the wrapper is killed before cleanup, use its reported
+Leave the command running while testing. When `--seconds` elapses after the
+container starts, the wrapper removes the container, network, and copied
+fixture and exits successfully if the instance reached readiness. Ctrl+C and
+SIGTERM also trigger cleanup. Podman enforces a backup cutoff with up to 30
+seconds of grace if the wrapper is killed. In that case, use its reported
 `bw-test-…` name to locate its container, network, and matching private
 directory under `/tmp`. Remove the directory after the container is gone.
 
