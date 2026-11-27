@@ -70,6 +70,7 @@ class ObservationRecipeTests(unittest.TestCase):
                       {"action": "screenshot", "after_ms": 400}]
         self.receipt = {"input_delivery": "completed", "input_id": "input-1",
                         "input_completed_monotonic_ns": 123, "generation": "g"}
+        self.timed_receipt = {**self.receipt, "timing": {"worker_mode": "resident", "input_round_trip_ms": 20.0}}
         self.now = 10.0
         self.enterContext(patch.object(client.time, "monotonic", side_effect=lambda: self.now))
         self.enterContext(patch.object(client.time, "monotonic_ns", side_effect=lambda: int(self.now * 1e9)))
@@ -96,7 +97,7 @@ class ObservationRecipeTests(unittest.TestCase):
         self.steps[1]["next_frame"] = self.steps[2]["next_frame"] = True
         result = self.run_recipe()
         self.assertEqual(result["completed"], 3)
-        self.assertEqual(result["results"][0], self.receipt)
+        self.assertEqual(result["results"][0], self.timed_receipt)
         self.assertNotIn("unneeded_status", result["results"][1])
         self.assertEqual([row["requested_delay_ms"] for row in result["timings"]], [0, 150, 400])
         for timing, expected in zip(result["timings"], (0, 150, 400)):
@@ -120,7 +121,7 @@ class ObservationRecipeTests(unittest.TestCase):
                 self.backend.request.side_effect = request
                 result = self.run_recipe()
                 self.assertEqual(result["completed"], failed_index)
-                self.assertEqual(result["results"][0], self.receipt)
+                self.assertEqual(result["results"][0], self.timed_receipt)
                 self.assertEqual(result["failed_action_index"], failed_index)
                 self.assertEqual(len(result["timings"]), failed_index + 1)
                 self.assertEqual(self.backend.request.call_count, failed_index + 1)
@@ -133,7 +134,7 @@ class ObservationRecipeTests(unittest.TestCase):
         self.sleep.side_effect = intervene
         result = self.run_recipe()
         self.assertEqual(result["completed"], 1)
-        self.assertEqual(result["results"][0], self.receipt)
+        self.assertEqual(result["results"][0], self.timed_receipt)
         self.backend.request.assert_called_once()
         self.assertIn("control changed", result["error"])
 
@@ -203,7 +204,7 @@ class ObservationRecipeTests(unittest.TestCase):
         self.backend.status.side_effect = status
         result = self.run_recipe()
         self.assertEqual(result["completed"], 1)
-        self.assertEqual(result["results"][0], self.receipt)
+        self.assertEqual(result["results"][0], self.timed_receipt)
         self.assertEqual(result["failed_action_index"], 1)
         self.assertEqual(len(result["timings"]), 2)
         self.backend.request.assert_called_once()
@@ -794,7 +795,10 @@ class PublishedRecipeTests(unittest.TestCase):
             self.assertEqual(code, 1)
             short = json.loads(out.getvalue())
             saved = json.loads(Path(short["artifact"]).read_text())
-            self.assertEqual(saved["results"][0], completed)
+            receipt = saved["results"][0]
+            self.assertEqual({key: receipt[key] for key in completed}, completed)
+            self.assertEqual(receipt["timing"]["worker_mode"], "resident")
+            self.assertGreaterEqual(receipt["timing"]["input_round_trip_ms"], 0)
             self.assertEqual(short["completed"], 2)
             self.assertEqual(short["failed_action_index"], 2)
             self.assertEqual(len(saved["timings"]), 3)
