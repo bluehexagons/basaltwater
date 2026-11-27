@@ -97,12 +97,16 @@ class CaptureCoordinateTests(unittest.TestCase):
             request.assert_not_called()
             result = json.loads(output.getvalue())
             self.assertEqual(result["capture_source"], "observation")
-            action = ["desktop", "--native", "input", *shlex.split(result["input_context_args"]),
-                      "click", *shlex.split(result["input_args"]), "--button", "1"]
+            self.assertEqual(result["input_context_argv"], shlex.split(result["input_context_args"]))
+            self.assertEqual(result["input_argv"], shlex.split(result["input_args"]))
+            action = ["desktop", "--native", "input", *result["input_context_argv"],
+                      "click", *result["input_argv"], "--button", "1"]
             with redirect_stdout(StringIO()):
                 self.assertEqual(desktop_cli.run_desktop_command(parser.parse_args(action)), 0)
             self.assertEqual(request.call_count, 1)
             self.assertEqual(request.call_args.args[0]["observation_id"], capture["observation_id"])
+            self.assertEqual(request.call_args.args[0]["x"], 1200)
+            self.assertEqual(request.call_args.args[0]["y"], 800)
             request.reset_mock()
             used = Path(folder) / "used.png"
             used.write_bytes(b"existing")
@@ -144,6 +148,8 @@ class CaptureCoordinateTests(unittest.TestCase):
         result = map_capture_points([2400, 1600], [1920, 1280], 800, 600, to_x=1200, to_y=800)
         self.assertEqual(result["input_coordinates"], {"x": 1000, "y": 750, "to_x": 1500, "to_y": 1000})
         self.assertEqual(result["input_args"], "--x 1000 --y 750 --to-x 1500 --to-y 1000")
+        self.assertEqual(result["input_argv"], ["--x", "1000", "--y", "750", "--to-x", "1500", "--to-y", "1000"])
+        self.assertNotIn("input_context_argv", result)
         self.assertEqual(result["scale"], [1.25, 1.25])
         self.assertFalse(result["input_sent"])
 

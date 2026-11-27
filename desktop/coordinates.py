@@ -49,9 +49,11 @@ def map_observation_points(capture: dict, current: dict, view_geometry: list[int
         to_x=to_x - origin[0] if to_x is not None else None,
         to_y=to_y - origin[1] if to_y is not None else None)
     context = {key: capture[key] for key in ("observation_id", "generation", "control_revision")}
+    context_argv = ["--generation", str(context["generation"]), "--geometry",
+                    *map(str, capture["geometry"]), "--observation", observation]
     return {**result, **context, "capture_source": source,
             "view_origin": None if image_coordinates else origin, "capture_freshness": current["capture_freshness"],
-            "input_context_args": f"--generation {context['generation']} --geometry {' '.join(map(str, capture['geometry']))} --observation {observation}",
+            "input_context_args": " ".join(context_argv), "input_context_argv": context_argv,
             "limit": "Input revalidates the token; inspect moving/recentered targets again. No automatic retry."}
 
 
@@ -94,6 +96,9 @@ def map_capture_points(
         raise ValueError("Drag mapping requires both --to-x and --to-y")
     if to_x is not None:
         coordinates["to_x"], coordinates["to_y"] = point(to_x, to_y)
+    input_argv = []
+    for key, value in coordinates.items():
+        input_argv.extend((f"--{key.replace('_', '-')}", str(value)))
     return {
         "geometry": geometry,
         "image_geometry": [width, height],
@@ -103,6 +108,7 @@ def map_capture_points(
         "scale": [width / point_geometry[0], height / point_geometry[1]],
         "rounding": "floor",
         "input_coordinates": coordinates,
-        "input_args": " ".join(f"--{key.replace('_', '-')} {value}" for key, value in coordinates.items()),
+        "input_args": " ".join(input_argv),
+        "input_argv": input_argv,
         "input_sent": False,
     }

@@ -18,9 +18,26 @@ basaltw desktop --native map-point --geometry 2400 1600 \
 
 The result reports per-axis scale `[1.25, 1.25]`, the image origin and dimensions,
 and `input_args: "--x 1000 --y 750"`. Review that monitor position against the
-intended target, then use those arguments with `input`, the original capture's
-generation, and full-monitor geometry. Copy the returned arguments literally;
-do not apply the scale again. The backend applies portal logical scaling later.
+intended target. The same values are available as `input_argv`, a JSON array
+with one string per argument. Use the mapped coordinates directly. The backend
+applies portal logical scaling later.
+
+For live input, inspect a fresh screenshot or nested post-input observation
+and map the chosen point with `map-point --capture`. That mapping also returns
+`input_context_argv` for the generation, full-monitor geometry and observation
+token. Pass the arrays directly to the input process, with the context before
+the input kind and the coordinates after it. For example, given the parsed
+mapping result for a left-click target:
+
+```python
+subprocess.run([
+    "basaltw", "desktop", "--native", "input", *mapped["input_context_argv"],
+    "click", "--button", "1", *mapped["input_argv"],
+], check=True)
+```
+
+`input` emits JSON by default. The existing `input_args` and `input_context_args`
+fields are strings for use when reading or copying a mapping by hand.
 
 For a screenshot made with `--crop 100 200 800 600`, presented at 400 × 300,
 map a drag within that image as follows:
