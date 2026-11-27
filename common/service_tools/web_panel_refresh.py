@@ -254,6 +254,25 @@ SCRIPT = r'''(() => {
     renderAge(region);
     schedule(region, 500 + Math.random() * 2500);
   }
+  for (const access of document.querySelectorAll('[data-route-access]')) {
+    const link = access.querySelector('[data-route-url]');
+    const button = access.querySelector('[data-route-copy]');
+    const status = access.querySelector('[data-route-copy-status]');
+    button.hidden = false;
+    button.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(link.textContent);
+        status.textContent = 'URL copied.';
+      } catch {
+        const range = document.createRange();
+        range.selectNodeContents(link);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        status.textContent = 'URL selected. Use your device’s Copy command.';
+      }
+    });
+  }
   document.addEventListener('visibilitychange', () => { if (document.hidden) suspend(); else { for (const region of regions) renderAge(region); resume(); } });
   window.addEventListener('pagehide', suspend);
   window.addEventListener('pageshow', event => {

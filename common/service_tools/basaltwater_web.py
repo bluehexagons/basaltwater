@@ -1225,6 +1225,8 @@ def _diagnose_endpoint(
         "errors": errors,
         "headers": headers,
         "name": name,
+        "network_origin": "vm",
+        "client_device_checked": False,
         "ok": not errors,
         "status": status,
         "url": url,
@@ -1233,9 +1235,9 @@ def _diagnose_endpoint(
     if as_json:
         print(json.dumps(result, sort_keys=True))
     elif errors:
-        print(f"{name}: failed ({'; '.join(errors)})")
+        print(f"{name}: VM HTTPS check failed ({'; '.join(errors)})")
     else:
-        print(f"{name}: healthy ({url})")
+        print(f"{name}: VM HTTPS check passed ({url}). Client device untested.")
     return 0 if not errors else 1
 
 
@@ -1377,15 +1379,27 @@ def _forward_list(as_json: bool) -> int:
     username = account.pw_name
     forwards = _load_forwards(policy)
     sources_by_listener = _forward_access_sources(forwards, policy)
+    try:
+        previews = {str(item["name"]): item for item in _load_previews(policy)}
+    except (OSError, RuntimeError, ValueError):
+        # A bad preview record must not hide the independently managed forwards.
+        previews = {}
     routes = [
         {
             **route,
             "ready": _tcp_ready(str(route["target_host"]), int(route["target_port"])),
+            "readiness_origin": "vm",
+            "readiness_check": "upstream_tcp",
+            "client_device_checked": False,
             "url": _forward_route_url(policy, int(route["listen"]), sources_by_listener[int(route["listen"])]),
         }
         for route in forwards
         if os.geteuid() == 0 or route["owner"] == username
     ]
+    for route in routes:
+        preview = previews.get(str(route["name"]))
+        if preview and _preview_matches_route(preview, route):
+            route.update(project_name=os.path.basename(str(preview["project"])), unit=preview["unit"])
     if as_json:
         print(json.dumps({"forwards": routes}, sort_keys=True))
     elif not routes:
@@ -1395,7 +1409,7 @@ def _forward_list(as_json: bool) -> int:
             print(
                 f"{route['name']}\t{route['url']}\thttp://"
                 f"{route['target_host']}:{route['target_port']}\t{route['profile']}\t"
-                f"{'ready' if route['ready'] else 'down'}"
+                f"{'ready' if route['ready'] else 'down'} (VM upstream TCP check)"
             )
     return 0
 
@@ -1940,11 +1954,15 @@ def _preview_for_user(
     return record
 
 
+def _preview_matches_route(record: dict[str, object], route: dict[str, object]) -> bool:
+    return all(route[key] == record[key] for key in ("owner", "target_host", "target_port", "listen", "profile"))
+
+
 def _require_preview_route(record: dict[str, object], routes: list[dict[str, object]]) -> dict[str, object]:
     route = next((item for item in routes if item["name"] == record["name"]), None)
     if route is None:
         raise RuntimeError("No HTTPS forward for this preview")
-    if any(route[key] != record[key] for key in ("owner", "target_host", "target_port", "listen", "profile")):
+    if not _preview_matches_route(record, route):
         raise RuntimeError("HTTPS forward no longer matches its managed preview")
     return route
 
@@ -2241,7 +2259,7 @@ def _preview_status(name: str, as_json: bool) -> int:
         https["error"] = str(exc)
     ok = bool(active and checkout_error is None and https["ok"] and build["status"] not in ("failed", "unavailable"))
     result = {**record, "ok": ok, "active": active, "url": url, "https": https, "build": build,
-              "checkout_error": checkout_error}
+              "checkout_error": checkout_error, "network_origin": "vm", "client_device_checked": False}
     if as_json:
         print(json.dumps(result, sort_keys=True))
     else:
@@ -2250,9 +2268,10 @@ def _preview_status(name: str, as_json: bool) -> int:
             print(f"Checkout unavailable ({checkout_error})")
         print(f"Service {'active' if active else 'inactive'}")
         if https["ok"]:
-            print(f"HTTPS {https['status']} at {url}")
+            print(f"VM HTTPS check returned {https['status']} at {url}")
         else:
-            print(https["error"])
+            print(f"VM HTTPS check failed: {https['error']}")
+        print("Client device untested")
         print(f"Reported build status {build['status']}")
         if build["last_success_at"]:
             print(f"Last successful rebuild at {build['last_success_at']}")
@@ -2289,6 +2308,8 @@ def _preview_resolve(args: argparse.Namespace) -> int:
         "upstream_url": upstream_url,
         "url": None,
         "navigation": None,
+        "network_origin": "vm",
+        "client_device_checked": False,
         "component": "gateway",
         "issue": None,
         "remediation": None,
@@ -2351,7 +2372,6 @@ def _preview_resolve(args: argparse.Namespace) -> int:
                 else:
                     result.update(
                         ok=True, navigation={"url": url}, remediation=None,
-                        network_origin="vm",
                     )
         except (OSError, RuntimeError) as exc:
             issue = http_transport_issue(exc)

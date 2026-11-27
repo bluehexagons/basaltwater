@@ -264,8 +264,16 @@ def discover_basaltwater_web_services() -> list[dict[str, str]]:
                 else:
                     description = "Readiness not reported"
                 service = {"label": f"{label_prefix}: {name}", "url": url, "description": description}
-                if collection == "forwards" and name == "t3code":
-                    service["application"] = "t3code"
+                if collection == "forwards":
+                    if name == "t3code":
+                        service["application"] = "t3code"
+                    host, port = record.get("target_host"), record.get("target_port")
+                    if host in ("127.0.0.1", "::1") and type(port) is int and 1 <= port <= 65535:
+                        authority = f"[{host}]" if host == "::1" else host
+                        service["upstream"] = f"http://{authority}:{port}"
+                        project, unit = record.get("project_name"), record.get("unit")
+                        if isinstance(project, str) and project and isinstance(unit, str) and unit:
+                            service.update(project=project, unit=unit)
                 services.append(service)
     return services
 
@@ -673,8 +681,11 @@ def _deduplicate_services(
         if not url or not isinstance(label, str) or not label:
             continue
         if url in seen:
+            existing = next(service for service in services if service["url"] == url)
             if record.get("application") == "t3code":
-                next(service for service in services if service["url"] == url)["application"] = "t3code"
+                existing["application"] = "t3code"
+            if record.get("upstream"):
+                existing.update({key: record[key] for key in ("upstream", "project", "unit", "description") if key in record})
             continue
         description = record.get("description")
         service: dict[str, Any] = {
@@ -684,6 +695,7 @@ def _deduplicate_services(
         }
         if record.get("application") == "t3code":
             service["application"] = "t3code"
+        service.update({key: record[key] for key in ("upstream", "project", "unit") if key in record})
         if (probe_port := _homebox_probe_port(record)) is not None:
             service["probe"] = {"kind": "homebox", "port": probe_port}
         services.append(service)
@@ -1027,6 +1039,10 @@ h2 { margin: 0; font-size: 1.2rem; letter-spacing: -.015em; }
   font-size: .72rem;
   overflow-wrap: anywhere;
 }
+.route-access { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.route-access a { overflow-wrap: anywhere; }
+.route-access button { min-height: 44px; }
+.route-access button[hidden] { display: none; }
 .overview-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
@@ -1635,6 +1651,7 @@ def render_page(state: WebPanelState, *, proxmox_query: ProxmoxQuery | None = No
     web_reading = state.web_services()
     services = web_reading.value or []
     service_cards = ""
+    gateway_routes = False
     service_states = {"ready": 0, "attention": 0, "unavailable": 0, "unchecked": 0}
     for record in services:
         status_html = ""
@@ -1650,6 +1667,9 @@ def render_page(state: WebPanelState, *, proxmox_query: ProxmoxQuery | None = No
                 label = label.removeprefix(prefix)
                 kind = service_kind
                 break
+        upstream = record.get("upstream")
+        if record.get("project"):
+            kind = "Project preview"
         if description in {"live", "not responding"}:
             tone, text = (
                 ("ready", "Responding") if description == "live"
@@ -1669,7 +1689,30 @@ def render_page(state: WebPanelState, *, proxmox_query: ProxmoxQuery | None = No
         icon, category = {
             "Published site": ("web-services", "sea"),
             "HTTPS service": ("service-status", "workspace"),
+            "Project preview": ("web-services", "workspace"),
         }.get(kind, ("web-services", "water"))
+        if upstream or kind == "Published site":
+            gateway_routes = True
+            url = html.escape(record["url"], quote=True)
+            hostname = urllib.parse.urlsplit(record["url"]).hostname
+            url_label = "Host URL" if hostname in {"localhost", "127.0.0.1", "::1"} else "LAN URL"
+            project = f'<span class="card-description">Project <strong>{html.escape(record["project"])}</strong></span>' if record.get("project") else ""
+            target = html.escape(upstream or "")
+            if record.get("unit"):
+                target += f' · {html.escape(record["unit"])}'
+            target_line = f'<span class="card-description">Forwards to <code>{target}</code></span>' if upstream else ""
+            origin = ""
+            if upstream:
+                check = "HTTP health check" if _homebox_probe_port(record) is not None else "TCP connection check"
+                origin = f'<span class="card-description">{check} from this host · Client device untested</span>'
+            service_cards += f'''<article class="card service-card tone-{category}" data-panel-service="{record["id"]}">
+<div class="card-top"><span class="action-icon">{render_icon(icon)}</span>
+<span class="service-title"><strong>{html.escape(label)}</strong><span class="service-kind">{kind}</span></span></div>
+{project}{target_line}<div class="service-detail">{status_html}{origin}</div>
+<div class="card-url route-access" data-route-access><span>{url_label}</span> <a data-route-url href="{url}">{url}</a>
+<button type="button" data-route-copy hidden>Copy URL</button> <span data-route-copy-status role="status"></span>
+<a href="#trust">Certificate trust instructions</a></div></article>'''
+            continue
         service_cards += (
             '<a class="card service-card tone-{}" data-panel-service="{}" href="{}"><span class="card-top"><span class="action-icon">{}</span>'
             '<span class="service-title"><strong>{}</strong><span class="service-kind">{}</span></span>'
@@ -1760,7 +1803,12 @@ def render_page(state: WebPanelState, *, proxmox_query: ProxmoxQuery | None = No
     if filesystem_section:
         filesystem_section += '<p class="filesystem-note">Mounted storage reflects the page-load readings. Reload the dashboard for new filesystem details.</p><p><a class="refresh-link" href="/storage">Explore storage usage →</a></p>'
     trust = state.certificate_trust()
-    trust_section = _render_certificate_trust(trust) if trust else ""
+    if trust:
+        trust_section = _render_certificate_trust(trust)
+    elif gateway_routes:
+        trust_section = _render_certificate_trust({"status": "unknown"})
+    else:
+        trust_section = ""
     audit_section = _render_audit_section(state)
     notification_section = _render_notification_section(state)
 

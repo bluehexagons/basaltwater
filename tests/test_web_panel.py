@@ -1714,6 +1714,37 @@ class WebPanelEventTest(unittest.TestCase):
 
         self.assertEqual(services, [landing])
 
+    def test_managed_project_preview_shows_lan_access_and_host_check_origin(self) -> None:
+        route = {
+            "name": "demo", "owner": "agent", "target_host": "::1", "target_port": 4173,
+            "listen": 8449, "profile": "godot", "url": "https://vm.example.test:8449/",
+            "ready": True,
+            "project_name": "Demo & Game", "unit": "basaltwater-preview-demo.service",
+        }
+
+        def run_json(command: list[str]) -> dict:
+            return {
+                "forward": {"forwards": [route]},
+                "site": {"sites": []},
+            }[command[1]]
+
+        state = WebPanelState({**self._t3_manifest(), "services": []})
+        with (
+            patch.object(panel.shutil, "which", return_value="/usr/local/bin/basaltwater-web"),
+            patch.object(panel, "_internal_web_landing_service", return_value=None),
+            patch.object(panel, "_run_json", side_effect=run_json),
+            patch.object(state, "certificate_trust", return_value={"publicly_trusted": True}),
+            patch.object(panel, "collect_system_overview", return_value=[]),
+        ):
+            rendered = render_page(state)
+        self.assertIn("Demo &amp; Game", rendered)
+        self.assertNotIn("/home/agent/", rendered)
+        self.assertIn("http://[::1]:4173 · basaltwater-preview-demo.service", rendered)
+        self.assertIn('data-route-url href="https://vm.example.test:8449/"', rendered)
+        self.assertIn("Copy URL", rendered)
+        self.assertIn("TCP connection check from this host · Client device untested", rendered)
+        self.assertIn('href="#trust">Certificate trust instructions', rendered)
+
     def test_discovers_local_certificate_trust_metadata(self) -> None:
         with (
             patch(

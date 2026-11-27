@@ -16,6 +16,15 @@ site, not on a separate controller. Check `command -v basaltwater-web` first. If
 is missing, provision a gateway-capable feature before continuing; the
 [beginner walkthrough](../getting-started/getting-started.md#5-try-another-feature) shows one path.
 
+In the Basaltwater web panel, open **Web services** to find published sites
+and managed project previews. Preview cards show the checkout name, target
+loopback service, and systemd unit. Use **Copy URL** to open the LAN address
+on the device you want to test. **Certificate trust instructions** links to
+enrollment help for that device. A forwarded service's TCP check runs from
+the host and only probes the loopback target. To check HTTPS from the host,
+run `basaltwater-web preview status NAME` or `basaltwater-web forward doctor NAME`.
+Open the LAN URL on the client device to verify its routing and trust.
+
 ## Choose a topic
 
 <a id="try-a-plain-html-page"></a>
