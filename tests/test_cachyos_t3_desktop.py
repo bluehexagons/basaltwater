@@ -46,6 +46,7 @@ class DesktopAutostartTests(unittest.TestCase):
         legacy = path.with_name(desktop.LEGACY_AUTOSTART_NAME)
         path.parent.mkdir(parents=True)
         legacy.write_text(desktop.AUTOSTART_ENTRY)
+        legacy.chmod(0o644)
         personal = path.with_name("personal.desktop")
         personal.write_text("unrelated autostart entry")
         state, reason = desktop.collect_autostart_health(self.home)
@@ -59,6 +60,7 @@ class DesktopAutostartTests(unittest.TestCase):
 
         # A direct web switch or a retry with both names removes owned entries.
         legacy.write_text(desktop.AUTOSTART_ENTRY)
+        legacy.chmod(0o644)
         desktop.disable_autostart(self.home)
         self.assertEqual(list(path.parent.iterdir()), [personal])
 
@@ -67,7 +69,9 @@ class DesktopAutostartTests(unittest.TestCase):
         legacy = path.with_name(desktop.LEGACY_AUTOSTART_NAME)
         path.parent.mkdir(parents=True)
         legacy.write_text(desktop.AUTOSTART_ENTRY)
+        legacy.chmod(0o644)
         path.write_text("[Desktop Entry]\nExec=personal-command\n")
+        path.chmod(0o644)
         with self.assertRaisesRegex(ValueError, "unmanaged T3 desktop autostart file"):
             desktop.enable_autostart(self.home)
         self.assertIn("personal-command", path.read_text())
