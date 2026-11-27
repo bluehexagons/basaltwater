@@ -313,7 +313,6 @@ class TestDevelopmentToolPackages(unittest.TestCase):
                 site = directory / "vimrc.local"
                 defaults = directory / "basaltwater.vim"
                 self.assertEqual(site.read_text(), f"source {defaults}\n")
-                self.assertIn("set incsearch hlsearch ignorecase smartcase", defaults.read_text())
                 self.assertEqual(site.stat().st_mode & 0o777, 0o644)
                 self.assertEqual(defaults.stat().st_mode & 0o777, 0o644)
 
@@ -458,22 +457,40 @@ class TestDevelopmentToolPackages(unittest.TestCase):
         install_cli_tools(SetupConfig(host="testhost", username="agent", system_type="agent_vm"))
         site = self.vim_dir / "vimrc.local"
         with site.open("a", encoding="utf-8") as stream:
-            stream.write("set nonumber\n")
-        project = self.vim_dir.parent / "project"
+            stream.write("set nonumber scrolloff=2\n")
+        home = self.vim_dir.parent
+        rg_config = home / "ripgreprc"
+        rg_config.write_text("--json\n")
+        project = home / "project"
         project.mkdir()
         (project / "two words.py").write_text("pass\n# SearchNeedle\n")
+        (project / "ignored.py").write_text("# SearchNeedle\n")
+        (project / ".ignore").write_text("ignored.py\n")
+        check = home / "check.vim"
+        check.write_text("""\
+silent grep! searchneedle .
+cc
+call assert_equal(1, len(getqflist()))
+call assert_equal('two words.py', expand('%:t'))
+call assert_equal([2, 3], getpos('.')[1:2])
+call assert_equal('python', &filetype)
+call assert_equal([0, 2], [&number, &scrolloff])
+call assert_equal([1, 1], [&ignorecase, &smartcase])
+call assert_equal([1, 1], [&linebreak, &breakindent])
+call assert_equal(0, &list)
+call writefile(v:errors, $HOME . '/errors')
+qall!
+""")
+        # Load the installed site vimrc before Vim's own no-user-vimrc fallback.
         result = subprocess.run(
-            ["vim", "-Nu", str(site), "-n", "-i", "NONE", "--noplugin", "-es",
-             "-c", "silent grep! searchneedle .",
-             "-c", "cc", "-c", "call writefile([expand('%:t'), string(getpos('.')[1:2]), "
-                               "string(&number), string(&smartcase)], 'result')",
-             "-c", "qall!"],
-            cwd=project, env={"HOME": str(self.vim_dir.parent), "PATH": os.environ["PATH"]},
+            ["vim", "-Nu", "DEFAULTS", "--cmd", "execute 'source' fnameescape($SITE_VIMRC)",
+             "-n", "-i", "NONE", "--noplugin", "-es", "-V1", "-S", str(check)],
+            cwd=project, env={"HOME": str(home), "PATH": os.environ["PATH"],
+                              "SITE_VIMRC": str(site), "RIPGREP_CONFIG_PATH": str(rg_config)},
             stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual((project / "result").read_text().splitlines(),
-                         ["two words.py", "[2, 3]", "0", "1"])
+        self.assertEqual((home / "errors").read_text(), "")
 
 
 class TestUserCommandEnvironment(unittest.TestCase):

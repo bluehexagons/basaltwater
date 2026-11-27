@@ -26,17 +26,23 @@ inspired by [vim-sensible](https://github.com/tpope/vim-sensible) and the
 [Basic edition of amix/vimrc](https://github.com/amix/vimrc#how-to-install-the-basic-version).
 It uses Vim's built-in syntax highlighting, filetype indentation, line numbers,
 and Tab completion. You can switch buffers with unsaved edits and use
-`Ctrl-^` to return to the alternate buffer.
+`Ctrl-^` to return to the alternate buffer. Long lines wrap at word boundaries
+and keep their indentation on screen. Use `:set list` to mark the start of
+each tab with `>`, trailing spaces with `~`, and nonbreaking spaces with `+`.
+Use `:set nolist` to hide the markers.
 
-Use `/name` to find any capitalization or `/Name` to match case. Press
-`Ctrl-L` to clear the highlights and redraw. For project-wide results, run
+Use `/name` to find any capitalization or `/Name` to match case. The default
+`Ctrl-L` mapping clears the highlights and redraws. For project-wide results, run
 `:grep name .` from the project directory, then `:copen` to see the matches.
-Use `:cnext` and `:cprevious` to jump between them. The search uses ripgrep
-and respects the project's ignore files.
+Use `:cnext` and `:cprevious` to jump between them. Vim runs `rg --no-config`
+so quickfix can read the locations. Project ignore files still apply. To set
+a different search command for Vim, change `grepprg` in your vimrc.
 
 Put personal overrides in `~/.vimrc`, for example `set nonumber`. On a fresh
 setup, Debian's `/etc/vim/vimrc.local` loads the managed
 `/etc/vim/basaltwater.vim`. Put site-wide overrides below its `source` line.
+They also apply to accounts without a personal vimrc. To see where a setting
+came from, use `:verbose set scrolloff?`, substituting the option you want to inspect.
 To adopt the defaults in an existing site vimrc, add
 `source /etc/vim/basaltwater.vim` before your site settings.
 Setup reruns leave previously installed Neovim and personal editor files in place.

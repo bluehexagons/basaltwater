@@ -31,7 +31,7 @@ ci_phase() {
 }
 ci_phase apt-update apt-get update
 ci_phase apt-install env DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \\
-  ca-certificates fish git make python3-venv libsqlite3-0 libffi8 libstdc++6 libatomic1
+  ca-certificates fish git make ripgrep vim python3-venv libsqlite3-0 libffi8 libstdc++6 libatomic1
 git config --global --add safe.directory /workspace
 ci_phase python-venv "$BASALTWATER_CI_PYTHON" -m venv /opt/basaltwater-ci-python
 export PATH=/opt/basaltwater-ci-python/bin:"$BASALTWATER_CI_NODE_DIR":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
