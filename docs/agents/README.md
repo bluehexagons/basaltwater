@@ -53,6 +53,12 @@ updates or managed runtimes. JSON keeps the home observation in `disk` and the
 root observation in `disk.root_filesystem`; readiness records retain both
 capacity observations without the account's home path.
 
+The host check includes the uv update timer on setups that install it. Its
+maintenance results come from currently loaded systemd state. `last_result`
+and `last_exit_status` stay null when systemd has no observed main-process exit
+and reports its default success. Service failures before a main process exits
+still appear as failures.
+
 For a deliberate terminal-agent upgrade, preview it first:
 
 ```bash

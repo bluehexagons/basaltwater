@@ -163,7 +163,7 @@ class TestAgentHostReadiness(unittest.TestCase):
                     "ActiveState": "active",
                     "UnitFileState": "enabled",
                 }
-            if unit == "auto-update-node.service":
+            if unit == "auto-update-uv.service":
                 return {
                     "LoadState": "loaded",
                     "ActiveState": "failed",
@@ -187,8 +187,42 @@ class TestAgentHostReadiness(unittest.TestCase):
             result = _maintenance_status()
 
         self.assertIn("auto-update-node", result["units"])
+        self.assertIn("auto-update-uv", result["units"])
         self.assertNotIn("auto-update-godot", result["units"])
-        self.assertIn("auto-update-node maintenance last failed", result["errors"])
+        self.assertIn("auto-update-uv maintenance last failed", result["errors"])
+
+    def test_maintenance_requires_observed_exit_for_success(self) -> None:
+        for state, systemd_result, exit_at, status, expected_result, expected_status in (
+            ("inactive", "success", "0", "0", None, None),
+            ("activating", "success", "0", "0", None, None),
+            ("inactive", "success", "123", "0", "success", 0),
+            ("failed", "resources", "0", "0", "resources", None),
+            ("failed", "exit-code", "123", "1", "exit-code", 1),
+        ):
+            with self.subTest(state=state, result=systemd_result, exit_at=exit_at):
+                def properties(unit, requested):
+                    if unit.startswith("auto-update-uv."):
+                        available = {"LoadState": "not-found"}
+                    elif unit.endswith(".timer"):
+                        available = {
+                            "LoadState": "loaded", "UnitFileState": "enabled", "ActiveState": "active",
+                        }
+                    else:
+                        available = {
+                            "LoadState": "loaded", "ActiveState": state, "Result": systemd_result,
+                            "ExecMainExitTimestampMonotonic": exit_at, "ExecMainStatus": status,
+                        }
+                    return {name: available[name] for name in requested if name in available}
+
+                with patch("lib.agent_cli._systemd_properties", side_effect=properties):
+                    result = _maintenance_status()
+
+                self.assertNotIn("auto-update-uv", result["units"])
+                observed = result["units"]["auto-update-apt"]
+                self.assertEqual(observed["last_result"], expected_result)
+                self.assertEqual(observed["last_exit_status"], expected_status)
+                self.assertEqual(bool(result["errors"]), state == "failed")
+                self.assertEqual(result["warnings"], [])
 
     def test_maintenance_reports_boot_deadline_alongside_calendar_run(self) -> None:
         def properties(

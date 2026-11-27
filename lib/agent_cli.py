@@ -110,6 +110,7 @@ _AGENT_HOST_MAINTENANCE_UNITS = (
 _AGENT_HOST_OPTIONAL_MAINTENANCE_UNITS = (
     "auto-update-godot",
     "auto-update-node",
+    "auto-update-uv",
     "codex-auth-maintenance",
 )
 _AGENT_HOST_MIN_RECOMMENDED_MEMORY = 4 * BYTES_PER_GB
@@ -1526,7 +1527,7 @@ def _maintenance_status() -> JSONDict:
         )
         service = _systemd_properties(
             f"{service_name}.service",
-            ("LoadState", "ActiveState", "Result", "ExecMainStatus"),
+            ("LoadState", "ActiveState", "Result", "ExecMainStatus", "ExecMainExitTimestampMonotonic"),
         )
         if (
             service_name in _AGENT_HOST_OPTIONAL_MAINTENANCE_UNITS
@@ -1537,15 +1538,15 @@ def _maintenance_status() -> JSONDict:
         loaded = timer.get("LoadState") == "loaded" if timer else None
         enabled = timer.get("UnitFileState") in {"enabled", "enabled-runtime"} if timer else None
         active = timer.get("ActiveState") == "active" if timer else None
-        result = service.get("Result")
+        result = service.get("Result") or None
+        # systemd reports success and status 0 before the service has run.
+        main_exited = (_optional_systemd_integer(service.get("ExecMainExitTimestampMonotonic")) or 0) > 0
         units[service_name] = {
             "loaded": loaded,
             "enabled": enabled,
             "active": active,
-            "last_result": result or None,
-            "last_exit_status": _optional_systemd_integer(
-                service.get("ExecMainStatus")
-            ),
+            "last_result": None if result == "success" and not main_exited else result,
+            "last_exit_status": _optional_systemd_integer(service.get("ExecMainStatus")) if main_exited else None,
             "next_run": format_timer_next_trigger(timer) if loaded else None,
         }
         if not timer or not service:
