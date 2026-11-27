@@ -1,0 +1,160 @@
+# Agent tool interface inventory
+
+Snapshot for 2026-11-27 at `bcf13995`. This covers the Basaltwater CLI, installed
+helpers and skills an agent encounters while discovering an environment, writing
+code, testing, collecting evidence, coordinating work, or deploying a test build.
+It includes the upstream interfaces Basaltwater bundles or routes agents to.
+General infrastructure administration and project-owned application commands
+are covered by their own references. [Command reference](../reference/README.md)
+
+The biggest inconsistency is the meaning of `--json`. It can select JSON output,
+change only the failure channel, change the result shape, change indentation,
+have no effect, or fail argument parsing. Another recurring problem is that a
+single command can produce a result object, a path to a receipt, and separate
+media. Agents need to know which one the next command consumes.
+
+## Availability and evidence
+
+| Evidence | Current observation |
+| --- | --- |
+| Source and active CLI | The checkout and PATH launcher reported `bcf13995`. The managed installation reported `f065d375` from its setup receipt. A running helper can have its own startup revision. [Provenance contract](agent-environment.md) |
+| Installed and loaded skills | Both manifest invocations found 15 current Basaltwater bundles in the shared provider catalog and zero Claude copies. This session also listed 15 Basaltwater skills. The manifest itself reports session access as `unverified` and does not establish the loaded revision. [Skill access](agent-skill-access.md) |
+| Browser and task discovery | The Playwright MCP launcher and doctor wrapper were on PATH. This session exposed 31 managed Playwright tools, 10 Basaltwater task and feedback tools, and T3 Code tools. A live task capabilities call returned a JSON-encoded text block. Browser and desktop inventories reported their respective readiness limits. [Browser automation](browser-automation.md), [task integration](agent-tasks.md) |
+| Platform qualification | Recorded evidence covers selected Debian XRDP, CachyOS KDE, Windows and browser fixtures. Native Windows control, KDE portal behavior, browser runtime and client reachability each require their own evidence. The probes below exercised CLI serialization on Debian and task MCP response delivery. [Testing status](../testing/README.md), [desktop platform evidence](../plans/game-testing.md#desktop-observation-follow-up), [browser qualification](browser-testing.md) |
+
+## Desktop, development and test evidence
+
+Linux uses `basaltw desktop` for Debian XRDP and `basaltw desktop --native`
+for the existing CachyOS KDE Wayland session. Native Windows has a separate
+`basaltw.exe` and PowerShell implementation. Ubuntu WSL supplies a Linux
+development environment with its own tool and skill inventory. [Workstation workflow routes](../workstations/workflows.md)
+
+| Tool | Input | Output and current boundary |
+| --- | --- | --- |
+| Linux desktop lifecycle | `status`, `doctor`, `start`, `stop`, `logout`, `revoke`, `handoff`, `control`, `renew`, `wake` and operation-specific flags | The common dispatcher emits JSON. Most commands accept a redundant `--json`. Backend availability differs. KDE consent and XRDP control are distinct state machines. [CLI](../../lib/desktop_cli.py), [desktop control](../workstations/desktop-control.md), [KDE](../workstations/cachyos-desktop.md) |
+| Linux desktop discovery | `preflight`, `instructions PATH`, `windows`, `inspect`, `wait`, `wait-element` with selectors, generation and optional bounds | JSON for status, bounded text ranges, window/accessibility observations and waits. `--save-output` on `windows`, `inspect`, `wait` and `wait-element` substitutes a bounded preview with an `artifact` path. A saved full reply can still describe a truncated scan. [CLI](../../lib/desktop_cli.py), [retention](../../desktop/observations.py), [evaluation](../workstations/desktop-evaluation.md) |
+| Linux desktop launch and control | `exec -- ARGV`, `open PATH`, `launch-status ID`, `window`, `element`, `input`, `sequence PLAN.json --generation GEN`, `smoke` | JSON for launch, input, partial execution and follow-up observations. `sequence` reads an array of action objects from a JSON file and rejects `--json`. Its `--save-output` retains the full `results` and partial-failure receipts at the returned `artifact`. `input` normally takes flags and native touch reads a JSON frame file. Observation and dispatch failures can happen after an effect. `smoke` is a live Debian Geany fixture. [CLI](../../lib/desktop_cli.py), [short sequences](../workstations/short-observation-sequences.md) |
+| Linux screenshot and coordinates | `screenshot` with optional PNG path, crop or preview settings. `map-point` takes explicit geometry or `--capture FRAME.json` and a declared coordinate space. | JSON metadata plus PNG files. `--compact` changes the screenshot envelope. `--capture` expects the saved receipt, including when its associated image is already in context. XRDP supports window targets. KDE captures the consent-selected monitor and supports cropping. [Screenshot and input contract](../workstations/desktop-observations.md), [CLI](../../lib/desktop_cli.py) |
+| Linux supervised development | `desktop develop doctor`, `editor`, `run`, `import`, `exec`, `node`, `check`, `compare`, `playtest`, `browser`, `cleanup-browser`, `list`, `status`, `logs`, `stop`, `wait`. Uses project paths, task IDs, literal argv after `--`, or declared recipes. | JSON plans, task IDs, results and bounded log metadata. `logs` defaults to text and takes `--json` for the envelope. `wait` uses exit 124 for a caller-side timeout. Capability gates depend on the host and action. [CLI](../../desktop/development.py), [Debian](../workstations/debian-development.md), [CachyOS](../workstations/cachyos-development-session.md) |
+| Linux recording and checkpoints | `desktop evidence start`, `finish`, `finalize`, `verify`, `closeout`, `process`, `run start/show/checkpoint/suspend/resume/context/policy/finish`, and `accessibility-record` | JSON replies with private recording, verification or checkpoint artifacts and optional media. Reopening a ledger preserves its original clock. Finalization and application cleanup each have their own receipt. Native AT-SPI recording is explicit and bounded. [Evaluation](../workstations/desktop-evaluation.md), [CLI](../../lib/desktop_cli.py), [evidence CLI](../../desktop/qa_cli.py) |
+| Linux media, recognition and controller checks | `desktop audio sources/capture/analyze`; `desktop evidence crop/point-preview/excerpt/export/timeline`, `perception recognize/evaluate`, `records create/validate/audit`, `corpus`, `conditional validate/execute/wait`; `desktop gamepad serve/status/stop/doctor/press` | JSON replies, versioned JSON inputs and manifests, and PNG or WAV artifacts where applicable. Offline validation, bounded native execution, synthetic recognition, and application behavior have separate proof. PipeWire capture and live conditional execution are native-mode workflows; WAV analysis and core record validation can run offline. [QA CLI](../../desktop/qa_cli.py), [learning records](../workstations/learning-records.md), [gamepad and platform evidence](../plans/game-testing.md) |
+| Native Windows desktop | `status`, `doctor`, `environment`, `worker`, `windows`, `inspect`, `screenshot`, `map-point`, `window`, `element`, `input`, `control`, `open`, `terminal`, `notify`. Uses native window IDs, observation references, literal text and key/timeline arguments. | JSON for native control. Many core verbs accept `--json` as a no-op. `input sequence` is a comma-delimited key list, with a separate hold timeline grammar. Pixel commands use window identity, generation and dimensions. Screenshots write PNGs and return observation metadata. [CLI](../../windows/Cli.Common.ps1), [desktop implementation](../../windows/Desktop.Common.ps1), [native controls](../workstations/windows-desktop-native-controls.md) |
+| Native Windows supervised development | `desktop develop doctor`, `exec`, `node`, `editor`, `run`, `import`, `status`, `logs`, `cancel`, `wait`, `ready`, `diagnose` | The launcher serializes PowerShell results to JSON. `status`, `logs` and `cancel` take a bare task ID and reject the Linux-style `--json`. Logs return `Stdout` and `Stderr` with per-stream bounds. `ready` and `wait` report different milestones, and wait timeout uses exit 124. Test sessions add a token-bearing readiness JSON file, a final `receipt.json` and bounded log files. [Dispatch](../../windows/Cli.Common.ps1), [development CLI](../../windows/Development.Common.ps1), [test sessions](../workstations/windows-test-sessions.md) |
+| Native Windows capture and media | `desktop capture`, `pacing`, `audio`; `media doctor` and file inspection. Capture selects a target, size or tracing options. | JSON metadata plus private media or diagnostics files. Capture and pacing can ingest project JSONL events. Native control, GPU capture, process audio and streaming have separate qualification. [Evidence](../workstations/windows-evidence.md), [media](../workstations/windows-media.md) |
+| Render and visual recipes | `agent visuals compare/batch/capture/check/check-revisions`, `agent blender smoke/inspect`, `agent graphics doctor`. Uses PNG or PFM where supported, settings and recipe JSON, project paths, literal argv and Git refs. | Visual and Blender commands have human and `--json` outputs with evidence paths. Graphics doctor emits JSON. A successful isolated Blender or GLX check has its stated renderer/context coverage. Project recipes own image-content assertions and required artifacts. [Visual comparisons](../workstations/visual-comparisons.md), [command reference](../reference/cli-agent-diagnostics.md) |
+| Command output helpers | Skill scripts `capture_output.py -- COMMAND [ARGS...]` and `read_output.py SUMMARY.json` with stream, scan and excerpt selectors | Capture returns JSON plus `summary.json`, `stdout.log` and `stderr.log`. It propagates child status in the supported range and uses 124 on timeout. Reader returns bounded JSON, emits inspection errors as JSON on stderr, and uses its own inspection status. [Output and evidence guide](../../common/agent_skills/basaltwater-project-development/references/tool-output.md) |
+| Basaltwater's own qualification runners | `make check-fast`, `check-ci`, `test`, `docs-check`, `browser-test`, `panel-dev`; native Windows `windows/tests/Run-*.ps1` and explicit qualification scripts | Test or server output and process status. `run_tests.py` optionally retains timing JSON. `browser-test` announces an evidence directory in text and writes `summary.json`, Playwright `results.json`, logs and optional traces. The selected check, skipped prerequisites and application coverage appear in the summary. [Make targets](../../Makefile), [browser runner](../../scripts/run_browser_tests.py), [Windows qualification](../workstations/windows-qualification.md) |
+
+## Browser tooling
+
+| Tool | Input | Output and current boundary |
+| --- | --- | --- |
+| `agent browser doctor/install/register` and the managed Playwright wrappers | Engine, context, optional project path and supported agent registration target | JSON by default for these three verbs. `--json` indents it. Browser startup, MCP registration, session exposure and application checks are distinct. The installed `basaltwater-playwright-mcp` is a stdio MCP server. The doctor wrapper provides a bounded engine smoke. [CLI](../../lib/agent_browser.py), [launcher](../../common/browser_automation_steps.py) |
+| `agent browser resolve-preview` | Loopback host/port, optional protocol, path and profile | A successful default reply is the T3 navigation object alone. `--json` returns the full readiness object and nests the navigation arguments under `navigation`. Failure is diagnostic text on stderr by default and JSON on stdout with the flag. The probe runs from the command host. [Resolver](../../lib/t3_preview.py), [preview guide](browser-t3-preview.md) |
+| `agent test-instance` | Service profile, project or snapshot directory, port and readiness options | Text by default. `--json` emits a single ready line with URL and container identity while the command stays alive. Terminal startup or cleanup errors use stderr and process status. Readiness establishes service availability for test setup. [Implementation](../../lib/browser_test_instance.py) |
+| T3 collaborative preview | `preview_status`, `preview_open`, `t3_preview_list` and `t3_preview_close` select/manage tabs. `preview_navigate`, `preview_snapshot`, `preview_act`, `preview_evaluate`, `preview_wait_for`, `preview_dialog`, `preview_resize`, `preview_set_appearance` and recording start/stop use typed tool arguments. | Structured tab and action state is advertised for several tools. Snapshot and HTML tools advertise a generic MCP result with possible media. Evaluation advertises `{value}`. Saved screenshots and recording use paths. `preview_act` uses `locator: "aria-ref=…"` from the current snapshot and tab ownership gates actions. [Collaborative preview reference](../../common/agent_skills/basaltwater-project-development/references/collaborative-preview.md) |
+| T3 visual and native surface tools | `html_preview` and `html_render` take inline HTML or an absolute HTML path. `device_list/open/screenshot/close` use native device arguments where offered. | Preview reports rendering and diagnostics, and render provides a user-facing inline artifact. Native surface support is session-dependent. [T3 visual replies](../../common/agent_skills/basaltwater-project-development/references/t3-visual-replies.md), [T3 platforms](../../common/agent_skills/basaltwater-project-development/references/t3-platforms.md) |
+| Managed Playwright MCP navigation and inspection | `browser_navigate`, `browser_navigate_back`, `browser_tabs`, `browser_close`, `browser_snapshot`, `browser_find`, `browser_console_messages`, `browser_network_requests`, `browser_network_request` | The active schemas advertise generic MCP content. Snapshots, context snippets and network/console reports are text; supported `filename` arguments save results to disk. Network detail takes a request number from the list. [Managed browser guide](browser-automation.md) |
+| Managed Playwright MCP actions, evaluation and media | `browser_click`, `browser_hover`, `browser_type`, `browser_fill_form`, `browser_select_option`, `browser_press_key`, `browser_drag`, `browser_drop`, `browser_file_upload`, `browser_handle_dialog`, `browser_wait_for`, `browser_resize`, `browser_emulate_media`, `browser_mouse_click_xy`, `browser_mouse_down`, `browser_mouse_drag_xy`, `browser_mouse_move_xy`, `browser_mouse_up`, `browser_mouse_wheel`, `browser_evaluate`, `browser_run_code_unsafe`, `browser_take_screenshot` | Structured argument objects with generic MCP content results. DOM actions use `target` from a Playwright snapshot or a unique selector. Evaluation expects a JavaScript `function` string and can return text or save it with `filename`. Screenshot has a CSS/device scale and image/file output options. [Playwright skill reference](../../common/agent_skills/basaltwater-browser-testing/references/playwright.md), [canvas reference](../../common/agent_skills/basaltwater-browser-testing/references/canvas.md) |
+| Project-pinned Playwright and interactive Firefox/Firefox ESR | Project config, fixtures and test argv, or native desktop commands and pixels | Project Playwright owns its runner/reporters and artifact paths. Interactive desktop provides visual/input evidence through desktop receipts. T3, managed Chromium/Firefox, project engines and interactive browsers each have their own network origin and trust context. [Engine and context coverage](browser-automation.md#engine-and-context-coverage) |
+
+## Environment, coordination and deployment tools
+
+| Tool | Input | Output and current boundary |
+| --- | --- | --- |
+| `agent context` and `agent manifest` | Optional project path, capability and application selectors, project declaration in `basaltwater-agent.json` | Human summary or versioned JSON with `--json`. JSON context includes more detail. Manifest supplies literal recipe and launch argv and reports discovery without running project recipes. [Manifest reference](agent-environment.md) |
+| `agent diagnostics`, `support-bundle`, `doctor`, `update` | Diagnostic selectors and optional output, tool/capability/profile and optionally SSH target. `update` supports an explicit preview. | `diagnostics` emits JSON and can save full evidence while printing a summary. `support-bundle` prints JSON by default and a path with `--output`. `doctor` and `update` offer text or `--json`. The JSON update result is an array, and some failures are text. Readiness, redaction and actual task results have different scopes. [Diagnostics reference](../reference/cli-agent-diagnostics.md), [agent host commands](../reference/cli-agent-hosts.md) |
+| `agent resources`, `containers inspect/preflight`, `storage inspect/project/clean-generated/clean-go-build/clean-podman`, `reservations status/run` | Capacity selectors, paths, reviewed cleanup selection and literal argv after `--` for an advisory reservation | JSON for probes and cleanup reports. `reservations run` forwards command output and status and prints its JSON reservation receipt to stderr. [Command reference](../reference/cli-agent-diagnostics.md), [reservations](../workstations/performance-sessions.md) |
+| `agent auth set/status/login`, `agent web pair`, `agent privilege request/status/wait/cancel/password-hash/admin-status` | Terminal or protected credential input, pairing parameters, allowed broker operation, literal argv or request ID | Interactive flows, status summaries and optional JSON where offered. Broker result state distinguishes submission, approval, execution and terminal outcome. Transport failure can be text on stderr even with `--json`. [Authentication](agent-authentication.md), [privilege reference](privilege-broker-reference.md), [CLI](../../lib/privilege_client.py) |
+| `agent workspace create/list/status/adopt/group/remove`, `agent memory scope/list/get/put/remove/claim/renew/finish/reopen`, `agent models init/recommend/record/report` | Git paths/refs and worktree identity, local note/todo payloads, or a provider model catalog file and reviewed run observations | Workspace has human and JSON views. Memory uses compact or indented JSON. Models emits JSON results, including a possible absent selection, and prints some errors as text. They keep their own ownership, scope and result fields. [Workspace CLI](../../lib/agent_workspace.py), [memory](agent-memory.md), [models CLI](../../lib/agent_models.py) |
+| `agent inbox send/feedback/list/wait/ack/restore`, `agent maintenance-agent status/configure/run/clean`, `agent maintenance hold/status/release` | Account-local messages and receipts, bounded wait and maintenance configuration or hold lifetime | Inbox and maintenance supervisor generally emit JSON results and can emit text errors. Inbox wait timeout returns `[]` with `--json` and text without it. Hold commands also have human status output. [Inbox CLI](../../lib/agent_inbox.py), [supervisor](../../lib/maintenance_agent.py), [holds](../operations/maintenance.md#agent-maintenance-holds) |
+| Task CLI and web panel | `agent tasks capabilities/list/show/history/receipt/create/update/run/pause/resume/cancel/delete/reset-context/notify/worker/mcp`. Create/update accept a JSON object from a file or stdin `-`; other verbs take task/run IDs and flags. The panel supplies HTML forms. | CLI success is JSON. `--json` switches caught failures from stderr text to stdout JSON. `list --summary` opts into a compact view. Job submission returns control data, and the worker retains completion and run evidence. [CLI](../../lib/agent_tasks_cli.py), [task guide](agent-tasks.md) |
+| Task MCP | `basaltwater_tasks_capabilities`, `basaltwater_tasks_list`, `basaltwater_tasks_show`, `basaltwater_tasks_history`, `basaltwater_tasks_receipt`, `basaltwater_tasks_create`, `basaltwater_tasks_update`, `basaltwater_tasks_action`, `basaltwater_tasks_notify`, `basaltwater_operator_feedback`. Accepts native object arguments, including a nested `task` object. | The server advertises input schemas and emits success JSON in `content[0].text`. Tool failures set `isError` and return prose in that field. There is no advertised `outputSchema` or `structuredContent` result. List defaults to `summary=true`. Mutation exposure depends on registration flags and session authority. [Server](../../lib/agent_tasks_mcp.py) |
+| T3 coordination and project workflows | Live tools for provider capabilities, delegation and task status, threads/worktrees, local project actions, schedules and issue/PR integration. Structured thread handoffs can carry an `outputSchema` and a later `output`. | Typed results vary by upstream operation and client version. T3 thread/task IDs and wakes belong to T3. Basaltwater's independent task worker uses its own IDs, persistence and receipts. [T3 workflows](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md), [delegation and scheduling](agent-subagents.md), [Basaltwater tasks](agent-tasks.md) |
+| Host and project tooling | Linux `local cachyos-doctor/install/update/desktop/browser/hostname/ip/network`, `manifest init/validate/check-t3-worktree`, `node status/doctor/env/exec/resolve/install`. Native Windows `info`, `doctor`, `storage`, `refresh`; Windows/WSL job scripts use PowerShell parameters and paths. | Discovery and validation offer JSON where documented. Other routes use shell exports, child status, text or private files. Native Windows refresh has background job status/logs and follow modes. Windows/WSL job evidence is conditional on the selected distribution, worker and job. [Project tooling](project-tooling.md), [CachyOS](../workstations/cachyos.md), [Windows CLI](../../windows/Cli.Common.ps1), [Windows/WSL](../workstations/windows-wsl.md) |
+| Deployment smoke and gateway | `agent deployment-receipt` takes an expected revision, health URLs and optional service units or activation argv. `basaltwater-web publish site/godot`, `site list/url/doctor/verify/remove/migrate-legacy`, `forward add/remove/list/url/doctor/prune/reconcile`, `preview resolve/start/restart/stop/list/status/url/logs/prune`, and legacy `list/url/remove/doctor/ca` use named routes and optional project/port settings. | Stage receipt, route metadata and verification JSON where offered. URL-only and logs verbs emit text. Successful `preview resolve` prints a URL by default for a gateway route, the navigation object with `--route t3`, or a full result with `--json`. Deployment receipt uses stderr text for invalid inputs even in JSON mode. Managed HTTPS probes report their test origin. [Deployment receipt](../../lib/deployment_receipt.py), [gateway CLI](../../common/service_tools/basaltwater_web.py), [gateway skill](../../common/agent_skills/basaltwater-web-gateway/SKILL.md) |
+| Godot exports, build and game publishing | `basaltwater-web publish site --profile godot`, project export or build recipes, `basaltw publish status/projects/jobs/runs/project/complete/prepare/upload/cancel/worker/schedule/job/draft/export/artifact-text/remove-artifact/promote-itch/release/beta-prepare/beta-promote/auth`. Inputs include project manifest, exact revision, release artifacts and human approvals where applicable. | Gateway outputs a publication receipt and URL. Build runners and project recipes have their own logs and artifacts. Game publishing exposes JSON modes, durable upload results and reviewed handoffs. [Godot skill](../../common/agent_skills/basaltwater-godot-web/SKILL.md), [project and publishing CLI](../reference/cli-project-workflows.md), [build delivery](contributing/build-architecture.md) |
+
+## Skill coverage
+
+All 23 source entrypoints are listed below. Names omit the common `basaltwater-`
+prefix. Installers select bundles by profile and resolved capability. The active
+provider and session determine tool exposure. [Debian and CachyOS catalog](agent-skill-catalog.md), [Windows catalog](../../windows/agent-skills.json), [WSL catalog](../../common/wsl_steps.py)
+
+| Installed with | Skills | Main interfaces |
+| --- | --- | --- |
+| Shared development roles | `project-development`, `project-adoption`, `frontend-design`, `subagents` | Project CLI, literal argv and output capture, optional native or T3 orchestration. Windows supplies three of these four and omits `project-adoption`. |
+| Debian agent base | `agent-operations`, `agent-tasks`, `agent-workspace`, `deploy-smoke`, `shared-assets`, `vm-triage` | Discovery, privileged or interactive workflows, task CLI/MCP, worktree and memory CLI, deployment checks, SMB/SSHFS/Git LFS, support bundles. |
+| Resolved browser capabilities | `browser-testing` for both T3 and managed Playwright, `playwright-testing` for Playwright only, `t3-preview-testing` for T3 only | Session policy and browser routing. The T3-only bundle also appears in selected CachyOS installations and in the Windows catalog. |
+| Optional Debian capabilities | `desktop`, `t3code`, `web-gateway`, `godot-web` | XRDP, T3 service/pairing, HTTPS previews and snapshots, Godot export and verification. |
+| CachyOS | `cachyos-workstation`, `cachyos-workspace`, `cachyos-desktop`, optional `cachyos-t3code` | Native workstation tools, Git worktrees, KDE portal/AT-SPI control, native development, T3 desktop or service. |
+| Native Windows and Ubuntu WSL | `windows-workspace`, `wsl-workspace` | Native PowerShell/Windows tools and Ubuntu distribution tooling respectively, with T3 platform routing. |
+
+## Reproduced format differences
+
+The probes used no application data. `JSON` means stdout parsed as a single
+JSON value. Text channels are listed explicitly.
+
+| Probe | Default | With `--json` |
+| --- | --- | --- |
+| `agent context` | Exit 0, stdout text | Exit 0, stdout JSON object |
+| `desktop map-point` with explicit synthetic geometry | Exit 0, stdout JSON object | Exit 0, same stdout JSON fields |
+| `agent tasks capabilities` | Exit 0, stdout JSON object | Exit 0, same stdout JSON fields |
+| `agent tasks create -` with `[]` on stdin | Exit 1, stderr text | Exit 1, stdout JSON `{ok,error}` |
+| `agent browser resolve-preview` with invalid `--path //invalid` | Exit 2, stderr text | Exit 2, stdout JSON `{ok,error}` |
+| `desktop sequence` with `--json` | The command is defined to emit JSON without this flag. | Exit 2, stderr usage, before reading the plan |
+
+`desktop map-point --capture` also rejected a synthetic `.png` path with exit 1
+and stdout JSON `{error}`. A live MCP capabilities call returned
+`isError: false` and a JSON document inside one text block, with no
+`structuredContent`. [Desktop CLI](../../lib/desktop_cli.py), [task CLI](../../lib/agent_tasks_cli.py), [task MCP](../../lib/agent_tasks_mcp.py), [browser resolver](../../lib/t3_preview.py)
+
+### Handoffs that need explicit format labels
+
+| Workflow | What the next tool consumes |
+| --- | --- |
+| Desktop screenshot → map → input | The screenshot's `output` is the PNG to inspect. Save stdout separately as `FRAME.json` for `map-point --capture`. The resulting coordinates, frame generation and observation ID feed `input`. With `sequence --save-output`, open the path in `artifact` for the full action receipts. [Desktop observations](../workstations/desktop-observations.md), [short sequences](../workstations/short-observation-sequences.md) |
+| Loopback readiness → T3 preview | Default `agent browser resolve-preview` stdout is the navigation arguments. With `--json`, pass the nested `navigation` object to T3. A gateway resolver returns a successful default URL as text. [T3 resolver](../../lib/t3_preview.py), [gateway resolver](../../common/service_tools/basaltwater_web.py) |
+| Task CLI → task MCP | Pass one task object to CLI `create -` on stdin. Pass an object containing a `task` field to MCP, with scheduling controls alongside it. CLI `list` needs `--summary` for the compact result that MCP already defaults to. [CLI](../../lib/agent_tasks_cli.py), [MCP](../../lib/agent_tasks_mcp.py) |
+| Browser snapshot → interaction | T3 uses `locator: "aria-ref=…"`. Playwright uses `target` from its own snapshot or a unique selector. For evaluation, T3 takes `expression` and advertises a `{value}` result, while Playwright takes `function` and advertises text/file output. [Collaborative preview](../../common/agent_skills/basaltwater-project-development/references/collaborative-preview.md), [Playwright reference](../../common/agent_skills/basaltwater-browser-testing/references/playwright.md) |
+
+## Priorities for consistency
+
+1. **Give JSON mode a shared CLI contract.** Pilot it on desktop, tasks and
+   browser resolution. Document whether the default is text or JSON. Accept
+   `--json` on JSON-by-default commands and make it select a stable machine
+   view on mixed-output commands. In that mode, emit one JSON value on stdout
+   for success and handled failure, with progress and child logs on stderr.
+   Document parser errors, foreground readiness streams and child-output
+   passthrough as explicit interfaces. Preserve existing callers through aliases
+   or additive fields and test both output streams.
+2. **Label each accepted input and returned artifact.** Help and skill examples
+   should say `PLAN.json`, `CAPTURE_RECEIPT.json`, `PNG`, `TASK_ID` or `ARGV`
+   as appropriate. Use the same names for equivalent arguments where practical.
+   For cross-platform workflows, put the Linux and Windows invocation side by
+   side and show the follow-up command consuming the actual returned field.
+   Apply this first to screenshot → map → input and develop → status → logs.
+3. **Expose task MCP results as structured data.** Add per-tool output schemas
+   for negotiated revisions that support them, and preserve the current
+   serialized text for existing clients. Test MCP and CLI against the same task
+   payloads, including list defaults and draft versus scheduled creation. The
+   protocol already defines fields for structured success and tool errors.
+   [MCP structured output reference](https://py.sdk.modelcontextprotocol.io/v2/servers/structured-output/)
+4. **Make lifecycle and partial effects observable.** Document whether a result
+   reports discovery, accepted work, readiness, completion, verification or
+   uncertainty. Keep job IDs, affected scope and evidence paths in failures after
+   an effect. Keep output truncation distinct from incomplete observation.
+   Use current desktop input receipts and supervised development waits as the
+   starting points for tests of retry and recovery behavior.
+5. **Put capability discovery and I/O notes where agents start.** Keep one short
+   contract next to each owning CLI or MCP definition. Link to it from the skill
+   and add only the relevant entry points to scoped discovery. Show PATH,
+   installed bundle, session exposure, running-helper revision and verified
+   readiness as independent observations. Start with desktop, browser and
+   tasks, then extend the convention across the rest of the inventory.
+
+For acceptance, exercise one success, one invalid input, one runtime failure,
+and any partial or timeout result through each selected CLI or MCP entry point.
+Assert the exit code or `isError`, stdout/stderr or MCP content type, schema
+shape, and whether a returned artifact can be consumed by the documented next
+step. Run native fixtures for backend-specific behavior and retain scoped evidence.

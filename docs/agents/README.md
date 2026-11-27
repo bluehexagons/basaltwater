@@ -21,6 +21,7 @@ browser-approved privileged-action panel, start with
 | Set up, rotate, or recover provider credentials | [Agent authentication](agent-authentication.md), [Credentials](credentials.md) |
 | Inspect tools, workspace conventions, or deployment mappings | [Environment manifest](agent-environment.md) |
 | Understand installed capabilities and skill routing | [Managed skills](agent-skills.md) |
+| Compare agent tool inputs, outputs, and platform support | [Agent tool interface inventory](agent-tool-inventory.md) |
 | Keep context within a budget | [Context budgets](agent-context.md) |
 | Delegate isolated work | [Subagent workflows](agent-subagents.md) |
 | Save notes and shared todos | [Project memory](agent-memory.md) |
