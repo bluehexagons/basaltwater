@@ -76,7 +76,7 @@ def render_request(request: dict, token: str, *, integrated: bool = False) -> st
     title = (ADMIN_ACTIONS.get(plan["parameters"].get("action"), {}).get("title", "Administration job")
              if plan["operation"] == "admin.run" else
              DATA_ACTIONS[plan["parameters"]["action"]][0] if plan["operation"] == "data.run" else
-             {"command.run": "Run privileged command", "service.restart": "Restart service",
+             {"software.install": "Install agent software", "command.run": "Run privileged command", "service.restart": "Restart service",
               "system.reboot": "Restart host"}.get(plan["operation"], "Review privilege request"))
     listing = "/approvals" if integrated else "/"
     content = f'<p><a href="{listing}">All requests</a></p>'
@@ -86,6 +86,21 @@ def render_request(request: dict, token: str, *, integrated: bool = False) -> st
     # Keep the exact executable arguments visible for general command reviews.
     if plan["operation"] == "command.run":
         content += '<h3>Exact command arguments</h3><pre>' + escape(canonical(plan["argv"])) + '</pre>'
+    elif plan["operation"] == "software.install":
+        info, params = plan["software"], plan["parameters"]
+        command = f'basaltw agent software plan --{params["kind"]} {params["name"]}'
+        packages = ''.join('<li>' + escape(f'{row["package"]} {row["version"]} ({", ".join(row["sources"])})')
+                           + '</li>' for row in info["packages"])
+        content += '<h3>Debian software selection</h3><p>' + escape(", ".join(info["requested"])) + '</p>'
+        if packages:
+            content += f'<p>Showing {len(info["packages"])} of {info["changes"]} package changes.</p><ul>{packages}</ul>'
+        content += ('<p>Inspect the complete transaction on the target and match its package digest.</p><pre>'
+                    + escape(command) + '</pre><code>' + escape(info["package_digest"]) + '</code>')
+        if params["scope"] == "saved":
+            content += ('<p>Rebuild configuration saved on the controller.</p>' if request["saved_for_rebuild"] else
+                        '<p>The owning controller must synchronize this selection before installation.</p>')
+        if request["applied"]:
+            content += '<p>Installation verified on the target.</p>'
     elif plan["operation"] == "data.run":
         parameters = plan["parameters"]
         labels = (("Scrub root", "directory"), ("Parity directory", "database"), ("Independent copy", "backup"))
@@ -145,11 +160,11 @@ def render_queue(records: list[dict]) -> str:
     for row in records:
         operation, target = row["operation"], row.get("target", "")
         title = (ADMIN_ACTIONS.get(target, {}).get("title", "Administration job") if operation == "admin.run" else
-                 {"command.run": "Run privileged command", "service.restart": "Restart service" + (": " + target if target else ""),
+                 {"software.install": "Install agent software", "command.run": "Run privileged command", "service.restart": "Restart service" + (": " + target if target else ""),
                   "system.reboot": "Restart host"}.get(operation, operation))
         item = (f'<li><a class="approval-task" href="/requests/{row["id"]}"><strong>{html.escape(title)}</strong>'
                 f'<span>{html.escape(row["state"])} · UID {row["uid"]}</span></a></li>')
-        (active if row["state"] in {"pending", "approved", "executing"} else recent).append(item)
+        (active if row["state"] in {"pending", "approved", "awaiting_controller", "saving", "ready", "executing"} else recent).append(item)
     content = '<h2>Active requests</h2>' + ('<ul class="approval-tasks">' + ''.join(active) + '</ul>' if active else '<p>No active approval requests.</p>')
     if recent:
         content += '<h2>Recent history</h2><ul class="approval-tasks">' + ''.join(recent[:3]) + '</ul>'

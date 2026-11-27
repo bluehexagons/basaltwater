@@ -59,9 +59,9 @@ def protected_path(path: str, *, directory: bool = False) -> None:
 
 
 def validate_policy(value: object) -> dict:
-    if not isinstance(value, dict) or set(value) - {"max_review_seconds", "max_runtime_seconds"} not in ({
-        "version", "machine", "origin", "requester_uid", "ttl_seconds", "services", "reboot"
-    }, {"version", "machine", "origin", "requester_uid", "ttl_seconds", "services", "reboot", "commands"}):
+    required = {"version", "machine", "origin", "requester_uid", "ttl_seconds", "services", "reboot"}
+    optional = {"commands", "max_review_seconds", "max_runtime_seconds", "software"}
+    if not isinstance(value, dict) or not required <= value.keys() <= required | optional:
         raise ValueError("Invalid broker policy fields")
     if type(value["version"]) is not int or value["version"] != 1:
         raise ValueError("Unsupported broker policy version")
@@ -108,6 +108,8 @@ def validate_policy(value: object) -> dict:
         value["commands"] = "approve"
     if value["commands"] != "approve":
         raise ValueError("Commands must require individual approval")
+    if value.get("software", "approve") not in ("approve", "deny"):
+        raise ValueError("Software installations may only be denied or individually approved")
     return value
 
 
@@ -204,6 +206,16 @@ def operation_plan(policy: dict, uid: int, operation: str, parameters: object) -
                   + ". Approval admits or changes access to the shared network. "
                   "Register only the exact Auth ID verified with the selected person. "
                   "Registration expires after five minutes or broker restart; attempt once, never retry automatically.")
+    elif operation == "software.install":
+        from lib.software_requests import reviewed_install
+        if policy.get("software") == "deny":
+            raise PermissionError("Software installation is disabled by administrator policy")
+        ceiling = policy.get("max_runtime_seconds")
+        runtime = validate_runtime(parameters.get("runtime_seconds", min(3600, ceiling) if ceiling else 3600))
+        if ceiling is not None and runtime > ceiling:
+            raise ValueError("Requested runtime exceeds administrator policy")
+        software, argv, effect = reviewed_install(parameters)
+        mode = "approve"
     elif operation == "command.run" and set(parameters) in ({"argv"}, {"argv", "runtime_seconds"}):
         argv = validate_command_argv(parameters["argv"])
         mode = policy.get("commands", "approve")
@@ -224,4 +236,8 @@ def operation_plan(policy: dict, uid: int, operation: str, parameters: object) -
         plan["headscale_endpoint"] = endpoint
     if operation == "command.run":
         plan["runtime_seconds"] = runtime
+    if operation == "software.install":
+        plan["software"] = software
+        plan["runtime_seconds"] = runtime
+        plan["effect"] += f" Execution limit: {runtime} seconds."
     return plan

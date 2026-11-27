@@ -171,7 +171,7 @@ def _privilege_requests(snapshot: dict, csrf: str, approval_url: str | None) -> 
         return content + '<p class="empty">Broker request listing is unavailable. Use the approval portal; rerun setup to update an older broker.</p></section>'
     rows = []
     titles = {'service.restart': 'Service restart', 'system.reboot': 'Reboot',
-              'command.run': 'Privileged command', 'admin.run': 'Administration job'}
+              'command.run': 'Privileged command', 'software.install': 'Install agent software', 'admin.run': 'Administration job'}
     for record in records[:20]:
         operation = record.get('operation', '')
         target = str(record.get('target', ''))
@@ -184,7 +184,7 @@ def _privilege_requests(snapshot: dict, csrf: str, approval_url: str | None) -> 
         identifier = record.get('id')
         if approval_url == "/approvals" and isinstance(identifier, str) and ID_PATTERN.fullmatch(identifier):
             actions = f'<a class="refresh-link" href="/requests/{identifier}">Review exact action</a>'
-        if status in {'pending', 'approved'} and isinstance(identifier, str) and ID_PATTERN.fullmatch(identifier):
+        if status in {'pending', 'approved', 'awaiting_controller'} and isinstance(identifier, str) and ID_PATTERN.fullmatch(identifier):
             actions += f'<form method="post" action="/actions/admin/cancel">{csrf}<input type="hidden" name="id" value="{identifier}"><button>Cancel request</button></form>'
         detail = ''
         execution = record.get('execution')
@@ -249,7 +249,7 @@ def render_admin(state: Any, style: str, query: dict[str, str], *, error: str = 
     records = snapshot.get("privilege_requests")
     if not isinstance(records, list):
         records = snapshot.get("requests", [])
-    active = sum(row.get("state") in {"pending", "approved", "executing"} for row in records)
+    active = sum(row.get("state") in {"pending", "approved", "awaiting_controller", "saving", "ready", "executing"} for row in records)
     if view == "actions" and active:
         body += f'<aside class="status"><a href="/admin?view=requests">{active} active approval request(s) · Review requests →</a></aside>'
     if view == "requests":

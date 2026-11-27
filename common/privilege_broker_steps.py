@@ -27,6 +27,7 @@ from lib.privilege_policy import (
 from lib.privilege_setup import approval_origin, broker_enabled, integrated_approvals, privilege_broker_origin, validate_broker_settings
 from lib.remote_utils import is_dry_run, is_service_active, run
 from lib.setup_directories import directory_fd
+from lib.software_requests import SOFTWARE_PROFILES
 from lib.unit_transaction import inspect_unit_state, snapshot_unit_file
 from lib.validators import validate_username
 
@@ -440,6 +441,11 @@ def _configure_privilege_broker(config, begin_changes) -> None:
                   "requester_uid": account.pw_uid, "ttl_seconds": DEFAULT_REQUEST_TTL_SECONDS,
                   "max_review_seconds": MAX_REQUEST_TTL_SECONDS, "services": {}, "reboot": "approve", "commands": "approve"}
     validate_policy(policy)
+    if config.system_type in SOFTWARE_PROFILES:
+        check_apt = ["/usr/bin/python3", "-I", "-c", "import apt, apt_pkg"]
+        if run(check_apt, check=False).returncode:
+            run(["apt-get", "install", "-y", "python3-apt"])
+            run(check_apt)
     # Every installed Python dependency is part of the privileged boundary.
     for directory in ("/opt/basaltwater/lib", "/opt/basaltwater/common", "/opt/basaltwater/plugins", "/opt/basaltwater/sync", "/opt/basaltwater/smb"):
         protected_path(directory, directory=True)

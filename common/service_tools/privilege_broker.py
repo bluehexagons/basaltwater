@@ -42,7 +42,7 @@ from lib.privilege_execution import (
 )
 from lib import headscale_portal
 
-_REVIEW_ORDER = "CASE WHEN state IN ('pending','approved','executing') THEN 0 ELSE 1 END, created DESC"
+_REVIEW_ORDER = "CASE WHEN state IN ('pending','approved','awaiting_controller','saving','ready','executing') THEN 0 ELSE 1 END, created DESC"
 
 
 class BrokerRequestRejected(ValueError):
@@ -82,7 +82,7 @@ def execute(plan: dict) -> ExecutionResult:
             if not status["available"] or status["blocked"] or status["unit_state"] not in {"inactive", "failed"}:
                 return ExecutionResult("failed", failure="action_unavailable")
             stage_share_job(plan["parameters"])
-        command = plan["operation"] == "command.run"
+        command = plan["operation"] in {"command.run", "software.install"}
         if command:
             protected_path(COMMAND_HELPER)
             runtime = validate_runtime(plan.get("runtime_seconds", 60))
@@ -137,7 +137,7 @@ class Broker:
             self.db.execute("ALTER TABLE requests ADD COLUMN execution TEXT")
         with self.db:
             for row in self.db.execute(
-                "SELECT id,state FROM requests WHERE state IN ('pending','approved','executing')"
+                "SELECT id,state FROM requests WHERE state IN ('pending','approved','awaiting_controller','executing')"
             ).fetchall():
                 self._transition(row["id"], "uncertain" if row["state"] == "executing" else "expired", "restart")
 
@@ -160,7 +160,7 @@ class Broker:
 
     def _expire(self) -> None:
         for row in self.db.execute(
-            "SELECT id FROM requests WHERE state IN ('pending','approved') AND expires<=?", (time.time(),)
+            "SELECT id FROM requests WHERE state IN ('pending','approved','awaiting_controller') AND expires<=?", (time.time(),)
         ).fetchall():
             self._transition(row["id"], "expired", "expiry")
 
@@ -173,6 +173,11 @@ class Broker:
         result = dict(row)
         result["plan"] = json.loads(result["plan"])
         result["execution"] = json.loads(result["execution"]) if result["execution"] else None
+        if result["plan"]["operation"] == "software.install":
+            result["saved_for_rebuild"] = bool(self.db.execute(
+                "SELECT 1 FROM events WHERE request_id=? AND state='ready' LIMIT 1", (request_id,)
+            ).fetchone())
+            result["applied"] = result["state"] == "succeeded"
         return result
 
     def request(self, uid: int, operation: str, parameters: dict, reason: str, *, review_seconds: int | None = None) -> dict:
@@ -184,6 +189,14 @@ class Broker:
             self._expire()
             try:
                 policy = self.policy_loader()
+                if uid != policy["requester_uid"]:
+                    raise PermissionError("Account is not authorized to request privileges")
+                # Check durable admission limits before invoking a package planner.
+                count = self.db.execute("SELECT count(*) FROM requests WHERE uid=? AND created>?",
+                                        (uid, time.time() - 3600)).fetchone()[0]
+                pending = self.db.execute("SELECT count(*) FROM requests WHERE state IN ('pending','approved','awaiting_controller','saving','ready')").fetchone()[0]
+                if count >= 30 or pending >= 8:
+                    raise ValueError("Request quota reached; wait before submitting more requests")
                 ttl = policy["ttl_seconds"] if review_seconds is None else review_seconds
                 if type(ttl) is not int or not 30 <= ttl <= policy.get("max_review_seconds", policy["ttl_seconds"]):
                     raise ValueError("Requested review window exceeds policy or is shorter than 30 seconds")
@@ -207,12 +220,6 @@ class Broker:
                         if (existing == operation or existing.startswith("samba.") and operation.startswith("samba.")
                                 or existing.startswith("data.") and operation.startswith("data.")):
                             raise ValueError("An administration request is already outstanding; review or cancel it first")
-                # Persistent quotas bound pending requests and repeated automatic actions.
-                count = self.db.execute("SELECT count(*) FROM requests WHERE uid=? AND created>?",
-                                        (uid, time.time() - 3600)).fetchone()[0]
-                pending = self.db.execute("SELECT count(*) FROM requests WHERE state IN ('pending','approved')").fetchone()[0]
-                if count >= 30 or pending >= 8:
-                    raise ValueError("Request quota reached; wait before submitting more requests")
                 request_id = secrets.token_hex(16)
                 now = time.time()
                 fingerprint = digest({"id": request_id, "created": now, "expires": now + ttl, "plan": plan})
@@ -255,7 +262,7 @@ class Broker:
             row = self._get(request_id)
             if row["uid"] != uid:
                 raise PermissionError("Request unavailable")
-            if row["state"] in {"pending", "approved"}:
+            if row["state"] in {"pending", "approved", "awaiting_controller"}:
                 self._transition(request_id, "cancelled", f"uid:{uid}")
             elif row["state"] not in {"cancelled", "expired", "denied", "invalidated"}:
                 raise ValueError("Execution was already claimed; cancellation cannot undo the action")
@@ -273,6 +280,8 @@ class Broker:
                 self._transition(request_id, "invalidated", "policy-change")
             else:
                 self._transition(request_id, "approved" if approve else "denied", actor)
+                if approve and row["plan"]["operation"] == "software.install" and row["plan"]["parameters"]["scope"] == "saved":
+                    self._transition(request_id, "awaiting_controller", actor)
             return self._get(request_id)
 
     def execute_next(self) -> bool:
@@ -281,7 +290,7 @@ class Broker:
             # Also protects against accidental multiple worker threads.
             if self.db.execute("SELECT 1 FROM requests WHERE state='executing'").fetchone():
                 return False
-            row = self.db.execute("SELECT id FROM requests WHERE state='approved' ORDER BY created LIMIT 1").fetchone()
+            row = self.db.execute("SELECT id FROM requests WHERE state IN ('approved','ready') ORDER BY created LIMIT 1").fetchone()
             if row is None:
                 return False
             request = self._get(row["id"])
@@ -289,10 +298,13 @@ class Broker:
                 policy = self.policy_loader()
                 plan = operation_plan(policy, request["uid"], request["plan"]["operation"], request["plan"]["parameters"])
                 valid = plan == request["plan"]
-            except (OSError, ValueError, PermissionError):
+            except (OSError, ValueError, subprocess.SubprocessError):
                 valid = False
             if not valid:
                 self._transition(request["id"], "invalidated", "policy-change")
+                return True
+            if plan["operation"] == "software.install" and plan["parameters"]["scope"] == "saved" and not request["saved_for_rebuild"]:
+                self._transition(request["id"], "awaiting_controller", request["actor"])
                 return True
             self._transition(request["id"], "executing", request["actor"])
         # The execution claim must be durably committed BEFORE any side effect.
@@ -367,6 +379,8 @@ class Broker:
         if not isinstance(message, dict):
             raise ValueError("Expected an object")
         action = message.get("action")
+        if uid == 0 and not approval:
+            return self.controller_request(message)
         if not approval and action in {"headscale-inspect", "headscale-register"}:
             with self.lock:
                 if uid != self.policy_loader()["requester_uid"]:
@@ -535,14 +549,19 @@ class Broker:
                 while (result["privilege_requests"] or result["requests"]) and len(canonical({"ok": True, "result": result}).encode()) > MAX_MESSAGE:
                     (result["privilege_requests"] or result["requests"]).pop()
             return result
-        if approval and action == "list" and set(message) == {"action"}:
+        if action == ("list" if approval else "owned-requests") and set(message) == {"action"}:
+            if not approval and uid != self.policy_loader()["requester_uid"]:
+                raise PermissionError("Account is not authorized")
             with self.lock, self.db:
                 self._expire()
-                rows = self.db.execute(f"SELECT id,uid,created,state,plan FROM requests ORDER BY {_REVIEW_ORDER} LIMIT 20").fetchall()
+                scope = "" if approval else "WHERE uid=?"
+                rows = self.db.execute(f"SELECT id,uid,created,state,plan FROM requests {scope} ORDER BY {_REVIEW_ORDER} LIMIT 20",
+                                       () if approval else (uid,)).fetchall()
                 records = []
                 for row in rows:
                     plan = json.loads(row["plan"])
                     target = (plan["parameters"]["action"] if plan["operation"] == "admin.run" else
+                              plan["parameters"]["name"] if plan["operation"] == "software.install" else
                               plan["parameters"]["unit"] if plan["operation"] == "service.restart" else "")
                     records.append({"id": row["id"], "uid": row["uid"], "created": row["created"],
                                     "state": row["state"], "operation": plan["operation"], "target": target})
@@ -560,13 +579,45 @@ class Broker:
             return self.decide(message["id"], message["digest"], message["approve"], message["actor"])
         raise PermissionError("Action is not available on this interface")
 
+    def controller_request(self, message: dict) -> dict:
+        """Only a local root peer (normally the owning controller over SSH) can acknowledge persistence."""
+        action = message.get("action")
+        with self.lock, self.db:
+            self._expire()
+            if action == "software-queue" and set(message) == {"action"}:
+                rows = self.db.execute("SELECT id,digest,plan FROM requests WHERE state IN ('awaiting_controller','saving') ORDER BY created LIMIT 8")
+                items = []
+                for row in rows:
+                    info = json.loads(row["plan"])["software"]
+                    items.append({"id": row["id"], "digest": row["digest"], "profile": info["profile"], "username": info["username"]})
+                return {"requests": items}
+            if action not in {"software-claim", "software-saved"} or set(message) != {"action", "id", "digest"}:
+                raise PermissionError("Unsupported controller operation")
+            row = self._get(message["id"])
+            plan = row["plan"]
+            if (plan["operation"] != "software.install" or plan["parameters"]["scope"] != "saved"
+                    or row["digest"] != message["digest"]):
+                raise ValueError("Software approval mismatch")
+            if action == "software-claim" and row["state"] in {"awaiting_controller", "saving"}:
+                if row["state"] == "awaiting_controller":
+                    try:
+                        valid = plan == operation_plan(self.policy_loader(), row["uid"], "software.install", plan["parameters"])
+                    except (OSError, ValueError, subprocess.SubprocessError):
+                        valid = False
+                    self._transition(row["id"], "saving" if valid else "invalidated", "controller")
+            elif action == "software-saved" and row["state"] == "saving":
+                self._transition(row["id"], "ready", "controller")
+            else:
+                raise ValueError("Software request is no longer available for this action")
+            return self._get(row["id"])
+
 
 class Handler(socketserver.StreamRequestHandler):
     def handle(self) -> None:
         self.request.settimeout(3)
         try:
             _pid, uid, _gid = struct.unpack("3i", self.request.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
-            if uid != self.server.allowed_uid:
+            if uid != self.server.allowed_uid and not (uid == 0 and not self.server.approval):
                 raise PermissionError("Unauthorized peer")
             raw = self.rfile.readline(MAX_MESSAGE + 1)
             if len(raw) > MAX_MESSAGE or not raw.endswith(b"\n"):

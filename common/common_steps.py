@@ -22,6 +22,7 @@ from lib.node_toolchain import is_supported_node, resolve_node_release
 from lib.apt_sources import ensure_debian_package_sources
 from lib.setup_directories import directory_fd
 from lib.config import SetupConfig
+from lib.software_requests import AV_TOOL_PACKAGES, GL_TOOL_PACKAGES, JUPYTERLAB_PACKAGES
 from lib.maintenance_defaults import APT_LOCK_OPTIONS, APT_UPDATE_OPTIONS, APT_UPGRADE_SAFETY_OPTIONS
 from lib.machine_state import can_manage_time_sync, can_modify_kernel
 from lib.remote_utils import (
@@ -121,15 +122,6 @@ DATA_ANALYSIS_PACKAGES = (
     "python3-numpy",
     "python3-pandas",
     "python3-scipy",
-)
-AV_TOOL_PACKAGES = (
-    "ffmpeg",
-    "imagemagick",
-    "libimage-exiftool-perl",
-)
-GL_TOOL_PACKAGES = (
-    "apitrace",
-    "mesa-utils",
 )
 
 
@@ -642,7 +634,7 @@ def configure_time_sync(config: SetupConfig) -> None:
     print(f"  ✓ Time synchronization configured (chrony, timezone: {tz})")
 
 
-def _install_tool_packages(packages: Sequence[str], label: str) -> None:
+def _install_tool_packages(packages: Sequence[str], label: str, *, recommends: bool = True) -> None:
     """Share bundle installation while observing fresh state on each side of APT."""
     if is_dry_run():
         print(f"  [DRY-RUN] Would install {label} tools: {', '.join(packages)}")
@@ -654,7 +646,8 @@ def _install_tool_packages(packages: Sequence[str], label: str) -> None:
 
     os.environ["DEBIAN_FRONTEND"] = "noninteractive"
     package_args = " ".join(shlex.quote(package) for package in missing)
-    result = run(f"{_APT_GET} install -y -qq {package_args}", check=False)
+    options = "" if recommends else "--no-install-recommends "
+    result = run(f"{_APT_GET} install -y -qq {options}{package_args}", check=False)
     remaining = missing_packages(missing)
     if result.returncode != 0 or remaining:
         failed = ", ".join(remaining or missing)
@@ -756,8 +749,7 @@ def install_data_analysis_tools(config: SetupConfig) -> None:
 
 def install_jupyterlab(config: SetupConfig) -> None:
     """Install the notebook interface with a usable local Python kernel."""
-    _install_tool_packages(("jupyterlab", "python3-jupyterlab-server", "python3-jupyter-server",
-                            "python3-ipykernel"), "JupyterLab")
+    _install_tool_packages(JUPYTERLAB_PACKAGES, "JupyterLab", recommends=False)
 
 
 def install_av_tools(config: SetupConfig) -> None:
@@ -1536,12 +1528,20 @@ def install_apt_packages(config: SetupConfig) -> None:
     os.environ["DEBIAN_FRONTEND"] = "noninteractive"
     print("  Installing custom apt packages...")
     packages = [validate_package_name(package) for package in config.apt_packages]
+    architecture = None
     for package in packages:
         if is_package_installed(package):
             print(f"  ✓ {package} already installed")
         else:
             print(f"  Installing {package}...")
-            run(f"{_APT_GET} install -y -qq {shlex.quote(package)}")
+            selector = package
+            if "." in package or "+" in package or package.endswith("-"):
+                # APT also uses punctuation for actions and fallback matches.
+                # Replay names such as g++ literally for the native architecture.
+                if architecture is None:
+                    architecture = validate_package_name(run(["dpkg", "--print-architecture"], capture_output=True).stdout.strip())
+                selector = f"?and(?exact-name({package}),?architecture({architecture}))"
+            run(f"{_APT_GET} install -y -qq {shlex.quote(selector)}")
             if is_package_installed(package):
                 print(f"  ✓ {package} installed")
             else:

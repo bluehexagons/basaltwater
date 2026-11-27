@@ -23,6 +23,7 @@ Select a reference before performing the corresponding operation:
 | Project toolchains, terminal editing, visual evidence, or task discovery | [Project tools](references/project-tools.md) |
 | Protect long work across a restart window | [Maintenance holds](references/maintenance.md) |
 | An authorized root action through the configured broker | [Privilege requests](references/privilege.md) |
+| Add a tool to a Debian agent's reproducible setup or request a task-only install | [Software requests](references/privilege.md#request-tools) |
 | Credential status, login, or explicit rotation | [Credentials](references/credentials.md) |
 | Preparing or running unattended prompts | [Unattended tasks](references/unattended-tasks.md), plus the installed task skill |
 | Account-local environment feedback for the operator | [Feedback entrypoint](references/unattended-tasks.md#account-local-operator-feedback) |

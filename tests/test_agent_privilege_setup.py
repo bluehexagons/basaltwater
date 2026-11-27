@@ -517,6 +517,8 @@ class LifecycleTests(unittest.TestCase):
             raise failure
         if command[0] == "sudo":
             return self.run.return_value
+        if command == ["/usr/bin/python3", "-I", "-c", "import apt, apt_pkg"]:
+            return SimpleNamespace(returncode=0)
         if command[:2] == ["systemd-analyze", "verify"]:
             return SimpleNamespace(returncode=0, stdout="", stderr="")
         self.assertEqual(command[0], "systemctl")

@@ -30,6 +30,56 @@ execution. The approval page shows every argument; shell strings, environment
 assignments, stdin, and command prefixes are not accepted. VM reboot and exact
 administrator-registered service restarts remain available as structured actions.
 
+## Request software for a Debian agent
+
+For a recurring tool, request a saved setup flag when available. Use a saved
+Debian package for other tools. The broker supports the package-only setup
+flags `jupyterlab`, `av-tools` and `gl-tools` on Debian agent profiles.
+Run these commands on the agent.
+
+```bash
+basaltw agent software plan --flag jupyterlab --json
+basaltw agent software request --flag jupyterlab --reason "Run notebooks for recurring data analysis" --json
+basaltw agent software request --apt shellcheck --reason "Lint deployment scripts on this host" --review-window 2d --json
+basaltw agent privilege wait REQUEST_ID --until decision --timeout 2d --json
+```
+
+The request returns its ID and review URL immediately after planning. Pass the
+URL to the operator and continue independent work. The approval shows the
+target selection, upgrades, download size, disk change and a digest. The plan
+command lists every changed package, version, source and archive hash. APT uses
+the configured, trusted Debian indexes. A changed transaction requires fresh
+review. Approved packages can run maintainer scripts and start services.
+Software installs default to a one-hour execution budget, capped by policy.
+Use `--runtime 30m` or `--runtime 2h` to request a different budget.
+
+On the controller with the host's saved setup and enrolled root SSH identity,
+run the following once to collect current approvals. Add `--watch` to keep
+collecting them as they arrive. The watcher checks every 15 seconds and backs
+off on SSH outages. Use the workspace that owns the host's rebuild record.
+
+```bash
+basaltw agent software sync vm.example --watch
+```
+
+Saved requests wait in `awaiting_controller` until synchronization or expiry.
+The controller merges just the approved selection into the current setup,
+then releases the installation. Rerunning sync after an interrupted save is
+safe. Use `agent privilege status REQUEST_ID --json` to check
+`saved_for_rebuild` and `applied` separately. On installation failure the
+controller retains the approved declaration. Inspect the package manager and
+target receipt before requesting further changes. A rebuild uses versions
+available from its configured repositories at rebuild time.
+
+For a host package needed only for one task, add `--temporary` to the request.
+If it is already installed, the command reports `already_installed`. Installing
+a missing package requires approval and can install dependencies. It skips the controller
+and leaves the installed packages on the running host until removed or rebuilt.
+
+Use `basaltw agent privilege list --json` to recover a lost ID or check a
+submission whose reply was interrupted. It lists up to 20 of the requesting
+account's active and recent requests, with active requests first.
+
 ## Set up the standalone approval panel
 
 Run this from the trusted controller:

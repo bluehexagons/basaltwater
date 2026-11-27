@@ -165,6 +165,8 @@ def add_agent_subparser(subparsers: argparse._SubParsersAction) -> None:
     from lib.privilege_client import add_privilege_parser
 
     add_privilege_parser(commands)
+    from lib.agent_software import add_software_parser
+    add_software_parser(commands)
     from lib.agent_environment import add_manifest_parser
 
     add_manifest_parser(commands)
@@ -2904,6 +2906,9 @@ def run_agent_command(args: argparse.Namespace) -> int:
         from lib.privilege_client import run_privilege_command
 
         return run_privilege_command(args)
+    if args.agent_command == "software":
+        from lib.agent_software import run_software
+        return run_software(args)
     if args.agent_command == "maintenance":
         try:
             target = _remote_agent_target(

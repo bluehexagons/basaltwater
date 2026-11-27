@@ -1,5 +1,25 @@
 # One-time privileged actions
 
+## Request tools
+
+Prefer a saved setup change for tools the host should have after a rebuild.
+Check `basaltw agent software plan --flag jupyterlab --json` to see the exact
+packages. Then request the flag with `basaltw agent software request --flag
+jupyterlab --reason "Run recurring notebook checks" --json`. Use `--apt PACKAGE`
+for a tool outside the flag catalog. For a tool specific to a temporary task,
+use the project's environment when practical, or add `--temporary` for an
+approved host install. Temporary packages stay installed until removal or rebuild.
+
+Keep the returned ID and send the review URL through the authorized user
+channel. Continue independent work. Use the privilege wait command below when
+dependent work is ready. A saved request can also be waiting for the owning
+controller's `basaltw agent software sync HOST`. Check both `saved_for_rebuild`
+and `applied` before reporting success.
+If a submission response is lost, use `basaltw agent privilege list --json` to
+recover the ID before requesting the same change again.
+
+## Request a command
+
 On a machine with web-panel approvals enabled, or a VM with `--approval-panel`, request a supported root action
 through `basaltw agent privilege request` instead of trying `sudo`:
 

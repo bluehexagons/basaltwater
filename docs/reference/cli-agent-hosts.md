@@ -58,6 +58,11 @@ coding profiles also install ShellCheck. Select `--data-analysis` for Python
 analysis tools and `--jupyterlab` for interactive notebooks. Image, audio, and video processing tools remain opt-in
 through `--av-tools`; OpenGL inspection and API tracing remain opt-in through
 `--gl-tools`.
+After setup, Debian agents can request a saved software flag or an exact Debian
+package. The owning controller collects approved changes with
+`basaltw agent software sync HOST --watch`.
+[Software requests and examples](../agents/privilege-approvals.md#request-software-for-a-debian-agent)
+
 Missing account and pairing passwords are requested securely from a terminal.
 `server_lite` omits the standard firewall and generic CLI bundle, so use it
 only when that lighter profile is intentional.

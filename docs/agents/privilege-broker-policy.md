@@ -17,6 +17,7 @@ rules:
   },
   "reboot": "approve",
   "commands": "approve",
+  "software": "approve",
   "ttl_seconds": 86400,
   "max_review_seconds": 604800,
   "max_runtime_seconds": 21600
@@ -32,6 +33,14 @@ seconds. New installations default to 86,400 seconds. Setup reruns preserve the
 administrator's existing value. Commands always require individual approval.
 The broker reads policy for every request and before execution, so a
 change invalidates an outstanding request.
+
+On Debian agent profiles, the optional `software` field accepts `approve`
+(default) or `deny`. Each approval covers one exact package transaction and
+one persistence choice. The owning controller connects over its enrolled root
+SSH channel to collect approved additions and acknowledge a durable save.
+Only a local root peer can claim or acknowledge these entries. Package
+installation runs under the target setup and APT locks. An interrupted
+installation requires inspection before submitting a fresh request.
 
 Keep the non-secret policy root-owned with mode `0644`: the dedicated approval
 account also reads it at startup. Setup reconciles `/etc/basaltwater` and its
@@ -121,8 +130,10 @@ The root-only database is
 `/var/lib/basaltwater-privilege-broker/requests.sqlite3`. Its `requests` and
 `events` tables record decisions and outcomes. It is protected from the coding
 account, but not tamper-proof against root. Execution claims are committed
-before effects. Pending requests expire on restart; an in-progress action is
-marked uncertain and never replayed.
+before effects. Pending, approved and unclaimed software requests expire on
+restart. An interrupted execution is marked uncertain. Software saves already
+claimed by the controller can finish synchronization after restart. The broker
+revalidates the reviewed package plan and policy before starting installation.
 
 The request socket also permits its authenticated owner to cancel pending or
 approved requests. Cancellation shares the execution-claim lock and commits a

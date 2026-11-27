@@ -247,6 +247,21 @@ def save_setup_command(
             "args": config.to_dict(),
         }
         cache_data.update(_get_entrypoint_metadata(operation))
+        # The target lock is released before a finished setup writes its run
+        # metadata. Preserve controller approvals saved since that run started.
+        if start_time is not None:
+            previous = _cache_record(cache_path)
+            if (previous and previous["system_type"] == config.system_type
+                    and previous["args"].get("username") == config.username):
+                from lib.software_requests import save_selection
+                for key, recorded in previous.get("software_additions", {}).items():
+                    if recorded >= start_time:
+                        kind, name = key.split(":", 1)
+                        updated = save_selection({**cache_data["args"], "system_type": config.system_type},
+                                                 {"kind": kind, "name": name, "scope": "saved"})
+                        updated.pop("system_type")
+                        cache_data["args"] = updated
+                        cache_data.setdefault("software_additions", {})[key] = recorded
 
         if config.friendly_name:
             cache_data["name"] = config.friendly_name
@@ -271,6 +286,24 @@ def save_setup_command(
                 end_time=end_time,
                 success=success,
             )
+
+
+def record_software_selection(host: str, profile: str, username: str, parameters: dict) -> None:
+    """Merge only an approved software addition into the latest controller record."""
+    from lib.software_requests import save_selection
+    path = get_cache_path_for_host(host)
+    with resource_lock("setup-cache", path, wait=True):
+        record = _cache_record(path)
+        if (not record or record["host"].lower().rstrip(".") != host.lower().rstrip(".") or record["system_type"] != profile
+                or record["args"].get("username") != username):
+            raise ValueError("Approved software target differs from this controller's saved setup")
+        args = save_selection({**record["args"], "system_type": profile}, parameters)
+        del args["system_type"]
+        SetupConfig.from_dict(host, profile, args)
+        if args != record["args"]:
+            additions = {**record.get("software_additions", {}),
+                         f'{parameters["kind"]}:{parameters["name"]}': time.time()}
+            write_json_atomic(path, {**record, "args": args, "software_additions": additions})
 
 
 def _rewrite_cached_home_path(value: Any, old_home: str, new_home: str) -> Any:

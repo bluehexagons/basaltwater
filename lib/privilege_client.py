@@ -34,7 +34,8 @@ def exchange(message: dict, path: str = REQUEST_SOCKET) -> dict:
     if len(data) > MAX_MESSAGE:
         raise ValueError("Request exceeds size limit")
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
-        connection.settimeout(5)
+        planning = message.get("operation") == "software.install" or message.get("action") == "software-claim"
+        connection.settimeout(55 if planning else 5)
         try:
             connection.connect(path)
         except (FileNotFoundError, ConnectionRefusedError) as exc:
@@ -67,7 +68,7 @@ def exchange(message: dict, path: str = REQUEST_SOCKET) -> dict:
             raise PrivilegeRequestUnconfirmed(
                 "Broker response did not confirm a valid request ID; request acceptance is unknown"
             )
-    elif action in {"status", "cancel", "decide"}:
+    elif action in {"status", "cancel", "decide", "software-claim", "software-saved"}:
         request_id = result.get("id")
         if (not isinstance(request_id, str) or not ID_PATTERN.fullmatch(request_id)
                 or request_id != message.get("id")):
@@ -87,6 +88,8 @@ def duration(value: str) -> int:
 def add_privilege_parser(commands: argparse._SubParsersAction) -> None:
     parser = commands.add_parser("privilege", help="Request a privileged operation for browser approval")
     actions = parser.add_subparsers(dest="privilege_command", required=True)
+    listing = actions.add_parser("list", help="Find your active and recent requests, including a lost request ID")
+    listing.add_argument("--json", action="store_true")
     request = actions.add_parser("request")
     request.add_argument("operation", choices=("command.run", "service.restart", "system.reboot"))
     request.add_argument("--unit", help="Exact administrator-registered service name")
@@ -141,6 +144,16 @@ def run_privilege_command(args: argparse.Namespace) -> int:
     if args.privilege_command == "admin-status":
         return _admin_status(args)
     try:
+        if args.privilege_command == "list":
+            records = exchange({"action": "owned-requests"})["requests"]
+            if args.json:
+                print(json.dumps({"schema_version": 1, "ok": True, "requests": records}))
+            else:
+                for row in records:
+                    print(f'{row["id"]}  {row["state"]}  {row["operation"]} {row["target"]}'.rstrip())
+                if not records:
+                    print("No recent privilege requests.")
+            return 0
         if args.privilege_command == "password-hash":
             from lib.privilege_auth import password_record
             import getpass
@@ -176,7 +189,9 @@ def run_privilege_command(args: argparse.Namespace) -> int:
                 raise ValueError("Wait timeout must be between zero and seven days plus six hours")
             deadline = time.monotonic() + timeout
             delay = 1
-            waiting = {"pending"} if getattr(args, "until", "") == "decision" else {"pending", "approved", "executing"}
+            waiting = {"pending"} if getattr(args, "until", "") == "decision" else {
+                "pending", "approved", "awaiting_controller", "saving", "ready", "executing",
+            }
             while True:
                 result = exchange({"action": "status", "id": args.request_id})
                 remaining = deadline - time.monotonic()
@@ -195,7 +210,8 @@ def run_privilege_command(args: argparse.Namespace) -> int:
         if args.privilege_command == "cancel":
             return 0 if result["state"] in {"cancelled", "expired", "denied", "invalidated"} else 1
         if (args.privilege_command == "wait" and args.until == "decision"
-                and result["state"] in {"approved", "executing", "dispatched", "succeeded", "failed", "uncertain"}):
+                and result["state"] in {"approved", "awaiting_controller", "saving", "ready", "executing",
+                                        "dispatched", "succeeded", "failed", "uncertain"}):
             return 0
         if result["state"] in {"cancelled", "denied", "failed", "uncertain", "expired", "invalidated"}:
             return 1
@@ -203,5 +219,8 @@ def run_privilege_command(args: argparse.Namespace) -> int:
             return 124
         return 0
     except (OSError, ValueError, EOFError) as exc:
+        if args.privilege_command == "list" and args.json:
+            print(json.dumps({"schema_version": 1, "ok": False, "issue": "listing_unavailable", "error": str(exc)}))
+            return 1
         print(f"Privilege request failed: {exc}", file=sys.stderr)
         return 1

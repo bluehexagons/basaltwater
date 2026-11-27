@@ -13,7 +13,7 @@
 | `--go` | Install Go |
 | `--python` | Install Python aliases + uv |
 | `--data-analysis` | Install NumPy, pandas, SciPy, Matplotlib and csvkit. Also enables `--python`. |
-| `--jupyterlab` / `--no-jupyterlab` | Select the notebook environment and Python kernel on Debian. Existing saved analysis setups retain JupyterLab on replay. |
+| `--jupyterlab` / `--no-jupyterlab` | Install the Debian notebook environment, `jupyter lab` launcher and Python kernel with required dependencies. Debian recommendations are optional. Existing saved analysis setups retain JupyterLab on replay. |
 | `--av-tools` | Install ImageMagick, FFmpeg (including ffprobe), and ExifTool for image, audio, video, and metadata processing |
 | `--gl-tools` | Install the minimal OpenGL inspection and debugging bundle: Mesa utilities and apitrace |
 | `--godot` | Install the newest stable verified Godot Engine release for graphical or headless use |
