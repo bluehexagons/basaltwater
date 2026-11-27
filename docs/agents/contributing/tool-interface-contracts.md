@@ -153,8 +153,10 @@ shipped skills, examples, and fixtures as one release. Check that running
 helpers, MCP clients and session-loaded skills are using the rollout's
 versions. Increment the result schema version when a published schema changes
 incompatibly. Consumers of a version should tolerate additional response fields.
+The v2 switch covers the full Basaltwater-owned agent interface inventory.
+[Scope, stored data and delivery plan](../../plans/agent-tool-interface-switch.md)
 
-| Workflow | Acceptance |
+| Representative workflow | Acceptance |
 | --- | --- |
 | Linux desktop capture, mapping and sequences | Return the same result fields with and without `--json`. Show which field names the image and which names the receipt. Preserve the input receipt and completed captures when a later capture fails. |
 | Preview resolution | Return one machine result shape by default and with `--json` for native T3 and gateway resolution. Verify the `navigation` object can be passed to the preview tool with the appropriate target for each route. Exercise loopback success, unhealthy upstream and invalid input. |
