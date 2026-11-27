@@ -104,7 +104,6 @@ CLI_TOOL_PACKAGES = (
     "less",
     "make",
     "patch",
-    "pv",
     "ripgrep",
     "rsync",
     "sqlite3",
@@ -113,7 +112,6 @@ CLI_TOOL_PACKAGES = (
     "unzip",
     "vim",
     "wget",
-    "xdg-utils",
     "zip",
 )
 DATA_ANALYSIS_PACKAGES = (

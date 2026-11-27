@@ -145,6 +145,33 @@ class TestInfraWebForwarding(unittest.TestCase):
             ],
         )
 
+    def test_forward_open_on_headless_host_keeps_successful_json_result(self) -> None:
+        with (
+            patch.object(basaltwater_web, "_load_policy", return_value=_policy()),
+            patch.object(basaltwater_web, "_load_forwards", return_value=[]),
+            patch.object(basaltwater_web, "_requesting_username", return_value="agent"),
+            patch.object(basaltwater_web, "_select_listen_port", return_value=8444),
+            patch.object(basaltwater_web, "_apply_forwards") as apply,
+            patch.object(basaltwater_web.shutil, "which", return_value=None),
+            patch.object(basaltwater_web.subprocess, "Popen") as launch,
+            redirect_stdout(StringIO()) as stdout,
+            redirect_stderr(StringIO()) as stderr,
+        ):
+            code = basaltwater_web.main(["forward", "add", "demo", "--to", "127.0.0.1:3000", "--open", "--json"])
+        self.assertEqual(code, 0)
+        apply.assert_called_once()
+        launch.assert_not_called()
+        self.assertIn(json.loads(stdout.getvalue())["url"], stderr.getvalue())
+
+    def test_local_browser_open_runs_as_route_owner(self) -> None:
+        url = "https://games.example:8444"
+        with (
+            patch.object(basaltwater_web.shutil, "which", return_value="/usr/bin/xdg-open"),
+            patch.object(basaltwater_web.subprocess, "Popen") as launch,
+        ):
+            basaltwater_web._open_url(url, "agent")
+        self.assertEqual(launch.call_args.args[0], ["runuser", "-u", "agent", "--", "/usr/bin/xdg-open", url])
+
     def test_policy_loader_validates_forwarding_range_and_sources(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             policy_path = os.path.join(temporary_dir, "policy.json")

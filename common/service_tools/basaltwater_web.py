@@ -1145,15 +1145,22 @@ def _wait_for_upstream(host: str, port: int, path: str, seconds: float) -> None:
 
 
 def _open_url(url: str, username: str | None = None) -> None:
-    if username and os.geteuid() == 0:
-        subprocess.Popen(
-            ["runuser", "-u", username, "--", "xdg-open", url],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-    else:
-        webbrowser.open(url)
+    try:
+        if username and os.geteuid() == 0:
+            opener = shutil.which("xdg-open")
+            if opener:
+                subprocess.Popen(
+                    ["runuser", "-u", username, "--", opener, url],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+                return
+        elif webbrowser.open(url):
+            return
+    except (OSError, webbrowser.Error):
+        pass
+    print(f"Local browser unavailable. Open {url} in your browser.", file=sys.stderr)
 
 
 def _site_doctor(name: str, as_json: bool) -> int:

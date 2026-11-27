@@ -279,6 +279,10 @@ class TestDevelopmentToolPackages(unittest.TestCase):
         self.assertTrue(set(CLI_TOOL_PACKAGES).isdisjoint(DATA_ANALYSIS_PACKAGES))
         self.assertNotIn("jupyterlab", DATA_ANALYSIS_PACKAGES)
 
+    def test_stream_progress_and_desktop_openers_are_outside_headless_baseline(self):
+        for packages in (CLI_TOOL_PACKAGES, CONTROL_PLANE_PACKAGES):
+            self.assertTrue({"pv", "xdg-utils"}.isdisjoint(packages))
+
     def test_av_packages_are_not_in_cli_baseline(self):
         self.assertEqual(
             set(AV_TOOL_PACKAGES),
