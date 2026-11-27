@@ -39,6 +39,12 @@ subprocess.run([
 `input` emits JSON by default. The existing `input_args` and `input_context_args`
 fields are strings for use when reading or copying a mapping by hand.
 
+If a focused text field needs a value starting with `--`, pass that value in
+the same argument as `--text=`. For example, use `text --text='--windowed'`
+in a shell or `['text', '--text=--windowed']` in a process argument list.
+With detached `--text '--windowed'`, the parser rejects the request before
+sending input. Inspect the field after delivery to verify the entered value.
+
 For a screenshot made with `--crop 100 200 800 600`, presented at 400 × 300,
 map a drag within that image as follows:
 
