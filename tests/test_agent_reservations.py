@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
+import json
 import os
 from pathlib import Path
 import signal
@@ -96,7 +97,7 @@ class ReservationTests(unittest.TestCase):
         args = parser.parse_args(["agent", "reservations", "status", "--resource", "gpu:all", "--json"])
         with redirect_stdout(output := StringIO()):
             self.assertEqual(run_agent_command(args), 0)
-        self.assertIn('"active": false', output.getvalue())
+        self.assertFalse(json.loads(output.getvalue())["reservations"][0]["active"])
 
     def test_sigterm_uses_cancellation_and_restores_previous_handler(self):
         previous = signal.getsignal(signal.SIGTERM)

@@ -18,6 +18,8 @@ import subprocess
 import sys
 import time
 
+from lib.tool_results import add_json_option, artifact, exception_issue, failure, from_report, write_result
+
 if os.name == "nt":
     from lib.media_windows import (snapshot, parent_lock as _windows_lock,
                                    validate_path as validate_filesystem_path,
@@ -237,6 +239,8 @@ def inspect(source: str, output: str, *, video: int = 0, audio: int = 0,
         result.update(status="unsupported", errors=[str(exc)])
     except (OSError, ValueError, TypeError, KeyError, RuntimeError, subprocess.SubprocessError) as exc:
         result["errors"].append(str(exc))
+        if isinstance(exc, (TimeoutError, subprocess.TimeoutExpired)):
+            result["issue"] = "wait_timeout"
     except KeyboardInterrupt:
         result.update(status="cancelled", errors=["Interrupted; owned child process group terminated"])
         raise
@@ -289,14 +293,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-mib", type=int, default=128)
     parser.add_argument("--max-seconds", type=float, default=120)
     parser.add_argument("--timeout", type=float, default=180)
+    add_json_option(parser, default=True)
     args = parser.parse_args(argv)
     try:
-        result = inspect(**vars(args))
+        result = inspect(args.source, args.output, video=args.video, audio=args.audio,
+                         max_mib=args.max_mib, max_seconds=args.max_seconds, timeout=args.timeout)
     except (OSError, ValueError) as exc:
-        print(json.dumps({"status": "incomplete", "errors": [str(exc)]}))
-        return 1
-    print(json.dumps(result, ensure_ascii=False, allow_nan=False))
-    return 0 if result["status"] == "complete" else 1
+        issue = exception_issue(exc)
+        return write_result(failure(issue, str(exc), status="incomplete", errors=[str(exc)], stage="prepare",
+                                    effect="none" if issue == "invalid_input" else "unknown"))
+    result = {**result, "artifacts": [artifact("media_report", Path(args.output) / "manifest.json", "application/json")]}
+    if result["status"] != "complete":
+        result.update(stage="inspect", effect="partial")
+    return write_result(from_report(result, ok=result["status"] == "complete", issue="media_inspection_failed",
+                                    error=result["errors"][0] if result["errors"] else "Media inspection failed"))
 
 
 if __name__ == "__main__":

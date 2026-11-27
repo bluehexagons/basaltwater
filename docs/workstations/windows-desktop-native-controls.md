@@ -61,6 +61,8 @@ are never overwritten. Monitor captures can include other visible applications.
 
 See the shared [observation contract](desktop-observations.md) for the same
 lifecycle on Debian XFCE and CachyOS KDE Plasma and the platform-validation backlog.
+Open the path in `artifacts` with kind `screenshot` to view the image, and pass
+the `capture_receipt` path to `map-point` for the observation and geometry.
 A successful screenshot normally returns `result.observation_id` (32 lowercase
 hex characters), `captured_at`, `artifact_sha256`, `geometry` (input width/height),
 `image_geometry` (actual PNG width/height), `image_origin`, `desktop_origin` and
@@ -121,8 +123,9 @@ Use `map-point --capture FRAME.json --image-coordinates --x X --y Y` to map
 exact PNG pixels. For points in a resized view, supply `--view-width`,
 `--view-height` and optional `--view-origin-x` and `--view-origin-y` margins.
 Add `--to-x` and `--to-y` to map the second point for a drag. The command
-checks the current observation and returns arguments for a separately
-authorized input.
+checks the current observation and returns `input_context_argv` for the
+window and observation selectors and `input_argv` for the mapped points.
+Pass both arrays as literal arguments to the separately authorized input.
 
 ## Act on observed controls
 

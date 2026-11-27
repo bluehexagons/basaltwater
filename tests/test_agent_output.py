@@ -40,7 +40,9 @@ class AgentOutputTests(unittest.TestCase):
         self.assertEqual(len(lines), 1)
         result = json.loads(lines[0])
         path = Path(result["summary_path"])
-        self.assertEqual(json.loads(path.read_text(encoding="utf-8")), result)
+        saved = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(saved, {key: result[key] for key in saved})
+        self.assertEqual(result["artifacts"][0]["path"], str(path))
         if os.name == "posix":
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
         return result
@@ -99,10 +101,9 @@ class AgentOutputTests(unittest.TestCase):
             regular_file.write_text("keep", encoding="utf-8")
             for invalid in (directory, regular_file, self.root / "missing-parent/output"):
                 popen.reset_mock()
-                with self.subTest(path=invalid), patch("sys.stderr", new_callable=io.StringIO), \
-                        self.assertRaises(SystemExit) as failure:
-                    capture_output.main(["--output-directory", str(invalid), "--", "program"])
-                self.assertEqual(failure.exception.code, 2)
+                with self.subTest(path=invalid), patch("sys.stdout", new_callable=io.StringIO) as error:
+                    self.assertEqual(capture_output.main(["--output-directory", str(invalid), "--", "program"]), 2)
+                self.assertEqual(json.loads(error.getvalue())["issue"], "invalid_input")
                 popen.assert_not_called()
             self.assertEqual((directory / "summary.json").read_bytes(), original)
             self.assertEqual(regular_file.read_text(encoding="utf-8"), "keep")
@@ -251,7 +252,8 @@ class AgentOutputReaderTests(unittest.TestCase):
         self.path.write_text(json.dumps(self.record), encoding="utf-8")
         with patch("sys.stdout", new_callable=io.StringIO) as output, patch("sys.stderr", new_callable=io.StringIO) as error:
             code = read_output.main([str(self.path), *arguments])
-        return code, json.loads(output.getvalue()) if code == 0 else json.loads(error.getvalue())
+        self.assertEqual(error.getvalue(), "")
+        return code, json.loads(output.getvalue())
 
     def test_success_and_unfinished_defaults_read_summary_only_without_guessing_liveness(self):
         self.stdout.unlink()
@@ -343,8 +345,8 @@ class AgentOutputReaderTests(unittest.TestCase):
                 original = self.record.copy()
                 self.record.update(fields)
                 code, value = self.inspect()
-                self.assertEqual(code, 1)
-                self.assertIn("inspection_error", value)
+                self.assertEqual(code, 2)
+                self.assertEqual(value["issue"], "invalid_input")
                 self.assertNotIn("do-not-echo", json.dumps(value))
                 self.record = original
         self.stdout.unlink()
@@ -353,8 +355,8 @@ class AgentOutputReaderTests(unittest.TestCase):
     def test_oversized_malformed_and_symlink_artifacts_are_refused(self):
         for payload in (b"x" * 65537, b"not JSON", b"\xff"):
             self.path.write_bytes(payload)
-            with self.subTest(size=len(payload)), patch("sys.stderr", new_callable=io.StringIO) as error:
-                self.assertEqual(read_output.main([str(self.path)]), 1)
+            with self.subTest(size=len(payload)), patch("sys.stdout", new_callable=io.StringIO) as error:
+                self.assertEqual(read_output.main([str(self.path)]), 2)
             self.assertLess(len(error.getvalue()), 1024)
         target = self.root / "real-summary.json"
         target.write_text(json.dumps(self.record), encoding="utf-8")
@@ -363,8 +365,8 @@ class AgentOutputReaderTests(unittest.TestCase):
             self.path.symlink_to(target)
         except OSError:
             self.skipTest("symlink creation unavailable for this account")
-        with patch("sys.stderr", new_callable=io.StringIO) as error:
-            self.assertEqual(read_output.main([str(self.path)]), 1)
+        with patch("sys.stdout", new_callable=io.StringIO) as error:
+            self.assertEqual(read_output.main([str(self.path)]), 2)
         self.assertIn("symlink", error.getvalue())
 
     def test_argument_limits_are_enforced_before_reading_artifacts(self):

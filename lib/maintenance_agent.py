@@ -25,6 +25,7 @@ from lib.maintenance_agent_config import (
     CONFIG_FILE, CONTROL_DIR, DATA_DIR, DEFAULTS, POLICY_FILE, REPORT_FILE,
     add_policy_arguments, validate_policy,
 )
+from lib.tool_results import add_json_option, exception_issue, failure, success, write_result
 from lib.validation import validate_filesystem_path, validate_service_name_uniqueness
 from lib.validators import validate_username
 from lib.unit_transaction import snapshot_unit_file
@@ -647,12 +648,13 @@ def add_maintenance_agent_parser(commands: argparse._SubParsersAction) -> None:
         command = actions.add_parser(action)
         if action == "clean":
             command.description = "Request managed package/cache/log housekeeping once, including APT autoremove under existing job policy; leave automatic schedules unchanged."
-        command.add_argument("--json", action="store_true")
+        add_json_option(command, default=True)
         if action == "configure":
             add_policy_arguments(command)
 
 
 def run_maintenance_agent_command(args: argparse.Namespace) -> int:
+    action = args.maintenance_agent_command
     try:
         if args.maintenance_agent_command == "configure":
             values = {key: getattr(args, "maintenance_agent" if key == "enabled" else "maintenance_agent_" + key)
@@ -664,8 +666,9 @@ def run_maintenance_agent_command(args: argparse.Namespace) -> int:
             result = {"requested": request_check(cleanup=True), "action": "managed housekeeping once"}
         else:
             result = {"policy": load_policy(), **load_reports()}
-        print(json.dumps(result, indent=2, ensure_ascii=False))
-        return 0
+        return write_result(success(**result))
     except (OSError, RuntimeError, ValueError) as exc:
-        print(f"Error: {exc}")
-        return 1
+        issue = exception_issue(exc)
+        effect = ({"stage": action, "effect": "none" if issue == "invalid_input" else "unknown"}
+                  if action != "status" else {})
+        return write_result(failure(issue, str(exc), **effect))

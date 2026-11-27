@@ -67,13 +67,13 @@ class AgentCapabilityFeedbackTests(unittest.TestCase):
         self.assertEqual(result, 0)
         inspect_tools.assert_called_once_with(list(agent_cli.DEFAULT_DOCTOR_TOOLS))
         payload = json.loads(output.getvalue())
-        tools = [entry for entry in payload if "tool" in entry]
+        tools = payload["tools"]
         self.assertEqual(
             [(entry["tool"], entry["required"]) for entry in tools],
             [("codex", True), ("claude", False)],
         )
         self.assertEqual(
-            [entry["capability"] for entry in payload if "capability" in entry],
+            [entry["capability"] for entry in payload["capabilities"]],
             list(agent_cli.AGENT_DOCTOR_CAPABILITIES),
         )
 
@@ -128,7 +128,8 @@ class AgentCapabilityFeedbackTests(unittest.TestCase):
 
         self.assertEqual(result, 1)
         payload = json.loads(output.getvalue())
-        self.assertTrue(payload[0]["required"])
+        self.assertTrue(payload["tools"][0]["required"])
+        self.assertEqual(payload["issue"], "readiness_failed")
 
     def test_all_capabilities_forwards_one_remote_flag(self) -> None:
         args = self._parser().parse_args(

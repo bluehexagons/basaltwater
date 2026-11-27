@@ -15,6 +15,7 @@ from lib.agent_task_worker import run_worker
 from lib.agent_tasks import AgentTasks
 from lib.agent_tasks_cli import add_tasks_parser, run_tasks_command
 from lib.agent_tasks_mcp import TaskMCP, serve
+from lib.tool_results import success
 
 
 class TaskAPITests(unittest.TestCase):
@@ -94,6 +95,24 @@ class TaskAPITests(unittest.TestCase):
             with self.subTest(operation=operation), self.assertRaises(ValueError):
                 self.api.call(operation, arguments)
 
+    def test_list_agrees_through_cli_and_mcp_and_omits_prompt_by_default(self) -> None:
+        self.api.call("create", {"task": self.values})
+        parser = argparse.ArgumentParser()
+        add_tasks_parser(parser.add_subparsers())
+        server = TaskMCP(self.api)
+        server.request({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-03-26"}})
+        for extra, arguments, has_prompt in (([], {}, False), (["--json"], {}, False), (["--full"], {"summary": False}, True)):
+            output, errors = io.StringIO(), io.StringIO()
+            with patch("lib.agent_tasks_cli.TaskAPI", return_value=self.api), patch("sys.stdout", output), patch("sys.stderr", errors):
+                self.assertEqual(run_tasks_command(parser.parse_args(["tasks", "list", *extra])), 0)
+            reply = server.request({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+                "name": "basaltwater_tasks_list", "arguments": arguments,
+            }})["result"]
+            self.assertFalse(reply["isError"])
+            self.assertEqual(errors.getvalue(), "")
+            self.assertEqual(json.loads(output.getvalue()), reply["structuredContent"])
+            self.assertEqual("prompt" in reply["structuredContent"]["tasks"][0], has_prompt)
+
 
 class TaskMCPTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -104,21 +123,25 @@ class TaskMCPTests(unittest.TestCase):
     def test_read_only_catalog_omits_mutations_and_direct_calls_are_denied(self) -> None:
         catalog = self.server.request({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
         self.assertEqual(len(catalog["result"]["tools"]), 5)
+        self.assertTrue(all(tool["outputSchema"]["type"] == "object" for tool in catalog["result"]["tools"]))
         result = self.server.request({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
             "name": "basaltwater_tasks_action", "arguments": {"id": "a" * 32, "action": "run"},
         }})
         self.assertTrue(result["result"]["isError"])
-        self.api.call.assert_not_called()
+        self.assertEqual(result["result"]["structuredContent"]["issue"], "permission_denied")
+        self.assertEqual(result["result"]["structuredContent"]["effect"], "none")
+        self.api.result.assert_not_called()
 
     def test_write_catalog_dispatches_validated_arguments_without_executing_work(self) -> None:
         self.server.allow_write = True
-        self.api.call.return_value = {"id": "a" * 32}
+        self.api.result.return_value = success(id="a" * 32, worker={})
         request = {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
             "name": "basaltwater_tasks_action", "arguments": {"id": "a" * 32, "action": "pause"},
         }}
         result = self.server.request(request)
         self.assertFalse(result["result"]["isError"])
-        self.api.call.assert_called_once_with("action", {"id": "a" * 32, "action": "pause"})
+        self.assertEqual(result["result"]["structuredContent"]["id"], "a" * 32)
+        self.api.result.assert_called_once_with("action", {"id": "a" * 32, "action": "pause"})
         request["params"]["arguments"]["shell"] = "unsupported"
         self.assertTrue(self.server.request(request)["result"]["isError"])
 
@@ -138,7 +161,7 @@ class TaskMCPTests(unittest.TestCase):
         self.assertEqual(responses[3]["result"], {})
 
     def test_reply_limit_includes_jsonrpc_encoding_and_rejects_invalid_ids(self) -> None:
-        self.api.call.return_value = {"output": "\"" * 260}
+        self.api.result.return_value = success(output="\"" * 600)
         with patch("lib.agent_tasks_mcp.MAX_REPLY_BYTES", 1024):
             reply = self.server.request({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {
                 "name": "basaltwater_tasks_list", "arguments": {},

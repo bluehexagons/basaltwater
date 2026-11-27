@@ -471,7 +471,7 @@ class TaskAccessFlowTests(unittest.TestCase):
             reply = request("tools/call", name="basaltwater_operator_feedback",
                             arguments={"sender": "diagnostic", "message": "Service status unavailable"})
             self.assertFalse(reply["result"]["isError"])
-            self.assertEqual(json.loads(reply["result"]["content"][0]["text"]), {"id": "feedback-2"})
+            self.assertEqual(reply["result"]["structuredContent"], {"id": "feedback-2", "schema_version": 1, "ok": True})
             inbox.return_value.feedback.assert_called_once_with("diagnostic", "Service status unavailable")
             reply = request("tools/call", name="basaltwater_tasks_create", arguments={"task": self.values})
             self.assertTrue(reply["result"]["isError"])

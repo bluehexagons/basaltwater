@@ -29,7 +29,8 @@ without a managed web gateway.
 basaltw agent browser resolve-preview --port PORT --path '/app/?view=details#summary' --json
 ```
 
-Use the returned `navigation.target` with the retained tab ID. The probe tries
+Use the returned `navigation` object with the retained tab ID. Both the default
+and `--json` modes return one result object. The probe tries
 `127.0.0.1` first and falls back to `::1` on a TCP connection failure. Use
 `--host` to check one address explicitly. Omit `--path` for `/`. Add
 `--protocol https` to verify TLS for `localhost` using the probe host's trust
@@ -59,8 +60,8 @@ managed VM's loopback development port:
 basaltwater-web preview resolve --route gateway --port PORT --json
 ```
 
-Use the returned `navigation.url`. For `forward_missing`, use the exact
-returned command when client-visible access is within scope, then resolve
+Use the returned `navigation.url`. For `forward_missing`, execute the
+returned `remediation_argv` as literal arguments when client-visible access is within scope, then resolve
 again. Add `--host ::1` for IPv6 or `--profile godot` for threaded Godot.
 The resolver is read-only and reports `component`, `issue`, and
 `remediation`. Report an unprovisioned gateway if that route needs the CLI

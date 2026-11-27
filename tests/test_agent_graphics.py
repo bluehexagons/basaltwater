@@ -127,7 +127,10 @@ class GraphicsTests(unittest.TestCase):
         with patch.object(graphics, "inspect_graphics_context", return_value={"healthy": False}) as inspect, redirect_stdout(output := StringIO()):
             self.assertEqual(run_agent_command(args), 1)
         inspect.assert_called_once_with("xvfb", require_software=True, backend="glx", expect_renderer=None)
-        self.assertEqual(json.loads(output.getvalue()), {"healthy": False})
+        result = json.loads(output.getvalue())
+        self.assertFalse(result["healthy"])
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["issue"], "graphics_probe_failed")
 
     def test_egl_uses_observed_renderer_despite_software_selectors(self):
         for renderer, expected in (("NVIDIA Example GPU", False), ("llvmpipe (LLVM)", True)):

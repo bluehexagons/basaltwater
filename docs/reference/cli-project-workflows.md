@@ -28,6 +28,9 @@ quoted PATH export for shell activation. Selection honors an explicit
 requirements. `node exec` runs the command after `--` with that runtime while
 retaining the current working directory; `--project` selects metadata rather
 than changing directories. These commands do not download a missing runtime.
+Use `--json` for one result from `node status`, `env`, `resolve`, `install`,
+or `doctor`. `node exec` forwards the child's streams and exit code. An
+input or selection failure before dispatch can be returned with `--json`.
 Selection requires `^24.22.1 || ^26.12.1`; unsupported pins and system runtimes
 fail with guidance rather than running a project command.
 
@@ -51,11 +54,12 @@ VM-local sessions; no controller credential transfer is involved.
 
 ```text
 basaltw publish status|projects|jobs|runs
+basaltw publish runs --id RUN_ID
 basaltw publish project ID REPOSITORY butler OWNER/GAME:CHANNEL [--record PATH]
 basaltw publish project ID REPOSITORY steamcmd APP_ID --depot DEPOT_ID --username ACCOUNT
 basaltw publish complete REPOSITORY ARTIFACT_SUBDIRECTORY INTERNAL_BUILD_ID [--record PATH]
 basaltw publish prepare PROJECT_ID
-basaltw publish upload ARTIFACT_ID [--wait]
+basaltw publish upload ARTIFACT_ID [--wait [--timeout SECONDS]]
 basaltw publish cancel RUN_ID
 basaltw publish worker
 basaltw publish schedule PROJECT_ID [--interval MINUTES]
@@ -71,6 +75,13 @@ basaltw publish beta-prepare RUN_ID BRANCH
 basaltw publish beta-promote RELEASE_ID
 basaltw publish auth login|logout butler|steamcmd [--username ACCOUNT]
 ```
+
+Pass `prepare`'s `id` to `upload`. Use the returned `job.id` with `runs --id`
+to read the run or with `cancel` to request cancellation. `job.state` describes
+the observed run outcome and `job.native_state` preserves the publisher's state.
+`--wait` observes completion for up to 600 seconds by default. Exit 124
+returns the same handle with `issue: wait_timeout` while the worker continues.
+The `projects`, `jobs` and `runs` list commands return named arrays.
 
 `auth` requires a human non-root terminal and accepts no secret arguments.
 The HTTPS panel provides guided login and the sole managed human approval

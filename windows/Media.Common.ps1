@@ -47,15 +47,17 @@ function Install-NativeAvTools([switch]$Plan) {
 }
 
 function Invoke-NativeMediaCli([string]$Source, [string[]]$Arguments) {
-    if ($Arguments.Count -eq 1 -and $Arguments[0] -eq 'doctor') {
+    if ($Arguments.Count -and $Arguments[0] -eq 'doctor') {
+        if ($Arguments.Count -gt 2 -or ($Arguments.Count -eq 2 -and $Arguments[1] -ne '--json')) {
+            return Write-NativeToolResult @{} $false 'invalid_input' 'Usage: basaltw media doctor [--json]'
+        }
         . (Join-Path $Source 'windows\WorkstationHealth.Common.ps1')
         $checks = @(foreach ($name in @('ffmpeg','ffprobe')) {
             $check = Invoke-NativeHealthProbe (Get-NativeMediaCommand $name) -Arguments '-version'
             $check | Add-Member NoteProperty Name $name -PassThru
         })
-        Write-Host ($checks | ConvertTo-Json -Depth 4)
-        if (@($checks | Where-Object State -ne 'ok').Count) { return 1 }
-        return 0
+        return Write-NativeToolResult @{ checks = $checks } (-not @($checks | Where-Object State -ne 'ok').Count) `
+            'media_check_failed' 'FFmpeg or ffprobe did not pass its executable check.'
     }
     if ($Arguments.Count -and $Arguments[0] -in @('--help','-h','help')) {
         Write-Host 'Usage: basaltw media INPUT --output NEW_DIRECTORY [--video N] [--audio N] [--max-mib 128] [--max-seconds 120] [--timeout 180]'

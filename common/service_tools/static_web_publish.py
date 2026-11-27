@@ -37,6 +37,7 @@ from lib.static_publication import (
     verify_receipt,
     write_receipt,
 )
+from lib.tool_results import exception_issue, failure, from_report, write_result
 from lib.validation import validate_filesystem_path, validate_positive_integer
 from lib.validators import validate_username
 
@@ -542,7 +543,10 @@ def publish(args: argparse.Namespace) -> dict[str, object]:
 
 def print_publish_result(result: dict[str, object], *, as_json: bool) -> None:
     if as_json:
-        print(json.dumps(result, sort_keys=True))
+        if not result["ok"]:
+            result = {**result, "stage": "verification", "effect": "applied"}
+        write_result(from_report(result, ok=bool(result["ok"]), issue="publication_unverified",
+                                 error="Site was published but verification failed. Inspect the publication receipt."))
         return
     print(f"Published {result['site']} to {result['url']}")
     if "catalog_error" in result:
@@ -714,7 +718,8 @@ def main(argv: list[str] | None = None) -> int:
         result = publish(args)
     except (OSError, RuntimeError, ValueError) as exc:
         if args.json:
-            print(json.dumps({"error": str(exc), "ok": False}, sort_keys=True))
+            issue = exception_issue(exc)
+            return write_result(failure(issue, str(exc), stage="publish", effect="none" if issue == "invalid_input" else "unknown"))
         else:
             print(f"Error: {exc}")
         return 2 if isinstance(exc, ValueError) else 1

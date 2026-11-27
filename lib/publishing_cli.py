@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import argparse
 import http.client
-import json
 import os
 import subprocess
 import sys
+import time
 
 from lib.atomic_io import read_json_file
 from lib.publishing import PROVIDERS, Publishing
@@ -15,6 +15,7 @@ from lib.publishing_artifacts import complete_record
 from lib.publishing_auth import PublishingAuth, credential_paths, environment, executable
 from lib.publishing_store import file_lock, private_directory
 from lib.publishing_worker import work
+from lib.tool_results import failure, from_report, success, write_result
 from lib.validators import validate_steam_account_name
 
 
@@ -22,8 +23,10 @@ def add_publishing_subparser(subparsers: argparse._SubParsersAction) -> None:
     parser = subparsers.add_parser("publish", help="Manage VM game uploads and reviewed release writing", allow_abbrev=False)
     parser.add_argument("--json", action="store_true", help="Emit JSON (also accepted after the subcommand)")
     commands = parser.add_subparsers(dest="publish_command", required=True)
-    for name in ("status", "projects", "jobs", "runs"):
+    for name in ("status", "projects", "jobs"):
         commands.add_parser(name)
+    runs = commands.add_parser("runs")
+    runs.add_argument("--id", metavar="JOB_ID", help="Read one retained run by its job ID")
     command = commands.add_parser("project", help="Configure a destination without credentials")
     command.add_argument("id")
     command.add_argument("repository")
@@ -42,6 +45,7 @@ def add_publishing_subparser(subparsers: argparse._SubParsersAction) -> None:
     command = commands.add_parser("upload")
     command.add_argument("artifact")
     command.add_argument("--wait", action="store_true")
+    command.add_argument("--timeout", type=int, help="Caller wait limit in seconds (1–86400, default 600)")
     command = commands.add_parser("cancel")
     command.add_argument("run")
     commands.add_parser("worker", help="Process the durable queue (no schedule ownership)")
@@ -83,14 +87,33 @@ def add_publishing_subparser(subparsers: argparse._SubParsersAction) -> None:
         command.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
 
 
+def _run_view(run: dict) -> dict:
+    view = dict(run)
+    native = view["state"]
+    states = {"queued": "queued", "running": "running", "uploaded": "succeeded", "promoted": "succeeded",
+              "operator-confirmed": "succeeded", "preflight-failed": "failed", "not-submitted": "failed",
+              "cancelled": "cancelled"}
+    view["schedule_id"] = view.get("job") or None
+    view["job"] = {"id": view["id"], "state": states.get(native, "unknown"), "native_state": native}
+    if "exit_code" in view:
+        view["child_exit_code"] = view["exit_code"]
+    return view
+
+
 def run_publishing_command(args: argparse.Namespace) -> int:
-    publisher = Publishing()
+    name = args.publish_command
+    admitted = None
+    stage = "validate"
     try:
-        name = args.publish_command
+        publisher = Publishing()
         result: object = {"ok": True}
-        if name in {"status", "projects", "jobs", "runs"}:
+        if name == "runs" and getattr(args, "id", None):
+            with publisher.store.transaction() as db:
+                result = _run_view(publisher.store.get(db, "runs", args.id))
+        elif name in {"status", "projects", "jobs", "runs"}:
             snapshot = publisher.status()
-            result = snapshot if name == "status" else snapshot[name]
+            snapshot["runs"] = [_run_view(run) for run in snapshot["runs"]]
+            result = snapshot if name == "status" else {name: snapshot[name]}
         elif name == "project":
             result = publisher.save_project(args.id, args.repository, args.provider, args.target, depot=args.depot, username=args.username, record=args.record)
         elif name == "complete":
@@ -98,15 +121,34 @@ def run_publishing_command(args: argparse.Namespace) -> int:
         elif name == "prepare":
             result = publisher.prepare(args.project)
         elif name == "upload":
-            result = publisher.upload(args.artifact)
-            if args.wait:
-                work(publisher)
-                with publisher.store.transaction() as db:
-                    result = publisher.store.get(db, "runs", result["id"])
-            else:
+            timeout = args.timeout if args.timeout is not None else 600
+            if args.timeout is not None and not args.wait or not 1 <= timeout <= 86400:
+                raise ValueError("--timeout requires --wait and accepts 1–86400 seconds")
+            result = _run_view(publisher.upload(args.artifact))
+            admitted = result["job"]
+            if admitted["state"] in {"queued", "running"}:
+                stage = "start_worker"
                 publisher.start_worker()
+            if args.wait:
+                stage = "wait"
+                deadline = time.monotonic() + timeout
+                while result["job"]["state"] in {"queued", "running"}:
+                    with publisher.store.transaction() as db:
+                        result = _run_view(publisher.store.get(db, "runs", admitted["id"]))
+                    admitted = result["job"]
+                    remaining = deadline - time.monotonic()
+                    if admitted["state"] not in {"queued", "running"}:
+                        break
+                    if remaining <= 0:
+                        return write_result(failure("wait_timeout", "Inspect the same publishing run after the caller wait expired",
+                                                    **result, stage="wait", effect="unknown"))
+                    time.sleep(min(0.5, remaining))
         elif name == "cancel":
             publisher.cancel(args.run)
+            stage = "read_cancellation"
+            with publisher.store.transaction() as db:
+                result = _run_view(publisher.store.get(db, "runs", args.run))
+            result["cancellation"] = "confirmed" if result["state"] == "cancelled" else "requested"
         elif name == "worker":
             work(publisher)
         elif name == "schedule":
@@ -133,7 +175,9 @@ def run_publishing_command(args: argparse.Namespace) -> int:
         elif name == "remove-artifact":
             publisher.remove_artifact(args.artifact)
         elif name == "promote-itch":
-            result = publisher.promote_itch(args.artifact, args.destination)
+            result = _run_view(publisher.promote_itch(args.artifact, args.destination))
+            admitted = result["job"]
+            stage = "start_worker"
             publisher.start_worker()
         elif name == "release":
             result = publisher.create_release(args.run, args.branch)
@@ -144,7 +188,9 @@ def run_publishing_command(args: argparse.Namespace) -> int:
         elif name == "beta-promote":
             from lib.publishing_steam import queue_beta
 
-            result = queue_beta(publisher, args.release)
+            result = _run_view(queue_beta(publisher, args.release))
+            admitted = result["job"]
+            stage = "start_worker"
             publisher.start_worker()
         elif name == "auth":
             if os.geteuid() == 0 or not sys.stdin.isatty() or not sys.stdout.isatty():
@@ -159,10 +205,24 @@ def run_publishing_command(args: argparse.Namespace) -> int:
                 command = [binary, "-i", str(native), "login"] if args.provider == "butler" else [binary, "+login", args.username, "+quit"]
                 with file_lock(private_directory(publisher.store.root) / (args.provider + ".lock")) as fd:
                     completed = subprocess.run(command, cwd=str(publisher.home), env=environment(publisher.home, login=True), timeout=900, check=False, umask=0o077, pass_fds=(fd,))
-                result = {"ok": completed.returncode == 0, "provider": args.provider}
-        print(json.dumps(result, indent=2, ensure_ascii=False))
-        return 0 if not isinstance(result, dict) or result.get("ok", True) and result.get("state") not in {"unknown", "preflight-failed", "uploaded-unverified"} else 1
-    except (OSError, RuntimeError, ValueError, TypeError, subprocess.SubprocessError, http.client.HTTPException):
+                result = {"ok": completed.returncode == 0, "provider": args.provider,
+                          "child_exit_code": completed.returncode}
+        if name == "upload" and args.wait and result["job"]["state"] != "succeeded":
+            effect = "unknown" if result["job"]["state"] == "unknown" else "none"
+            return write_result(from_report({**result, "stage": "upload", "effect": effect}, ok=False,
+                                            issue="upload_unconfirmed", error="Inspect the retained publication run before retrying"))
+        if result.get("ok") is False:
+            return write_result(from_report({**result, "stage": "authentication", "effect": "unknown"}, ok=False,
+                                            issue="authentication_failed", error="The provider login did not succeed"))
+        return write_result(success(**result))
+    except (OSError, RuntimeError, ValueError, TypeError, subprocess.SubprocessError, http.client.HTTPException) as exc:
         # Never print provider exceptions, credentials, or imported text here.
-        print(json.dumps({"ok": False, "error": "Publishing action failed; inspect the project, artifact, review requirements and VM-local operation history"}))
-        return 1
+        issue = "invalid_input" if isinstance(exc, (ValueError, TypeError)) and stage == "validate" else "publishing_failed"
+        fields = {}
+        if name not in {"status", "projects", "jobs", "runs"}:
+            fields.update(stage=stage if stage != "validate" else name.replace("-", "_"),
+                          effect="applied" if admitted and stage == "start_worker" or stage == "read_cancellation"
+                          else "none" if issue == "invalid_input" else "unknown")
+        if admitted:
+            fields["job"] = admitted
+        return write_result(failure(issue, "Publishing action failed. Inspect the project, artifact, review requirements and VM-local operation history", **fields))

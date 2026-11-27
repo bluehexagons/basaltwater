@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
-import json
 import os
 from pathlib import Path
 import shutil
@@ -18,6 +17,7 @@ from lib import agent_workspace
 from lib.agent_visuals import _image
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.remote_utils import is_dry_run, run
+from lib.tool_results import exception_issue, exit_status, from_report, report_artifacts, write_result
 from lib.validation import validate_filesystem_path, validate_positive_integer
 
 
@@ -134,6 +134,7 @@ def smoke_blender(output: str | None = None, *, timeout: int = 120) -> dict:
         report["scene"] = os.path.join(directory, "scene.blend")
         report["ok"] = True
     except TimeoutError:
+        report["issue"] = "wait_timeout"
         report["error"] = f"Blender render timed out after {timeout} seconds; inspect {log_path}"
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
         report["error"] = str(exc)
@@ -153,9 +154,21 @@ def run_blender_command(args: argparse.Namespace) -> int:
         else:
             result = smoke_blender(args.output, timeout=args.timeout)
     except (OSError, RuntimeError, ValueError) as exc:
-        result = {"ok": False, "error": str(exc)}
+        result = {"ok": False, "issue": exception_issue(exc), "error": str(exc)}
+    if not result["ok"]:
+        result.update(stage=args.blender_command, effect="partial" if result.get("report") else
+                      "none" if result.get("issue") == "invalid_input" else "unknown")
+    result = from_report(result, ok=result["ok"], issue="blender_check_failed", error="Blender could not complete the check")
     if args.json:
-        print(json.dumps(result, indent=2))
+        files = {"report": ("blender_report", "application/json"), "log": ("job_log", "text/plain"),
+                 "scene": ("blender_scene", "application/x-blender")}
+        artifacts = report_artifacts(result, files)
+        images = list(result.get("images", {}).values())
+        if result.get("image"):
+            images.append(result["image"])
+        for image in images:
+            artifacts.extend(report_artifacts(image, {"path": ("render", "image/png")}))
+        return write_result({**result, "artifacts": artifacts})
     elif result["ok"]:
         if args.blender_command == "inspect":
             print(f"Inspected {len(result['inspection']['objects'])} objects; visual correctness remains unverified")
@@ -167,4 +180,4 @@ def run_blender_command(args: argparse.Namespace) -> int:
         print(f"Error: {result['error']}")
         if "directory" in result:
             print(f"Evidence: {result['directory']}")
-    return 0 if result["ok"] else 1
+    return exit_status(result)

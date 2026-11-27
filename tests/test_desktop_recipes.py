@@ -292,7 +292,7 @@ class RecorderHeadroomTests(unittest.TestCase):
         with (patch.object(native_session, "status") as status, patch.object(native_session, "request") as request):
             def refuse(options, detail):
                 with redirect_stdout(output := StringIO()):
-                    self.assertEqual(desktop_cli.run_desktop_command(parser.parse_args([*base, *options])), 1)
+                    self.assertEqual(desktop_cli.run_desktop_command(parser.parse_args([*base, *options])), 2)
                 self.assertIn(detail, json.loads(output.getvalue())["error"])
 
             refuse(inherit, "Finish the previous recording")
@@ -459,7 +459,7 @@ class WindowFollowupRecipeTests(unittest.TestCase):
                 patch.object(development, "task_status", return_value={
                     "state": "running", "ok": True, "session_generation": "other"}), \
                 patch.object(development, "wait_task") as wait, redirect_stdout(out := StringIO()):
-            self.assertEqual(desktop_cli.run_desktop_command(self.args("--observe-task", "1" * 32)), 1)
+            self.assertEqual(desktop_cli.run_desktop_command(self.args("--observe-task", "1" * 32)), 2)
         self.assertEqual(json.loads(out.getvalue())["input_delivery"], "not-sent")
         request.assert_not_called()
         wait.assert_not_called()
@@ -565,15 +565,15 @@ class WindowFollowupRecipeTests(unittest.TestCase):
                 patch.object(qa_artifacts, "process_identity", return_value={"pid": 123, "start_ticks": "1230"}) as identity:
             with redirect_stdout(out := StringIO()):
                 path = self.process_receipt(123, "old")
-                self.assertEqual(desktop_cli.run_desktop_command(self.args("--observe-process", path, native=True)), 1)
+                self.assertEqual(desktop_cli.run_desktop_command(self.args("--observe-process", path, native=True)), 2)
             self.assertEqual(json.loads(out.getvalue())["input_delivery"], "not-sent")
             with redirect_stdout(out := StringIO()):
                 path = self.process_receipt(123, "1230", clock={"boot_id": "22222222-2222-2222-2222-222222222222"})
-                self.assertEqual(desktop_cli.run_desktop_command(self.args("--observe-process", path, native=True)), 1)
+                self.assertEqual(desktop_cli.run_desktop_command(self.args("--observe-process", path, native=True)), 2)
             self.assertIn("current Linux boot", json.loads(out.getvalue())["error"])
             with redirect_stdout(out := StringIO()):
                 path = self.process_receipt(123, "1229")
-                self.assertEqual(desktop_cli.run_desktop_command(self.args("--observe-process", path, native=True)), 1)
+                self.assertEqual(desktop_cli.run_desktop_command(self.args("--observe-process", path, native=True)), 2)
             self.assertEqual(json.loads(out.getvalue())["input_delivery"], "not-sent")
             request.assert_not_called()
             identity.assert_called_once_with(123)
@@ -669,7 +669,7 @@ class WindowFollowupRecipeTests(unittest.TestCase):
                     patch.object(native_session, "request") as native_request, \
                     patch.object(client, "artifact_path") as allocate, \
                     redirect_stdout(out := StringIO()):
-                self.assertEqual(desktop_cli.run_desktop_command(self.args(*extra, native=native)), 1)
+                self.assertEqual(desktop_cli.run_desktop_command(self.args(*extra, native=native)), 2)
                 result = json.loads(out.getvalue())
                 self.assertIn(message, result["error"])
                 self.assertEqual(result["input_delivery"], "not-sent")
@@ -846,17 +846,26 @@ class PublishedRecipeTests(unittest.TestCase):
             with patch.object(native_session, "status") as status, redirect_stdout(out := StringIO()):
                 args = self.parser.parse_args(["desktop", "--native", "map-point", "--capture", "/absent/frame.json",
                     "--view-geometry", "1200", "800", "--x", "1", "--y", "1", *extra])
-                self.assertEqual(desktop_cli.run_desktop_command(args), 1)
+                self.assertEqual(desktop_cli.run_desktop_command(args), 2)
                 self.assertIn("omit --geometry and --crop", json.loads(out.getvalue())["error"])
                 status.assert_not_called()
         with redirect_stderr(message := StringIO()), self.assertRaises(SystemExit) as error:
             self.parser.parse_args(["desktop", "handoff", "--native"])
         self.assertEqual(error.exception.code, 2)
         self.assertIn("Place --native before handoff", message.getvalue())
-        with redirect_stderr(message := StringIO()), self.assertRaises(SystemExit) as error:
-            self.parser.parse_args(["desktop", "sequence", "/private/steps.json", "--generation", "g", "--json"])
-        self.assertEqual(error.exception.code, 2)
-        self.assertIn("omit --json, or use --save-output", message.getvalue())
+
+    def test_sequence_returns_same_partial_receipts_in_both_json_modes(self):
+        before = {"completed": 1, "results": [{"input_delivery": "completed"}], "error": "Frame unavailable",
+                  "failed_action": {"input_delivery": "not-sent"}}
+        results = []
+        for options in ([], ["--json"]):
+            with patch.object(client, "run_sequence", return_value=before), redirect_stdout(out := StringIO()):
+                args = self.parser.parse_args(["desktop", "sequence", "/private/steps.json", "--generation", "g", *options])
+                self.assertEqual(desktop_cli.run_desktop_command(args), 1)
+            results.append(json.loads(out.getvalue()))
+        self.assertEqual(results[0], results[1])
+        self.assertEqual(results[0]["results"], before["results"])
+        self.assertEqual(results[0]["effect"], "partial")
 
     def test_debian_handoff_uses_fixed_ui_action_while_ordinary_exec_stays_blocked(self):
         for mode in ("enabled", "human-override", "disabled"):
@@ -906,7 +915,7 @@ class PublishedRecipeTests(unittest.TestCase):
                 with self.subTest(path=path), redirect_stdout(out := StringIO()):
                     args = self.parser.parse_args(["desktop", "--native", "map-point", "--capture", path,
                         "--view-geometry", "1200", "800", "--x", "1", "--y", "1"])
-                    self.assertEqual(desktop_cli.run_desktop_command(args), 1)
+                    self.assertEqual(desktop_cli.run_desktop_command(args), 2)
                     self.assertIn("saved JSON receipt", json.loads(out.getvalue())["error"])
             status.assert_not_called()
 

@@ -439,7 +439,11 @@ function ConvertTo-NativeDesktopRequest([string[]]$Arguments) {
 }
 
 function Assert-NativeDesktopRequired($Request, [string[]]$Keys) {
-    foreach ($key in $Keys) { if (-not $Request.ContainsKey($key) -or [string]$Request[$key] -eq '') { throw "Required option: --$key" } }
+    foreach ($key in $Keys) {
+        if (-not $Request.ContainsKey($key) -or [string]$Request[$key] -eq '') {
+            throw [ArgumentException]::new("Required option: --$key")
+        }
+    }
 }
 function New-NativeDesktopCapturePath {
     $stateDirectory = Split-Path -Parent (Get-NativeDesktopStatePath)
@@ -573,7 +577,8 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
             if($Arguments[1] -in @('move','wheel')){return @{ok=$true;help='input move --x X --y Y; input wheel --x X --y Y --delta N (nonzero multiples of 120, -1200..1200). Require observed window identity, generation and geometry. Supports --observation ID and --observe [--output NEW.png]. Pointer target must be foreground and unoccluded; physical modifiers/buttons refuse input.'}}
             return @{ ok = $true; help = 'input key --key KEY | input chord --key CTRL+A (one/two distinct CTRL/SHIFT modifiers). input sequence --keys HOME,SHIFT+END: at most 32 chords and 1024 characters. Keys: A-Z 0-9 F1-F12 ENTER ESC TAB SPACE LEFT UP RIGHT DOWN BACKSPACE DELETE HOME END PAGEUP PAGEDOWN INSERT. input text --text TEXT: at most 1024 UTF-16 code units. input click --x X --y Y. All require --window --identity --generation --width --height from fresh windows, or matching window screenshot geometry with --observation ID. Observation is single-use and consumed before input attempt; status/windows never renew it. Queue acceptance only; inspect application afterward.' }
         }
-        $request = ConvertTo-NativeDesktopRequest $Arguments
+        try { $request = ConvertTo-NativeDesktopRequest $Arguments }
+        catch { throw [ArgumentException]::new($_.Exception.Message, $_.Exception) }
         if($request.command -eq 'map-point'){
             Assert-NativeDesktopRequired $request @('capture','x','y')
             if ($request.ContainsKey('to-x') -ne $request.ContainsKey('to-y')) { throw 'Drag mapping requires both endpoints' }
@@ -872,6 +877,9 @@ function Invoke-NativeDesktopCli([string[]]$Arguments) {
         return @{ ok = $true; agent_control = $state.mode; control_revision = $state.revision; override_until = $state.until }
     } catch {
         $reply=@{ ok = $false; code = 'native_desktop_error'; error = $_.Exception.Message }
+        if ($_.Exception -is [ArgumentException] -and -not $dispatchAttempted) {
+            $reply.issue = 'invalid_input'; $reply.stage = 'validation'; $reply.effect = 'none'
+        }
         $reply.submitted=$dispatchAttempted
         $reply.dispatch_stage=$(if($dispatchAttempted){'transport'}else{'before-input'})
         $reply.input_delivery=$(if($dispatchAttempted){'unknown'}else{'not-sent'})

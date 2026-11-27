@@ -282,7 +282,9 @@ class TestAgentVisualCheck(unittest.TestCase):
         self.assertEqual(observations, [(baseline, {"frame": 180, "resolution": [3840, 2160]}),
                                         (candidate, {"frame": 180, "resolution": [3840, 2160]})])
         self.assertTrue(all(Path(check["check_report"]).is_file() for check in result["checks"].values()))
-        self.assertEqual(json.loads(Path(result["comparison_report"]).read_text()), result)
+        saved = json.loads(Path(result["comparison_report"]).read_text())
+        self.assertEqual(saved, {key: result[key] for key in saved})
+        self.assertIn(result["comparison_report"], [entry["path"] for entry in result["artifacts"]])
 
     def test_pair_marks_cases_unverified_after_a_renderer_failure_or_recipe_change(self) -> None:
         baseline, candidate = self.root / "baseline", self.root / "candidate"
@@ -644,7 +646,9 @@ class TestAgentVisualCheck(unittest.TestCase):
             self.assertEqual(agent_cli.run_agent_command(self.args("--review-manifest", "captures/review.json", "--json")), 0)
         self.execute.assert_called_once()
         result = json.loads(output.getvalue())
-        self.assertEqual(json.loads((self.output / "check.json").read_text()), result)
+        saved = json.loads((self.output / "check.json").read_text())
+        self.assertEqual(saved, {key: result[key] for key in saved})
+        self.assertIn(str(self.output / "check.json"), [entry["path"] for entry in result["artifacts"]])
         review = result["review"]
         self.assertEqual(Path(review["manifest"]), self.output / "captures/review.json")
         self.assertEqual(Path(review["viewer"]), self.output / "review-gallery/index.html")

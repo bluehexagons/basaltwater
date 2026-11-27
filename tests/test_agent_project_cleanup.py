@@ -107,10 +107,11 @@ class ProjectCleanupTests(unittest.TestCase):
         parser = argparse.ArgumentParser()
         inventory.add_storage_parser(parser.add_subparsers())
         command = ["storage", "clean-generated", str(self.root), "--rule", "build"]
-        for flag, apply in (([], False), (["--dry-run"], False), (["--apply"], True)):
+        for flag, apply in (([], False), (["--dry-run"], False), (["--apply"], True), (["--json"], False)):
             with self.subTest(flag=flag), patch("lib.agent_generated_cleanup.clean_generated", return_value=0) as run:
                 self.assertEqual(inventory.run_storage_command(parser.parse_args(command + flag)), 0)
-                run.assert_called_once_with(str(self.root), "build", policy_path=cleanup.POLICY_PATH, apply=apply)
+                run.assert_called_once_with(str(self.root), "build", policy_path=cleanup.POLICY_PATH,
+                                            apply=apply, as_json="--json" in flag)
         with redirect_stdout(StringIO()), patch("sys.stderr", StringIO()), self.assertRaises(SystemExit):
             parser.parse_args(command + ["--apply", "--dry-run"])
 
@@ -212,7 +213,7 @@ class ProjectCleanupTests(unittest.TestCase):
             cleanup.inspect_project_cleanup(str(self.root), policy_path="tools/cleanup.json")
         args.policy = "../other"
         with redirect_stdout(StringIO()) as output:
-            self.assertEqual(inventory.run_storage_command(args), 1)
+            self.assertEqual(inventory.run_storage_command(args), 2)
         self.assertIn("error", json.loads(output.getvalue()))
         self.scan.assert_not_called()
 

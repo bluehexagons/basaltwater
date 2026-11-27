@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 import json
 import math
 import os
@@ -90,9 +91,13 @@ def _terminate_group(process: subprocess.Popen[bytes]) -> str | None:
 
 def _private_file(path: Path):
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    if os.name == "posix":
-        os.fchmod(descriptor, 0o600)
-    return os.fdopen(descriptor, "wb")
+    try:
+        if os.name == "posix":
+            os.fchmod(descriptor, 0o600)
+        return os.fdopen(descriptor, "wb")
+    except OSError:
+        os.close(descriptor)
+        raise
 
 
 def _emit(result: dict[str, object]) -> None:
@@ -117,6 +122,7 @@ def _save_summary(path: Path, result: dict[str, object]) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--json", action="store_true", help="Emit one JSON result object (the default)")
     parser.add_argument("--timeout", type=_positive_finite, default=300.0)
     parser.add_argument("--output-directory", type=Path,
                         help="create a new private directory under an existing parent for logs and summary.json")
@@ -129,15 +135,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not command:
         parser.error("provide a command after --")
 
-    if args.output_directory is None:
-        artifact_dir = Path(tempfile.mkdtemp(prefix="basaltwater-output-"))
-    else:
-        artifact_dir = args.output_directory.expanduser().absolute()
-        try:
+    try:
+        if args.output_directory is None:
+            artifact_dir = Path(tempfile.mkdtemp(prefix="basaltwater-output-"))
+        else:
+            artifact_dir = args.output_directory.expanduser().absolute()
             artifact_dir.mkdir(mode=0o700)
-        except (OSError, ValueError):
-            parser.error("--output-directory must name a new directory under an existing writable parent")
-    os.chmod(artifact_dir, 0o700)
+        os.chmod(artifact_dir, 0o700)
+    except (OSError, ValueError):
+        issue = "invalid_input" if args.output_directory else "artifact_save_failed"
+        _emit({"schema_version": 1, "ok": False, "issue": issue, "stage": "allocate", "effect": "none",
+               "error": "Capture needs a new private directory under an existing writable parent"})
+        return 2 if args.output_directory else 1
     stdout_path = artifact_dir / "stdout.log"
     stderr_path = artifact_dir / "stderr.log"
     summary_path = artifact_dir / "summary.json"
@@ -147,16 +156,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     launch_error: str | None = None
     cleanup_error: str | None = None
 
-    with _private_file(stdout_path) as stdout_file, _private_file(stderr_path) as stderr_file:
-        result: dict[str, object] = {
-            "schema_version": 1,
-            "status": "in_progress",
-            "summary_path": str(summary_path),
-            "stdout_path": str(stdout_path), "stdout_bytes": 0,
-            "stderr_path": str(stderr_path), "stderr_bytes": 0,
-            "return_code": None, "duration_seconds": None,
-        }
-        _save_summary(summary_path, result)
+    result: dict[str, object] = {
+        "schema_version": 1,
+        "status": "in_progress",
+        "summary_path": str(summary_path),
+        "stdout_path": str(stdout_path), "stdout_bytes": 0,
+        "stderr_path": str(stderr_path), "stderr_bytes": 0,
+        "return_code": None, "duration_seconds": None,
+    }
+    with ExitStack() as files:
+        try:
+            stdout_file = files.enter_context(_private_file(stdout_path))
+            stderr_file = files.enter_context(_private_file(stderr_path))
+            _save_summary(summary_path, result)
+        except OSError as exc:
+            _emit({"schema_version": 1, "ok": False, "issue": "artifact_save_failed", "stage": "allocate",
+                   "effect": "none", "error": f"Could not open private capture files: {exc}"})
+            return 1
         try:
             process = subprocess.Popen(
                 command,
@@ -184,19 +200,33 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return_code = 130
                 cleanup_error = _terminate_group(process)
 
-    result.update({
-        "status": status,
-        "stdout_bytes": stdout_path.stat().st_size,
-        "stderr_bytes": stderr_path.stat().st_size,
-        "return_code": return_code,
-        "duration_seconds": round(time.monotonic() - started, 3),
-    })
+    result.update(status=status, return_code=return_code, duration_seconds=round(time.monotonic() - started, 3))
     if launch_error is not None:
         result["error"] = launch_error
     if cleanup_error is not None:
         result["cleanup_error"] = cleanup_error
-    _save_summary(summary_path, result)
-    _emit(result)
+    view = {"ok": status == "completed" and return_code == 0,
+            "child_exit_code": return_code if status == "completed" else None}
+    artifacts = [("stdout_log", stdout_path, "text/plain"), ("stderr_log", stderr_path, "text/plain")]
+    if not view["ok"]:
+        view["issue"] = {"timeout": "wait_timeout", "launch_error": "launch_failed",
+                         "interrupted": "interrupted"}.get(status, "child_failed")
+        view["error"] = launch_error or "Inspect the captured command's result and retained logs."
+        view["stage"] = "launch" if status == "launch_error" else "child_execution"
+        view["effect"] = "none" if status == "launch_error" else "unknown"
+    try:
+        result.update(stdout_bytes=stdout_path.stat().st_size, stderr_bytes=stderr_path.stat().st_size)
+        _save_summary(summary_path, result)
+        artifacts.insert(0, ("command_summary", summary_path, "application/json"))
+    except OSError as exc:
+        view["summary_save_error"] = str(exc)
+        if view["ok"]:
+            view.update(ok=False, issue="artifact_save_failed", stage="retain_summary", effect="unknown",
+                        error="Command finished but its summary could not be retained.")
+            return_code = 1
+    view["artifacts"] = [{"kind": kind, "path": str(path), "media_type": media_type}
+                         for kind, path, media_type in artifacts if path.is_file()]
+    _emit({**result, **view})
     return return_code
 
 

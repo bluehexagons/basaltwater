@@ -21,6 +21,7 @@ from lib.remote_utils import CommandTimeoutError, get_os_id, run as run_command
 from lib.node_toolchain import select_node
 from lib.service_node import SERVICE_NODE, verify_service_node
 from lib.t3_preview import add_t3_preview_arguments, run_t3_preview_command
+from lib.tool_results import add_json_option, exception_issue, from_report, write_result
 from lib.validation import validate_filesystem_path
 
 
@@ -250,7 +251,7 @@ def add_browser_parser(commands: argparse._SubParsersAction) -> None:
         action.add_argument("--engine", choices=("chromium", "firefox"), default="chromium")
         action.add_argument("--context", choices=("managed", "managed-mcp", "project"), default="managed")
         action.add_argument("--project")
-        action.add_argument("--json", action="store_true")
+        add_json_option(action, default=True)
         if name == "register":
             action.add_argument("--agent-tool", choices=("codex", "opencode"), required=True)
 
@@ -284,6 +285,7 @@ def run_browser_command(args: argparse.Namespace) -> int:
     if args.browser_command == "resolve-preview":
         return run_t3_preview_command(args)
     result = None
+    stage = "check"
     try:
         context = args.context
         if args.browser_command == "register":
@@ -306,6 +308,7 @@ def run_browser_command(args: argparse.Namespace) -> int:
                 if args.engine == "firefox" and '--engine' not in source.read():
                     raise ValueError("Managed launcher lacks Firefox support; rerun the saved setup")
             with redirect_stdout(sys.stderr):
+                stage = "register"
                 register_browser_agent(args.engine, args.agent_tool)
             result["registrations"] = browser_registrations(args.engine)
             result["mcp_registered"] = result["registrations"].get(args.agent_tool) is True
@@ -318,6 +321,9 @@ def run_browser_command(args: argparse.Namespace) -> int:
                       "remediation": "inspect_managed_launcher_and_agent_configuration", "error": str(exc)}
         else:
             result = {"engine": args.engine, "context": args.context, "ok": False, "healthy": False,
-                      "issue": "invalid_browser_request", "remediation": "check_context_and_project_path", "error": str(exc)}
-    print(json.dumps(result, indent=2) if args.json else json.dumps(result))
-    return 0 if result["ok"] else 1
+                      "issue": exception_issue(exc), "remediation": "check_context_and_project_path", "error": str(exc)}
+    if not result["ok"] and args.browser_command != "doctor":
+        result.update(stage=stage, effect="none" if args.browser_command == "register" and stage == "check"
+                      or result.get("issue") == "invalid_input" else "unknown")
+    return write_result(from_report(result, ok=result["ok"], issue="browser_check_failed",
+                                    error="The browser check failed. Inspect the reported remediation."))

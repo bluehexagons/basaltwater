@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import json
 import os
 import pwd
 import re
@@ -14,6 +13,7 @@ from typing import Optional
 
 from lib.types import JSONDict
 from lib.atomic_io import read_json_file, write_json_atomic
+from lib.tool_results import exception_issue, exit_status, failure, success, write_result
 from lib.validation import validate_filesystem_path
 
 
@@ -428,10 +428,7 @@ def remove_agent_worktree(
     return result
 
 
-def _print_result(value: JSONDict | list[JSONDict], *, as_json: bool) -> None:
-    if as_json:
-        print(json.dumps(value, indent=2))
-        return
+def _print_result(value: JSONDict | list[JSONDict]) -> None:
     records = value if isinstance(value, list) else [value]
     if isinstance(value, dict) and "workspaces" in value:
         records = value["workspaces"]
@@ -473,14 +470,17 @@ def run_agent_workspace_command(args: argparse.Namespace) -> int:
             raise WorkspaceIssue("workspace_command_required", "Agent workspace command required",
                                  "Choose create, adopt, list, group, status, or remove.")
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+        issue = exc.issue if isinstance(exc, WorkspaceIssue) else exception_issue(exc)
+        fields = {"remediation": getattr(exc, "remediation", "Check the path, Git state and permissions; inspect the worktree before retrying.")}
+        if args.agent_workspace_command in {"create", "adopt", "remove"}:
+            fields.update(stage=args.agent_workspace_command,
+                          effect="none" if isinstance(exc, ValueError) else "unknown")
+        result = failure(issue, str(exc), **fields)
         if getattr(args, "json", False):
-            print(json.dumps({
-                "ok": False, "error": str(exc),
-                "issue": getattr(exc, "issue", "invalid_workspace" if isinstance(exc, ValueError) else "workspace_operation_failed"),
-                "remediation": getattr(exc, "remediation", "Check the path, Git state and permissions; inspect the worktree before retrying."),
-            }, indent=2))
-        else:
-            print(f"Error: {exc}")
-        return 1
-    _print_result(value, as_json=bool(getattr(args, "json", False)))
+            return write_result(result)
+        print(f"Error: {exc}")
+        return exit_status(result)
+    if getattr(args, "json", False):
+        return write_result(success(workspaces=value) if isinstance(value, list) else success(**value))
+    _print_result(value)
     return 0

@@ -14,6 +14,7 @@ from lib.atomic_io import read_json_file, write_json_atomic
 from lib.node_project import select_package_manager
 from lib.project_manifest import MANIFEST_FILENAME, load_manifest, parse_manifest
 from lib.t3_project import check_t3_worktree
+from lib.tool_results import exception_issue, exit_status, failure, success, write_result
 from lib.validation import validate_filesystem_path
 
 
@@ -257,7 +258,7 @@ def run_project_manifest_command(args: argparse.Namespace) -> int:
                 raise ValueError("No basaltwater.json found; run basaltw manifest init")
             result = {"status": "valid", "components": len(manifest.components), "ci_stages": list(manifest.ci), "publishing": manifest.publishing}
         if args.json:
-            print(json.dumps(result, indent=2))
+            return write_result(success(**result))
         elif args.manifest_command == "check-t3-worktree":
             print(f"T3 worktree at {result['commit']} uses a {result['status']} checkout.")
             if result["patterns_path"] is not None:
@@ -272,5 +273,11 @@ def run_project_manifest_command(args: argparse.Namespace) -> int:
                 print("Guide: " + result["guide"])
         return 0
     except (OSError, ValueError) as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}) if args.json else f"Error: {exc}")
-        return 1
+        issue = exception_issue(exc)
+        details = ({"stage": "initialize", "effect": "none" if args.dry_run or issue == "invalid_input" else "unknown"}
+                   if args.manifest_command == "init" else {})
+        result = failure(issue, str(exc), **details)
+        if args.json:
+            return write_result(result)
+        print(f"Error: {exc}")
+        return exit_status(result)

@@ -401,11 +401,11 @@ Resolution is read-only. It probes the loopback HTTP endpoint, finds a forward
 owned by the requesting account with the same host, port, and profile, and
 verifies that route's HTTPS endpoint with normal TLS validation. On success,
 `navigation` contains the exact `{ "url": "https://..." }` argument for T3's
-`preview_navigate`; supply the retained tab ID as well. Plain output prints
-only the URL on success.
+`preview_navigate`. Supply the retained tab ID as well. Default output and
+`--json` return the same result object. Use `forward url NAME` for URL-only output.
 
-If no matching route exists, `issue: forward_missing` includes an executable
-`command` that allocates a managed listener, waits for upstream readiness, and
+If no matching route exists, `issue: forward_missing` includes literal
+`remediation_argv` arguments to allocate a managed listener, wait for upstream readiness, and
 retains the saved access policy. Run it within the requested preview scope and
 resolve again. The suggested name avoids replacing any existing forward.
 `--host ::1` selects IPv6 loopback; `--profile godot` requires the matching

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 import subprocess
 
 from desktop import session_runtime as runtime
 from desktop import client
+from desktop.receipts import DesktopRequestError
+from lib.tool_results import add_json_to_leaves, artifact, exception_issue, from_report, report_artifacts, write_result
 from lib.validation import validate_filesystem_path
 
 
@@ -37,13 +38,11 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     preflight.add_argument("--managed-source")
     preflight.add_argument("--instruction", action="append", default=[], help="Relevant required file; repeat up to 16, return retrievable range checklist")
     preflight.add_argument("--output", help="New private evidence directory outside Git")
-    preflight.add_argument("--json", action="store_true")
     instructions = commands.add_parser("instructions", help="Read at most 4000 Unicode characters with explicit remaining ranges")
     instructions.add_argument("path")
     instructions.add_argument("--start", type=int, default=0)
     instructions.add_argument("--characters", type=int, default=4000)
     instructions.add_argument("--sha256", help="Refuse a changed file when continuing a bounded read")
-    instructions.add_argument("--json", action="store_true")
     from desktop.development import add_development_parser
     add_development_parser(commands)
     from desktop.gamepad_qa import add_gamepad_parser
@@ -69,18 +68,14 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     verifying.add_argument("artifact")
     verifying.add_argument("--retention", nargs=2, action="append", default=[], metavar=("RECEIPT", "SHA256"),
                            help="Explicitly pinned wait receipt for intentional ring evictions; repeat up to 16")
-    verifying.add_argument("--json", action="store_true")
     for command in (finishing, finalizing):
         command.add_argument("--task", action="append", default=[], help="Also attach a pre-existing development task; repeat as needed")
         command.add_argument("--renderer", help="Renderer/device observed in the application's log; recorded as operator-observed")
-    for command in (recording, finishing, finalizing):
-        command.add_argument("--json", action="store_true")
     for name in ("status", "stop", "logout", "windows", "doctor", "handoff", "revoke"):
         help_args = ({"help": "Open the human control window; changes no permission. KDE: desktop --native handoff",
                       "description": "Open the human control window without transferring ownership or changing agent permission. "
                                      "On CachyOS use: basaltw desktop --native handoff"} if name == "handoff" else {})
         command = commands.add_parser(name, **help_args)
-        command.add_argument("--json", action="store_true")
         if name == "handoff":
             command.add_argument("--native", action=_RecipeUsageError, nargs=0, dest="misplaced_native",
                                  default=argparse.SUPPRESS, help=argparse.SUPPRESS,
@@ -88,16 +83,13 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
         if name == "windows":
             command.add_argument("--save-output", action="store_true", help="Save full JSON privately and print a bounded preview")
     wake = commands.add_parser("wake", help="Native KDE: wake sleeping displays without keyboard/pointer input; requires enabled agent control")
-    wake.add_argument("--json", action="store_true")
     starting = commands.add_parser("start")
-    starting.add_argument("--json", action="store_true")
     starting.add_argument("--remember", action="store_true", help="Native opt-in to a reusable KDE grant; initial approval remains required")
     starting.add_argument("--touch", action="store_true", help="Native: explicitly request touchscreen consent for bounded multitouch gestures")
     starting.add_argument("--session-seconds", type=int, default=0, help="Optional native lifetime, 60–28800 seconds; 0 (default) is unlimited")
     renewal = commands.add_parser("renew", help="Change an optional native backend lifetime without changing agent permission")
     renewal.add_argument("--generation", required=True)
     renewal.add_argument("--seconds", type=int, default=0)
-    renewal.add_argument("--json", action="store_true")
     commands.add_parser("smoke", help="Verify native editing, saving and dialog control in a disposable GTK window")
     blocking = commands.add_parser("check-blocking", help="Test the selected browser on a local filter fixture")
     blocking.add_argument("--browser", choices=("firefox", "chromium", "librewolf"), required=True)
@@ -107,7 +99,6 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     screenshot = commands.add_parser("screenshot", description="Debian: capture the desktop or a selected window. With --native: selected monitor only.")
     parser.native_screenshot_parser = screenshot
     screenshot.add_argument("--output", help="New PNG path; defaults to private Pictures/basaltwater artifact storage")
-    screenshot.add_argument("--json", action="store_true")
     screenshot.add_argument("--compact", action="store_true", help="Return capture metadata without the status envelope; use status/doctor for diagnostics")
     screenshot.add_argument("--preview-width", type=int, help="Also retain a private preview up to this width (1–2048)")
     screenshot.add_argument("--max-age-seconds", type=int, default=60,
@@ -133,8 +124,8 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     mapping.add_argument("--y", required=True, type=int, help="Local y in the selected source-image or presented-view space")
     mapping.add_argument("--to-x", type=int, help="Optional drag endpoint x in the same coordinate space")
     mapping.add_argument("--to-y", type=int, help="Optional drag endpoint y in the same coordinate space")
-    mapping.add_argument("--json", action="store_true")
-    mapping.add_argument("--capture", help="Saved screenshot or input --observe JSON receipt; checks the fresh frame against status without capturing")
+    mapping.add_argument("--capture", metavar="CAPTURE_RECEIPT.json",
+                         help="JSON capture receipt (maximum 64 KiB); checks the fresh frame against status without capturing")
     mapping.add_argument("--view-origin", nargs=2, type=int, metavar=("LEFT", "TOP"),
                          help="Presented image content origin inside a viewer; points include these margins (requires --capture)")
     execute = commands.add_parser("exec")
@@ -172,11 +163,9 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     launch.add_argument("launch")
     launch.add_argument("--generation", required=True)
     sequence = commands.add_parser("sequence", help="Run up to 20 JSON actions within 20 seconds; screenshot after_ms delays total at most 5000 ms")
-    sequence.add_argument("path")
+    sequence.add_argument("path", metavar="PLAN.json", help="UTF-8 JSON array of action objects (maximum 64 KiB)")
     sequence.add_argument("--generation", required=True)
     sequence.add_argument("--save-output", action="store_true", help="Retain all completion/failure/timing receipts privately and return their artifact path")
-    sequence.add_argument("--json", action=_RecipeUsageError, nargs=0, help=argparse.SUPPRESS,
-                         const="sequence already emits JSON; omit --json, or use --save-output to retain full receipts privately")
     control = commands.add_parser("control", help="Change Debian XRDP agent permission. KDE: desktop --native handoff")
     control.add_argument("operation", choices=("enabled", "human-override", "disabled"))
     control.add_argument("--human-approved", action="store_true", help="Confirm explicit human approval for this state change; a desktop task alone is insufficient")
@@ -237,6 +226,84 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     action.add_argument("--settle-ms", type=int, default=120, help="Settling delay for --observe, 0–5000 ms (default: 120)")
     action.add_argument("--output", help="New PNG path for --observe; defaults to private artifact storage")
     action.add_argument("--preview-width", type=int, help="Retain a preview with --observe (1–2048 pixels)")
+    for name, command in commands.choices.items():
+        if name != "develop":
+            add_json_to_leaves(command, default=name != "check-blocking")
+
+
+_MUTATIONS = {"accessibility-record", "audio", "control", "element", "evidence", "exec", "gamepad",
+              "handoff", "input", "logout", "open", "renew", "revoke", "screenshot", "sequence", "smoke", "start", "stop", "wake", "window"}
+
+
+def _desktop_result(command: str, result: dict, *, issue: str = "desktop_operation_failed") -> dict:
+    observation = result.get("observation")
+    if not isinstance(observation, dict):
+        observation = {}
+    error = result.get("error") or result.get("preview_error") or observation.get("preview_error")
+    ok = not (error or result.get("ok") is False or result.get("healthy") is False or
+              result.get("state") == "failed" or result.get("state") == "stopped" and result.get("last_failure"))
+    if ok:
+        return from_report(result, ok=True, issue=issue, error="")
+    if command in _MUTATIONS:
+        receipt = result.get("failed_action") or result
+        delivery = receipt.get("input_delivery")
+        effect = {"not-sent": "none", "completed": "applied", "partial": "partial"}.get(delivery, "unknown")
+        stage = receipt.get("dispatch_stage", command).replace("-", "_")
+        if command == "sequence" and result.get("completed") and effect != "unknown":
+            effect = "partial"
+        if result.get("launch") or observation.get("preview_error"):
+            effect = "applied"
+        result = {**result, "stage": result.get("stage") or stage, "effect": result.get("effect") or effect}
+    return from_report(result, ok=False, issue=issue, error=error or f"Desktop {command} failed. Inspect the returned details.")
+
+
+def _capture_artifacts(command: str, result: dict) -> dict:
+    from desktop.observations import retain_capture
+
+    observations = []
+    if command == "screenshot":
+        observations.append(result)
+    elif command == "input" and isinstance(result.get("observation"), dict):
+        observations.append(result["observation"])
+    elif command == "sequence":
+        observations.extend(item for item in result.get("results", []) if item.get("observation_id") and item.get("output"))
+    files = []
+    for observation in observations:
+        try:
+            files.extend(retain_capture(observation))
+        except (OSError, RuntimeError, ValueError) as exc:
+            primary_failure = result.get("error") or result.get("ok") is False
+            result = {**result, "receipt_save_error": str(exc)}
+            if not primary_failure:
+                result.update(error=str(exc), issue="artifact_save_failed", stage="retain_capture", effect="applied")
+            if Path(observation["output"]).is_file():
+                files.append(artifact("screenshot", observation["output"], "image/png"))
+    return {**result, "artifacts": files} if files else result
+
+
+_EVIDENCE_KINDS = {
+    "run": "run_ledger", "start": "recording", "finish": "recording", "status": "recording",
+    "verify": "recording", "finalize": "recording", "records": "record_bundle", "timeline": "timeline",
+    "closeout": "closeout_receipt", "process": "process_snapshot", "conditional": "conditional_report",
+    "corpus": "corpus_summary", "perception": "perception_report",
+}
+
+
+def _evidence_artifacts(args: argparse.Namespace, result: dict) -> dict:
+    command = args.desktop_command
+    if command == "evidence":
+        kind = _EVIDENCE_KINDS.get(args.evidence_command, "media_manifest")
+    elif command == "audio":
+        kind = "audio_analysis" if args.audio_command == "analyze" else "audio_capture"
+    else:
+        kind = {"preflight": "preflight_report", "accessibility-record": "accessibility_recording",
+                "gamepad": "input_receipt"}.get(command)
+    if kind is None:
+        return result
+    files = report_artifacts(result, {"artifact": (kind, "application/json"),
+                                      "report": ("review_notes", "text/markdown"),
+                                      "preview": ("point_preview", "image/png")})
+    return {**result, "artifacts": files} if files else result
 
 
 def run_desktop_command(args: argparse.Namespace) -> int:
@@ -245,9 +312,9 @@ def run_desktop_command(args: argparse.Namespace) -> int:
         try:
             result = run_check(args.browser, flatpak=args.flatpak, timeout=args.timeout)
         except (OSError, ValueError, RuntimeError) as exc:
-            result = {"schema_version": 1, "ok": False, "issue": "check_unavailable", "error": str(exc)}
+            result = {"ok": False, "issue": exception_issue(exc), "error": str(exc)}
         if args.json:
-            print(json.dumps(result))
+            return write_result(from_report(result, ok=result["ok"], issue="check_failed", error="Browser filtering check failed."))
         elif result["ok"]:
             print(f"{args.browser} loaded the control and blocked the ad script.")
         else:
@@ -344,11 +411,11 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                 if project is not None:
                     result = {**result, "project": project}
                 if operation == "finish":
-                    artifact = result["artifact"]
+                    recording_path = result["artifact"]
                     try:
-                        result = finalize(artifact, tasks=args.task, renderer=args.renderer)
+                        result = finalize(recording_path, tasks=args.task, renderer=args.renderer)
                     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
-                        result = {**result, "error": f"Recording saved; finalization failed: {exc}", "artifact": artifact}
+                        result = {**result, "error": f"Recording saved; finalization failed: {exc}", "stage": "finalization", "effect": "partial"}
         elif command == "status":
             result = backend.status()
         elif command == "wake":
@@ -430,7 +497,7 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                     baseline = {"complete": False, "observed_window_ids": None, "detail": str(exc)[:500]}
                 else:
                     if inventory.get("generation") != current["generation"]:
-                        raise ValueError("Desktop session changed before application launch; inspect status")
+                        raise RuntimeError("Desktop session changed before application launch; inspect status")
                     unavailable = inventory.get("coverage") == "unavailable"
                     baseline = {"complete": inventory.get("truncated") is False and not unavailable,
                                 "observed_window_ids": None if unavailable else [item["id"] for item in inventory["windows"]]}
@@ -438,9 +505,9 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                         baseline["detail"] = inventory.get("detail", "Window inventory unavailable")
                 latest = backend.status()
                 if latest.get("state") != "running" or latest.get("generation") != current["generation"]:
-                    raise ValueError("Desktop session changed before application launch; inspect status")
+                    raise RuntimeError("Desktop session changed before application launch; inspect status")
                 if latest.get("control_revision") != current["control_revision"]:
-                    raise ValueError("Desktop control changed before application launch; inspect status")
+                    raise RuntimeError("Desktop control changed before application launch; inspect status")
             if command == "smoke":
                 if backend is not runtime:
                     raise RuntimeError("The GTK XRDP smoke check requires a managed Debian desktop")
@@ -505,7 +572,7 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                 elif command == "input":
                     if args.observation is not None:
                         if "observation-input" not in current.get("input_capabilities", []):
-                            raise ValueError("Helper does not support observation-bound input; update and restart it at a safe checkpoint")
+                            raise RuntimeError("Helper does not support observation-bound input; refresh and restart the helper")
                         payload["observation_id"] = args.observation
                     if not 0 <= args.settle_ms <= 5000:
                         raise ValueError("Observation settling delay must be 0–5000 ms")
@@ -570,26 +637,29 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                                                           exclude_titles=exclude_titles, stable_seconds=stable_seconds)
                     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
                         result["error"] = str(exc)  # Preserve launch identity for inspection after timeout.
+                        result["issue"] = getattr(exc, "receipt", {}).get("issue", exception_issue(exc))
                     else:
                         previous = set(baseline["observed_window_ids"]) if baseline["complete"] else None
                         result.update(windows=observed["windows"], launch_status=observed["launch_status"],
                                       existing_window_ids=([item["id"] for item in observed["windows"] if item["id"] in previous]
                                                            if previous is not None else None),
                                       window_association="title substring; inspect PID/class before acting")
-        exit_code = int("error" in result or result.get("ok") is False or result.get("healthy") is False or result.get("state") == "failed"
-                        or "preview_error" in result
-                        or (isinstance(result.get("observation"), dict) and "preview_error" in result["observation"])
-                        or (result.get("state") == "stopped" and bool(result.get("last_failure"))))
+        if command in {"screenshot", "sequence", "input"}:
+            result = _capture_artifacts(command, result)
+        else:
+            result = _evidence_artifacts(args, result)
+        result = _desktop_result(command, result)
         if getattr(args, "save_output", False):
             from desktop.observations import save_observation
             try:
-                result = save_observation(result)
+                summary = save_observation(result)
+                fields = {key: result[key] for key in ("schema_version", "ok", "issue", "error", "stage", "effect") if key in result}
+                result = {**summary, **fields, "output_truncated": True, "artifacts": [
+                    artifact("full_result", summary["artifact"], "application/json"), *result.get("artifacts", [])]}
             except (OSError, ValueError, RuntimeError) as exc:
-                result = {**result, "error": result.get("error", "Could not retain the result artifact; inspect receipts before further action"),
-                          "output_save_error": str(exc)}
-                exit_code = 1
-        print(json.dumps(result, indent=2))
-        return exit_code
+                result = _desktop_result(command, {**result, "error": result.get("error", "Could not retain the result artifact; inspect receipts before further action"),
+                                         "output_save_error": str(exc)}, issue="artifact_save_failed")
+        return write_result(result)
     except (OSError, ValueError, RuntimeError, KeyError, subprocess.SubprocessError) as exc:
         result = getattr(exc, "receipt", {"error": str(exc)})
         if args.desktop_command == "handoff" and backend is runtime:
@@ -601,5 +671,11 @@ def run_desktop_command(args: argparse.Namespace) -> int:
         if args.desktop_command == "input" and "input_delivery" not in result:
             from desktop.receipts import input_failure
             result = input_failure(exc, {"generation": args.generation}, stage="before-input")
-        print(json.dumps(result))
-        return 1
+        issue = "invalid_input" if isinstance(exc, FileNotFoundError) and args.desktop_command in {"map-point", "sequence"} else exception_issue(exc)
+        if isinstance(exc, DesktopRequestError):
+            issue = result.get("issue", "desktop_operation_failed")
+        if command == "handoff" and result.get("hint"):
+            issue = "desktop_unavailable"
+        if args.desktop_command in _MUTATIONS and issue == "invalid_input":
+            result = {**result, "stage": "validation", "effect": "none"}
+        return write_result(_desktop_result(args.desktop_command, result, issue=issue))

@@ -131,10 +131,14 @@ Get-Acl -LiteralPath $PSScriptRoot | Out-Null
     }
     [IO.File]::WriteAllText((Join-Path $developmentSource 'windows\Development.Common.ps1'), @'
 function Invoke-NativeDevelopmentCli($Arguments) {
-    $receipt = [pscustomobject]@{ State = $env:BASALTWATER_TEST_TASK_STATE; ExitCode = 23 }
+    $receipt = [pscustomobject]@{ Id = $Arguments[1]; State = $env:BASALTWATER_TEST_TASK_STATE; ExitCode = 23 }
     if ($Arguments[0] -in @('wait','ready')) {
-        return [pscustomobject]@{ WaitState = $env:BASALTWATER_TEST_WAIT_STATE;
+        return [pscustomobject]@{ Id = $Arguments[1]; WaitState = $env:BASALTWATER_TEST_WAIT_STATE;
             TimedOut = ($env:BASALTWATER_TEST_WAIT_STATE -eq 'timed-out'); Receipt = $receipt }
+    }
+    if ($Arguments[0] -eq 'logs') {
+        return @{ Id = $Arguments[1]; State = $receipt.State;
+            Tails = @{ stdout = @{ Truncated = $false }; stderr = @{ Truncated = $true } }; Artifacts = @() }
     }
     return $receipt
 }
@@ -145,9 +149,10 @@ function Invoke-NativeDevelopmentCli($Arguments) {
         @{ Source = $developmentSource } | ConvertTo-Json | Set-Content -LiteralPath $receiptPath -Encoding UTF8
         foreach ($state in @('failed','timed-out','cancelled','cleanup-uncertain','launch-uncertain','interrupted','queued','running','complete')) {
             $env:BASALTWATER_TEST_TASK_STATE = $state
-            $response = & $launcher desktop develop status fixture-id | Out-String
-            $expected = if ($state -in @('queued','running','complete')) { 0 } else { 1 }
-            Assert-True ($LASTEXITCODE -eq $expected -and ($response | ConvertFrom-Json).State -eq $state) "Development CLI lost status or exit meaning: $state"
+            $response = & $launcher desktop develop status fixture-id --json | Out-String
+            $view = $response | ConvertFrom-Json
+            Assert-True ($LASTEXITCODE -eq 0 -and $view.ok -and $view.schema_version -eq 1 -and
+                $view.job.id -eq 'fixture-id' -and $view.job.native_state -eq $state) "Development CLI lost status or exit meaning: $state"
         }
         foreach ($case in @(@('completed','complete',0), @('completed','failed',1),
             @('timed-out','running',124), @('attention-required','cleanup-uncertain',1))) {
@@ -157,7 +162,8 @@ function Invoke-NativeDevelopmentCli($Arguments) {
             $code = $LASTEXITCODE
             $wait = $response | ConvertFrom-Json
             Assert-True ($code -eq $case[2] -and $wait.WaitState -eq $case[0] -and
-                $wait.Receipt.State -eq $case[1] -and $wait.Receipt.ExitCode -eq 23) "Development wait lost receipt or exit meaning: $($case[0])/$($case[1])"
+                $wait.job.id -eq 'fixture-id' -and $wait.Receipt.State -eq $case[1] -and
+                $wait.child_exit_code -eq 23) "Development wait lost receipt or exit meaning: $($case[0])/$($case[1])"
         }
         foreach ($case in @(@('ready','running',0), @('completed','complete',1),
             @('timed-out','running',124), @('attention-required','cleanup-uncertain',1))) {
@@ -166,6 +172,10 @@ function Invoke-NativeDevelopmentCli($Arguments) {
             $response = & $launcher desktop develop ready fixture-id --timeout 1 | Out-String
             Assert-True ($LASTEXITCODE -eq $case[2] -and ($response | ConvertFrom-Json).WaitState -eq $case[0]) 'Ready wait lost receipt or exit meaning'
         }
+        $response = & $launcher desktop develop logs fixture-id --json | Out-String
+        $logs = $response | ConvertFrom-Json
+        Assert-True ($LASTEXITCODE -eq 0 -and $logs.ok -and $logs.job.id -eq 'fixture-id' -and
+            $logs.output_truncated -and $logs.artifacts.Count -eq 0) 'Development logs lost bounded result fields'
     } finally {
         $env:BASALTWATER_TEST_TASK_STATE = $savedTaskState
         $env:BASALTWATER_TEST_WAIT_STATE = $savedWaitState
@@ -221,7 +231,7 @@ exit ([int]$env:BASALTWATER_TEST_EXIT)
     Set-Content -LiteralPath (Join-Path $refreshSource 'windows\AgentWorkstation.Common.ps1') -Value '# fixture'
     Set-Content -LiteralPath (Join-Path $refreshSource 'windows\Refresh.Common.ps1') -Value @'
 function Start-NativeRefresh($Saved, $Source, $Arguments) {
-    return [pscustomobject]@{ Id = 'fixture'; StatusCommand = 'status fixture'; LogsCommand = 'logs fixture' }
+    return [pscustomobject]@{ Id = 'fixture'; Status = 'queued'; StatusCommand = 'status fixture'; LogsCommand = 'logs fixture' }
 }
 function Watch-NativeRefresh($Id) { Write-Host 'fixture live setup output'; return 23 }
 '@
@@ -231,6 +241,10 @@ function Watch-NativeRefresh($Id) { Write-Host 'fixture live setup output'; retu
         Assert-True ($LASTEXITCODE -eq 23 -and $output -match 'fixture live setup output') 'Default refresh did not follow output or propagate the result'
         $output = & $launcher refresh --detach | Out-String
         Assert-True ($LASTEXITCODE -eq 0 -and $output -notmatch 'fixture live setup output' -and $output -match 'queued') 'Explicit detachment waited or lost submission status'
+        $output = & $launcher refresh --detach --json | Out-String
+        $submitted = $output | ConvertFrom-Json
+        Assert-True ($LASTEXITCODE -eq 0 -and $submitted.ok -and $submitted.job.id -eq 'fixture' -and
+            $submitted.job.state -eq 'queued') 'Refresh machine submission lost the queued job handle'
         $output = & $launcher refresh --follow fixture | Out-String
         Assert-True ($LASTEXITCODE -eq 23 -and $output -match 'fixture live setup output') 'Existing-job follow lost output or result'
     } finally { Set-Content -LiteralPath $receiptPath -Value $receiptText -Encoding UTF8 }

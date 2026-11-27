@@ -277,9 +277,9 @@ class TestAgentBrowser(unittest.TestCase):
         for arguments in (["--context", "project"], ["--context", "managed", "--project", str(self.project)]):
             args = parser.parse_args(["agent", "browser", "doctor", *arguments, "--json"])
             with redirect_stdout(output := StringIO()):
-                self.assertEqual(agent_cli.run_agent_command(args), 1)
+                self.assertEqual(agent_cli.run_agent_command(args), 2)
             result = json.loads(output.getvalue())
-            self.assertEqual(result["issue"], "invalid_browser_request")
+            self.assertEqual(result["issue"], "invalid_input")
             self.assertEqual(result["remediation"], "check_context_and_project_path")
         self.execute.assert_not_called()
 

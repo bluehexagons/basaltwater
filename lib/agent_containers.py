@@ -11,6 +11,7 @@ import stat
 import tempfile
 
 from lib.agent_probe import run_probe
+from lib.tool_results import add_json_option, failure, from_report, write_result
 from lib.validation import validate_filesystem_path
 
 
@@ -213,13 +214,13 @@ def add_containers_parser(commands: argparse._SubParsersAction) -> None:
     actions = parser.add_subparsers(dest="agent_containers_command", required=True)
     inspect = actions.add_parser("inspect")
     inspect.add_argument("--engine", choices=ENGINES, action="append")
-    inspect.add_argument("--json", action="store_true")
+    add_json_option(inspect, default=True)
     preflight = actions.add_parser("preflight")
     preflight.add_argument("--engine", choices=ENGINES, required=True)
     preflight.add_argument("--image-bytes", type=int, required=True, help="Estimated uncompressed new image size")
     preflight.add_argument("--additional-copies", type=int, default=1)
     preflight.add_argument("--reserve-bytes", type=int, default=1024**3)
-    preflight.add_argument("--json", action="store_true")
+    add_json_option(preflight, default=True)
 
 
 def run_containers_command(args: argparse.Namespace) -> int:
@@ -236,13 +237,10 @@ def run_containers_command(args: argparse.Namespace) -> int:
         else:
             result = inspect_container_storage(engines=args.engine)
             success = all(record["available"] and not record["issues"] for record in result["engines"])
-        print(json.dumps(result, indent=2))
-        return 0 if success else 1
+        return write_result(from_report(result, ok=success, issue="container_check_failed",
+                                        error="The selected container checks did not pass. Inspect the storage and capacity findings."))
     except OSError:
-        print(json.dumps({"ok": False, "issue": "probe_unavailable",
-                          "remediation": "Check local temporary-directory capacity and permissions."}))
-        return 1
+        return write_result(failure("probe_unavailable", "Check local temporary-directory capacity and permissions."))
     except ValueError as exc:
-        print(json.dumps({"ok": False, "issue": "invalid_capacity_input", "error": str(exc),
-                          "remediation": "Provide uncompressed image bytes, 0-8 additional copies, and reserve bytes."}))
-        return 1
+        return write_result(failure("invalid_input", str(exc),
+                                    remediation="Provide uncompressed image bytes, 0-8 additional copies, and reserve bytes."))

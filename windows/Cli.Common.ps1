@@ -82,6 +82,7 @@ Native Windows commands:
 
 Refresh options:
   --detach          Return after submission; inspect status/logs separately
+                    Add --json for a job receipt
   --wait            Run refresh in this terminal instead of a detached job
   --follow ID       Follow live output and wait for an existing job's result
   --status ID       Read a detached refresh receipt
@@ -118,6 +119,120 @@ Linux controller, server and agent commands require a Linux installation.
 '@
 }
 
+function ConvertTo-NativeResultFields($Value) {
+    $fields = [ordered]@{}
+    if ($Value -is [Collections.IDictionary]) {
+        foreach ($key in $Value.Keys) { $fields[$key] = $Value[$key] }
+    } elseif ($null -ne $Value) {
+        foreach ($property in $Value.PSObject.Properties) { $fields[$property.Name] = $property.Value }
+    }
+    return $fields
+}
+
+function Write-NativeToolResult($Result, [bool]$Ok = $true, [string]$Issue = 'operation_failed',
+    [string]$Message = 'Inspect the command result for details.') {
+    $fields = ConvertTo-NativeResultFields $Result
+    $fields['schema_version'] = 1
+    $fields['ok'] = $Ok
+    if (-not $Ok) {
+        if (-not $fields['issue']) { $fields['issue'] = $Issue }
+        if (-not $fields['error']) { $fields['error'] = $Message }
+    }
+    Write-Host ($fields | ConvertTo-Json -Depth 20 -Compress)
+    if ($Ok) { return 0 }
+    switch ($fields['issue']) {
+        'invalid_input' { return 2 }
+        'wait_timeout' { return 124 }
+        default { return 1 }
+    }
+}
+
+function Get-NativeJobView([string]$Id, [string]$State) {
+    $states = @{ queued = 'queued'; running = 'running'; complete = 'succeeded'; failed = 'failed';
+        cancelled = 'cancelled'; 'timed-out' = 'failed'; 'dispatch-failed' = 'failed' }
+    return @{ id = $Id; state = $(if ($states.ContainsKey($State)) { $states[$State] } else { 'unknown' }); native_state = $State }
+}
+
+function Write-NativeDevelopmentResult([string]$Verb, $Result) {
+    $fields = ConvertTo-NativeResultFields $Result
+    $record = if ($fields['Receipt']) { ConvertTo-NativeResultFields $fields['Receipt'] } else { $fields }
+    if ($fields['Id']) { $fields['job'] = Get-NativeJobView $fields['Id'] $record['State'] }
+    if ($record.Contains('ExitCode')) { $fields['child_exit_code'] = $record['ExitCode'] }
+    if ($Verb -eq 'cancel') {
+        $fields['cancellation'] = if ($record['State'] -eq 'cancelled') { 'confirmed' }
+            elseif ($fields['CancelRequested']) { 'requested' } else { 'not_requested' }
+    }
+    if ($Verb -eq 'logs') {
+        $fields['output_truncated'] = [bool]($fields['Tails'].stdout.Truncated -or $fields['Tails'].stderr.Truncated)
+        $artifacts = $fields['Artifacts']
+        $fields.Remove('Artifacts')
+        $fields['artifacts'] = @($artifacts)
+    }
+    if ($Verb -eq 'ready') {
+        $fields['readiness'] = @{ condition = 'test_session_ready'; ready = ($fields['WaitState'] -eq 'ready') }
+    }
+    if ($fields['TimedOut']) {
+        return Write-NativeToolResult $fields $false 'wait_timeout' 'The caller wait expired. Inspect or wait on the same job.'
+    }
+    if (($Verb -eq 'wait' -and ($fields['WaitState'] -ne 'completed' -or $record['State'] -ne 'complete')) -or
+        ($Verb -eq 'ready' -and $fields['WaitState'] -ne 'ready')) {
+        return Write-NativeToolResult $fields $false 'development_failed' 'The job did not reach the requested milestone. Inspect its receipt.'
+    }
+    return Write-NativeToolResult $fields
+}
+
+function Add-NativeCaptureArtifacts($Fields, [string]$Verb) {
+    $nested = ConvertTo-NativeResultFields $Fields['result']
+    $capture = if ($Verb -eq 'input') { ConvertTo-NativeResultFields $nested['observation'] } else { $nested }
+    if (-not $capture['output']) { return }
+    $files = @(@{ kind = 'screenshot'; path = [IO.Path]::GetFullPath($capture['output']); media_type = 'image/png' })
+    if ($capture['observation_id']) {
+        $capture['schema_version'] = 1
+        $capture['ok'] = $true
+        $temporary = $null
+        $created = $false
+        try {
+            $receipt = [IO.Path]::ChangeExtension((New-NativeDesktopCapturePath), '.json')
+            $temporary = $receipt + '.tmp'
+            $bytes = [Text.Encoding]::UTF8.GetBytes(($capture | ConvertTo-Json -Depth 12 -Compress) + "`n")
+            $stream = [IO.File]::Open($temporary, 'CreateNew', 'Write', 'None')
+            $created = $true
+            try { $stream.Write($bytes, 0, $bytes.Length) } finally { $stream.Dispose() }
+            [IO.File]::Move($temporary, $receipt)
+            $files += @{ kind = 'capture_receipt'; path = $receipt; media_type = 'application/json' }
+        } catch {
+            $Fields['ok'] = $false; $Fields['issue'] = 'artifact_save_failed'; $Fields['error'] = $_.Exception.Message
+            $Fields['stage'] = 'retain_capture'; $Fields['effect'] = 'applied'
+        } finally {
+            if ($created -and [IO.File]::Exists($temporary)) { [IO.File]::Delete($temporary) }
+        }
+    }
+    $Fields['artifacts'] = $files
+}
+
+function Add-NativeEvidenceArtifacts($Fields, [string]$Verb) {
+    $files = @()
+    if ($Verb -in @('capture','pacing') -and $Fields['output']) {
+        $manifest = Join-Path $Fields['output'] 'manifest.json'
+        if ([IO.File]::Exists($manifest)) {
+            $files += @{ kind = 'evidence_manifest'; path = $manifest; media_type = 'application/json' }
+        }
+        if ($Verb -eq 'pacing') {
+            $trace = Join-Path $Fields['output'] 'raw.csv'
+            if ([IO.File]::Exists($trace)) { $files += @{ kind = 'pacing_trace'; path = $trace; media_type = 'text/csv' } }
+        }
+    } elseif ($Verb -eq 'audio') {
+        $capture = ConvertTo-NativeResultFields $Fields['result']
+        if ($capture['MetadataPath'] -and [IO.File]::Exists($capture['MetadataPath'])) {
+            $files += @{ kind = 'audio_capture'; path = $capture['MetadataPath']; media_type = 'application/json' }
+        }
+        if ($capture['WavPath'] -and [IO.File]::Exists($capture['WavPath'])) {
+            $files += @{ kind = 'process_audio'; path = $capture['WavPath']; media_type = 'audio/wav' }
+        }
+    }
+    if ($files.Count) { $Fields['artifacts'] = $files }
+}
+
 function Invoke-NativeCli([string[]]$Arguments) {
     if (-not $Arguments -or ($Arguments.Count -eq 1 -and $Arguments[0] -in @('--help', '-h', 'help'))) {
         Show-NativeCliHelp
@@ -126,19 +241,35 @@ function Invoke-NativeCli([string[]]$Arguments) {
     $command = $Arguments[0]
     $options = @($Arguments | Select-Object -Skip 1)
     if ($command -eq 'media') {
-        $source = Get-NativeCliSource
-        . (Join-Path $source 'windows\Media.Common.ps1')
-        return Invoke-NativeMediaCli -Source $source -Arguments $options
+        try {
+            $source = Get-NativeCliSource
+            . (Join-Path $source 'windows\Media.Common.ps1')
+            return Invoke-NativeMediaCli -Source $source -Arguments $options
+        } catch {
+            return Write-NativeToolResult @{} $false 'media_unavailable' $_.Exception.Message
+        }
     }
     if ($command -eq 'storage') {
-        $source = Get-NativeCliSource
-        . (Join-Path $source 'windows\Storage.Common.ps1')
-        return (Invoke-NativeStorageCli -Arguments $options)
+        try {
+            $source = Get-NativeCliSource
+            . (Join-Path $source 'windows\Storage.Common.ps1')
+            return (Invoke-NativeStorageCli -Arguments $options)
+        } catch {
+            if ($options -notcontains '--json') { throw }
+            $invalid = $_.Exception -is [ArgumentException]
+            $issue = if ($invalid) { 'invalid_input' } else { 'storage_cleanup_failed' }
+            $fields = @{}
+            if ($options -contains '--apply') {
+                $fields.stage = if ($invalid) { 'validate' } else { 'cleanup' }
+                $fields.effect = if ($invalid) { 'none' } else { 'unknown' }
+            }
+            return Write-NativeToolResult $fields $false $issue $_.Exception.Message
+        }
     }
     if ($command -eq 'desktop') {
         if (-not $options.Count -or $options[0] -in @('--help','help','-h')) {
             Write-Host @'
-Native desktop commands (explicit actions use the current account's session):
+Native desktop commands (JSON by default, --json selects the same result):
   status|doctor|environment [--json]
   windows [--task ID] [--json]
   worker start [--idle-seconds 120] [--session-seconds 1800] | worker status|stop
@@ -168,7 +299,8 @@ Native desktop commands (explicit actions use the current account's session):
   develop doctor|exec|node|editor|run|import|status|logs|cancel|wait|ready|diagnose ...
   develop --help  Task options, npm-script examples and bounded waiting
 Observe windows/inspect before actions. Pixel capture does not prove rendered content or input outcome.
-Screenshot and input --observe choose a private PNG path by default. Read it from the receipt.
+Screenshot and input --observe return screenshot and capture_receipt artifact entries.
+Pass the capture_receipt path into map-point --capture.
 Screenshot returns observation_id and capture_freshness, timed from capture admission
 with a monotonic clock. Max age is an integer 1-600 (default 60); increase it explicitly
 only for stable turn-based work. Tokens are single-use, consumed before input attempt.
@@ -179,6 +311,7 @@ Tokens do not prove semantic or scene validity. Input without a token keeps its 
 '@
             return 0
         }
+        try {
         $source = Get-NativeCliSource
         . (Join-Path $source 'windows\AgentWorkstation.Common.ps1')
         . (Join-Path $source 'windows\Desktop.Common.ps1')
@@ -188,19 +321,8 @@ Tokens do not prove semantic or scene validity. Input without a token keeps its 
         if ($options.Count -and $options[0] -eq 'develop') {
             . (Join-Path $source 'windows\Development.Common.ps1')
             $result = Invoke-NativeDevelopmentCli @($options | Select-Object -Skip 1)
-            if ($null -ne $result -and $options.Count -ge 2 -and $options[1] -in @('wait','ready') -and
-                $result.PSObject.Properties['WaitState']) {
-                Write-Host ($result | ConvertTo-Json -Depth 12)
-                if ($result.TimedOut) { return 124 }
-                if ($options[1] -eq 'ready') { if ($result.WaitState -eq 'ready') { return 0 }; return 1 }
-                if ($result.WaitState -ne 'completed' -or $result.Receipt.State -ne 'complete') { return 1 }
-                return 0
-            }
-            if ($null -ne $result -and $options.Count -ge 2 -and $options[1] -eq 'status' -and
-                $result.State -in @('failed','timed-out','cancelled','cleanup-uncertain','launch-uncertain','interrupted')) {
-                Write-Host ($result | ConvertTo-Json -Depth 12)
-                return 1
-            }
+            if ($null -eq $result) { return 0 }
+            return Write-NativeDevelopmentResult $options[1] $result
         } elseif ($options.Count -and $options[0] -eq 'capture') {
             . (Join-Path $source 'windows\Capture.Common.ps1')
             $result = Invoke-NativeWindowCapture @($options | Select-Object -Skip 1)
@@ -217,11 +339,32 @@ Tokens do not prove semantic or scene validity. Input without a token keeps its 
         } elseif ($options.Count -and $options[0] -in @('open','terminal','notify')) {
             $result = Invoke-NativeDesktopHandoff -Source $source -Arguments $options
         } else { $result = Invoke-NativeDesktopCli $options }
-        if ($null -ne $result) { Write-Host ($result | ConvertTo-Json -Depth 12) }
-        if ($result -and (($result -is [Collections.IDictionary] -and $result.Contains('ok') -and -not $result.ok) -or
-            ($result.PSObject.Properties['ok'] -and -not $result.ok))) { return 1 }
-        if ($options[0] -eq 'doctor' -and -not $result.healthy) { return 1 }
-        return 0
+        if ($null -eq $result) { return 0 }
+        $fields = ConvertTo-NativeResultFields $result
+        if ($options[0] -in @('screenshot','input')) { Add-NativeCaptureArtifacts $fields $options[0] }
+        if ($options[0] -in @('capture','pacing','audio')) { Add-NativeEvidenceArtifacts $fields $options[0] }
+        if ($options[0] -eq 'map-point' -and $fields['input_args']) {
+            $fields['input_argv'] = $fields['input_args']
+            $fields['input_context_argv'] = $fields['input_context_args']
+        }
+        $ok = (-not $fields.Contains('ok') -or $fields['ok']) -and ($options[0] -ne 'doctor' -or $fields['healthy'])
+        if (-not $ok -and $fields['input_delivery']) {
+            $effect = @{ 'not-sent' = 'none'; completed = 'applied'; partial = 'partial'; unknown = 'unknown' }
+            if (-not $fields['effect']) { $fields['effect'] = $effect[$fields['input_delivery']] }
+            if (-not $fields['stage']) { $fields['stage'] = $fields['dispatch_stage'].Replace('-', '_') }
+        }
+        return Write-NativeToolResult $fields $ok 'desktop_operation_failed'
+        } catch {
+            $errorInfo = $_.Exception
+            $issue = if ($errorInfo -is [ArgumentException]) { 'invalid_input' } else { 'desktop_operation_failed' }
+            $details = @{}
+            if ($options[0] -eq 'develop' -and $options.Count -gt 1 -and $options[1] -in @('exec','node','editor','run','import','cancel')) {
+                $details['stage'] = if ($errorInfo.Data['stage']) { $errorInfo.Data['stage'] } else { $options[1] }
+                $details['effect'] = if ($issue -eq 'invalid_input') { 'none' } else { 'unknown' }
+                if ($errorInfo.Data['job_id']) { $details['job'] = Get-NativeJobView $errorInfo.Data['job_id'] '' }
+            }
+            return Write-NativeToolResult $details $false $issue $errorInfo.Message
+        }
     }
     if ($command -in @('--version', 'version')) {
         if ($options.Count) { throw 'Usage: basaltw --version' }
@@ -238,13 +381,16 @@ Tokens do not prove semantic or scene validity. Input without a token keeps its 
     }
     if ($command -eq 'info') {
         if ($options.Count -gt 1 -or ($options.Count -eq 1 -and $options[0] -ne '--json')) { throw 'Usage: basaltw info [--json]' }
-        $saved = Read-NativeCliSetup
+        try { $saved = Read-NativeCliSetup } catch {
+            if ($options -notcontains '--json') { throw }
+            return Write-NativeToolResult @{} $false 'setup_record_unavailable' $_.Exception.Message
+        }
         $info = [ordered]@{ Platform = 'windows'; Profile = $saved.Profile; Revision = $saved.Revision;
             Source = $saved.Source; Phase = $saved.Phase }
         foreach ($name in @('AgentTool', 'T3CodeDesktop', 'Node', 'Python', 'Go', 'NodeVersions', 'GameDev', 'ShaderTools', 'Godot', 'Sunshine', 'AvTools', 'StorageRoot')) {
             if ($saved.PSObject.Properties[$name]) { $info[$name] = $saved.$name }
         }
-        if ($options -contains '--json') { Write-Host ($info | ConvertTo-Json -Depth 4) }
+        if ($options -contains '--json') { return Write-NativeToolResult $info }
         else { Write-Host (($info.GetEnumerator() | ForEach-Object { "  $($_.Key): $($_.Value -join ', ')" }) -join "`n") }
         return 0
     }
@@ -258,7 +404,11 @@ Tokens do not prove semantic or scene validity. Input without a token keeps its 
         $receipt = Join-Path $PSScriptRoot 'cli-source.json'
         if (Test-Path -LiteralPath $receipt) { $source = (Get-Content -LiteralPath $receipt -Raw -Encoding UTF8 | ConvertFrom-Json).Source }
         $entry = Join-Path $source 'windows\Test-AgentWorkstation.ps1'
-        if (-not (Test-Path -LiteralPath $entry -PathType Leaf)) { throw 'Windows diagnostic source is missing; refresh Basaltwater from a current installer.' }
+        if (-not (Test-Path -LiteralPath $entry -PathType Leaf)) {
+            $message = 'Windows diagnostic source is missing; refresh Basaltwater from a current installer.'
+            if ($options -contains '--json') { return Write-NativeToolResult @{} $false 'diagnostics_unavailable' $message }
+            throw $message
+        }
         $diagnosticOptions = @()
         if ($options -contains '--json') { $diagnosticOptions += '-Json' }
         if ($options -contains '--skills') { $diagnosticOptions += '-Skills' }
@@ -268,30 +418,63 @@ Tokens do not prove semantic or scene validity. Input without a token keeps its 
     }
     if ($command -ne 'refresh') { throw "Unsupported Windows command '$command'. Run basaltw --help for available commands." }
     if ($options.Count -eq 1 -and $options[0] -in @('--help', '-h')) { Show-NativeCliHelp; return 0 }
-    if ($options.Count -eq 2 -and $options[0] -in @('--status','--logs','--cancel','--follow')) {
+    $json = $options.Count -eq 3 -and $options[2] -eq '--json'
+    if (($options.Count -eq 2 -or $json) -and $options[0] -in @('--status','--logs','--cancel','--follow')) {
+        if ($json -and $options[0] -eq '--follow') { throw 'Refresh --follow streams live text' }
+        try {
         $source = Get-NativeCliSource
         . (Join-Path $source 'windows\AgentWorkstation.Common.ps1')
         . (Join-Path $source 'windows\Refresh.Common.ps1')
         if ($options[0] -eq '--follow') { return Watch-NativeRefresh $options[1] }
         if ($options[0] -eq '--cancel') {
-            Write-Host ((Stop-NativeQueuedRefresh $options[1]) | ConvertTo-Json)
-            return 0
+            $receipt = Stop-NativeQueuedRefresh $options[1]
+            return Write-NativeToolResult @{ job = (Get-NativeJobView $receipt.Id $receipt.Status); cancellation = 'confirmed' }
         }
         $receipt = Get-NativeRefreshStatus $options[1]
+        $job = Get-NativeJobView $receipt.Id $receipt.Status
         if ($options[0] -eq '--logs') {
             $log = Join-Path (Get-NativeRefreshDirectory $receipt.Id) 'setup.log'
             Assert-NativeSkillPath $log
+            if ($json) {
+                $fields = @{ job = $job; log = ''; artifacts = @(); output_truncated = [bool]$receipt.LogTruncated }
+                if (Test-Path -LiteralPath $log -PathType Leaf) {
+                    $stream = [IO.File]::Open($log, 'Open', 'Read', 'ReadWrite')
+                    try {
+                        $offset = [Math]::Max(0, $stream.Length - 65536)
+                        $null = $stream.Seek($offset, 'Begin')
+                        $buffer = New-Object byte[] 65536
+                        $count = $stream.Read($buffer, 0, $buffer.Length)
+                        $fields.log = [Text.Encoding]::UTF8.GetString($buffer, 0, $count)
+                        $fields.output_truncated = $fields.output_truncated -or ($offset -gt 0)
+                        $fields.artifacts = @(@{ kind = 'job_log'; path = $log; media_type = 'text/plain' })
+                    } finally { $stream.Dispose() }
+                }
+                return Write-NativeToolResult $fields
+            }
             if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Tail 100 -Encoding UTF8 | ForEach-Object { Write-Host $_ } }
         } else {
-            Write-Host ($receipt | Select-Object Id,Status,StartedUtc,CompletedUtc,Log | ConvertTo-Json)
+            $fields = ConvertTo-NativeResultFields ($receipt | Select-Object Id,Status,StartedUtc,CompletedUtc,Log)
+            $fields['job'] = $job
+            return Write-NativeToolResult $fields
         }
-        if ($options[0] -eq '--status' -and $receipt.Status -in @('failed','dispatch-failed','interrupted','cleanup-uncertain')) { return 1 }
         return 0
+        } catch {
+            if (-not $json -and $options[0] -in @('--follow','--logs')) { throw }
+            $fields = @{}
+            if ($options[0] -eq '--cancel') { $fields.stage = 'cancel'; $fields.effect = 'unknown' }
+            return Write-NativeToolResult $fields $false 'refresh_job_unavailable' $_.Exception.Message
+        }
     }
     $wait = $options -contains '--wait'
     $detach = $options -contains '--detach'
+    $json = $options -contains '--json'
+    if ($json -and (-not $detach -or $wait -or $options -contains '--dry-run')) {
+        return Write-NativeToolResult @{ stage = 'validation'; effect = 'none' } $false 'invalid_input' 'Refresh submission uses --detach --json.'
+    }
     if ($wait -and $detach) { throw 'Choose --wait or --detach' }
-    $options = @($options | Where-Object { $_ -notin @('--wait','--detach') })
+    $options = @($options | Where-Object { $_ -notin @('--wait','--detach','--json') })
+    $stage = 'validation'
+    try {
     # Explicit switches also let an installed CLI update an older saved entry
     # point that predates automatic native reruns and source updates.
     $forward = @('-Profile', 'agent_windows', '-Resume', '-UpdateSource')
@@ -334,12 +517,15 @@ Tokens do not prove semantic or scene validity. Input without a token keeps its 
         }
         throw "Unsupported refresh option '$option'. Run basaltw refresh --help."
     }
+    $stage = 'load_setup'
     $saved = Read-NativeCliSetup
     if (-not $wait -and '-Plan' -notin $forward) {
         $source = Get-NativeCliSource
         . (Join-Path $source 'windows\AgentWorkstation.Common.ps1')
         . (Join-Path $source 'windows\Refresh.Common.ps1')
+        $stage = 'submit'
         $job = Start-NativeRefresh -Saved $saved -Source $source -Arguments $forward
+        if ($json) { return Write-NativeToolResult @{ job = (Get-NativeJobView $job.Id $job.Status) } }
         Write-Host ("Refresh queued: $($job.Id). Setup runs independently of this terminal.")
         Write-Host ("Status: $($job.StatusCommand)`nLog: $($job.LogsCommand)")
         if ($detach) { return 0 }
@@ -355,4 +541,11 @@ Tokens do not prove semantic or scene validity. Input without a token keeps its 
         $code = $LASTEXITCODE
     } finally { $ErrorActionPreference = $previousPreference }
     return $code
+    } catch {
+        if (-not $json) { throw }
+        $fields = @{ stage = $stage; effect = $(if ($stage -eq 'submit') { 'unknown' } else { 'none' }) }
+        if ($_.Exception.Data['job_id']) { $fields.job = Get-NativeJobView $_.Exception.Data['job_id'] '' }
+        $issue = if ($stage -eq 'validation') { 'invalid_input' } else { 'refresh_submit_failed' }
+        return Write-NativeToolResult $fields $false $issue $_.Exception.Message
+    }
 }

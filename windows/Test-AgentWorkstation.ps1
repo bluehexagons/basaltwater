@@ -11,7 +11,7 @@ try {
     }
     $saved = Read-NativeCliSetup
     $report = if ($Skills) { Get-NativeSkillHealth $saved } else { Get-NativeWorkstationHealth $saved -TimeoutSeconds $TimeoutSeconds }
-    if ($Json) { $report | ConvertTo-Json -Depth 5 }
+    if ($Json) { exit (Write-NativeToolResult $report $report.Healthy 'readiness_failed' 'Inspect the workstation checks.') }
     else {
         if ($Skills) { Write-Host "Skill source: $($report.Source) (saved revision $($report.Revision)); session-loaded state unknown." }
         foreach ($check in $report.Checks) {
@@ -23,6 +23,9 @@ try {
     }
     if (-not $report.Healthy) { exit 1 }
 } catch {
+    if ($Json -and (Get-Command Write-NativeToolResult -ErrorAction SilentlyContinue)) {
+        exit (Write-NativeToolResult @{} $false 'diagnostics_unavailable' $_.Exception.Message)
+    }
     [Console]::Error.WriteLine('Windows doctor: ' + $_.Exception.Message)
     exit 1
 }

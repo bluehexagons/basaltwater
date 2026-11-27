@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import stat
 import sys
 
 from lib.agent_memory import AgentMemory, MAX_TEXT_BYTES, MemoryBusyError, MemoryConflictError
+from lib.tool_results import add_json_option, exception_issue, failure, success, write_result
 from lib.validation import validate_filesystem_path
 
 
@@ -18,7 +18,7 @@ def add_memory_parser(commands: argparse._SubParsersAction) -> None:
     for action in ("scope", "list", "get", "put", "remove", "claim", "renew", "finish", "reopen"):
         command = actions.add_parser(action)
         command.add_argument("--project", default=".", help="Project directory; Git worktrees share memory")
-        command.add_argument("--json", action="store_true", help="Pretty-print JSON results")
+        add_json_option(command, default=True)
         if action not in ("scope", "list"):
             command.add_argument("name")
         if action in ("list", "get", "put", "remove"):
@@ -67,9 +67,9 @@ def _read_text(path: str) -> str:
 
 
 def run_memory_command(args: argparse.Namespace) -> int:
+    action = args.agent_memory_command
     try:
         memory = AgentMemory(args.project)
-        action = args.agent_memory_command
         if action == "scope":
             result = {"scope": memory.scope, "identity": memory.identity, "state_file": str(memory.path)}
         elif action == "list":
@@ -91,9 +91,9 @@ def run_memory_command(args: argparse.Namespace) -> int:
             result = memory.complete_claim(args.name, args.claim_token, status=args.status)
         else:
             result = memory.reopen(args.name, revision=args.if_revision)
-        print(json.dumps({"ok": True, **result}, indent=2 if args.json else None, ensure_ascii=False))
-        return 0
+        return write_result(success(**result))
     except (OSError, RuntimeError, ValueError) as exc:
-        issue = "conflict" if isinstance(exc, MemoryConflictError) else "busy" if isinstance(exc, MemoryBusyError) else "memory_error"
-        print(json.dumps({"ok": False, "issue": issue, "error": str(exc)}, ensure_ascii=False))
-        return 1
+        issue = "conflict" if isinstance(exc, MemoryConflictError) else "busy" if isinstance(exc, MemoryBusyError) else exception_issue(exc)
+        effect = ({"stage": action, "effect": "none" if issue in {"conflict", "busy", "invalid_input"} else "unknown"}
+                  if action not in {"scope", "list", "get"} else {})
+        return write_result(failure(issue, str(exc), **effect))

@@ -11,6 +11,7 @@ import time
 from lib.privilege_client import PrivilegeBrokerUnavailable, PrivilegeRequestRejected, duration, exchange
 from lib.privilege_policy import ID_PATTERN, MAX_MESSAGE
 from lib.software_requests import SOFTWARE_FLAGS, WORKER, selection
+from lib.tool_results import add_json_option, failure, success, write_result
 
 
 def add_software_parser(commands: argparse._SubParsersAction) -> None:
@@ -22,7 +23,7 @@ def add_software_parser(commands: argparse._SubParsersAction) -> None:
         choice.add_argument("--flag", choices=sorted(SOFTWARE_FLAGS))
         choice.add_argument("--apt", metavar="PACKAGE")
         action.add_argument("--temporary", action="store_true", help="Install on this host without changing its rebuild setup")
-        action.add_argument("--json", action="store_true", help="Return JSON (default)")
+        add_json_option(action, default=True)
         if name == "request":
             action.add_argument("--reason", required=True)
             action.add_argument("--review-window", type=duration)
@@ -30,8 +31,8 @@ def add_software_parser(commands: argparse._SubParsersAction) -> None:
     sync = actions.add_parser("sync", help="On the controller, save approved changes for one enrolled host")
     sync.add_argument("host")
     sync.add_argument("--ssh-key")
-    sync.add_argument("--watch", action="store_true", help="Keep checking for newly approved requests")
-    sync.add_argument("--json", action="store_true")
+    sync.add_argument("--watch", action="store_true", help="Stream JSON lines for newly saved requests and retry notices")
+    sync.add_argument("--json", action="store_true", help="Emit JSON (the default); --watch emits JSON lines")
 
 
 def synchronize(host: str, key: str | None, *, rpc=None) -> list[str]:
@@ -94,18 +95,16 @@ def run_software(args: argparse.Namespace) -> int:
                 except (subprocess.TimeoutExpired, subprocess.CalledProcessError, ResourceBusyError) as exc:
                     if not args.watch:
                         raise
-                    print(json.dumps({"schema_version": 1, "ok": False, "issue": "sync_unavailable",
-                                      "error": str(exc), "retry_seconds": delay}), flush=True)
+                    write_result(failure("sync_unavailable", str(exc), event="retry", retry_seconds=delay), flush=True)
                     time.sleep(delay)
                     delay = min(300, delay * 2)
                     continue
                 delay = 15
-                result = {"schema_version": 1, "ok": True, "saved": saved}
-                if first or result["saved"]:
-                    print(json.dumps(result), flush=True)
-                    first = False
                 if not args.watch:
-                    return 0
+                    return write_result(success(saved=saved), flush=True)
+                if first or saved:
+                    write_result(success(event="sync", saved=saved), flush=True)
+                    first = False
                 time.sleep(15)
         parameters = {"kind": "flag" if args.flag else "apt", "name": args.flag or args.apt,
                       "scope": "temporary" if args.temporary else "saved"}
@@ -121,18 +120,14 @@ def run_software(args: argparse.Namespace) -> int:
                                     text=True, timeout=45, check=True)
             plan = json.loads(output.stdout)
             if args.software_action == "plan":
-                print(json.dumps({"schema_version": 1, "ok": True, **plan}))
-                return 0
+                return write_result(success(**plan))
             if plan["changes"] == 0:
-                print(json.dumps({"schema_version": 1, "ok": True, "state": "already_installed",
-                                  "requested": plan["requested"], "saved_for_rebuild": False}))
-                return 0
+                return write_result(success(state="already_installed", requested=plan["requested"], saved_for_rebuild=False))
         stage = "request"
         message = {"action": "request", "operation": "software.install", "parameters": parameters, "reason": args.reason}
         if args.review_window is not None:
             message["review_seconds"] = args.review_window
-        print(json.dumps({"schema_version": 1, "ok": True, **exchange(message)}))
-        return 0
+        return write_result(success(**exchange(message)))
     except (OSError, ValueError, RuntimeError, KeyError, subprocess.SubprocessError) as exc:
         effect = "none" if stage in {"plan", "validate"} or isinstance(
             exc, (PrivilegeRequestRejected, PrivilegeBrokerUnavailable)
@@ -140,7 +135,6 @@ def run_software(args: argparse.Namespace) -> int:
         error = str(exc)
         if stage == "plan" and isinstance(exc, subprocess.CalledProcessError) and exc.stderr:
             error = exc.stderr.strip()[:500]
-        print(json.dumps({"schema_version": 1, "ok": False,
-                          "issue": "invalid_input" if stage == "validate" else "software_request_failed",
-                          "error": error, "stage": stage, "effect": effect}))
-        return 2 if stage == "validate" else 1
+        issue = "invalid_input" if stage == "validate" else "software_request_failed"
+        event = {"event": "failed"} if args.software_action == "sync" and args.watch else {}
+        return write_result(failure(issue, error, stage=stage, effect=effect, **event), flush=True)

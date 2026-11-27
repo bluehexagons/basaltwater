@@ -394,7 +394,7 @@ class TestMemoryCLI(MemoryFixture):
         self.assertEqual(self.invoke("reopen", "verify", "--if-revision", str(done["revision"]))[1]["status"], "open")
 
     def test_cli_rejects_oversized_input_without_creating_a_record(self) -> None:
-        self.assertEqual(self.invoke("put", "large", "--file", "-", stdin="x" * (agent_memory.MAX_TEXT_BYTES + 1))[0], 1)
+        self.assertEqual(self.invoke("put", "large", "--file", "-", stdin="x" * (agent_memory.MAX_TEXT_BYTES + 1))[0], 2)
         self.assertFalse(self.memory.path.exists())
 
     def test_cli_rejects_stale_revisions_after_a_name_is_reused(self) -> None:
@@ -421,8 +421,8 @@ class TestMemoryCLI(MemoryFixture):
         self.assertIsNone(last["next_offset"])
         self.assertNotIn("text", json.dumps([first, last]))
         status, invalid = self.invoke("list", "--offset", "-1")
-        self.assertEqual(status, 1)
-        self.assertEqual(invalid["issue"], "memory_error")
+        self.assertEqual(status, 2)
+        self.assertEqual(invalid["issue"], "invalid_input")
 
 
 class TestMemoryScope(unittest.TestCase):

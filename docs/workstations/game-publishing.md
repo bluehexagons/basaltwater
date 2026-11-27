@@ -105,6 +105,8 @@ basaltw publish complete /home/agent/repos/game exports/linux internal-build-42
 basaltw publish prepare game-linux
 # Select the returned artifact ID:
 basaltw publish upload ARTIFACT_ID --wait
+# Inspect the upload using its returned job.id:
+basaltw publish runs --id RUN_ID
 ```
 
 The default record is `.basaltwater/publishing-complete.json`, configurable with
@@ -119,6 +121,8 @@ name. `build_id` is an internal operational identifier, not a public version.
 Build producers must finish the directory before writing the record. Changed
 files invalidate it. Preparation does not run repository code or contact a
 provider, and uploads use a retained private snapshot rather than live output.
+`--wait` observes the worker for up to 600 seconds by default. Pass the result's
+`job.id` to `runs --id` if the caller wait expires. The worker keeps ownership.
 
 Each build completion record pins a directory, internal build identifier and
 content digest. Snapshots reject links, special files, hard links and credential

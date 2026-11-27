@@ -54,14 +54,15 @@ choose the path. The older `--observe NEW.png` form also works on Windows.
 The settle delay accepts 0–5000 ms on all three platforms. The output must be
 new, and the CLI checks its parent and write access before input.
 
-`screenshot --compact` retains the existing small JSON geometry/origin receipt.
-Save that JSON and use `map-point --capture frame.json --view-width 1200
+`screenshot --compact` returns the small geometry and origin view. Open the
+`screenshot` entry in `artifacts` and pass the `capture_receipt` entry's path to
+`map-point --capture frame.json --view-width 1200
 --view-height 800 --x 600 --y 400` for a resized, full window image. Supply
 `--view-origin-x` and `--view-origin-y` for viewer margins, or use
 `--image-coordinates` alone for source-PNG pixels. Supply both `--to-x` and
 `--to-y` to map a drag endpoint in the same coordinate system. Windows mapping
 also accepts the nested post-input observation, checks the current receipt and
-age, and returns `input_context_args` plus `input_args`. The command is
+age, and returns `input_context_argv` plus `input_argv`. The command is
 read-only and uses full-window captures.
 
 `--observation` binds input to the latest successfully published screenshot.
@@ -91,23 +92,23 @@ both endpoints of a native drag. Account for any image presentation scaling
 before submitting coordinates. A window move does not necessarily change the
 session generation. Compact Linux captures preserve window and origin metadata.
 
-On CachyOS, save the inspected capture's JSON receipt alongside its PNG, then
-map against that exact receipt:
+On CachyOS, inspect the PNG in `artifacts`, then substitute the matching
+`capture_receipt` path for `/absolute/private/frame.json`:
 
 ```bash
-basaltw desktop --native screenshot --compact > /absolute/private/frame.json
+basaltw desktop --native screenshot --compact --json
 basaltw desktop --native map-point --capture /absolute/private/frame.json \
   --view-geometry 1200 800 --view-origin 20 30 --x 620 --y 430
 ```
 
-`--capture` also accepts the complete JSON receipt from `input --observe`.
-Inspect the PNG in its nested `observation`, then pass the full receipt to
-`map-point`; `capture_source: observation` confirms that selection. The top-level
-input token is consumed and is never a fallback. A missing, failed or stale nested
-frame requires another capture and inspection, never replay of the completed input.
-Omit `--output` on screenshots and `input --observe` to generate a unique private
-PNG path. On Windows, read `result.output` or `result.observation.output`.
-On Linux, read `output` or `observation.output`.
+`input --observe` returns the same artifact kinds for the follow-up frame.
+Pass its `capture_receipt` to `map-point` and assemble the input with the
+returned literal argument arrays. A missing, failed or stale follow-up frame
+requires another capture and inspection. Omit `--output` to generate a unique
+private PNG path. To inspect a historical response manually, read `output` or
+`observation.output` on Linux, and `result.output` or
+`result.observation.output` on Windows. Take a fresh capture after refresh
+before binding an input to the current session.
 
 ### Map points from a saved Linux capture preview
 

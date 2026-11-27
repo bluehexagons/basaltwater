@@ -194,7 +194,7 @@ class BlenderSmokeTests(unittest.TestCase):
         self.assertTrue(json.loads(output.getvalue())["ok"])
         args.timeout = 601
         with redirect_stdout(output := StringIO()):
-            self.assertEqual(agent_cli.run_agent_command(args), 1)
+            self.assertEqual(agent_cli.run_agent_command(args), 2)
         self.assertIn("600", json.loads(output.getvalue())["error"])
 
 

@@ -18,6 +18,7 @@ from common.service_tools.web_panel_diagnostics import (
     collect_diagnostics,
 )
 from lib.setup_directories import directory_fd
+from lib.tool_results import add_json_option, artifact, failure, from_report, write_result
 from lib.types import JSONDict
 from lib.validation import validate_filesystem_path
 
@@ -32,6 +33,7 @@ def add_diagnostics_parser(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument("--priority", default="4", choices=PRIORITIES)
     parser.add_argument("--summary", action="store_true", help="Omit events from stdout; requires --output")
     parser.add_argument("--output", metavar="PATH", help="Save full JSON to a new file in an owned directory without group/other write access")
+    add_json_option(parser, default=True)
 
 
 def _check_evidence_ancestors(directory: str) -> None:
@@ -112,12 +114,11 @@ def run_diagnostics_command(args: argparse.Namespace) -> int:
     summary = getattr(args, "summary", False)
     output = getattr(args, "output", None)
     if summary and output is None:
-        print(json.dumps({"properties": {}, "events": [], "issues": [
-            "--summary requires --output PATH; no collection was run.",
-        ]}, indent=2))
-        return 2
+        error = "--summary requires --output PATH; no collection was run."
+        return write_result(failure("invalid_input", error, properties={}, events=[], issues=[error]))
     if args.service not in SOURCES or args.window not in WINDOWS or args.priority not in PRIORITIES:
-        result = {"properties": {}, "events": [], "issues": ["Invalid diagnostic selector."]}
+        error = "Invalid diagnostic selector."
+        return write_result(failure("invalid_input", error, properties={}, events=[], issues=[error]))
     else:
         try:
             evidence = collect_diagnostics(DiagnosticQuery(
@@ -135,6 +136,13 @@ def run_diagnostics_command(args: argparse.Namespace) -> int:
             # Keep all evidence on stdout when saving fails, including in summary
             # mode. Never echo exception text or an unvalidated output path.
             result["issues"] = [*result["issues"], "Full diagnostic evidence could not be saved; events remain on stdout."]
-    code = 1 if result["issues"] else 0
-    print(json.dumps(_summarize(result, args, path) if summary and path else result, indent=2))
-    return code
+    reply = _summarize(result, args, path) if summary and path else result
+    if path:
+        reply["artifacts"] = [artifact("diagnostics_report", path, "application/json")]
+    if summary and path:
+        reply["output_truncated"] = bool(result["events"])
+    status = from_report(reply, ok=not result["issues"], issue="diagnostics_incomplete",
+                         error="; ".join(result["issues"]))
+    if output is not None and not status["ok"]:
+        status.update(stage="collect" if path else "save_evidence", effect="applied" if path else "unknown")
+    return write_result(status)

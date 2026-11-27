@@ -24,6 +24,7 @@ public static class BasaltwaterNativeCli {
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 try {
+    if ([Console]::IsOutputRedirected) { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) }
     $packet = [Convert]::FromBase64String([Console]::In.ReadLine())
     $reader = [IO.BinaryReader]::new([IO.MemoryStream]::new($packet), [Text.UTF8Encoding]::new($false, $true))
     try {

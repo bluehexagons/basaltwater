@@ -23,6 +23,7 @@ from lib.agent_browser import _environment, _runtime, browser_node
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.guacamole_config import RELEASE
 from lib.remote_utils import run
+from lib.tool_results import add_json_option, artifact, exception_issue, failure, from_report, write_result
 from lib.validation import validate_filesystem_path
 
 # all.js extracted from the checksum-verified 1.6.0-bw2 release archive.
@@ -120,11 +121,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--grep", help="Run tests matching this Playwright title regex; results are focused, not full qualification")
     parser.add_argument("--headed", action="store_true", help="Show the selected browser on the development desktop")
     parser.add_argument("--trace", action="store_true", help="Keep traces for successful checks too")
+    add_json_option(parser)
     args = parser.parse_args(argv)
     if args.grep is not None and (not args.grep.strip() or len(args.grep) > 512):
         parser.error("--grep must be a non-empty title regex of at most 512 characters")
     if os.environ.get("CI"):
         parser.error("Intensive browser checks run on development machines, outside CI")
+    artifacts = []
+    stage = "validate"
     try:
         runtime = _runtime(args.context, args.project)
         if not runtime or runtime["version"] != PLAYWRIGHT_VERSION:
@@ -153,13 +157,15 @@ def main(argv: list[str] | None = None) -> int:
         evidence.mkdir(mode=0o700, parents=True, exist_ok=True)
         evidence.chmod(0o700)
         output = Path(tempfile.mkdtemp(prefix="run-", dir=evidence))
-        print(f"Private evidence: {output}", flush=True)
+        stage = "start_fixtures"
+        print(f"Private evidence: {output}", file=sys.stderr if args.json else sys.stdout, flush=True)
         with tempfile.TemporaryDirectory(prefix="basaltwater-browser-fixtures-") as temporary:
             directory = Path(temporary)
             command = [sys.executable, "-m", "tests.browser.fixtures", str(directory)]
             if asset:
                 command += ["--guacamole-assets", str(asset.resolve())]
             with (output / "fixtures.log").open("w") as log:
+                artifacts.append(artifact("fixture_log", output / "fixtures.log", "text/plain"))
                 server = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=log)
                 try:
                     deadline = time.monotonic() + 30
@@ -176,14 +182,17 @@ def main(argv: list[str] | None = None) -> int:
                                         "BASALTW_BROWSER_TRACE": "1" if args.trace else "0", "BASALTW_BROWSER_PYTHON": sys.executable,
                                         "BASALTW_BROWSER_GUACAMOLE_ASSETS": str(asset.resolve()) if asset else ""})
                     engines = list(dict.fromkeys(args.engine or ("chromium", "firefox")))
+                    stage = "run_tests"
                     result = run([node, runtime["cli"], "test", "--config", str(ROOT / "tests/browser/playwright.config.cjs"),
                                   *[f"--project={engine}" for engine in engines], *(["--grep", args.grep] if args.grep is not None else [])],
-                                 check=False, env=environment, cwd=ROOT, timeout=1800)
+                                 check=False, env=environment, cwd=ROOT, timeout=1800, stdout=sys.stderr if args.json else None)
                     summary = summarize_results(output, engines=engines, playwright_version=runtime["version"],
                                                 context=args.context, returncode=result.returncode, guacamole_available=asset is not None,
                                                 selection=args.grep)
                     write_json_atomic(str(output / "summary.json"), summary)
-                    return summary["exit_code"]
+                    artifacts.append(artifact("test_summary", output / "summary.json", "application/json"))
+                    if (output / "results.json").is_file():
+                        artifacts.append(artifact("test_report", output / "results.json", "application/json"))
                 finally:
                     server.terminate()
                     try:
@@ -191,7 +200,19 @@ def main(argv: list[str] | None = None) -> int:
                     except subprocess.TimeoutExpired:
                         server.kill()
                         server.wait()
-    except (OSError, RuntimeError, ValueError, TimeoutError) as exc:
+        if args.json:
+            ok = summary["exit_code"] == 0
+            fields = {**summary, "child_exit_code": result.returncode, "artifacts": artifacts}
+            if not ok:
+                fields.update(stage="run_tests", effect="partial")
+            return write_result(from_report(fields, ok=ok, issue="browser_qualification_failed",
+                                            error="Inspect the saved test summary and results"))
+        return summary["exit_code"]
+    except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
+        if args.json:
+            issue = "wait_timeout" if isinstance(exc, subprocess.TimeoutExpired) else exception_issue(exc)
+            return write_result(failure(issue, str(exc), stage=stage,
+                                        effect="partial" if artifacts else "none", artifacts=artifacts))
         print(f"Browser qualification failed: {exc}", file=sys.stderr)
         return 1
 

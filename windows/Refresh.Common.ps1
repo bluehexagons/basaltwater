@@ -169,6 +169,7 @@ function Start-NativeRefresh($Saved, [string]$Source, [string[]]$Arguments) {
                 }
             } catch [IO.IOException] { } # A claimed worker retains authority over its receipt.
             finally { if ($claim) { $claim.Dispose() } }
+            $dispatchError.Exception.Data['job_id'] = $id
             throw $dispatchError
         }
         return [pscustomobject]@{ Id = $id; Status = $receipt.Status; Log = $receipt.Log;

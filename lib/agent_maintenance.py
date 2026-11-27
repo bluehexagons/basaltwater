@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from lib.atomic_io import remove_file_durable, write_json_atomic
+from lib.tool_results import exception_issue, exit_status, failure, from_report, write_result
 from lib.types import JSONDict
 from lib.validation import validate_filesystem_path
 
@@ -247,10 +248,7 @@ def release_agent_maintenance(*, home: Optional[str] = None) -> JSONDict:
     }
 
 
-def _print_result(result: JSONDict, *, json_output: bool) -> None:
-    if json_output:
-        print(json.dumps(result, indent=2))
-        return
+def _print_result(result: JSONDict) -> None:
     status = str(result["status"])
     if status == "active":
         print(f"Agent maintenance hold: active until {result['expires_at']}")
@@ -280,7 +278,17 @@ def run_agent_maintenance_command(args: argparse.Namespace) -> int:
             )
             return 1
     except (OSError, RuntimeError, ValueError) as exc:
+        issue = exception_issue(exc)
+        effect = ({"stage": args.agent_maintenance_command,
+                   "effect": "none" if issue == "invalid_input" else "unknown"}
+                  if args.agent_maintenance_command in {"hold", "release"} else {})
+        result = failure(issue, str(exc), **effect)
+        if args.json:
+            return write_result(result)
         print(f"Error: {exc}")
-        return 1
-    _print_result(result, json_output=bool(args.json))
+        return exit_status(result)
+    if args.json:
+        return write_result(from_report(result, ok=result["status"] != "invalid", issue="invalid_hold_record",
+                                        error="The maintenance hold record is invalid; release and recreate it"))
+    _print_result(result)
     return 1 if result["status"] == "invalid" else 0

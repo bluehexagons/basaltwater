@@ -67,7 +67,8 @@ directory under `/tmp`. Remove the directory after the container is gone.
 places a dedicated `agent/TASK` branch below
 `~/.local/share/basaltwater/worktrees`, leaving the primary checkout's files
 untouched. `list` and `status` report branch, commit, and dirty state without
-printing changed file names. The default base is the primary checkout's `HEAD`;
+printing changed file names. `list --json` returns a `workspaces` array.
+The default base is the primary checkout's `HEAD`;
 creation does not fetch remote refs or copy uncommitted changes. To start from
 current remote main, fetch it first and pass `--base origin/main`. `remove`
 accepts only a registered worktree below that managed root, refuses dirty or
@@ -116,8 +117,9 @@ restart proceeds even if a session, hold, or recognized workload remains.
 `update TASK_ID TASK_JSON` changes only supplied settings. `show` reports its
 checkpoint and conversation/workspace bindings; `history --limit N` reads
 retained history beyond the panel's latest 40 records. `receipt TASK_ID RUN_ID`
-reads exact evidence, including for a removed task. `list --summary
---history-limit N` omits prompts/output and includes 0–40 recent run summaries.
+reads exact evidence, including for a removed task. `list` omits prompts and
+run output by default. Use `--history-limit N` for 0–40 recent runs and `--full`
+when the full saved prompts and run output are needed.
 `notify TASK_ID MESSAGE
 --key KEY` wakes enabled work with deduplicated event evidence. `worker` runs
 the independent foreground scheduler; `--once` handles currently due work.
@@ -149,8 +151,9 @@ private-evidence, WebGL-settle, and launcher-security states so a stale or
 unsafe managed launcher remains identifiable in a support artifact. Tool paths,
 home paths, Git identity, repository contents and status names, prompts,
 sessions, and credential contents are omitted. Without `--output` it prints
-JSON; an output path must be a new file below the current user's home and is
-written with mode `0600`. Browser configuration is inventoried without starting
+JSON. With `--output`, the command writes a new file below the current user's
+home with mode `0600` and returns a `support_bundle` artifact whose `path`
+locates it. Browser configuration is inventoried without starting
 Chromium; add `--browser-smoke` when it is relevant to exercise an explicitly
 installed Playwright fallback for the report.
 Manifest and support share the [installation provenance contract](../agents/agent-environment.md):
@@ -185,8 +188,8 @@ tools and host readiness, adds T3 Code readiness when that managed service is
 present, and saves the redacted readiness record described above. An unhealthy
 post-update result or failure to persist it makes the update command exit
 nonzero even when the vendor updater itself succeeded. Inspect the evidence
-with `basaltw agent doctor --last-record`; update JSON output retains its
-existing per-tool result-array contract. The setup-internal invocation uses
+with `basaltw agent doctor --last-record`. Update JSON output carries per-tool
+results in `tools` and the check in `readiness` when it ran. The setup-internal invocation uses
 `--tools-only-readiness` so an unrelated pre-existing T3 or host condition does
 not make a successful terminal-agent update fail. The complete host/T3 result is
 still stored and a warning points to the follow-up check; run the default

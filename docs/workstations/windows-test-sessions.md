@@ -18,7 +18,11 @@ basaltw desktop develop cancel TASK_ID
 basaltw desktop develop wait TASK_ID --timeout 60
 ```
 
-Record the returned ID before waiting. Dry run validates the plan without
+Record `job.id` before waiting. Read `job.state` for the observed outcome and
+`child_exit_code` for the native child exit when available. `status` can read
+the record of a failed task successfully. Use `logs --json` for a bounded
+excerpt and its retained log artifacts, or `logs --follow` for text.
+Dry run validates the plan without
 creating directories, reserving a project or launching code. It does not
 evaluate whether the project actually honors isolation or readiness.
 
@@ -76,7 +80,8 @@ task earlier. Deadline expiry terminates owned descendants and retains evidence.
 returns the same wait envelope as `develop wait`, with `WaitState: ready` only
 for a live running session whose marker was accepted. Exit 0 means ready;
 exit 1 means the session ended or needs attention, even if it previously became
-ready. Exit 124 is a caller wait timeout and does not cancel the session. Use
+ready. Exit 124 returns `issue: wait_timeout` and the original `job.id` to
+continue following the session. Use
 `develop wait` to confirm terminal cleanup after cancellation or application exit.
 
 ## Coordination, evidence and cleanup

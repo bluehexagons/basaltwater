@@ -598,7 +598,7 @@ class DesktopProductivityTests(unittest.TestCase):
             for field in ("generation", "control_revision", "lease"):
                 with self.subTest(field=field):
                     path.write_text(json.dumps([{"action": "input", field: "other"}]))
-                    with self.assertRaisesRegex(ValueError, "embedded"):
+                    with self.assertRaisesRegex(ValueError, "Unknown input sequence field"):
                         client.run_sequence(str(path), "g")
         request.assert_not_called()
 
@@ -620,7 +620,7 @@ class DesktopProductivityTests(unittest.TestCase):
         for title in ("", "x" * 513):
             args = parser.parse_args(["desktop", "exec", "--wait-window", title, "--", "editor"])
             with contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(run_desktop_command(args), 1)
+                self.assertEqual(run_desktop_command(args), 2)
         request.assert_not_called()
 
 

@@ -151,8 +151,8 @@ class ContainerTests(unittest.TestCase):
         add_agent_subparser(parser.add_subparsers(dest="command"))
         args = parser.parse_args(["agent", "containers", "preflight", "--engine", "podman", "--image-bytes", "-1", "--json"])
         with patch.object(containers, "inspect_container_engine") as probe, redirect_stdout(output := StringIO()):
-            self.assertEqual(run_agent_command(args), 1)
-        self.assertEqual(json.loads(output.getvalue())["issue"], "invalid_capacity_input")
+            self.assertEqual(run_agent_command(args), 2)
+        self.assertEqual(json.loads(output.getvalue())["issue"], "invalid_input")
         probe.assert_not_called()
         for fields in ({"image_bytes": True}, {"image_bytes": 1, "additional_copies": 9}, {"image_bytes": 1, "reserve_bytes": -1}):
             with self.assertRaises(ValueError):

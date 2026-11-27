@@ -245,13 +245,13 @@ class T3WorktreeTests(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertEqual(result, {
             "status": "sparse", "commit": self.commit, "patterns_path": ".t3/sparse",
-            "required_files": ["app/start script.sh"],
+            "required_files": ["app/start script.sh"], "schema_version": 1, "ok": True,
         })
 
     def test_reports_excluded_and_missing_files(self):
         self.included = b""
         status, result = self.check_worktree("app/start script.sh")
-        self.assertEqual(status, 1)
+        self.assertEqual(status, 2)
         self.assertIn("exclude required files", result["error"])
         _, result = self.check_worktree("missing.sh")
         self.assertIn("Required files missing", result["error"])
@@ -265,7 +265,7 @@ class T3WorktreeTests(unittest.TestCase):
             "worktreeSparsePatternsPath": ".t3/sparse"
         }'''
         status, result = self.check_worktree("app/start script.sh")
-        self.assertEqual(status, 1)
+        self.assertEqual(status, 2)
         self.assertIn("declares worktreeLayout", result["error"])
 
     def test_full_checkout_and_invalid_paths(self):
@@ -276,7 +276,7 @@ class T3WorktreeTests(unittest.TestCase):
         for value in ("../rules", "/tmp/rules", "C:/rules", "dir/./rules", "a\nb"):
             with self.subTest(value=value):
                 self.config = json.dumps({"worktreeSparsePatternsPath": value}).encode()
-                self.assertEqual(self.check_worktree()[0], 1)
+                self.assertEqual(self.check_worktree()[0], 2)
 
 
 if __name__ == '__main__':

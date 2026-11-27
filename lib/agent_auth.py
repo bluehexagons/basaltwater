@@ -15,6 +15,7 @@ from lib.agent_credentials import (
     inspect_codex_auth_payload,
 )
 from lib.ssh_utils import build_ssh_command, ssh_batch_mode, ssh_process_timeout
+from lib.tool_results import success, write_result
 
 
 AGENT_AUTH_TOOLS = ("gh", "codex", "claude", "opencode")
@@ -373,8 +374,7 @@ def run_agent_auth_status(args: Any) -> int:
         git_host=args.git_host,
     )
     if args.json:
-        print(json.dumps(results, indent=2))
-        return 0
+        return write_result(success(tools=results))
     print("Remote agent credential status")
     for result in results:
         credential = result.get("credential", {})

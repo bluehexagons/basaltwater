@@ -115,14 +115,20 @@ already running application to open a document do not own that application's
 existing process; inspect actual window/process identities.
 
 Task status/list/logs/wait work without the desktop helper.
+Pass the launch result's `job.id` to `status`, `logs`, `wait` or `stop`.
+`job.state` carries the observed outcome and `child_exit_code` carries the
+recorded exit when known. Status can read the record of a failed task
+successfully.
 A missing or uninspectable service with no sufficient evidence
 stays unavailable/unverified. Status does not automatically repair or restart
 anything. Logs, argv and raw receipts may contain project information; retain
 them privately and inspect before sharing.
 
 `develop logs TASK_ID` reads a private log directly, including live recipe
-output for `check` tasks. Use `--worker` for supervisor output. A wait deadline
-while the task is still running or stopping exits 124. Successful completion
+output for `check` tasks. Use `--json` for a bounded excerpt and its `job_log`
+artifact, or `--worker` for supervisor output. A wait deadline while the task
+is still running or stopping returns `wait_timeout`, the same job handle, and
+exit 124. Successful completion
 exits 0 and failed or unverified completion exits 1.
 
 ## Stop and reconcile

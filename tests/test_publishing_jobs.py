@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from contextlib import redirect_stdout
 from io import StringIO
+import json
 import unittest
 from unittest.mock import patch
 
@@ -191,11 +192,34 @@ class PublishingJobTests(unittest.TestCase):
         parser = argparse.ArgumentParser()
         add_publishing_subparser(parser.add_subparsers())
         job = self.publisher.schedule("game", 60)
-        for options, expected in ((["edit", "--interval", "30"], 0), (["edit"], 1),
-                                  (["resume", "--interval", "30"], 1), (["remove"], 0)):
+        for options, expected in ((["edit", "--interval", "30"], 0), (["edit"], 2),
+                                  (["resume", "--interval", "30"], 2), (["remove"], 0)):
             args = parser.parse_args(["publish", "job", job["id"], *options])
             with self.subTest(options=options), patch("lib.publishing_cli.Publishing", return_value=self.publisher), redirect_stdout(StringIO()):
                 self.assertEqual(run_publishing_command(args), expected)
         saved = self.saved("jobs", job["id"])
         self.assertEqual(saved["interval"], 1800)
         self.assertEqual(saved["state"], "removed")
+
+    def test_cli_hands_prepared_artifact_and_wait_timeout_to_status_and_cancel(self):
+        parser = argparse.ArgumentParser()
+        add_publishing_subparser(parser.add_subparsers())
+
+        def run(expected, *argv):
+            with redirect_stdout(StringIO()) as output:
+                self.assertEqual(run_publishing_command(parser.parse_args(["publish", *argv])), expected)
+            return json.loads(output.getvalue())
+
+        with patch("lib.publishing_cli.Publishing", return_value=self.publisher), \
+                patch.object(self.publisher, "start_worker") as start, \
+                patch("lib.publishing_cli.time.monotonic", side_effect=[0, 1]):
+            prepared = run(0, "prepare", "game")
+            waited = run(124, "upload", prepared["id"], "--wait", "--timeout", "1")
+            self.assertEqual(waited["issue"], "wait_timeout")
+            job = waited["job"]
+            self.assertEqual(job["state"], "queued")
+            self.assertEqual(run(0, "runs", "--id", job["id"])["job"], job)
+            cancelled = run(0, "cancel", job["id"])
+            self.assertEqual(cancelled["job"]["id"], job["id"])
+            self.assertEqual(cancelled["cancellation"], "confirmed")
+            start.assert_called_once_with()

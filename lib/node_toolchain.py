@@ -19,6 +19,7 @@ from lib.atomic_io import read_json_file
 from lib.agent_probe import run_probe
 from lib.node_install import node_install_guard
 from lib.node_runtime_ownership import mark_runtime, runtime_directory, runtime_lock, runtime_owner
+from lib.tool_results import add_json_option, exception_issue, failure, from_report, success, write_result
 from lib.validation import validate_filesystem_path, validate_no_control_characters
 
 
@@ -513,8 +514,8 @@ def add_node_subparser(subparsers: argparse._SubParsersAction) -> None:
             "Resolve a stable version, major/minor pin, node, stable, or lts/NAME" if name in {"install", "resolve"}
             else "Override the project pin with a version or range"
         ))
-        if name in {"status", "doctor"}:
-            command.add_argument("--json", action="store_true")
+        if name in {"status", "doctor", "resolve", "install"}:
+            add_json_option(command)
         if name == "exec":
             command.add_argument("argv", nargs=argparse.REMAINDER)
         if name == "install":
@@ -523,18 +524,25 @@ def add_node_subparser(subparsers: argparse._SubParsersAction) -> None:
 
 
 def run_node_command(args: argparse.Namespace) -> int:
+    as_json = getattr(args, "json", False)
+    stage = "validate"
     try:
         if args.node_command == "doctor":
             report = inspect_project_node(args.project, version=args.version)
-            print(json.dumps(report, indent=2) if args.json else
-                  f"Project Node {report['selection']['version']}: "
+            if as_json:
+                return write_result(from_report(report, ok=report["healthy"], issue="node_check_failed",
+                                                error="The selected Node runtime did not pass its checks"))
+            print(f"Project Node {report['selection']['version']}: "
                   + ("healthy" if report["healthy"] else ", ".join(report["issues"])))
             return 0 if report["healthy"] else 1
         if args.node_command in {"install", "resolve"}:
             pin, _, engines = project_requirements(args.project)
             version = args.version or pin
             if args.node_command == "resolve":
-                print(resolve_node_release(version or ("node" if engines else "lts/*"), engines=engines))
+                target = resolve_node_release(version or ("node" if engines else "lts/*"), engines=engines)
+                if as_json:
+                    return write_result(success(version=target))
+                print(target)
                 return 0
             if not version:
                 raise ValueError("Install requires --version or a project pin")
@@ -543,6 +551,7 @@ def run_node_command(args: argparse.Namespace) -> int:
                 if not re.fullmatch(r"(?:npm|pnpm|yarn)@\d+\.\d+\.\d+", manager):
                     raise ValueError("Package managers require an exact npm@VERSION, pnpm@VERSION, or yarn@VERSION")
             target = resolve_node_release(version, engines=engines)
+            stage = "install_runtime"
             nvm = Path(os.environ.get("NVM_DIR") or Path.home() / ".nvm") / "nvm.sh"
             validate_filesystem_path(str(nvm))
             if not nvm.is_file():
@@ -566,6 +575,10 @@ def run_node_command(args: argparse.Namespace) -> int:
             if result.stderr:
                 print(result.stderr, end="", file=sys.stderr)
             if result.returncode:
+                if as_json:
+                    return write_result(failure("node_install_failed", "NVM did not install the selected runtime",
+                                                stage=stage, effect="unknown", child_exit_code=result.returncode,
+                                                version=target))
                 return result.returncode
             # Validate what this install resolved, not another compatible entry
             # in the inventory (or a compatible Node found on PATH).
@@ -590,6 +603,7 @@ def run_node_command(args: argparse.Namespace) -> int:
                                       target, engines, str(nvm.parent.resolve()), "nvm")
             mark_runtime(nvm.parent, selection.version, owner="project")
             if managers:
+                stage = "install_package_managers"
                 environment = selection.environment()
                 environment['npm_config_engine_strict'] = 'true'
                 npm = Path(selection.executable).with_name('npm')
@@ -607,8 +621,13 @@ def run_node_command(args: argparse.Namespace) -> int:
                     result = subprocess.run([str(npm), 'install', '--global', '--prefix',
                                              str(Path(selection.executable).parent.parent),
                                              '--ignore-scripts=false', *script_policy, *managers],
-                                            cwd=temporary, env=environment, check=False)
+                                            cwd=temporary, env=environment, check=False,
+                                            stdout=sys.stderr if as_json else None)
                     if result.returncode:
+                        if as_json:
+                            return write_result(failure("node_install_failed", "npm did not install the requested package managers",
+                                                        stage=stage, effect="partial", child_exit_code=result.returncode,
+                                                        version=target))
                         return result.returncode
                     for manager in managers:
                         name, expected = manager.split('@')
@@ -617,12 +636,14 @@ def run_node_command(args: argparse.Namespace) -> int:
                                                capture_output=True, text=True, timeout=30, check=True)
                         if _version(probe.stdout) != _version(expected):
                             raise ValueError(f'{name} did not activate the requested version {expected}')
-                return 0
+            if as_json:
+                return write_result(success(**asdict(selection), package_managers=managers))
             return 0
         selection = select_node(args.project, version=args.version)
         if args.node_command == "status":
-            print(json.dumps(asdict(selection), indent=2) if args.json else
-                  f"Node {selection.version}: {selection.executable}\n"
+            if as_json:
+                return write_result(success(**asdict(selection)))
+            print(f"Node {selection.version}: {selection.executable}\n"
                   f"Runtime source: {selection.runtime_source.upper()}\n"
                   f"Selected by {selection.source} ({selection.requirement})")
         elif args.node_command == "env":
@@ -635,8 +656,11 @@ def run_node_command(args: argparse.Namespace) -> int:
             return result.returncode
         return 0
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
-        if getattr(args, "json", False):
-            print(json.dumps({"ok": False, "error": str(exc)}))
-        else:
-            print(f"Error: {exc}", file=sys.stderr)
+        issue = exception_issue(exc) if stage == "validate" else "node_install_failed"
+        if as_json:
+            detail = ({"stage": stage, "effect": {"validate": "none", "install_runtime": "unknown",
+                                               "install_package_managers": "partial"}[stage]}
+                      if args.node_command == "install" else {})
+            return write_result(failure(issue, str(exc), **detail))
+        print(f"Error: {exc}", file=sys.stderr)
         return 1

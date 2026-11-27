@@ -119,7 +119,7 @@ class CaptureCoordinateTests(unittest.TestCase):
                             patch.object(client.runtime, "status", return_value=current), \
                             patch.object(client.runtime, "request") as debian_request:
                         self.assertEqual(desktop_cli.run_desktop_command(parser.parse_args(
-                            arguments + ["--observe", "--output", str(path)])), 1)
+                            arguments + ["--observe", "--output", str(path)])), 2)
                         self.assertEqual(json.loads(output.getvalue())["input_delivery"], "not-sent")
                         debian_request.assert_not_called()
             request.assert_not_called()
@@ -227,7 +227,7 @@ class CaptureCoordinateTests(unittest.TestCase):
                 patch.object(client.runtime, "request") as debian_request, \
                 patch.object(client, "artifact_path") as artifact:
             for prefix, suffix, code in ((["desktop", "--native"], [], 0),
-                                         (["desktop", "--native"], ["--to-x", "400", "--to-y", "10"], 1),
+                                         (["desktop", "--native"], ["--to-x", "400", "--to-y", "10"], 2),
                                          (["desktop"], [], 0)):
                 output = StringIO()
                 with self.subTest(prefix=prefix, suffix=suffix), redirect_stdout(output):
@@ -481,7 +481,7 @@ class NativeCanvasTests(unittest.TestCase):
                                   "--x", "1", "--y", "2", "--to-x", "3", "--to-y", "4"])
         with patch.object(client.runtime, "status", return_value={"state": "running", "generation": "g", "control_revision": "r"}), \
                 patch.object(client.runtime, "request") as request, redirect_stdout(StringIO()):
-            self.assertEqual(desktop_cli.run_desktop_command(args), 1)
+            self.assertEqual(desktop_cli.run_desktop_command(args), 2)
             sequence = self.home / "sequence.json"
             sequence.write_text(json.dumps([{"action": "windows"}, {k:v for k,v in self.payload.items() if k not in ("generation", "control_revision")}]))
             with self.assertRaisesRegex(ValueError, "native desktop"):

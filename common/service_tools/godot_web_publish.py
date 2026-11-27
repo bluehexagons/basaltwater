@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import gzip
-import json
 import os
 import re
 import shutil
@@ -19,6 +18,7 @@ if SOURCE_ROOT not in sys.path:
     sys.path.insert(0, SOURCE_ROOT)
 
 from lib.remote_utils import run
+from lib.tool_results import exception_issue, failure, success, write_result
 from lib.validation import validate_positive_integer
 
 
@@ -236,42 +236,19 @@ def publish_legacy(args: argparse.Namespace) -> int:
         game, published_url, metadata = _publish(args)
     except (OSError, RuntimeError, ValueError) as exc:
         if args.json:
-            print(
-                json.dumps(
-                    {
-                        "elapsed_seconds": round(time.monotonic() - started_at, 3),
-                        "error": str(exc),
-                        "ok": False,
-                    },
-                    sort_keys=True,
-                )
-            )
+            issue = exception_issue(exc)
+            return write_result(failure(issue, str(exc), stage="publish", effect="none" if issue == "invalid_input" else "unknown",
+                                        elapsed_seconds=round(time.monotonic() - started_at, 3)))
         else:
             print(f"Error: {exc}", file=sys.stderr)
         return 2 if isinstance(exc, ValueError) else 1
 
     if args.json:
-        print(
-            json.dumps(
-                {
-                    "artifact_bytes": metadata["artifact_bytes"],
-                    "artifact_count": metadata["artifact_count"],
-                    "compressed_artifact_bytes": metadata[
-                        "compressed_artifact_bytes"
-                    ],
-                    "compressed_artifact_count": metadata[
-                        "compressed_artifact_count"
-                    ],
-                    "elapsed_seconds": round(time.monotonic() - started_at, 3),
-                    "game": game,
-                    "metadata": metadata,
-                    "ok": True,
-                    "replaced": metadata["replaced"],
-                    "url": published_url,
-                },
-                sort_keys=True,
-            )
-        )
+        write_result(success(artifact_bytes=metadata["artifact_bytes"], artifact_count=metadata["artifact_count"],
+                             compressed_artifact_bytes=metadata["compressed_artifact_bytes"],
+                             compressed_artifact_count=metadata["compressed_artifact_count"],
+                             elapsed_seconds=round(time.monotonic() - started_at, 3),
+                             game=game, metadata=metadata, replaced=metadata["replaced"], url=published_url))
     else:
         print(f"Published {game} to {published_url}")
     if args.open:

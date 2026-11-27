@@ -979,8 +979,8 @@ class TestPreviewResolution(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["navigation"], {"url": "https://games.example:8444/"})
         self.assertEqual(result["upstream_url"], "http://127.0.0.1:8080/")
-        self.assertEqual(result["network_origin"], "vm")
-        self.assertIsNone(result["command"])
+        self.assertEqual(result["network_origin"], "command_host")
+        self.assertIsNone(result["remediation_argv"])
         self.assertEqual(self.loopback.call_args.kwargs["timeout"], 3)
 
     def test_t3_environment_port_resolves_without_gateway_policy(self) -> None:
@@ -1012,7 +1012,7 @@ class TestPreviewResolution(unittest.TestCase):
         status, result = self.resolve()
         self.assertEqual(status, 1)
         self.assertEqual(result["issue"], "forward_missing")
-        argv = basaltwater_web.shlex.split(result["command"])
+        argv = result["remediation_argv"]
         parsed = basaltwater_web._parser().parse_args(argv[1:])
         self.assertEqual(parsed.to, "127.0.0.1:8080")
         self.assertEqual(parsed.listen, "auto")
@@ -1037,13 +1037,13 @@ class TestPreviewResolution(unittest.TestCase):
             {**self.route, "name": "preview-agent-8080-2", "target_port": 8081},
         ]
         _, result = self.resolve()
-        self.assertIn("forward add preview-agent-8080-3 ", result["command"])
+        self.assertEqual(result["remediation_argv"][:4], ["basaltwater-web", "forward", "add", "preview-agent-8080-3"])
 
     def test_ipv6_route_and_command_use_bracketed_upstream(self) -> None:
         self.routes.return_value = []
         _, result = self.resolve("--host", "::1", "--profile", "godot")
         self.assertEqual(result["upstream_url"], "http://[::1]:8080/")
-        argv = basaltwater_web.shlex.split(result["command"])
+        argv = result["remediation_argv"]
         parsed = basaltwater_web._parser().parse_args(argv[1:])
         self.assertEqual(parsed.to, "[::1]:8080")
         self.assertEqual(parsed.profile, "godot")
@@ -1090,7 +1090,7 @@ class TestPreviewResolution(unittest.TestCase):
         self.assertEqual(result["issue"], "http_error")
         self.assertEqual(result["component"], "upstream")
         self.assertEqual(result["upstream_status"], 503)
-        self.assertIsNone(result["command"])
+        self.assertIsNone(result["remediation_argv"])
         self.https.assert_not_called()
 
     def test_gateway_http_error_retains_url_and_recovery(self) -> None:
@@ -1129,16 +1129,20 @@ class TestPreviewResolution(unittest.TestCase):
                 self.assertEqual(self.resolve(*extra)[0], 2)
         self.loopback.assert_not_called()
 
-    def test_plain_output_is_url_or_actionable_failure(self) -> None:
-        output, errors = StringIO(), StringIO()
-        with redirect_stdout(output), redirect_stderr(errors):
-            self.assertEqual(basaltwater_web.main(["preview", "resolve", "--port", "8080"]), 0)
-        self.assertEqual(output.getvalue(), "https://games.example:8444/\n")
-        self.routes.return_value = []
-        with redirect_stderr(errors):
-            self.assertEqual(basaltwater_web.main(["preview", "resolve", "--port", "8080"]), 1)
-        self.assertIn("gateway: forward_missing", errors.getvalue())
-        self.assertIn("basaltwater-web forward add", errors.getvalue())
+    def test_default_output_matches_explicit_json_for_success_and_failure(self) -> None:
+        for routes, expected in (([self.route], 0), ([], 1)):
+            self.routes.return_value = routes
+            output, errors = StringIO(), StringIO()
+            with redirect_stdout(output), redirect_stderr(errors):
+                self.assertEqual(basaltwater_web.main(["preview", "resolve", "--port", "8080"]), expected)
+            self.assertEqual(errors.getvalue(), "")
+            result = json.loads(output.getvalue())
+            self.assertEqual((expected, result), self.resolve())
+            self.assertEqual(result["schema_version"], 1)
+            if expected:
+                self.assertEqual(result["issue"], "forward_missing")
+            else:
+                self.assertEqual(result["navigation"], {"url": "https://games.example:8444/"})
 
 
 class TestInfraWebControl(unittest.TestCase):
@@ -1160,7 +1164,7 @@ class TestInfraWebControl(unittest.TestCase):
             patch.object(basaltwater_web_control, "request", return_value=0) as request,
         ):
             self.assertEqual(basaltwater_web.main(argv), 0)
-        request.assert_called_once_with(argv)
+        request.assert_called_once_with(argv, as_json=False)
 
     def test_unprivileged_preview_restart_delegates_without_sudo(self) -> None:
         argv = ["preview", "restart", "demo", "--wait", "45", "--json"]
@@ -1169,7 +1173,7 @@ class TestInfraWebControl(unittest.TestCase):
             patch.object(basaltwater_web_control, "request", return_value=0) as request,
         ):
             self.assertEqual(basaltwater_web.main(argv), 0)
-        request.assert_called_once_with(argv)
+        request.assert_called_once_with(argv, as_json=True)
 
     def test_control_rejects_commands_outside_owner_scoped_mutations(self) -> None:
         for argv in (["forward", "reconcile"], ["publish", "site"], ["preview", "logs"]):

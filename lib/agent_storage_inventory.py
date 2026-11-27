@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 from pathlib import Path
 import pwd
@@ -12,6 +11,7 @@ import shutil
 import stat
 import time
 
+from lib.tool_results import add_json_to_leaves, exception_issue, failure, from_report, write_result
 from lib.validation import validate_filesystem_path
 
 
@@ -382,13 +382,11 @@ def add_storage_parser(commands: argparse._SubParsersAction) -> None:
     inspect.add_argument("--max-entries", type=int, default=250000)
     inspect.add_argument("--timeout", type=int, default=20, help="Shared scan budget in seconds (1-60)")
     inspect.add_argument("--summary", action="store_true", help="Omit absent default roots and detailed file metrics; retain selected paths, issues, retention and three ranked children per root")
-    inspect.add_argument("--json", action="store_true")
     project = actions.add_parser("project", help="Inspect project cleanup rules and artifacts without running scripts")
     project.add_argument("repository", metavar="ABSOLUTE_PROJECT")
     project.add_argument("--policy", default=".basaltwater/cleanup.json", help="Literal project-relative JSON policy path; existing project conventions take precedence")
     project.add_argument("--max-entries", type=int, default=50000)
     project.add_argument("--timeout", type=int, default=10)
-    project.add_argument("--json", action="store_true")
     clean = actions.add_parser("clean-generated", help="Preview one declared generated-output rule; delete only with --apply")
     clean.add_argument("repository", metavar="ABSOLUTE_PROJECT")
     clean.add_argument("--rule", required=True, help="Exact generated rule name in the reviewed project policy")
@@ -396,14 +394,14 @@ def add_storage_parser(commands: argparse._SubParsersAction) -> None:
     mode = clean.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true", help="Preview without deleting (default)")
     mode.add_argument("--apply", action="store_true", help="Remove the rule's generated directories after preflight")
+    clean.add_argument("--json", action="store_true", help="Emit one JSON result object")
     go = actions.add_parser("clean-go-build", help="Preview native Go build-cache cleanup with active-build checks")
     go.add_argument("--apply", action="store_true", help="Execute go clean -cache within authorized cleanup scope")
-    go.add_argument("--json", action="store_true")
     podman = actions.add_parser("clean-podman", help="Preview age-limited unused test images and abandoned Buildah builders")
     mode = podman.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true", help="Preview without deleting (default)")
     mode.add_argument("--apply", action="store_true", help="Remove eligible abandoned builders and prune unused images, including tagged images")
-    podman.add_argument("--json", action="store_true")
+    add_json_to_leaves(parser, default=True)
 
 
 def run_storage_command(args: argparse.Namespace) -> int:
@@ -412,25 +410,23 @@ def run_storage_command(args: argparse.Namespace) -> int:
             from lib.podman_cleanup import clean_podman_images
 
             result = clean_podman_images(apply=args.apply)
-            print(json.dumps(result, indent=2))
-            return 0 if result["status"] in ("preview", "cleaned", "absent") else 1
+            return _write_cleanup(result, args, "clean_podman")
         if args.agent_storage_command == "clean-go-build":
             from lib.go_cache_cleanup import clean_go_build_cache
 
             result = clean_go_build_cache(apply=args.apply)
-            print(json.dumps(result, indent=2))
-            return 0 if result["status"] in ("preview", "cleaned", "absent") else 1
+            return _write_cleanup(result, args, "clean_go_build")
         if args.agent_storage_command == "clean-generated":
             from lib.agent_generated_cleanup import clean_generated
 
-            return clean_generated(args.repository, args.rule, policy_path=args.policy, apply=args.apply)
+            return clean_generated(args.repository, args.rule, policy_path=args.policy, apply=args.apply, as_json=args.json)
         if args.agent_storage_command == "project":
             from lib.agent_project_cleanup import inspect_project_cleanup
 
             result = inspect_project_cleanup(args.repository, policy_path=args.policy,
                                              max_entries=args.max_entries, timeout=args.timeout)
-            print(json.dumps(result, indent=2))
-            return 1 if result["evidence"] and result["evidence"]["issues"] else 0
+            return write_result(from_report(result, ok=not (result["evidence"] and result["evidence"]["issues"]),
+                                            issue="storage_inspection_incomplete", error="Inspect project cleanup evidence issues"))
         result = inspect_storage(paths=args.path, max_entries=args.max_entries, timeout=args.timeout)
         unavailable_selection = any(
             row["category"] == "selected" and row["status"] == "unavailable"
@@ -438,8 +434,18 @@ def run_storage_command(args: argparse.Namespace) -> int:
         )
         if getattr(args, "summary", False):
             result = _summarize_inventory(result)
-        print(json.dumps(result, separators=(",", ":")) if getattr(args, "summary", False) else json.dumps(result, indent=2))
-        return 1 if result["issues"] or unavailable_selection else 0
+        return write_result(from_report(result, ok=not (result["issues"] or unavailable_selection),
+                                        issue="storage_inspection_incomplete", error="Inspect storage issues and candidate status"))
     except (OSError, ValueError) as exc:
-        print(json.dumps({"read_only": not bool(getattr(args, "apply", False)), "error": str(exc)}))
-        return 1
+        issue = exception_issue(exc)
+        applying = bool(getattr(args, "apply", False))
+        details = {"stage": args.agent_storage_command.replace("-", "_"),
+                   "effect": "none" if issue == "invalid_input" else "unknown"} if applying else {}
+        return write_result(failure(issue, str(exc), read_only=not applying, **details))
+
+
+def _write_cleanup(result: dict, args: argparse.Namespace, stage: str) -> int:
+    ok = result["status"] in ("preview", "cleaned", "absent")
+    if args.apply and not ok:
+        result = {**result, "stage": stage, "effect": "unknown"}
+    return write_result(from_report(result, ok=ok, issue="cleanup_failed", error="Inspect the cleanup status and recovery details"))

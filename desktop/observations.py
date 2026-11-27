@@ -11,6 +11,8 @@ import shutil
 import tempfile
 import time
 
+from lib.tool_results import artifact, success
+
 DEFAULT_CAPTURE_MAX_AGE_SECONDS = 60
 MAX_CAPTURE_MAX_AGE_SECONDS = 600
 
@@ -90,6 +92,33 @@ def compact_capture(result: dict) -> dict:
         "pixel_sha256", "artifact_sha256", "frame_received_at", "frame_received_monotonic_ns", "frame_pts_ns",
         "initial_frame_skipped", "capture_freshness", "last_input", "error", "reason", "dispatch_stage",
         "input_delivery", "input_id", "evidence_error", "evidence_capacity") if key in result}
+
+
+def retain_capture(result: dict) -> list[dict]:
+    """Write the private mapping receipt for an image already captured by a helper."""
+    from desktop.qa_artifacts import new_bundle
+    from lib.atomic_io import write_json_atomic
+
+    files = []
+    for kind, capture in (("screenshot", result), ("screenshot_preview", result.get("preview"))):
+        if isinstance(capture, dict) and isinstance(capture.get("output"), str):
+            item = artifact(kind, capture["output"], "image/png")
+            if capture.get("artifact_sha256"):
+                item["sha256"] = capture["artifact_sha256"]
+            files.append(item)
+    if files and not result.get("error") and result.get("observation_id"):
+        folder = new_bundle()
+        path = folder / "capture.json"
+        try:
+            fields = compact_capture(result)
+            if "preview" in result:
+                fields["preview"] = result["preview"]
+            write_json_atomic(str(path), success(**fields))
+        except BaseException:
+            shutil.rmtree(folder)
+            raise
+        files.append(artifact("capture_receipt", path, "application/json"))
+    return files
 
 
 def save_observation(result: dict) -> dict:

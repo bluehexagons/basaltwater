@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 from contextlib import closing
 import http.client
-import json
 import os
 from pathlib import Path
 import re
@@ -20,6 +19,7 @@ from urllib.parse import urlsplit
 
 from lib.agent_probe import run_probe
 from lib.local_http import open_loopback
+from lib.tool_results import success, write_result
 from lib.validation import validate_filesystem_path, validate_network_port, validate_no_control_characters
 
 
@@ -34,7 +34,7 @@ def add_test_instance_parser(commands: argparse._SubParsersAction) -> None:
     parser.add_argument("--sqlite-snapshot", type=Path, help="Offline, checkpointed SQLite fixture")
     parser.add_argument("--database-env", default="DATABASE_PATH", help="App variable for the copied SQLite fixture")
     parser.add_argument("--seconds", type=int, default=900, help="Maximum container lifetime (default 900 seconds)")
-    parser.add_argument("--json", action="store_true", help="Print the ready instance as one JSON line")
+    parser.add_argument("--json", action="store_true", help="Emit one JSON ready event; terminal errors use stderr")
     parser.add_argument("argv", nargs=argparse.REMAINDER, help="Optional image command arguments after --")
 
 
@@ -124,8 +124,8 @@ def _run_instance(args: argparse.Namespace, podman: list[str], data: Path) -> in
         if time.monotonic() >= deadline:
             raise RuntimeError("Instance lifetime elapsed before readiness could be reported")
         if args.json:
-            print(json.dumps({"url": url, "container": name, "network_origin": "vm",
-                              "lifetime_seconds": args.seconds}), flush=True)
+            write_result(success(event="ready", url=url, container=name, network_origin="vm",
+                                 lifetime_seconds=args.seconds), flush=True)
         else:
             print(f"Open {url} in the VM browser. Press Ctrl+C to stop {name}.", flush=True)
         # The wrapper owns the normal cutoff. Podman's later timeout caps the

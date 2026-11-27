@@ -4,12 +4,15 @@
 
 ## MCP for Codex and T3 agents
 
-`basaltw agent tasks mcp` serves initialization-based MCP revisions through
-2025-11-25 on stdio, with read-only tools by default. It exposes capabilities,
+`basaltw agent tasks mcp` serves MCP revisions 2025-06-18 and 2025-11-25 on
+stdio, with read-only tools by default. It exposes capabilities,
 compact task listing, task/context inspection, retained history and exact run
 receipts. MCP listing defaults to `summary: true`; set `summary: false` for
 full prompts and output, and `history_limit` from 0 to 40 to bound recent runs. Explicit
 `--allow-write` adds creation, partial update, lifecycle actions and notify.
+Use `structuredContent` for the same result object as the CLI. Each tool
+advertises an `outputSchema`. A handled tool failure sets `isError` and
+returns `ok: false`, `issue` and `error` in `structuredContent`.
 Mutations queue work; the MCP process does not execute providers or start a
 scheduler. A scheduler must be running for queued work to proceed.
 Worker lease inspection errors are returned in `worker.error` so task reads

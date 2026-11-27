@@ -450,7 +450,7 @@ class T3ReadinessTests(unittest.TestCase):
                 redirect_stdout(io.StringIO()) as output:
             self.assertEqual(agent_cli.run_agent_command(args), 0)
         inspect.assert_called_once_with(fix=False, wait_for_startup=True)
-        self.assertEqual(json.loads(output.getvalue()), [result])
+        self.assertEqual(json.loads(output.getvalue())["capabilities"], [result])
 
     def test_unstable_startup_fails_even_when_last_endpoint_probe_answered(self):
         with patch.object(agent_cli, '_wait_for_t3_startup', return_value=(True, True, 'startup deadline exceeded')):

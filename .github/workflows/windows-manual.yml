@@ -37,6 +37,10 @@ jobs:
         shell: powershell
         run: .\windows\tests\Run-ObservationTests.ps1
 
+      - name: Test Windows CLI result and refresh handoffs
+        shell: powershell
+        run: .\windows\tests\Run-CliTests.ps1
+
       - name: Test Windows PowerShell setup and native jobs
         shell: powershell
         run: .\windows\tests\Run-NativeTests.ps1

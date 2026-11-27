@@ -46,3 +46,8 @@ temporary script afterward. The account's saved execution policy is unchanged.
 Package installers and selected machine-wide service configuration can ask for
 UAC; account tooling and provider logins remain with the intended account.
 CI runner registration and managed build-host setup use their existing flags.
+
+`basaltw refresh --detach --json` returns the queued `job.id`. Pass that ID
+to `refresh --status ID` for the current `job.state`, `refresh --logs ID --json`
+for a bounded log excerpt, or `refresh --cancel ID` while still queued.
+`refresh --follow ID` streams text, as does an ordinary foreground refresh.

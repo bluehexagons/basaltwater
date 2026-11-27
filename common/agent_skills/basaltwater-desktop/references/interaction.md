@@ -160,8 +160,9 @@ Older supervisors refuse token-bound pacing before dispatch. Prefer accessible
 `element set-text` and read-back. Always verify delivered text before submitting;
 `submitted_characters` counts acknowledged injections, not application text.
 
-Debian also supports `desktop map-point --capture /absolute/frame.json
---image-coordinates --x X --y Y` against a saved screenshot receipt. It adds the
+Open the `screenshot` artifact as pixels and pass the `capture_receipt`
+artifact's path to `desktop map-point --capture /absolute/frame.json
+--image-coordinates --x X --y Y`. It adds the
 image origin and checks current observation identity and freshness without
 injecting input or renewing the token. Presented-view coordinates require the
 actual image display dimensions via `--view-geometry WIDTH HEIGHT`.

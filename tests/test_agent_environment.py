@@ -400,8 +400,9 @@ class TestAgentEnvironment(unittest.TestCase):
         args = parser.parse_args(["agent", "manifest", self.directory, "--json"])
         output = StringIO()
         with patch.object(agent_environment, "inspect_environment", side_effect=ValueError("invalid declaration")), redirect_stdout(output):
-            self.assertEqual(agent_cli.run_agent_command(args), 1)
-        self.assertEqual(json.loads(output.getvalue()), {"ok": False, "error": "invalid declaration"})
+            self.assertEqual(agent_cli.run_agent_command(args), 2)
+        self.assertEqual(json.loads(output.getvalue()),
+                         {"schema_version": 1, "ok": False, "issue": "invalid_input", "error": "invalid declaration"})
 
     def test_scoped_web_summary_omits_desktop_and_storefront_workflows(self) -> None:
         self.declaration(required_tools=["project-tool"], recipes={"test": {

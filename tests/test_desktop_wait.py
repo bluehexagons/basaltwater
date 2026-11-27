@@ -219,7 +219,7 @@ class WindowWaitCliTests(unittest.TestCase):
             with self.subTest(command=command), patch.object(runtime, "status", return_value={
                 "state": "running", "generation": "g", "control_revision": "r",
             }), patch.object(runtime, "request") as request, redirect_stdout(StringIO()):
-                self.assertEqual(run_desktop_command(self.args(command)), 1)
+                self.assertEqual(run_desktop_command(self.args(command)), 2)
                 request.assert_not_called()
 
     def test_launch_filters_reach_wait_without_permission_changes_or_leases(self):
@@ -300,7 +300,8 @@ class WindowWaitCliTests(unittest.TestCase):
                 'state': 'running', 'generation': 'g', 'control_revision': 'r',
             }), patch.object(runtime, 'request', side_effect=error) as request, \
                     patch.object(client, 'wait_for_window') as wait, redirect_stdout(StringIO()):
-                self.assertEqual(run_desktop_command(self.args(['exec', '--wait-window', 'Editor', '--', 'editor'])), 1)
+                code = run_desktop_command(self.args(['exec', '--wait-window', 'Editor', '--', 'editor']))
+                self.assertEqual(code, 124 if isinstance(error, TimeoutError) else 1)
                 request.assert_called_once_with({'action': 'windows', 'generation': 'g'})
                 wait.assert_not_called()
 
@@ -311,7 +312,8 @@ class WindowWaitCliTests(unittest.TestCase):
                 'state': 'running', 'generation': 'g', 'control_revision': 'r',
             }), patch.object(runtime, 'request', side_effect=[RuntimeError('metadata unavailable'), error]) as request, \
                     patch.object(client, 'wait_for_window') as wait, redirect_stdout(StringIO()) as output:
-                self.assertEqual(run_desktop_command(self.args(['exec', '--wait-window', 'Editor', '--', 'editor'])), 1)
+                code = run_desktop_command(self.args(['exec', '--wait-window', 'Editor', '--', 'editor']))
+                self.assertEqual(code, 124 if isinstance(error, TimeoutError) else 1)
                 result = json.loads(output.getvalue())
                 self.assertIn(str(error), result['error'])
                 self.assertNotIn('pid', result)

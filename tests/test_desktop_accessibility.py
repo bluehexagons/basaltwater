@@ -370,7 +370,7 @@ class WaitTests(unittest.TestCase):
         add_desktop_subparser(parser.add_subparsers())
         argv = ["desktop", "inspect", "--pid", "42", "--root", "0:" + "a" * 32]
         with contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(run_desktop_command(parser.parse_args(argv)), 1)
+            self.assertEqual(run_desktop_command(parser.parse_args(argv)), 2)
         request.assert_not_called()
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(run_desktop_command(parser.parse_args([*argv, "--generation", "g"])), 0)

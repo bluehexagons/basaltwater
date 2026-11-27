@@ -17,6 +17,7 @@ import uuid
 from lib import agent_workspace
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.remote_utils import run
+from lib.tool_results import exception_issue, exit_status, from_report, report_artifacts, write_result
 from lib.validation import validate_filesystem_path, validate_no_control_characters, validate_positive_integer
 from lib.visual_compare_viewer import render_viewer
 from lib.visual_evidence import add_evidence_options
@@ -251,6 +252,8 @@ def capture_revisions(args: argparse.Namespace) -> dict:
         result["ok"] = True
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
         result["error"] = str(exc)
+        if isinstance(exc, TimeoutError):
+            result["issue"] = "wait_timeout"
     finally:
         write_json_atomic(manifest_path, result)
     return result
@@ -273,9 +276,23 @@ def run_visuals_command(args: argparse.Namespace) -> int:
         else:
             result = capture_revisions(args) if args.visuals_command == "capture" else compare_captures(args)
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
-        result = {"ok": False, "error": str(exc)}
+        result = {"ok": False, "issue": exception_issue(exc), "error": str(exc)}
+    if result.get("ok") is False:
+        result.update(stage=args.visuals_command, effect="partial" if result.get("directory") else
+                      "none" if result.get("issue") == "invalid_input" else "unknown")
+    result = from_report(result, ok=result.get("ok") is not False, issue="visual_check_failed",
+                         error="The visual operation failed. Inspect its evidence.")
     if args.json:
-        print(json.dumps(result, indent=2))
+        files = {"viewer": ("visual_review", "text/html"), "report": ("visual_report", "application/json"),
+                 "comparison_report": ("comparison_report", "application/json"), "log": ("job_log", "text/plain")}
+        artifacts = report_artifacts(result, files)
+        artifacts.extend(report_artifacts(result.get("review") or {}, files))
+        if args.visuals_command == "capture" and result.get("directory"):
+            artifacts.extend(report_artifacts({"manifest": os.path.join(result["directory"], "capture.json")},
+                                              {"manifest": ("capture_report", "application/json")}))
+        for side in ("before", "after"):
+            artifacts.extend(report_artifacts(result.get(side) or {}, {"path": ("render", "image/png")}))
+        return write_result({**result, "artifacts": artifacts})
     elif result.get("viewer"):
         print(result["viewer"])
     elif result.get("comparison_report"):
@@ -292,4 +309,4 @@ def run_visuals_command(args: argparse.Namespace) -> int:
         print(f"Error: {result['error']}")
         if result.get("directory"):
             print(f"Capture evidence retained: {result['directory']}")
-    return 1 if result.get("ok") is False else 0
+    return exit_status(result)

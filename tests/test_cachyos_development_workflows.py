@@ -273,7 +273,7 @@ class TestDevelopmentWorkflows(unittest.TestCase):
                     self.assertEqual(args.argv, suffix[1:])
                     self.assertEqual(args.manager, "pnpm")
                     self.assertTrue(args.dry_run)
-                    self.assertFalse(args.json)
+                    self.assertTrue(args.json)
 
     def test_cli_node_literal_suffix_cannot_supply_required_options_or_hide_errors(self):
         parser = argparse.ArgumentParser()

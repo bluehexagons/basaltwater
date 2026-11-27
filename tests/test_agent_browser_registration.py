@@ -140,7 +140,7 @@ class BrowserRegistrationTests(unittest.TestCase):
             with patch.object(agent_browser, "check_browser", return_value={"ok": False}):
                 self.assertEqual(agent_browser.run_browser_command(args), 1)
             args.context = "project"
-            self.assertEqual(agent_browser.run_browser_command(args), 1)
+            self.assertEqual(agent_browser.run_browser_command(args), 2)
         register.assert_not_called()
 
 

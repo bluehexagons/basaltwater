@@ -276,9 +276,8 @@ repository contents, and process details. Use `doctor --last-record` to read it
 without running checks. That command exits nonzero when the record is unhealthy
 or belongs to a previous boot, so it can distinguish fresh post-reboot evidence
 from an older successful audit. Both options support the remote `HOST USER`
-form. Doctor JSON output retains its existing result-array shape when
-`--record` is used; query the saved evidence separately with `--last-record
---json`.
+form. Doctor JSON returns `tools` and `capabilities` in one result object.
+Query the saved evidence with `--last-record --json`.
 
 ## Native T3 preview readiness
 
@@ -300,7 +299,8 @@ headers. `upstream_url` identifies the endpoint used for the probe, or the first
 address if both connection attempts fail. Browser rendering, tunnel
 access and client trust need separate checks.
 
-Exit status 0 returns a native environment-port target. Status 1 reports an
+Default output and `--json` return the same result object. Exit status 0
+returns a native environment-port target in `navigation`. Status 1 reports an
 upstream failure with `issue` and `remediation`, and status 2 reports an
 invalid request. Where the gateway utility is installed,
 `basaltwater-web preview resolve --route t3` accepts the same flags.

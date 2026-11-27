@@ -80,13 +80,13 @@ class DesktopOutputTests(unittest.TestCase):
             code = run_desktop_command(self.arguments(*argv))
         return code, json.loads(output.getvalue()), request
 
-    def test_default_inspection_keeps_legacy_payload(self) -> None:
+    def test_default_inspection_keeps_observations_in_result(self) -> None:
         result = self.observation()
         for mode in ("enabled", "human-override", "disabled"):
             with self.subTest(mode=mode):
                 code, output, request = self.run_cli(result, "inspect", "--pid", "123", mode=mode)
                 self.assertEqual(code, 0)
-                self.assertEqual(output, result)
+                self.assertEqual(output, {**result, "schema_version": 1, "ok": True})
                 request.assert_called_once()
                 self.assertEqual(request.call_args.args[0]["action"], "inspect")
                 self.assertFalse(self.directory.exists())
@@ -97,7 +97,9 @@ class DesktopOutputTests(unittest.TestCase):
                                              "--generation", "generation-1", "--save-output")
         self.assertEqual(code, 1)
         self.assertEqual(output["error"], result["error"])
-        self.assertEqual(json.loads(Path(output["artifact"]).read_text()), result)
+        self.assertTrue(output["output_truncated"])
+        receipt = json.loads(Path(output["artifacts"][0]["path"]).read_text())
+        self.assertEqual(receipt, {**result, "schema_version": 1, "ok": False, "issue": "desktop_operation_failed"})
         self.assertEqual(request.call_args.args[0]["root"], "root-ref")
         self.assertEqual(request.call_args.args[0]["generation"], "generation-1")
 
@@ -143,7 +145,7 @@ class DesktopOutputTests(unittest.TestCase):
             if expected:
                 self.assertIn("did not confirm", output["error"])
         code, output, request = self.run_cli({}, "screenshot", "--max-age-seconds", "601")
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 2)
         request.assert_not_called()
 
     def test_old_helper_cannot_silently_ignore_observation_input(self):
@@ -662,10 +664,17 @@ class BoundCaptureTests(unittest.TestCase):
     def test_debian_receipt_mapping_preserves_token_and_rejects_expiry_and_consumption(self):
         parser = argparse.ArgumentParser()
         add_desktop_subparser(parser.add_subparsers())
-        observed = self.observe(self.debian)
-        receipt = self.home / "frame.json"
-        receipt.write_text(json.dumps(observed))
-        args = parser.parse_args(["desktop", "map-point", "--capture", str(receipt),
+        with patch.object(runtime, "status", side_effect=self.debian.snapshot_status), \
+                patch.object(runtime, "request", side_effect=self.debian.handle), \
+                patch("desktop.qa_artifacts.new_bundle", return_value=self.home / "mapping-receipt"), \
+                patch("sys.stdout", new_callable=io.StringIO) as output:
+            capture_args = parser.parse_args(["desktop", "screenshot", "--output", str(self.home / "frame.png")])
+            self.assertEqual(run_desktop_command(capture_args), 0)
+        observed = json.loads(output.getvalue())
+        artifacts = {item["kind"]: item for item in observed["artifacts"]}
+        receipt = artifacts["capture_receipt"]["path"]
+        self.assertEqual(artifacts["screenshot"]["path"], observed["output"])
+        args = parser.parse_args(["desktop", "map-point", "--capture", receipt,
                                   "--image-coordinates", "--x", "1", "--y", "2", "--json"])
         with patch.object(runtime, "status", side_effect=self.debian.snapshot_status), \
                 patch.object(runtime, "request") as request:
@@ -820,7 +829,12 @@ class BoundCaptureTests(unittest.TestCase):
                 connection = socket.return_value.__enter__.return_value
                 connection.recv.return_value = json.dumps(reply).encode() + b"\n"
                 self.assertEqual(run_desktop_command(args), 1)
-                self.assertEqual(json.loads(output.getvalue()), {**reply, "ok": False})
+                result = json.loads(output.getvalue())
+                self.assertFalse(result["ok"])
+                self.assertEqual(result["schema_version"], 1)
+                self.assertEqual({key: result[key] for key in reply}, reply)
+                if "task" in reply:
+                    self.assertEqual(result["job"]["id"], reply["task"])
                 connection.sendall.assert_called_once()
 
     def test_debian_expired_frame_proves_no_dispatch_and_ignores_caller_receipt(self):

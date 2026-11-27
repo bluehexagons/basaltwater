@@ -214,11 +214,11 @@ class TaskControlsTests(unittest.TestCase):
         with patch("lib.agent_tasks_cli.TaskAPI", return_value=self.api), patch("sys.stdout", io.StringIO()):
             self.assertEqual(run_tasks_command(parser.parse_args(["tasks", "list", "--summary", "--history-limit", "0"])), 0)
         mocked = MagicMock()
-        mocked.call.return_value = {"tasks": [], "runs": []}
+        mocked.result.return_value = {"schema_version": 1, "ok": True, "tasks": [], "runs": []}
         server = TaskMCP(mocked)
         server.request({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25"}})
         server.request({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "basaltwater_tasks_list"}})
-        mocked.call.assert_called_once_with("list", {"summary": True})
+        mocked.result.assert_called_once_with("list", {})
 
 
 if __name__ == "__main__":

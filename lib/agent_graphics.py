@@ -11,6 +11,7 @@ import sys
 import tempfile
 
 from lib.agent_probe import run_probe
+from lib.tool_results import add_json_option, failure, from_report, write_result
 from lib.validation import validate_no_control_characters
 
 
@@ -142,7 +143,7 @@ def add_graphics_parser(commands: argparse._SubParsersAction) -> None:
     doctor.add_argument("--require-software", action="store_true",
                         help="Fail unless this context reports a recognized software renderer")
     doctor.add_argument("--expect-renderer", help="Require this case-insensitive substring in the observed renderer")
-    doctor.add_argument("--json", action="store_true")
+    add_json_option(doctor, default=True)
 
 
 def run_graphics_command(args: argparse.Namespace) -> int:
@@ -150,11 +151,8 @@ def run_graphics_command(args: argparse.Namespace) -> int:
         result = inspect_graphics_context(args.context, require_software=args.require_software,
                                           backend=args.backend, expect_renderer=args.expect_renderer)
     except ValueError as exc:
-        print(json.dumps({"ok": False, "issue": "invalid_graphics_request", "error": str(exc)}))
-        return 1
+        return write_result(failure("invalid_input", str(exc)))
     except OSError:
-        print(json.dumps({"ok": False, "issue": "probe_unavailable",
-                          "remediation": "Check local temporary-directory capacity and permissions."}))
-        return 1
-    print(json.dumps(result, indent=2))
-    return 0 if result["healthy"] else 1
+        return write_result(failure("probe_unavailable", "Check local temporary-directory capacity and permissions."))
+    return write_result(from_report(result, ok=result["healthy"], issue="graphics_probe_failed",
+                                    error="The requested graphics check failed. Inspect issues for details."))

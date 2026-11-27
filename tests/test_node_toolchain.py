@@ -490,7 +490,7 @@ class NodeToolchainTests(unittest.TestCase):
                         patch('lib.node_toolchain.shutil.which', return_value='/usr/bin/node'), \
                         patch('lib.node_toolchain.run_probe', return_value=ProbeResult(observed)), \
                         patch('lib.node_toolchain.subprocess.run') as run:
-                    self.assertEqual(run_node_command(args), 1)
+                    self.assertEqual(run_node_command(args), 2)
                     run.assert_not_called()
 
     def test_alias_chains_cycles_and_missing_aliases_are_read_only(self):

@@ -37,12 +37,19 @@ def _regular_file(path: Path):
         raise
 
 
+def _unique_fields(pairs: list[tuple[str, object]]) -> dict:
+    fields = dict(pairs)
+    if len(fields) != len(pairs):
+        raise ValueError("Capture summary contains duplicate fields")
+    return fields
+
+
 def _summary(path: Path) -> dict:
     with _regular_file(path) as stream:
         data = stream.read(65537)
     if len(data) > 65536:
         raise ValueError("Summary exceeds 64 KiB")
-    value = json.loads(data.decode("utf-8"))
+    value = json.loads(data.decode("utf-8"), object_pairs_hook=_unique_fields)
     if (not isinstance(value, dict) or type(value.get("schema_version")) is not int
             or value["schema_version"] != 1
             or value.get("status") not in ("in_progress", "completed", "timeout", "interrupted", "launch_error")):
@@ -113,6 +120,7 @@ def _excerpt(lines: list[str], budget: int, terms: list[str]) -> tuple[str, bool
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--json", action="store_true", help="Emit one JSON result object (the default)")
     parser.add_argument("summary", type=Path, help="saved summary.json; only adjacent stdout.log/stderr.log are read")
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument("--stream", choices=("stdout", "stderr", "both"),
@@ -146,11 +154,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 text, truncated = _excerpt(lines, remaining // (len(ordered) - index), args.match)
                 remaining -= len(text.encode("utf-8"))
                 result["streams"][name] = {**metadata, "excerpt_truncated": truncated, "text": text}
+        result["ok"] = True
+        result["child_exit_code"] = result["return_code"] if result["status"] == "completed" else None
+        result["output_truncated"] = any(stream["scan_truncated"] or stream["excerpt_truncated"]
+                                         for stream in result.get("streams", {}).values())
+        result["artifacts"] = [{"kind": "command_summary", "path": str(summary_path), "media_type": "application/json"}]
         print(json.dumps(result, separators=(",", ":"), allow_nan=False))
         return 0  # Inspection success, independent of the captured command's exit.
-    except (OSError, ValueError, OverflowError) as exc:
-        print(json.dumps({"inspection_error": str(exc)[:512]}, separators=(",", ":")), file=sys.stderr)
-        return 1
+    except (OSError, ValueError, OverflowError, RecursionError) as exc:
+        issue = "inspection_failed" if isinstance(exc, OSError) else "invalid_input"
+        print(json.dumps({"schema_version": 1, "ok": False, "issue": issue,
+                          "error": str(exc)[:512]}, separators=(",", ":")))
+        return 2 if issue == "invalid_input" else 1
 
 
 if __name__ == "__main__":

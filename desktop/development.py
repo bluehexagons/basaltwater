@@ -25,6 +25,7 @@ from lib.atomic_io import read_json_file, write_json_atomic
 from lib.cachyos import is_cachyos
 from lib.cachyos_doctor import _owned_socket, _probe
 from lib.remote_utils import is_dry_run
+from lib.tool_results import add_json_option, artifact, exception_issue, from_report, write_result
 from lib.validation import validate_filesystem_path, validate_no_control_characters
 
 
@@ -61,7 +62,7 @@ def add_development_parser(commands: argparse._SubParsersAction) -> None:
     for name in ("doctor", "editor", "run", "import", "exec"):
         action = actions.add_parser(name)
         action.add_argument("--project", required=True, help="Existing project or worktree directory")
-        action.add_argument("--json", action="store_true")
+        add_json_option(action, default=True)
         if name != "exec":
             action.add_argument("--engine", help="Godot executable name or absolute path; defaults to godot or godot-mono for C#")
         if name == "doctor":
@@ -84,7 +85,7 @@ def add_development_parser(commands: argparse._SubParsersAction) -> None:
         action = actions.add_parser(name, script_arguments=(name == "node"), help=help_text)
         action.add_argument("script" if name == "node" else "recipe")
         action.add_argument("--project", required=True)
-        action.add_argument("--json", action="store_true")
+        add_json_option(action, default=True)
         action.add_argument("--dry-run", action="store_true")
         if name == "node":
             action.add_argument("--manager", choices=("npm", "pnpm", "yarn"), help="Override packageManager; defaults to npm when undeclared")
@@ -96,37 +97,37 @@ def add_development_parser(commands: argparse._SubParsersAction) -> None:
     playtest = actions.add_parser("playtest", help="Launch a declared disposable profile and attach it to the active recorder")
     playtest.add_argument("playtest", metavar="PROFILE")
     playtest.add_argument("--project", required=True)
-    playtest.add_argument("--json", action="store_true")
+    add_json_option(playtest, default=True)
     playtest.add_argument("--dry-run", action="store_true", help="Validate the profile without creating state or launching")
     browser = actions.add_parser("browser", help="Launch a native browser with a private profile and download directory")
     browser.add_argument("--project", required=True, help="Tag the task with an existing project or worktree")
     browser.add_argument("--browser", choices=BROWSERS, default="firefox")
     browser.add_argument("--url", default="about:blank", help="Initial HTTP(S) URL")
-    browser.add_argument("--json", action="store_true")
+    add_json_option(browser, default=True)
     browser.add_argument("--dry-run", action="store_true", help="Validate without creating a profile or launching")
     cleanup = actions.add_parser("cleanup-browser", help="Remove the profile of a finished browser task")
     cleanup.add_argument("task", help="Task ID returned by develop browser")
     cleanup.add_argument("--include-downloads", action="store_true", help="Also remove the task's private download directory")
     cleanup.add_argument("--dry-run", action="store_true")
-    cleanup.add_argument("--json", action="store_true")
+    add_json_option(cleanup, default=True)
     logs = actions.add_parser("logs", help="Show the last lines of a development task's retained output")
     logs.add_argument("task", help="Task ID returned by a development launch")
     logs.add_argument("--tail", type=int, default=30, metavar="LINES", help="Number of lines to show (1–10000, default 30)")
     logs.add_argument("--worker", action="store_true", help="Show supervisor output even when a recipe log is available")
-    logs.add_argument("--json", action="store_true")
-    for name in ("status", "stop", "wait"):
+    add_json_option(logs)
+    for name in ("status", "stop", "wait", "ready"):
         action = actions.add_parser(name)
-        action.add_argument("task", help="Task ID returned by a development launch")
-        action.add_argument("--json", action="store_true")
+        action.add_argument("task", metavar="JOB_ID", help="Job ID returned by a development launch")
+        add_json_option(action, default=True)
         if name == "stop":
             action.add_argument("--dry-run", action="store_true", help="Validate the task identity without stopping it")
-        elif name == "wait":
+        elif name in ("wait", "ready"):
             action.add_argument("--timeout", type=int, default=600, help="Wait deadline in seconds (1–3600); does not stop the task")
     listing = actions.add_parser("list", help="List private task records; use status for current process state")
     listing.add_argument("--project", help="Filter records to an existing project/worktree")
     listing.add_argument("--since", help="Inclusive creation-time lower bound, ISO 8601 with timezone")
     listing.add_argument("--until", help="Inclusive creation-time upper bound, ISO 8601 with timezone")
-    listing.add_argument("--json", action="store_true")
+    add_json_option(listing, default=True)
 
 
 def _guard() -> int:
@@ -572,21 +573,26 @@ def task_logs(task_id: str, *, tail: int = 30, worker: bool = False) -> dict:
                     "error": "No output log is available for this task yet"}
     # Count a trailing newline as part of the last line, including blank lines.
     lines = tail + body.endswith(b"\n")
-    excerpt = b"\n".join(body.rsplit(b"\n", lines)[-lines:])
+    excerpt = b"\n".join(body.rsplit(b"\n", lines)[-lines:])[-65536:]
     return {"schema_version": 1, "ok": True, "task": task_id, "log": str(path),
-            "output": excerpt.decode("utf-8", errors="replace")}
+            "output": excerpt.decode("utf-8", errors="replace"), "output_truncated": len(excerpt) < len(body)}
 
 
-def wait_task(task_id: str, *, timeout: int = 600) -> dict:
-    """Observe one task to verified completion without changing its lifecycle."""
+def wait_task(task_id: str, *, timeout: int = 600, until_ready: bool = False) -> dict:
+    """Observe launch evidence or verified completion without changing a job."""
     if type(timeout) is not int or not 1 <= timeout <= 3600:
         raise ValueError("Wait timeout must be from 1 through 3600 seconds")
     deadline = time.monotonic() + timeout
     while True:
         result = task_status(task_id)
         state = result["state"]
+        if until_ready:
+            ready = state == "running" and bool(result.get("launch_pid"))
+            result["readiness"] = {"condition": "child_started", "ready": ready}
+            if ready:
+                return {**result, "ok": True, "wait_timed_out": False}
         if state not in ("running", "stopping"):
-            successful = state == "completed" and result["ok"] and result["returncode"] == 0
+            successful = not until_ready and state == "completed" and result["ok"] and result["returncode"] == 0
             return {**result, "ok": successful, "wait_timed_out": False}
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -840,10 +846,51 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
             "error": f"{reason}; inspect this task's status before retrying"}
 
 
+_JOB_STATES = {"running": "running", "stopping": "running", "completed": "succeeded", "failed": "failed",
+               "stopped": "cancelled", "not-launched": "failed"}
+
+
+def _development_result(action: str, result: dict) -> dict:
+    result = dict(result)
+    if isinstance(result.get("task"), str):
+        state = result.get("state")
+        result["job"] = {"id": result["task"], "state": _JOB_STATES.get(state, "unknown"), "native_state": state}
+        if "returncode" in result:
+            result["child_exit_code"] = result["returncode"]
+    files = []
+    playtest_artifacts = result.pop("artifacts", None)
+    if isinstance(playtest_artifacts, str):
+        result["artifact_directory"] = playtest_artifacts
+    for kind, name, media_type in (
+        ("job_log", "log", "text/plain"), ("completion_receipt", "report", "application/json"),
+        ("check_report", "check_report", "application/json"), ("comparison_report", "comparison_report", "application/json"),
+        ("prepare_report", "prepare_report", "application/json"), ("recipe_log", "check_log", "text/plain"),
+    ):
+        if isinstance(path := result.get(name), str) and Path(path).is_file():
+            files.append(artifact(kind, path, media_type))
+    if files:
+        result["artifacts"] = files
+    if result.get("matches_truncated"):
+        result["output_truncated"] = True
+    ok = result["ok"] or action == "status" and "job" in result
+    if action == "stop" and ok:
+        result["cancellation"] = "confirmed" if result.get("state") == "stopped" else (
+            "requested" if result.get("stop_requested_at") else "not_requested")
+    issue = "wait_timeout" if result.get("wait_timed_out") else "development_failed"
+    if not ok and action in {*KINDS, "stop", "cleanup-browser"}:
+        result.setdefault("stage", action)
+        result.setdefault("effect", "none" if result.get("issue") == "invalid_input" else "unknown")
+    if ok and action == "status" and "error" in result:
+        result["child_error"] = result.pop("error")
+    return from_report(result, ok=ok, issue=issue,
+                       error=result.get("message") or result.get("service_error") or result.get("reason") or
+                       f"Development {action} failed. Inspect the job details.")
+
+
 def run_development_command(args: argparse.Namespace) -> int:
     action = args.development_command
     try:
-        if not getattr(args, "native", False) and action not in ("list", "status", "stop", "wait", "logs", "cleanup-browser"):
+        if not getattr(args, "native", False) and action not in ("list", "status", "stop", "wait", "ready", "logs", "cleanup-browser"):
             from desktop.debian_development import request_task
             result = request_task(args)
         elif action == "doctor":
@@ -854,6 +901,8 @@ def run_development_command(args: argparse.Namespace) -> int:
             result = task_status(args.task, stop=action == "stop", dry_run=getattr(args, "dry_run", False))
         elif action == "wait":
             result = wait_task(args.task, timeout=args.timeout)
+        elif action == "ready":
+            result = wait_task(args.task, timeout=args.timeout, until_ready=True)
         elif action == "logs":
             result = task_logs(args.task, tail=args.tail, worker=args.worker)
         elif action == "cleanup-browser":
@@ -879,14 +928,12 @@ def run_development_command(args: argparse.Namespace) -> int:
     except DesktopRequestError as exc:
         result = {**exc.receipt, "ok": False}
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
-        result = {"ok": False, "error": str(exc)}
+        result = {"ok": False, "issue": exception_issue(exc), "error": str(exc)}
+    result = _development_result(action, result)
     if action == "logs" and not args.json:
         if result["ok"]:
             sys.stdout.write(result["output"])
         else:
             print(result["error"], file=sys.stderr)
         return 0 if result["ok"] else 1
-    print(json.dumps(result, indent=2))
-    if action == "wait" and result.get("wait_timed_out"):
-        return 124
-    return 0 if result["ok"] else 1
+    return write_result(result)

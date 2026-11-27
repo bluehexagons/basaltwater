@@ -251,7 +251,7 @@ class AgentModelsTests(unittest.TestCase):
         add_agent_subparser(parser.add_subparsers(dest="command"))
         args = parser.parse_args(["agent", "models", "report", str(self.repository), "--json"])
         with patch("builtins.print") as output:
-            self.assertEqual(run_agent_command(args), 1)
+            self.assertEqual(run_agent_command(args), 2)
         self.assertIn("finite number", output.call_args.args[0])
 
     def test_overflowing_statistics_and_estimates_fail_without_invalid_json(self) -> None:

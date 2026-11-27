@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib.util
-import json
 import math
 import os
 from pathlib import Path
@@ -17,6 +16,7 @@ from typing import Any
 from desktop import session_runtime as runtime
 from desktop.accessibility import check_dependencies, validate_query
 from desktop.observations import validate_capture_max_age, validate_observation_option
+from lib.atomic_io import read_json_file
 from lib.validation import validate_filesystem_path
 from desktop.receipts import DesktopRequestError, input_failure, input_request_failure
 
@@ -151,7 +151,9 @@ def wait_for_window(generation: str, *, window: str | None = None,
         if time.monotonic() >= deadline:
             break
     detail = f"; {inventory_detail}" if inventory_detail else ""
-    raise RuntimeError(f"Timed out waiting for window condition '{condition}'; inspect desktop status and windows{detail}")
+    raise DesktopRequestError({"issue": "wait_timeout", "generation": generation, "condition": condition,
+                               "launch_status": launch_status,
+                               "error": f"Timed out waiting for window condition '{condition}'; inspect desktop status and windows{detail}"})
 
 
 def wait_for_element(generation: str, *, pid: int, name: str | None = None,
@@ -192,7 +194,8 @@ def wait_for_element(generation: str, *, pid: int, name: str | None = None,
         poll_interval = min(1, poll_interval * 2)
         if time.monotonic() >= deadline:
             break
-    return {**result, "error": f"Timed out waiting for element state '{state}'; inspect matches and truncation"}
+    return {**result, "issue": "wait_timeout", "condition": state,
+            "error": f"Timed out waiting for element state '{state}'; inspect matches and truncation"}
 
 
 def doctor() -> dict[str, Any]:
@@ -588,18 +591,27 @@ def observe_processes_after_input(result: dict, identities: list[tuple[int, str]
 
 
 def run_sequence(path: str, generation: str, *, backend=runtime) -> dict[str, Any]:
-    validate_filesystem_path(path, must_exist=True)
-    if Path(path).stat().st_size > backend.MAX_MESSAGE:
-        raise ValueError("Desktop sequence is too large")
-    steps = json.loads(Path(path).read_text())
+    steps = read_json_file(path, max_bytes=backend.MAX_MESSAGE)
     if not isinstance(steps, list) or not 1 <= len(steps) <= 20:
         raise ValueError("Desktop sequences require 1 to 20 actions")
     outputs = set()
     delayed_ms = 0
+    fields = {
+        "input": {"kind", "geometry", "observation_id", "key", "text", "x", "y", "button", "codes", "dx", "dy",
+                  "hold_ms", "delay_ms", "to_x", "to_y", "duration_ms", "frames"},
+        "window": {"window", "identity", "operation", "x", "y", "width", "height"},
+        "screenshot": {"output", "after_ms", "next_frame", "max_age_seconds", "crop", "window", "active_window"},
+        "windows": set(),
+    }
     for step in steps:
-        if (not isinstance(step, dict) or step.get("action") not in ("input", "window", "screenshot", "windows")
-                or any(key in step for key in ("generation", "control_revision", "lease"))):
+        action = step.get("action") if isinstance(step, dict) else None
+        if not isinstance(action, str) or action not in fields:
             raise ValueError("Sequences accept input, window, screenshot, and windows actions without embedded control metadata")
+        if action != "screenshot" and "after_ms" in step:
+            raise ValueError("after_ms applies only to sequence screenshots")
+        unknown = step.keys() - fields[action] - {"action"}
+        if unknown:
+            raise ValueError(f"Unknown {action} sequence field: {', '.join(sorted(unknown))}")
         validate_text_delay(step)
         validate_keycodes(step)
         validate_hold(step)
@@ -629,8 +641,6 @@ def run_sequence(path: str, generation: str, *, backend=runtime) -> dict[str, An
             if Path(output).resolve() in outputs:
                 raise ValueError("Each sequence capture needs a different new PNG path")
             outputs.add(Path(output).resolve())
-        elif "after_ms" in step:
-            raise ValueError("after_ms applies only to sequence screenshots")
         validate_capture_crop(step, backend=backend)
         if step.get("kind") == "keycode" and backend is runtime:
             raise ValueError("Physical keycodes require the native desktop backend")

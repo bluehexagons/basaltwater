@@ -25,22 +25,28 @@ controller or third-party packages. Native supervised-task `status/logs` remain
 the route when Python is unavailable; this adds no launcher dependency.
 
 Capture runs literal argv with closed stdin and keeps stdout/stderr in private
-temporary files. It saves `summary.json` atomically before printing its compact
-summary. `--output-directory NEW_PATH` selects a new directory under an existing
+temporary files. It saves `summary.json` atomically and prints one JSON object
+on stdout. Pass the `command_summary` artifact's `path` to `read_output.py`.
+`--output-directory NEW_PATH` selects a new directory under an existing
 private parent; existing paths are refused. Retain its location before launching
-work that may lose the terminal. Child status is preserved; timeout returns 124,
-interruption 130. `error` and `cleanup_error` are evidence, not successful cleanup.
+work that may lose the terminal. The capture helper forwards the child exit and
+reports it in `child_exit_code`. A caller timeout returns 124, interruption 130,
+and failure to launch 127. Check `ok`, `status`, and any `cleanup_error` before
+using the artifacts.
 Windows cleanup targets the owned tree before its parent.
 
 The reader never starts or resumes a command. It shows status/exit/duration and
 byte counts. Success and unfinished captures default to summary only; failed
 captures include bounded tails. `--stream stdout|stderr|both` explicitly requests
-logs for any outcome. `--summary-only` avoids logs even on failure. Inspection
-exit zero means the files were read, not that the captured command passed.
+logs for any outcome. `--summary-only` avoids logs even on failure. The reader
+prints one JSON object with `ok` for the inspection and `child_exit_code` for
+the captured command when it finished. An invalid summary returns exit 2 with
+`issue: invalid_input`.
 
 `--max-bytes` defaults to **4096 UTF-8 excerpt bytes total across both streams**
 (maximum 65536), before JSON escaping and fixed metadata. Empty/short streams
-give unused budget to the other. `excerpt_truncated` marks excluded excerpt data;
+give unused budget to the other. `output_truncated` signals a limit on the
+returned view. `excerpt_truncated` marks excluded excerpt data;
 the full logs stay unchanged. Escaping Unicode/control characters can increase
 the serialized response size, so leave room in the enclosing tool's reply budget.
 

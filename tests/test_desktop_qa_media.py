@@ -213,7 +213,7 @@ class QAMediaTests(unittest.TestCase):
             out.truncate(0)
             out.seek(0)
             args = parser.parse_args(["desktop", "evidence", "run", "policy", artifact, "--clear-hard-limit"])
-            self.assertEqual(desktop_cli.run_desktop_command(args), 1)
+            self.assertEqual(desktop_cli.run_desktop_command(args), 2)
             self.assertIn("authorization/source", json.loads(out.getvalue())["error"])
             status.assert_not_called()
         before = Path(artifact).read_bytes()

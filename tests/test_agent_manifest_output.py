@@ -38,7 +38,7 @@ class ManifestOutputTests(unittest.TestCase):
         return json.loads(output.getvalue())
 
     def test_default_retains_full_inventory(self) -> None:
-        self.assertEqual(self.run_cli(), self.manifest())
+        self.assertEqual(self.run_cli(), {**self.manifest(), "ok": True})
 
     def test_scoped_discovery_only_runs_relevant_probes(self) -> None:
         parser = argparse.ArgumentParser()

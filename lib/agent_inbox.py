@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from lib.atomic_io import read_json_file, write_json_atomic
+from lib.tool_results import add_json_option, exception_issue, failure, success, write_result
 from lib.validation import validate_filesystem_path
 
 
@@ -197,7 +198,7 @@ def add_inbox_parser(commands: argparse._SubParsersAction) -> None:
         command = actions.add_parser(action)
         if action != "feedback":
             command.add_argument("recipient", metavar="MAILBOX")
-        command.add_argument("--json", action="store_true")
+        add_json_option(command, default=True)
         if action in {"send", "feedback"}:
             command.add_argument("--sender", required=True)
             command.add_argument("message", metavar="MESSAGE")
@@ -225,12 +226,12 @@ def run_inbox_command(args: argparse.Namespace) -> int:
         elif args.agent_inbox_command == "wait":
             result = inbox.wait(args.recipient, timeout=args.timeout)
             if not result:
-                print("[]" if args.json else "No unread messages before timeout")
-                return 2
+                return write_result(failure("wait_timeout", "No unread messages before timeout", items=[]))
         else:
             result = inbox.list(args.recipient, include_acknowledged=args.all)
-        print(json.dumps(result, indent=2, ensure_ascii=False))
-        return 0
+        return write_result(success(items=result) if isinstance(result, list) else success(**result))
     except (OSError, RuntimeError, ValueError) as exc:
-        print(f"Error: {exc}")
-        return 1
+        issue = exception_issue(exc)
+        effect = ({"stage": args.agent_inbox_command, "effect": "none" if issue == "invalid_input" else "unknown"}
+                  if args.agent_inbox_command in {"send", "feedback", "ack", "restore"} else {})
+        return write_result(failure(issue, str(exc), **effect))

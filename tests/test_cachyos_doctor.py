@@ -243,13 +243,14 @@ class DoctorOutputTests(unittest.TestCase):
         return output.getvalue()
 
     def test_default_json_retains_the_complete_report(self):
-        self.assertEqual(json.loads(self.run_doctor("--json")), self.report)
+        self.assertEqual(json.loads(self.run_doctor("--json")), {**self.report, "ok": True})
 
     def test_attention_preserves_all_unavailable_records_and_full_counts(self):
         original = json.loads(json.dumps(self.report))
         report = json.loads(self.run_doctor("--attention", "--json"))
         self.assertEqual(report, {
             **original,
+            "ok": True,
             "summary": {"total": 4, "available": 2, "deferred": 1, "failed": 1},
             "capabilities": original["capabilities"][1:3],
         })

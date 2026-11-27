@@ -236,6 +236,14 @@ $state = Get-Content "$env:LOCALAPPDATA\Basaltwater\wsl-setup.json" -Raw | Conve
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $state.Source 'windows\Manage-Wsl.ps1') -Action status
 ```
 
+Add `-Json` to `status` for a result with the saved distribution, worker
+state, and native distribution inventory text. Use `-Action logs -Json` to
+find up to ten recent `job_receipt` artifacts. Open the returned receipt path
+for the recorded job state, source revision, and artifact checksum.
+The native artifact runner uses process status and retains its logs and receipt.
+The `start`, `stop`, and `refresh` management actions use PowerShell's ordinary
+output and process status.
+
 `refresh` updates WSL, Ubuntu packages, selected tools, and eligible WinGet
 packages using the pinned Basaltwater source. WinGet's catalogs can lag the
 app's own updater. See

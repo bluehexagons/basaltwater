@@ -33,6 +33,8 @@ class AgentInboxTest(unittest.TestCase):
             self.assertEqual(record["recipient"], "operator")
             self.assertEqual(record["sender"], "t3-agent")
             self.assertEqual(record["message"], mail.FEEDBACK_PREFIX + "Missing tool\nCheck failed")
+            self.assertTrue(record.pop("ok"))
+            self.assertEqual(record.pop("schema_version"), 1)
             self.assertEqual(mail.AgentInbox(self.home).list("operator"), [record])
             for action in ("ack", "restore"):
                 self.assertEqual(mail.run_inbox_command(parser.parse_args(["inbox", action, "operator", record["id"], "--json"])), 0)
@@ -47,8 +49,8 @@ class AgentInboxTest(unittest.TestCase):
         with patch.object(mail, "AgentInbox", return_value=self.inbox), patch("sys.stdout", new_callable=io.StringIO) as output:
             self.assertEqual(mail.run_inbox_command(parser.parse_args([
                 "inbox", "feedback", "--sender", "worker", " \t", "--json",
-            ])), 1)
-            self.assertIn("Error:", output.getvalue())
+            ])), 2)
+            self.assertEqual(json.loads(output.getvalue())["issue"], "invalid_input")
             self.assertFalse(self.inbox.parent.exists())
             self.assertEqual(mail.run_inbox_command(parser.parse_args([
                 "inbox", "send", "parent", "--sender", "worker", "Original message",

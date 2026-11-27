@@ -8,13 +8,36 @@ import stat
 from pathlib import Path
 from typing import Any
 
-from lib.agent_tasks import AgentTasks
+from lib.agent_tasks import AgentTasks, MAX_FAILURE_LIMIT, MAX_REPEAT_MINUTES, MAX_TIMEOUT_MINUTES
 from lib.agent_task_storage import STORAGE_OPERATIONS
 from lib.atomic_io import read_json_file
 from lib.t3code_runtime import is_t3_service_version
+from lib.tool_results import failure, success
 
 
 WORKER_MARKER = "# Managed by basaltwater agent tasks"
+DEFAULT_HISTORY_LIMIT = 40
+TASK_MUTATIONS = frozenset({"create", "update", "action", "notify", "feedback"})
+INTEGER_SETTINGS = {
+    "timeout_minutes": (1, MAX_TIMEOUT_MINUTES), "failure_limit": (0, MAX_FAILURE_LIMIT),
+    "repeat_minutes": (0, MAX_REPEAT_MINUTES), "continuation_minutes": (1, MAX_REPEAT_MINUTES),
+    "max_runs": (0, 1_000_000), "token_budget": (0, 10**12), "daily_limit": (0, 1000),
+    "backoff_minutes": (0, MAX_REPEAT_MINUTES), "history_limit": (1, 1000),
+}
+
+
+def _settings(arguments: dict[str, Any], *, updating: bool = False) -> dict[str, Any]:
+    settings = arguments.get("task")
+    if not isinstance(settings, dict):
+        raise ValueError("Task settings must be an object")
+    for name, (minimum, maximum) in INTEGER_SETTINGS.items():
+        if name in settings and (type(settings[name]) is not int or not minimum <= settings[name] <= maximum):
+            raise ValueError(f"{name} must be an integer from {minimum} through {maximum}")
+    if "usage_repair_tokens_used" in settings:
+        usage = settings["usage_repair_tokens_used"]
+        if not updating or usage is not None and (type(usage) is not int or not 0 <= usage <= 10**15):
+            raise ValueError("usage_repair_tokens_used may be set on update to an integer from 0 through 10^15")
+    return settings
 
 
 def worker_unit(home: str) -> str:
@@ -88,6 +111,18 @@ class TaskAPI:
     def __init__(self, manager: AgentTasks | None = None) -> None:
         self.manager = manager or AgentTasks()
 
+    def result(self, operation: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        mutation = operation in TASK_MUTATIONS
+        try:
+            return success(**self.call(operation, arguments))
+        except (ValueError, TypeError) as exc:
+            fields = {"stage": "validation", "effect": "none"} if mutation else {}
+            return failure("invalid_input", str(exc), **fields)
+        except (OSError, RuntimeError) as exc:
+            fields = {"stage": operation, "effect": "unknown"} if mutation else {}
+            issue = "permission_denied" if isinstance(exc, PermissionError) else "task_store_unavailable"
+            return failure(issue, str(exc), **fields)
+
     def call(self, operation: str, arguments: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(arguments, dict):
             raise ValueError("Task arguments must be an object")
@@ -107,10 +142,12 @@ class TaskAPI:
 
             return AgentInbox(self.manager.home).feedback(arguments.get("sender"), arguments.get("message"))
         if operation == "list":
-            summary, limit = arguments.get("summary", False), arguments.get("history_limit", 40)
-            if type(summary) is not bool or type(limit) is not int or not 0 <= limit <= 40:
+            summary = arguments.get("summary", True)
+            limit = arguments.get("history_limit", DEFAULT_HISTORY_LIMIT)
+            if type(summary) is not bool or type(limit) is not int or not 0 <= limit <= DEFAULT_HISTORY_LIMIT:
                 raise ValueError("List summary must be a boolean and history limit must be 0–40")
             state = self.manager.snapshot()
+            output_truncated = len(state["runs"]) > limit
             state["runs"] = state["runs"][-limit:] if limit else []
             if summary:
                 fields = {"id", "title", "directory", "interval", "persistence", "workspace", "executor", "start_at",
@@ -133,11 +170,9 @@ class TaskAPI:
                                     "follow_up_requested": bool(run.get("follow_up")), "follow_up_status": status,
                                     "task": {key: run["task"][key] for key in ("id", "title")}})
                 state["runs"] = compact
-            return {**state, "worker": worker_status(self.manager)}
+            return {**state, "output_truncated": output_truncated, "worker": worker_status(self.manager)}
         if operation == "create":
-            task = arguments.get("task")
-            if not isinstance(task, dict):
-                raise ValueError("Task settings must be an object")
+            task = _settings(arguments)
             from lib.agent_tasks import validate_task
 
             if set(task) - set(validate_task(task, self.manager.home, check_existing_workspace=False)):
@@ -166,9 +201,7 @@ class TaskAPI:
         if operation == "history":
             return {"runs": self.manager.contexts.history(identifier, limit=arguments.get("limit", 40))}
         if operation == "update":
-            settings = arguments.get("task")
-            if not isinstance(settings, dict):
-                raise ValueError("Task settings must be an object")
+            settings = _settings(arguments, updating=True)
             from lib.agent_tasks import validate_task
 
             # This call discovers accepted setting names. AgentTasks.update

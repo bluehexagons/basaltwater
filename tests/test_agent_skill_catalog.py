@@ -380,4 +380,4 @@ class SkillCatalogTests(unittest.TestCase):
         with patch("lib.agent_environment.inspect_environment", return_value={"skills": skills}), redirect_stdout(output):
             code = run_manifest_command(Namespace(repository=str(self.home), capability=["skills"], json=True))
         self.assertEqual(code, 0)
-        self.assertEqual(json.loads(output.getvalue()), {"skills": skills})
+        self.assertEqual(json.loads(output.getvalue()), {"skills": skills, "schema_version": 1, "ok": True})

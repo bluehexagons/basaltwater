@@ -70,7 +70,7 @@ class AgentDiscoveryTests(unittest.TestCase):
               patch("lib.agent_workspace._repository_root", side_effect=AssertionError("No Git required")),
               patch("sys.stdout", new_callable=io.StringIO) as output):
             self.assertEqual(run_agent_command(parser.parse_args(["agent", "context", "--json"])), 0)
-            self.assertEqual(json.loads(output.getvalue()), context)
+            self.assertEqual(json.loads(output.getvalue()), {**context, "schema_version": 1, "ok": True})
             inspect.assert_called_once_with(detailed=True)
 
     def test_discovery_errors_remain_failures_in_json(self):

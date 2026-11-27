@@ -15,6 +15,7 @@ from lib.privilege_policy import (
 )
 from lib.admin_status import FAILURE_LABELS, STAGE_LABELS, sanitize_admin_status
 from lib.privilege_execution import MAX_RUNTIME_SECONDS, validate_runtime
+from lib.tool_results import exception_issue, exit_status, failure, from_report, success, write_result
 
 
 class PrivilegeRequestRejected(ValueError):
@@ -154,11 +155,16 @@ def _admin_status(args: argparse.Namespace) -> int:
     try:
         result = sanitize_admin_status(exchange({"action": "admin-status"}))
     except (OSError, ValueError, RuntimeError):
-        print(json.dumps({"ok": False, "issue": "maintenance_status_unavailable",
-                          "remediation": "Check broker access/version and existing request status before submitting work."}))
+        error = "Check broker access and existing request status before submitting work."
+        if args.json:
+            return write_result(failure("maintenance_status_unavailable", error))
+        print(error, file=sys.stderr)
         return 1
     if args.json:
-        print(json.dumps(result, indent=2))
+        if result["unit_state"] == "unavailable":
+            return write_result(from_report(result, ok=False, issue="maintenance_status_unavailable",
+                                            error="The maintenance service status could not be checked"))
+        return write_result(success(**result))
     else:
         print("Maintenance service: " + result["unit_state"])
         latest = result["latest"]
@@ -174,17 +180,19 @@ def _admin_status(args: argparse.Namespace) -> int:
                 print("Error class: " + (setup["error_type"] or "Unavailable"))
         for request in result["requests"]:
             print(f"{request['id']}: {request['state']} ({request['action']})")
-    return 1 if result["unit_state"] == "unavailable" or result["latest"].get("status") in {"failed", "interrupted", "unavailable"} else 0
+    return 1 if result["unit_state"] == "unavailable" else 0
 
 
 def run_privilege_command(args: argparse.Namespace) -> int:
-    if args.privilege_command == "admin-status":
+    action = args.privilege_command
+    if action == "admin-status":
         return _admin_status(args)
+    sent = False
     try:
         if args.privilege_command == "list":
             records = exchange({"action": "owned-requests"})["requests"]
             if args.json:
-                print(json.dumps({"schema_version": 1, "ok": True, "requests": records}))
+                return write_result(success(requests=records))
             else:
                 for row in records:
                     print(f'{row["id"]}  {row["state"]}  {row["operation"]} {row["target"]}'.rstrip())
@@ -217,33 +225,53 @@ def run_privilege_command(args: argparse.Namespace) -> int:
                 if args.operation != "command.run":
                     raise ValueError("--runtime is available for command.run")
                 parameters["runtime_seconds"] = validate_runtime(args.runtime)
+            sent = True
             result = exchange(message)
         elif args.privilege_command == "cancel":
+            if not ID_PATTERN.fullmatch(args.request_id):
+                raise ValueError("Invalid request ID")
+            sent = True
             result = exchange({"action": "cancel", "id": args.request_id})
         elif args.privilege_command == "wait":
             result = _wait_for_request(args.request_id, args.until, args.timeout)
         else:
+            if not ID_PATTERN.fullmatch(args.request_id):
+                raise ValueError("Invalid request ID")
             result = exchange({"action": "status", "id": args.request_id})
+        state = result["state"]
+        ok = True
+        if action == "cancel":
+            ok = state in {"cancelled", "denied", "expired", "invalidated"}
+            cancellation = "confirmed" if state == "cancelled" else "already_settled" if ok else "not_confirmed"
+            result = {**result, "cancellation": cancellation}
+            if not ok:
+                result.update(stage="cancel", effect="none")
+        if action == "wait":
+            decision_states = {"approved", "awaiting_controller", "saving", "ready", "executing",
+                               "dispatched", "succeeded", "failed", "uncertain"}
+            ok = result.get("issue") != "wait_timeout" and state in (decision_states if args.until == "decision"
+                                                                    else {"succeeded", "dispatched"})
+        result = from_report(result, ok=ok, issue="request_milestone_failed",
+                             error=f"The request is {state}. Inspect this request's status before acting again.")
         if args.json:
-            print(json.dumps(result, indent=2))
+            return write_result(result)
         else:
             print(f"{result['id']}: {result['state']}")
             if result.get("review_url"):
                 print("Review on your own device: " + result["review_url"])
-        if args.privilege_command == "cancel":
-            return 0 if result["state"] in {"cancelled", "expired", "denied", "invalidated"} else 1
-        if result.get("issue") == "wait_timeout":
-            return 124
-        if (args.privilege_command == "wait" and args.until == "decision"
-                and result["state"] in {"approved", "awaiting_controller", "saving", "ready", "executing",
-                                        "dispatched", "succeeded", "failed", "uncertain"}):
-            return 0
-        if result["state"] in {"cancelled", "denied", "failed", "uncertain", "expired", "invalidated"}:
-            return 1
-        return 0
+        return exit_status(result)
     except (OSError, ValueError, EOFError) as exc:
-        if args.privilege_command == "list" and args.json:
-            print(json.dumps({"schema_version": 1, "ok": False, "issue": "listing_unavailable", "error": str(exc)}))
-            return 1
+        issue = ("listing_unavailable" if action == "list" else
+                 "request_unconfirmed" if isinstance(exc, PrivilegeRequestUnconfirmed) else
+                 "request_rejected" if isinstance(exc, PrivilegeRequestRejected) else exception_issue(exc))
+        fields = {}
+        if action in {"request", "cancel"}:
+            fields.update(stage=action, effect="none" if not sent or isinstance(
+                exc, (PrivilegeRequestRejected, PrivilegeBrokerUnavailable)) else "unknown")
+        if action in {"status", "wait", "cancel"} and ID_PATTERN.fullmatch(args.request_id):
+            fields.update(id=args.request_id, state="unknown")
+        result = failure(issue, str(exc), **fields)
+        if getattr(args, "json", False):
+            return write_result(result)
         print(f"Privilege request failed: {exc}", file=sys.stderr)
-        return 1
+        return exit_status(result)

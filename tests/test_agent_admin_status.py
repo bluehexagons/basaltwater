@@ -42,7 +42,7 @@ class AdminStatusTests(unittest.TestCase):
             "action": "refresh", "status": "failed", "stage": "command", "command_index": 1,
             "failure": "nonzero_exit", "output": "root-secret",
         }}) as exchange, redirect_stdout(output := StringIO()):
-            self.assertEqual(run_privilege_command(args), 1)
+            self.assertEqual(run_privilege_command(args), 0)
         exchange.assert_called_once_with({"action": "admin-status"})
         self.assertEqual(json.loads(output.getvalue())["latest"]["failure"], "nonzero_exit")
         self.assertNotIn("root-secret", output.getvalue())

@@ -448,7 +448,7 @@ class NativeCliTests(PrivateHomeTestCase):
         for mode, duration in (("enabled", ["--indefinite"]), ("disabled", ["--seconds", "60"])):
             with self.subTest(mode=mode), patch.object(desktop_cli.runtime, "set_control") as change, redirect_stdout(StringIO()):
                 args = parser.parse_args(["desktop", "control", mode, "--human-approved", *duration])
-                self.assertEqual(desktop_cli.run_desktop_command(args), 1)
+                self.assertEqual(desktop_cli.run_desktop_command(args), 2)
                 change.assert_not_called()
 
     def test_default_start_and_renewal_use_unlimited_native_lifetime(self):
@@ -476,7 +476,7 @@ class NativeCliTests(PrivateHomeTestCase):
         request.assert_called_once_with({"action": "renew", "generation": "current", "seconds": 3600, "control_revision": "r"})
         args = parser.parse_args(["desktop", "start", "--remember"])
         with patch.object(desktop_cli.runtime, "start") as xrdp, redirect_stdout(StringIO()):
-            self.assertEqual(desktop_cli.run_desktop_command(args), 1)
+            self.assertEqual(desktop_cli.run_desktop_command(args), 2)
         xrdp.assert_not_called()
 
     def test_native_start_and_status_report_failed_consent_without_claiming_success(self):

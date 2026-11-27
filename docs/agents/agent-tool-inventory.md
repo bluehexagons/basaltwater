@@ -1,5 +1,24 @@
 # Agent tool interface inventory
 
+## v2 checkout interfaces
+
+One-shot machine results carry `schema_version` and `ok`. Failures carry
+`issue` and `error`. Use the owning references for selectors, exact exit
+codes, and access to files on the producing host. The session and installation
+probes below describe the earlier deployment. [Shared contracts](contributing/tool-interface-contracts.md), [v2 switch scope](../plans/agent-tool-interface-switch.md)
+
+| Basaltwater-owned interfaces | Output mode and handoff |
+| --- | --- |
+| Desktop lifecycle, discovery, input and evidence | JSON by default. Select `screenshot` for pixels and `capture_receipt` for mapping. Pass `input_context_argv` and `input_argv` as literal arguments. Sequences retain completed steps and report dispatch effects independently of a failed capture. Evidence commands identify retained manifests and reports in `artifacts`. [Desktop observations](../workstations/desktop-observations.md), [evaluation](../workstations/desktop-evaluation.md), [Windows controls](../workstations/windows-desktop-native-controls.md) |
+| Supervised development, visual recipes and media | Reuse `job.id` for status, waits and logs. Read `job.state` and `child_exit_code` separately. Linux development and Windows refresh logs offer bounded `--json` views alongside text modes. Visual CLI machine results identify retained reports and images by kind. [Linux](../workstations/debian-development.md), [KDE](../workstations/cachyos-development-session.md), [Windows](../workstations/windows-test-sessions.md), [visual checks](../workstations/visual-comparisons.md) |
+| Browser, preview and gateway | Browser setup and preview resolvers emit JSON by default. Both preview paths pass the resolver's `navigation` object to T3. Gateway one-shot operations offer `--json`. URL and log commands retain text, and a disposable instance emits a readiness line before continuing in the foreground. [Browser tools](browser-automation.md), [preview](browser-t3-preview.md), [gateway](../services/internal-web-publishing.md) |
+| Tasks, workspaces, models, memory and inbox | CLI task results are JSON. Task MCP returns the same operation result in `structuredContent`, with concise text content. List is compact by default. Workspace JSON, model reports, memory and inbox return named fields. [Task controls](agent-task-controls.md), [coordination](../reference/cli-agent-operations.md) |
+| Host discovery, diagnostics and operations | `--json` selects machine output on human-first commands, and JSON-first commands accept it explicitly. Diagnostics and support bundles identify retained artifacts. Credentials and pairing retain their protected/interactive channels. Reservations forward child stdout and use stderr for their receipt. Software sync watch uses JSON lines. [Diagnostics](../reference/cli-agent-diagnostics.md), [agent operations](../reference/cli-agent-operations.md), [privilege](privilege-broker-reference.md) |
+| Project setup, deployment and publishing | Manifest and Node inspection offer a JSON view. Node exec forwards the child's streams and status. Deployment reports revision/health evidence. Pass the publishing preparation `id` to upload and the returned `job.id` to run lookup. Windows refresh provides detached submission through `--detach --json`. WSL status and log discovery offer `-Json`. [Project commands](../reference/cli-project-workflows.md), [Windows refresh](../workstations/windows-install.md), [WSL tools](../workstations/windows-wsl.md#manage-and-recover) |
+| Output and test helpers | Capture emits a `command_summary` path for the bounded reader. Capture forwards child status and the reader reports its own inspection status. The browser runner offers `--json` with report artifacts. Make and native test suites use their normal human output and process status. [Output helpers](../../common/agent_skills/basaltwater-project-development/references/tool-output.md), [checks](contributing/checks.md) |
+
+## Pre-v2 inventory and observed differences
+
 Snapshot for 2026-11-27 at `bcf13995`. This covers the Basaltwater CLI, installed
 helpers and skills an agent encounters while discovering an environment, writing
 code, testing, collecting evidence, coordinating work, or deploying a test build.

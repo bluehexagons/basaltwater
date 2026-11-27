@@ -42,7 +42,7 @@ class AgentDiagnosticsTests(unittest.TestCase):
         collect.return_value = {**evidence, "raw_output": "must not be emitted"}
         code, result = self.invoke("--service", "nginx.service")
         self.assertEqual(code, 0)  # Collection success is independent of service state.
-        self.assertEqual(result, evidence)
+        self.assertEqual(result, {**evidence, "schema_version": 1, "ok": True})
         collect.assert_called_once_with(collector.DiagnosticQuery(
             service="nginx.service", window="24h", priority="4", load=True,
         ))
@@ -130,7 +130,11 @@ class AgentDiagnosticsTests(unittest.TestCase):
         collect.return_value = evidence
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory, "evidence.json")
-            self.assertEqual(self.invoke("--service", "nginx.service", "--output", str(path)), (0, evidence))
+            code, result = self.invoke("--service", "nginx.service", "--output", str(path))
+            self.assertEqual(code, 0)
+            self.assertEqual(result["artifacts"], [{"kind": "diagnostics_report", "path": str(path),
+                                                    "media_type": "application/json"}])
+            self.assertEqual({key: result[key] for key in evidence}, evidence)
             self.assertEqual(json.loads(path.read_text()), evidence)
             summary_path = Path(directory, "summary-evidence.json")
             code, result = self.invoke("--service", "nginx.service", "--output", str(summary_path), "--summary")
@@ -321,7 +325,7 @@ class AgentDiagnosticsTests(unittest.TestCase):
             code = run_diagnostics_command(argparse.Namespace(
                 service="arbitrary.service", window="24h", priority="4",
             ))
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 2)
         self.assertTrue(json.loads(output.getvalue())["issues"])
         collect.assert_not_called()
 
@@ -329,7 +333,10 @@ class AgentDiagnosticsTests(unittest.TestCase):
     def test_collection_issues_return_one_and_preserve_partial_evidence(self, collect):
         evidence = {"properties": {"LoadState": "loaded"}, "events": [], "issues": ["Query unavailable."]}
         collect.return_value = evidence
-        self.assertEqual(self.invoke("--service", "nginx.service"), (1, evidence))
+        code, result = self.invoke("--service", "nginx.service")
+        self.assertEqual(code, 1)
+        self.assertEqual(result["issue"], "diagnostics_incomplete")
+        self.assertEqual({key: result[key] for key in evidence}, evidence)
 
     @patch("lib.agent_diagnostics.collect_diagnostics")
     def test_exceptions_never_emit_raw_output(self, collect):

@@ -19,14 +19,17 @@ MCP tools, or:
 
 ```bash
 basaltw agent tasks capabilities --json
-basaltw agent tasks list --summary --history-limit 5 --json
+basaltw agent tasks list --history-limit 5 --json
 ```
 
 Standard managed Codex configuration exposes writable `basaltwater-tasks` MCP
 tools to terminal and T3 Codex sessions after setup refresh. User overrides and
 disabled tools still apply. A hardened account forbids configured MCP servers;
 do not weaken that policy. Other providers can use the CLI within their own
-permissions or an explicitly configured stdio integration.
+permissions or an explicitly configured stdio integration. Read MCP
+`structuredContent` for the machine result. CLI stdout uses the same shape
+and defaults. Read `issue` on a handled failure and keep returned IDs for
+follow-up history or receipt lookup.
 
 Check `available`, `worker.running`, and `worker.error`. A saved schedule does
 not prove a worker is running. If it is unavailable, explain the saved state

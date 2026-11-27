@@ -21,6 +21,7 @@ from lib.agent_workspace import _effective_home, _managed_root
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.remote_utils import is_dry_run
 from lib.streamed_process import run_streamed
+from lib.tool_results import add_json_option, exception_issue, failure, success, write_result
 from lib.validation import validate_filesystem_path, validate_no_control_characters, validate_positive_integer
 
 
@@ -160,7 +161,7 @@ def add_reservations_parser(commands: argparse._SubParsersAction) -> None:
     for action in (status, execute):
         action.add_argument("--resource", action="append", default=[], help="Shared name, for example gpu:all (repeatable)")
         action.add_argument("--build-output", action="append", default=[], help="Canonical shared build output root (repeatable)")
-    status.add_argument("--json", action="store_true")
+    add_json_option(status, default=True)
     execute.add_argument("--owner", required=True, help="Agent or task owner label")
     execute.add_argument("--run-id", default=None, help="Run identity; default: generated UUID")
     execute.add_argument("--timeout", type=validate_positive_integer, default=3600)
@@ -171,8 +172,7 @@ def run_reservations_command(args: argparse.Namespace) -> int:
     try:
         keys = resource_keys(args.resource, args.build_output)
         if args.reservation_command == "status":
-            print(json.dumps(reservation_status(keys), indent=2))
-            return 0
+            return write_result(success(reservations=reservation_status(keys)))
         command = list(args.reservation_argv)
         if command and command[0] == "--":
             command.pop(0)
@@ -194,5 +194,7 @@ def run_reservations_command(args: argparse.Namespace) -> int:
     except KeyboardInterrupt:
         return 130
     except (OSError, RuntimeError, ValueError) as exc:
+        if args.reservation_command == "status":
+            return write_result(failure(exception_issue(exc), str(exc)))
         print(f"Error: {exc}", file=sys.stderr)
         return 1

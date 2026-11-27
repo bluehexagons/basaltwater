@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import platform
 import shutil
 
@@ -13,6 +12,7 @@ from lib import agent_workspace
 from lib.agent_skill_catalog import inspect_skill_catalogs, installed_skill_names
 from lib.agent_environment import DESKTOP_APPLICATIONS, MUSESCORE_EXECUTABLES, TERMINAL_EDITING_TOOLS
 from lib.cachyos import is_cachyos
+from lib.tool_results import exception_issue, exit_status, failure, success, write_result
 
 
 GUIDE = "https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/agent-environment.md"
@@ -95,11 +95,13 @@ def run_context_command(args: argparse.Namespace) -> int:
     try:
         result = inspect_context(detailed=args.json)
     except (OSError, RuntimeError, ValueError) as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}) if args.json else f"Error: {exc}")
-        return 1
+        result = failure(exception_issue(exc), str(exc))
+        if args.json:
+            return write_result(result)
+        print(f"Error: {exc}")
+        return exit_status(result)
     if args.json:
-        print(json.dumps(result, indent=2))
-        return 0
+        return write_result(success(**result))
     print(f"Basaltwater agent context: {result['host_profile']} (readiness unverified)")
     for group, names in result["tools_on_path"].items():
         print(f"PATH {group}: {', '.join(names) or 'none observed'}")

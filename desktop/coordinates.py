@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from desktop.portal_capture import validate_crop
+from desktop.receipts import DesktopRequestError
 
 
 def map_observation_points(capture: dict, current: dict, view_geometry: list[int] | None, x: int, y: int, *,
@@ -32,9 +33,9 @@ def map_observation_points(capture: dict, current: dict, view_geometry: list[int
         raise ValueError("Capture has no usable observation ID; capture and inspect again")
     for key in ("observation_id", "generation", "control_revision", "geometry", "image_origin", "image_geometry"):
         if capture.get(key) is None or capture[key] != current.get(key):
-            raise ValueError(f"Capture {key} changed or is unavailable; capture and inspect again")
+            raise DesktopRequestError({"issue": "stale_observation", "error": f"Capture {key} changed or is unavailable; capture and inspect again"})
     if current.get("state") != "running" or current.get("capture_freshness", {}).get("fresh") is not True:
-        raise ValueError("Capture expired or helper stopped; capture and inspect again")
+        raise DesktopRequestError({"issue": "stale_observation", "error": "Capture expired or helper stopped; capture and inspect again"})
     if image_coordinates and view_origin is not None:
         raise ValueError("Image coordinates do not use viewer margins")
     origin = [0, 0] if view_origin is None else view_origin

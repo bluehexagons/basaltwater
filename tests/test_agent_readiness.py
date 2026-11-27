@@ -433,7 +433,9 @@ class TestAgentReadinessCLI(unittest.TestCase):
         ):
             self.assertEqual(run_agent_command(args), 1)
         recorder.assert_called_once_with(["codex"])
-        self.assertEqual(json.loads(output.getvalue()), updates)
+        reply = json.loads(output.getvalue())
+        self.assertEqual(reply["tools"], updates)
+        self.assertEqual(reply["issue"], "update_failed")
         self.assertIn("post-update readiness is unhealthy", errors.getvalue())
 
     def test_update_explains_unhealthy_post_update_checks(self) -> None:
@@ -569,7 +571,7 @@ class TestAgentReadinessCLI(unittest.TestCase):
             self.assertEqual(run_agent_command(args), 0)
 
         updater.assert_not_called()
-        self.assertEqual(json.loads(output.getvalue()), [])
+        self.assertEqual(json.loads(output.getvalue()), {"schema_version": 1, "ok": True, "tools": [], "readiness": None})
 
     def test_readiness_failure_details_include_host_errors(self) -> None:
         details = _readiness_failure_details(

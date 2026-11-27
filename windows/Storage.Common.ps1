@@ -108,7 +108,7 @@ function Invoke-NativeStorageCli([string[]]$Arguments) {
     }
     for ($index = 0; $index -lt $Arguments.Count; $index++) {
         $option = $Arguments[$index]
-        if ($seen.ContainsKey($option)) { throw 'Duplicate storage option' }
+        if ($seen.ContainsKey($option)) { throw [ArgumentException]::new('Duplicate storage option') }
         $seen[$option] = $true
         switch ($option) {
             '--apply' { $apply = $true }
@@ -116,7 +116,7 @@ function Invoke-NativeStorageCli([string[]]$Arguments) {
             '--scratch-dir' {
                 $index++
                 if ($index -ge $Arguments.Count -or -not $Arguments[$index] -or $Arguments[$index].StartsWith('-')) {
-                    throw 'Missing directory for --scratch-dir'
+                    throw [ArgumentException]::new('Missing directory for --scratch-dir')
                 }
                 $scratch = $Arguments[$index]
             }
@@ -124,15 +124,20 @@ function Invoke-NativeStorageCli([string[]]$Arguments) {
                 $index++
                 if ($index -ge $Arguments.Count -or $Arguments[$index] -notmatch '\A[0-9]{1,4}\z' -or
                     [int]$Arguments[$index] -lt 1 -or [int]$Arguments[$index] -gt 1024) {
-                    throw 'Storage target must be an integer from 1 to 1024 GiB'
+                    throw [ArgumentException]::new('Storage target must be an integer from 1 to 1024 GiB')
                 }
                 $target = [int]$Arguments[$index]
             }
-            default { throw 'Usage: basaltw storage [--apply] [--target-gib 5] [--scratch-dir PATH] [--json]' }
+            default { throw [ArgumentException]::new('Usage: basaltw storage [--apply] [--target-gib 5] [--scratch-dir PATH] [--json]') }
         }
     }
     $result = Invoke-NativeStorageCleanup -Apply:$apply -TargetGiB $target -ScratchDirectory $scratch
-    if ($json) { Write-Host ($result | ConvertTo-Json -Depth 6) }
+    $ok = -not ($apply -and (-not $result.TargetMet -or @($result.Actions | Where-Object { $_.Status -eq 'failed' }).Count))
+    if ($json) {
+        $fields = ConvertTo-NativeResultFields $result
+        if (-not $ok) { $fields['stage'] = 'cleanup'; $fields['effect'] = 'unknown' }
+        return Write-NativeToolResult $fields $ok 'storage_cleanup_incomplete' 'Inspect the cleanup actions and free-space target.'
+    }
     else {
         Write-Host ('Disk {0}: {1:N2} GiB available; target {2} GiB' -f $result.After.Drive, ($result.After.FreeBytes / 1GB), $target)
         if ($result.ScratchDirectory) { Write-Host ("Servicing scratch: " + $result.ScratchDirectory) }
@@ -142,6 +147,6 @@ function Invoke-NativeStorageCli([string[]]$Arguments) {
         if ($result.RebootRequired) { Write-Host 'Windows requires a reboot; no reboot was initiated.' }
         if (-not $result.TargetMet) { Write-Host 'The free-space target remains unmet. Cleanup may be insufficient for the next update.' }
     }
-    if ($apply -and (-not $result.TargetMet -or @($result.Actions | Where-Object { $_.Status -eq 'failed' }).Count)) { return 1 }
+    if (-not $ok) { return 1 }
     return 0
 }

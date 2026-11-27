@@ -174,7 +174,7 @@ class ControlStateTests(unittest.TestCase):
                 patch.object(native_session, "start") as start, redirect_stdout(StringIO()):
             self.assertEqual(desktop_cli.run_desktop_command(parser.parse_args(["desktop", "--native", "wake", "--json"])), 0)
             wake.assert_called_once_with()
-            self.assertEqual(desktop_cli.run_desktop_command(parser.parse_args(["desktop", "wake"])), 1)
+            self.assertEqual(desktop_cli.run_desktop_command(parser.parse_args(["desktop", "wake"])), 2)
             self.assertEqual(wake.call_count, 1)
             start.assert_not_called()
 

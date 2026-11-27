@@ -6,7 +6,6 @@ import argparse
 from datetime import datetime, timezone
 import http.client
 import ipaddress
-import json
 import re
 import subprocess
 import sys
@@ -16,6 +15,7 @@ import urllib.request
 from urllib.parse import urlsplit
 
 from lib.local_http import http_transport_issue, open_direct
+from lib.tool_results import add_json_option, failure, write_result
 from lib.validation import validate_network_ip, validate_network_port, validate_no_control_characters
 from lib.validators import validate_host
 
@@ -34,7 +34,7 @@ def add_deployment_receipt_parser(commands: argparse._SubParsersAction) -> None:
     parser.add_argument("--restart-unit", action="append", default=[], help="Restart this systemd service after activation; repeatable")
     parser.add_argument("--user-units", action="store_true", help="Use the current user's systemd manager for restarts")
     parser.add_argument("--wait", type=int, default=15, help="Seconds to retry transient readiness after activation or a restart")
-    parser.add_argument("--json", action="store_true")
+    add_json_option(parser)
     parser.add_argument("activate", nargs=argparse.REMAINDER, help="Optional release activation command after --")
 
 
@@ -138,6 +138,8 @@ def run_deployment_receipt(args: argparse.Namespace) -> int:
         if args.activate and (args.activate[0] != "--" or len(args.activate) < 2):
             raise ValueError("Pass an activation command after --")
     except ValueError as exc:
+        if args.json:
+            return write_result(failure("invalid_input", str(exc), stage="validation", effect="none"))
         print(f"Error: {exc}", file=sys.stderr)
         return 2
 
@@ -160,17 +162,28 @@ def run_deployment_receipt(args: argparse.Namespace) -> int:
             continue
         stages[name], observed = _wait_for_health(url, args.revision_header, wait)
         stages[f"{name}_revision"] = _revision_check(observed, args.revision, stages[name])
-    ok = all(stage["status"] != "failed" for stage in stages.values())
+    failed = next(((name, stage) for name, stage in stages.items() if stage["status"] == "failed"), None)
     result = {
-        "version": 1, "recorded_at": datetime.now(timezone.utc).isoformat(), "ok": ok,
+        "schema_version": 1, "recorded_at": datetime.now(timezone.utc).isoformat(), "ok": failed is None,
         "expected_revision": args.revision, "client_device_checked": False, "stages": stages,
     }
+    if failed:
+        name, details = failed
+        issue = details.get("issue", blocked or "verification_failed")
+        result.update(issue=issue, error=f"Deployment stage {name} failed ({issue}). Inspect the stages before retrying.")
+        if args.activate or args.restart_unit:
+            effect = "applied"
+            if blocked:
+                effect = "partial" if any(stage["status"] == "passed" for stage in stages.values()) else "unknown"
+                if effect == "unknown" and issue == "command_launch_failed":
+                    effect = "none"
+            result.update(stage=name, effect=effect)
     if args.json:
-        print(json.dumps(result, indent=2))
+        return write_result(result)
     else:
         print(f"Expected revision {args.revision}")
         for name, stage in stages.items():
             details = ", ".join(f"{key}={value}" for key, value in stage.items() if key not in {"status", "url"})
             print(f"{name}: {stage['status']}" + (f" ({details})" if details else ""))
         print("HTTP checks ran from this host. Client device untested.")
-    return 0 if ok else 1
+    return 0 if failed is None else 1

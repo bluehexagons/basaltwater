@@ -901,7 +901,7 @@ class TestAgentDoctor(unittest.TestCase):
             ssh_key=None,
             json=True,
         )
-        completed = argparse.Namespace(returncode=0)
+        completed = argparse.Namespace(returncode=0, stdout='{"schema_version":1,"ok":true,"tools":[],"capabilities":[]}')
         with (
             patch('lib.agent_cli.build_ssh_command', return_value=['ssh']) as builder,
             patch('lib.agent_cli.subprocess.run', return_value=completed),
@@ -925,7 +925,7 @@ class TestAgentDoctor(unittest.TestCase):
             json=False,
         )
         with patch('lib.agent_cli.subprocess.run') as run_command:
-            self.assertEqual(run_agent_command(args), 1)
+            self.assertEqual(run_agent_command(args), 2)
         run_command.assert_not_called()
 
 
@@ -1358,7 +1358,7 @@ class TestAgentUpdate(unittest.TestCase):
             dry_run=True,
             json=True,
         )
-        completed = argparse.Namespace(returncode=0)
+        completed = argparse.Namespace(returncode=0, stdout='{"schema_version":1,"ok":true,"tools":[],"readiness":null}')
         with (
             patch('lib.agent_cli.build_ssh_command', return_value=['ssh']) as builder,
             patch('lib.agent_cli.subprocess.run', return_value=completed),

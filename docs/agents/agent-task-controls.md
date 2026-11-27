@@ -165,8 +165,12 @@ to anchor their elapsed cadence; a Once goal then continues at its configured
 goal interval. Rescheduling a finished one-time task requires a future
 `start_at` and explicit Resume. Event tasks leave `start_at` unset.
 
-Compact listing omits prompts, wake payloads and run output while preserving
-controls, counters and stop reasons. `--history-limit 0` omits recent runs.
+Listing defaults to a compact view that omits prompts, wake payloads and run
+output while preserving controls, counters and stop reasons. Use `--full`
+for a detailed view and `--history-limit 0` to omit recent runs.
+The default and `--json` modes return one object with `schema_version` and
+`ok`. Match handled errors by `issue`. Use the returned IDs for history and
+receipts when `output_truncated` is true.
 `receipt` reads full retained settings, checkpoint and verification evidence.
 History and receipts remain accessible after removing their task, using its
 saved ID; an absent receipt fails without creating storage or starting work.

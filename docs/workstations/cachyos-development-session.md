@@ -172,13 +172,16 @@ supervisor's `output.log`, which can contain a preparation failure. Use
 This works during execution and after exit.
 Reading an excerpt leaves the full retained log available at its original path.
 
-`wait TASK_ID --timeout SECONDS --json` repeatedly reads the same verified
+Pass the submission's `job.id` to `status`, `ready`, `wait`, `logs` or `stop`.
+`job.state` carries the observed outcome and `child_exit_code` carries the
+recorded child exit when known. Status can read the record of a failed task
+successfully. `wait TASK_ID --timeout SECONDS --json` repeatedly reads the same verified
 status, at most twice per second. The timeout is an integer from 1 through
 3600 seconds (default 600). It emits one final JSON status with the existing
 log/report paths and `wait_timed_out`. Exit zero requires verified `completed`
 state and a successful recorded exit. Failed, stopped, unavailable or unverified
 tasks return 1. A deadline reached while the task is still running or stopping
-returns 124 with `wait_timed_out: true` and a message reporting the observed
+returns 124 with `issue: wait_timeout`, the same `job.id`, and the observed
 state. The task lifecycle is unaffected. Each status probe has
 its existing three-second deadline plus bounded process cleanup, so an in-flight
 probe can delay return beyond the wait deadline. An uncertain/expired wait needs

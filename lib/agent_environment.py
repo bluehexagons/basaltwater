@@ -22,6 +22,7 @@ from lib.atomic_io import read_json_file
 from lib.cachyos import is_cachyos
 from lib.installation_info import inspect_installation_context, inspect_installation_provenance
 from lib.game_development import NATIVE_COMMANDS
+from lib.tool_results import add_json_option, exception_issue, exit_status, failure, success, write_result
 from lib.validation import validate_filesystem_path, validate_no_control_characters
 from lib.validators import validate_host
 
@@ -182,7 +183,7 @@ def _publishing_instructions(native_desktop: bool) -> list[str]:
 def add_manifest_parser(commands: argparse._SubParsersAction) -> None:
     parser = commands.add_parser("manifest", help="Show tools, workspace conventions and declared deployment mappings")
     parser.add_argument("repository", nargs="?", default=".")
-    parser.add_argument("--json", action="store_true")
+    add_json_option(parser)
     parser.add_argument("--project-runtime", action="store_true",
                         help="Probe the project's selected Node/npm without installs or project execution")
     parser.add_argument("--installation-context", action="store_true",
@@ -648,17 +649,19 @@ def run_manifest_command(args: argparse.Namespace) -> int:
                                      managed_source=getattr(args, "managed_source", None),
                                      capabilities=capabilities)
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+        result = failure(exception_issue(exc), str(exc))
         if args.json:
-            print(json.dumps({"ok": False, "error": str(exc)}))
-        else:
-            print(f"Error: {exc}")
-        return 1
+            return write_result(result)
+        print(f"Error: {exc}")
+        return exit_status(result)
     if applications:
         result["desktop_applications"] = {name: app for name, app in result["desktop_applications"].items()
                                           if name in applications}
     if capabilities:
         result = scoped_environment(result, capabilities)
-        if set(capabilities) == {"workstation"} and not args.json:
+        if args.json:
+            return write_result(success(**result))
+        if set(capabilities) == {"workstation"}:
             from lib.workstation_report import format_workstation
 
             print(format_workstation(result["workstation"]))
@@ -666,11 +669,10 @@ def run_manifest_command(args: argparse.Namespace) -> int:
                 print(f"Container engine {name}: {engine['status']}" +
                       ("; " + shlex.join(engine["argv"]) if engine["argv"] else ""))
             return 0
-        print(json.dumps(result, indent=2) if args.json else "\n".join(f"{key}: {json.dumps(value)}" for key, value in result.items()))
+        print("\n".join(f"{key}: {json.dumps(value)}" for key, value in result.items()))
         return 0
     if args.json:
-        print(json.dumps(result, indent=2))
-        return 0
+        return write_result(success(**result))
     workspace = result["workspace"]
     if installation := result.get("basaltwater"):
         print(f"Basaltwater: {installation['version']} ({installation['commit'] or 'revision unrecorded'})")

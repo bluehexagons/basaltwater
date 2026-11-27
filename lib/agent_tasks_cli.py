@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 
-from lib.agent_task_api import TaskAPI
+from lib.agent_task_api import DEFAULT_HISTORY_LIMIT, TASK_MUTATIONS, TaskAPI
 from lib.atomic_io import parse_json, read_json_file
+from lib.tool_results import add_json_option, failure, write_result
 from lib.validation import validate_filesystem_path
 
 
@@ -16,16 +16,18 @@ def add_tasks_parser(commands: argparse._SubParsersAction) -> None:
     actions = parser.add_subparsers(dest="agent_tasks_command", required=True)
     for action in ("capabilities", "list"):
         command = actions.add_parser(action, help="Inspect task capabilities" if action == "capabilities" else "List saved tasks and recent runs")
-        command.add_argument("--json", action="store_true")
+        add_json_option(command, default=True)
         if action == "list":
-            command.add_argument("--summary", action="store_true", help="Omit prompts, events and run output")
-            command.add_argument("--history-limit", type=int, default=40, help="Include 0–40 recent runs")
+            detail = command.add_mutually_exclusive_group()
+            detail.add_argument("--summary", action="store_true", default=True, help="Omit prompts, events and run output (default)")
+            detail.add_argument("--full", action="store_false", dest="summary", help="Include prompts, events and run output")
+            command.add_argument("--history-limit", type=int, default=DEFAULT_HISTORY_LIMIT, help="Include 0–40 recent runs")
     for action in ("show", "history"):
         command = actions.add_parser(action, help="Show task context" if action == "show" else "Read retained run receipts")
         command.add_argument("identifier", metavar="TASK_ID")
         if action == "history":
             command.add_argument("--limit", type=int, default=40)
-        command.add_argument("--json", action="store_true")
+        add_json_option(command, default=True)
     create = actions.add_parser("create", help="Save task settings from JSON (file or - for stdin)")
     create.add_argument("file", metavar="TASK_JSON", help="JSON file or - for stdin; maximum 64 KiB")
     disposition = create.add_mutually_exclusive_group()
@@ -33,15 +35,15 @@ def add_tasks_parser(commands: argparse._SubParsersAction) -> None:
     disposition.add_argument("--schedule", action="store_true", help="Activate work at start_at or after its first interval")
     disposition.add_argument("--draft", action="store_true", help="Save inactive settings (the default)")
     create.add_argument("--request-key", default="", help="Idempotent creation key for retried requests")
-    create.add_argument("--json", action="store_true")
+    add_json_option(create, default=True)
     update = actions.add_parser("update", help="Apply settings from JSON (file or - for stdin)")
     update.add_argument("identifier", metavar="TASK_ID")
     update.add_argument("file", metavar="TASK_JSON", help="JSON file or - for stdin; maximum 64 KiB")
-    update.add_argument("--json", action="store_true")
+    add_json_option(update, default=True)
     receipt = actions.add_parser("receipt", help="Read full retained evidence, including for a deleted task")
     receipt.add_argument("identifier", metavar="TASK_ID")
     receipt.add_argument("run_id", metavar="RUN_ID")
-    receipt.add_argument("--json", action="store_true")
+    add_json_option(receipt, default=True)
     for action in ("run", "pause", "resume", "cancel", "delete", "reset-context"):
         command = actions.add_parser(action, help={
             "run": "Queue one run", "pause": "Pause future runs", "resume": "Resume a paused schedule",
@@ -49,12 +51,12 @@ def add_tasks_parser(commands: argparse._SubParsersAction) -> None:
             "reset-context": "Clear the checkpoint and conversation, preserving files",
         }[action])
         command.add_argument("identifier", metavar="TASK_ID")
-        command.add_argument("--json", action="store_true")
+        add_json_option(command, default=True)
     notify = actions.add_parser("notify", help="Wake enabled work with an external event")
     notify.add_argument("identifier", metavar="TASK_ID")
     notify.add_argument("message", help="Event evidence, not additional permissions")
     notify.add_argument("--key", default="", help="Deduplicate repeated deliveries")
-    notify.add_argument("--json", action="store_true")
+    add_json_option(notify, default=True)
     worker = actions.add_parser("worker", help="Run the foreground scheduler independently of the panel")
     worker.add_argument("--once", action="store_true", help="Claim the worker lease, handle due work, then exit")
     mcp = actions.add_parser("mcp", help="Expose the task API over stdio MCP")
@@ -102,12 +104,7 @@ def run_tasks_command(args: argparse.Namespace) -> int:
             arguments.update(message=args.message, key=args.key)
         if operation in {"run", "pause", "resume", "cancel", "delete", "reset-context"}:
             arguments["action"], operation = operation, "action"
-        result = TaskAPI().call(operation, arguments)
-        print(json.dumps(result, indent=2, ensure_ascii=False))
-        return 0
-    except (OSError, RuntimeError, ValueError, TypeError) as exc:
-        if getattr(args, "json", False):
-            print(json.dumps({"ok": False, "error": str(exc)}))
-        else:
-            print(f"Error: {exc}", file=sys.stderr)
-        return 1
+    except (OSError, ValueError) as exc:
+        fields = {"stage": "validation", "effect": "none"} if operation in TASK_MUTATIONS else {}
+        return write_result(failure("invalid_input", str(exc), **fields))
+    return write_result(TaskAPI().result(operation, arguments))

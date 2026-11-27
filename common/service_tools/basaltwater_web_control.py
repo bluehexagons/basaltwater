@@ -19,6 +19,8 @@ if SOURCE_ROOT not in sys.path:
     sys.path.insert(0, SOURCE_ROOT)
 
 from common.service_tools import basaltwater_web
+from lib.atomic_io import parse_json
+from lib.tool_results import exception_issue, exit_status, failure, write_result
 
 
 SOCKET_PATH = "/run/basaltwater-web/control.sock"
@@ -118,7 +120,9 @@ def _execute(argv: list[str], username: str) -> dict[str, object]:
                 "stderr": _read_output(stderr),
             }
         except subprocess.TimeoutExpired:
-            return {"status": 1, "stdout": "", "stderr": "HTTPS gateway command timed out\n"}
+            return {"status": 124, "stdout": "", "stderr": "HTTPS gateway command timed out\n",
+                    "failure": failure("wait_timeout", "Gateway command timed out. Inspect the route before retrying.",
+                                       stage="command", effect="unknown")}
 
 
 def _handle(connection: socket.socket) -> None:
@@ -130,7 +134,8 @@ def _handle(connection: socket.socket) -> None:
         argv = _validate_argv(request["argv"])
         response = _execute(argv, username)
     except (OSError, KeyError, PermissionError, RuntimeError, ValueError) as exc:
-        response = {"status": 1, "stdout": "", "stderr": f"Error: {exc}\n"}
+        result = failure(exception_issue(exc), str(exc), stage="admission", effect="none")
+        response = {"status": exit_status(result), "stdout": "", "stderr": f"Error: {exc}\n", "failure": result}
     try:
         connection.sendall((json.dumps(response, ensure_ascii=False) + "\n").encode("utf-8"))
     except OSError:
@@ -164,7 +169,7 @@ def serve() -> None:
                 _handle(connection)
 
 
-def request(argv: list[str]) -> int:
+def request(argv: list[str], *, as_json: bool = False) -> int:
     _validate_argv(argv)
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
@@ -183,6 +188,20 @@ def request(argv: list[str]) -> int:
         or not isinstance(response.get("stderr"), str)
     ):
         raise RuntimeError("Invalid HTTPS gateway control response")
+    if as_json:
+        if isinstance(response.get("failure"), dict):
+            return write_result(response["failure"])
+        try:
+            result = parse_json(response["stdout"])
+        except ValueError:
+            result = None
+        if (not isinstance(result, dict) or type(result.get("ok")) is not bool or
+                type(result.get("schema_version")) is not int or not result["ok"] and "issue" not in result):
+            sys.stderr.write(response["stderr"])
+            return write_result(failure("gateway_receipt_unavailable", "Gateway did not return a result. Inspect the route before retrying.",
+                                        stage="reply", effect="unknown", child_exit_code=response["status"]))
+        sys.stderr.write(response["stderr"])
+        return write_result(result)
     sys.stdout.write(response["stdout"])
     sys.stderr.write(response["stderr"])
     return response["status"]

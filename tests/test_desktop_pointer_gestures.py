@@ -304,7 +304,7 @@ class PointerGestureTests(unittest.TestCase):
             self.assertEqual(desktop_cli.run_desktop_command(parser.parse_args(["desktop", "--native", "start", "--touch"])), 0)
         self.assertTrue(start.call_args.kwargs["touch"])
         with patch.object(client.runtime, "start") as start, redirect_stdout(StringIO()):
-            self.assertEqual(desktop_cli.run_desktop_command(parser.parse_args(["desktop", "start", "--touch"])), 1)
+            self.assertEqual(desktop_cli.run_desktop_command(parser.parse_args(["desktop", "start", "--touch"])), 2)
         start.assert_not_called()
 
     def test_touch_request_does_not_silently_reuse_non_touch_session(self):

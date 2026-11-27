@@ -15,6 +15,7 @@ from typing import Iterator
 
 from lib.agent_workspace import primary_agent_repository
 from lib.atomic_io import read_json_file, write_json_atomic
+from lib.tool_results import add_json_option, exception_issue, failure, success, write_result
 from lib.types import JSONDict
 from lib.validation import validate_filesystem_path
 
@@ -365,7 +366,7 @@ def add_models_parser(commands: argparse._SubParsersAction) -> None:
     for action in ("init", "recommend", "record", "report"):
         command = actions.add_parser(action)
         command.add_argument("repository", metavar="REPOSITORY")
-        command.add_argument("--json", action="store_true")
+        add_json_option(command, default=True)
         if action == "recommend":
             command.add_argument("task", metavar="TASK_CLASS")
             command.add_argument("--available", required=True, metavar="JSON_FILE",
@@ -381,8 +382,6 @@ def add_models_parser(commands: argparse._SubParsersAction) -> None:
 
 
 def run_models_command(args: argparse.Namespace) -> int:
-    import json
-
     try:
         if args.agent_models_command == "init":
             result = init_model_policy(args.repository)
@@ -392,8 +391,11 @@ def run_models_command(args: argparse.Namespace) -> int:
             result = record_model_outcome(args.repository, vars(args))
         else:
             result = report_model_outcomes(args.repository)
-        print(json.dumps(result, indent=2, allow_nan=False))
-        return 1 if args.agent_models_command == "recommend" and result["selection"] is None else 0
+        if args.agent_models_command == "recommend" and result["selection"] is None:
+            return write_result(failure("no_model_match", "No available model matched the project policy", **result))
+        return write_result(success(items=result) if isinstance(result, list) else success(**result))
     except (OSError, RuntimeError, ValueError) as exc:
-        print(f"Error: {exc}")
-        return 1
+        issue = exception_issue(exc)
+        effect = ({"stage": args.agent_models_command, "effect": "none" if issue == "invalid_input" else "unknown"}
+                  if args.agent_models_command in {"init", "record"} else {})
+        return write_result(failure(issue, str(exc), **effect))

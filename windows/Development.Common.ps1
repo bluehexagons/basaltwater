@@ -193,7 +193,8 @@ Examples:
   basaltw desktop develop exec --project F:\Repos\game -- node.exe script.js
   basaltw desktop develop wait TASK_ID --timeout 120
 
-wait returns JSON with WaitState, TimedOut and the authoritative Receipt.
+Commands emit a JSON result by default and accept --json. Submit, status,
+logs, ready and wait return job.id. The native Receipt remains available.
 Exit: 0 for completed success, 1 for task failure or attention required,
 124 for caller wait timeout. Wait timeout/Ctrl+C does not cancel the task.
 Task timeout remains distinct in Receipt.State. Use logs separately for output.
@@ -355,6 +356,7 @@ function New-DevelopmentPlan([string[]]$Arguments) {
         $arg = $Arguments[$i]
         if ($arg -eq '--') { $literal = @($Arguments | Select-Object -Skip ($i + 1)); break }
         switch ($arg) {
+            '--json' { }
             '--msvc' { $msvc = $true }
             '--test-session' { $testSession = $true }
             '--track-children' { $trackChildren = $true }
@@ -466,6 +468,9 @@ function Invoke-NativeDevelopmentCli([string[]]$Arguments) {
         Show-NativeDevelopmentHelp
         return
     }
+    if ($Arguments[0] -in @('status','logs','cancel','wait','ready','diagnose')) {
+        $Arguments = @($Arguments | Where-Object { $_ -cne '--json' })
+    }
     if ($Arguments[0] -eq 'diagnose') {
         $tree = $Arguments.Count -eq 3 -and $Arguments[2] -eq '--tree'
         $member = ''
@@ -503,11 +508,12 @@ function Invoke-NativeDevelopmentCli([string[]]$Arguments) {
             }
             return [pscustomobject]@{ Id = $id; State = $record.State; CancelRequested = $true; Message = 'Use status to confirm cleanup. Uncertain tasks block setup/reboot.' }
         }
-        $logs = @{}; $tails = @{}
+        $logs = @{}; $tails = @{}; $artifacts = @()
         foreach ($name in @('stdout','stderr')) {
             $path = Join-Path $directory ($name + '.log'); $logs[$name] = ''
             $tails[$name] = [pscustomobject]@{ ReturnedBytes = 0; OmittedBytes = 0; Truncated = $false }
             if (Test-Path -LiteralPath $path) {
+                $artifacts += @{ kind = ($name + '_log'); path = $path; media_type = 'text/plain' }
                 $stream = [IO.File]::Open($path, 'Open', 'Read', 'ReadWrite')
                 try {
                     $null = $stream.Seek([Math]::Max(0, $stream.Length - 65536), 'Begin')
@@ -521,9 +527,10 @@ function Invoke-NativeDevelopmentCli([string[]]$Arguments) {
         }
         $retention = if ($record.PSObject.Properties['Streams']) { $record.Streams } else { $null }
         return [pscustomobject]@{ Id = $id; State = $record.State; Stdout = $logs.stdout; Stderr = $logs.stderr; MaximumBytesPerStream = 65536;
-            Tails = [pscustomobject]$tails; Streams = $retention }
+            Tails = [pscustomobject]$tails; Streams = $retention; Artifacts = $artifacts }
     }
-    $request = New-DevelopmentPlan $Arguments
+    try { $request = New-DevelopmentPlan $Arguments }
+    catch { throw [ArgumentException]::new($_.Exception.Message, $_.Exception) }
     if ($request.Verb -eq 'doctor') {
         $node = ''; $nodeError = ''
         try { $node = Resolve-DevelopmentNode $request.Project '' } catch { $nodeError = $_.Exception.Message }
@@ -585,7 +592,10 @@ function Invoke-NativeDevelopmentCli([string[]]$Arguments) {
             try { Remove-DevelopmentRequest $directory; Remove-DevelopmentSessionProfile $record; $record.CompletedUtc = [DateTime]::UtcNow.ToString('o') }
             catch { $record.State = 'cleanup-uncertain'; $record.Message += '; profile cleanup unconfirmed: ' + $_.Exception.Message }
             Write-DevelopmentJson (Join-Path $directory 'receipt.json') $record
-            throw "Test session preparation failed. Inspect status/logs $id before retrying."
+            $failure = [InvalidOperationException]::new("Test session preparation failed. Inspect status/logs $id before retrying.")
+            $failure.Data['job_id'] = $id
+            $failure.Data['stage'] = 'prepare'
+            throw $failure
         }
     }
     else {
@@ -596,7 +606,10 @@ function Invoke-NativeDevelopmentCli([string[]]$Arguments) {
     catch {
         # The guardian may already own or have completed the receipt. A stale
         # dispatcher snapshot must never overwrite its identity or completion.
-        throw "Worker launch could not be confirmed. Inspect Task Scheduler; use status/logs/cancel $id before retrying."
+        $failure = [InvalidOperationException]::new("Worker launch could not be confirmed. Inspect Task Scheduler; use status/logs/cancel $id before retrying.")
+        $failure.Data['job_id'] = $id
+        $failure.Data['stage'] = 'submit'
+        throw $failure
     }
     return $record
     } finally { $admission.Dispose() }

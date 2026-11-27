@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import platform
 import pwd
@@ -16,6 +15,7 @@ from lib.agent_readiness import sanitize_browser_context, sanitize_development_r
 from lib.agent_containers import sanitize_container_storage
 from lib.agent_resources import sanitize_t3_resources, sanitize_workload_limits
 from lib.installation_info import inspect_installation_provenance
+from lib.tool_results import artifact, exception_issue, failure, success, write_result
 from lib.types import JSONDict
 from lib.validation import validate_filesystem_path
 
@@ -311,10 +311,10 @@ def run_agent_support_command(args: argparse.Namespace) -> int:
         )
         if args.output:
             path = write_agent_support_bundle(bundle, args.output, home)
-            print(path)
-        else:
-            print(json.dumps(bundle, indent=2, sort_keys=True))
+            return write_result(success(artifacts=[artifact("support_bundle", path, "application/json")]))
+        return write_result(success(**bundle))
     except (OSError, RuntimeError, ValueError) as exc:
-        print(f"Error: {exc}")
-        return 1
-    return 0
+        issue = exception_issue(exc)
+        effect = ({"stage": "save_bundle", "effect": "none" if issue == "invalid_input" else "unknown"}
+                  if args.output else {})
+        return write_result(failure(issue, str(exc), **effect))

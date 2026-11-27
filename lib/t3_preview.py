@@ -5,13 +5,12 @@ from __future__ import annotations
 import argparse
 from contextlib import ExitStack, closing
 import http.client
-import json
 import socket
 import ssl
-import sys
 from urllib.parse import quote
 
 from lib.local_http import has_corp_isolation_headers, http_status_is_healthy, http_transport_issue
+from lib.tool_results import add_json_option, failure, write_result
 from lib.validation import validate_network_ip, validate_network_port, validate_no_control_characters, validate_positive_integer
 
 
@@ -21,7 +20,7 @@ def add_t3_preview_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--protocol", choices=("http", "https"), help="T3 preview protocol (default: http)")
     parser.add_argument("--path", help="T3 preview path, with optional query and fragment (default: /)")
     parser.add_argument("--profile", choices=("general", "godot"), default="general")
-    parser.add_argument("--json", action="store_true")
+    add_json_option(parser, default=True)
 
 
 def _navigation_path(path: str) -> str:
@@ -68,9 +67,12 @@ def _resolve_t3_preview(args: argparse.Namespace) -> dict[str, object]:
     path = _navigation_path(args.path if args.path is not None else "/")
     request_path, _, _ = path.partition("#")
     result: dict[str, object] = {
+        "schema_version": 1,
         "ok": False,
         "component": "upstream",
         "navigation": None,
+        "network_origin": "command_host",
+        "client_device_checked": False,
         "issue": None,
         "remediation": "Start or repair the loopback server, then retry resolution.",
     }
@@ -109,15 +111,5 @@ def run_t3_preview_command(args: argparse.Namespace) -> int:
     try:
         result = _resolve_t3_preview(args)
     except ValueError as exc:
-        if args.json:
-            print(json.dumps({"ok": False, "error": str(exc)}, sort_keys=True))
-        else:
-            print(f"Error: {exc}", file=sys.stderr)
-        return 2
-    if args.json:
-        print(json.dumps(result, sort_keys=True))
-    elif result["ok"]:
-        print(json.dumps(result["navigation"], sort_keys=True))
-    else:
-        print(f"{result['component']}: {result['issue']}. {result['remediation']}", file=sys.stderr)
-    return 0 if result["ok"] else 1
+        result = failure("invalid_input", str(exc), navigation=None)
+    return write_result(result)

@@ -77,7 +77,7 @@ class AgentSchedulingTests(unittest.TestCase):
         for content in requests:
             with self.subTest(content=str(content)[:40]):
                 status, result = self.cli(["create", "-", "--schedule"], content)
-                self.assertEqual(status, 1)
+                self.assertEqual(status, 2)
                 self.assertFalse(result["ok"])
         self.assertFalse(self.manager.parent.exists())
 
@@ -158,7 +158,7 @@ class AgentSchedulingTests(unittest.TestCase):
         reply = server.request({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
             "name": "basaltwater_tasks_create", "arguments": {"task": settings, "draft": False, "request_key": "goal-1"}}})
         self.assertFalse(reply["result"]["isError"])
-        identifier = json.loads(reply["result"]["content"][0]["text"])["id"]
+        identifier = reply["result"]["structuredContent"]["id"]
         self.assertTrue(self.api.call("show", {"id": identifier})["task"]["enabled"])
         self.assertEqual(self.run_task(identifier)["checkpoint"], settings["initial_checkpoint"])
         self.api.call("action", {"id": identifier, "action": "pause"})

@@ -8,17 +8,16 @@ capture delays and interpretation. Keep one desktop controller.
 
 ## Inspect, then run once
 
-On CachyOS, capture the consent-selected monitor and retain its JSON receipt:
+On CachyOS, capture the consent-selected monitor:
 
 ```bash
-basaltw desktop --native screenshot --compact > /absolute/private/frame.json
+basaltw desktop --native screenshot --compact --json
 ```
 
-Read the receipt and inspect the PNG named by `output`. Confirm the application,
+Read the `capture_receipt` and inspect the `screenshot` PNG in `artifacts`. Confirm the application,
 focus and target. Replace the geometry, observation ID, coordinates and generation
-below with that inspected frame's values. Mapping a resized view uses
-`map-point --capture frame.json`; do not combine it with `--geometry` or `--crop`.
-Mapping takes a JSON receipt, not the PNG. Do not use an expired/consumed token.
+below with that inspected frame's values. For a resized view, pass the
+`capture_receipt` path to `map-point --capture`. Use a fresh, unconsumed token.
 
 Save this JSON as a private `observe-pair.json` outside Git:
 
@@ -41,7 +40,7 @@ Run once, promptly after inspection:
 basaltw desktop --native sequence /absolute/private/observe-pair.json --generation GEN --save-output
 ```
 
-The returned `artifact` names a private JSON result, not an image or directory.
+The `full_result` entry in `artifacts` names the private JSON result.
 Read it even on nonzero exit. `results[0]` retains the input receipt; later results
 contain compact capture receipts with PNG `output` paths. `completed` counts only
 successful actions; `failed_action_index` is zero-based and `failed_action` retains
@@ -51,7 +50,8 @@ input. Inspect retained evidence, then capture again separately if permitted.
 Unknown input delivery remains unknown; an acknowledged input does not prove
 its application effect. `--save-output` preserves the full result before emitting
 a short preview, including the latest recorder headroom and any recording error.
-Omit the flag for direct JSON; sequences have no `--json` flag.
+Omit `--save-output` for the full result on stdout. `--json` selects the default
+machine result in either case.
 
 `after_ms` waits **after the preceding action's response**, not at a fixed offset
 from input or compositor presentation. Each delay is 0–5000 ms, with at most

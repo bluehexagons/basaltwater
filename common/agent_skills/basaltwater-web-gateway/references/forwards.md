@@ -9,7 +9,7 @@ basaltwater-web preview resolve --route gateway --port PORT --json
 ```
 
 The read-only resolver returns an existing owned route as `navigation.url`, or
-`forward_missing` with an exact creation `command`. Run that command when the
+`forward_missing` with a creation `remediation_argv`. Execute those literal arguments when the
 requested preview includes client-visible access, then resolve again. Failures
 identify the upstream or gateway in `component`, distinguish transport, timeout,
 HTTP and certificate issues, and include `remediation`. Use `--host ::1` for

@@ -262,7 +262,7 @@ class TestAgentVisuals(unittest.TestCase):
         with redirect_stdout(output):
             args = self.compare_args("--json")
             args.before = str(self.root / "missing.png")
-            self.assertEqual(agent_cli.run_agent_command(args), 1)
+            self.assertEqual(agent_cli.run_agent_command(args), 2)
         self.assertFalse(json.loads(output.getvalue())["ok"])
 
 

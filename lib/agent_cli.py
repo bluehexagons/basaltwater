@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Optional
 
-from lib.atomic_io import write_json_atomic
+from lib.atomic_io import parse_json, write_json_atomic
 from lib.browser_registration import browser_registrations
 from lib.agent_containers import inspect_container_storage
 from lib.agent_resources import inspect_service_memory, inspect_workload_limits, sanitize_t3_resources
@@ -44,6 +44,7 @@ from lib.agent_credentials import (
 )
 from lib.ssh_utils import build_ssh_command, shell_join, ssh_batch_mode
 from lib.systemd_timers import format_timer_next_trigger
+from lib.tool_results import add_json_option, exception_issue, exit_status, failure, from_report, success, write_result
 from lib.types import BYTES_PER_GB, BYTES_PER_MB, JSONDict, StrList
 from lib.t3code_runtime import (
     has_t3_active_runtime_contract,
@@ -211,7 +212,7 @@ def add_agent_subparser(subparsers: argparse._SubParsersAction) -> None:
     add_storage_parser(commands)
     add_reservations_parser(commands)
     resources = commands.add_parser("resources", help="Read-only affinity, cgroup limits and pressure on Linux")
-    resources.add_argument("--json", action="store_true")
+    add_json_option(resources, default=True)
     doctor = commands.add_parser(
         "doctor",
         help="Check installed agent tools and local credential files",
@@ -520,6 +521,7 @@ def add_agent_subparser(subparsers: argparse._SubParsersAction) -> None:
     )
     support.add_argument("--container-storage", action="store_true",
                          help="Include aggregate local Podman/Docker storage; no cleanup")
+    add_json_option(support, default=True)
 
 
 def _tool_path(tool: str, home: str) -> Optional[str]:
@@ -2695,11 +2697,44 @@ def _run_remote_agent_lifecycle(
         server_alive_interval=30,
     )
     try:
+        if "--json" in remote_arguments:
+            result = subprocess.run(command, check=False, timeout=timeout, stdout=subprocess.PIPE)
+            try:
+                reply = parse_json(result.stdout)
+                if (not isinstance(reply, dict) or type(reply.get("schema_version")) is not int
+                        or reply["schema_version"] != 1 or type(reply.get("ok")) is not bool
+                        or not reply["ok"] and not all(isinstance(reply.get(key), str) and reply[key]
+                                                       for key in ("issue", "error"))
+                        or exit_status(reply) != result.returncode):
+                    raise ValueError("Invalid remote result")
+            except ValueError:
+                return write_result(failure("remote_result_unavailable", "No usable result arrived from the remote agent command",
+                                            child_exit_code=result.returncode, **_remote_effect(subcommand, remote_arguments)))
+            return write_result(reply)
         result = subprocess.run(command, check=False, timeout=timeout)
     except (OSError, subprocess.TimeoutExpired) as exc:
+        if "--json" in remote_arguments:
+            issue = "wait_timeout" if isinstance(exc, subprocess.TimeoutExpired) else exception_issue(exc)
+            return write_result(failure(issue, f"Remote agent {subcommand} did not return a result",
+                                        **_remote_effect(subcommand, remote_arguments)))
         print(f"Error: remote agent {subcommand} failed: {exc}")
         return 1
     return result.returncode
+
+
+def _remote_effect(subcommand: str, arguments: StrList) -> JSONDict:
+    mutating = (subcommand == "update" and "--dry-run" not in arguments
+                or subcommand == "maintenance" and arguments[0] in {"hold", "release"}
+                or subcommand == "doctor" and bool({"--fix", "--record"}.intersection(arguments)))
+    return {"stage": "remote_execution", "effect": "unknown"} if mutating else {}
+
+
+def _agent_failure(args: argparse.Namespace, issue: str, error: str, **fields) -> int:
+    result = failure(issue, error, **fields)
+    if getattr(args, "json", False):
+        return write_result(result)
+    print(f"Error: {error}")
+    return exit_status(result)
 
 
 def _t3_readiness_expected(home: str) -> bool:
@@ -2888,8 +2923,10 @@ def run_agent_command(args: argparse.Namespace) -> int:
 
         return run_graphics_command(args)
     if args.agent_command == "resources":
-        print(json.dumps(inspect_workload_limits(), indent=2))
-        return 0
+        try:
+            return write_result(success(**inspect_workload_limits()))
+        except (OSError, ValueError, RuntimeError) as exc:
+            return write_result(failure(exception_issue(exc), str(exc)))
     if args.agent_command == "reservations":
         from lib.agent_reservations import run_reservations_command
 
@@ -2917,8 +2954,8 @@ def run_agent_command(args: argparse.Namespace) -> int:
                 username_attribute="agent_maintenance_username",
             )
         except ValueError as exc:
-            print(f"Error: {exc}")
-            return 1
+            details = {"stage": "validate_target", "effect": "none"} if args.agent_maintenance_command in {"hold", "release"} else {}
+            return _agent_failure(args, "invalid_input", str(exc), **details)
         if target is not None:
             remote_arguments = [str(args.agent_maintenance_command or "")]
             if args.agent_maintenance_command == "hold":
@@ -2973,8 +3010,7 @@ def run_agent_command(args: argparse.Namespace) -> int:
 
                 return run_agent_auth_login(args)
         except (OSError, RuntimeError, ValueError, EOFError, KeyboardInterrupt) as exc:
-            print(f"Error: {exc}")
-            return 1
+            return _agent_failure(args, exception_issue(exc), str(exc))
         print("Error: agent auth command required (login, set, or status)")
         return 1
 
@@ -2989,8 +3025,7 @@ def run_agent_command(args: argparse.Namespace) -> int:
                 username_attribute="agent_update_username",
             )
         except ValueError as exc:
-            print(f"Error: {exc}")
-            return 1
+            return _agent_failure(args, "invalid_input", str(exc), stage="validate_target", effect="none")
         if target is not None:
             remote_arguments: StrList = []
             for tool in args.agent_update_tools or []:
@@ -3013,15 +3048,15 @@ def run_agent_command(args: argparse.Namespace) -> int:
             )
             if not selected:
                 if args.json:
-                    print("[]")
+                    return write_result(success(tools=[], readiness=None))
                 else:
                     print("No installed user-managed terminal agents found")
                 return 0
         try:
             results = update_agent_tools(selected, dry_run=args.dry_run)
         except (OSError, RuntimeError, ValueError) as exc:
-            print(f"Error: {exc}")
-            return 1
+            return _agent_failure(args, exception_issue(exc), str(exc), stage="update",
+                                  effect="none" if args.dry_run else "unknown")
         readiness_record: Optional[JSONDict] = None
         readiness_error: Optional[str] = None
         if not args.dry_run:
@@ -3029,9 +3064,7 @@ def run_agent_command(args: argparse.Namespace) -> int:
                 readiness_record = _record_post_update_readiness(selected)
             except (OSError, RuntimeError, ValueError) as exc:
                 readiness_error = str(exc)
-        if args.json:
-            print(json.dumps(results, indent=2))
-        else:
+        if not args.json:
             heading = "Agent update plan" if args.dry_run else "Agent update result"
             print(heading)
             for result in results:
@@ -3123,6 +3156,15 @@ def run_agent_command(args: argparse.Namespace) -> int:
                 )
             )
         )
+        if args.json:
+            fields = {"tools": results, "readiness": readiness_record}
+            if updates_healthy and readiness_healthy:
+                return write_result(success(**fields))
+            error = readiness_error or ("An agent tool update failed" if not updates_healthy else
+                                        "Post-update readiness failed. Inspect the record with agent doctor --last-record.")
+            effect = "none" if args.dry_run else "applied" if updates_healthy else "unknown"
+            return write_result(failure("update_failed", error, stage="readiness" if updates_healthy else "update",
+                                        effect=effect, **fields))
         return 0 if updates_healthy and readiness_healthy else 1
 
     if args.agent_command != "doctor":
@@ -3153,8 +3195,8 @@ def run_agent_command(args: argparse.Namespace) -> int:
             username_attribute="agent_doctor_username",
         )
     except ValueError as exc:
-        print(f"Error: {exc}")
-        return 1
+        details = {"stage": "validate_target", "effect": "none"} if getattr(args, "fix", False) or record_requested else {}
+        return _agent_failure(args, "invalid_input", str(exc), **details)
     if target is not None:
         remote_arguments = []
         for tool in requested_tools or []:
@@ -3193,8 +3235,7 @@ def run_agent_command(args: argparse.Namespace) -> int:
     if last_record_requested:
         if (requested_tools or requested_capabilities or getattr(args, "fix", False)
                 or getattr(args, "container_storage", False) or getattr(args, "wait_for_t3_startup", False)):
-            print("Error: --last-record cannot be combined with checks or --fix")
-            return 1
+            return _agent_failure(args, "invalid_input", "--last-record cannot be combined with checks or --fix")
         from lib.agent_readiness import (
             format_agent_readiness_record,
             load_agent_readiness_record,
@@ -3203,16 +3244,15 @@ def run_agent_command(args: argparse.Namespace) -> int:
         try:
             record = load_agent_readiness_record()
         except (OSError, RuntimeError, ValueError) as exc:
-            print(f"Error: {exc}")
-            return 1
+            return _agent_failure(args, "readiness_record_unavailable", str(exc))
         if record is None:
-            print("Error: no agent readiness record is available")
-            return 1
+            return _agent_failure(args, "readiness_record_unavailable", "No agent readiness record is available")
+        healthy = record.get("healthy") is True and record.get("current_boot") is True
         if args.json:
-            print(json.dumps(record, indent=2))
-        else:
-            print(format_agent_readiness_record(record))
-        return 0 if record.get("healthy") is True and record.get("current_boot") is True else 1
+            return write_result(from_report(record, ok=healthy, issue="record_not_ready",
+                                            error="The record does not establish readiness on this boot"))
+        print(format_agent_readiness_record(record))
+        return 0 if healthy else 1
 
     if record_requested and not requested_capabilities:
         requested_capabilities.append("host")
@@ -3259,9 +3299,7 @@ def run_agent_command(args: argparse.Namespace) -> int:
             )
         except (OSError, RuntimeError, ValueError) as exc:
             record_error = str(exc)
-    if args.json:
-        print(json.dumps([*results, *capability_results], indent=2))
-    else:
+    if not args.json:
         print("Agent tool check")
         for result in results:
             tool = str(result["tool"])
@@ -3383,4 +3421,12 @@ def run_agent_command(args: argparse.Namespace) -> int:
         for result in results
     )
     capabilities_healthy = all(bool(result["healthy"]) for result in capability_results)
-    return 0 if tools_healthy and capabilities_healthy and record_error is None else 1
+    healthy = tools_healthy and capabilities_healthy and record_error is None
+    if args.json:
+        fields = {"tools": results, "capabilities": capability_results}
+        if healthy:
+            return write_result(success(**fields))
+        if record_requested or getattr(args, "fix", False):
+            fields.update(stage="record" if record_error else "check", effect="unknown" if record_error else "partial")
+        return write_result(failure("readiness_failed", record_error or "Inspect the requested tool and capability checks", **fields))
+    return 0 if healthy else 1

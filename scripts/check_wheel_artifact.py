@@ -203,8 +203,8 @@ def _smoke_desktop_cli(launcher: Path, work_dir: Path, environment: dict[str, st
     # and fail locally, without creating a device or contacting either helper.
     for selection in ((), ("--native",)):
         refused = request("desktop", *selection, "gamepad", "press", "--observation", str(observation),
-                          "--button", "west", "--hold-ms", "5001", expected=1)
-        if "hold_ms" not in refused.get("error", ""):
+                          "--button", "west", "--hold-ms", "5001", expected=2)
+        if refused.get("issue") != "invalid_input" or "hold_ms" not in refused.get("error", ""):
             raise RuntimeError("Installed gamepad CLI lost its local bounded-input admission")
 
     plan = folder / "conditional.json"
@@ -302,7 +302,7 @@ def _smoke_desktop_cli(launcher: Path, work_dir: Path, environment: dict[str, st
     if not shown["finished"] or shown["events"] != 10 or shown["hard_limit_seconds"] != 1500:
         raise RuntimeError("Installed run ledger lost checkpoint/policy history")
     before = Path(artifact).read_bytes()
-    refused = request("desktop", "evidence", "run", "checkpoint", artifact, "--json", expected=1)
+    refused = request("desktop", "evidence", "run", "checkpoint", artifact, "--json", expected=2)
     if "finished" not in refused.get("error", "") or Path(artifact).read_bytes() != before:
         raise RuntimeError("Installed run ledger did not preserve its finished record on refusal")
 

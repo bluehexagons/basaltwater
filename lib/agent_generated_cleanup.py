@@ -11,6 +11,7 @@ import time
 
 from lib import agent_storage_inventory, cleanup_paths
 from lib.agent_project_cleanup import _sensitive, read_cleanup_policy
+from lib.tool_results import exception_issue, failure, success, write_result
 
 
 _INVENTORY_MAX_ENTRIES = 50_000
@@ -208,8 +209,11 @@ def _preflight(root: Path, names: list[str]) -> list[tuple[Path, os.stat_result 
 
 
 def clean_generated(repository: str, rule_name: str, *, policy_path: str = ".basaltwater/cleanup.json",
-                    apply: bool = False) -> int:
+                    apply: bool = False, as_json: bool = False) -> int:
     """Preview one declared generated rule; apply only after every target passes."""
+    stage = "preflight"
+    results = []
+    completed = []
     try:
         _reject_symlink_components(Path(repository))
         policy = read_cleanup_policy(repository, policy_path=policy_path)
@@ -223,17 +227,18 @@ def clean_generated(repository: str, rule_name: str, *, policy_path: str = ".bas
         for path, expected, record in targets:
             byte_count = record.get("allocated_bytes", 0)
             status = record["status"]
-            if expected is None:
-                print(f"{path}: {byte_count} allocated bytes ({status})")
-                continue
-            if not cleanup_paths.remove_checked_path(
+            if expected is not None and not cleanup_paths.remove_checked_path(
                     str(path), expected, uid=uid,
                     in_use=lambda selected=path: _in_use(selected, root, uid, coverage),
                     dry_run=True):
                 raise CleanupRefused(f"Target is in use: {path}")
-            print(f"{path}: {byte_count} allocated bytes ({status}; {'apply' if apply else 'dry-run'})")
+            results.append({"path": str(path), "allocated_bytes": byte_count, "status": status})
+            if not as_json:
+                mode = ("; apply" if apply else "; dry-run") if expected is not None else ""
+                print(f"{path}: {byte_count} allocated bytes ({status}{mode})")
         if not apply:
-            return 0
+            return write_result(success(status="preview", items=results)) if as_json else 0
+        stage = "remove"
         for path, expected, _record in targets:
             if expected is None:
                 continue
@@ -243,9 +248,16 @@ def clean_generated(repository: str, rule_name: str, *, policy_path: str = ".bas
             )
             if not removed:
                 raise CleanupRefused(f"Target became active before removal: {path}")
-        return 0
+            completed.append(str(path))
+        return write_result(success(status="cleaned", items=results, removed=completed)) if as_json else 0
     except (CleanupRefused, OSError, ValueError) as exc:
-        print(f"clean-generated: {exc}", file=sys.stderr)
+        if not as_json:
+            print(f"clean-generated: {exc}", file=sys.stderr)
+            if isinstance(exc, cleanup_paths.CleanupPathError):
+                print(f"Retained for recovery: {exc.recovery_path}", file=sys.stderr)
+            return 1
+        details = {"items": results, "removed": completed, "stage": stage}
+        details["effect"] = "partial" if completed else "none" if stage == "preflight" else "unknown"
         if isinstance(exc, cleanup_paths.CleanupPathError):
-            print(f"Retained for recovery: {exc.recovery_path}", file=sys.stderr)
-        return 1
+            details["recovery_path"] = exc.recovery_path
+        return write_result(failure(exception_issue(exc), str(exc), **details))

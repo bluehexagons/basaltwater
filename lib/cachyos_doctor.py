@@ -499,10 +499,15 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
 
 def run_cachyos_doctor(args: argparse.Namespace) -> int:
     """Emit shareable metadata. Deferred prerequisites are not setup failures."""
+    from lib.tool_results import failure, success, write_result
+
     try:
         report = collect_cachyos_doctor()
     except (OSError, KeyError, ValueError):
-        print("Error: could not resolve the invoking desktop account or diagnostic contract.")
+        error = "Could not resolve the invoking desktop account or diagnostic contract."
+        if args.json:
+            return write_result(failure("diagnostics_unavailable", error))
+        print(f"Error: {error}")
         return 1
     if getattr(args, "attention", False):
         capabilities = report["capabilities"]
@@ -515,7 +520,7 @@ def run_cachyos_doctor(args: argparse.Namespace) -> int:
             "capabilities": [item for item in capabilities if item["state"] != "available"],
         }
     if args.json:
-        print(json.dumps(report, indent=2, sort_keys=True))
+        return write_result(success(**report))
     else:
         if "summary" in report:
             summary = report["summary"]

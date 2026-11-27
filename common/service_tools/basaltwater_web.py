@@ -54,6 +54,7 @@ from lib.validation import (
 from lib.remote_utils import CommandTimeoutError, run as run_command
 from lib.node_project import NodePackageManager, select_package_manager
 from lib.t3_preview import add_t3_preview_arguments, run_t3_preview_command
+from lib.tool_results import add_json_option, exception_issue, failure, from_report, success, write_result
 from lib.ufw_ingress import verify_live_ufw_ingress
 
 
@@ -169,7 +170,8 @@ def _parser() -> argparse.ArgumentParser:
     site_remove.add_argument("name")
     site_remove.add_argument("--yes", action="store_true")
     site_remove.add_argument("--json", action="store_true")
-    site_commands.add_parser("migrate-legacy", help="Move the current user's legacy games into sites")
+    migrate_legacy = site_commands.add_parser("migrate-legacy", help="Move the current user's legacy games into sites")
+    add_json_option(migrate_legacy)
 
     list_command = commands.add_parser("list", aliases=["ls"], help="List published games")
     list_command.add_argument("--json", action="store_true")
@@ -180,6 +182,7 @@ def _parser() -> argparse.ArgumentParser:
     remove = commands.add_parser("remove", help="Remove a published game")
     remove.add_argument("game")
     remove.add_argument("--yes", action="store_true", help="Confirm permanent removal")
+    add_json_option(remove)
 
     doctor = commands.add_parser("doctor", help="Legacy check for a Godot site or HTTPS forward")
     doctor.add_argument("name")
@@ -1015,7 +1018,7 @@ def _game_records(account: pwd.struct_passwd) -> list[dict[str, object]]:
 def _print_games(as_json: bool) -> int:
     records = _game_records(_site_account())
     if as_json:
-        print(json.dumps({"games": records}, sort_keys=True))
+        return write_result(success(games=records))
     elif not records:
         print("No games published")
     else:
@@ -1024,8 +1027,10 @@ def _print_games(as_json: bool) -> int:
     return 0
 
 
-def _remove_game(game: str, confirmed: bool) -> int:
+def _remove_game(game: str, confirmed: bool, as_json: bool) -> int:
     static_web_publish.remove_site(_site_account(), game, confirmed, profile="godot")
+    if as_json:
+        return write_result(success(game=game, removed=True))
     print(f"Removed published game {game}")
     return 0
 
@@ -1034,7 +1039,7 @@ def _print_sites(as_json: bool) -> int:
     account = _site_account()
     records = static_web_publish.list_sites(account)
     if as_json:
-        print(json.dumps({"sites": records}, sort_keys=True))
+        return write_result(success(sites=records))
     elif not records:
         print("No sites published")
     else:
@@ -1072,7 +1077,7 @@ def _remove_site(name: str, confirmed: bool, as_json: bool) -> int:
     account = _site_account()
     static_web_publish.remove_site(account, name, confirmed)
     if as_json:
-        print(json.dumps({"name": name, "removed": True}, sort_keys=True))
+        return write_result(success(name=name, removed=True))
     else:
         print(f"Removed published site {name}")
     return 0
@@ -1138,7 +1143,7 @@ def _wait_for_upstream(host: str, port: int, path: str, seconds: float) -> None:
         if _http_ready(host, port, health_path):
             return
         time.sleep(0.2)
-    raise RuntimeError(
+    raise TimeoutError(
         f"Upstream did not become ready at http://{host}:{port}{health_path} "
         f"within {seconds:g} seconds"
     )
@@ -1254,7 +1259,7 @@ def _diagnose_endpoint(
         **transport_failure,
     }
     if as_json:
-        print(json.dumps(result, sort_keys=True))
+        return write_result(from_report(result, ok=not errors, issue="endpoint_unhealthy", error="; ".join(errors)))
     elif errors:
         print(f"{name}: VM HTTPS check failed ({'; '.join(errors)})")
     else:
@@ -1266,7 +1271,7 @@ def _print_ca(as_json: bool) -> int:
     policy = _load_policy()
     result = _certificate_trust(policy)
     if as_json:
-        print(json.dumps(result, sort_keys=True))
+        return write_result(success(**result))
     elif result["status"] == "public":
         print("The internal-web endpoint uses a publicly trusted certificate")
     elif result["status"] == "local_ca":
@@ -1364,7 +1369,7 @@ def _forward_add(args: argparse.Namespace) -> int:
     url = _forward_route_url(policy, listen, _forward_access_sources(updated, policy)[listen])
     result = {**route, "url": url}
     if args.json:
-        print(json.dumps(result, sort_keys=True))
+        write_result(success(**result))
     else:
         print(
             f"{name}: {result['url']} -> http://{target_host}:{target_port} "
@@ -1388,7 +1393,7 @@ def _forward_remove(args: argparse.Namespace) -> int:
         raise RuntimeError(f"HTTPS forward is owned by another user: {name}")
     _apply_forwards([route for route in routes if route["name"] != name], policy)
     if args.json:
-        print(json.dumps({"name": name, "removed": True}, sort_keys=True))
+        return write_result(success(name=name, removed=True))
     else:
         print(f"Removed HTTPS forward {name}")
     return 0
@@ -1423,7 +1428,7 @@ def _forward_list(as_json: bool) -> int:
         if preview and _preview_matches_route(preview, route):
             route.update(project_name=os.path.basename(str(preview["project"])), unit=preview["unit"])
     if as_json:
-        print(json.dumps({"forwards": routes}, sort_keys=True))
+        return write_result(success(forwards=routes))
     elif not routes:
         print("No HTTPS forwards configured")
     else:
@@ -1475,7 +1480,7 @@ def _forward_prune(confirmed: bool, as_json: bool) -> int:
         _apply_forwards(updated, policy)
     result = {"removed": removed}
     if as_json:
-        print(json.dumps(result, sort_keys=True))
+        return write_result(success(**result))
     elif removed:
         print(f"Removed {len(removed)} dead forward(s): {', '.join(removed)}")
     else:
@@ -1522,9 +1527,7 @@ def _forward_reconcile(args: argparse.Namespace) -> int:
             _restore_file(POLICY_FILE, previous_content, 0o644)
         raise
     if args.json:
-        print(json.dumps({
-            "forwards": len(routes), "policy_changed": changed, "reconciled": True,
-        }, sort_keys=True))
+        return write_result(success(forwards=len(routes), policy_changed=changed, reconciled=True))
     else:
         print(f"Reconciled {len(routes)} HTTPS forward(s)")
     return 0
@@ -2120,7 +2123,7 @@ def _preview_start(args: argparse.Namespace) -> int:
         "url": url,
     }
     if args.json:
-        print(json.dumps(result, sort_keys=True))
+        write_result(success(**result))
     else:
         print(f"{name}: {url} (unit {unit}, loopback {port})")
     if args.open:
@@ -2151,7 +2154,7 @@ def _preview_restart(args: argparse.Namespace) -> int:
     listen = int(route["listen"])
     url = _forward_route_url(policy, listen, _forward_access_sources(routes, policy)[listen])
     if args.json:
-        print(json.dumps({"name": args.name, "ok": True, "unit": unit, "url": url}, sort_keys=True))
+        return write_result(success(name=args.name, unit=unit, url=url))
     else:
         print(f"Restarted {args.name}: {url}")
     return 0
@@ -2168,7 +2171,7 @@ def _preview_stop(name: str, as_json: bool) -> int:
     record = _preview_for_user(name, previews, owner)
     _stop_preview_record(record, policy, routes, previews)
     if as_json:
-        print(json.dumps({"name": name, "removed": True}, sort_keys=True))
+        return write_result(success(name=name, removed=True))
     else:
         print(f"Stopped and removed live preview {name}")
     return 0
@@ -2188,7 +2191,7 @@ def _preview_list(as_json: bool) -> int:
         if os.geteuid() == 0 or preview["owner"] == account.pw_name
     ]
     if as_json:
-        print(json.dumps({"previews": previews}, sort_keys=True))
+        return write_result(success(previews=previews))
     elif not previews:
         print("No live previews configured")
     else:
@@ -2283,7 +2286,8 @@ def _preview_status(name: str, as_json: bool) -> int:
     result = {**record, "ok": ok, "active": active, "url": url, "https": https, "build": build,
               "checkout_error": checkout_error, "network_origin": "vm", "client_device_checked": False}
     if as_json:
-        print(json.dumps(result, sort_keys=True))
+        return write_result(from_report(result, ok=ok, issue="preview_unhealthy",
+                                        error="Live preview is unhealthy. Inspect its service, checkout and build details."))
     else:
         print(f"{name}\t{project}")
         if checkout_error:
@@ -2330,12 +2334,12 @@ def _preview_resolve(args: argparse.Namespace) -> int:
         "upstream_url": upstream_url,
         "url": None,
         "navigation": None,
-        "network_origin": "vm",
+        "network_origin": "command_host",
         "client_device_checked": False,
         "component": "gateway",
         "issue": None,
         "remediation": None,
-        "command": None,
+        "remediation_argv": None,
     }
     try:
         policy = _load_policy()
@@ -2366,14 +2370,15 @@ def _preview_resolve(args: argparse.Namespace) -> int:
                 while name in names:
                     name = f"{name_base}-{suffix}"
                     suffix += 1
-                command = shlex.join([
+                command = [
                     "basaltwater-web", "forward", "add", name,
                     "--listen", "auto", "--to", f"{url_host}:{port}",
                     "--profile", args.profile, "--wait", "30", "--json",
-                ])
+                ]
                 result.update(
-                    component="gateway", issue="forward_missing", command=command,
-                    remediation="Run the supplied command within the requested preview scope, then retry resolution.",
+                    component="gateway", issue="forward_missing", remediation_argv=command,
+                    error="No owned HTTPS forward matches the loopback service and profile.",
+                    remediation="Run the supplied arguments within the requested preview scope, then retry resolution.",
                 )
             else:
                 listen = int(route["listen"])
@@ -2400,15 +2405,8 @@ def _preview_resolve(args: argparse.Namespace) -> int:
             result.update(issue=issue, error=str(exc))
             if issue == "certificate_untrusted":
                 result["remediation"] = "Inspect VM certificate trust with basaltwater-web ca; preserve TLS verification."
-    if args.json:
-        print(json.dumps(result, sort_keys=True))
-    elif result["ok"]:
-        print(result["url"])
-    else:
-        print(f"{result['component']}: {result['issue']}. {result['remediation']}", file=sys.stderr)
-        if result["command"]:
-            print(result["command"], file=sys.stderr)
-    return 0 if result["ok"] else 1
+    return write_result(from_report(result, ok=bool(result["ok"]), issue="preview_unavailable",
+                                    error="Could not resolve a reachable HTTPS preview."))
 
 
 def _preview_print_url(name: str) -> int:
@@ -2462,7 +2460,7 @@ def _preview_prune(confirmed: bool, as_json: bool) -> int:
         _stop_preview_record(record, policy, routes, previews)
         removed.append(str(record["name"]))
     if as_json:
-        print(json.dumps({"removed": removed}, sort_keys=True))
+        return write_result(success(removed=removed))
     elif removed:
         print(f"Removed {len(removed)} stopped preview(s): {', '.join(removed)}")
     else:
@@ -2501,7 +2499,7 @@ def main(argv: list[str] | None = None) -> int:
                     delegated_args.extend(["--project", project])
                     if preview_argv:
                         delegated_args.extend(["--", *preview_argv])
-                return basaltwater_web_control.request(delegated_args)
+                return basaltwater_web_control.request(delegated_args, as_json=args.json)
         if args.command == "publish":
             if args.publish_kind == "godot":
                 return godot_web_publish.publish_legacy(args)
@@ -2517,7 +2515,8 @@ def main(argv: list[str] | None = None) -> int:
             if args.site_command == "verify":
                 result = static_web_publish.verify_site(args)
                 if args.json:
-                    print(json.dumps(result, sort_keys=True))
+                    return write_result(from_report(result, ok=result["ok"], issue="verification_failed",
+                                                    error="Could not verify the published site. Inspect the verification details."))
                 else:
                     print(f"{args.name}: {'verified' if result['ok'] else result['issue']}")
                     if result.get("remediation"):
@@ -2526,7 +2525,10 @@ def main(argv: list[str] | None = None) -> int:
             if args.site_command == "remove":
                 return _remove_site(args.name, args.yes, args.json)
             if args.site_command == "migrate-legacy":
-                for url in static_web_publish.migrate_legacy_sites():
+                urls = static_web_publish.migrate_legacy_sites()
+                if args.json:
+                    return write_result(success(urls=urls))
+                for url in urls:
                     print(f"Migrated Godot site to {url}")
                 return 0
         if args.command in ("list", "ls"):
@@ -2534,7 +2536,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "url":
             return _print_site_url(args.game, profile="godot")
         if args.command == "remove":
-            return _remove_game(args.game, args.yes)
+            return _remove_game(args.game, args.yes, args.json)
         if args.command == "doctor":
             return _doctor(args.name, args.json)
         if args.command == "ca":
@@ -2576,9 +2578,18 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, RuntimeError, ValueError) as exc:
         as_json = bool(getattr(args, "json", False))
         if as_json:
-            print(json.dumps({"error": str(exc), "ok": False}, sort_keys=True))
-        else:
-            print(f"Error: {exc}", file=sys.stderr)
+            operation = next((value for value in (getattr(args, "preview_command", None), getattr(args, "forward_command", None),
+                                                   getattr(args, "site_command", None), args.command) if value), args.command)
+            issue = exception_issue(exc)
+            fields = {}
+            if operation == "resolve":
+                fields["navigation"] = None
+            if operation in {"add", "migrate-legacy", "prune", "publish", "reconcile", "remove", "restart", "start", "stop"}:
+                fields.update(stage=operation.replace("-", "_"), effect="none" if issue == "invalid_input" else "unknown")
+            return write_result(failure(issue, str(exc), **fields))
+        print(f"Error: {exc}", file=sys.stderr)
+        if isinstance(exc, TimeoutError):
+            return 124
         return 2 if isinstance(exc, ValueError) else 1
     return 2
 
