@@ -17,7 +17,9 @@ rules:
   },
   "reboot": "approve",
   "commands": "approve",
-  "ttl_seconds": 3600
+  "ttl_seconds": 86400,
+  "max_review_seconds": 604800,
+  "max_runtime_seconds": 21600
 }
 ```
 
@@ -25,8 +27,8 @@ This fragment describes the mutable values; retain the installation's existing
 machine identity and requester UID. `approve` needs a browser decision for
 every request. `allow` executes automatically but is still audited.
 Unregistered services are denied. Reboot accepts only `approve` or `deny`.
-The schema permits at most 32 exact `.service` names and an expiry of 30–86,400
-seconds. New installations default to 3,600 seconds; setup reruns preserve the
+The schema permits at most 32 exact `.service` names and an expiry of 30–604,800
+seconds. New installations default to 86,400 seconds. Setup reruns preserve the
 administrator's existing value. Commands always require individual approval.
 The broker reads policy for every request and before execution, so a
 change invalidates an outstanding request.
@@ -90,8 +92,10 @@ and executes it with a clean environment and closed interactive stdin.
 
 The transient unit deliberately has host filesystem, device and network access;
 that authority is described in the reviewed effects. It has no restart, a
-60-second command timeout, a 65-second unit runtime cap, a five-second stop
-deadline and control-group termination. The broker waits up to 80 seconds;
+reviewed command timeout (default 900 seconds), five seconds of unit runtime
+grace, a five-second stop deadline and control-group termination. The broker
+waits for the selected timeout plus 20 seconds. Administrators can lower the
+six-hour ceiling with `max_runtime_seconds`, which also caps the default.
 the unit is limited to 1 GiB of memory and 128 tasks. A signalled systemd client or
 a lost wait response stays uncertain and is never replayed. Child output is
 discarded. `execution` metadata records only state, exit code and a fixed failure

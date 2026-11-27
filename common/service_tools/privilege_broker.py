@@ -38,7 +38,7 @@ from common.service_tools.data_job import job_status as data_job_status, stage_d
 from lib.storage_routines import ROUTINE_HELPER
 from sync.routine_job import job_status as routine_job_status, stage_routine_job
 from lib.privilege_execution import (
-    COMMAND_HELPER, ENVIRONMENT, EXECUTOR_WAIT_SECONDS, ExecutionResult, command_executor_argv,
+    COMMAND_HELPER, ENVIRONMENT, ExecutionResult, command_executor_argv, validate_runtime,
 )
 from lib import headscale_portal
 
@@ -85,12 +85,14 @@ def execute(plan: dict) -> ExecutionResult:
         command = plan["operation"] == "command.run"
         if command:
             protected_path(COMMAND_HELPER)
+            runtime = validate_runtime(plan.get("runtime_seconds", 60))
+            payload = {"argv": plan["argv"], "runtime_seconds": runtime}
         result = subprocess.run(
-            command_executor_argv() if command else plan["argv"],
-            **({"input": canonical(plan["argv"]).encode()} if command else {"stdin": subprocess.DEVNULL}),
+            command_executor_argv(runtime) if command else plan["argv"],
+            **({"input": canonical(payload).encode()} if command else {"stdin": subprocess.DEVNULL}),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL, cwd="/", env=ENVIRONMENT, close_fds=True,
-            timeout=EXECUTOR_WAIT_SECONDS if command else 60, check=False,
+            timeout=runtime + 20 if command else 60, check=False,
         )
     except subprocess.TimeoutExpired:
         # systemd may still have a job after its client is killed.
@@ -173,7 +175,7 @@ class Broker:
         result["execution"] = json.loads(result["execution"]) if result["execution"] else None
         return result
 
-    def request(self, uid: int, operation: str, parameters: dict, reason: str) -> dict:
+    def request(self, uid: int, operation: str, parameters: dict, reason: str, *, review_seconds: int | None = None) -> dict:
         if operation == "headscale.admin":
             reason = "Administrator requested Headscale action"
         if not isinstance(reason, str) or len(reason) > 1000 or any(unicodedata.category(c).startswith("C") for c in reason):
@@ -182,6 +184,9 @@ class Broker:
             self._expire()
             try:
                 policy = self.policy_loader()
+                ttl = policy["ttl_seconds"] if review_seconds is None else review_seconds
+                if type(ttl) is not int or not 30 <= ttl <= policy.get("max_review_seconds", policy["ttl_seconds"]):
+                    raise ValueError("Requested review window exceeds policy or is shorter than 30 seconds")
                 plan = operation_plan(policy, uid, operation, parameters)
                 if operation == "headscale.admin" and parameters["action"] == "register" and parameters["token"] not in self.registrations.entries:
                     raise ValueError("Registration input unavailable")
@@ -189,8 +194,9 @@ class Broker:
                     if self.db.execute("SELECT 1 FROM requests WHERE json_extract(plan,'$.parameters.token')=?",
                                        (parameters["token"],)).fetchone():
                         raise ValueError("Registration input already used")
-                    policy = {**policy, "ttl_seconds": min(policy["ttl_seconds"], headscale_portal.TTL)}
+                    ttl = min(ttl, headscale_portal.TTL)
                 if operation == "samba.account" and plan["parameters"]["action"] in PASSWORD_ACTIONS:
+                    ttl = min(ttl, 3600)
                     if self.db.execute("SELECT 1 FROM requests WHERE json_extract(plan,'$.operation')='samba.account' AND json_extract(plan,'$.parameters.job_id')=? LIMIT 1",
                                        (plan["parameters"]["job_id"],)).fetchone():
                         raise ValueError("This password staging identity was already used")
@@ -209,8 +215,8 @@ class Broker:
                     raise ValueError("Request quota reached; wait before submitting more requests")
                 request_id = secrets.token_hex(16)
                 now = time.time()
-                fingerprint = digest({"id": request_id, "created": now, "expires": now + policy["ttl_seconds"], "plan": plan})
-                preview = {"id": request_id, "uid": uid, "created": now, "expires": now + policy["ttl_seconds"],
+                fingerprint = digest({"id": request_id, "created": now, "expires": now + ttl, "plan": plan})
+                preview = {"id": request_id, "uid": uid, "created": now, "expires": now + ttl,
                            "plan": plan, "digest": fingerprint, "reason": reason, "state": "pending",
                            "actor": f"uid:{uid}", "execution": None,
                            "review_url": policy["origin"] + "/requests/" + request_id}
@@ -226,7 +232,7 @@ class Broker:
                 # use the generic response because persistence may have happened.
                 raise BrokerRequestRejected(str(exc)) from exc
             self.db.execute("INSERT INTO requests(id,uid,created,expires,plan,digest,reason,state,actor) VALUES(?,?,?,?,?,?,?,?,?)",
-                            (request_id, uid, now, now + policy["ttl_seconds"], canonical(plan), fingerprint, reason, "pending", "requester"))
+                            (request_id, uid, now, now + ttl, canonical(plan), fingerprint, reason, "pending", "requester"))
             self._transition(request_id, "pending", f"uid:{uid}")
             if plan["mode"] == "allow":
                 self._transition(request_id, "approved", "administrator-policy")
@@ -545,8 +551,9 @@ class Broker:
             return self.status(message["id"], None if approval else uid)
         if not approval and action == "cancel" and set(message) == {"action", "id"}:
             return self.cancel(message["id"], uid)
-        if not approval and action == "request" and set(message) == {"action", "operation", "parameters", "reason"}:
-            return self.request(uid, message["operation"], message["parameters"], message["reason"])
+        if not approval and action == "request" and set(message) - {"review_seconds"} == {"action", "operation", "parameters", "reason"}:
+            return self.request(uid, message["operation"], message["parameters"], message["reason"],
+                                review_seconds=message.get("review_seconds"))
         if approval and action == "decide" and set(message) == {"action", "id", "digest", "approve", "actor"}:
             if type(message["approve"]) is not bool:
                 raise ValueError("approve must be a boolean")

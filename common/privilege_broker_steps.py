@@ -22,7 +22,7 @@ from lib.machine_state import can_manage_system_services, is_vm
 from lib.operation_state import OperationStateStore
 from lib.privilege_auth import validate_auth
 from lib.privilege_policy import (
-    CONFIG_DIR, DEFAULT_REQUEST_TTL_SECONDS, PANEL_APPROVAL_SOCKET, POLICY_PATH, WEB_USER, load_policy, protected_path, validate_policy,
+    CONFIG_DIR, DEFAULT_REQUEST_TTL_SECONDS, MAX_REQUEST_TTL_SECONDS, PANEL_APPROVAL_SOCKET, POLICY_PATH, WEB_USER, load_policy, protected_path, validate_policy,
 )
 from lib.privilege_setup import approval_origin, broker_enabled, integrated_approvals, privilege_broker_origin, validate_broker_settings
 from lib.remote_utils import is_dry_run, is_service_active, run
@@ -438,7 +438,7 @@ def _configure_privilege_broker(config, begin_changes) -> None:
     else:
         policy = {"version": 1, "machine": secrets.token_hex(16), "origin": approval_origin(config),
                   "requester_uid": account.pw_uid, "ttl_seconds": DEFAULT_REQUEST_TTL_SECONDS,
-                  "services": {}, "reboot": "approve", "commands": "approve"}
+                  "max_review_seconds": MAX_REQUEST_TTL_SECONDS, "services": {}, "reboot": "approve", "commands": "approve"}
     validate_policy(policy)
     # Every installed Python dependency is part of the privileged boundary.
     for directory in ("/opt/basaltwater/lib", "/opt/basaltwater/common", "/opt/basaltwater/plugins", "/opt/basaltwater/sync", "/opt/basaltwater/smb"):

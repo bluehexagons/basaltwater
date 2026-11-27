@@ -6,8 +6,8 @@ from dataclasses import dataclass
 import secrets
 
 COMMAND_HELPER = "/opt/basaltwater/common/service_tools/privilege_command.py"
-COMMAND_TIMEOUT_SECONDS = 60
-EXECUTOR_WAIT_SECONDS = COMMAND_TIMEOUT_SECONDS + 20
+COMMAND_TIMEOUT_SECONDS = 15 * 60
+MAX_RUNTIME_SECONDS = 6 * 60 * 60
 ENVIRONMENT = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C", "HOME": "/"}
 
 
@@ -19,12 +19,18 @@ class ExecutionResult:
     failure: str | None = None
 
 
-def command_executor_argv() -> list[str]:
+def validate_runtime(seconds: object) -> int:
+    if type(seconds) is not int or not 1 <= seconds <= MAX_RUNTIME_SECONDS:
+        raise ValueError(f"Command runtime must be between 1 and {MAX_RUNTIME_SECONDS} seconds")
+    return seconds
+
+
+def command_executor_argv(runtime: int) -> list[str]:
     """Only fixed helper arguments reach systemd; reviewed argv travels on stdin."""
     return [
         "/usr/bin/systemd-run", "--no-ask-password", "--quiet", "--wait", "--collect", "--pipe",
         "--unit=basaltwater-approved-command-" + secrets.token_hex(16),
-        "--property=Type=exec", f"--property=RuntimeMaxSec={COMMAND_TIMEOUT_SECONDS + 5}",
+        "--property=Type=exec", f"--property=RuntimeMaxSec={validate_runtime(runtime) + 5}",
         "--property=TimeoutStopSec=5", "--property=KillMode=control-group",
         "--property=Restart=no", "--property=NoNewPrivileges=yes", "--property=UMask=0077",
         "--property=MemoryMax=1G", "--property=TasksMax=128",

@@ -17,6 +17,7 @@ from lib.data_actions import DATA_ACTIONS, data_dispatch_argv, validate_data_act
 from lib.samba_accounts import ACCOUNT_ACTIONS, PASSWORD_ACTIONS, account_dispatch_argv, account_effect, validate_account_action
 from lib.samba_shares import share_dispatch_argv, share_label, share_name, validate_share_action
 from lib.storage_routines import routine_dispatch_argv, routine_effect, routine_label, validate_routine_action
+from lib.privilege_execution import COMMAND_TIMEOUT_SECONDS, validate_runtime
 
 CONFIG_DIR = "/etc/basaltwater/privilege-broker"
 POLICY_PATH = CONFIG_DIR + "/policy.json"
@@ -26,8 +27,8 @@ PANEL_APPROVAL_SOCKET = "/run/basaltwater-privilege-approval/http.sock"
 DATABASE_PATH = "/var/lib/basaltwater-privilege-broker/requests.sqlite3"
 WEB_USER = "basaltwater-approval"
 MAX_MESSAGE = 16384
-DEFAULT_REQUEST_TTL_SECONDS = 3600
-MAX_REQUEST_TTL_SECONDS = 24 * 60 * 60
+DEFAULT_REQUEST_TTL_SECONDS = 24 * 60 * 60
+MAX_REQUEST_TTL_SECONDS = 7 * DEFAULT_REQUEST_TTL_SECONDS
 UNIT_PATTERN = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,180}\.service\Z")
 COMMAND_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.+-]{0,127}\Z")
 ID_PATTERN = re.compile(r"[a-f0-9]{32}\Z")
@@ -58,7 +59,7 @@ def protected_path(path: str, *, directory: bool = False) -> None:
 
 
 def validate_policy(value: object) -> dict:
-    if not isinstance(value, dict) or set(value) not in ({
+    if not isinstance(value, dict) or set(value) - {"max_review_seconds", "max_runtime_seconds"} not in ({
         "version", "machine", "origin", "requester_uid", "ttl_seconds", "services", "reboot"
     }, {"version", "machine", "origin", "requester_uid", "ttl_seconds", "services", "reboot", "commands"}):
         raise ValueError("Invalid broker policy fields")
@@ -70,6 +71,11 @@ def validate_policy(value: object) -> dict:
         raise ValueError("requester_uid must identify a non-root account")
     if type(value["ttl_seconds"]) is not int or not 30 <= value["ttl_seconds"] <= MAX_REQUEST_TTL_SECONDS:
         raise ValueError(f"ttl_seconds must be between 30 and {MAX_REQUEST_TTL_SECONDS}")
+    maximum = value.get("max_review_seconds", value["ttl_seconds"])
+    if type(maximum) is not int or not value["ttl_seconds"] <= maximum <= MAX_REQUEST_TTL_SECONDS:
+        raise ValueError("max_review_seconds must cover the default window and be at most seven days")
+    if "max_runtime_seconds" in value:
+        validate_runtime(value["max_runtime_seconds"])
     origin = value["origin"]
     if not isinstance(origin, str):
         raise ValueError("origin must be an HTTP or HTTPS origin")
@@ -198,10 +204,15 @@ def operation_plan(policy: dict, uid: int, operation: str, parameters: object) -
                   + ". Approval admits or changes access to the shared network. "
                   "Register only the exact Auth ID verified with the selected person. "
                   "Registration expires after five minutes or broker restart; attempt once, never retry automatically.")
-    elif operation == "command.run" and set(parameters) == {"argv"}:
+    elif operation == "command.run" and set(parameters) in ({"argv"}, {"argv", "runtime_seconds"}):
         argv = validate_command_argv(parameters["argv"])
         mode = policy.get("commands", "approve")
-        effect = "Run this exact command once as root with host filesystem, device and network access, limited to 60 seconds; review every argument before approving."
+        maximum = policy.get("max_runtime_seconds")
+        default_runtime = min(COMMAND_TIMEOUT_SECONDS, maximum) if maximum is not None else COMMAND_TIMEOUT_SECONDS
+        runtime = validate_runtime(parameters.get("runtime_seconds", default_runtime))
+        if maximum is not None and runtime > maximum:
+            raise ValueError("Requested runtime exceeds administrator policy")
+        effect = f"Run this exact command once as root with host filesystem, device and network access for up to {runtime} seconds."
     else:
         raise ValueError("Unknown operation or parameters")
     if mode == "deny":
@@ -211,4 +222,6 @@ def operation_plan(policy: dict, uid: int, operation: str, parameters: object) -
             "policy_digest": digest(policy), "mode": mode}
     if operation == "headscale.admin":
         plan["headscale_endpoint"] = endpoint
+    if operation == "command.run":
+        plan["runtime_seconds"] = runtime
     return plan

@@ -39,7 +39,9 @@ class CommandExecutionTests(unittest.TestCase):
                 self.assertIn("--property=Restart=no", dispatch)
                 self.assertEqual(dispatch[-4:], ["--", "/usr/bin/python3", "-I", COMMAND_HELPER])
                 self.assertNotIn("/srv/archive", dispatch)
-                self.assertEqual(json.loads(run.call_args.kwargs["input"]), argv)
+                self.assertEqual(json.loads(run.call_args.kwargs["input"]), {"argv": argv, "runtime_seconds": 900})
+                self.assertIn("--property=RuntimeMaxSec=905", dispatch)
+                self.assertEqual(run.call_args.kwargs["timeout"], 920)
             self.assertEqual(broker.status(request["id"])["execution"]["exit_code"], 0)
 
     @patch.object(privilege_command.subprocess, "run", return_value=Mock(returncode=0))

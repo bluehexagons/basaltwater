@@ -11,7 +11,7 @@ import sys
 if __name__ == "__main__" and not __package__:
     sys.path.insert(0, "/opt/basaltwater")
 
-from lib.privilege_execution import COMMAND_TIMEOUT_SECONDS, ENVIRONMENT
+from lib.privilege_execution import ENVIRONMENT, validate_runtime
 from lib.privilege_policy import MAX_MESSAGE, validate_command_argv
 
 
@@ -20,11 +20,17 @@ def execute_command(payload: bytes) -> int:
     if len(payload) > MAX_MESSAGE:
         return 125
     try:
-        argv = validate_command_argv(json.loads(payload))
+        message = json.loads(payload)
+        if isinstance(message, list):
+            argv, runtime = validate_command_argv(message), 60  # Previously reviewed wire format.
+        elif isinstance(message, dict) and set(message) == {"argv", "runtime_seconds"}:
+            argv, runtime = validate_command_argv(message["argv"]), validate_runtime(message["runtime_seconds"])
+        else:
+            return 125
         result = subprocess.run(
             argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL, cwd="/", env=ENVIRONMENT, close_fds=True,
-            timeout=COMMAND_TIMEOUT_SECONDS, check=False,
+            timeout=runtime, check=False,
         )
     except subprocess.TimeoutExpired:
         return 124

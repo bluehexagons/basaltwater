@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import socket
 import sys
 import time
@@ -13,6 +14,7 @@ from lib.privilege_policy import (
     REQUEST_SOCKET, canonical,
 )
 from lib.admin_status import FAILURE_LABELS, STAGE_LABELS, sanitize_admin_status
+from lib.privilege_execution import MAX_RUNTIME_SECONDS, validate_runtime
 
 
 class PrivilegeRequestRejected(ValueError):
@@ -75,6 +77,13 @@ def exchange(message: dict, path: str = REQUEST_SOCKET) -> dict:
     return result
 
 
+def duration(value: str) -> int:
+    match = re.fullmatch(r"([0-9]{1,8})([smhd]?)", value)
+    if not match:
+        raise argparse.ArgumentTypeError("Use seconds or a duration such as 15m, 4h, or 2d")
+    return int(match[1]) * {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}[match[2]]
+
+
 def add_privilege_parser(commands: argparse._SubParsersAction) -> None:
     parser = commands.add_parser("privilege", help="Request a privileged operation for browser approval")
     actions = parser.add_subparsers(dest="privilege_command", required=True)
@@ -84,13 +93,17 @@ def add_privilege_parser(commands: argparse._SubParsersAction) -> None:
     request.add_argument("--command", dest="privilege_argv", nargs=argparse.REMAINDER,
                          help="Exact command and arguments; place after --command")
     request.add_argument("--reason", required=True, help="Explain why the operation is needed")
+    request.add_argument("--review-window", type=duration, help="Time available for approval, e.g. 2d")
+    request.add_argument("--runtime", type=duration, help="Execution budget for command.run, e.g. 30m")
     request.add_argument("--json", action="store_true")
     for name in ("status", "wait", "cancel"):
         sub = actions.add_parser(name)
         sub.add_argument("request_id")
         sub.add_argument("--json", action="store_true")
         if name == "wait":
-            sub.add_argument("--timeout", type=int, default=DEFAULT_REQUEST_TTL_SECONDS)
+            sub.add_argument("--timeout", type=duration, default=DEFAULT_REQUEST_TTL_SECONDS,
+                             help="Local observation budget, default 24h. Use 0 for an immediate check.")
+            sub.add_argument("--until", choices=("decision", "completion"), default="completion")
     password = actions.add_parser("password-hash", help="Create an approval password hash on the administrator's device")
     password.add_argument("--username", required=True)
     status = actions.add_parser("admin-status", help="Read owned maintenance requests and safe job diagnostics")
@@ -144,20 +157,35 @@ def run_privilege_command(args: argparse.Namespace) -> int:
                 raise ValueError("--command is required only for command.run")
             if args.operation != "command.run" and args.privilege_argv:
                 raise ValueError("--command is required only for command.run")
-            result = exchange({"action": "request", "operation": args.operation,
-                               "parameters": ({"unit": args.unit} if args.unit else {"argv": args.privilege_argv} if args.privilege_argv else {}), "reason": args.reason})
+            parameters = {"unit": args.unit} if args.unit else {"argv": args.privilege_argv} if args.privilege_argv else {}
+            message = {"action": "request", "operation": args.operation, "parameters": parameters, "reason": args.reason}
+            if args.review_window is not None:
+                if not 30 <= args.review_window <= MAX_REQUEST_TTL_SECONDS:
+                    raise ValueError("Review window must be between 30 seconds and 7 days")
+                message["review_seconds"] = args.review_window
+            if args.runtime is not None:
+                if args.operation != "command.run":
+                    raise ValueError("--runtime is available for command.run")
+                parameters["runtime_seconds"] = validate_runtime(args.runtime)
+            result = exchange(message)
         elif args.privilege_command == "cancel":
             result = exchange({"action": "cancel", "id": args.request_id})
         else:
             timeout = getattr(args, "timeout", 0)
-            if not 0 <= timeout <= MAX_REQUEST_TTL_SECONDS:
-                raise ValueError(f"Timeout must be between 0 and {MAX_REQUEST_TTL_SECONDS} seconds")
+            if not 0 <= timeout <= MAX_REQUEST_TTL_SECONDS + MAX_RUNTIME_SECONDS:
+                raise ValueError("Wait timeout must be between zero and seven days plus six hours")
             deadline = time.monotonic() + timeout
+            delay = 1
+            waiting = {"pending"} if getattr(args, "until", "") == "decision" else {"pending", "approved", "executing"}
             while True:
                 result = exchange({"action": "status", "id": args.request_id})
-                if result["state"] not in {"pending", "approved", "executing"} or time.monotonic() >= deadline:
+                remaining = deadline - time.monotonic()
+                if result["state"] not in waiting or remaining <= 0:
                     break
-                time.sleep(2)
+                time.sleep(min(delay, remaining))
+                delay = min(delay * 2, 15)
+            if args.privilege_command == "wait" and result["state"] in waiting:
+                result = {**result, "ok": False, "issue": "wait_timeout"}
         if args.json:
             print(json.dumps(result, indent=2))
         else:
@@ -166,10 +194,13 @@ def run_privilege_command(args: argparse.Namespace) -> int:
                 print("Review on your own device: " + result["review_url"])
         if args.privilege_command == "cancel":
             return 0 if result["state"] in {"cancelled", "expired", "denied", "invalidated"} else 1
+        if (args.privilege_command == "wait" and args.until == "decision"
+                and result["state"] in {"approved", "executing", "dispatched", "succeeded", "failed", "uncertain"}):
+            return 0
         if result["state"] in {"cancelled", "denied", "failed", "uncertain", "expired", "invalidated"}:
             return 1
-        if args.privilege_command == "wait" and result["state"] in {"pending", "approved", "executing"}:
-            return 2
+        if result.get("issue") == "wait_timeout":
+            return 124
         return 0
     except (OSError, ValueError, EOFError) as exc:
         print(f"Privilege request failed: {exc}", file=sys.stderr)

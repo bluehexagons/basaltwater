@@ -22,6 +22,11 @@ already work without this approval flow. See
 for the supported actions and portal setup.
 
 Waiting can time out while the original request remains pending or executing.
+Request a review window with `--review-window 2d` and a command budget with
+`--runtime 30m` before `--command`. Keep the ID and continue independent work.
+A background `basaltw agent privilege wait REQUEST_ID --until decision --timeout 2d --json`
+can notify your task runner when the operator decides. For dependent work wait
+for completion and check the execution result. Exit 124 is a local wait timeout.
 Inspect it with `basaltw agent privilege status REQUEST_ID --json` rather than
 submitting another request. An uncertain execution result also needs inspection
 before retrying. Cancelling a local prompt or reaching its runtime cap does not

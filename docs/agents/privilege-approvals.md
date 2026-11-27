@@ -91,11 +91,18 @@ parameters, effects, and expiry, then choose **Approve once** or **Deny**.
 Treat the agent's explanation as untrusted. The root broker performs one
 approved attempt automatically.
 
-New installations use a one-hour review window. Administrators can select
-30 seconds to 24 hours through `ttl_seconds` in the root-owned policy. Setup
-reruns preserve an existing window, including an older five-minute value; change
-that policy explicitly to extend an existing installation. The CLI's wait
-timeout only controls observation and does not extend the review deadline.
+New installations give the operator 24 hours to decide. A request can use
+`--review-window 2d` and a command can use `--runtime 30m`. Put both options
+before `--command`. Seconds and the suffixes `s`, `m`, `h` and `d` are accepted.
+The administrator controls the default with `ttl_seconds` and the ceiling with
+`max_review_seconds` (seven days on new installs). An older policy without
+a ceiling uses its existing review window as the ceiling.
+
+Submission returns immediately. Keep the request ID and continue independent
+work. Run `basaltw agent privilege wait REQUEST_ID --until decision --timeout 2d --json`
+as a background command to receive the decision, or omit `--until decision` to
+wait for the execution result. A local wait that expires returns exit 124 and
+the same ID. Reattach with that ID. The review deadline stays in effect.
 A changed policy invalidates a request; an interrupted execution is marked
 uncertain and is never retried.
 Check status before submitting a replacement request. A reboot reported as
@@ -119,7 +126,8 @@ never replays, approves, cancels or stops work.
 Approved commands run in a separate supervised root service with host
 filesystem, device and network access. The broker's own filesystem sandbox
 remains enabled. Review every argument and any referenced executable/configuration
-before approval. Each command has a 60-second runtime limit and its process
+before approval. The default command budget is 15 minutes. The requested
+runtime can range from one second to six hours within policy. Its process
 group is stopped when the unit finishes. Status and the review page expose
 safe exit/failure metadata; privileged stdout and stderr remain discarded.
 The command unit has a 1 GiB memory limit and a 128-task limit; use the fixed

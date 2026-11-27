@@ -355,15 +355,27 @@ class BrokerTests(unittest.TestCase):
         self.assertIsNone(self.broker.status(request["id"])["execution"])
         self.assertEqual(self.broker.db.execute("SELECT count(*) FROM events").fetchone()[0], 2)
 
-    def test_hour_review_window_accepts_a_delayed_human_decision(self):
+    def test_day_review_window_accepts_an_overnight_human_decision(self):
         self.policy["ttl_seconds"] = DEFAULT_REQUEST_TTL_SECONDS
         with patch("common.service_tools.privilege_broker.time.time", return_value=10000):
             request = self.request()
-        self.assertEqual(request["expires"] - request["created"], 3600)
-        with patch("common.service_tools.privilege_broker.time.time", return_value=11800):
+        self.assertEqual(request["expires"] - request["created"], 86400)
+        with patch("common.service_tools.privilege_broker.time.time", return_value=70000):
             self.broker.decide(request["id"], request["digest"], True, "operator")
             self.broker.execute_next()
         self.runner.assert_called_once()
+
+    def test_requested_budgets_are_reviewed_and_bounded_by_policy(self):
+        self.policy.update(max_review_seconds=86400, max_runtime_seconds=120)
+        arguments = {"argv": ["/usr/bin/true"], "runtime_seconds": 90}
+        request = self.broker.request(1000, "command.run", arguments, "test", review_seconds=7200)
+        self.assertEqual(request["expires"] - request["created"], 7200)
+        self.assertEqual(request["plan"]["runtime_seconds"], 90)
+        self.assertIn("90 seconds", request["plan"]["effect"])
+        for review, runtime in ((90000, 90), (29, 90), (300, 121), (300, False)):
+            with self.assertRaises(ValueError):
+                self.broker.request(1000, "command.run", {**arguments, "runtime_seconds": runtime},
+                                    "test", review_seconds=review)
 
 
 class PolicyTests(unittest.TestCase):
@@ -418,11 +430,23 @@ class ClientTests(unittest.TestCase):
     @patch("lib.privilege_client.exchange")
     def test_wait_supports_hour_default_and_longer_administrator_windows(self, exchange):
         args = self.arguments("wait")
-        self.assertEqual(args.timeout, 3600)
+        self.assertEqual(args.timeout, 86400)
         args.timeout = MAX_REQUEST_TTL_SECONDS
         exchange.return_value = {"id": "a" * 32, "state": "succeeded"}
         with redirect_stdout(io.StringIO()):
             self.assertEqual(run_privilege_command(args), 0)
+
+    @patch("lib.privilege_client.exchange")
+    def test_wait_for_decision_and_nonmutating_local_timeout(self, exchange):
+        args = self.arguments("wait")
+        args.timeout = 0
+        args.until = "decision"
+        for state, code in (("pending", 124), ("executing", 0), ("denied", 1)):
+            exchange.return_value = {"id": args.request_id, "state": state}
+            with redirect_stdout(output := io.StringIO()):
+                self.assertEqual(run_privilege_command(args), code)
+            self.assertEqual(json.loads(output.getvalue())["id"], args.request_id)
+            exchange.assert_called_with({"action": "status", "id": args.request_id})
 
 
 class SocketClientTests(unittest.TestCase):
