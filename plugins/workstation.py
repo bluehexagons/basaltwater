@@ -69,7 +69,6 @@ PLUGIN = PluginDefinition(
             include_cli_tools=True,
             include_workstation_dev_apps=True,
             default_browser="firefox",
-            default_editor="geany",
             default_agent_tools=("gh",),
             default_web_interfaces=("t3code",),
             default_device_pairing_providers=("t3code",),

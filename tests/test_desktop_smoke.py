@@ -25,7 +25,6 @@ class SmokeTests(unittest.TestCase):
         self.save = True
         self.window = {"id": "0x42", "pid": 42, "identity": "fresh"}
         for target, kwargs in (
-            ("shutil.which", {"return_value": "/usr/bin/geany"}),
             ("tempfile.mkdtemp", {"return_value": str(self.directory)}),
             ("runtime.request", {"side_effect": self.handle_request}),
             ("client.wait_for_window", {"return_value": {"windows": [self.window]}}),
@@ -52,8 +51,9 @@ class SmokeTests(unittest.TestCase):
         self.assertEqual(result["completed"], ["launch", "edit", "save", "dialog", "close"])
         self.assertFalse(self.directory.exists())
         launch = next(p for p in self.calls if p["action"] == "exec")
-        self.assertIn("--new-instance", launch["argv"])
-        self.assertIn(str(self.directory / "profile"), launch["argv"])
+        self.assertIn("/usr/bin/python3", launch["argv"])
+        self.assertEqual(Path(launch["argv"][-2]).name, "smoke_window.py")
+        self.assertEqual(launch["argv"][-1], str(self.directory / "check.txt"))
         scoped = [c.kwargs for c in self.wait_for_element.call_args_list if "root" in c.kwargs]
         self.assertEqual(len(scoped), 3)
         self.assertTrue(all(c["root"] == "Find" for c in scoped))
@@ -98,13 +98,6 @@ class SmokeTests(unittest.TestCase):
         actions = [c.args[0]["action"] for c in self.request_mock.call_args_list]
         self.assertEqual(actions.count("element"), 1)
         self.assertEqual(actions, ["exec", "element"])
-
-    def test_missing_geany_does_not_create_files_or_launch(self):
-        self.which.return_value = None
-        with self.assertRaisesRegex(RuntimeError, "Geany is required"):
-            smoke.run_smoke_check("g")
-        self.mkdtemp.assert_not_called()
-        smoke.runtime.request.assert_not_called()
 
     @patch("lib.desktop_cli.runtime.status", return_value={"state": "stopped"})
     @patch.object(smoke, "run_smoke_check")

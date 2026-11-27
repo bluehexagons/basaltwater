@@ -98,7 +98,7 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     renewal.add_argument("--generation", required=True)
     renewal.add_argument("--seconds", type=int, default=0)
     renewal.add_argument("--json", action="store_true")
-    commands.add_parser("smoke", help="Live Geany edit/save/dialog check in an isolated test instance")
+    commands.add_parser("smoke", help="Verify native editing, saving and dialog control in a disposable GTK window")
     screenshot = commands.add_parser("screenshot", description="Debian: capture the desktop or a selected window. With --native: selected monitor only.")
     parser.native_screenshot_parser = screenshot
     screenshot.add_argument("--output", help="New PNG path; defaults to private Pictures/basaltwater artifact storage")
@@ -425,7 +425,7 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                     raise ValueError("Desktop control changed before application launch; inspect status")
             if command == "smoke":
                 if backend is not runtime:
-                    raise RuntimeError("The Geany XRDP smoke check is Debian-only; use native application edit/save/reopen checks")
+                    raise RuntimeError("The GTK XRDP smoke check requires a managed Debian desktop")
                 from desktop.smoke import run_smoke_check
                 result = run_smoke_check(current["generation"])
             elif command == "windows":

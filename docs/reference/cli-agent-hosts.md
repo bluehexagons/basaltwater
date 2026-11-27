@@ -9,7 +9,7 @@ availability remains profile-specific; `agent_cachyos` accepts only its local
 workstation subset documented in [CachyOS](../workstations/cachyos.md). `agent_vm` is the
 recommended terminal-only profile,
 `agent_workstation` adds a desktop and Firefox ESR, and `agent_code_vm` adds
-the common T3 Code web service, Geany, RDP, private source ranges, protected T3
+the common T3 Code web service, RDP, private source ranges, protected T3
 pairing, read-write Git, active GitHub auth, and target-owned login when Codex is selected. Playwright remains an explicit
 fallback through `--browser-automation playwright` for SSH-only or standalone
 Codex and OpenCode sessions.
@@ -54,8 +54,8 @@ See [Privilege approvals](../agents/privilege-approvals.md)
 and the complete [Agentic VM examples](../agents/agentic-vms.md).
 The shared CLI baseline includes [terminal Vim](../workstations/workstation-profiles-and-software.md#terminal-vim),
 `ripgrep` (`rg`), `jq`, SQLite, `file`, `tree`, `make`, and `patch`. The
-substantially larger Python analysis/notebook stack remains opt-in through
-`--data-analysis`. Image, audio, and video processing tools remain opt-in
+coding profiles also install ShellCheck. Select `--data-analysis` for Python
+analysis tools and `--jupyterlab` for interactive notebooks. Image, audio, and video processing tools remain opt-in
 through `--av-tools`; OpenGL inspection and API tracing remain opt-in through
 `--gl-tools`.
 Missing account and pairing passwords are requested securely from a terminal.
@@ -93,7 +93,7 @@ basaltw setup agent_code_vm 10.0.0.11 agentuser \
   --opencode --lan-access
 ```
 
-The profile supplies T3 Code, Geany, RDP, read-write Git, active GitHub auth,
+The profile supplies T3 Code, RDP, read-write Git, active GitHub auth,
 target-owned Codex subscription login, and T3 pairing. Access sources are deliberately explicit; the
 example uses `--lan-access`, while a narrower deployment can use
 `--access-source` or the service-specific source flags. Passwords omitted from

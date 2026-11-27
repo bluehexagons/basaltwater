@@ -164,7 +164,7 @@ GitHub CLI. No provider is selected by default. Agent setup requires at least
 one of `--codex`, `--claude`, or `--opencode`.
 Combine these flags to select multiple providers. The general `--agent-tool`
 selector also accepts comma-separated lists; use `--no-agent-tool` to remove a default. The
-`agent_code_vm` profile additionally defaults to Geany, T3 Code, RDP, T3
+`agent_code_vm` profile additionally defaults to T3 Code, RDP, T3
 pairing, read-write Git, active GitHub auth, and target-owned login when Codex is selected. It
 does not assume a management network; add `--lan-access`, `--access-source`, or service-specific
 source flags explicitly. Node.js is installed automatically because T3 Code

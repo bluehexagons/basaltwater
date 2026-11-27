@@ -11,7 +11,7 @@ from lib.validation import validate_package_name
 
 
 DATA_ANALYSIS_MARKER_PACKAGES = (
-    "jupyterlab",
+    "csvkit",
     "python3-pandas",
 )
 AV_TOOL_MARKER_PACKAGES = (
@@ -235,6 +235,7 @@ def reconstruct_configuration(host: str = "localhost", username: str = "root") -
         "install_node": detect_node(),
         "install_python": detect_python(),
         "install_data_analysis_tools": detect_data_analysis_tools(),
+        "install_jupyterlab": check_package_installed("jupyterlab"),
         "install_av_tools": detect_av_tools(),
         "install_gl_tools": detect_gl_tools(),
         "install_musescore": check_package_installed("musescore3"),
@@ -278,6 +279,7 @@ def run_reconstruct_command(compact: bool) -> int:
             "install_node": config.install_node,
             "install_python": config.install_python,
             "install_data_analysis_tools": config.install_data_analysis_tools,
+            "install_jupyterlab": config.install_jupyterlab,
             "install_av_tools": config.install_av_tools,
             "install_gl_tools": config.install_gl_tools,
             "install_musescore": config.install_musescore,

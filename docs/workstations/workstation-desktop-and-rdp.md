@@ -68,7 +68,7 @@ fallbacks and software rendering in containers, are documented in
 
 For agent-operated native controls, see [Desktop automation](desktop-automation.md).
 It covers bounded AT-SPI inspection, named actions, semantic waits, and a small
-Geany edit/save check using the default `agent_code_vm` editor.
+GTK edit/save check using a disposable native window.
 Use `basaltw agent manifest --json` to discover installed desktop application
 workflows. For a Blender editing check in a running shared desktop, use
 `basaltw desktop exec -- blender /absolute/project/scene.blend`; use the

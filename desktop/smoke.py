@@ -1,4 +1,4 @@
-"""Opt-in live Geany check using the managed desktop's ordinary operations."""
+"""Exercise editing, saving and dialog control in a private native window."""
 
 from __future__ import annotations
 
@@ -16,8 +16,6 @@ from lib.validation import validate_filesystem_path
 
 def run_smoke_check(generation: str) -> dict[str, Any]:
     """Verify editing, saving and a scoped dialog; retain failures for inspection."""
-    if shutil.which("geany") is None:
-        raise RuntimeError("Geany is required for the desktop smoke check; it ships in agent_code_vm")
     report: dict[str, Any] = {"generation": generation, "completed": []}
     stage = "prepare"
     revision = runtime.status()["control_revision"]
@@ -47,8 +45,8 @@ def run_smoke_check(generation: str) -> dict[str, Any]:
         document.write_text(seed, encoding="utf-8")
         (directory / "expected.txt").write_text(expected, encoding="utf-8")
         stage = "launch"
-        launched = mutate("exec", argv=["env", "LC_ALL=C.UTF-8", "LANGUAGE=C", "geany",
-                          "--new-instance", "--no-session", "--config", str(directory / "profile"),
+        launched = mutate("exec", argv=["/usr/bin/env", "LC_ALL=C.UTF-8", "LANGUAGE=C",
+                          "/usr/bin/python3", "-I", str(Path(__file__).with_name("smoke_window.py").resolve()),
                           str(document)], cwd=str(directory))
         report.update(pid=launched["pid"], launch=launched["launch"])
         ready = client.wait_for_window(generation, pid=report["pid"], title=str(directory),
@@ -73,8 +71,7 @@ def run_smoke_check(generation: str) -> dict[str, Any]:
         report["completed"].append(stage)
 
         stage = "dialog"
-        click(name="Search", role="menu")
-        click(name="Find...", role="menu item")
+        click(name="Find", role="button")
         root = observe(name="Find", role="dialog")["ref"]
         field = observe(root=root, role="text", state="focused")
         query = "scoped café 日本語"

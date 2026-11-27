@@ -30,7 +30,7 @@ bundles and ownership rules are described in
 ### High-capability graphical agent VM
 
 Use `agent_code_vm` for the recurring combination of a graphical coding
-desktop, Firefox ESR, Geany, T3 Code's headless web service, GitHub CLI, Codex,
+desktop, Firefox ESR, T3 Code's headless web service, GitHub CLI, Codex,
 RDP, protected pairing, and read-write Git/auth defaults. Provisioning
 capacity, project language runtimes, browser fallback, and network access
 remain operator choices:
@@ -63,7 +63,8 @@ automatically because T3 Code requires it. Go and other project runtimes remain
 optional and can be selected with their runtime flags. The shared CLI baseline
 includes Vim, ripgrep (`rg`), `jq`, SQLite, `file`, `tree`, `make`, and `patch`.
 Add `--data-analysis` only when the VM needs the larger NumPy, pandas, SciPy,
-Matplotlib, JupyterLab, and csvkit stack; the flag also enables Python tooling.
+Matplotlib and csvkit stack. The flag also enables Python tooling. Add
+`--jupyterlab` for interactive notebooks.
 Add `--av-tools` when agents need local media inspection or conversion; it
 installs ImageMagick, FFmpeg with ffprobe, and ExifTool without selecting any
 language runtime.

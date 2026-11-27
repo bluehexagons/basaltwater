@@ -861,9 +861,13 @@ def add_setup_arguments(
         default=None if not for_remote else False,
         help=(
             "Install the larger Python data-analysis bundle (NumPy, pandas, "
-            "SciPy, Matplotlib, JupyterLab, and csvkit); also enables --python"
+            "SciPy, Matplotlib, and csvkit); also enables --python"
         ),
     )
+    parser.add_argument("--jupyterlab", dest="install_jupyterlab",
+                        action=argparse.BooleanOptionalAction if not for_remote else "store_true",
+                        default=None if not for_remote else False,
+                        help="Install the Debian JupyterLab notebook environment and Python kernel")
     parser.add_argument(
         "--av-tools",
         dest="install_av_tools",

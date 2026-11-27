@@ -36,6 +36,17 @@ class OptionalBundleTests(unittest.TestCase):
                 with self.subTest(flag=flag, options=options):
                     self.assertIs(getattr(parser.parse_args(["example.com", *options]), field), expected)
 
+    def test_old_analysis_selection_keeps_notebooks_new_selection_is_independent(self):
+        plain = self.config(install_data_analysis_tools=True)
+        self.assertNotIn("--jupyterlab", plain.to_remote_args())
+        old = plain.to_dict()
+        old.pop("install_jupyterlab")
+        migrated = SetupConfig.from_dict(plain.host, plain.system_type, old)
+        self.assertIn("--jupyterlab", migrated.to_remote_args())
+        self.assertIn("--jupyterlab", migrated.to_setup_command())
+        self.assertFalse(merge_setup_configs(migrated, self.config(install_jupyterlab=False)).install_jupyterlab)
+        self.assertTrue(merge_setup_configs(migrated, self.config()).install_jupyterlab)
+
     def test_saved_selection_roundtrips_and_normalizes_omitted_state(self):
         for _flag, field, _label, _markers in BUNDLES:
             for selected in (None, False, True):
@@ -79,7 +90,7 @@ class OptionalBundleTests(unittest.TestCase):
                 self.assertTrue(getattr(config, field))
                 if field == "install_data_analysis_tools":
                     self.assertTrue(config.install_python)
-                self.assertEqual([call.args[0] for call in packages.call_args_list], [*markers, "musescore3"])
+                self.assertCountEqual([call.args[0] for call in packages.call_args_list], [*markers, "jupyterlab", "musescore3"])
                 with redirect_stdout(io.StringIO()) as output:
                     self.assertEqual(reconstruct.run_reconstruct_command(compact=True), 0)
                 self.assertTrue(json.loads(output.getvalue())[field])

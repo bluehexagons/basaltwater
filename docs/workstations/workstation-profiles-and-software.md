@@ -10,14 +10,13 @@
 | `pc_dev` | Desktop, Firefox ESR, LibreOffice, SMB client packages, Remmina, and CLI tools |
 | `workstation_dev` | Desktop, Firefox ESR, and CLI tools including Vim |
 | `agent_workstation` | Developer workstation defaults plus GitHub CLI; explicit provider required |
-| `agent_code_vm` | Agent workstation plus Geany, T3 Code web, RDP, pairing, and read-write Git/auth defaults |
+| `agent_code_vm` | Agent workstation plus T3 Code web, RDP, pairing, and read-write Git/auth defaults |
 
 The default desktop is XFCE. All workstation profiles use Debian's Firefox ESR
 by default. A browser selected with `--browser` becomes the default for the
 setup user; repeat the flag to install more than one browser. Graphical editors
-are explicit on the general profiles: select Geany or Visual Studio Code with
-`--editor geany` or `--editor vscode`. The opinionated `agent_code_vm` profile
-defaults to Geany; `--editor vscode` replaces that editor default.
+are optional on Debian coding and workstation profiles. Select Geany or Visual Studio Code with
+`--editor geany` or `--editor vscode`.
 
 ## Terminal Vim
 

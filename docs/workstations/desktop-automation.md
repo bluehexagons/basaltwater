@@ -298,7 +298,7 @@ task records, including [supervised Debian jobs](debian-development.md). Legacy
 process ownership. Live audio capture and conditional
 execution retain their native backend requirements.
 
-## Small Geany check
+## Desktop editing check
 
 Run the repeatable live check on a running desktop:
 
@@ -306,7 +306,7 @@ Run the repeatable live check on a running desktop:
 basaltw desktop smoke
 ```
 
-It launches a new Geany instance with a private temporary profile and an English
+It launches a disposable GTK window with a private temporary document and an English
 UTF-8 locale, edits Unicode text, verifies the saved file's exact bytes, and
 exercises a scoped Find dialog wait. Success closes its own window, verifies
 that the instance has no remaining windows, and removes its temporary files.
@@ -321,8 +321,8 @@ deadline. This is an explicit live check, separate from `doctor` and unit tests.
 
 To reproduce the edit/save portion manually:
 
-Geany ships in the `agent_code_vm` profile. This check uses its normal editor and
-Save button. On other profiles, first check `command -v geany`.
+For a separate real-editor check, select `--editor geany` and use its editor and
+Save button. Verify availability with `command -v geany`.
 
 1. Create a private temporary directory and a UTF-8 text file containing a short,
    unique marker. Keep a separate expected file containing the desired result.

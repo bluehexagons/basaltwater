@@ -563,6 +563,7 @@ class SetupConfig:
     install_game_dev: bool = False
     install_python: bool = False
     install_data_analysis_tools: bool = False
+    install_jupyterlab: Optional[bool] = None
     install_av_tools: bool = False
     install_audio_tools: Optional[bool] = False
     install_gl_tools: bool = False
@@ -903,6 +904,10 @@ class SetupConfig:
 
         if self.install_data_analysis_tools:
             self.install_python = True
+        if self.install_jupyterlab is not None and type(self.install_jupyterlab) is not bool:
+            raise ValueError("install_jupyterlab must be a boolean")
+        if self.install_jupyterlab and self.system_type in {"server_proxmox", "server_wsl", "agent_cachyos", "custom_steps", "server_github_runner"}:
+            raise ValueError("--jupyterlab requires a standard Debian server or workstation profile")
 
         if self.is_build_server:
             # A general builder is usable immediately for every core runtime.
@@ -1628,6 +1633,8 @@ class SetupConfig:
 
         if self.install_data_analysis_tools:
             args.append("--data-analysis")
+        if self.install_jupyterlab:
+            args.append("--jupyterlab")
 
         if self.install_av_tools:
             args.append("--av-tools")
@@ -2212,6 +2219,8 @@ class SetupConfig:
 
         if self.install_data_analysis_tools:
             cmd_parts.append("--data-analysis")
+        if self.install_jupyterlab:
+            cmd_parts.append("--jupyterlab")
 
         if self.install_av_tools:
             cmd_parts.append("--av-tools")
@@ -2706,6 +2715,7 @@ class SetupConfig:
             self.install_data_analysis_tools
         )
         data['install_av_tools'] = bool(self.install_av_tools)
+        data['install_jupyterlab'] = bool(self.install_jupyterlab)
         data['install_audio_tools'] = bool(self.install_audio_tools)
         data['install_gl_tools'] = bool(self.install_gl_tools)
         data['install_node_versions'] = bool(self.install_node_versions)
@@ -2759,6 +2769,8 @@ class SetupConfig:
         """Decode saved settings, deferring only the reserved Syncthing tree policy."""
         validate_current_setup_fields(data)
         data = dict(data)
+        if system_type not in {"server_proxmox", "server_wsl", "agent_cachyos", "custom_steps", "server_github_runner"}:
+            data.setdefault('install_jupyterlab', data.get('install_data_analysis_tools') is True)
         data.pop('share_credentials', None)
         data.pop('resolved_credentials', None)
         from lib.notifications import notification_strict_https_from_state
@@ -3310,6 +3322,7 @@ class SetupConfig:
                 args, 'install_data_analysis_tools', False
             ),
             install_av_tools=getattr(args, 'install_av_tools', False),
+            install_jupyterlab=getattr(args, 'install_jupyterlab', None),
             install_audio_tools=_optional_bool_arg(args, 'install_audio_tools'),
             install_gl_tools=getattr(args, 'install_gl_tools', False),
             install_godot=getattr(args, 'install_godot', False),

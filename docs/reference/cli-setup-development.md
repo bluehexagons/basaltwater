@@ -12,7 +12,8 @@
 | `--game-dev` / `--no-game-dev` | Select native game build/debug tools and dependency headers on Debian or CachyOS; Debian leaves SDL versions to project bootstrap; see [Project tooling](../agents/project-tooling.md) and [CachyOS game development](../workstations/cachyos-game-development.md) |
 | `--go` | Install Go |
 | `--python` | Install Python aliases + uv |
-| `--data-analysis` | Install the larger Python analysis bundle: NumPy, pandas, SciPy, Matplotlib, JupyterLab, and csvkit; also enables `--python` |
+| `--data-analysis` | Install NumPy, pandas, SciPy, Matplotlib and csvkit. Also enables `--python`. |
+| `--jupyterlab` / `--no-jupyterlab` | Select the notebook environment and Python kernel on Debian. Existing saved analysis setups retain JupyterLab on replay. |
 | `--av-tools` | Install ImageMagick, FFmpeg (including ffprobe), and ExifTool for image, audio, video, and metadata processing |
 | `--gl-tools` | Install the minimal OpenGL inspection and debugging bundle: Mesa utilities and apitrace |
 | `--godot` | Install the newest stable verified Godot Engine release for graphical or headless use |

@@ -324,12 +324,12 @@ class TestAgentProfiles(unittest.TestCase):
         self.assertIn("Installing Codex CLI", step_names)
         self.assertIn("Updating managed agent tools", step_names)
 
-    def test_agent_code_vm_adds_t3_and_geany_without_browser_fallback(self) -> None:
+    def test_agent_code_vm_adds_t3_without_a_default_graphical_editor(self) -> None:
         config = SetupConfig.from_args(_setup_args(), "agent_code_vm")
 
         self.assertEqual(config.selected_agent_tools(), ["gh", "codex"])
         self.assertEqual(config.browser, "firefox")
-        self.assertEqual(config.editor, "geany")
+        self.assertIsNone(config.editor)
         self.assertEqual(config.web_interfaces, ["t3code"])
         self.assertIsNone(config.browser_automation)
         self.assertTrue(config.include_desktop)
@@ -346,7 +346,7 @@ class TestAgentProfiles(unittest.TestCase):
         self.assertEqual(config.device_pairing_providers, ["t3code"])
 
         step_names = [name for name, _step in get_steps_for_system_type(config)]
-        self.assertIn("Installing workstation editor", step_names)
+        self.assertNotIn("Installing workstation editor", step_names)
         self.assertIn("Installing T3 Code web interface", step_names)
         self.assertNotIn("Installing agent browser automation", step_names)
         self.assertNotIn("Installing data-analysis tools", step_names)
@@ -481,7 +481,7 @@ class TestAgentProfiles(unittest.TestCase):
         self.assertIsNone(config.device_pairing_providers)
         self.assertTrue(config.install_node)
 
-    def test_agent_code_vm_explicit_editor_replaces_geany(self) -> None:
+    def test_agent_code_vm_explicit_editor_selects_vscode(self) -> None:
         config = SetupConfig.from_args(
             _setup_args(editor="vscode"),
             "agent_code_vm",
@@ -543,7 +543,7 @@ class TestAgentProfiles(unittest.TestCase):
             },
         )
 
-        self.assertEqual(config.editor, "geany")
+        self.assertIsNone(config.editor)
         self.assertEqual(config.web_interfaces, ["t3code"])
         self.assertIsNone(config.browser_automation)
         self.assertTrue(config.install_node)

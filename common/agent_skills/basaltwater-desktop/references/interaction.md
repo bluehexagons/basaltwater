@@ -71,8 +71,8 @@ report success. An in-flight backend request can still delay the timeout respons
 until its own bounded timeout; do not stack new waits while it is running.
 Accessibility support varies by application; use screenshots and existing input
 when controls are unavailable. No application-specific adapter is required.
-Run `basaltw desktop smoke` for a live Geany edit/save/scoped-dialog check
-on a running desktop. It uses a private test profile, verifies saved UTF-8 bytes,
+Run `basaltw desktop smoke` for a live GTK edit/save/scoped-dialog check
+on a running desktop. It uses a disposable native window, verifies saved UTF-8 bytes,
 and closes its own window and removes test files on success. On failure it
 reports the stage and retains the test instance/files for inspection; inspect
 and close that instance before rerunning. It never changes agent permission.

@@ -117,7 +117,6 @@ CLI_TOOL_PACKAGES = (
 )
 DATA_ANALYSIS_PACKAGES = (
     "csvkit",
-    "jupyterlab",
     "python3-matplotlib",
     "python3-numpy",
     "python3-pandas",
@@ -702,7 +701,11 @@ def _configure_vim() -> None:
 
 def install_cli_tools(config: SetupConfig) -> None:
     """Install the small command-line baseline shared by development profiles."""
-    _install_tool_packages(CLI_TOOL_PACKAGES, "CLI")
+    packages = CLI_TOOL_PACKAGES
+    if config.system_type in {"agent_vm", "agent_vm_lite", "agent_code_vm", "agent_workstation",
+                               "server_dev", "workstation_dev", "pc_dev"}:
+        packages = (*packages, "shellcheck")
+    _install_tool_packages(packages, "CLI")
     _configure_vim()
 
 
@@ -747,8 +750,14 @@ def ensure_python_alias(config: SetupConfig) -> str | None:
 
 
 def install_data_analysis_tools(config: SetupConfig) -> None:
-    """Install the opt-in Python data-analysis and notebook bundle."""
+    """Install the opt-in Python data-analysis bundle."""
     _install_tool_packages(DATA_ANALYSIS_PACKAGES, "Data-analysis")
+
+
+def install_jupyterlab(config: SetupConfig) -> None:
+    """Install the notebook interface with a usable local Python kernel."""
+    _install_tool_packages(("jupyterlab", "python3-jupyterlab-server", "python3-jupyter-server",
+                            "python3-ipykernel"), "JupyterLab")
 
 
 def install_av_tools(config: SetupConfig) -> None:

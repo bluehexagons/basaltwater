@@ -270,7 +270,6 @@ class TestDevelopmentToolPackages(unittest.TestCase):
     def test_large_analysis_packages_are_not_in_cli_baseline(self):
         self.assertTrue(
             {
-                "jupyterlab",
                 "python3-matplotlib",
                 "python3-numpy",
                 "python3-pandas",
@@ -278,6 +277,7 @@ class TestDevelopmentToolPackages(unittest.TestCase):
             }.issubset(DATA_ANALYSIS_PACKAGES)
         )
         self.assertTrue(set(CLI_TOOL_PACKAGES).isdisjoint(DATA_ANALYSIS_PACKAGES))
+        self.assertNotIn("jupyterlab", DATA_ANALYSIS_PACKAGES)
 
     def test_av_packages_are_not_in_cli_baseline(self):
         self.assertEqual(
@@ -298,7 +298,7 @@ class TestDevelopmentToolPackages(unittest.TestCase):
         mock_run.return_value = MagicMock(returncode=0)
         config = SetupConfig(host="testhost", username="agent", system_type="agent_vm")
         for installer, packages in (
-            (install_cli_tools, CLI_TOOL_PACKAGES),
+            (install_cli_tools, (*CLI_TOOL_PACKAGES, "shellcheck")),
             (install_control_plane_tools, CONTROL_PLANE_PACKAGES),
         ):
             directory = self.vim_dir / installer.__name__
@@ -394,7 +394,7 @@ class TestDevelopmentToolPackages(unittest.TestCase):
     def test_bundle_installs_only_missing_packages_and_observes_them_again(self):
         config = SetupConfig(host="testhost", username="agent", system_type="agent_vm")
         for installer, packages in (
-            (install_cli_tools, CLI_TOOL_PACKAGES),
+            (install_cli_tools, (*CLI_TOOL_PACKAGES, "shellcheck")),
             (install_control_plane_tools, CONTROL_PLANE_PACKAGES),
             (install_data_analysis_tools, DATA_ANALYSIS_PACKAGES),
             (install_av_tools, AV_TOOL_PACKAGES),
