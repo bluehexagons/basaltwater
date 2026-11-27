@@ -406,6 +406,15 @@ that passes the profile path to the game's own save/config flags. Verify that th
 game uses those paths before a real run. It runs with the desktop account's
 ordinary filesystem and network access.
 
+Projects shared with the Windows test-session workflow can use
+`BASALTWATER_TEST_PROFILE` for the same disposable path and
+`BASALTWATER_TEST_EVIDENCE` for the retained task `artifacts` directory.
+Linux tasks report that directory once the worker creates it. Projects own
+their milestone and capture formats and size limits. The recorder remains
+available for independent desktop captures. Windows readiness tokens are
+issued only by the Windows guardian. A Linux project can record its own
+readiness event and report failures through its exit status.
+
 Enabled agent control and an active recorder for the same resolved project
 are required to launch. The recorder checkpoints the task ID before submission.
 Keep the returned task, profile and recording paths for closeout. The profile

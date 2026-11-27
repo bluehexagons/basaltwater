@@ -53,7 +53,14 @@ def run_task(directory: Path) -> int:
                 profile = profile_environment(directory / "profile")
                 for path in profile.values():
                     _private_directory(Path(path))
-                environment = {**os.environ, **profile}
+                artifacts = directory / "artifacts"
+                artifacts.mkdir(mode=0o700)
+                environment = {**os.environ, **profile,
+                               "BASALTWATER_TEST_PROFILE": profile["BASALTWATER_PLAYTEST_PROFILE"],
+                               "BASALTWATER_TEST_EVIDENCE": str(artifacts)}
+                # Readiness tokens are issued by the Windows test-session guardian.
+                for name in ("BASALTWATER_TEST_READY_FILE", "BASALTWATER_TEST_READY_TOKEN"):
+                    environment.pop(name, None)
             process = subprocess.Popen(task["argv"], cwd=task["project"], stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=environment)
             write_json_atomic(str(directory / "started.json"), {"launch_pid": process.pid}, mode=0o600)

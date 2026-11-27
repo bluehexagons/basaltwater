@@ -478,6 +478,8 @@ def task_status(task_id: str, *, stop: bool = False, dry_run: bool = False) -> d
                       comparison_report=str(directory / "comparison" / "comparison.json"))
     if task["kind"] == "playtest":
         result.update(playtest=task["playtest"], profile=str(directory / "profile"))
+        if (directory / "artifacts").is_dir():
+            result["artifacts"] = str(directory / "artifacts")
     elif task["kind"] == "browser":
         result.update(profile=str(directory / "profile"), downloads=str(directory / "downloads"))
     if (directory / "stop-requested.json").exists():

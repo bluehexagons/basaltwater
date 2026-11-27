@@ -151,6 +151,10 @@ class TestDevelopmentTasks(unittest.TestCase):
             "profile = pathlib.Path(os.environ['BASALTWATER_PLAYTEST_PROFILE'])\n"
             "data = pathlib.Path(os.environ['XDG_DATA_HOME'])\n"
             "assert data == profile / 'data'\n"
+            "assert pathlib.Path(os.environ['BASALTWATER_TEST_PROFILE']) == profile\n"
+            "assert 'BASALTWATER_TEST_READY_TOKEN' not in os.environ\n"
+            "artifacts = pathlib.Path(os.environ['BASALTWATER_TEST_EVIDENCE'])\n"
+            "(artifacts / 'milestones.jsonl').write_text('ready\\n')\n"
             "print((data / 'game/fixture.txt').read_text())\n"
         )
         dry = self.launch(kind="playtest", playtest="training", dry_run=True)
@@ -176,14 +180,20 @@ class TestDevelopmentTasks(unittest.TestCase):
         self.assertEqual(first["recording"], str(recorder.path))
         self.assertNotEqual(first["profile"], second["profile"])
         first_directory = Path(first["directory"])
-        with patch.object(development_worker.signal, "signal"), patch.object(development_worker, "_honor_agent_control"):
+        with (patch.object(development_worker.signal, "signal"),
+              patch.object(development_worker, "_honor_agent_control"),
+              patch.dict(os.environ, {"BASALTWATER_TEST_READY_TOKEN": "unrelated"})):
             self.assertEqual(development_worker.run_task(first_directory), 0)
         self.assertEqual((first_directory / "output.log").read_text(), "training\n")
         self.assertEqual(json.loads((first_directory / "result.json").read_text())["returncode"], 0)
+        artifacts = first_directory / "artifacts"
+        self.assertEqual((artifacts / "milestones.jsonl").read_text(), "ready\n")
+        self.assertEqual(stat.S_IMODE(artifacts.stat().st_mode), 0o700)
         recorder.finish({})
         with patch.object(development, "list_tasks", return_value={"tasks": [], "truncated": True}):
             finalized = evidence.finalize(str(recorder.path), tasks=[], renderer=None)
         self.assertEqual([item["task"] for item in finalized["tasks"]], [first["task"], second["task"]])
+        self.assertEqual(json.loads(recorder.path.read_text())["tasks"][0]["artifacts"], str(artifacts))
 
     def test_playtest_refuses_symlink_seed_and_wrong_recorder_before_submit(self):
         self.playtest_manifest()
