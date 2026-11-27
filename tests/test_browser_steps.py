@@ -16,10 +16,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from desktop import browser_extensions
 from desktop.browser_steps import (
-    _configure_librewolf_apparmor_profile,
     _ensure_extrepo_and_update,
     _install_via_extrepo,
     _refresh_existing_extrepo_sources,
+    _update_apt_metadata,
     install_single_browser,
     install_browser,
     is_flatpak_app_installed,
@@ -36,7 +36,6 @@ class TestBrowserSteps(unittest.TestCase):
                         patch("desktop.browser_steps.is_package_installed", return_value=False), \
                         patch("desktop.browser_steps.is_flatpak_app_installed", return_value=False), \
                         patch("desktop.browser_steps.install_flatpak_if_needed", return_value=True), \
-                        patch("desktop.browser_steps.shutil.which", return_value=None), \
                         patch("desktop.browser_steps.os.path.exists", return_value=False), \
                         patch("desktop.browser_steps._install_via_extrepo", return_value=False), \
                         patch("desktop.browser_steps.run", return_value=SimpleNamespace(
@@ -48,11 +47,41 @@ class TestBrowserSteps(unittest.TestCase):
         for code, installed, expected in ((1, True, False), (0, False, False), (0, True, True)):
             with self.subTest(code=code, installed=installed), \
                     patch("desktop.browser_steps._ensure_extrepo_and_update"), \
-                    patch("desktop.browser_steps._update_apt_metadata"), \
-                    patch("desktop.browser_steps.os.path.exists", return_value=True), \
+                    patch("desktop.browser_steps._update_apt_metadata", return_value=SimpleNamespace(returncode=0)), \
+                    patch("desktop.browser_steps.os.path.isfile", return_value=True), \
                     patch("desktop.browser_steps.is_package_installed", return_value=installed), \
-                    patch("desktop.browser_steps.run", return_value=SimpleNamespace(returncode=code)):
+                    patch("desktop.browser_steps.run", side_effect=[SimpleNamespace(returncode=0), SimpleNamespace(returncode=code)]):
                 self.assertEqual(_install_via_extrepo("LibreWolf", "librewolf", "librewolf"), expected)
+
+    def test_only_an_extrepo_timeout_uses_packaged_metadata_and_failed_refresh_stops_install(self):
+        for enable, offline, refresh, expected in (
+            (124, True, 0, True), (124, False, 0, False), (1, True, 0, False), (0, True, 100, False),
+        ):
+            commands = []
+
+            def execute(command, **kwargs):
+                commands.append(command)
+                return SimpleNamespace(returncode=enable if len(commands) == 1 else 0)
+
+            with self.subTest(enable=enable, offline=offline, refresh=refresh), \
+                    patch("desktop.browser_steps._ensure_extrepo_and_update"), \
+                    patch("desktop.browser_steps._update_apt_metadata", return_value=SimpleNamespace(returncode=refresh)), \
+                    patch("desktop.browser_steps.os.path.isfile", return_value=True), \
+                    patch("desktop.browser_steps.is_package_installed", side_effect=lambda pkg: pkg == "librewolf" or offline), \
+                    patch("desktop.browser_steps.run", side_effect=execute):
+                self.assertEqual(_install_via_extrepo("LibreWolf", "librewolf", "librewolf"), expected)
+            self.assertEqual(any("--offlinedata" in cmd for cmd in commands), enable == 124 and offline)
+            self.assertEqual(any(cmd.startswith("apt-get install") for cmd in commands), expected)
+
+    @patch("desktop.browser_steps.run")
+    def test_targeted_apt_update_rejects_partial_indexes_and_keeps_other_lists(self, execute):
+        source = "/etc/apt/sources.list.d/extrepo_librewolf.sources"
+        _update_apt_metadata(source)
+        options = execute.call_args.args[0]
+        self.assertIn("APT::Update::Error-Mode=any", options)
+        self.assertIn(f"Dir::Etc::sourcelist={source}", options)
+        self.assertIn("Dir::Etc::sourceparts=-", options)
+        self.assertIn("--no-list-cleanup", options)
 
     def test_failed_first_browser_stops_before_installing_later_selections(self):
         with patch("desktop.browser_steps.is_package_installed", return_value=False), \
@@ -191,62 +220,6 @@ class TestBrowserSteps(unittest.TestCase):
         mock_run.side_effect = FileNotFoundError
         self.assertFalse(is_flatpak_app_installed("org.mozilla.firefox", system=True))
 
-    @patch("desktop.browser_steps.os.path.isfile", return_value=True)
-    @patch("desktop.browser_steps.shutil.which", return_value="/usr/bin/apparmor-tool")
-    @patch("desktop.browser_steps.run")
-    @patch("builtins.open", new_callable=unittest.mock.mock_open)
-    def test_recreates_and_reloads_librewolf_apparmor_profile(
-        self, mock_open, mock_run, _which, _isfile
-    ):
-        mock_run.side_effect = [
-            subprocess.CompletedProcess(args=["aa-enabled"], returncode=0),
-            subprocess.CompletedProcess(args=["apparmor_parser"], returncode=0),
-            subprocess.CompletedProcess(args=["apparmor_parser"], returncode=0),
-        ]
-
-        _configure_librewolf_apparmor_profile()
-
-        self.assertEqual(mock_run.call_count, 3)
-        mock_run.assert_any_call("aa-enabled -q", check=False)
-        mock_run.assert_any_call(
-            "apparmor_parser -R /etc/apparmor.d/librewolf", check=False
-        )
-        mock_run.assert_any_call(
-            "apparmor_parser -r -W /etc/apparmor.d/librewolf", check=False
-        )
-        written = "".join(
-            call.args[0] for call in mock_open().write.call_args_list if call.args
-        )
-        self.assertIn(
-            "profile librewolf /usr/share/librewolf/{librewolf,librewolf-bin} "
-            "flags=(unconfined) {",
-            written,
-        )
-
-    @patch("desktop.browser_steps.os.path.isfile", return_value=True)
-    @patch("desktop.browser_steps.shutil.which", return_value="/usr/bin/apparmor-tool")
-    @patch("desktop.browser_steps.run")
-    def test_skips_librewolf_profile_reload_when_apparmor_is_inactive(
-        self, mock_run, _which, _isfile
-    ):
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=["aa-enabled"], returncode=1
-        )
-
-        _configure_librewolf_apparmor_profile()
-
-        mock_run.assert_called_once_with("aa-enabled -q", check=False)
-
-    @patch("desktop.browser_steps.os.path.isfile", return_value=True)
-    @patch("desktop.browser_steps.shutil.which", return_value=None)
-    @patch("desktop.browser_steps.run")
-    def test_skips_librewolf_profile_reload_when_apparmor_tools_are_missing(
-        self, mock_run, _which, _isfile
-    ):
-        _configure_librewolf_apparmor_profile()
-
-        mock_run.assert_not_called()
-
     @patch("desktop.browser_steps.os.path.isfile")
     @patch("desktop.browser_steps.run")
     def test_refreshes_existing_extrepo_source_definitions(self, mock_run, mock_isfile):
@@ -292,8 +265,7 @@ class TestBrowserSteps(unittest.TestCase):
             args=["apt-get"], returncode=0
         )
 
-        with patch("desktop.browser_steps._apt_update_done", False):
-            _ensure_extrepo_and_update()
+        _ensure_extrepo_and_update()
 
         mock_update.assert_called_once_with()
         mock_refresh.assert_not_called()
@@ -309,8 +281,7 @@ class TestBrowserSteps(unittest.TestCase):
             subprocess.CompletedProcess(args=["apt-get"], returncode=0),
         ]
 
-        with patch("desktop.browser_steps._apt_update_done", False):
-            _ensure_extrepo_and_update()
+        _ensure_extrepo_and_update()
 
         self.assertEqual(mock_update.call_count, 2)
         mock_refresh.assert_called_once_with()

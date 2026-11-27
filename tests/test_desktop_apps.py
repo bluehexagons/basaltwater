@@ -554,20 +554,19 @@ class TestBrowserSteps(unittest.TestCase):
 
     @patch("desktop.browser_steps._install_via_extrepo")
     @patch("desktop.browser_steps.is_package_installed")
-    def test_librewolf_install_does_not_remove_legacy_repo_files(self, mock_package, mock_extrepo):
-        """Legacy LibreWolf repo cleanup has been removed from the install path."""
+    def test_librewolf_install_and_rerun_leave_apparmor_to_the_package(self, mock_package, mock_extrepo):
         from desktop.browser_steps import install_single_browser
 
-        mock_package.return_value = False
+        mock_package.side_effect = [False, True]
         mock_extrepo.return_value = True
 
-        with patch(
-            "desktop.browser_steps._configure_librewolf_apparmor_profile"
-        ) as mock_profile:
+        with patch("desktop.browser_steps.run") as execute, patch("builtins.open") as opened:
+            install_single_browser("librewolf", use_flatpak=False)
             install_single_browser("librewolf", use_flatpak=False)
 
         mock_extrepo.assert_called_once_with("LibreWolf", "librewolf", "librewolf")
-        mock_profile.assert_called_once_with()
+        execute.assert_not_called()
+        opened.assert_not_called()
 
 if __name__ == "__main__":
     unittest.main()

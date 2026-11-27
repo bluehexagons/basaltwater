@@ -188,11 +188,11 @@ repository problem, then rerun the same desired setup.
 For an extrepo-based browser install, setup first refreshes APT normally. If
 that refresh fails, it makes one bounded attempt to refresh existing
 extrepo-managed definitions for LibreWolf and legacy VS Code installs,
-then retries APT. The extrepo repair has a 30-second per-source timeout and does not
-run on successful reruns. It does not remove or rewrite manually managed files under
-`/etc/apt/sources.list` or `/etc/apt/sources.list.d`. If APT still reports an
-unrelated third-party source error, repair or disable that source separately
-before rerunning setup.
+then retries APT. Each extrepo lookup has a 30-second timeout. If enabling
+LibreWolf times out and Debian's `extrepo-offline-data` package is installed,
+setup retries with that package's repository definition. Setup requires a
+successful refresh of the selected repository before installing LibreWolf.
+An already installed browser skips repository setup on rerun.
 
 The first browser in a repeated list is written to the setup user's
 `~/.config/mimeapps.list` as the HTTP/HTTPS default. Text-only browsers do not
@@ -207,11 +207,11 @@ helper selections and comments in both preference files.
 
 On VM and hardware targets, AppArmor is enabled and its distro service reloads
 the installed policy without blanket-enforcing package profiles. This preserves
-each profile's declared `enforce`, `complain`, or `unconfined` mode. LibreWolf's
-own browser sandbox remains responsible for browser confinement. Setup replaces
-the package profile with its managed unconfined compatibility profile and
-reloads it. The `v2.0.0` setup is intended for clean workstation builds rather
-than in-place migration of older basaltwater state.
+each profile's declared `enforce`, `complain`, or `unconfined` mode. The native
+LibreWolf package supplies `/etc/apparmor.d/librewolf` and handles its
+installation. Browser setup preserves the package profile and administrator
+edits. For older installations with a malformed profile, review the installed
+conffile against the current LibreWolf package.
 
 Debian 13's AppArmor policy also supplies the `unprivileged_userns` transition
 used by otherwise-unconfined applications that create a user namespace. Setup

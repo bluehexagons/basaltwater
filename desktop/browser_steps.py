@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import shlex
-import shutil
 import subprocess
 
 from desktop.apps_steps import FLATPAK_REMOTE, install_flatpak_if_needed, is_flatpak_app_installed
@@ -13,6 +12,7 @@ from desktop.browser_session import FLATPAK_BROWSER_IDS
 from desktop.home_setup import apply_home_settings
 from lib.config import GRAPHICAL_SETUP_BROWSERS, SetupConfig
 from lib.machine_state import is_container
+from lib.maintenance_defaults import APT_UPDATE_OPTIONS
 from lib.remote_utils import (
     is_dry_run,
     is_package_installed,
@@ -20,62 +20,10 @@ from lib.remote_utils import (
 )
 
 
-_apt_update_done = False
 _EXTREPO_SOURCE_DIR = "/etc/apt/sources.list.d"
 _MANAGED_EXTREPOS = ("librewolf", "vscode")
-_EXTREPO_UPDATE_TIMEOUT_SECONDS = 30
-_APT_UPDATE_COMMAND = (
-    "apt-get -o DPkg::Lock::Timeout=120 "
-    "-o Acquire::Retries=0 -o Acquire::http::Timeout=15 "
-    "-o Acquire::https::Timeout=15 update -qq"
-)
-_LIBREWOLF_APPARMOR_PROFILE = "/etc/apparmor.d/librewolf"
+_EXTREPO_COMMAND = "timeout --kill-after=5s 30s extrepo"
 _XFCE_HELPER_SUBDIR = os.path.join(".local", "share", "xfce4", "helpers")
-_LIBREWOLF_APPARMOR_PROFILE_CONTENT = """# Managed by basaltwater.
-abi <abi/4.0>,
-include <tunables/global>
-
-profile librewolf /usr/share/librewolf/{librewolf,librewolf-bin} flags=(unconfined) {
-        userns,
-        include if exists <local/librewolf>
-}
-"""
-
-
-def _configure_librewolf_apparmor_profile() -> None:
-    """Write and load the managed LibreWolf AppArmor compatibility profile.
-
-    LibreWolf's own browser sandbox remains responsible for confinement while
-    the AppArmor label avoids blocking its dynamic loader and user namespaces.
-    Workstation setup owns this small package-profile replacement; older
-    workstation state is intentionally outside the supported upgrade path.
-    """
-    if not os.path.isfile(_LIBREWOLF_APPARMOR_PROFILE):
-        return
-    if not shutil.which("aa-enabled") or not shutil.which("apparmor_parser"):
-        print(
-            "  ⚠ AppArmor tooling is unavailable; "
-            "skipping LibreWolf profile reload"
-        )
-        return
-    if run("aa-enabled -q", check=False).returncode != 0:
-        return
-    run(
-        f"apparmor_parser -R {shlex.quote(_LIBREWOLF_APPARMOR_PROFILE)}",
-        check=False,
-    )
-    try:
-        with open(_LIBREWOLF_APPARMOR_PROFILE, "w", encoding="utf-8") as f:
-            f.write(_LIBREWOLF_APPARMOR_PROFILE_CONTENT)
-    except OSError:
-        print("  ⚠ Could not write LibreWolf's managed AppArmor profile")
-        return
-    result = run(
-        f"apparmor_parser -r -W {shlex.quote(_LIBREWOLF_APPARMOR_PROFILE)}",
-        check=False,
-    )
-    if result.returncode != 0:
-        print("  ⚠ Could not reload LibreWolf's unconfined AppArmor profile")
 
 
 def _refresh_existing_extrepo_sources() -> bool:
@@ -96,14 +44,13 @@ def _refresh_existing_extrepo_sources() -> bool:
             continue
         refreshed_any = True
         result = run(
-            f"timeout --kill-after=5s {_EXTREPO_UPDATE_TIMEOUT_SECONDS}s "
-            f"extrepo update {shlex.quote(extrepo_name)}",
+            f"{_EXTREPO_COMMAND} update {shlex.quote(extrepo_name)}",
             check=False,
         )
         if result.returncode in (124, 137):
             print(
                 f"  ⚠ Timed out refreshing the extrepo {extrepo_name} "
-                f"source definition after {_EXTREPO_UPDATE_TIMEOUT_SECONDS}s"
+                "source definition after 30s"
             )
             continue
         if result.returncode != 0:
@@ -114,50 +61,55 @@ def _refresh_existing_extrepo_sources() -> bool:
     return refreshed_any
 
 
-def _update_apt_metadata() -> subprocess.CompletedProcess[str]:
+def _update_apt_metadata(source: str | None = None) -> subprocess.CompletedProcess[str]:
     """Refresh APT metadata with bounded network and lock waits."""
-    return run(_APT_UPDATE_COMMAND, check=False)
+    options = [
+        "-o", "DPkg::Lock::Timeout=120",
+        "-o", "Acquire::Retries=0",
+        "-o", "Acquire::http::Timeout=15",
+        "-o", "Acquire::https::Timeout=15",
+        *APT_UPDATE_OPTIONS,
+    ]
+    if source:
+        options.extend([
+            "-o", f"Dir::Etc::sourcelist={source}",
+            "-o", "Dir::Etc::sourceparts=-",
+            "--no-list-cleanup",
+        ])
+    return run(["apt-get", *options, "update", "-qq"], check=False)
 
 
 def _ensure_extrepo_and_update() -> None:
-    """Install extrepo if needed and run apt-get update only once."""
-    global _apt_update_done
+    """Refresh the package lists before installing extrepo on a fresh target."""
+    update_result = _update_apt_metadata()
     if not is_package_installed("extrepo"):
         os.environ["DEBIAN_FRONTEND"] = "noninteractive"
-        run("apt-get install -y -qq extrepo", check=False)
-    if not _apt_update_done:
-        update_result = _update_apt_metadata()
-        if update_result.returncode != 0:
-            print("  ⚠ APT metadata refresh failed; checking extrepo definitions")
-            if _refresh_existing_extrepo_sources():
-                retry_result = _update_apt_metadata()
-                if retry_result.returncode != 0:
-                    print(
-                        "  ⚠ APT metadata refresh still reports an error; "
-                        "continuing so the requested package can be verified"
-                    )
-            else:
-                print(
-                    "  ⚠ No managed extrepo definitions were found; "
-                    "continuing so the requested package can be verified"
-                )
-        _apt_update_done = True
+        run("apt-get install -y -qq extrepo")
+    if update_result.returncode != 0:
+        print("  ⚠ APT metadata refresh failed; checking extrepo definitions")
+        if _refresh_existing_extrepo_sources() and _update_apt_metadata().returncode != 0:
+            print("  ⚠ APT refresh still reports an error. Setup will check the selected repository separately.")
 
 
 def _install_via_extrepo(name: str, extrepo_name: str, package_name: str) -> bool:
     """Install a package via extrepo. Returns True if successful."""
     _ensure_extrepo_and_update()
-    run(f"extrepo enable {extrepo_name}", check=False)
-    _update_apt_metadata()
-    sources_path = f"/etc/apt/sources.list.d/extrepo_{extrepo_name}.sources"
-    if os.path.exists(sources_path):
-        os.environ["DEBIAN_FRONTEND"] = "noninteractive"
-        result = run(f"apt-get install -y -qq {package_name}", check=False)
-        if result.returncode == 0 and is_package_installed(package_name):
-            return True
-        print(f"  ✗ Failed to install {name} (package not found after install)")
-    else:
+    repository = shlex.quote(extrepo_name)
+    result = run(f"{_EXTREPO_COMMAND} enable {repository}", check=False)
+    if result.returncode in (124, 137) and is_package_installed("extrepo-offline-data"):
+        print(f"  Online extrepo lookup timed out. Using Debian's packaged definition for {name}.")
+        result = run(f"{_EXTREPO_COMMAND} --offlinedata enable {repository}", check=False)
+    sources_path = os.path.join(_EXTREPO_SOURCE_DIR, f"extrepo_{extrepo_name}.sources")
+    if result.returncode != 0 or not os.path.isfile(sources_path):
         print(f"  ✗ Failed to enable {name} repository")
+        return False
+    if _update_apt_metadata(sources_path).returncode != 0:
+        print(f"  ✗ Failed to refresh {name} repository")
+        return False
+    result = run(f"apt-get install -y -qq {shlex.quote(package_name)}", check=False)
+    if result.returncode == 0 and is_package_installed(package_name):
+        return True
+    print(f"  ✗ Failed to install {name}")
     return False
 
 
@@ -199,13 +151,11 @@ def install_single_browser(browser: str, use_flatpak: bool) -> None:
 
     elif browser == "librewolf":
         if is_package_installed("librewolf"):
-            _configure_librewolf_apparmor_profile()
             print("  ✓ LibreWolf browser already installed")
             return
         print("  Installing LibreWolf browser...")
         if not _install_via_extrepo("LibreWolf", "librewolf", "librewolf"):
             raise RuntimeError("LibreWolf installation failed")
-        _configure_librewolf_apparmor_profile()
         print("  ✓ LibreWolf browser installed")
 
     elif browser in ("chromium", "lynx"):
