@@ -12,9 +12,10 @@ import shutil
 import stat
 import subprocess
 import tempfile
+from pathlib import Path
 from typing import Optional, Sequence
 
-from lib.atomic_io import write_text_atomic
+from lib.atomic_io import write_bytes_atomic, write_text_atomic
 from lib.maintenance_systemd import configure_maintenance_timer
 from lib.kernel_restart import newer_installed_kernel
 from lib.node_toolchain import is_supported_node, resolve_node_release
@@ -68,6 +69,7 @@ _USER_TOOL_SHELL_ENV_RELATIVE_PATH = (
 )
 _USER_TOOL_SHELL_MARKER = "# basaltwater user tool environment"
 _PYTHON_ALIAS_PATH = "/usr/local/bin/python"
+_VIM_CONFIG_DIR = Path("/etc/vim")
 _ROOT_SSH_DIRECTORY = "/root/.ssh"
 _AUTHORIZED_KEYS_LIMIT = 1024 * 1024
 # pnpm 12 replaces a shell fallback with its native executable during install.
@@ -101,7 +103,6 @@ CLI_TOOL_PACKAGES = (
     "jq",
     "less",
     "make",
-    "neovim",
     "patch",
     "pv",
     "ripgrep",
@@ -110,6 +111,7 @@ CLI_TOOL_PACKAGES = (
     "tmux",
     "tree",
     "unzip",
+    "vim",
     "wget",
     "xdg-utils",
     "zip",
@@ -663,9 +665,46 @@ def _install_tool_packages(packages: Sequence[str], label: str) -> None:
     print(f"  ✓ Installed {label} tools: {', '.join(missing)}")
 
 
+def _configure_vim() -> None:
+    """Install the shared defaults and use Debian's site vimrc hook if available."""
+    if is_dry_run():
+        print("  [DRY-RUN] Would install Basaltwater Vim defaults")
+        return
+
+    defaults = _VIM_CONFIG_DIR / "basaltwater.vim"
+    content = (Path(__file__).parent / "config" / defaults.name).read_bytes()
+    try:
+        info = defaults.lstat()
+    except FileNotFoundError:
+        info = None
+    if info and not stat.S_ISREG(info.st_mode):
+        raise RuntimeError(f"Expected a regular file at {defaults}")
+    if (
+        info is None
+        or info.st_uid != os.geteuid()
+        or stat.S_IMODE(info.st_mode) != 0o644
+        or info.st_size != len(content)
+        or defaults.read_bytes() != content
+    ):
+        write_bytes_atomic(str(defaults), content, mode=0o644)
+
+    site_vimrc = _VIM_CONFIG_DIR / "vimrc.local"
+    if not os.path.lexists(site_vimrc):
+        # Publish a complete, editable starter only if the site hook is still free.
+        with tempfile.TemporaryDirectory(dir=_VIM_CONFIG_DIR) as staging:
+            starter = Path(staging) / site_vimrc.name
+            write_text_atomic(str(starter), f"source {defaults}\n", mode=0o644)
+            try:
+                os.link(starter, site_vimrc)
+            except FileExistsError:
+                pass
+    print(f"  Vim defaults available at {defaults}. Site configuration: {site_vimrc}")
+
+
 def install_cli_tools(config: SetupConfig) -> None:
     """Install the small command-line baseline shared by development profiles."""
     _install_tool_packages(CLI_TOOL_PACKAGES, "CLI")
+    _configure_vim()
 
 
 def ensure_python_alias(config: SetupConfig) -> str | None:
@@ -741,7 +780,6 @@ CONTROL_PLANE_PACKAGES = (
     "less",
     "lsof",
     "netcat-openbsd",
-    "neovim",
     "openssh-client",
     "procps",
     "psmisc",
@@ -751,6 +789,7 @@ CONTROL_PLANE_PACKAGES = (
     "tmux",
     "tree",
     "unzip",
+    "vim",
     "wget",
     "zip",
 )
@@ -759,6 +798,7 @@ CONTROL_PLANE_PACKAGES = (
 def install_control_plane_tools(config: SetupConfig) -> None:
     """Install common Debian administrator and Linux control-plane tools."""
     _install_tool_packages(CONTROL_PLANE_PACKAGES, "Control-plane")
+    _configure_vim()
 
 
 def check_restart_required(config: SetupConfig) -> None:

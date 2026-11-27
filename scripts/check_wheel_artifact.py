@@ -27,6 +27,7 @@ REQUIRED_WHEEL_PATHS = (
     "lib/t3code_service_env_probe.cjs",
     "plugins/common.py",
     "common/agent_steps.py",
+    "common/config/basaltwater.vim",
     "lib/admin_actions.py",
     "common/service_tools/admin_job.py",
     "common/service_tools/web_panel_admin.py",

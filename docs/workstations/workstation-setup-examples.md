@@ -107,8 +107,9 @@ basaltw setup agent_workstation 10.0.0.25 agent --codex \
 ```
 
 This adds the selected agent tools, Playwright browser automation, Firefox ESR,
-administrator tools, and the selected repository. Neovim is part of the CLI
-bundle; add `--editor geany` or `--editor vscode` only when the VM needs a
+administrator tools, and the selected repository. The CLI bundle includes
+[terminal Vim](workstation-profiles-and-software.md#terminal-vim).
+Add `--editor geany` or `--editor vscode` when the VM needs a
 graphical development editor.
 Combine `--codex`, `--claude`, and `--opencode` for the providers you need;
 `--agent-tool gh` selects GitHub CLI on profiles without that default. Install a graphical T3 Code client

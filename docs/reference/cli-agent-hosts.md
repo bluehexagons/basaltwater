@@ -52,7 +52,7 @@ The standalone flag replaces the former `--privilege-broker [PORT]` syntax;
 saved standalone configurations retain their listener.
 See [Privilege approvals](../agents/privilege-approvals.md)
 and the complete [Agentic VM examples](../agents/agentic-vms.md).
-The shared CLI baseline includes small coding and inspection tools such as
+The shared CLI baseline includes [terminal Vim](../workstations/workstation-profiles-and-software.md#terminal-vim),
 `ripgrep` (`rg`), `jq`, SQLite, `file`, `tree`, `make`, and `patch`. The
 substantially larger Python analysis/notebook stack remains opt-in through
 `--data-analysis`. Image, audio, and video processing tools remain opt-in

@@ -33,7 +33,7 @@ previews these steps without taking the lock. See
 Install one or more Debian packages without running the rest of setup:
 
 ```bash
-sudo basaltw local install neovim tmux jq
+sudo basaltw local install vim tmux jq
 ```
 
 Package names are validated before APT runs. The command uses the same
@@ -93,7 +93,7 @@ sudo basaltw setup workstation_dev localhost "$USER" \
   --office --editor geany --dry-run
 ```
 
-`workstation_dev` already includes Firefox ESR and Neovim. Use `--editor
+`workstation_dev` already includes Firefox ESR and terminal Vim. Use `--editor
 geany` for the lightweight Debian IDE or `--editor vscode` for the explicitly
 scoped Microsoft repository. The `pc_dev` profile adds LibreOffice, SMB client
 support, and Remmina. Third-party GUI applications such as Discord are

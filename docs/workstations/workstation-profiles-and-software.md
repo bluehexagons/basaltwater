@@ -8,7 +8,7 @@
 | --- | --- |
 | `workstation_desktop` | Desktop, Firefox ESR, and CLI tools |
 | `pc_dev` | Desktop, Firefox ESR, LibreOffice, SMB client packages, Remmina, and CLI tools |
-| `workstation_dev` | Desktop, Firefox ESR, and CLI tools including Neovim |
+| `workstation_dev` | Desktop, Firefox ESR, and CLI tools including Vim |
 | `agent_workstation` | Developer workstation defaults plus GitHub CLI; explicit provider required |
 | `agent_code_vm` | Agent workstation plus Geany, T3 Code web, RDP, pairing, and read-write Git/auth defaults |
 
@@ -18,6 +18,28 @@ setup user; repeat the flag to install more than one browser. Graphical editors
 are explicit on the general profiles: select Geany or Visual Studio Code with
 `--editor geany` or `--editor vscode`. The opinionated `agent_code_vm` profile
 defaults to Geany; `--editor vscode` replaces that editor default.
+
+## Terminal Vim
+
+The Debian CLI and control-plane bundles install `vim` with a small configuration
+inspired by [vim-sensible](https://github.com/tpope/vim-sensible) and the
+[Basic edition of amix/vimrc](https://github.com/amix/vimrc#how-to-install-the-basic-version).
+It uses Vim's built-in syntax highlighting, filetype indentation, line numbers,
+and Tab completion. You can switch buffers with unsaved edits and use
+`Ctrl-^` to return to the alternate buffer.
+
+Use `/name` to find any capitalization or `/Name` to match case. Press
+`Ctrl-L` to clear the highlights and redraw. For project-wide results, run
+`:grep name .` from the project directory, then `:copen` to see the matches.
+Use `:cnext` and `:cprevious` to jump between them. The search uses ripgrep
+and respects the project's ignore files.
+
+Put personal overrides in `~/.vimrc`, for example `set nonumber`. On a fresh
+setup, Debian's `/etc/vim/vimrc.local` loads the managed
+`/etc/vim/basaltwater.vim`. Put site-wide overrides below its `source` line.
+To adopt the defaults in an existing site vimrc, add
+`source /etc/vim/basaltwater.vim` before your site settings.
+Setup reruns leave previously installed Neovim and personal editor files in place.
 
 ## Desktop software support and flags
 

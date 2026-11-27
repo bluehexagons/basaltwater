@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import os
 import shlex
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -157,6 +160,10 @@ class TestControlPlanePackages(unittest.TestCase):
 
 
 class TestDevelopmentToolPackages(unittest.TestCase):
+    def setUp(self):
+        self.vim_dir = Path(self.enterContext(tempfile.TemporaryDirectory())) / "vim"
+        self.enterContext(patch("common.common_steps._VIM_CONFIG_DIR", self.vim_dir))
+
     @patch("common.common_steps.os.path.isfile", return_value=True)
     @patch("common.common_steps.os.path.lexists", return_value=False)
     @patch("common.common_steps.shutil.which", side_effect=["/usr/bin/python3", None])
@@ -285,21 +292,30 @@ class TestDevelopmentToolPackages(unittest.TestCase):
 
     @patch("common.common_steps.run")
     @patch("common.common_steps.missing_packages")
-    def test_cli_installer_requests_every_missing_baseline_package(
+    def test_editor_bundles_install_vim_and_activate_the_shipped_defaults(
         self, mock_missing, mock_run
     ):
-        mock_missing.side_effect = [list(CLI_TOOL_PACKAGES), []]
         mock_run.return_value = MagicMock(returncode=0)
-
-        install_cli_tools(
-            SetupConfig(host="testhost", username="agent", system_type="agent_vm")
-        )
-
-        command = mock_run.call_args.args[0]
-        self.assertIn("-o DPkg::Lock::Timeout=300", command)
-        for package in CLI_TOOL_PACKAGES:
-            with self.subTest(package=package):
-                self.assertIn(f" {package}", command)
+        config = SetupConfig(host="testhost", username="agent", system_type="agent_vm")
+        for installer, packages in (
+            (install_cli_tools, CLI_TOOL_PACKAGES),
+            (install_control_plane_tools, CONTROL_PLANE_PACKAGES),
+        ):
+            directory = self.vim_dir / installer.__name__
+            with self.subTest(installer=installer.__name__), patch("common.common_steps._VIM_CONFIG_DIR", directory):
+                mock_missing.side_effect = [list(packages), []]
+                installer(config)
+                command = shlex.split(mock_run.call_args.args[0])
+                self.assertIn("DPkg::Lock::Timeout=300", command)
+                self.assertTrue(set(packages).issubset(command))
+                self.assertIn("vim", command)
+                self.assertNotIn("neovim", command)
+                site = directory / "vimrc.local"
+                defaults = directory / "basaltwater.vim"
+                self.assertEqual(site.read_text(), f"source {defaults}\n")
+                self.assertIn("set incsearch hlsearch ignorecase smartcase", defaults.read_text())
+                self.assertEqual(site.stat().st_mode & 0o777, 0o644)
+                self.assertEqual(defaults.stat().st_mode & 0o777, 0o644)
 
     @patch("common.common_steps.run")
     @patch("common.common_steps.missing_packages")
@@ -406,10 +422,11 @@ class TestDevelopmentToolPackages(unittest.TestCase):
                     self.assertRaisesRegex(RuntimeError, "CLI tool installation failed:") as raised:
                 install_cli_tools(config)
             self.assertTrue(str(raised.exception).endswith(", ".join(remaining or missing)))
+            self.assertFalse(self.vim_dir.exists())
 
     def test_installed_bundles_and_previews_do_not_run_apt(self):
         config = SetupConfig(host="testhost", username="agent", system_type="agent_vm")
-        for preview in (False, True):
+        for preview in (True, False):
             with self.subTest(preview=preview), \
                     patch("common.common_steps.is_dry_run", return_value=preview), \
                     patch("common.common_steps.missing_packages", return_value=[]) as probe, \
@@ -417,6 +434,46 @@ class TestDevelopmentToolPackages(unittest.TestCase):
                 install_cli_tools(config)
                 run.assert_not_called()
                 self.assertEqual(probe.call_count, int(not preview))
+                self.assertEqual((self.vim_dir / "vimrc.local").is_file(), not preview)
+
+    @patch("common.common_steps.missing_packages", return_value=[])
+    def test_vim_rerun_refreshes_only_the_managed_file(self, _missing):
+        config = SetupConfig(host="testhost", username="agent", system_type="agent_vm")
+        self.vim_dir.mkdir()
+        site = self.vim_dir / "vimrc.local"
+        site.write_text("set nonumber\n")
+        defaults = self.vim_dir / "basaltwater.vim"
+        defaults.write_text("old defaults\n")
+        install_cli_tools(config)
+        self.assertIn("set number", defaults.read_text())
+        installed = defaults.stat()
+        install_control_plane_tools(config)
+        self.assertEqual(defaults.stat().st_ino, installed.st_ino)
+        self.assertEqual(site.read_text(), "set nonumber\n")
+        self.assertFalse(site.is_symlink())
+
+    @unittest.skipUnless(shutil.which("vim") and shutil.which("rg"), "requires Vim and ripgrep")
+    @patch("common.common_steps.missing_packages", return_value=[])
+    def test_site_vimrc_supports_overrides_and_ripgrep_quickfix_locations(self, _missing):
+        install_cli_tools(SetupConfig(host="testhost", username="agent", system_type="agent_vm"))
+        site = self.vim_dir / "vimrc.local"
+        with site.open("a", encoding="utf-8") as stream:
+            stream.write("set nonumber\n")
+        project = self.vim_dir.parent / "project"
+        project.mkdir()
+        (project / "two words.py").write_text("pass\n# SearchNeedle\n")
+        result = subprocess.run(
+            ["vim", "-Nu", str(site), "-n", "-i", "NONE", "--noplugin", "-es",
+             "-c", "silent grep! searchneedle .",
+             "-c", "cc", "-c", "call writefile([expand('%:t'), string(getpos('.')[1:2]), "
+                               "string(&number), string(&smartcase)], 'result')",
+             "-c", "qall!"],
+            cwd=project, env={"HOME": str(self.vim_dir.parent), "PATH": os.environ["PATH"]},
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((project / "result").read_text().splitlines(),
+                         ["two words.py", "[2, 3]", "0", "1"])
 
 
 class TestUserCommandEnvironment(unittest.TestCase):
