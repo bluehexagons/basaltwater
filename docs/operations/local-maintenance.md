@@ -83,7 +83,10 @@ sudo basaltw local browser librewolf --flatpak --no-default
 
 The default behavior configures the browser for the local desktop user. Use
 `--no-default` when installing a secondary browser. Supported browsers are
-`firefox`, `chromium`, `librewolf`, and `lynx`.
+`firefox`, `chromium`, `librewolf`, and `lynx`. The same command adds a
+missing content blocker to an existing browser. For Flatpak Firefox and
+Chromium, launch the browser online to finish the install.
+[Content blocking and verification](../workstations/workstation-profiles-and-software.md#content-blocking)
 
 For LibreOffice or an explicit graphical editor, use the workstation profile's
 existing flags and inspect the plan first:

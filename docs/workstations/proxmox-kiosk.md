@@ -109,11 +109,12 @@ the normal LAN bridge and manually configured host addresses.
 
 ## Runtime and lifecycle
 
-The runtime installs the APT packages `greetd`, `cage`, `firefox-esr`,
+The runtime installs the APT packages `greetd`, `cage`, `firefox-esr`, `webext-ublock-origin-firefox`,
 `dbus-user-session`, `libpam-systemd`, `libgl1-mesa-dri`, and
 `fonts-dejavu-core`, along with their required dependencies. Distribution
 security updates continue through the normal package maintenance path; a full
-desktop environment is not installed. Package rollback is not automatic.
+desktop environment is not installed. Firefox loads uBlock Origin from the
+Debian package even on an offline first launch. Package rollback is not automatic.
 
 Basaltwater owns `basaltwater-kiosk.service` and immutable configuration
 generations named `/etc/basaltwater/kiosk/session-<hash>.json` and

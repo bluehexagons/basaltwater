@@ -7,6 +7,7 @@ import shlex
 import shutil
 import subprocess
 
+from desktop.browser_extensions import install_chromium_blocker, install_firefox_blocker
 from desktop.browser_session import FLATPAK_BROWSER_IDS
 from desktop.home_setup import apply_home_settings
 from lib.config import GRAPHICAL_SETUP_BROWSERS, SetupConfig
@@ -77,10 +78,10 @@ def _configure_librewolf_apparmor_profile() -> None:
         print("  ⚠ Could not reload LibreWolf's unconfined AppArmor profile")
 
 
-def is_flatpak_app_installed(app_id: str) -> bool:
+def is_flatpak_app_installed(app_id: str, *, system: bool = False) -> bool:
     """Check if a Flatpak application is installed."""
     result = subprocess.run(
-        ["flatpak", "list", "--app", "--columns=application"],
+        ["flatpak", "list", *(["--system"] if system else []), "--app", "--columns=application"],
         capture_output=True,
         text=True,
     )
@@ -172,31 +173,39 @@ def _install_via_extrepo(name: str, extrepo_name: str, package_name: str) -> boo
     return False
 
 
+def _install_browser_package(name: str, package: str) -> None:
+    if is_package_installed(package):
+        print(f"  ✓ {name} already installed")
+        return
+    print(f"  Installing {name}...")
+    result = run(f"apt-get install -y -qq {package}", check=False)
+    if result.returncode != 0 or not is_package_installed(package):
+        raise RuntimeError(f"{name} installation failed")
+    print(f"  ✓ {name} installed")
+
+
 def install_single_browser(browser: str, use_flatpak: bool) -> None:
     """Install a single browser."""
     os.environ["DEBIAN_FRONTEND"] = "noninteractive"
     app_id = FLATPAK_BROWSER_IDS.get(browser) if use_flatpak else None
     if app_id:
         name = "LibreWolf" if browser == "librewolf" else "Firefox"
-        if is_flatpak_app_installed(app_id):
+        if is_flatpak_app_installed(app_id, system=True):
             print(f"  ✓ {name} already installed")
-            return
-        print(f"  Installing {name}...")
-        result = run(f"flatpak install -y {FLATPAK_REMOTE} {app_id}", check=False)
-        if result.returncode != 0 or not is_flatpak_app_installed(app_id):
-            raise RuntimeError(f"{name} Flatpak installation failed")
-        print(f"  ✓ {name} installed")
+        else:
+            print(f"  Installing {name}...")
+            result = run(f"flatpak install --system -y {FLATPAK_REMOTE} {app_id}", check=False)
+            if result.returncode != 0 or not is_flatpak_app_installed(app_id, system=True):
+                raise RuntimeError(f"{name} Flatpak installation failed")
+            print(f"  ✓ {name} installed")
+        if browser == "firefox":
+            install_firefox_blocker(flatpak=True)
         return
 
     if browser == "firefox":
-        if is_package_installed("firefox") or is_package_installed("firefox-esr"):
-            print("  ✓ Firefox already installed")
-            return
-        print("  Installing Firefox...")
-        result = run("apt-get install -y -qq firefox-esr", check=False)
-        if result.returncode != 0 or not is_package_installed("firefox-esr"):
-            raise RuntimeError("Firefox installation failed")
-        print("  ✓ Firefox installed")
+        if not is_package_installed("firefox"):
+            _install_browser_package("Firefox", "firefox-esr")
+        install_firefox_blocker(flatpak=False)
 
     elif browser == "librewolf":
         if is_package_installed("librewolf"):
@@ -210,15 +219,9 @@ def install_single_browser(browser: str, use_flatpak: bool) -> None:
         print("  ✓ LibreWolf browser installed")
 
     elif browser in ("chromium", "lynx"):
-        name = browser.capitalize()
-        if is_package_installed(browser):
-            print(f"  ✓ {name} already installed")
-            return
-        print(f"  Installing {name}...")
-        result = run(f"apt-get install -y -qq {browser}", check=False)
-        if result.returncode != 0 or not is_package_installed(browser):
-            raise RuntimeError(f"{name} installation failed")
-        print(f"  ✓ {name} installed")
+        _install_browser_package(browser.capitalize(), browser)
+        if browser == "chromium":
+            install_chromium_blocker()
     else:
         raise ValueError(f"Unsupported browser: {browser}")
 
@@ -230,6 +233,10 @@ def install_browser(config: SetupConfig) -> None:
         return
     if config.dry_run or is_dry_run():
         print(f"  [DRY-RUN] Would install and verify: {', '.join(browsers)}")
+        if "firefox" in browsers:
+            print("  [DRY-RUN] Would set up uBlock Origin for Firefox")
+        if "chromium" in browsers:
+            print("  [DRY-RUN] Would register uBlock Origin Lite for Chromium")
         return
     # In containers, prefer apt over Flatpak since Flatpak often doesn't work
     use_flatpak = config.use_flatpak
@@ -274,7 +281,7 @@ def configure_default_browser(config: SetupConfig) -> None:
         config.use_flatpak
         and flatpak_app_id
         and not is_container()
-        and is_flatpak_app_installed(flatpak_app_id)
+        and is_flatpak_app_installed(flatpak_app_id, system=True)
     )
     if using_flatpak_browser:
         desktop_file = f"{flatpak_app_id}.desktop"

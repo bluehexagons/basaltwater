@@ -11,11 +11,14 @@ from lib.validation import validate_filesystem_path
 
 
 @contextmanager
-def directory_fd(path: str, *, create: bool = False, mode: int = 0o755) -> Iterator[int]:
+def directory_fd(path: str, *, create: bool = False, mode: int = 0o755,
+                 exact_create_mode: bool = False) -> Iterator[int]:
     """Open every component without following links; optionally create missing ones.
 
     Mutations through the returned descriptor remain on the opened directory
     even if an unprivileged owner replaces its pathname during setup.
+    Set exact_create_mode for public configuration that must remain readable
+    under a private setup umask. Existing directory modes are preserved.
     Creation syncs every parent entry before yielding, including entries left
     by an interrupted earlier invocation, so subsequent state writes are durable.
     """
@@ -28,18 +31,26 @@ def directory_fd(path: str, *, create: bool = False, mode: int = 0o755) -> Itera
         for component in path.split(os.sep):
             if not component or component == ".":
                 continue
+            created = False
             try:
                 child = os.open(component, flags, dir_fd=descriptor)
             except FileNotFoundError:
                 if not create:
                     raise
+                if exact_create_mode:
+                    info = os.fstat(descriptor)
+                    if info.st_uid != os.geteuid() or info.st_mode & 0o022:
+                        raise ValueError(f"Unsafe parent for setup directory: {path}")
                 try:
                     os.mkdir(component, mode=mode, dir_fd=descriptor)
+                    created = True
                 except FileExistsError:
                     pass
                 child = os.open(component, flags, dir_fd=descriptor)
             parent, descriptor = descriptor, child
             try:
+                if created and exact_create_mode:
+                    os.fchmod(descriptor, mode)
                 if create:
                     os.fsync(parent)
             finally:

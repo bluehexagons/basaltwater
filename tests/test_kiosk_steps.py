@@ -384,6 +384,7 @@ class KioskPreflightTests(unittest.TestCase):
             self.assertEqual(run.call_count, 1)
             self.assertIn("--no-remove", run.call_args.args[0])
             self.assertIn("firefox-esr", run.call_args.args[0])
+            self.assertIn("webext-ublock-origin-firefox", run.call_args.args[0])
             verify.assert_called_once()
             self.assertTrue(mask.is_symlink())
             self.assertEqual(mask.readlink(), Path("/dev/null"))

@@ -13,6 +13,7 @@ import shlex
 import stat
 from typing import TYPE_CHECKING
 
+from desktop.browser_extensions import FIREFOX_BLOCKER_PACKAGE
 from desktop.kiosk_runtime import ACCOUNT_COMMENT as COMMENT, HOME, MANAGER, USER, cleanup_sessions
 from lib.atomic_io import remove_file_durable, write_text_atomic
 from lib.kiosk_config import validate_kiosk_destinations, validate_kiosk_settings, validate_kiosk_url
@@ -37,7 +38,7 @@ DRM_DIR = Path("/dev/dri")
 INPUT_DIR = Path("/dev/input")
 VT = Path("/dev/tty7")
 MARKER = "# Managed by basaltwater local kiosk\n"
-PACKAGES = ("greetd", "cage", "firefox-esr", "dbus-user-session", "libpam-systemd",
+PACKAGES = ("greetd", "cage", "firefox-esr", FIREFOX_BLOCKER_PACKAGE, "dbus-user-session", "libpam-systemd",
             "libgl1-mesa-dri", "fonts-dejavu-core")
 GENERATED_NAME = re.compile(r"session-[a-f0-9]{64}\.(?:json|toml)\Z")
 

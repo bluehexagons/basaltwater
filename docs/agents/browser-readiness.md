@@ -75,6 +75,10 @@ on PATH. It also checks Firefox and LibreWolf through `flatpak info` and reports
 versions when available. A connected
 preview has engine `unknown` until the session establishes it. Never infer Firefox
 coverage from a viewport preset or an unknown preview.
+
+Disposable desktop profiles inherit [workstation content blockers](../workstations/workstation-profiles-and-software.md#content-blocking).
+For a missing request, record the active extension and browser context.
+Managed Playwright uses its own browser binaries and profiles.
 The ordinary browser capability doctor below qualifies managed Chromium and
 its MCP integration only. Its result includes the engine, context, and
 network origin explicitly, also retained in redacted readiness and support

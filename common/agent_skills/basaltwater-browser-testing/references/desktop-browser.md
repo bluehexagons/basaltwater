@@ -8,6 +8,9 @@ profile use `basaltw desktop develop browser --browser firefox-esr --project
 REPOSITORY --url URL --json`. Use `--browser chromium` or `--browser librewolf`
 to test either native alternative. The task reports its private profile and
 download directory. Use `desktop develop status TASK_ID` to get the browser launch PID.
+Fresh desktop profiles can inherit system-wide content blockers. If a request
+is missing, record the enabled extension and compare with the project's
+Playwright context when the task permits.
 Use a fresh window receipt for the file picker when it opens separately.
 Collect required downloads, close the owned browser, and run
 `desktop develop cleanup-browser TASK_ID` after exit. Add `--include-downloads`

@@ -148,6 +148,29 @@ selection as the primary browser.
 - Lynx installs the Debian terminal browser and does not become a graphical
   default.
 
+### Content blocking
+
+| Browser | What setup installs | How to check |
+| --- | --- | --- |
+| Native Firefox ESR | Debian's `webext-ublock-origin-firefox` package includes full uBlock Origin. APT supplies updates. | Open `about:addons` and look for enabled uBlock Origin. |
+| Firefox Flatpak | A system-wide Firefox policy installs full uBlock Origin from Mozilla Add-ons on the next online launch. Users can disable it. | Check `about:policies` for `ExtensionSettings` and `about:addons` for uBlock Origin. |
+| Debian Chromium | Chromium fetches uBlock Origin Lite from the Chrome Web Store on the next online launch. Lite is the publisher's Manifest V3 edition. Users can disable or remove it. | Open `chrome://extensions` and look for enabled uBlock Origin Lite. |
+| LibreWolf | LibreWolf includes uBlock Origin and its own filter-list defaults. | Open `about:addons`. |
+| Lynx | This text browser has no WebExtension support. | N/A |
+
+Allow the filter lists to initialize on first launch before testing blocking.
+Setup also registers missing blockers when rerun on an existing browser. If
+an administrator already supplies the Firefox Flatpak `policies.json` or a
+different Chromium registration for the same extension ID, setup reports the
+path and preserves the file. To include uBlock Origin in an existing Firefox
+policy, add `uBlock0@raymondhill.net` under `policies.ExtensionSettings` with
+`installation_mode` set to `normal_installed` and `install_url` set to
+`https://addons.mozilla.org/firefox/downloads/latest/ublock-origin/latest.xpi`.
+[Firefox extension policy](https://firefox-admin-docs.mozilla.org/reference/policies/extensionsettings/) ·
+[uBlock Origin Lite](https://github.com/uBlockOrigin/uBOL-home)
+
+### Saved selections and defaults
+
 Saved setups drop Brave, Browsh and Helium and keep the remaining browsers
 in order. If every selection was retired, setup uses the profile default
 (Firefox on Debian workstations). Rerunning setup preserves previously

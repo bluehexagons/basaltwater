@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import json
 import os
+from pathlib import Path
 import sys
 import subprocess
+import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
+from desktop import browser_extensions
 from desktop.browser_steps import (
     _configure_librewolf_apparmor_profile,
     _ensure_extrepo_and_update,
@@ -57,12 +61,78 @@ class TestBrowserSteps(unittest.TestCase):
         run.assert_called_once_with("apt-get install -y -qq firefox-esr", check=False)
 
     def test_chromium_uses_debian_package_and_skips_installed_copy(self):
-        with patch("desktop.browser_steps.is_package_installed", side_effect=[False, True, True]) as installed, \
+        with tempfile.TemporaryDirectory() as temp, \
+                patch.object(browser_extensions, "_CHROMIUM_ENTRY", Path(temp) / "extension.json") as entry, \
+                patch("desktop.browser_steps.is_package_installed", side_effect=[False, True, True]) as installed, \
                 patch("desktop.browser_steps.run", return_value=SimpleNamespace(returncode=0)) as run:
             install_single_browser("chromium", use_flatpak=True)
+            self.assertEqual(json.loads(entry.read_text()), {"external_update_url": "https://clients2.google.com/service/update2/crx"})
+            entry.unlink()
             install_single_browser("chromium", use_flatpak=False)
+            self.assertEqual(entry.stat().st_mode & 0o777, 0o644)
         self.assertEqual([call.args for call in installed.call_args_list], [("chromium",)] * 3)
         run.assert_called_once_with("apt-get install -y -qq chromium", check=False)
+
+    def test_native_firefox_repairs_and_verifies_blocker_on_rerun(self):
+        with patch("desktop.browser_steps.is_package_installed", return_value=True), \
+                patch.object(browser_extensions, "is_package_installed", side_effect=[False, True, True, False, False]), \
+                patch.object(browser_extensions, "run") as apt:
+            install_single_browser("firefox", False)
+            install_single_browser("firefox", False)
+            apt.assert_called_once_with(["apt-get", "install", "--no-install-recommends", "-y", "-qq",
+                                         "webext-ublock-origin-firefox"])
+            with self.assertRaisesRegex(RuntimeError, "missing webext-ublock-origin-firefox"):
+                install_single_browser("firefox", False)
+
+    def test_firefox_flatpak_seeds_only_its_own_branch_and_preserves_existing_policy(self):
+        with tempfile.TemporaryDirectory() as temp, \
+                patch.object(browser_extensions, "_FLATPAK_SYSTEMCONFIG", Path(temp)), \
+                patch("desktop.browser_steps.is_flatpak_app_installed", side_effect=[False, True, True, True]), \
+                patch("desktop.browser_steps.run", return_value=SimpleNamespace(returncode=0)) as install, \
+                patch.object(browser_extensions, "run", return_value=SimpleNamespace(
+                    stdout="app/org.mozilla.firefox/aarch64/stable\n")):
+            previous_umask = os.umask(0o077)
+            try:
+                install_single_browser("firefox", True)
+            finally:
+                os.umask(previous_umask)
+            policy = Path(temp, "aarch64/stable/policies/policies.json")
+            for directory in (policy.parent, policy.parent.parent, policy.parent.parent.parent):
+                self.assertEqual(directory.stat().st_mode & 0o777, 0o755)
+            self.assertEqual(Path(temp).stat().st_mode & 0o777, 0o700)
+            settings = json.loads(policy.read_text())["policies"]["ExtensionSettings"]["uBlock0@raymondhill.net"]
+            self.assertEqual(settings, {
+                "installation_mode": "normal_installed",
+                "install_url": "https://addons.mozilla.org/firefox/downloads/latest/ublock-origin/latest.xpi",
+            })
+            previous = policy.stat()
+            install_single_browser("firefox", True)
+            self.assertEqual(policy.stat().st_mtime_ns, previous.st_mtime_ns)
+            custom = '{"policies": {"ExtensionSettings": {"*": {"installation_mode": "blocked"}}}}\n'
+            policy.write_text(custom)
+            install_single_browser("firefox", True)
+            self.assertEqual(policy.read_text(), custom)
+            install.assert_called_once_with("flatpak install --system -y flathub org.mozilla.firefox", check=False)
+
+    def test_flatpak_ref_must_belong_to_firefox_and_contain_safe_path_components(self):
+        for ref in ("app/other/x86_64/stable", "app/org.mozilla.firefox/../stable",
+                    "app/org.mozilla.firefox/aarch64/../policy"):
+            with self.subTest(ref=ref), patch.object(browser_extensions, "run", return_value=SimpleNamespace(stdout=ref)), \
+                    patch.object(browser_extensions, "_seed_extension_file") as write:
+                with self.assertRaisesRegex(RuntimeError, "Flatpak architecture and branch"):
+                    browser_extensions.install_firefox_blocker(flatpak=True)
+                write.assert_not_called()
+
+    def test_chromium_registration_preserves_an_administrator_link(self):
+        with tempfile.TemporaryDirectory() as temp:
+            admin = Path(temp, "admin.json")
+            admin.write_text("{}\n")
+            entry = Path(temp, "extension.json")
+            entry.symlink_to(admin)
+            with patch.object(browser_extensions, "_CHROMIUM_ENTRY", entry):
+                browser_extensions.install_chromium_blocker()
+            self.assertTrue(entry.is_symlink())
+            self.assertEqual(admin.read_text(), "{}\n")
 
     def test_browser_dry_run_does_not_probe_or_install_packages(self):
         with patch("desktop.browser_steps.run") as run, \
