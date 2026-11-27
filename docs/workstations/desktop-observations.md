@@ -53,6 +53,7 @@ after confirmed release and cleanup. Use `--observe --output NEW.png` to
 choose the path. The older `--observe NEW.png` form also works on Windows.
 The settle delay accepts 0–5000 ms on all three platforms. The output must be
 new, and the CLI checks its parent and write access before input.
+
 `screenshot --compact` retains the existing small JSON geometry/origin receipt.
 Save that JSON and use `map-point --capture frame.json --view-width 1200
 --view-height 800 --x 600 --y 400` for a resized, full window image. Supply
@@ -401,6 +402,28 @@ checks. Token-bound non-ASCII text is refused before dispatch on Debian until
 server-paced text is implemented. Use accessible `element set-text` and verify
 its result when a control supports it; otherwise inspect a fresh capture and
 use paced text without `--observation`, then verify the delivered text.
+
+## Compare input and capture timing
+
+Input receipts report measured milliseconds in `timing` where available
+(`result.timing` on Windows). `input_round_trip_ms` includes client preflight
+on Linux and measures the worker exchange after caller-side guards on Windows.
+`input_submission_ms` measures the backend's dispatch through completion and
+is part of the round trip. An observation adds
+`settle_wait_ms` for the actual delay, `control_recheck_ms` for the checks
+before capture, and `capture_round_trip_ms` for the capture request. A failure
+retains timings for stages reached. A control refusal omits capture timing.
+Older workers, client-paced text and Windows held leases may omit submission
+timing. The held lease's send journal retains its own timings.
+
+Windows reports `worker_mode` as `cold` or `warm`. The cold
+`worker_startup_ms` spans process launch through native worker readiness.
+The nested observation's own `timing` records its worker and
+`capture_operation_ms`, the time the native capture call took inside it.
+Linux uses resident workers. Repeat the same
+actions at the same game state and settle setting in each mode, inspect the
+returned images, and retain the receipts privately. These durations measure tool
+operations. Use application milestones to establish which frame followed input.
 
 ## Planner and operator workflow
 

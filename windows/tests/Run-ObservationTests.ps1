@@ -133,6 +133,8 @@ try {
         $post.result.observation.last_input.input_id -ceq $post.result.input_id -and $post.result.observation_id -ceq $first.result.observation_id -and
         $post.result.observation.generation -ceq $first.result.generation -and $post.result.observation.artifact_sha256 -ceq ('b'*64) -and
         $post.result.observation.output -ceq $postPath -and $post.result.settle_ms -eq 0) 'Windows receipt cannot link the original capture, input and follow-up'
+    Assert-Observation ($post.result.timing.ContainsKey('control_recheck_ms') -and
+        $post.result.timing.ContainsKey('capture_round_trip_ms')) 'Successful follow-up omitted its measured phases'
     $first=New-ObservationCapture
     Assert-Observation ($first.result.last_input.input_id -ceq $post.result.input_id) 'A separate capture lost the completed input summary'
     $before=$script:ObservationInputs
@@ -159,6 +161,8 @@ try {
         $post=Invoke-ObservationInput $first @('--observe',$postPath)
         Assert-ObservationFailure $post 'latest input changed'
         Assert-Observation ($post.input_delivery -eq 'completed' -and $script:ObservationCalls -eq $before+1) 'A superseded input triggered capture or lost completion'
+        Assert-Observation ($post.timing.ContainsKey('control_recheck_ms') -and
+            -not $post.timing.ContainsKey('capture_round_trip_ms')) 'Superseded input reported the wrong phases'
     }
     $first=New-ObservationCapture
     [IO.File]::WriteAllText($postPath,'preserve')

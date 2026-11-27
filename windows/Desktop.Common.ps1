@@ -199,8 +199,10 @@ function Invoke-NativeDesktopInput($Request) {
     if (($Request -is [Collections.IDictionary] -and $Request.Contains('observation_deadline')) -or $Request.PSObject.Properties['observation_deadline']) {
         $inputGuard = [Basaltwater.Desktop.Native]::ObservationGuard($inputGuard, [long]$Request.observation_deadline)
     }
+    $submission = [Diagnostics.Stopwatch]::StartNew()
     [Basaltwater.Desktop.Native]::InputAction([long]$Request.window, $Request.identity, $Request.operation, $Request.text, [int]$Request.x, [int]$Request.y, [int]$Request.width, [int]$Request.height,$inputGuard)
-    return @{ submitted = $true; outcome_verified = $false; verification = 'Input queue acceptance only; inspect application before further input' }
+    return @{ submitted = $true; outcome_verified = $false; verification = 'Input queue acceptance only; inspect application before further input';
+        timing = @{ input_submission_ms = $submission.Elapsed.TotalMilliseconds } }
 }
 
 function Invoke-NativeDesktopWorkerBody($Request) {
@@ -227,6 +229,7 @@ function Invoke-NativeDesktopWorkerBody($Request) {
     if ($Request.command -eq 'ready') { return @{ healthy = $true; interactive = $true; capture_performed = $false; backend = 'win32-uia'; worker = 'WindowsPowerShell-5.1'; timeout_seconds = 8;
         capabilities = @{ keyboard_hold = $true; maximum_hold_ms = 5000; maximum_owned_keys=8; maximum_timeline_events=32; explicit_repeat = $true; mouse_hold = $true; drag=$true; wheel=$true; observation_hold=$true; post_input_observation=$true; warm_worker = $true } } }
     [Basaltwater.Desktop.Native]::Dpi()
+    $workerReady = [Diagnostics.Stopwatch]::GetTimestamp()
     switch ($Request.command) {
         'hold-plan' {
             $guard=$script:NativeDesktopInputGuard
@@ -262,25 +265,36 @@ function Invoke-NativeDesktopWorkerBody($Request) {
             if ($Request.operation -ne 'invoke' -and -not $verified) { throw 'Element outcome not observed; inspect before retrying' }
             return @{ accepted = $true; outcome_verified = $verified; verification = 'Focus/Value are read back; InvokePattern requires task-specific reinspection' }
         }
-        'input' { return Invoke-NativeDesktopInput $Request }
+        'input' {
+            $inputResult = Invoke-NativeDesktopInput $Request
+            $inputResult.worker_ready_qpc = $workerReady
+            return $inputResult
+        }
         'screenshot' {
             $capture = [Basaltwater.Desktop.Native]::Capture([long]$Request.window, $Request.identity, $Request.monitor, $Request.output)
             return @{ output = $Request.output; bytes = $capture.bytes; artifact_sha256 = $capture.artifact_sha256; capture_method = 'PrintWindow for window; CopyFromScreen for explicit monitor'; outcome_verified = $true; content_verified = $false;
+                worker_ready_qpc = $workerReady; timing = @{ capture_operation_ms = ([Diagnostics.Stopwatch]::GetTimestamp() - $workerReady) * 1000.0 / [Diagnostics.Stopwatch]::Frequency };
                 geometry = $capture.geometry; image_geometry = $capture.image_geometry; image_origin = $capture.image_origin; desktop_origin = $capture.desktop_origin; coordinate_space = $capture.coordinate_space; captured_at = $capture.captured_at } }
         default { throw 'Unsupported native worker request' }
     }
 }
 
 function Invoke-NativeDesktopWorker($Request, [int]$TimeoutSeconds = 8) {
+    $measured = $Request.command -in @('input','screenshot')
+    $clock = [Diagnostics.Stopwatch]::StartNew()
     if(-not $script:NativeDesktopWorkerServing -and $Request.command -notin @('environment','diagnostics')){
         $warm=Get-NativeWarmRecord
-        if($warm -and -not $warm.cleanup_confirmed){return Invoke-NativeWarmRequest $warm $Request $TimeoutSeconds}
+        if($warm -and -not $warm.cleanup_confirmed){
+            $reply = Invoke-NativeWarmRequest $warm $Request $TimeoutSeconds
+            if($measured){ Set-NativeWorkerTiming $reply $Request.command 'warm' $clock.Elapsed.TotalMilliseconds }
+            return $reply
+        }
     }
     # No external application is killed: this handle belongs exclusively to our worker.
     $directory = Join-Path ([IO.Path]::GetTempPath()) ('basaltwater-desktop-' + [guid]::NewGuid().ToString('N'))
     New-NativeDesktopPrivateDirectory $directory
     $inputPath = Join-Path $directory 'request.json'; $outputPath = Join-Path $directory 'response.json'
-    $process = $null; $result=$null
+    $process = $null; $result=$null; $reply=$null; $launch=$null
     try {
         $payload=$Request
         $enveloped=$Request.command -in @('ready','windows','inspect','window','element','input','screenshot','hold-plan','hold')
@@ -319,6 +333,7 @@ New-NativeDesktopPrivateFile '$escapedOutput' ([Text.Encoding]::UTF8.GetBytes((`
         $start.UseShellExecute = $false; $start.CreateNoWindow = $true; $start.WindowStyle = 'Hidden'
         # .NET process launches do not apply pwsh's Windows PowerShell path filtering.
         $start.EnvironmentVariables.Remove('PSModulePath')
+        $launch = [Diagnostics.Stopwatch]::GetTimestamp()
         $process = [Diagnostics.Process]::Start($start)
         if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
             $process.Kill(); if (-not $process.WaitForExit(2000)) { throw 'Owned worker cleanup unconfirmed' }
@@ -331,10 +346,11 @@ New-NativeDesktopPrivateFile '$escapedOutput' ([Text.Encoding]::UTF8.GetBytes((`
                 -not $result.PSObject.Properties['ok'] -or $result.ok -isnot [bool] -or -not $result.PSObject.Properties['submitted'] -or $result.submitted -isnot [bool] -or
                 -not $result.PSObject.Properties['result'] -or -not $result.PSObject.Properties['error']){throw (New-NativeWorkerFailure 'Cold worker response schema mismatch; do not replay' $true 'transport')}
             if(-not $result.ok){throw (New-NativeWorkerReplyFailure $result)}
-            return $result.result
+            $reply = $result.result
+        } else {
+            if ($result.PSObject.Properties['error']) { throw $result.error }
+            $reply = $result
         }
-        if ($result.PSObject.Properties['error']) { throw $result.error }
-        return $result
     } finally {
         if ($process) { $process.Dispose() }
         # directory was made here with a random name; never follow a replaced link.
@@ -351,6 +367,8 @@ New-NativeDesktopPrivateFile '$escapedOutput' ([Text.Encoding]::UTF8.GetBytes((`
             } else {throw}
         }
     }
+    if($measured){ Set-NativeWorkerTiming $reply $Request.command 'cold' $clock.Elapsed.TotalMilliseconds $launch }
+    return $reply
 }
 
 function Get-NativeDesktopReadiness {
@@ -444,6 +462,25 @@ function Add-NativeDesktopFields($Result, [hashtable]$Fields) {
     }
 }
 
+function Set-NativeWorkerTiming($Result,[string]$Command,[string]$Mode,[double]$Elapsed,$Launch) {
+    $timing = @{ worker_mode = $Mode }
+    if($Result.PSObject.Properties['worker_ready_qpc']){
+        if($null -ne $Launch -and [long]$Result.worker_ready_qpc -ge $Launch){
+            $timing.worker_startup_ms = ([long]$Result.worker_ready_qpc - $Launch) * 1000.0 / [Diagnostics.Stopwatch]::Frequency
+        }
+        $Result.PSObject.Properties.Remove('worker_ready_qpc')
+    }
+    $hasTiming = ($Result -is [Collections.IDictionary] -and $Result.Contains('timing')) -or $Result.PSObject.Properties['timing']
+    if($Command -eq 'input'){
+        $timing.input_round_trip_ms = $Elapsed
+        if($hasTiming){ $timing.input_submission_ms = $Result.timing.input_submission_ms }
+    } else {
+        $timing.capture_round_trip_ms = $Elapsed
+        if($hasTiming){ $timing.capture_operation_ms = $Result.timing.capture_operation_ms }
+    }
+    Add-NativeDesktopFields $Result @{ timing = $timing }
+}
+
 function Set-NativeCaptureReceipt($Result,$Request,$State,[long]$Admitted,[int]$MaxAge,$Unavailable) {
     $receipt = @{ observation_id = $null; admitted = $Admitted; max_age_seconds = $MaxAge;
         session = $State.session; generation = $State.generation; revision = $State.revision;
@@ -468,31 +505,49 @@ function New-NativePostCaptureFailure($InputResult,$Receipt,[string]$Message) {
 }
 
 function Invoke-NativePostInputCapture($Request,$InputResult,$Receipt,$State) {
-    $lock = $null
+    $lock = $null; $captureClock = $null
+    $timing = @{}
+    if(($InputResult -is [Collections.IDictionary] -and $InputResult.Contains('timing')) -or $InputResult.PSObject.Properties['timing']){
+        foreach($field in $InputResult.timing.Keys){ $timing[$field] = $InputResult.timing[$field] }
+    }
     try {
+        $settle = [Diagnostics.Stopwatch]::StartNew()
         Start-Sleep -Milliseconds $Request['settle-ms']
-        $context = Get-NativeDesktopContext
-        $lock = Enter-NativeDesktopLock $context
-        Assert-NativeHeldIdle
-        $current=Read-NativeDesktopState $context
-        if ($current.mode -ne 'enabled' -or $current.revision -cne $State.revision -or
-            $current.generation -cne $State.generation -or -not $current.last_input -or
-            $current.last_input.input_id -cne $Receipt.input_id) {
-            throw 'Desktop control or latest input changed before post-input capture'
+        $timing.settle_wait_ms = $settle.Elapsed.TotalMilliseconds
+        $recheck = [Diagnostics.Stopwatch]::StartNew()
+        try {
+            $context = Get-NativeDesktopContext
+            $lock = Enter-NativeDesktopLock $context
+            Assert-NativeHeldIdle
+            $current=Read-NativeDesktopState $context
+            if ($current.mode -ne 'enabled' -or $current.revision -cne $State.revision -or
+                $current.generation -cne $State.generation -or -not $current.last_input -or
+                $current.last_input.input_id -cne $Receipt.input_id) {
+                throw 'Desktop control or latest input changed before post-input capture'
+            }
+        } finally {
+            $timing.control_recheck_ms = $recheck.Elapsed.TotalMilliseconds
         }
         $post=@{command='screenshot';window=$Request.window;identity=$Request.identity;output=$Request.observe}
         $admitted=Get-NativeDesktopMonotonic
+        $captureClock = [Diagnostics.Stopwatch]::StartNew()
         $capture=Invoke-NativeDesktopWorker $post
+        $timing.capture_round_trip_ms = $captureClock.Elapsed.TotalMilliseconds
         $current.last_input = $Receipt
         Set-NativeCaptureReceipt $capture $post $current $admitted 60 $null
         Write-NativeDesktopState $current -KeepObservation
         $result = $Receipt.Clone()
-        $result.input = $InputResult; $result.observation = $capture; $result.settle_ms = $Request['settle-ms']
+        $result.input = $InputResult; $result.observation = $capture; $result.settle_ms = $Request['settle-ms']; $result.timing = $timing
         $reply = @{ok=$true;generation=$State.generation;control_revision=$State.revision;result=$result}
         if ($InputResult -is [Collections.IDictionary] -and $InputResult.Contains('lease')) { $reply.lease = $InputResult.lease }
         return $reply
     } catch {
-        return New-NativePostCaptureFailure $InputResult $Receipt $_.Exception.Message
+        if($captureClock -and -not $timing.ContainsKey('capture_round_trip_ms')){
+            $timing.capture_round_trip_ms = $captureClock.Elapsed.TotalMilliseconds
+        }
+        $failure = New-NativePostCaptureFailure $InputResult $Receipt $_.Exception.Message
+        $failure.timing = $timing
+        return $failure
     } finally { if ($lock) { Exit-NativeDesktopLock $lock } }
 }
 

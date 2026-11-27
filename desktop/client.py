@@ -336,6 +336,20 @@ def remaining_seconds(deadline: float) -> float:
 
 
 def send_action(payload: dict[str, Any], *, deadline: float | None = None, backend=runtime) -> dict[str, Any]:
+    started = time.monotonic_ns()
+    result = _send_action(payload, deadline=deadline, backend=backend)
+    if payload.get("action") == "input":
+        timing = {"worker_mode": "resident", "input_round_trip_ms": (time.monotonic_ns() - started) / 1e6}
+        dispatched = result.get("input_dispatch_monotonic_ns")
+        completed = result.get("input_completed_monotonic_ns")
+        if (type(dispatched) is int and type(completed) is int and completed >= dispatched
+                and result.get("submitted_characters", 0) in (0, 1)):
+            timing["input_submission_ms"] = (completed - dispatched) / 1e6
+        return {**result, "timing": timing}
+    return result
+
+
+def _send_action(payload: dict[str, Any], *, deadline: float | None = None, backend=runtime) -> dict[str, Any]:
     """Pace text with short revocable requests, including on existing supervisors."""
     if (backend is runtime and payload.get("action") == "input" and payload.get("kind") == "text"
             and payload.get("delay_ms") is None and isinstance(payload.get("text"), str)
@@ -442,17 +456,28 @@ def observe_after_input(result: dict, payload: dict, output: str, *, settle_ms: 
                         window: str | None = None) -> dict:
     """Retain completed input evidence even when its subsequent capture fails."""
     from desktop.observations import compact_capture
+    timing = dict(result.get("timing", {}))
     try:
         window = validate_followup_window(window, backend=backend)
+        settle_started = time.monotonic_ns()
         time.sleep(settle_ms / 1000)
-        observed = backend.status()
-        if (observed.get("generation") != payload["generation"] or
-                observed.get("control_revision") != payload["control_revision"]):
-            raise RuntimeError("Desktop control changed after input; observe before further input")
-        capture = backend.request({"action": "screenshot", "generation": payload["generation"],
-                                   "control_revision": payload["control_revision"],
-                                   "output": output, **({"window": window} if window is not None else {}),
-                                   **({"next_frame": True} if backend is not runtime else {})})
+        timing["settle_wait_ms"] = (time.monotonic_ns() - settle_started) / 1e6
+        recheck_started = time.monotonic_ns()
+        try:
+            observed = backend.status()
+            if (observed.get("generation") != payload["generation"] or
+                    observed.get("control_revision") != payload["control_revision"]):
+                raise RuntimeError("Desktop control changed after input; observe before further input")
+        finally:
+            timing["control_recheck_ms"] = (time.monotonic_ns() - recheck_started) / 1e6
+        capture_started = time.monotonic_ns()
+        try:
+            capture = backend.request({"action": "screenshot", "generation": payload["generation"],
+                                       "control_revision": payload["control_revision"],
+                                       "output": output, **({"window": window} if window is not None else {}),
+                                       **({"next_frame": True} if backend is not runtime else {})})
+        finally:
+            timing["capture_round_trip_ms"] = (time.monotonic_ns() - capture_started) / 1e6
         if capture.get("error") is not None or capture.get("ok") is False:
             failure = compact_capture(capture)
             failure["error"] = failure.get("error") or "Follow-up capture failed"
@@ -472,11 +497,11 @@ def observe_after_input(result: dict, payload: dict, output: str, *, settle_ms: 
         if input_id and captured_input_id and captured_input_id != input_id:
             raise DesktopRequestError({"error": "Follow-up capture reported a different input",
                                        "reason": "input-superseded", "last_input_id": captured_input_id})
-        return {**result, "observation": compact_capture(capture), "settle_ms": settle_ms}
+        return {**result, "observation": compact_capture(capture), "settle_ms": settle_ms, "timing": timing}
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         return {**result, "error": f"Input completed; observation failed: {exc}. Do not replay input.",
                 "reason": "observation-failed", "dispatch_stage": "post-input-observation",
-                "input_delivery": "completed", "observation_output": output,
+                "input_delivery": "completed", "observation_output": output, "timing": timing,
                 "observation_failure": getattr(exc, "receipt", {"error": str(exc)})}
 
 
