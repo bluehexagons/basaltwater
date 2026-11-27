@@ -165,9 +165,11 @@ There is no log/record cleanup timer.
 
 `logs TASK_ID` prints the last 30 lines of retained output by default.
 Use `--tail LINES` for 1–10000 lines or `--json` for the excerpt and its log path.
-For a `check` task it reads the live `check.log` once available, including Godot
-import and recipe output. Use `--worker` to see the supervisor's `output.log`,
-including the final check receipt. This works during execution and after exit.
+For a `check` task it reads the live `check.log` once it contains output,
+including Godot import and recipe messages. Before that it reads the
+supervisor's `output.log`, which can contain a preparation failure. Use
+`--worker` to select `output.log` explicitly for the final check receipt.
+This works during execution and after exit.
 Reading an excerpt leaves the full retained log available at its original path.
 
 `wait TASK_ID --timeout SECONDS --json` repeatedly reads the same verified

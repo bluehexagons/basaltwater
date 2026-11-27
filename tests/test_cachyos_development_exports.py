@@ -218,6 +218,10 @@ class TestDevelopmentLogs(unittest.TestCase):
         self.assertEqual(development.task_logs(self.task_id)["output"], "preflight\n")
         self.check.mkdir(mode=0o700)
         log = self.check / "check.log"
+        self.write_private(log, b"")
+        receipt = development.task_logs(self.task_id)
+        self.assertEqual(receipt["log"], str(self.worker_log))
+        self.assertEqual(receipt["output"], "preflight\n")
         body = b"import\n\nframe\nteardown: \xff"
         self.write_private(log, body)
         parser = argparse.ArgumentParser()

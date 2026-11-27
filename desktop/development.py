@@ -560,8 +560,8 @@ def task_logs(task_id: str, *, tail: int = 30, worker: bool = False) -> dict:
     if task["kind"] == "check" and not worker:
         try:
             check_log = _private_directory(directory / "check") / "check.log"
-            body = _read_log(check_log)
-            path = check_log
+            if recipe_output := _read_log(check_log):
+                path, body = check_log, recipe_output
         except FileNotFoundError:
             pass  # The check may still be in preflight.
     if body is None:
