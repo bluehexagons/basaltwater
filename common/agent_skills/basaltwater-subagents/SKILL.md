@@ -59,7 +59,8 @@ owns combined validation, model records, and cleanup.
 - **Changed account/provider or unattended worker:** read
   [session context](references/session-context.md) for discovery, tool access,
   and runtime limits. Honor disabled skills; paths do not bypass selection.
-- **T3 schedule migration or recovery:** read [scheduling](references/t3-scheduling.md).
+- **T3 schedules and workflows:** read [scheduling](references/t3-scheduling.md)
+  for migration, run subjects, concurrency pools, and recovery.
 - **Project model policy, new models, or outcome tracking:** read
   [project model policy](references/model-policy.md). Review existing
   project policy before choosing workers. The local `agent models` commands

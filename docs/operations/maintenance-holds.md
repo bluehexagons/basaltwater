@@ -33,11 +33,14 @@ subcommand and no saved rollout, Claude `--print`, and OpenCode `run` commands
 also count as work.
 Standalone interactive Claude and OpenCode sessions need an explicit hold when
 their work must cross the restart window.
-For T3 Workflows, this activity check covers executing provider turns. Use a
-bounded hold when workflow code steps need uninterrupted execution. Completed
-step results and human waits are persisted by T3. A 0.1.13 run queued for a
-workflow concurrency limit or named pool is waiting for capacity. Check the
-run and pool after maintenance before repeating its trigger.
+For T3 Workflows, this activity check covers executing provider turns and
+code steps recorded by the current server with a registered workflow runner.
+A code step can still be active while a sibling waits. T3 persists completed
+step results and human waits. Runs waiting for a workflow concurrency limit
+or named pool can resume when capacity returns. Check the run and pool after
+maintenance before repeating its trigger. The restart check also covers code
+cleanup started by a cancelled workflow's `onEnd` handler. Use a bounded
+hold for external work that continues after its workflow step returns.
 [T3 Workflows](https://github.com/pingdotgg/t3code/blob/v0.1.13/docs/user/workflows.md)
 
 Lingering login managers, background sessions, idle logins, idle provider
@@ -47,11 +50,11 @@ defer restarts on hosts configured with coding agents; hosts without coding
 agents still protect non-idle human logins. Use a bounded hold for independent
 work that needs protection, such as an unattended build.
 
-The job records only workload categories. It reads T3 status/time metadata and
-background-task kinds and persistence flags,
-bounded provider command arguments and Codex rollout tails locally; it does not
-log their contents or scan closed session history. An unreadable activity
-source defers the restart rather than reporting the host idle. An invalid hold
+The job records only workload categories. It reads T3 status/time metadata,
+workflow step kinds and runner heartbeats, background-task kinds and
+persistence flags, bounded provider command arguments, and Codex rollout
+tails locally. Rollout inspection is limited to files held open by a provider.
+An unreadable activity source defers the restart. An invalid hold
 also fails safe and is visible in `basaltw agent doctor --capability host`;
 release and recreate it. The configured forced-restart deadline still overrides
 known sessions, holds, and workloads after its maximum deferral period.

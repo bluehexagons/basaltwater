@@ -69,6 +69,16 @@ class AgentActivityTest(unittest.TestCase):
     def active(self):
         return _t3_work_active(self.database, START, os.getuid())
 
+    def workflow_schema(self):
+        self.writer.executescript("""
+            CREATE TABLE workflow_runs (run_id TEXT PRIMARY KEY, status TEXT, ended_at TEXT);
+            CREATE TABLE workflow_steps (
+                run_id TEXT, name TEXT, kind TEXT, status TEXT, started_at TEXT, ended_at TEXT,
+                PRIMARY KEY (run_id, name));
+            CREATE TABLE cluster_runners (last_heartbeat TEXT);
+        """)
+        self.writer.execute("INSERT INTO cluster_runners VALUES (?)", (NOW,))
+
     def test_scheduled_ephemeral_codex_command_is_active_with_global_options(self):
         command = codex_command({
             "mode": "inspect", "model": "example", "effort": "low",
@@ -217,6 +227,63 @@ class AgentActivityTest(unittest.TestCase):
         self.insert("runtime_requests", thread_id="other", node_id="root",
                     provider_turn_id=None, status="pending")
         self.assertFalse(self.active())
+
+    def test_workflow_code_remains_active_during_a_sibling_wait(self):
+        self.workflow_schema()
+        self.writer.execute("INSERT INTO workflow_runs VALUES ('run', 'waiting', NULL)")
+        self.writer.executemany(
+            "INSERT INTO workflow_steps VALUES ('run', ?, ?, 'running', ?, NULL)",
+            [(kind, kind, NOW) for kind in ("queue", "sleep", "ask", "agent")]
+            + [("old-code", "step", OLD)],
+        )
+        self.writer.commit()
+        self.assertFalse(self.active())
+        self.writer.execute(
+            "INSERT INTO workflow_steps VALUES ('run', 'build', 'step', 'running', ?, NULL)",
+            (NOW,),
+        )
+        self.writer.commit()
+        self.assertTrue(self.active())
+        self.writer.execute("DELETE FROM cluster_runners")
+        self.writer.commit()
+        self.assertFalse(self.active())
+        self.writer.execute("INSERT INTO cluster_runners VALUES (?)", (OLD,))
+        self.writer.commit()
+        self.assertFalse(self.active())
+        self.writer.execute("UPDATE cluster_runners SET last_heartbeat = ?", (NOW,))
+        self.writer.execute("UPDATE workflow_runs SET status = 'paused'")
+        self.writer.commit()
+        self.assertFalse(self.active())
+
+    def test_cancelled_workflow_cleanup_counts_until_finished(self):
+        self.workflow_schema()
+        self.writer.execute("INSERT INTO workflow_runs VALUES ('run', 'cancelled', ?)", (NOW,))
+        self.writer.execute(
+            "INSERT INTO workflow_steps VALUES ('run', 'build', 'step', 'failed', ?, ?)",
+            (NOW, NOW),
+        )
+        self.writer.commit()
+        self.assertFalse(self.active())
+        self.writer.execute(
+            "INSERT INTO workflow_steps VALUES ('run', 'onEnd', 'step', 'running', ?, NULL)",
+            (NOW,),
+        )
+        self.writer.commit()
+        self.assertTrue(self.active())
+        self.writer.execute(
+            "UPDATE workflow_steps SET status = 'completed', ended_at = ? WHERE name = 'onEnd'",
+            (NOW,),
+        )
+        self.writer.commit()
+        self.assertFalse(self.active())
+
+    def test_incomplete_workflow_journal_reports_unknown_activity(self):
+        self.workflow_schema()
+        self.writer.execute("DROP TABLE workflow_steps")
+        self.writer.commit()
+        server = self.process(101, "t3", ["t3", "serve"])
+        (server / "fd/3").symlink_to(self.database)
+        self.assertIsNone(active_agent_workloads(os.getuid(), proc_root=str(self.proc)))
 
     def test_missing_schema_is_unknown_activity_instead_of_idle(self):
         self.writer.execute("DROP TABLE orchestration_v2_projection_subagents")

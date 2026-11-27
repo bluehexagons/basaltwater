@@ -109,6 +109,38 @@ def _process_started_at(process: Path, proc_root: Path) -> str:
     return datetime.fromtimestamp(started, timezone.utc).isoformat()
 
 
+def _t3_workflow_code_active(connection: sqlite3.Connection, started_at: str) -> bool:
+    """Read the optional T3 0.1.12+ workflow journal for executing code steps."""
+    tables = connection.execute("""
+        SELECT name FROM sqlite_schema
+        WHERE type = 'table' AND name IN ('workflow_runs', 'workflow_steps')
+    """).fetchall()
+    if not tables:
+        return False
+    if len(tables) != 2:
+        raise ValueError("Incomplete T3 workflow journal")
+    # A sibling can set the run to waiting while this step still executes.
+    # T3 also executes onEnd for cancelled runs after marking them terminal.
+    executing_step = connection.execute("""
+        SELECT 1 FROM workflow_runs AS run
+        JOIN workflow_steps AS step ON step.run_id = run.run_id
+        WHERE run.status IN ('running', 'waiting', 'cancelled')
+          AND (run.ended_at IS NULL OR run.status = 'cancelled')
+          AND step.kind = 'step' AND step.status = 'running' AND step.ended_at IS NULL
+          AND julianday(step.started_at) >= julianday(?)
+        LIMIT 1
+    """, (started_at,)).fetchone()
+    if executing_step is None:
+        return False
+    # Turning Workflows off unregisters the runner but leaves interrupted steps
+    # in the journal. Runner heartbeats have whole-second precision.
+    return connection.execute("""
+        SELECT 1 FROM cluster_runners
+        WHERE unixepoch(last_heartbeat) >= unixepoch(?)
+        LIMIT 1
+    """, (started_at,)).fetchone() is not None
+
+
 def _t3_work_active(database: Path, started_at: str, uid: int) -> bool:
     """Query activity metadata, using the live WAL and no database writes."""
     metadata = database.lstat()
@@ -198,7 +230,9 @@ def _t3_work_active(database: Path, started_at: str, uid: int) -> bool:
                   AND julianday(updated_at) >= julianday(?) LIMIT 1
             """
             parameters = (started_at,)
-        return connection.execute(query, parameters).fetchone() is not None
+        if connection.execute(query, parameters).fetchone() is not None:
+            return True
+        return database.name == "statev2.sqlite" and _t3_workflow_code_active(connection, started_at)
     finally:
         connection.close()
 
