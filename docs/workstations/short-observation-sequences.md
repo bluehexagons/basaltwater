@@ -47,6 +47,9 @@ successful actions; `failed_action_index` is zero-based and `failed_action` reta
 the failure receipt. If the second capture fails, the completed input and first
 capture remain in `results`. A failed sequence is never a reason to replay its
 input. Inspect retained evidence, then capture again separately if permitted.
+If the helper saves a PNG during a failed capture step, `artifacts` lists that
+image for diagnosis. Only verified captures receive a `capture_receipt` for
+mapping input coordinates.
 Unknown input delivery remains unknown; an acknowledged input does not prove
 its application effect. `--save-output` preserves the full result before emitting
 a short preview, including the latest recorder headroom and any recording error.

@@ -90,7 +90,7 @@ def compact_capture(result: dict) -> dict:
         "output", "generation", "control_revision", "geometry", "image_geometry", "image_origin", "captured_at", "changed",
         "observation_id", "coordinate_space", "window",
         "pixel_sha256", "artifact_sha256", "frame_received_at", "frame_received_monotonic_ns", "frame_pts_ns",
-        "initial_frame_skipped", "capture_freshness", "last_input", "error", "reason", "dispatch_stage",
+        "initial_frame_skipped", "capture_freshness", "last_input", "ok", "issue", "error", "reason", "stage", "effect", "dispatch_stage",
         "input_delivery", "input_id", "evidence_error", "evidence_capacity") if key in result}
 
 
@@ -99,14 +99,17 @@ def retain_capture(result: dict) -> list[dict]:
     from desktop.qa_artifacts import new_bundle
     from lib.atomic_io import write_json_atomic
 
+    failed = bool(result.get("error")) or result.get("ok") is False
     files = []
     for kind, capture in (("screenshot", result), ("screenshot_preview", result.get("preview"))):
         if isinstance(capture, dict) and isinstance(capture.get("output"), str):
+            if failed and not Path(capture["output"]).is_file():
+                continue
             item = artifact(kind, capture["output"], "image/png")
             if capture.get("artifact_sha256"):
                 item["sha256"] = capture["artifact_sha256"]
             files.append(item)
-    if files and not result.get("error") and result.get("observation_id"):
+    if files and not failed and result.get("observation_id"):
         folder = new_bundle()
         path = folder / "capture.json"
         try:

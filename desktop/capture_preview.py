@@ -62,7 +62,7 @@ def make_preview(capture: dict, width: int) -> dict:
 
 
 def with_preview(result: dict, width: int, *, followup: bool = False) -> dict:
-    if "error" in result or result.get("ok") is False:
+    if result.get("error") or result.get("ok") is False:
         return result
     capture = result["observation"] if followup else result
     try:

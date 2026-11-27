@@ -223,7 +223,7 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
                 CACHYOS_AUTOMATION_PACKAGES, CACHYOS_DESKTOP_PACKAGES,
                 CACHYOS_SYSADMIN_PACKAGES, CACHYOS_AV_COMMANDS, CACHYOS_GL_COMMANDS,
                 CACHYOS_REMMINA_PACKAGES, desktop_automation_requested,
-                CACHYOS_AUDIO_PACKAGES, CACHYOS_AUDIO_COMMANDS,
+                CACHYOS_AUDIO_PACKAGES, CACHYOS_AUDIO_COMMANDS, CACHYOS_BASELINE_COMMANDS,
             )
             from common.cachyos_software import selected_software
             from common.cachyos_development import (
@@ -329,7 +329,7 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
             ):
                 if enabled:
                     selected_packages.update({package: True for package in packages})
-            commands = config.selected_agent_tools() + ["git", "rg"]
+            commands = [*config.selected_agent_tools(), *CACHYOS_BASELINE_COMMANDS]
             if config.install_node:
                 commands += ["node", "npm", "pnpm"]
             if config.install_python:

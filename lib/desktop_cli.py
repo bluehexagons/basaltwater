@@ -199,7 +199,7 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     action.add_argument("--generation", required=True)
     action.add_argument("--observation", help="Bind input to the latest screenshot's single-use observation_id")
     action.add_argument("--geometry", required=True, nargs=2, type=int, metavar=("WIDTH", "HEIGHT"))
-    action.add_argument("kind", choices=("key", "keycode", "text", "click", "move", "drag", "relative", "scroll", "touch"))
+    action.add_argument("kind", choices=client.INPUT_KINDS)
     action.add_argument("--key")
     action.add_argument("--codes", nargs="+", type=int, help="Native physical chord: 1–8 distinct Linux evdev keyboard codes (1–255), e.g. 29 30 for Ctrl+A; no XKB +8 offset")
     action.add_argument("--text")
@@ -247,12 +247,14 @@ def _desktop_result(command: str, result: dict, *, issue: str = "desktop_operati
     if command in _MUTATIONS:
         receipt = result.get("failed_action") or result
         delivery = receipt.get("input_delivery")
-        effect = {"not-sent": "none", "completed": "applied", "partial": "partial"}.get(delivery, "unknown")
-        stage = receipt.get("dispatch_stage", command).replace("-", "_")
+        effect = receipt.get("effect") or {"not-sent": "none", "completed": "applied", "partial": "partial"}.get(delivery, "unknown")
+        stage = receipt.get("stage") or receipt.get("dispatch_stage", command).replace("-", "_")
         if command == "sequence" and result.get("completed") and effect != "unknown":
             effect = "partial"
         if result.get("launch") or observation.get("preview_error"):
             effect = "applied"
+        if command == "screenshot" and result.get("preview_error"):
+            stage, effect = "capture_preview", "applied"
         result = {**result, "stage": result.get("stage") or stage, "effect": result.get("effect") or effect}
     return from_report(result, ok=False, issue=issue, error=error or f"Desktop {command} failed. Inspect the returned details.")
 
@@ -261,18 +263,25 @@ def _capture_artifacts(command: str, result: dict) -> dict:
     from desktop.observations import retain_capture
 
     observations = []
+    failed_capture = None
     if command == "screenshot":
         observations.append(result)
-    elif command == "input" and isinstance(result.get("observation"), dict):
-        observations.append(result["observation"])
+    elif command == "input":
+        if isinstance(result.get("observation"), dict):
+            observations.append(result["observation"])
+        failed_capture = result.get("observation_failure")
     elif command == "sequence":
         observations.extend(item for item in result.get("results", []) if item.get("observation_id") and item.get("output"))
+        failed_capture = result.get("failed_action")
+    if isinstance(failed_capture, dict) and failed_capture.get("output"):
+        observations.append({**failed_capture, "ok": False})
     files = []
     for observation in observations:
         try:
             files.extend(retain_capture(observation))
         except (OSError, RuntimeError, ValueError) as exc:
-            primary_failure = result.get("error") or result.get("ok") is False
+            primary_failure = (result.get("error") or result.get("preview_error") or
+                               observation.get("preview_error") or result.get("ok") is False)
             result = {**result, "receipt_save_error": str(exc)}
             if not primary_failure:
                 result.update(error=str(exc), issue="artifact_save_failed", stage="retain_capture", effect="applied")
@@ -548,8 +557,6 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                 if args.next_frame:
                     payload["next_frame"] = True
                 result = client.send_action(payload, backend=backend)
-                if args.next_frame and result.get("initial_frame_skipped") is not True:
-                    result["error"] = "Backend did not confirm subsequent-frame capture; restart the native helper"
                 if args.compact:
                     from desktop.observations import compact_capture
                     result = compact_capture(result)

@@ -565,7 +565,8 @@ class DesktopProductivityTests(unittest.TestCase):
     def test_sequence_reports_partial_completion_without_further_mutations(self, request):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "steps.json"
-            path.write_text(json.dumps([{"action": "windows"}, {"action": "input"}]))
+            path.write_text(json.dumps([{"action": "windows"},
+                                        {"action": "input", "kind": "key", "key": "Return", "geometry": [1280, 720]}]))
             result = client.run_sequence(str(path), "g")
         self.assertEqual(result["completed"], 1)
         self.assertIn("human-override", result["error"])

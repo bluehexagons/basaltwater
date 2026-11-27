@@ -21,6 +21,9 @@ from lib.validation import validate_filesystem_path
 from desktop.receipts import DesktopRequestError, input_failure, input_request_failure
 
 
+INPUT_KINDS = ("key", "keycode", "text", "click", "move", "drag", "relative", "scroll", "touch")
+
+
 def artifact_path() -> str:
     """Allocate a private, persistent capture location outside the repository."""
     directory = Path.home() / "Pictures" / "basaltwater"
@@ -396,12 +399,21 @@ def _send_action(payload: dict[str, Any], *, deadline: float | None = None, back
             if payload.get("action") != "input":
                 raise
             raise DesktopRequestError(input_request_failure(exc, payload)) from exc
+        if result.get("error") or result.get("ok") is False or payload.get("action") != "screenshot":
+            return result
+        verification_error = None
         if crop is not None and (result.get("image_origin") != crop[:2] or result.get("image_geometry") != crop[2:]):
-            return {**result, "error": "Backend did not confirm requested crop mapping; restart the native helper and recapture"}
-        if payload.get("action") == "screenshot" and payload.get("max_age_seconds", 60) != 60 and not result.get("error"):
+            verification_error = "Backend did not confirm requested crop mapping; restart the native helper and recapture"
+        elif payload.get("next_frame") and result.get("initial_frame_skipped") is not True:
+            verification_error = "Backend did not confirm subsequent-frame capture; restart the native helper"
+        elif payload.get("max_age_seconds", 60) != 60:
+            freshness = result.get("capture_freshness")
             if (not result.get("observation_id")
-                    or result.get("capture_freshness", {}).get("max_age_seconds") != payload["max_age_seconds"]):
-                return {**result, "error": "Backend did not confirm observation lifetime; update and restart the helper at a safe checkpoint"}
+                    or not isinstance(freshness, dict) or freshness.get("max_age_seconds") != payload["max_age_seconds"]):
+                verification_error = "Backend did not confirm observation lifetime; update and restart the helper at a safe checkpoint"
+        if verification_error:
+            return {**result, "ok": False, "error": verification_error, "stage": "capture_verification",
+                    "effect": "partial" if result.get("output") else "unknown"}
         return result
     submitted = 0
     server_attempted = False
@@ -460,6 +472,7 @@ def observe_after_input(result: dict, payload: dict, output: str, *, settle_ms: 
     """Retain completed input evidence even when its subsequent capture fails."""
     from desktop.observations import compact_capture
     timing = dict(result.get("timing", {}))
+    capture = {}
     try:
         window = validate_followup_window(window, backend=backend)
         settle_started = time.monotonic_ns()
@@ -502,10 +515,12 @@ def observe_after_input(result: dict, payload: dict, output: str, *, settle_ms: 
                                        "reason": "input-superseded", "last_input_id": captured_input_id})
         return {**result, "observation": compact_capture(capture), "settle_ms": settle_ms, "timing": timing}
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        failure = getattr(exc, "receipt", {"error": str(exc)})
+        diagnostic = {key: capture[key] for key in ("output", "artifact_sha256") if key in capture}
         return {**result, "error": f"Input completed; observation failed: {exc}. Do not replay input.",
                 "reason": "observation-failed", "dispatch_stage": "post-input-observation",
                 "input_delivery": "completed", "observation_output": output, "timing": timing,
-                "observation_failure": getattr(exc, "receipt", {"error": str(exc)})}
+                "observation_failure": {**diagnostic, **failure, "ok": False}}
 
 
 def validate_followup_task(task_id: str, timeout: int, generation: str, *, backend=runtime) -> None:
@@ -612,6 +627,8 @@ def run_sequence(path: str, generation: str, *, backend=runtime) -> dict[str, An
         unknown = step.keys() - fields[action] - {"action"}
         if unknown:
             raise ValueError(f"Unknown {action} sequence field: {', '.join(sorted(unknown))}")
+        if action == "input" and step.get("kind") not in INPUT_KINDS:
+            raise ValueError("Sequence input kind must be one of: " + ", ".join(INPUT_KINDS))
         validate_text_delay(step)
         validate_keycodes(step)
         validate_hold(step)
@@ -694,11 +711,10 @@ def run_sequence(path: str, generation: str, *, backend=runtime) -> dict[str, An
             timing["request_started_monotonic_ns"] = time.monotonic_ns()
             request = {key: value for key, value in step.items() if key != "after_ms"}
             result = send_action({**request, "generation": generation, "control_revision": revision}, deadline=deadline, backend=backend)
-            if step["action"] == "screenshot" and step.get("next_frame") and result.get("initial_frame_skipped") is not True:
-                result = {**result, "error": "Backend did not confirm subsequent-frame capture; inspect before further input"}
             finish_timing()
-            if "error" in result:
-                return {"generation": generation, "error": result["error"], "completed": len(results),
+            if result.get("error") or result.get("ok") is False:
+                return {"generation": generation, "error": result.get("error") or f"Desktop {step['action']} failed",
+                        "completed": len(results),
                         "results": results, "timings": timings,
                         "failed_action_index": len(results), "failed_action": result}
             if step["action"] == "screenshot":

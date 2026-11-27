@@ -22,8 +22,10 @@ are not necessarily faults. The exit status still reports whether diagnosis
 completed, rather than whether every capability is available.
 
 Omit `--json` for readable counts and findings. Omit `--attention` to obtain the
-complete inventory, including successful checks and versions. Neither form
-starts applications, activates services, or verifies effective firewall rules.
+complete inventory, including successful checks and versions. With a valid
+saved setup, the doctor checks Git, ripgrep, Vim, ShellCheck, and the selected
+coding tools. Neither form starts applications, activates services, or verifies
+effective firewall rules.
 
 ## Choose a topic
 

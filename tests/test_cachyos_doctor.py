@@ -403,12 +403,16 @@ class DoctorTests(unittest.TestCase):
         path.chmod(0o600)
         self.use_saved_selection()
         with patch("lib.cachyos_refresh.load_saved_setup", return_value=([], config)), \
-                patch.object(doctor.shutil, "which", return_value="/usr/bin/node"):
+                patch.object(doctor.shutil, "which", side_effect=lambda name: None if name == "shellcheck" else f"/usr/bin/{name}"):
             report = doctor.collect_cachyos_doctor()
         records = {item["name"]: item for item in report["capabilities"]}
         self.assertNotIn("configuration.saved-setup", records)
         self.assertTrue(records["tool.node"]["selected"])
         self.assertEqual(records["tool.node"]["state"], "available")
+        self.assertEqual(records["tool.vim"]["state"], "available")
+        self.probe.assert_any_call(["/usr/bin/vim", "--version"], 1000)
+        self.assertTrue(records["tool.shellcheck"]["selected"])
+        self.assertEqual(records["tool.shellcheck"]["state"], "failed")
 
     def test_explicit_config_skips_invalid_saved_selection(self):
         from lib.config import SetupConfig
@@ -627,7 +631,7 @@ class DoctorTests(unittest.TestCase):
             if call.args[0] == DPMS_PROBE:
                 continue
             self.assertIn(call.args[0][0], ("/usr/bin/pacman", "/usr/bin/systemctl", "/usr/bin/busctl",
-                                          "/fixture/git", "/fixture/rg"))
+                                          "/fixture/git", "/fixture/rg", "/fixture/vim", "/fixture/shellcheck"))
 
     def test_power_state_stays_visible_without_waking_displays(self):
         for power, expected in (("on", "available"), ("off", "deferred"), ("unknown", "deferred")):

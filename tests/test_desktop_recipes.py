@@ -635,6 +635,31 @@ class WindowFollowupRecipeTests(unittest.TestCase):
         self.assertEqual(receipt["observation"]["preview_error"], "Resize failed")
         self.assertEqual([call.args[0]["action"] for call in request.call_args_list], ["input", "screenshot"])
 
+    def test_failed_standalone_preview_retains_the_original_mapping_receipt(self):
+        capture = {**self.capture, "ok": True, "error": None}
+
+        def save_capture(payload):
+            width, height = capture["image_geometry"]
+            Path(payload["output"]).write_bytes(png_regions.encode(width, height, bytes(width * height * 3)))
+            return capture
+
+        with patch.object(Path, "home", return_value=self.home), \
+                patch.object(client.runtime, "status", return_value=self.current), \
+                patch.object(client.runtime, "request", side_effect=save_capture), \
+                patch.object(capture_preview, "make_preview", side_effect=RuntimeError("Resize failed")), \
+                redirect_stdout(out := StringIO()):
+            args = self.parser.parse_args(["desktop", "screenshot", "--compact", "--preview-width", "200",
+                                           "--output", capture["output"]])
+            self.assertEqual(desktop_cli.run_desktop_command(args), 1)
+        result = json.loads(out.getvalue())
+        self.assertEqual(result["stage"], "capture_preview")
+        self.assertEqual(result["effect"], "applied")
+        self.assertEqual(result["error"], "Resize failed")
+        self.assertEqual([item["kind"] for item in result["artifacts"]], ["screenshot", "capture_receipt"])
+        self.assertTrue(Path(result["artifacts"][0]["path"]).is_file())
+        mapping_receipt = json.loads(Path(result["artifacts"][1]["path"]).read_text())
+        self.assertEqual(mapping_receipt["observation_id"], capture["observation_id"])
+
     def test_selected_window_followup_keeps_mapping_and_completed_input(self):
         with patch.object(client.runtime, "status", return_value=self.current), \
                 patch.object(client.runtime, "request", side_effect=[self.completed, self.capture]) as request, \
@@ -681,8 +706,18 @@ class WindowFollowupRecipeTests(unittest.TestCase):
     def test_capture_failure_or_wrong_window_never_replays_or_falls_back(self):
         for capture in (RuntimeError("Window is no longer visible"),
                         {**self.capture, "window": None}, {**self.capture, "window": {"id": "0x99"}}):
+            output = Path(self.capture["output"])
+
+            def request_capture(payload):
+                if payload["action"] == "input":
+                    return self.completed
+                if isinstance(capture, RuntimeError):
+                    raise capture
+                output.write_bytes(png_regions.encode(1, 1, b"\x01\x02\x03"))
+                return capture
+
             with self.subTest(capture=capture), patch.object(client.runtime, "status", return_value=self.current), \
-                    patch.object(client.runtime, "request", side_effect=[self.completed, capture]) as request, \
+                    patch.object(client.runtime, "request", side_effect=request_capture) as request, \
                     patch.object(client.time, "sleep"), redirect_stdout(out := StringIO()):
                 self.assertEqual(desktop_cli.run_desktop_command(self.args("--observe", "--observe-window", "0x2A",
                     "--output", self.capture["output"])), 1)
@@ -693,6 +728,15 @@ class WindowFollowupRecipeTests(unittest.TestCase):
                 self.assertEqual(result["dispatch_stage"], "post-input-observation")
                 self.assertIn("Do not replay input", result["error"])
                 self.assertNotIn("observation", result)
+                if output.is_file():
+                    self.assertFalse(result["observation_failure"]["ok"])
+                    self.assertEqual(result["observation_failure"]["output"], str(output))
+                    self.assertNotIn("observation_id", result["observation_failure"])
+                    self.assertEqual(result["artifacts"], [
+                        {"kind": "screenshot", "path": str(output), "media_type": "image/png"}])
+                    output.unlink()
+                else:
+                    self.assertNotIn("artifacts", result)
                 self.assertEqual([call.args[0]["action"] for call in request.call_args_list], ["input", "screenshot"])
                 self.assertEqual(request.call_args.args[0]["window"], "0x2a")
 
@@ -743,6 +787,76 @@ class PublishedRecipeTests(unittest.TestCase):
     def setUpClass(cls):
         cls.parser = argparse.ArgumentParser()
         desktop_cli.add_desktop_subparser(cls.parser.add_subparsers())
+
+    def test_malformed_sequence_input_kind_returns_validation_without_dispatch(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "steps.json"
+            for backend, route in ((client.runtime, []), (native_session, ["--native"])):
+                for kind in ([], {}, None, "unsupported"):
+                    with self.subTest(route=route, kind=kind), \
+                            patch.object(backend, "status") as status, patch.object(backend, "request") as request:
+                        path.write_text(json.dumps([{"action": "input", "kind": "key", "key": "a", "geometry": [800, 600]},
+                                                    {"action": "input", "kind": kind, "geometry": [800, 600]}]))
+                        for mode in ([], ["--json"]):
+                            args = self.parser.parse_args(["desktop", *route, "sequence", str(path), "--generation", "g", *mode])
+                            with redirect_stdout(out := StringIO()):
+                                self.assertEqual(desktop_cli.run_desktop_command(args), 2)
+                            result = json.loads(out.getvalue())
+                            self.assertEqual(result["issue"], "invalid_input")
+                            self.assertEqual(result["stage"], "validation")
+                            self.assertEqual(result["effect"], "none")
+                            self.assertIn("Sequence input kind", result["error"])
+                        status.assert_not_called()
+                        request.assert_not_called()
+
+    def test_unverified_sequence_png_is_reachable_with_completed_input_receipt(self):
+        current = {"state": "running", "generation": "g", "control_revision": "r", "agent_control": "enabled"}
+        completed = {"input_id": "one", "input_delivery": "completed", "ok": True, "error": None}
+
+        def capture_or_input(payload):
+            if payload["action"] == "input":
+                return completed
+            Path(payload["output"]).write_bytes(png_regions.encode(1, 1, b"\x01\x02\x03"))
+            return {"output": payload["output"], "observation_id": "b" * 32, "ok": True,
+                    "initial_frame_skipped": False}
+
+        with tempfile.TemporaryDirectory() as folder, patch.object(tempfile, "tempdir", folder), \
+                patch.object(native_session, "status", return_value=current), \
+                patch.object(native_session, "request", side_effect=capture_or_input) as request, \
+                redirect_stdout(out := StringIO()):
+            path = Path(folder) / "steps.json"
+            image = str(Path(folder) / "frame.png")
+            path.write_text(json.dumps([{"action": "input", "kind": "key", "key": "a", "geometry": [800, 600]},
+                                        {"action": "screenshot", "output": image, "next_frame": True}, {"action": "windows"}]))
+            args = self.parser.parse_args(["desktop", "--native", "sequence", str(path), "--generation", "g", "--save-output"])
+            self.assertEqual(desktop_cli.run_desktop_command(args), 1)
+            summary = json.loads(out.getvalue())
+            result = json.loads(Path(summary["artifact"]).read_text())
+            self.assertTrue(Path(image).is_file())
+        self.assertEqual([call.args[0]["action"] for call in request.call_args_list], ["input", "screenshot"])
+        self.assertEqual(summary["completed"], 1)
+        self.assertEqual(summary["stage"], "capture_verification")
+        self.assertEqual(summary["effect"], "partial")
+        self.assertEqual(result["results"][0]["input_id"], "one")
+        self.assertEqual(result["failed_action"]["output"], image)
+        self.assertFalse(result["failed_action"]["ok"])
+        self.assertEqual(summary["artifacts"][1:], [{"kind": "screenshot", "path": image, "media_type": "image/png"}])
+        self.assertEqual(result["artifacts"], summary["artifacts"][1:])
+
+    def test_compact_next_frame_capture_keeps_the_original_backend_failure(self):
+        current = {"state": "running", "generation": "g", "control_revision": "r", "agent_control": "enabled"}
+        with tempfile.TemporaryDirectory() as folder:
+            image = str(Path(folder) / "frame.png")
+            failure = {"ok": False, "error": "PipeWire timed out", "output": image, "stage": "acquire_frame", "effect": "none"}
+            with patch.object(native_session, "status", return_value=current), \
+                    patch.object(native_session, "request", return_value=failure), redirect_stdout(out := StringIO()):
+                args = self.parser.parse_args(["desktop", "--native", "screenshot", "--next-frame", "--compact", "--output", image])
+                self.assertEqual(desktop_cli.run_desktop_command(args), 1)
+            result = json.loads(out.getvalue())
+            self.assertEqual(result["error"], failure["error"])
+            self.assertEqual(result["stage"], failure["stage"])
+            self.assertEqual(result["effect"], failure["effect"])
+            self.assertNotIn("artifacts", result)
 
     def test_published_linux_desktop_recipes_parse_without_execution(self):
         files = [ROOT / "docs/workstations" / name for name in

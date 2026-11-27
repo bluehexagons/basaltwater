@@ -32,6 +32,7 @@ CACHYOS_SKILLS = (
     "basaltwater-subagents",
 )
 CACHYOS_T3_SKILL = "basaltwater-cachyos-t3code"
+CACHYOS_BASELINE_COMMANDS = ("git", "rg", "vim", "shellcheck")
 T3_SERVICE = "basaltwater-cachyos-t3.service"
 _MARKER = "# Managed by basaltwater CachyOS setup"
 
@@ -477,7 +478,7 @@ def report_cachyos_readiness(config: SetupConfig) -> None:
         report_game_dev_readiness(config)
     if config.install_node_versions:
         verify_node_versions(home)
-    commands = ["git", "rg", "vim", "shellcheck", *config.selected_agent_tools()]
+    commands = [*CACHYOS_BASELINE_COMMANDS, *config.selected_agent_tools()]
     for enabled, selected_commands in (
         (config.install_node, ("node", "npm", "pnpm")),
         (config.install_python, ("python", "uv")),
