@@ -148,6 +148,10 @@ selection as the primary browser.
 - Lynx installs the Debian terminal browser and does not become a graphical
   default.
 
+For a new Firefox or LibreWolf Flatpak install, setup prepares Flatpak and
+the system Flathub remote first. If the app is already installed system-wide,
+setup can repair its browser configuration without contacting Flathub.
+
 ### Content blocking
 
 | Browser | What setup installs | How to check |
@@ -197,10 +201,9 @@ the same time, so its launcher does not fall back to the optional
 `www-browser` command. A per-user `X-XFCE-Helper` desktop entry is also
 created, so XFCE's Preferred Applications dialog and `exo-open --launch
 WebBrowser` resolve the selected browser rather than falling back to an
-unregistered command. These files are managed defaults: workstation setup
-recreates them rather than merging older basaltwater state. The `v2.0.0` setup
-is intended for clean workstation builds; rebuild a workstation created by an
-older basaltwater release instead of attempting an in-place migration.
+unregistered command. The helper launches the selected native executable or
+system Flatpak. Changing browsers preserves other MIME associations, XFCE
+helper selections and comments in both preference files.
 
 On VM and hardware targets, AppArmor is enabled and its distro service reloads
 the installed policy without blanket-enforcing package profiles. This preserves

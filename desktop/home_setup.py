@@ -9,7 +9,7 @@ import pwd
 import stat
 import sys
 
-from desktop.xfce_config import clean_legacy_xfwm, remove_legacy_override, update_channel
+from desktop.xfce_config import clean_legacy_xfwm, remove_legacy_override, update_browser_defaults, update_channel
 from lib.atomic_io import write_text_atomic
 from lib.remote_utils import run
 from lib.setup_directories import directory_fd
@@ -53,6 +53,8 @@ def _apply(home: Path, edits: list[tuple[str, str, str]]) -> None:
                     raise ValueError(f"Refusing linked or non-regular desktop settings: {relative}")
             if action == "write":
                 write_text_atomic(str(target), content, mode=0o644)
+            elif action == "merge-browser-defaults":
+                update_browser_defaults(str(target), content)
             elif action == "merge-xfce":
                 update_channel(str(target), content)
             elif action == "retire":

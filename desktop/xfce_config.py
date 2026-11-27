@@ -1,4 +1,4 @@
-"""Targeted offline edits to XFCE settings while the desktop is logged out."""
+"""Targeted offline edits to desktop associations and XFCE settings."""
 
 from __future__ import annotations
 
@@ -63,6 +63,44 @@ def remove_legacy_override(path: str, expected: str) -> None:
     target = Path(path)
     if not target.is_symlink() and target.is_file() and _read_settings(path) == expected:
         target.unlink(missing_ok=True)
+
+
+def update_browser_defaults(path: str, settings: str) -> None:
+    """Update browser keys in one group, preserving other settings and comments."""
+    previous = _read_settings(path)
+    if previous is None:
+        write_text_atomic(path, settings)
+        return
+
+    desired = settings.splitlines()
+    header = desired.pop(0) if desired[0].startswith("[") else None
+    values = dict(line.split("=", 1) for line in desired)
+    lines = previous.splitlines(keepends=True)
+    if lines and not lines[-1].endswith("\n"):
+        lines[-1] += "\n"
+    start = 0
+    if header:
+        for start, line in enumerate(lines, 1):
+            if line.strip() == header:
+                break
+        else:
+            lines.append(header + "\n")
+            start = len(lines)
+    end = next((i for i in range(start, len(lines)) if lines[i].strip().startswith("[")), len(lines))
+    pending = values.copy()
+    group = []
+    for line in lines[start:end]:
+        key, separator, _ = line.partition("=")
+        key = key.strip()
+        if separator and key in values:
+            if key in pending:
+                group.append(f"{key}={pending.pop(key)}\n")
+        else:
+            group.append(line)
+    group.extend(f"{key}={value}\n" for key, value in pending.items())
+    merged = "".join(lines[:start] + group + lines[end:])
+    if merged != previous:
+        write_text_atomic(path, merged, mode=stat.S_IMODE(os.stat(path, follow_symlinks=False).st_mode) & 0o777)
 
 
 def remove_legacy_pm_stub(path: str = "/usr/local/bin/pm-is-supported") -> None:

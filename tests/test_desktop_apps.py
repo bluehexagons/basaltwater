@@ -366,7 +366,7 @@ class TestRequiredDesktopApps(unittest.TestCase):
         self.is_package_installed.side_effect = [False, True]
         self.run.side_effect = [Mock(returncode=0), Mock(returncode=1), Mock(returncode=0)]
         self.apps.install_office_apps(self.config)
-        self.assertFalse(self.config.use_flatpak)
+        self.assertTrue(self.config.use_flatpak)
         self.assertEqual(self.run.call_args.args[0], "apt-get install -y -qq libreoffice")
         self.is_flatpak_app_installed.assert_not_called()
 
@@ -375,7 +375,7 @@ class TestRequiredDesktopApps(unittest.TestCase):
         with patch.object(self.apps, "install_flatpak_if_needed", return_value=False):
             with self.assertRaisesRegex(RuntimeError, "LibreOffice installation failed"):
                 self.apps.install_office_apps(self.config)
-        self.assertFalse(self.config.use_flatpak)
+        self.assertTrue(self.config.use_flatpak)
 
 
 class TestMediaApps(unittest.TestCase):
@@ -491,6 +491,22 @@ class TestMediaApps(unittest.TestCase):
 
 
 class TestBrowserSteps(unittest.TestCase):
+    def test_missing_selected_flatpak_leaves_desktop_defaults_alone(self):
+        from desktop.browser_steps import configure_default_browser
+
+        config = SetupConfig(host="vm", username="agent", system_type="workstation_dev",
+                             browser="firefox", use_flatpak=True)
+        with patch("desktop.browser_steps.is_container", return_value=False), \
+                patch("desktop.browser_steps.is_flatpak_app_installed", return_value=False) as installed, \
+                patch("desktop.browser_steps.apply_home_settings") as apply:
+            config.dry_run = True
+            configure_default_browser(config)
+            installed.assert_not_called()
+            config.dry_run = False
+            with self.assertRaisesRegex(RuntimeError, "system Flatpak org.mozilla.firefox is missing"):
+                configure_default_browser(config)
+            apply.assert_not_called()
+
     @patch("desktop.browser_steps.apply_home_settings")
     @patch("desktop.browser_steps.is_flatpak_app_installed")
     @patch("desktop.browser_steps.is_container", return_value=False)
@@ -501,10 +517,10 @@ class TestBrowserSteps(unittest.TestCase):
 
         for browser, flatpak, desktop_id, command in (
             ("chromium", True, "chromium.desktop", "chromium"),
-            ("firefox", False, "firefox-esr.desktop", "firefox"),
-            ("firefox", True, "org.mozilla.firefox.desktop", "flatpak run org.mozilla.firefox"),
+            ("firefox", False, "firefox-esr.desktop", "firefox-esr"),
+            ("firefox", True, "org.mozilla.firefox.desktop", "flatpak run --system org.mozilla.firefox"),
             ("librewolf", False, "librewolf.desktop", "librewolf"),
-            ("librewolf", True, "io.gitlab.librewolf-community.desktop", "flatpak run io.gitlab.librewolf-community"),
+            ("librewolf", True, "io.gitlab.librewolf-community.desktop", "flatpak run --system io.gitlab.librewolf-community"),
         ):
             with self.subTest(browser=browser, flatpak=flatpak):
                 installed.return_value = flatpak
@@ -514,7 +530,7 @@ class TestBrowserSteps(unittest.TestCase):
                 ))
                 username, edits = apply.call_args.args
                 self.assertEqual(username, "testuser")
-                files = {path: content for action, path, content in edits if action == "write"}
+                files = {path: content for action, path, content in edits if action in {"write", "merge-browser-defaults"}}
                 self.assertIn(f"x-scheme-handler/http={desktop_id}", files[".config/mimeapps.list"])
                 self.assertIn(f"x-scheme-handler/https={desktop_id}", files[".config/mimeapps.list"])
                 self.assertEqual(files[".config/xfce4/helpers.rc"], f"WebBrowser={browser}\n")
@@ -523,6 +539,8 @@ class TestBrowserSteps(unittest.TestCase):
                 self.assertIn("X-XFCE-Category=WebBrowser", helper)
                 if command.startswith("flatpak run "):
                     self.assertIn(f"X-XFCE-CommandsWithParameter={command} \"%s\";", helper)
+                else:
+                    self.assertIn(f"X-XFCE-Binaries={command};", helper)
                 retired = [content for action, path, content in edits if action == "retire" and path.endswith("/brave.desktop")]
                 self.assertEqual(len(retired), 2)
                 self.assertTrue(any(action == "retire" and path.endswith("/helium.desktop")

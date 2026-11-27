@@ -24,6 +24,36 @@ class XfceConfigTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.path = Path(directory.name) / "settings.xml"
 
+    def test_changing_browser_preserves_other_associations_and_xfce_preferences(self):
+        from desktop.browser_steps import configure_default_browser
+        from lib.config import SetupConfig
+
+        home = self.path.parent
+        helpers = home / ".config/xfce4/helpers.rc"
+        helpers.parent.mkdir(parents=True)
+        helpers.write_text("TerminalEmulator=terminal\nWebBrowser=old\n[Other]\nWebBrowser=keep\n")
+        mime = home / ".config/mimeapps.list"
+        associations = "[Added Associations]\ntext/html=editor.desktop;\n"
+        mime.write_text("[Default Applications]\n# local preferences\napplication/pdf=viewer.desktop\n"
+                        "text/html = old.desktop\n" + associations)
+        mime.chmod(0o600)
+        config = SetupConfig(host="vm", username="agent", system_type="workstation_desktop", browser="chromium")
+        with patch("desktop.browser_steps.apply_home_settings", side_effect=lambda _, edits: home_setup._apply(home, edits)):
+            configure_default_browser(config)
+            before = mime.stat()
+            configure_default_browser(config)
+        self.assertEqual(mime.stat().st_ino, before.st_ino)
+        self.assertEqual(mime.stat().st_mode & 0o777, 0o600)
+        self.assertIn("# local preferences\napplication/pdf=viewer.desktop\ntext/html=chromium.desktop\n", mime.read_text())
+        self.assertIn("x-scheme-handler/https=chromium.desktop\n", mime.read_text())
+        self.assertTrue(mime.read_text().endswith(associations))
+        self.assertEqual(helpers.read_text(), "TerminalEmulator=terminal\nWebBrowser=chromium\n[Other]\nWebBrowser=keep\n")
+
+        mime.write_text(associations.rstrip())
+        with patch("desktop.browser_steps.apply_home_settings", side_effect=lambda _, edits: home_setup._apply(home, edits)):
+            configure_default_browser(config)
+        self.assertTrue(mime.read_text().startswith(associations + "[Default Applications]\n"))
+
     def test_merge_preserves_custom_preferences_and_is_repeatable(self):
         self.path.write_text('''<channel name="power" version="1.0">
           <property name="manager" type="empty">

@@ -11,7 +11,6 @@ from lib.config import SetupConfig
 from lib.machine_state import is_container
 from lib.remote_utils import install_package, is_package_installed, run
 from lib.validation import validate_filesystem_path
-from desktop.browser_steps import is_flatpak_app_installed
 
 
 FLATPAK_REMOTE = "flathub"
@@ -40,6 +39,16 @@ def is_flatpak_installed() -> bool:
     """Check if flatpak is installed."""
     result = run("which flatpak", check=False)
     return result.returncode == 0
+
+
+def is_flatpak_app_installed(app_id: str, *, system: bool = False) -> bool:
+    """Check the selected Flatpak installation, including on a fresh target."""
+    args = ["flatpak", "list", *(["--system"] if system else []), "--app", "--columns=application"]
+    try:
+        result = run(args, check=False, capture_output=True)
+    except FileNotFoundError:
+        return False
+    return result.returncode == 0 and app_id in result.stdout.splitlines()
 
 
 def install_flatpak_if_needed() -> bool:
@@ -127,8 +136,7 @@ def install_office_apps(config: SetupConfig) -> None:
     if config.use_flatpak:
         if not install_flatpak_if_needed():
             print("  Falling back to apt for LibreOffice installation")
-            config.use_flatpak = False
-        elif is_flatpak_app_installed("org.libreoffice.LibreOffice"):
+        elif is_flatpak_app_installed("org.libreoffice.LibreOffice", system=True):
             print("  ✓ LibreOffice already installed via Flatpak")
             return
         else:
@@ -138,7 +146,7 @@ def install_office_apps(config: SetupConfig) -> None:
                 check=False,
             )
             if result.returncode != 0 or not is_flatpak_app_installed(
-                "org.libreoffice.LibreOffice"
+                "org.libreoffice.LibreOffice", system=True
             ):
                 raise RuntimeError("LibreOffice Flatpak installation failed")
             print("  ✓ LibreOffice installed via Flatpak")

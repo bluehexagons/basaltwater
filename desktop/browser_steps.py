@@ -7,6 +7,7 @@ import shlex
 import shutil
 import subprocess
 
+from desktop.apps_steps import FLATPAK_REMOTE, install_flatpak_if_needed, is_flatpak_app_installed
 from desktop.browser_extensions import install_chromium_blocker, install_firefox_blocker
 from desktop.browser_session import FLATPAK_BROWSER_IDS
 from desktop.home_setup import apply_home_settings
@@ -19,7 +20,6 @@ from lib.remote_utils import (
 )
 
 
-FLATPAK_REMOTE = "flathub"
 _apt_update_done = False
 _EXTREPO_SOURCE_DIR = "/etc/apt/sources.list.d"
 _MANAGED_EXTREPOS = ("librewolf", "vscode")
@@ -76,18 +76,6 @@ def _configure_librewolf_apparmor_profile() -> None:
     )
     if result.returncode != 0:
         print("  ⚠ Could not reload LibreWolf's unconfined AppArmor profile")
-
-
-def is_flatpak_app_installed(app_id: str, *, system: bool = False) -> bool:
-    """Check if a Flatpak application is installed."""
-    result = subprocess.run(
-        ["flatpak", "list", *(["--system"] if system else []), "--app", "--columns=application"],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        return False
-    return app_id in result.stdout.splitlines()
 
 
 def _refresh_existing_extrepo_sources() -> bool:
@@ -193,6 +181,8 @@ def install_single_browser(browser: str, use_flatpak: bool) -> None:
         if is_flatpak_app_installed(app_id, system=True):
             print(f"  ✓ {name} already installed")
         else:
+            if not install_flatpak_if_needed():
+                raise RuntimeError(f"{name} Flatpak installation failed: could not prepare Flatpak and Flathub")
             print(f"  Installing {name}...")
             result = run(f"flatpak install --system -y {FLATPAK_REMOTE} {app_id}", check=False)
             if result.returncode != 0 or not is_flatpak_app_installed(app_id, system=True):
@@ -267,7 +257,7 @@ def configure_default_browser(config: SetupConfig) -> None:
     if not config.browser:
         return
 
-    if is_dry_run():
+    if config.dry_run or is_dry_run():
         print(f"  [DRY-RUN] Would set {config.browser} as the default browser")
         return
 
@@ -281,9 +271,10 @@ def configure_default_browser(config: SetupConfig) -> None:
         config.use_flatpak
         and flatpak_app_id
         and not is_container()
-        and is_flatpak_app_installed(flatpak_app_id, system=True)
     )
     if using_flatpak_browser:
+        if not is_flatpak_app_installed(flatpak_app_id, system=True):
+            raise RuntimeError(f"Cannot set default browser: system Flatpak {flatpak_app_id} is missing")
         desktop_file = f"{flatpak_app_id}.desktop"
     elif (config.browser == "firefox"
           and not os.path.isfile("/usr/share/applications/firefox.desktop")
@@ -298,25 +289,28 @@ x-scheme-handler/unknown={desktop_file}
 text/html={desktop_file}
 application/xhtml+xml={desktop_file}
 """
-    browser_command = config.browser
+    browser_command = desktop_file.removesuffix(".desktop")
     if using_flatpak_browser:
-        browser_command = f"flatpak run {flatpak_app_id}"
+        browser_command = f"flatpak run --system {flatpak_app_id}"
 
     edits = [
-        ("write", ".config/mimeapps.list", mimeapps_content),
+        ("merge-browser-defaults", ".config/mimeapps.list", mimeapps_content),
         ("write", f"{_XFCE_HELPER_SUBDIR}/{config.browser}.desktop",
          _xfce_browser_helper(config.browser, browser_command, flatpak=using_flatpak_browser)),
-        ("write", ".config/xfce4/helpers.rc", f"WebBrowser={config.browser}\n"),
+        ("merge-browser-defaults", ".config/xfce4/helpers.rc", f"WebBrowser={config.browser}\n"),
     ]
     for browser in GRAPHICAL_SETUP_BROWSERS:
         if browser == config.browser:
             continue
         path = f"{_XFCE_HELPER_SUBDIR}/{browser}.desktop"
         edits.append(("retire", path, _xfce_browser_helper(browser, browser, flatpak=False)))
+        if browser == "firefox":
+            edits.append(("retire", path, _xfce_browser_helper(browser, "firefox-esr", flatpak=False)))
         if browser in FLATPAK_BROWSER_IDS:
-            edits.append(("retire", path, _xfce_browser_helper(
-                browser, f"flatpak run {FLATPAK_BROWSER_IDS[browser]}", flatpak=True,
-            )))
+            for launcher in ("flatpak run", "flatpak run --system"):
+                edits.append(("retire", path, _xfce_browser_helper(
+                    browser, f"{launcher} {FLATPAK_BROWSER_IDS[browser]}", flatpak=True,
+                )))
     # Retire only exact copies of helpers written by older setups.
     edits.append(("retire", f"{_XFCE_HELPER_SUBDIR}/helium.desktop",
                   _xfce_browser_helper("helium", "helium", flatpak=False)))

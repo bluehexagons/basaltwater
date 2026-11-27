@@ -35,6 +35,7 @@ class TestBrowserSteps(unittest.TestCase):
                 with self.subTest(browser=browser, flatpak=flatpak, code=code), \
                         patch("desktop.browser_steps.is_package_installed", return_value=False), \
                         patch("desktop.browser_steps.is_flatpak_app_installed", return_value=False), \
+                        patch("desktop.browser_steps.install_flatpak_if_needed", return_value=True), \
                         patch("desktop.browser_steps.shutil.which", return_value=None), \
                         patch("desktop.browser_steps.os.path.exists", return_value=False), \
                         patch("desktop.browser_steps._install_via_extrepo", return_value=False), \
@@ -88,6 +89,7 @@ class TestBrowserSteps(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp, \
                 patch.object(browser_extensions, "_FLATPAK_SYSTEMCONFIG", Path(temp)), \
                 patch("desktop.browser_steps.is_flatpak_app_installed", side_effect=[False, True, True, True]), \
+                patch("desktop.browser_steps.install_flatpak_if_needed", return_value=True) as prepare, \
                 patch("desktop.browser_steps.run", return_value=SimpleNamespace(returncode=0)) as install, \
                 patch.object(browser_extensions, "run", return_value=SimpleNamespace(
                     stdout="app/org.mozilla.firefox/aarch64/stable\n")):
@@ -113,6 +115,16 @@ class TestBrowserSteps(unittest.TestCase):
             install_single_browser("firefox", True)
             self.assertEqual(policy.read_text(), custom)
             install.assert_called_once_with("flatpak install --system -y flathub org.mozilla.firefox", check=False)
+            prepare.assert_called_once_with()
+
+    def test_missing_flatpak_remote_stops_before_install_or_extension_registration(self):
+        with patch("desktop.browser_steps.is_flatpak_app_installed", return_value=False), \
+                patch("desktop.browser_steps.install_flatpak_if_needed", return_value=False), \
+                patch("desktop.browser_steps.run") as install, patch("desktop.browser_steps.install_firefox_blocker") as blocker:
+            with self.assertRaisesRegex(RuntimeError, "prepare Flatpak and Flathub"):
+                install_single_browser("firefox", True)
+            install.assert_not_called()
+            blocker.assert_not_called()
 
     def test_flatpak_ref_must_belong_to_firefox_and_contain_safe_path_components(self):
         for ref in ("app/other/x86_64/stable", "app/org.mozilla.firefox/../stable",
@@ -147,11 +159,12 @@ class TestBrowserSteps(unittest.TestCase):
             with self.subTest(browser=browser, flatpak=flatpak), \
                     patch("desktop.browser_steps.is_package_installed", side_effect=[False, False, True]), \
                     patch("desktop.browser_steps.is_flatpak_app_installed", side_effect=[False, True]), \
+                    patch("desktop.browser_steps.install_flatpak_if_needed", return_value=True), \
                     patch("desktop.browser_steps.run", return_value=SimpleNamespace(returncode=1)):
                 with self.assertRaises(RuntimeError):
                     install_single_browser(browser, use_flatpak=flatpak)
 
-    @patch("desktop.browser_steps.subprocess.run")
+    @patch("desktop.apps_steps.run")
     def test_flatpak_app_detection_uses_argument_list(self, mock_run):
         mock_run.return_value = subprocess.CompletedProcess(
             args=["flatpak"],
@@ -159,14 +172,14 @@ class TestBrowserSteps(unittest.TestCase):
             stdout="org.mozilla.firefox\n",
             stderr="",
         )
-        self.assertTrue(is_flatpak_app_installed("org.mozilla.firefox"))
+        self.assertTrue(is_flatpak_app_installed("org.mozilla.firefox", system=True))
         mock_run.assert_called_once_with(
-            ["flatpak", "list", "--app", "--columns=application"],
+            ["flatpak", "list", "--system", "--app", "--columns=application"],
             capture_output=True,
-            text=True,
+            check=False,
         )
 
-    @patch("desktop.browser_steps.subprocess.run")
+    @patch("desktop.apps_steps.run")
     def test_flatpak_app_detection_handles_missing_app(self, mock_run):
         mock_run.return_value = subprocess.CompletedProcess(
             args=["flatpak"],
@@ -175,6 +188,8 @@ class TestBrowserSteps(unittest.TestCase):
             stderr="",
         )
         self.assertFalse(is_flatpak_app_installed("io.gitlab.librewolf-community"))
+        mock_run.side_effect = FileNotFoundError
+        self.assertFalse(is_flatpak_app_installed("org.mozilla.firefox", system=True))
 
     @patch("desktop.browser_steps.os.path.isfile", return_value=True)
     @patch("desktop.browser_steps.shutil.which", return_value="/usr/bin/apparmor-tool")
