@@ -112,10 +112,11 @@ standalone provider lifecycle behavior differs by profile; see the corresponding
 setup guide.
 
 Basaltwater targets stable T3 Code releases. When T3 Code is selected, every
-setup run checks npm's `t3@latest` stable channel for a newer release.
-A healthy service receives a final reload after successful setup, even when
-runtime and managed configuration are unchanged; internal non-refresh service
-checks reuse a healthy session. The T3 client can also offer an explicit
+setup run checks npm's `t3@latest` stable channel for a newer release. When
+the runtime and service configuration are current, setup checks readiness on
+the existing invocation and reloads it once after successful setup. A staged
+runtime, native repair, or pending configuration can require earlier activation.
+The T3 client can also offer an explicit
 **Update server** action for this background service; prefer that action after
 active agent work and terminal commands finish. Keep the client open while the
 launcher downloads, installs, restarts, and reconnects. For a host-side update,

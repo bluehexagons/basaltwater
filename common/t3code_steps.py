@@ -1225,17 +1225,19 @@ def _install_locked_t3_service(
             if update_needed or pending is not None
             else None
         )
+        binary_changed = binary != previous_binary
+        restart_pending = update_needed and os.path.lexists(
+            os.path.join(_t3_runtime_path(home), ".restart-pending")
+        )
         # Repointing service-state.json does not prove activation: 0.1.7 can
         # leave the old invocation running with .restart-pending recorded.
         # Prefer systemd identity; retain the version fallback only when that
         # identity is unavailable and upstream reports no pending restart.
         updater_started_service = update_needed and (
             (
-                binary != previous_binary
+                binary_changed
                 and current_invocation is None
-                and not os.path.lexists(
-                    os.path.join(_t3_runtime_path(home), ".restart-pending")
-                )
+                and not restart_pending
             ) or (
                 current_invocation is not None
                 and (previous_invocation is not None or not service_was_present)
@@ -1247,10 +1249,14 @@ def _install_locked_t3_service(
             and current_invocation is not None
             and current_invocation != pending["original_invocation"]
         )
+        # An unchanged refresh only needs the reload queued after setup.
         action = (
             "restart"
             if native_repaired
-            or (refresh and not updater_started_service)
+            or (
+                update_needed and (binary_changed or restart_pending)
+                and not updater_started_service
+            )
             or (
                 (pending is not None or drop_in_changed or npm_shim_changed)
                 and not config_applied
@@ -1318,7 +1324,7 @@ def _install_locked_t3_service(
         status = "retained and repaired after updater failure"
     elif update_failed:
         status = "retained and validated after updater failure"
-    elif update_needed:
+    elif binary_changed or updater_started_service or restart_pending:
         status = "updated"
     elif native_repaired:
         status = "repaired"

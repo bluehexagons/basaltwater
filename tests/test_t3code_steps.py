@@ -1129,22 +1129,13 @@ class T3CodeWebTest(unittest.TestCase):
             self.assertIn("start", actions)
             self.assertNotIn("restart", actions)
 
-    def test_refresh_restarts_an_unchanged_service(self) -> None:
+    def test_refresh_restarts_unchanged_service_only_for_staged_activation(self) -> None:
         with tempfile.TemporaryDirectory() as home:
             workspace = os.path.join(home, "repos")
             os.makedirs(workspace)
             node_bin = self._write_node_tools(home)
-            binary = self._write_upstream_runtime(home)
-            service_file = os.path.join(
-                home,
-                ".config",
-                "systemd",
-                "user",
-                "t3code.service",
-            )
-            os.makedirs(os.path.dirname(service_file), exist_ok=True)
-            with open(service_file, "w", encoding="utf-8") as file_obj:
-                file_obj.write("# upstream managed\n")
+            version = "0.1.13"
+            binary = self._write_upstream_native_runtime(home, version, protocol=4)
             completed = SimpleNamespace(returncode=0, stdout="", stderr="")
             with (
                 patch("common.t3code_steps.install_package", return_value=True),
@@ -1169,7 +1160,7 @@ class T3CodeWebTest(unittest.TestCase):
                     "common.t3code_steps._t3_native_runtime_healthy",
                     return_value=True,
                 ),
-                patch("common.t3code_steps._wait_for_t3_service"),
+                patch("common.t3code_steps._wait_for_t3_service") as readiness,
                 patch(
                     "common.t3code_steps._user_systemctl",
                     return_value=completed,
@@ -1184,24 +1175,27 @@ class T3CodeWebTest(unittest.TestCase):
                     os.path.join(home, "legacy.service"),
                 ),
             ):
-                self.assertEqual(
-                    _install_t3_service(
-                        home,
-                        "agent",
-                        os.getuid(),
-                        os.getgid(),
-                        workspace,
-                        "127.0.0.1",
-                        3773,
-                        refresh=True,
-                    ),
-                    binary,
-                )
-
-            updater.assert_called_once()
-            actions = [call.args[2] for call in systemctl.call_args_list]
-            self.assertIn("restart", actions)
-            self.assertNotIn("start", actions)
+                for staged in (False, True):
+                    with self.subTest(staged=staged):
+                        if staged:
+                            marker = os.path.join(home, ".t3", "runtime", ".restart-pending")
+                            with open(marker, "w", encoding="utf-8") as file_obj:
+                                file_obj.write(f"{version}\n")
+                        updater.reset_mock()
+                        systemctl.reset_mock()
+                        readiness.reset_mock()
+                        self.assertEqual(
+                            _install_t3_service(
+                                home, "agent", os.getuid(), os.getgid(), workspace,
+                                "127.0.0.1", 3773, refresh=True,
+                            ),
+                            binary,
+                        )
+                        updater.assert_called_once()
+                        actions = [call.args[2] for call in systemctl.call_args_list]
+                        self.assertEqual(actions.count("restart"), int(staged))
+                        self.assertEqual(actions.count("start"), int(not staged))
+                        readiness.assert_called_once()
 
     def test_t3_loginctl_shim_supplies_explicit_username(self) -> None:
         with tempfile.TemporaryDirectory() as home:
@@ -1231,7 +1225,7 @@ class T3CodeWebTest(unittest.TestCase):
             )
             self.assertIn(f'exec {real_loginctl} "$@"', content)
 
-    def test_same_version_refresh_restarts_only_when_updater_did_not(self) -> None:
+    def test_refresh_activates_config_changes_only_when_updater_did_not(self) -> None:
         for updater_code, updater_restarts in ((0, True), (0, False), (1, True), (1, False)):
             with (
                 self.subTest(updater_code=updater_code, updater_restarts=updater_restarts),
