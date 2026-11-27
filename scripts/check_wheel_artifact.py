@@ -44,6 +44,7 @@ REQUIRED_WHEEL_PATHS = (
     "common/agent_skills/basaltwater-frontend-design/references/mobile-applications.md",
     "common/agent_skills/basaltwater-frontend-design/references/web-applications.md",
     "common/agent_skills/basaltwater-frontend-design/references/websites.md",
+    "common/agent_skills/basaltwater-agent-operations/references/project-tools.md",
     "common/agent_skills/basaltwater-agent-operations/references/unattended-tasks.md",
     "common/agent_skills/basaltwater-subagents/SKILL.md",
     "common/agent_skills/basaltwater-subagents/references/lifecycle.md",

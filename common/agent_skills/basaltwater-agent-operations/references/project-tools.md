@@ -1,22 +1,7 @@
-# Unattended panel tasks
+# Project tools
 
-The web panel's **Agents** screen and `basaltw agent tasks` share saved Codex
-prompts, goals, checkpoints and managed workspaces independently of T3.
-Use `basaltw agent tasks capabilities --json` to inspect executor and worker
-availability. CLI controls and optional stdio MCP are available to standalone
-Codex and agents inside T3. These Basaltwater tasks run independently of T3;
-native T3 schedules can instead return to their owning conversation. Use the
-installed `basaltwater-subagents` skill's T3 scheduling reference to choose one
-scheduler and inspect its actual target, limits, and provider settings.
-Use the `basaltwater-agent-tasks` skill to schedule authorized follow-ups,
-hand off current findings, or pursue bounded goals with persistent context.
-Read [the unattended task guidance](unattended-tasks.md) when preparing
-or running recurring prompts. It covers execution permissions, isolated working
-directories, blocked checks, and review between editing runs. Inspection tasks
-must not use the update, repair, login, hold, or privilege-request examples below.
-
-For quick project discovery, run `basaltw agent manifest --json` from its
-checkout. It reports available tools, workspace/artifact conventions, and
+For a project summary, run `basaltw agent manifest` from its checkout.
+Add `--json` for executable paths, workspace and artifact conventions, and
 explicit branch-to-deployment mappings from optional `basaltwater-agent.json`.
 Projects can also declare required executables and named validation recipes;
 the summary reports missing prerequisites and displays commands without running
@@ -25,6 +10,20 @@ Undeclared `dev` and `staging` destinations remain unknown; tool presence does
 not prove health or authentication. See the
 [environment manifest guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/agent-environment.md)
 or `docs/agents/agent-environment.md` in a Basaltwater checkout.
+
+## Terminal editing
+
+Run `basaltw agent context` to see whether Vim and ripgrep are on PATH.
+In a checkout, `basaltw agent manifest . --capability development --json`
+reports their paths in `tools.vim` and `tools.rg`.
+On Debian, use `:scriptnames` inside Vim to see which vimrc files loaded and
+`:verbose set grepprg?` to see which file last set the search command.
+With the managed defaults, `:grep pattern .` searches the current directory
+tree and `:copen` opens the results. See the
+[terminal Vim guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/workstation-profiles-and-software.md#terminal-vim)
+for site and user overrides.
+
+## Project checks and evidence
 
 For shared GPU profiling or build outputs, use `basaltw agent reservations run`
 with an agreed `--resource gpu:all`, `--build-output PATH`, `--owner` and optional
@@ -45,7 +44,7 @@ Normal host package maintenance owns its updates. Check `blender --version`
 and use the manifest's background-render recipe for repeatable scene output;
 installation does not establish GPU or interactive desktop readiness. Native
 editing uses the shared desktop skill when that capability is installed.
-See [desktop software support and flags](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/workstations.md#desktop-software-support-and-flags)
+See [desktop software support and flags](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/workstation-profiles-and-software.md#desktop-software-support-and-flags)
 and [Blender workflows](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/desktop-development.md#blender).
 
 For image evidence, `basaltw agent visuals compare BEFORE.png AFTER.png --json`
@@ -55,3 +54,20 @@ replays a project capture command and settings in two managed Git worktrees;
 it retains worktrees and evidence rather than swapping primary assets. Read the
 [visual comparison guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/visual-comparisons.md)
 or `docs/workstations/visual-comparisons.md` before running revision captures.
+
+## Unattended panel tasks
+
+The web panel's **Agents** screen and `basaltw agent tasks` share saved Codex
+prompts, goals, checkpoints and managed workspaces independently of T3.
+Use `basaltw agent tasks capabilities --json` to inspect executor and worker
+availability. CLI controls and optional stdio MCP are available to standalone
+Codex and agents inside T3. These Basaltwater tasks run independently of T3;
+native T3 schedules can instead return to their owning conversation. Use the
+installed `basaltwater-subagents` skill's T3 scheduling reference to choose one
+scheduler and inspect its actual target, limits, and provider settings.
+Use the `basaltwater-agent-tasks` skill to schedule authorized follow-ups,
+hand off current findings, or pursue bounded goals with persistent context.
+Read [the unattended task guidance](unattended-tasks.md) when preparing
+or running recurring prompts. It covers execution permissions, isolated working
+directories, blocked checks, and review between editing runs. Reserve updates,
+repairs, login, holds, and privilege requests for tasks that authorize them.

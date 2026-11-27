@@ -67,7 +67,7 @@ class ManifestOutputTests(unittest.TestCase):
                   patch("lib.agent_environment.platform.release", return_value="6.12-debian"),
                   patch("lib.agent_environment.inspect_installation_provenance", return_value=installation),
                   patch("lib.agent_environment.shutil.which", side_effect={
-                      "blender": "/bin/blender", "musescore4": "/bin/musescore4",
+                      "blender": "/bin/blender", "musescore4": "/bin/musescore4", "vim": "/bin/vim",
                   }.get) as which,
                   patch("lib.agent_environment.browser_context_inventory", return_value=[]) as browser,
                   patch("lib.agent_environment._desktop_development", return_value={}) as development,
@@ -90,6 +90,11 @@ class ManifestOutputTests(unittest.TestCase):
                     git.assert_not_called()
                 if scope in {"installation", "skills"}:
                     which.assert_not_called()
+                if scope in {"development", "web"}:
+                    self.assertEqual(result["tools"]["vim"], "/bin/vim")
+                    self.assertIsNone(result["tools"]["rg"])
+                else:
+                    self.assertTrue({"vim", "rg"}.isdisjoint(call.args[0] for call in which.call_args_list))
                 if scope == "browser":
                     self.assertEqual({entry.args[0] for entry in which.call_args_list},
                                      {"basaltwater-playwright-mcp", "firefox", "firefox-esr", "node"})

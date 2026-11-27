@@ -14,6 +14,7 @@ from lib.agent_discovery import inspect_context
 
 class AgentDiscoveryTests(unittest.TestCase):
     def inspect(self, *, distro="cachyos", release="linux", system="Linux"):
+        installed = {"codex", "t3code", "vim", "rg", "blender", "shotcut", "lmms", "obs", "musescore4"}
         catalog = {"catalogs": [{"skills": [
             {"name": "basaltwater-subagents", "path": "/skills/subagents/SKILL.md", "status": "current"},
             {"name": "broken", "path": "/skills/broken/SKILL.md", "status": "unsafe"},
@@ -25,7 +26,7 @@ class AgentDiscoveryTests(unittest.TestCase):
               patch("lib.agent_discovery.is_cachyos", return_value=distro == "cachyos"),
               patch("lib.agent_discovery.inspect_skill_catalogs", return_value=catalog) as inventory,
               patch("lib.agent_workspace._effective_home", return_value="/home/example"),
-              patch("lib.agent_discovery.shutil.which", side_effect=lambda name: "/usr/bin/" + name if name in {"codex", "t3code", "blender", "shotcut", "lmms", "obs", "musescore4"} else None),
+              patch("lib.agent_discovery.shutil.which", side_effect=lambda name: "/usr/bin/" + name if name in installed else None),
               patch("subprocess.Popen", side_effect=AssertionError("Discovery must not execute tools"))):
             result = inspect_context()
             inventory.assert_called_once_with("/home/example")
@@ -39,6 +40,7 @@ class AgentDiscoveryTests(unittest.TestCase):
         result = self.inspect()
         self.assertEqual(result["readiness"], "unverified")
         self.assertEqual(result["tools_on_path"]["agents"], ["codex", "t3code"])
+        self.assertEqual(result["tools_on_path"]["development"], ["vim", "rg"])
         self.assertEqual(result["tools_on_path"]["assets"], ["blender", "shotcut", "lmms", "obs", "musescore4"])
         self.assertEqual(result["tools_on_path"]["containers"], [])
         self.assertEqual(set(result["installed_guidance"]), {"basaltwater-subagents"})

@@ -28,6 +28,7 @@ from lib.validators import validate_host
 
 PROJECT_FILE = "basaltwater-agent.json"
 CONTAINER_ENGINES = ("podman", "docker")
+TERMINAL_EDITING_TOOLS = ("vim", "rg")
 MUSESCORE_EXECUTABLES = ("musescore4", "mscore4", "musescore3", "mscore3", "musescore", "mscore")
 DESKTOP_APPLICATIONS = {
     "blender": {
@@ -145,7 +146,8 @@ TOOLS = (
     "sox", "soxi", "arecord", "aplay", "amidi", "aconnect", "pactl", "paplay", "parecord",
     "aseqdump", "pw-cli", "pw-dump", "pw-top", "pw-play", "pw-record", "wpctl",
     *MUSESCORE_EXECUTABLES,
-    "rg", "jq", "aws", "basaltwater-web", "basaltwater-playwright-mcp", "butler", "steamcmd", *DESKTOP_APPLICATIONS,
+    *TERMINAL_EDITING_TOOLS, "jq", "aws", "basaltwater-web", "basaltwater-playwright-mcp", "butler", "steamcmd",
+    *DESKTOP_APPLICATIONS,
 )
 DESKTOP_GUIDE = "https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/desktop-development.md"
 PUBLISHING_GUIDE = "https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/game-publishing.md"
@@ -410,6 +412,7 @@ def _scoped_tool_names(scopes: set[str], desktop_applications: Iterable[str],
     if "desktop" in scopes:
         names.update(desktop_applications)
     if "development" in scopes:
+        names.update(TERMINAL_EDITING_TOOLS)
         names.update(("node", "npm", "yarn", "pnpm", "corepack", "python3", "uv", "go", "gcc", "g++",
                       "make", "cmake", "godot", "godot-mono", "dotnet", *NATIVE_COMMANDS, "clang", "llvm-symbolizer"))
         names.update(project_tools)

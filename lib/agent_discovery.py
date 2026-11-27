@@ -9,14 +9,15 @@ import shutil
 
 from lib import agent_workspace
 from lib.agent_skill_catalog import inspect_skill_catalogs, installed_skill_names
-from lib.agent_environment import DESKTOP_APPLICATIONS, MUSESCORE_EXECUTABLES
+from lib.agent_environment import DESKTOP_APPLICATIONS, MUSESCORE_EXECUTABLES, TERMINAL_EDITING_TOOLS
 from lib.cachyos import is_cachyos
 
 
 GUIDE = "https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/agent-environment.md"
 TOOL_GROUPS = {
     "agents": ("codex", "claude", "opencode", "gh", "t3code", "t3"),
-    "development": ("git", "node", "npm", "pnpm", "python3", "uv", "go", "gcc", "clang", "godot", "dotnet"),
+    "development": ("git", *TERMINAL_EDITING_TOOLS, "node", "npm", "pnpm", "python3", "uv", "go",
+                    "gcc", "clang", "godot", "dotnet"),
     "containers": ("podman", "docker"),
     "assets": tuple(dict.fromkeys((*DESKTOP_APPLICATIONS, *MUSESCORE_EXECUTABLES,
                                   "ffmpeg", "ffprobe", "magick", "convert", "exiftool"))),

@@ -18,8 +18,9 @@ basaltw setup agent_vm 10.0.0.24 agent --codex \
 
 This installs GitHub CLI, Codex, and the selected runtimes without the broader
 control-plane administrator package set. Remove `--agent-config` or `--repo`
-when those inputs are not needed. Use `tmux` for long-running agent sessions
-over SSH. To add another provider, append `--claude` or `--opencode`.
+when those inputs are not needed. Over SSH, use
+[Vim](workstation-profiles-and-software.md#terminal-vim) for editing and `tmux`
+for long-running agent sessions. To add another provider, append `--claude` or `--opencode`.
 Use `--no-agent-tool gh` to remove a profile default.
 Codex and OpenCode receive base workflow skills under `~/.agents/skills`;
 Claude Code receives them under `~/.claude/skills` when selected. The complete
@@ -60,7 +61,7 @@ an empty pairing password reuses the account password. Use
 `--no-device-pairing` to disable individual defaults. Node.js is installed
 automatically because T3 Code requires it. Go and other project runtimes remain
 optional and can be selected with their runtime flags. The shared CLI baseline
-includes `ripgrep` (`rg`), `jq`, SQLite, `file`, `tree`, `make`, and `patch`.
+includes Vim, ripgrep (`rg`), `jq`, SQLite, `file`, `tree`, `make`, and `patch`.
 Add `--data-analysis` only when the VM needs the larger NumPy, pandas, SciPy,
 Matplotlib, JupyterLab, and csvkit stack; the flag also enables Python tooling.
 Add `--av-tools` when agents need local media inspection or conversion; it

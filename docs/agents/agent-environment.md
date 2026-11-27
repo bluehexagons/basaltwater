@@ -57,6 +57,17 @@ their paths. For delivered bundle identities and skill comparison details, reque
 `skills`, `installation`, or explicit installation context. Other scopes
 retain source provenance and omit the per-skill summary.
 
+For terminal editing, `basaltw agent context` lists `vim` and `rg` in the
+development group when it finds them on PATH. From a checkout, this command
+shows the executable paths.
+
+```bash
+basaltw agent manifest . --capability development --json | jq '.tools | {vim, rg}'
+```
+
+Each missing executable has a `null` path. To check which configuration Vim
+loaded, use `:scriptnames` inside Vim. See the [Debian Vim defaults and overrides](../workstations/workstation-profiles-and-software.md#terminal-vim).
+
 For a short workstation capability report, use
 `basaltw agent manifest . --capability workstation` (add `--json` for individual
 observations). This opt-in scope reports PATH presence, bounded terminal-only

@@ -20,7 +20,7 @@ Select a reference before performing the corresponding operation:
 | --- | --- |
 | Agent/host readiness or deliberate tool updates | [Readiness and updates](references/readiness.md) |
 | Context pricing, compaction defaults, or approval for a larger window | [Context budgets](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/agent-context.md) |
-| Project toolchains, visual evidence, or task discovery | [Project tools](references/project-tools.md) |
+| Project toolchains, terminal editing, visual evidence, or task discovery | [Project tools](references/project-tools.md) |
 | Protect long work across a restart window | [Maintenance holds](references/maintenance.md) |
 | An authorized root action through the configured broker | [Privilege requests](references/privilege.md) |
 | Credential status, login, or explicit rotation | [Credentials](references/credentials.md) |
