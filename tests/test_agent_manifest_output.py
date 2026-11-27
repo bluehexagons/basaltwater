@@ -147,6 +147,59 @@ class ManifestOutputTests(unittest.TestCase):
         self.assertEqual(result["desktop_applications"], {})
         self.assertNotIn("tools", result)
 
+    def test_development_scope_reports_godot_preparation_per_checkout(self) -> None:
+        parser = argparse.ArgumentParser()
+        add_manifest_parser(parser.add_subparsers())
+        with (tempfile.TemporaryDirectory() as temporary,
+              patch("lib.agent_workspace._repository_root", side_effect=lambda path: path),
+              patch("lib.agent_environment.is_cachyos", return_value=True),
+              patch("lib.agent_environment.platform.release", return_value="6.18-cachyos"),
+              patch("lib.agent_environment.inspect_installation_provenance", return_value={}),
+              patch("lib.agent_environment.shutil.which", return_value="/usr/bin/godot")):
+            prepared, fresh = (Path(temporary) / name for name in ("prepared", "fresh worktree"))
+            declaration = {"version": 1, "recipes": {"graphics": {
+                "description": "Graphics smoke", "argv": ["do-not-run"], "requires": ["godot"],
+                "godot_prepare": {"project": "game", "asset_directories": ["assets/art"]}}}}
+            for root in (prepared, fresh):
+                (root / "game").mkdir(parents=True)
+                (root / "game/project.godot").touch()
+                (root / "basaltwater-agent.json").write_text(json.dumps(declaration))
+            (prepared / "game/assets/art").mkdir(parents=True)
+            (prepared / "game/.godot/imported").mkdir(parents=True)
+
+            def discover(root):
+                args = parser.parse_args(["manifest", str(root), "--capability", "development", "--json"])
+                with patch("sys.stdout", new_callable=io.StringIO) as output:
+                    self.assertEqual(run_manifest_command(args), 0)
+                recipe = json.loads(output.getvalue())["recipes"]["graphics"]
+                self.assertEqual(recipe["missing_tools"], [])
+                return recipe["godot_preparation"]
+
+            result = discover(fresh)
+            self.assertEqual(result["project"], str(fresh / "game"))
+            self.assertEqual(result["state"], "needs-preparation")
+            self.assertEqual(result["missing_asset_directories"], ["assets/art"])
+            self.assertEqual(result["import_cache"], "missing")
+            command = ["basaltw", "desktop", "--native", "develop", "check", "graphics",
+                       "--project", str(fresh), "--prepare"]
+            self.assertEqual(result["prepare_argv"], [*command, "--asset-bundle", "/absolute/local-qa-bundle"])
+            self.assertFalse((fresh / "game/.godot").exists())
+            (fresh / "game/assets/art").mkdir(parents=True)
+            self.assertEqual(discover(fresh)["prepare_argv"], command)
+
+            result = discover(prepared)
+            self.assertEqual(result["state"], "prerequisites-present")
+            self.assertEqual(result["missing_asset_directories"], [])
+            self.assertEqual(result["import_cache"], "present")
+            self.assertEqual(result["gpu_readiness"], "unverified")
+            self.assertIsNone(result["prepare_argv"])
+
+            (fresh / "game/.godot").symlink_to(prepared / "game/.godot", target_is_directory=True)
+            result = discover(fresh)
+            self.assertEqual(result["state"], "unverified")
+            self.assertEqual(result["import_cache"], "unverified")
+            self.assertIn("without symlinks", result["issue"])
+
     def test_workstation_scope_shares_project_declaration_and_reports_engines(self) -> None:
         parser = argparse.ArgumentParser()
         add_manifest_parser(parser.add_subparsers())

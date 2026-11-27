@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import redirect_stdout
+from datetime import datetime, timezone
 from io import StringIO
 import json
 import os
@@ -143,8 +144,9 @@ class TestDevelopmentWait(unittest.TestCase):
         for state, ok, code in (("stopped", True, 0), ("unverified", False, 0),
                                 ("unavailable", False, None), ("failed", False, 2)):
             with self.subTest(state=state), patch.object(development, "task_status", return_value=self.snapshot(state, ok, code)), \
+                    patch.object(development.time, "monotonic", side_effect=[0, 21]), \
                     patch.object(development.time, "sleep") as sleep:
-                result = development.wait_task("a" * 32)
+                result = development.wait_task("a" * 32, timeout=20)
                 self.assertFalse(result["ok"])
                 self.assertFalse(result["wait_timed_out"])
                 sleep.assert_not_called()
@@ -157,6 +159,7 @@ class TestDevelopmentWait(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertTrue(result["wait_timed_out"])
         self.assertEqual(result["state"], "running")
+        self.assertIn("still running", result["message"])
         status.assert_called_once_with("a" * 32)
         sleep.assert_not_called()
 
@@ -172,18 +175,73 @@ class TestDevelopmentWait(unittest.TestCase):
         development.add_development_parser(parser.add_subparsers(dest="command"))
         args = parser.parse_args(["develop", "wait", "a" * 32, "--timeout", "20", "--json"])
         args.native = True
-        for state, expected in (("completed", 0), ("failed", 1), ("running", 1), ("stopped", 1)):
+        for state, expected in (("completed", 0), ("failed", 1), ("running", 124), ("stopped", 1), ("stopping", 124)):
             snapshot = self.snapshot(state, state in ("completed", "running", "stopped"), 0)
             with self.subTest(state=state), patch.object(development, "task_status", return_value=snapshot), \
-                    patch.object(development.time, "monotonic", side_effect=[0, 20 if state == "running" else 1]), \
+                    patch.object(development.time, "monotonic", side_effect=[0, 20]), \
                     redirect_stdout(output := StringIO()):
                 self.assertEqual(development.run_development_command(args), expected)
-                self.assertEqual(json.loads(output.getvalue())["ok"], expected == 0)
+                result = json.loads(output.getvalue())
+                self.assertEqual(result["ok"], expected == 0)
+                self.assertEqual(result["wait_timed_out"], expected == 124)
         args = parser.parse_args(["develop", "doctor", "--project", "/project", "--export-check", "--json"])
         args.native = True
         with patch.object(development, "doctor", return_value={"ok": True}) as doctor, redirect_stdout(StringIO()):
             self.assertEqual(development.run_development_command(args), 0)
         doctor.assert_called_once_with("/project", None, export_check=True)
+
+
+class TestDevelopmentLogs(unittest.TestCase):
+    def setUp(self):
+        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.task_id = "a" * 32
+        self.directory = self.root / self.task_id
+        self.directory.mkdir(mode=0o700)
+        self.worker_log = self.directory / "output.log"
+        self.check = self.directory / "check"
+        self.enterContext(patch.object(development, "_guard", return_value=os.getuid()))
+        self.enterContext(patch.object(development, "_root", return_value=self.root))
+        self.unit = self.enterContext(patch.object(development, "_unit"))
+        task = {"schema_version": 1, "kind": "check", "recipe": "graphics", "task": self.task_id,
+                "unit": f"{development.UNIT_PREFIX}{self.task_id}.service", "project": str(self.root),
+                "argv": ["/bin/true"], "owner_uid": os.getuid(),
+                "created_at": datetime.now(timezone.utc).isoformat()}
+        self.write_private(self.directory / "task.json", json.dumps(task).encode())
+
+    def write_private(self, path, body):
+        path.write_bytes(body)
+        path.chmod(0o600)
+
+    def test_read_worker_fallback_and_live_recipe_excerpt_without_service(self):
+        self.assertFalse(development.task_logs(self.task_id)["ok"])
+        self.write_private(self.worker_log, b"preflight\n")
+        self.assertEqual(development.task_logs(self.task_id)["output"], "preflight\n")
+        self.check.mkdir(mode=0o700)
+        log = self.check / "check.log"
+        body = b"import\n\nframe\nteardown: \xff"
+        self.write_private(log, body)
+        parser = argparse.ArgumentParser()
+        development.add_development_parser(parser.add_subparsers())
+        for flags, expected in ((["--tail", "2"], "frame\nteardown: \ufffd"),
+                                (["--worker"], "preflight\n")):
+            args = parser.parse_args(["develop", "logs", self.task_id, *flags])
+            with redirect_stdout(output := StringIO()):
+                self.assertEqual(development.run_development_command(args), 0)
+                self.assertEqual(output.getvalue(), expected)
+        self.assertEqual(log.read_bytes(), body)
+        self.unit.assert_not_called()
+
+    def test_tail_counts_blank_lines_and_refuses_unsafe_logs(self):
+        self.write_private(self.worker_log, b"one\ntwo\n\n")
+        self.assertEqual(development.task_logs(self.task_id, tail=1)["output"], "\n")
+        with self.assertRaises(ValueError):
+            development.task_logs(self.task_id, tail=0)
+        with self.assertRaises(ValueError):
+            development.task_logs("../output.log")
+        self.check.mkdir(mode=0o700)
+        (self.check / "check.log").symlink_to(self.worker_log)
+        with self.assertRaises(OSError):
+            development.task_logs(self.task_id)
 
 
 if __name__ == "__main__":

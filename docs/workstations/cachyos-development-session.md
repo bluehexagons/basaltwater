@@ -116,6 +116,7 @@ unacknowledged launch or failed initial unit inspection retains the task ID as
 ```fish
 basaltw desktop --native develop list --project /absolute/project --json
 basaltw desktop --native develop status TASK_ID --json
+basaltw desktop --native develop logs TASK_ID --tail 30
 # Use the returned task ID; wait does not stop it on timeout:
 basaltw desktop --native develop wait TASK_ID --timeout 120 --json
 # Save task-owned editor changes first:
@@ -162,13 +163,21 @@ needed. Finished successful supervisor units are unloaded automatically after
 their process group exits; saved records still provide status and exit evidence.
 There is no log/record cleanup timer.
 
+`logs TASK_ID` prints the last 30 lines of retained output by default.
+Use `--tail LINES` for 1–10000 lines or `--json` for the excerpt and its log path.
+For a `check` task it reads the live `check.log` once available, including Godot
+import and recipe output. Use `--worker` to see the supervisor's `output.log`,
+including the final check receipt. This works during execution and after exit.
+Reading an excerpt leaves the full retained log available at its original path.
+
 `wait TASK_ID --timeout SECONDS --json` repeatedly reads the same verified
 status, at most twice per second. The timeout is an integer from 1 through
 3600 seconds (default 600). It emits one final JSON status with the existing
 log/report paths and `wait_timed_out`. Exit zero requires verified `completed`
 state and a successful recorded exit. Failed, stopped, unavailable or unverified
-tasks return nonzero immediately. Deadline expiry also returns nonzero, retaining
-the observed state; it never stops or relaunches the task. Each status probe has
+tasks return 1. A deadline reached while the task is still running or stopping
+returns 124 with `wait_timed_out: true` and a message reporting the observed
+state. The task lifecycle is unaffected. Each status probe has
 its existing three-second deadline plus bounded process cleanup, so an in-flight
 probe can delay return beyond the wait deadline. An uncertain/expired wait needs
 inspection of the same task handle before further dependent work.
@@ -267,6 +276,14 @@ at both revisions. Supply an approved directory outside the checkout with the
 same asset layout. Keep the bundle path in the invocation so it can vary by
 workstation.
 
+`agent manifest /absolute/worktree --capability development --json` reports
+`recipes.RECIPE.godot_preparation` for each opted-in recipe. It lists missing
+asset directories and checks for the project's local `.godot/imported`
+directory. When either is missing, `prepare_argv` targets that worktree.
+If asset directories are missing, replace `/absolute/local-qa-bundle` in the
+command with the approved local bundle path. Directory presence leaves asset
+completeness, import freshness, and GPU readiness unverified.
+
 ```fish
 basaltw desktop --native develop check playtest-smoke --project /absolute/worktree \
   --prepare --asset-bundle /absolute/local-qa-bundle --timeout 1200 --json
@@ -280,9 +297,10 @@ headless import writes its own `.godot` cache. If all declared directories
 are already present, `--prepare` can run without `--asset-bundle`.
 
 Use `develop status TASK_ID --json` to find `prepare_report` and `check_log`.
-The report distinguishes planning, staging and importing. Follow `check_log`
-for Godot's live import output. `--timeout` applies separately to the import
-and recipe, and `develop wait` has its own wait deadline. A failed or timed-out
+The report distinguishes planning, staging and importing. Use
+`develop logs TASK_ID --tail 30` to see Godot's recent import output.
+`--timeout` applies separately to the import and recipe, and `develop wait`
+has its own wait deadline. A failed or timed-out
 import leaves evidence for inspection and prevents the GPU recipe from starting.
 Preparation checks both Godot's import diagnostics and retained invalid
 `.import` records for existing assets. These can indicate failure even when

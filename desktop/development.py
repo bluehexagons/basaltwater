@@ -109,6 +109,11 @@ def add_development_parser(commands: argparse._SubParsersAction) -> None:
     cleanup.add_argument("--include-downloads", action="store_true", help="Also remove the task's private download directory")
     cleanup.add_argument("--dry-run", action="store_true")
     cleanup.add_argument("--json", action="store_true")
+    logs = actions.add_parser("logs", help="Show the last lines of a development task's retained output")
+    logs.add_argument("task", help="Task ID returned by a development launch")
+    logs.add_argument("--tail", type=int, default=30, metavar="LINES", help="Number of lines to show (1–10000, default 30)")
+    logs.add_argument("--worker", action="store_true", help="Show supervisor output even when a recipe log is available")
+    logs.add_argument("--json", action="store_true")
     for name in ("status", "stop", "wait"):
         action = actions.add_parser(name)
         action.add_argument("task", help="Task ID returned by a development launch")
@@ -533,6 +538,45 @@ def _honor_agent_control(revision: str | None = None) -> str:
     return current["control_revision"]
 
 
+def _read_log(path: Path) -> bytes:
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+            raise ValueError("Development logs must be owned private regular files")
+        if info.st_size > LOG_LIMIT:
+            raise ValueError("Development log exceeds its retained size limit")
+        return stream.read(info.st_size)
+
+
+def task_logs(task_id: str, *, tail: int = 30, worker: bool = False) -> dict:
+    if type(tail) is not int or not 1 <= tail <= 10000:
+        raise ValueError("Log tail must be from 1 through 10000 lines")
+    _guard()
+    directory = _task(task_id)
+    task = load_task(directory)
+    path = directory / "output.log"
+    body = None
+    if task["kind"] == "check" and not worker:
+        try:
+            check_log = _private_directory(directory / "check") / "check.log"
+            body = _read_log(check_log)
+            path = check_log
+        except FileNotFoundError:
+            pass  # The check may still be in preflight.
+    if body is None:
+        try:
+            body = _read_log(path)
+        except FileNotFoundError:
+            return {"schema_version": 1, "ok": False, "task": task_id, "log": str(path),
+                    "error": "No output log is available for this task yet"}
+    # Count a trailing newline as part of the last line, including blank lines.
+    lines = tail + body.endswith(b"\n")
+    excerpt = b"\n".join(body.rsplit(b"\n", lines)[-lines:])
+    return {"schema_version": 1, "ok": True, "task": task_id, "log": str(path),
+            "output": excerpt.decode("utf-8", errors="replace")}
+
+
 def wait_task(task_id: str, *, timeout: int = 600) -> dict:
     """Observe one task to verified completion without changing its lifecycle."""
     if type(timeout) is not int or not 1 <= timeout <= 3600:
@@ -540,12 +584,14 @@ def wait_task(task_id: str, *, timeout: int = 600) -> dict:
     deadline = time.monotonic() + timeout
     while True:
         result = task_status(task_id)
+        state = result["state"]
+        if state not in ("running", "stopping"):
+            successful = state == "completed" and result["ok"] and result["returncode"] == 0
+            return {**result, "ok": successful, "wait_timed_out": False}
         remaining = deadline - time.monotonic()
-        timed_out = remaining <= 0
-        successful = (result["state"] == "completed" and result["ok"]
-                      and result["returncode"] == 0 and not timed_out)
-        if result["state"] not in ("running", "stopping") or timed_out:
-            return {**result, "ok": successful, "wait_timed_out": timed_out}
+        if remaining <= 0:
+            return {**result, "ok": False, "wait_timed_out": True,
+                    "message": f"Wait deadline reached after {timeout} seconds. Task {task_id} is still {state}."}
         time.sleep(min(0.5, remaining))
 
 
@@ -795,9 +841,9 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
 
 
 def run_development_command(args: argparse.Namespace) -> int:
+    action = args.development_command
     try:
-        action = args.development_command
-        if not getattr(args, "native", False) and action not in ("list", "status", "stop", "wait", "cleanup-browser"):
+        if not getattr(args, "native", False) and action not in ("list", "status", "stop", "wait", "logs", "cleanup-browser"):
             from desktop.debian_development import request_task
             result = request_task(args)
         elif action == "doctor":
@@ -808,6 +854,8 @@ def run_development_command(args: argparse.Namespace) -> int:
             result = task_status(args.task, stop=action == "stop", dry_run=getattr(args, "dry_run", False))
         elif action == "wait":
             result = wait_task(args.task, timeout=args.timeout)
+        elif action == "logs":
+            result = task_logs(args.task, tail=args.tail, worker=args.worker)
         elif action == "cleanup-browser":
             result = cleanup_browser(args.task, include_downloads=args.include_downloads, dry_run=args.dry_run)
         elif action == "playtest":
@@ -832,5 +880,13 @@ def run_development_command(args: argparse.Namespace) -> int:
         result = {**exc.receipt, "ok": False}
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         result = {"ok": False, "error": str(exc)}
+    if action == "logs" and not args.json:
+        if result["ok"]:
+            sys.stdout.write(result["output"])
+        else:
+            print(result["error"], file=sys.stderr)
+        return 0 if result["ok"] else 1
     print(json.dumps(result, indent=2))
+    if action == "wait" and result.get("wait_timed_out"):
+        return 124
     return 0 if result["ok"] else 1

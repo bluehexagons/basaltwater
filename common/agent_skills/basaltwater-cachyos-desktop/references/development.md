@@ -26,9 +26,11 @@ use `develop exec --project PATH -- COMMAND`. Use `--dry-run` to preview.
 These user-systemd tasks survive client disconnection and retain private bounded
 logs; `develop list`, `develop status TASK_ID`, and `develop stop TASK_ID` manage
 only their records/process group. Status exposes a read-only unit process
-snapshot plus log/report paths and worker duration after completion. Counts
-include threads; historical PIDs are not cleanup identities. Save changes before
-stopping an editor.
+snapshot plus log/report paths and worker duration after completion. Use
+`develop logs TASK_ID --tail 30` for recent output during or after a task.
+For checks it shows the live recipe log when available. Use `--worker` for
+supervisor output. Process counts include threads. Save changes before stopping
+an editor and use its task ID to identify it.
 
 For a manual game test, use a declared `develop playtest PROFILE --project PATH`.
 Start `evidence start --project PATH` first. Each launch seeds a fresh private
@@ -48,8 +50,9 @@ task's process outcome.
 
 Use `develop wait TASK_ID --timeout SECONDS --json` for completion (1–3600
 seconds, default 600). It returns one status with log/report paths and
-`wait_timed_out`; only verified successful completion exits zero. Failed,
-stopped, unavailable/unverified states and deadline expiry exit nonzero.
+`wait_timed_out`. Verified successful completion exits 0. Failed, stopped,
+unavailable and unverified states exit 1. A deadline while the task is still
+running or stopping exits 124 and reports the observed state.
 An in-flight bounded status probe/cleanup can delay return beyond the deadline.
 Wait does not stop or relaunch tasks. Inspect the same handle after uncertainty.
 Measure GPU tasks sequentially: complete imports first, then launch and wait for
@@ -72,11 +75,13 @@ exit status alone does not verify GPU, audio, input or complete UI behavior.
 When the recipe produces a batch manifest, add `--review-manifest RELATIVE_JSON`
 and read `review.viewer` in the completed check report.
 
-For fresh worktrees, a recipe can declare `godot_prepare`. Opt in with
-`--prepare --asset-bundle PATH`, using an approved local bundle. Follow
-`prepare_report` and `check_log` from status to see missing assets and live
-import progress. Each worktree keeps its own `.godot` cache. Choose a timeout
-that allows the import to finish before the GPU recipe starts.
+For fresh worktrees, a recipe can declare `godot_prepare`. The development
+manifest reports missing asset directories or import cache under the recipe's
+`godot_preparation` and shows a preparation command for the selected worktree.
+Use `--prepare --asset-bundle PATH` with an approved local bundle when assets
+are missing. Read `prepare_report` from status and use `develop logs TASK_ID`
+for import progress. Each worktree keeps its own `.godot` cache. Choose a
+timeout that allows the import to finish before the GPU recipe starts.
 
 Use `develop compare RECIPE --project PATH --before REV --after REV --settings
 SETTINGS.json` to queue the same case set sequentially in separate worktrees.

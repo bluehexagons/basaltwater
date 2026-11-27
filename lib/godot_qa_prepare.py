@@ -80,6 +80,29 @@ def _directory_exists(root: Path, relative: Path) -> bool:
     return True
 
 
+def inspect_preparation(repository: Path, declaration: dict) -> dict:
+    """Observe worktree-local prerequisites without staging assets or running Godot."""
+    relative = Path(declaration["project"])
+    project = repository / relative
+    result = {"project": str(project), "state": "unverified", "gpu_readiness": "unverified",
+              "missing_asset_directories": None, "import_cache": "unverified", "prepare_argv": None}
+    try:
+        if not _directory_exists(repository, relative):
+            raise ValueError("The declared Godot project directory is missing")
+        if not stat.S_ISREG((project / "project.godot").lstat().st_mode):
+            raise ValueError("The declared project.godot must be a regular file")
+        missing = [entry for entry in declaration["asset_directories"]
+                   if not _directory_exists(project, Path(entry))]
+        result["missing_asset_directories"] = missing
+        cache_present = _directory_exists(project, Path(".godot/imported"))
+    except (OSError, ValueError) as exc:
+        result["issue"] = str(exc)
+    else:
+        result["import_cache"] = "present" if cache_present else "missing"
+        result["state"] = "needs-preparation" if missing or not cache_present else "prerequisites-present"
+    return result
+
+
 def _require_ignored(repository: Path, path: Path) -> None:
     relative = path.relative_to(repository).as_posix()
     tracked = run_captured(["git", "--literal-pathspecs", "ls-files", "-z", "--", relative],

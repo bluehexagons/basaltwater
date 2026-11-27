@@ -15,6 +15,7 @@ basaltw desktop develop exec --project /absolute/project --dry-run -- /usr/bin/p
 basaltw desktop develop exec --project /absolute/project -- /usr/bin/python3 script.py
 basaltw desktop develop list --project /absolute/project --json
 basaltw desktop develop status TASK_ID --json
+basaltw desktop develop logs TASK_ID --tail 30
 basaltw desktop develop wait TASK_ID --timeout 120 --json
 ```
 
@@ -111,11 +112,16 @@ establish completion while task descendants remain active. Tasks that ask an
 already running application to open a document do not own that application's
 existing process; inspect actual window/process identities.
 
-Task status/list/wait use private records and the user manager without the
-desktop helper. A missing or uninspectable service with no sufficient evidence
+Task status/list/logs/wait work without the desktop helper.
+A missing or uninspectable service with no sufficient evidence
 stays unavailable/unverified. Status does not automatically repair or restart
 anything. Logs, argv and raw receipts may contain project information; retain
 them privately and inspect before sharing.
+
+`develop logs TASK_ID` reads a private log directly, including live recipe
+output for `check` tasks. Use `--worker` for supervisor output. A wait deadline
+while the task is still running or stopping exits 124. Successful completion
+exits 0 and failed or unverified completion exits 1.
 
 ## Stop and reconcile
 

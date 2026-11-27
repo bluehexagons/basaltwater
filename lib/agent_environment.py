@@ -423,6 +423,8 @@ def _scoped_tool_names(scopes: set[str], desktop_applications: Iterable[str],
 def inspect_environment(repository: str, *, project_runtime: bool = False,
                         installation_context: bool = False, managed_source: str | None = None,
                         capabilities: Sequence[str] = ()) -> dict[str, object]:
+    from lib.godot_qa_prepare import inspect_preparation
+
     scopes = _manifest_scopes(capabilities)
     include_workspace = not scopes or "workspace" in scopes
     include_development = not scopes or "development" in scopes
@@ -454,6 +456,16 @@ def inspect_environment(repository: str, *, project_runtime: bool = False,
     }
     wsl = any(marker in platform.release().lower() for marker in ("microsoft", "wsl"))
     native_desktop = is_cachyos() and not wsl
+    for name, recipe in recipes.items():
+        if declaration := recipe.get("godot_prepare"):
+            preparation = inspect_preparation(Path(root), declaration)
+            if preparation["state"] == "needs-preparation" and not wsl and not name.startswith("-"):
+                command = ["basaltw", "desktop", *(["--native"] if native_desktop else []),
+                           "develop", "check", name, "--project", root, "--prepare"]
+                if preparation["missing_asset_directories"]:
+                    command.extend(["--asset-bundle", "/absolute/local-qa-bundle"])
+                preparation["prepare_argv"] = command
+            recipe["godot_preparation"] = preparation
     launch_prefix = "" if native_desktop or wsl else "basaltw desktop exec -- "
     desktop = {
         name: {**guidance,
@@ -700,6 +712,15 @@ def run_manifest_command(args: argparse.Namespace) -> int:
             print(f"  Declared version: {version['expected']} ({version['executable']}, unverified)")
         if recipe["missing_tools"]:
             print("  Missing tools: " + ", ".join(recipe["missing_tools"]))
+        if preparation := recipe.get("godot_preparation"):
+            print(f"  Godot preparation: {preparation['state']} ({preparation['project']})")
+            print(f"  Import cache: {preparation['import_cache']}; GPU readiness: {preparation['gpu_readiness']}")
+            if missing := preparation["missing_asset_directories"]:
+                print("  Missing asset directories: " + ", ".join(missing))
+            if issue := preparation.get("issue"):
+                print(f"  Preparation issue: {issue}")
+            if argv := preparation["prepare_argv"]:
+                print(f"  Prepare and check: {shlex.join(argv)}")
     for name, application in result["desktop_applications"].items():
         print(f"Desktop: {name} — {', '.join(application['workflows'])} (readiness unverified)")
         for instruction in application.get("instructions", []):
