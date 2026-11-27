@@ -29,13 +29,13 @@ class PrivilegeBrokerUnavailable(ConnectionError):
     """The request socket could not be connected to before sending a request."""
 
 
-def exchange(message: dict, path: str = REQUEST_SOCKET) -> dict:
+def exchange(message: dict, path: str = REQUEST_SOCKET, *, timeout: float | None = None) -> dict:
     data = (canonical(message) + "\n").encode()
     if len(data) > MAX_MESSAGE:
         raise ValueError("Request exceeds size limit")
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
         planning = message.get("operation") == "software.install" or message.get("action") == "software-claim"
-        connection.settimeout(55 if planning else 5)
+        connection.settimeout(timeout if timeout is not None else 55 if planning else 5)
         try:
             connection.connect(path)
         except (FileNotFoundError, ConnectionRefusedError) as exc:
@@ -43,6 +43,8 @@ def exchange(message: dict, path: str = REQUEST_SOCKET) -> dict:
         connection.sendall(data)
         with connection.makefile("rb") as stream:
             raw = stream.readline(MAX_MESSAGE + 1)
+    if not raw and message.get("action") == "status":
+        raise ConnectionResetError("The broker closed the status connection")
     if len(raw) > MAX_MESSAGE or not raw.endswith(b"\n"):
         raise PrivilegeRequestUnconfirmed("Invalid broker response framing; request acceptance is unknown")
     try:
@@ -76,6 +78,41 @@ def exchange(message: dict, path: str = REQUEST_SOCKET) -> dict:
                 "Broker response did not confirm the requested ID; outcome is unknown"
             )
     return result
+
+
+def _wait_for_request(request_id: str, until: str, timeout: int) -> dict:
+    if not ID_PATTERN.fullmatch(request_id):
+        raise ValueError("Invalid request ID")
+    if not 0 <= timeout <= MAX_REQUEST_TTL_SECONDS + MAX_RUNTIME_SECONDS:
+        raise ValueError("Wait timeout must be between zero and seven days plus six hours")
+    message = {"action": "status", "id": request_id}
+    waiting = {"pending"} if until == "decision" else {
+        "pending", "approved", "awaiting_controller", "saving", "ready", "executing",
+    }
+    if timeout == 0:
+        result = exchange(message)
+        if result["state"] not in waiting:
+            return result
+    else:
+        deadline = time.monotonic() + timeout
+        delay = 1
+        result = {"id": request_id, "state": "unknown"}
+        while (remaining := deadline - time.monotonic()) > 0:
+            try:
+                result = exchange(message, timeout=min(5, remaining))
+            except (ConnectionError, TimeoutError):
+                # A service restart or slow broker must not discard the receipt.
+                pass
+            else:
+                if result["state"] not in waiting:
+                    return result
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(delay, remaining))
+            delay = min(delay * 2, 15)
+    return {**result, "ok": False, "issue": "wait_timeout",
+            "error": "No further outcome was observed within the local wait budget"}
 
 
 def duration(value: str) -> int:
@@ -183,24 +220,10 @@ def run_privilege_command(args: argparse.Namespace) -> int:
             result = exchange(message)
         elif args.privilege_command == "cancel":
             result = exchange({"action": "cancel", "id": args.request_id})
+        elif args.privilege_command == "wait":
+            result = _wait_for_request(args.request_id, args.until, args.timeout)
         else:
-            timeout = getattr(args, "timeout", 0)
-            if not 0 <= timeout <= MAX_REQUEST_TTL_SECONDS + MAX_RUNTIME_SECONDS:
-                raise ValueError("Wait timeout must be between zero and seven days plus six hours")
-            deadline = time.monotonic() + timeout
-            delay = 1
-            waiting = {"pending"} if getattr(args, "until", "") == "decision" else {
-                "pending", "approved", "awaiting_controller", "saving", "ready", "executing",
-            }
-            while True:
-                result = exchange({"action": "status", "id": args.request_id})
-                remaining = deadline - time.monotonic()
-                if result["state"] not in waiting or remaining <= 0:
-                    break
-                time.sleep(min(delay, remaining))
-                delay = min(delay * 2, 15)
-            if args.privilege_command == "wait" and result["state"] in waiting:
-                result = {**result, "ok": False, "issue": "wait_timeout"}
+            result = exchange({"action": "status", "id": args.request_id})
         if args.json:
             print(json.dumps(result, indent=2))
         else:
@@ -209,14 +232,14 @@ def run_privilege_command(args: argparse.Namespace) -> int:
                 print("Review on your own device: " + result["review_url"])
         if args.privilege_command == "cancel":
             return 0 if result["state"] in {"cancelled", "expired", "denied", "invalidated"} else 1
+        if result.get("issue") == "wait_timeout":
+            return 124
         if (args.privilege_command == "wait" and args.until == "decision"
                 and result["state"] in {"approved", "awaiting_controller", "saving", "ready", "executing",
                                         "dispatched", "succeeded", "failed", "uncertain"}):
             return 0
         if result["state"] in {"cancelled", "denied", "failed", "uncertain", "expired", "invalidated"}:
             return 1
-        if result.get("issue") == "wait_timeout":
-            return 124
         return 0
     except (OSError, ValueError, EOFError) as exc:
         if args.privilege_command == "list" and args.json:

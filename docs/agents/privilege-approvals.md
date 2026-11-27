@@ -151,10 +151,10 @@ a ceiling uses its existing review window as the ceiling.
 Submission returns immediately. Keep the request ID and continue independent
 work. Run `basaltw agent privilege wait REQUEST_ID --until decision --timeout 2d --json`
 as a background command to receive the decision, or omit `--until decision` to
-wait for the execution result. A local wait that expires returns exit 124 and
-the same ID. Reattach with that ID. The review deadline stays in effect.
-A changed policy invalidates a request; an interrupted execution is marked
-uncertain and is never retried.
+wait for the execution result. Brief connection failures are retried within
+the local budget. A wait that expires returns exit 124 and the same ID, ready
+to reattach. The review deadline stays in effect. A changed policy invalidates
+a request. An interrupted execution is marked uncertain and requires inspection.
 Check status before submitting a replacement request. A reboot reported as
 `dispatched` is not proof that the VM returned.
 

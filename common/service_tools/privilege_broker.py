@@ -598,16 +598,19 @@ class Broker:
             if (plan["operation"] != "software.install" or plan["parameters"]["scope"] != "saved"
                     or row["digest"] != message["digest"]):
                 raise ValueError("Software approval mismatch")
-            if action == "software-claim" and row["state"] in {"awaiting_controller", "saving"}:
+            if action == "software-claim":
                 if row["state"] == "awaiting_controller":
                     try:
                         valid = plan == operation_plan(self.policy_loader(), row["uid"], "software.install", plan["parameters"])
                     except (OSError, ValueError, subprocess.SubprocessError):
                         valid = False
                     self._transition(row["id"], "saving" if valid else "invalidated", "controller")
+                elif (row["state"] not in {"saving", "cancelled", "expired", "invalidated"}
+                      and not row["saved_for_rebuild"]):
+                    raise ValueError("Software request is no longer available for this action")
             elif action == "software-saved" and row["state"] == "saving":
                 self._transition(row["id"], "ready", "controller")
-            else:
+            elif not row["saved_for_rebuild"]:
                 raise ValueError("Software request is no longer available for this action")
             return self._get(row["id"])
 

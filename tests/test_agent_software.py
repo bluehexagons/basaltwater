@@ -110,6 +110,35 @@ class SoftwareApprovalTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.broker.dispatch({"action": "owned-requests"}, 1001)
 
+    def test_cancelled_queue_item_does_not_block_later_sync(self):
+        cancelled = self.request()
+        self.approve(cancelled)
+        self.params = dict(kind="apt", name="hello", scope="saved")
+        current = self.request()
+        self.approve(current)
+
+        def rpc(message):
+            result = self.rpc(message)
+            if message["action"] == "software-queue":
+                self.broker.cancel(cancelled["id"], 1000)
+            return result
+
+        self.assertEqual(synchronize(self.target, None, rpc=rpc), [current["id"]])
+        self.assertEqual(self.broker.status(cancelled["id"])["state"], "cancelled")
+        self.assertFalse(load_setup_command(self.target).install_jupyterlab)
+        self.assertEqual(load_setup_command(self.target).apt_packages, ["hello"])
+
+    def test_repeated_save_ack_returns_receipt_without_replaying_installation(self):
+        item = self.request()
+        self.approve(item)
+        synchronize(self.target, None, rpc=self.rpc)
+        self.assertTrue(self.broker.execute_next())
+        ack = self.rpc({"action": "software-saved", "id": item["id"], "digest": item["digest"]})
+        self.assertTrue(ack["saved_for_rebuild"])
+        self.assertEqual(ack["state"], "succeeded")
+        self.assertFalse(self.broker.execute_next())
+        self.runner.assert_called_once()
+
     def test_package_drift_before_or_after_save_is_visible(self):
         item = self.request()
         self.approve(item)

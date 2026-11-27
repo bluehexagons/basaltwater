@@ -65,7 +65,10 @@ def synchronize(host: str, key: str | None, *, rpc=None) -> list[str]:
             item = rpc({"action": "software-claim", **identity})
             if item["id"] != rid or item["digest"] != entry["digest"] or item["plan"]["operation"] != "software.install":
                 raise ValueError("Software request changed before the controller could save it")
-            if item["state"] == "invalidated":
+            if item.get("saved_for_rebuild"):
+                completed.append(rid)
+                continue
+            if item["state"] in {"cancelled", "expired", "invalidated"}:
                 continue
             if item["state"] != "saving":
                 raise ValueError("Software request could not be claimed")

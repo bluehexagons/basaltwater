@@ -425,7 +425,7 @@ class ClientTests(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             self.assertEqual(run_privilege_command(self.arguments("wait")), 1)
         sleep.assert_not_called()
-        exchange.assert_called_once_with({"action": "status", "id": "a" * 32})
+        exchange.assert_called_once_with({"action": "status", "id": "a" * 32}, timeout=5)
 
     @patch("lib.privilege_client.exchange")
     def test_wait_supports_hour_default_and_longer_administrator_windows(self, exchange):
@@ -447,6 +447,31 @@ class ClientTests(unittest.TestCase):
                 self.assertEqual(run_privilege_command(args), code)
             self.assertEqual(json.loads(output.getvalue())["id"], args.request_id)
             exchange.assert_called_with({"action": "status", "id": args.request_id})
+
+    @patch("lib.privilege_client.time.sleep")
+    @patch("lib.privilege_client.exchange")
+    def test_wait_retains_request_during_transient_broker_failure(self, exchange, sleep):
+        args = self.arguments("wait")
+        args.until = "decision"
+        exchange.side_effect = [PrivilegeBrokerUnavailable("restarting"), ConnectionResetError(),
+                                {"id": args.request_id, "state": "awaiting_controller"}]
+        with redirect_stdout(output := io.StringIO()):
+            self.assertEqual(run_privilege_command(args), 0)
+        self.assertEqual(json.loads(output.getvalue())["state"], "awaiting_controller")
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2])
+
+    @patch("lib.privilege_client.time.monotonic", side_effect=[10, 10, 11, 12, 13])
+    @patch("lib.privilege_client.time.sleep")
+    @patch("lib.privilege_client.exchange", side_effect=TimeoutError)
+    def test_wait_timeout_during_broker_outage_retains_id(self, exchange, sleep, _clock):
+        args = self.arguments("wait")
+        args.timeout = 3
+        with redirect_stdout(output := io.StringIO()):
+            self.assertEqual(run_privilege_command(args), 124)
+        self.assertEqual(json.loads(output.getvalue())["id"], args.request_id)
+        self.assertEqual(json.loads(output.getvalue())["state"], "unknown")
+        self.assertEqual([call.kwargs["timeout"] for call in exchange.call_args_list], [3, 1])
+        sleep.assert_called_once_with(1)
 
 
 class SocketClientTests(unittest.TestCase):
