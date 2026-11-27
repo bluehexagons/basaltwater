@@ -147,7 +147,11 @@ def _run_instance(args: argparse.Namespace, podman: list[str], data: Path) -> in
         # our unique name and tear down the network only after it is gone.
         if start_attempted:
             _podman(podman, ["rm", "--force", "--ignore", name], f"Cleanup of container {name}")
-        if network_created:
+        # A failed network create may also have committed before Podman exited.
+        if network_created or _podman(
+            podman, ["network", "ls", "--filter", f"name=^{name}$", "--format", "{{.Name}}"],
+            f"Lookup of test network {name}",
+        ) == name:
             _podman(podman, ["network", "rm", name], f"Cleanup of network {name}")
 
 

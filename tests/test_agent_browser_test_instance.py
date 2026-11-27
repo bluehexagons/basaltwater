@@ -32,6 +32,21 @@ class BrowserTestInstanceTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "checkpointed"):
                 instance._copy_snapshot(source, Path(directory, "second.sqlite3"))
 
+    def test_uncertain_network_creation_removes_only_the_created_network(self) -> None:
+        for created in (False, True):
+            with self.subTest(created=created), tempfile.TemporaryDirectory(prefix="bw-test-") as directory:
+                data = Path(directory)
+                failure = RuntimeError("Network creation failed (probe_timeout)")
+                with (
+                    patch.object(instance, "_podman", side_effect=[failure, data.name if created else "", ""]) as podman,
+                    self.assertRaisesRegex(RuntimeError, "probe_timeout"),
+                ):
+                    instance._run_instance(argparse.Namespace(), ["podman"], data)
+                cleanup = [["network", "ls", "--filter", f"name=^{data.name}$", "--format", "{{.Name}}"]]
+                if created:
+                    cleanup.append(["network", "rm", data.name])
+                self.assertEqual([call.args[1] for call in podman.call_args_list[1:]], cleanup)
+
     def test_uncertain_container_start_cleans_up_before_removing_network(self) -> None:
         args = argparse.Namespace(port=8080, sqlite_snapshot="fixture.sqlite3", database_env="APP_DB",
                                   seconds=15, image="localhost/fixture:test", argv=[])
