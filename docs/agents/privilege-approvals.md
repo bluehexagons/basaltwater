@@ -167,7 +167,10 @@ basaltw agent privilege admin-status --json
 
 This returns owned request IDs, maintenance unit state, and the latest job's
 fixed stage, command index, failure category and correlated setup context.
-It returns nonzero for a failed/interrupted latest job or unavailable status.
+Exit zero means the query succeeded. In JSON, read `latest.status` for the
+job outcome and `latest.exit_code` for its recorded process result. A failed
+or interrupted job can appear in a successful query. The command exits
+nonzero when it cannot read the maintenance service status.
 Missing fields from older brokers remain unknown. A source activation receipt
 does not prove setup success or that services loaded that revision. Preserve
 recovery evidence and diagnose before another approved refresh; this command
