@@ -243,7 +243,7 @@ def discover_basaltwater_web_services() -> list[dict[str, str]]:
         services.append(landing)
     for command, collection, name_field, label_prefix in (
         ([utility, "forward", "list", "--json"], "forwards", "name", "HTTPS service"),
-        ([utility, "site", "list", "--json"], "sites", "name", "Published site"),
+        ([utility, "site", "list", "--json"], "sites", "site", "Published site"),
     ):
         payload = _run_json(command)
         records = payload.get(collection)
@@ -254,7 +254,7 @@ def discover_basaltwater_web_services() -> list[dict[str, str]]:
             if not isinstance(record, dict):
                 continue
             url = _safe_url(record.get("url"))
-            name = record.get(name_field)
+            name = record.get(name_field, record.get("name"))
             if url and isinstance(name, str) and name:
                 readiness = record.get("ready")
                 if readiness is True:
@@ -1039,10 +1039,6 @@ h2 { margin: 0; font-size: 1.2rem; letter-spacing: -.015em; }
   font-size: .72rem;
   overflow-wrap: anywhere;
 }
-.route-access { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.route-access a { overflow-wrap: anywhere; }
-.route-access button { min-height: 44px; }
-.route-access button[hidden] { display: none; }
 .overview-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
@@ -1317,6 +1313,13 @@ footer {
   footer { flex-direction: column; }
 }
 """.strip()
+
+_ROUTE_ACCESS_STYLE = """
+.route-access { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.route-access a { overflow-wrap: anywhere; }
+.route-access button { min-height: 44px; }
+.route-access button[hidden] { display: none; }
+"""
 
 
 def _system_type_label(value: str) -> str:
@@ -1880,7 +1883,8 @@ def render_page(state: WebPanelState, *, proxmox_query: ProxmoxQuery | None = No
     footer = f'<footer><span>Managed by Basaltwater</span><span>Authenticated as {username}</span></footer>'
     return render_document(
         title=f"Web panel · {title}",
-        style=_PAGE_STYLE + FILESYSTEM_STYLE + CA_STYLE + (PROXMOX_STYLE if proxmox_section else ""),
+        style=(_PAGE_STYLE + FILESYSTEM_STYLE + CA_STYLE + (PROXMOX_STYLE if proxmox_section else "")
+               + (_ROUTE_ACCESS_STYLE if gateway_routes else "")),
         header=header,
         content=body,
         navigation=state.navigation("dashboard"),

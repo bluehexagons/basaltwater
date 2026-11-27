@@ -1725,7 +1725,7 @@ class WebPanelEventTest(unittest.TestCase):
         def run_json(command: list[str]) -> dict:
             return {
                 "forward": {"forwards": [route]},
-                "site": {"sites": []},
+                "site": {"sites": [{"site": "godot-export", "url": "https://vm.example.test/sites/agent/godot-export/"}]},
             }[command[1]]
 
         state = WebPanelState({**self._t3_manifest(), "services": []})
@@ -1742,6 +1742,7 @@ class WebPanelEventTest(unittest.TestCase):
         self.assertIn("http://[::1]:4173 · basaltwater-preview-demo.service", rendered)
         self.assertIn('data-route-url href="https://vm.example.test:8449/"', rendered)
         self.assertIn("Copy URL", rendered)
+        self.assertIn('<strong>godot-export</strong><span class="service-kind">Published site', rendered)
         self.assertIn("TCP connection check from this host · Client device untested", rendered)
         self.assertIn('href="#trust">Certificate trust instructions', rendered)
 
