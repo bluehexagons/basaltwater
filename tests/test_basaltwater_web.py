@@ -5,7 +5,8 @@ from __future__ import annotations
 import fcntl
 import json
 from contextlib import nullcontext, redirect_stderr, redirect_stdout
-from io import StringIO
+from email.message import Message
+from io import BytesIO, StringIO
 import os
 from pathlib import Path
 import socket
@@ -13,6 +14,7 @@ import ssl
 import tempfile
 import unittest
 import urllib.error
+import urllib.response
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -265,6 +267,24 @@ class TestInfraWebForwarding(unittest.TestCase):
         self.assertEqual(result, 0)
         apply_forwards.assert_not_called()
 
+    def test_forward_list_reports_host_only_access_independently_of_url(self) -> None:
+        route = {
+            "listen": 8444, "name": "protected", "owner": "agent", "profile": "general",
+            "target_host": "127.0.0.1", "target_port": 3000,
+        }
+        policy = {**_policy(), "ca_certificate": None, "route_access_sources": {"protected": []}}
+        with (
+            patch.object(basaltwater_web, "_load_policy", return_value=policy),
+            patch.object(basaltwater_web, "_load_forwards", return_value=[route]),
+            patch.object(basaltwater_web, "_load_previews", return_value=[]),
+            patch.object(basaltwater_web, "_tcp_ready", return_value=True),
+            redirect_stdout(StringIO()) as output,
+        ):
+            self.assertEqual(basaltwater_web.main(["forward", "list", "--json"]), 0)
+        result = json.loads(output.getvalue())["forwards"][0]
+        self.assertEqual(result["url"], "https://games.example:8444/")
+        self.assertIs(result["host_only"], True)
+
     def test_doctor_accepts_authenticated_forward_challenge(self) -> None:
         route = {
             "listen": 8444,
@@ -291,6 +311,57 @@ class TestInfraWebForwarding(unittest.TestCase):
                 result = basaltwater_web.main(["doctor", "protected", "--json"])
 
         self.assertEqual(result, 0)
+
+    def test_gateway_probe_checks_the_named_https_response_directly(self) -> None:
+        url = "https://games.example:8444/"
+        headers = Message()
+        headers["Location"] = "https://login.example/"
+        body = BytesIO()
+        response = urllib.response.addinfourl(body, headers, url, 302)
+        response.msg = "Found"
+        destination = urllib.response.addinfourl(BytesIO(), Message(), headers["Location"], 200)
+        destination.msg = "OK"
+        with (
+            patch.dict(os.environ, {"https_proxy": "http://proxy.example:3128"}, clear=True),
+            patch("urllib.request.HTTPSHandler.https_open", autospec=True, side_effect=[response, destination]) as fetch,
+        ):
+            self.assertEqual(basaltwater_web._https_headers(url), (302, {"location": "https://login.example/"}))
+        fetch.assert_called_once()
+        self.assertEqual(fetch.call_args.args[1].host, "games.example:8444")
+        self.assertTrue(body.closed)
+
+    def test_doctor_reports_vm_scope_when_tls_verification_fails(self) -> None:
+        url = "https://games.example:8444/"
+        with (
+            patch("urllib.request.HTTPSHandler.https_open", autospec=True,
+                         side_effect=urllib.error.URLError(ssl.SSLCertVerificationError("untrusted"))),
+            redirect_stdout(StringIO()) as output,
+        ):
+            self.assertEqual(basaltwater_web._diagnose_endpoint("demo", True, url, "general"), 1)
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["issue"], "certificate_untrusted")
+        self.assertEqual(result["component"], "endpoint")
+        self.assertEqual(result["network_origin"], "vm")
+        self.assertEqual(result["url"], url)
+        self.assertFalse(result["client_device_checked"])
+        self.assertIsNone(result["status"])
+
+    def test_doctor_keeps_the_root_response_when_the_wasm_request_fails(self) -> None:
+        url = "https://games.example:8443/sites/agent/demo/"
+        wasm_url = url + "index.wasm"
+        headers = {
+            "cross-origin-opener-policy": "same-origin", "cross-origin-embedder-policy": "require-corp",
+        }
+        with (
+            patch.object(basaltwater_web, "_https_headers", side_effect=[(200, headers), RuntimeError("WASM timeout")]),
+            redirect_stdout(StringIO()) as output,
+        ):
+            self.assertEqual(basaltwater_web._diagnose_endpoint("demo", True, url, "godot", wasm_url), 1)
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["component"], "wasm")
+        self.assertEqual(result["status"], 200)
+        self.assertEqual(result["headers"], headers)
+        self.assertEqual(result["errors"], ["WASM timeout"])
 
     def test_doctor_rejects_unauthorized_forward_without_challenge(self) -> None:
         route = {

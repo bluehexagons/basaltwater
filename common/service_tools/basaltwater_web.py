@@ -10,6 +10,7 @@ import fcntl
 from functools import wraps
 import grp
 import hashlib
+import http.client
 import ipaddress
 import json
 import os
@@ -36,6 +37,13 @@ if SOURCE_ROOT not in sys.path:
 
 from common.service_tools import godot_web_publish, static_web_publish
 from lib.atomic_io import read_json_file
+from lib.local_http import (
+    has_corp_isolation_headers,
+    http_status_is_healthy,
+    http_transport_issue,
+    open_direct,
+    open_loopback,
+)
 from lib.validation import (
     validate_filesystem_path,
     validate_network_ip,
@@ -43,7 +51,6 @@ from lib.validation import (
     validate_network_port,
     validate_positive_integer,
 )
-from lib.local_http import has_corp_isolation_headers, http_status_is_healthy, http_transport_issue, open_loopback
 from lib.remote_utils import CommandTimeoutError, run as run_command
 from lib.node_project import NodePackageManager, select_package_manager
 from lib.t3_preview import add_t3_preview_arguments, run_t3_preview_command
@@ -1077,15 +1084,12 @@ def _https_headers(url: str) -> tuple[int, dict[str, str]]:
         headers={"Range": "bytes=0-0", "User-Agent": "basaltwater-web-doctor/1"},
     )
     try:
-        with urllib.request.urlopen(
-            request,
-            context=ssl.create_default_context(),
-            timeout=15,
-        ) as response:
+        with open_direct(request, timeout=15) as response:
             return response.status, {key.lower(): value for key, value in response.headers.items()}
     except urllib.error.HTTPError as exc:
-        return exc.code, {key.lower(): value for key, value in exc.headers.items()}
-    except (OSError, urllib.error.URLError) as exc:
+        with exc:
+            return exc.code, {key.lower(): value for key, value in exc.headers.items()}
+    except (OSError, http.client.HTTPException) as exc:
         raise RuntimeError(f"HTTPS request failed for {url}: {exc}") from exc
 
 
@@ -1204,23 +1208,32 @@ def _doctor(name: str, as_json: bool, *, forward_only: bool = False) -> int:
 def _diagnose_endpoint(
     name: str, as_json: bool, url: str, profile: str, wasm_url: str | None = None,
 ) -> int:
-    status, headers = _https_headers(url)
-    errors: list[str] = []
-    if not http_status_is_healthy(status, headers):
-        errors.append(f"HTTPS endpoint returned {status}")
-    if profile == "godot":
-        if headers.get("cross-origin-opener-policy") != "same-origin":
-            errors.append("missing Cross-Origin-Opener-Policy: same-origin")
-        if headers.get("cross-origin-embedder-policy") != "require-corp":
-            errors.append("missing Cross-Origin-Embedder-Policy: require-corp")
+    status = None
+    headers: dict[str, str] = {}
     wasm_headers: dict[str, str] = {}
-    if wasm_url:
-        wasm_status, wasm_headers = _https_headers(wasm_url)
-        if not 200 <= wasm_status < 300:
-            errors.append(f"WASM endpoint returned {wasm_status}")
-        content_type = wasm_headers.get("content-type", "").split(";", 1)[0]
-        if content_type != "application/wasm":
-            errors.append(f"WASM content type is {content_type or 'missing'}")
+    errors: list[str] = []
+    transport_failure: dict[str, str] = {}
+    component = "endpoint"
+    try:
+        status, headers = _https_headers(url)
+        if not http_status_is_healthy(status, headers):
+            errors.append(f"HTTPS endpoint returned {status}")
+        if profile == "godot":
+            if headers.get("cross-origin-opener-policy") != "same-origin":
+                errors.append("missing Cross-Origin-Opener-Policy: same-origin")
+            if headers.get("cross-origin-embedder-policy") != "require-corp":
+                errors.append("missing Cross-Origin-Embedder-Policy: require-corp")
+        if wasm_url:
+            component = "wasm"
+            wasm_status, wasm_headers = _https_headers(wasm_url)
+            if not 200 <= wasm_status < 300:
+                errors.append(f"WASM endpoint returned {wasm_status}")
+            content_type = wasm_headers.get("content-type", "").split(";", 1)[0]
+            if content_type != "application/wasm":
+                errors.append(f"WASM content type is {content_type or 'missing'}")
+    except RuntimeError as exc:
+        errors.append(str(exc))
+        transport_failure = {"component": component, "issue": http_transport_issue(exc), "error": str(exc)}
     result = {
         "errors": errors,
         "headers": headers,
@@ -1231,13 +1244,14 @@ def _diagnose_endpoint(
         "status": status,
         "url": url,
         "wasm_headers": wasm_headers,
+        **transport_failure,
     }
     if as_json:
         print(json.dumps(result, sort_keys=True))
     elif errors:
         print(f"{name}: VM HTTPS check failed ({'; '.join(errors)})")
     else:
-        print(f"{name}: VM HTTPS check passed ({url}). Client device untested.")
+        print(f"{name}: VM HTTPS check returned {status} at {url}. Client device untested.")
     return 0 if not errors else 1
 
 
@@ -1391,6 +1405,7 @@ def _forward_list(as_json: bool) -> int:
             "readiness_origin": "vm",
             "readiness_check": "upstream_tcp",
             "client_device_checked": False,
+            "host_only": sources_by_listener[int(route["listen"])] == [],
             "url": _forward_route_url(policy, int(route["listen"]), sources_by_listener[int(route["listen"])]),
         }
         for route in forwards

@@ -19,10 +19,14 @@ is missing, provision a gateway-capable feature before continuing; the
 In the Basaltwater web panel, open **Web services** to find published sites
 and managed project previews. Preview cards show the checkout name, target
 loopback service, and systemd unit. Use **Copy URL** to open the LAN address
-on the device you want to test. **Certificate trust instructions** links to
-enrollment help for that device. A forwarded service's TCP check runs from
-the host and only probes the loopback target. To check HTTPS from the host,
-run `basaltwater-web preview status NAME` or `basaltwater-web forward doctor NAME`.
+on the device you want to test. Host-only forwards are labeled **Host URL**.
+**Certificate trust instructions** links to enrollment help for that device.
+A forwarded service's TCP check runs from the host and only probes the loopback
+target. To check HTTPS from the host, run `basaltwater-web preview status NAME`
+or `basaltwater-web forward doctor NAME`.
+These commands probe the configured URL directly with normal TLS validation.
+A redirect status confirms the named listener responded. The destination is
+unchecked. The doctor's JSON retains the URL and VM origin on transport failures.
 Open the LAN URL on the client device to verify its routing and trust.
 
 ## Choose a topic

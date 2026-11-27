@@ -1722,13 +1722,20 @@ class WebPanelEventTest(unittest.TestCase):
             "project_name": "Demo & Game", "unit": "basaltwater-preview-demo.service",
         }
 
+        site_url = "https://vm.example.test/sites/agent/godot-export/"
+        host_url = "https://vm.example.test:8450/"
+        host_route = {**route, "name": "local-demo", "listen": 8450, "url": host_url, "host_only": True}
+
         def run_json(command: list[str]) -> dict:
             return {
-                "forward": {"forwards": [route]},
-                "site": {"sites": [{"site": "godot-export", "url": "https://vm.example.test/sites/agent/godot-export/"}]},
+                "forward": {"forwards": [route, host_route]},
+                "site": {"sites": [
+                    {"site": "godot-export", "url": site_url},
+                    {"site": "other-export", "url": "https://vm.example.test/sites/agent/other-export/"},
+                ]},
             }[command[1]]
 
-        state = WebPanelState({**self._t3_manifest(), "services": []})
+        state = WebPanelState({**self._t3_manifest(), "services": [{"label": "Game export", "url": site_url}]})
         with (
             patch.object(panel.shutil, "which", return_value="/usr/local/bin/basaltwater-web"),
             patch.object(panel, "_internal_web_landing_service", return_value=None),
@@ -1740,9 +1747,12 @@ class WebPanelEventTest(unittest.TestCase):
         self.assertIn("Demo &amp; Game", rendered)
         self.assertNotIn("/home/agent/", rendered)
         self.assertIn("http://[::1]:4173 · basaltwater-preview-demo.service", rendered)
-        self.assertIn('data-route-url href="https://vm.example.test:8449/"', rendered)
+        self.assertIn('<span>LAN URL</span> <a data-route-url href="https://vm.example.test:8449/"', rendered)
+        self.assertIn(f'<span>Host URL</span> <a data-route-url href="{host_url}"', rendered)
         self.assertIn("Copy URL", rendered)
-        self.assertIn('<strong>godot-export</strong><span class="service-kind">Published site', rendered)
+        self.assertIn('<strong>Game export</strong><span class="service-kind">Published site', rendered)
+        self.assertIn(f'data-route-url href="{site_url}"', rendered)
+        self.assertIn('<strong>other-export</strong><span class="service-kind">Published site', rendered)
         self.assertIn("TCP connection check from this host · Client device untested", rendered)
         self.assertIn('href="#trust">Certificate trust instructions', rendered)
 

@@ -267,6 +267,8 @@ def discover_basaltwater_web_services() -> list[dict[str, str]]:
                 if collection == "forwards":
                     if name == "t3code":
                         service["application"] = "t3code"
+                    if record.get("host_only") is True:
+                        service["access_scope"] = "host"
                     host, port = record.get("target_host"), record.get("target_port")
                     if host in ("127.0.0.1", "::1") and type(port) is int and 1 <= port <= 65535:
                         authority = f"[{host}]" if host == "::1" else host
@@ -274,6 +276,8 @@ def discover_basaltwater_web_services() -> list[dict[str, str]]:
                         project, unit = record.get("project_name"), record.get("unit")
                         if isinstance(project, str) and project and isinstance(unit, str) and unit:
                             service.update(project=project, unit=unit)
+                else:
+                    service["published_site"] = name
                 services.append(service)
     return services
 
@@ -685,7 +689,12 @@ def _deduplicate_services(
             if record.get("application") == "t3code":
                 existing["application"] = "t3code"
             if record.get("upstream"):
-                existing.update({key: record[key] for key in ("upstream", "project", "unit", "description") if key in record})
+                existing.update({
+                    key: record[key] for key in ("upstream", "project", "unit", "description", "access_scope")
+                    if key in record
+                })
+            if record.get("published_site"):
+                existing["published_site"] = record["published_site"]
             continue
         description = record.get("description")
         service: dict[str, Any] = {
@@ -695,7 +704,10 @@ def _deduplicate_services(
         }
         if record.get("application") == "t3code":
             service["application"] = "t3code"
-        service.update({key: record[key] for key in ("upstream", "project", "unit") if key in record})
+        service.update({
+            key: record[key] for key in ("upstream", "project", "unit", "published_site", "access_scope")
+            if key in record
+        })
         if (probe_port := _homebox_probe_port(record)) is not None:
             service["probe"] = {"kind": "homebox", "port": probe_port}
         services.append(service)
@@ -1671,6 +1683,8 @@ def render_page(state: WebPanelState, *, proxmox_query: ProxmoxQuery | None = No
                 kind = service_kind
                 break
         upstream = record.get("upstream")
+        if record.get("published_site"):
+            kind = "Published site"
         if record.get("project"):
             kind = "Project preview"
         if description in {"live", "not responding"}:
@@ -1698,7 +1712,8 @@ def render_page(state: WebPanelState, *, proxmox_query: ProxmoxQuery | None = No
             gateway_routes = True
             url = html.escape(record["url"], quote=True)
             hostname = urllib.parse.urlsplit(record["url"]).hostname
-            url_label = "Host URL" if hostname in {"localhost", "127.0.0.1", "::1"} else "LAN URL"
+            host_only = record.get("access_scope") == "host" or hostname in {"localhost", "127.0.0.1", "::1"}
+            url_label = "Host URL" if host_only else "LAN URL"
             project = f'<span class="card-description">Project <strong>{html.escape(record["project"])}</strong></span>' if record.get("project") else ""
             target = html.escape(upstream or "")
             if record.get("unit"):
