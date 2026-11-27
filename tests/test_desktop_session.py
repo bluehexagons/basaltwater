@@ -485,7 +485,7 @@ class DesktopProductivityTests(unittest.TestCase):
             path = Path(directory) / "steps.json"
             path.write_text(json.dumps([{"action": "input", "kind": "text", "text": "abc",
                                         "geometry": [1280, 720], "delay_ms": 10},
-                                       {"action": "input", "kind": "key", "key": "Return"}]))
+                                       {"action": "input", "kind": "key", "key": "Return", "geometry": [1280, 720]}]))
             result = client.run_sequence(str(path), "g")
         self.assertEqual(result["completed"], 0)
         self.assertEqual(result["failed_action"]["submitted_characters"], 1)

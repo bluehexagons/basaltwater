@@ -6,6 +6,7 @@ import importlib.util
 import math
 import os
 from pathlib import Path
+import re
 import secrets
 import shutil
 import signal
@@ -18,10 +19,11 @@ from desktop.accessibility import check_dependencies, validate_query
 from desktop.observations import validate_capture_max_age, validate_observation_option
 from lib.atomic_io import read_json_file
 from lib.validation import validate_filesystem_path
-from desktop.receipts import DesktopRequestError, input_failure, input_request_failure
+from desktop.receipts import DesktopRequestError, confirm_input_completion, input_failure, input_request_failure
 
 
 INPUT_KINDS = ("key", "keycode", "text", "click", "move", "drag", "relative", "scroll", "touch")
+WINDOW_OPERATIONS = ("focus", "move", "resize", "maximize", "minimize", "restore", "close")
 
 
 def artifact_path() -> str:
@@ -319,6 +321,16 @@ def validate_capture_crop(payload: dict[str, Any], *, backend=runtime) -> list |
     return crop
 
 
+def validate_capture_target(payload: dict[str, Any], *, backend=runtime) -> None:
+    window, active = payload.get("window"), payload.get("active_window", False)
+    if type(active) is not bool or (active and window is not None):
+        raise ValueError("Choose either a window ID or the active window")
+    if backend is not runtime and (window is not None or active):
+        raise ValueError("Portal capture uses the consent-selected monitor; window capture is unavailable")
+    if window is not None:
+        runtime.normalize_window_id(window)
+
+
 def bounded_deadline(payload: dict, *, deadline: float | None = None, seconds: float = 14) -> float:
     """Keep the earliest finite absolute monotonic budget across local hops."""
     limits = [time.monotonic() + seconds]
@@ -375,6 +387,7 @@ def _send_action(payload: dict[str, Any], *, deadline: float | None = None, back
         raise ValueError("Touch, relative motion, multi-step scroll and extra buttons require the native portal backend; XRDP touch is unavailable")
     if payload.get("action") == "screenshot":
         validate_capture_max_age(payload.get("max_age_seconds", 60))
+        validate_capture_target(payload, backend=backend)
     crop = validate_capture_crop(payload, backend=backend)
     if payload.get("kind") == "keycode" and backend is runtime:
         raise ValueError("Physical keycodes require the native desktop backend")
@@ -605,7 +618,33 @@ def observe_processes_after_input(result: dict, identities: list[tuple[int, str]
     return observed
 
 
+def _validate_sequence_input(step: dict, *, backend) -> None:
+    geometry = step.get("geometry")
+    if (not isinstance(geometry, list) or len(geometry) != 2
+            or any(type(size) is not int or size < 1 for size in geometry)):
+        raise ValueError("Sequence input geometry requires two positive integer dimensions")
+    kind = step["kind"]
+    if kind == "key":
+        key = step.get("key")
+        if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9_+]{1,100}", key):
+            raise ValueError("Invalid key chord")
+    elif kind == "text":
+        text = step.get("text")
+        if not isinstance(text, str) or len(text) > 1024 or "\0" in text:
+            raise ValueError("Text must contain at most 1024 characters without NUL")
+    elif kind in ("click", "move"):
+        x, y = step.get("x"), step.get("y")
+        if type(x) is not int or type(y) is not int or not (0 <= x < geometry[0] and 0 <= y < geometry[1]):
+            raise ValueError("Sequence pointer coordinates must lie inside the declared geometry")
+        button = step.get("button", 1)
+        maximum = 7 if backend is runtime else 9
+        if kind == "click" and (type(button) is not int or not 1 <= button <= maximum):
+            raise ValueError(f"Button must be 1 through {maximum}")
+
+
 def run_sequence(path: str, generation: str, *, backend=runtime) -> dict[str, Any]:
+    from desktop.pointer_gestures import CAPABILITIES, validate as validate_gestures
+
     steps = read_json_file(path, max_bytes=backend.MAX_MESSAGE)
     if not isinstance(steps, list) or not 1 <= len(steps) <= 20:
         raise ValueError("Desktop sequences require 1 to 20 actions")
@@ -634,13 +673,13 @@ def run_sequence(path: str, generation: str, *, backend=runtime) -> dict[str, An
         validate_hold(step)
         validate_drag(step)
         validate_observation_option(step)
-        from desktop.pointer_gestures import CAPABILITIES, validate as validate_gestures
         validate_gestures(step)
         if backend is runtime and (step.get("kind") in CAPABILITIES or
                 (step.get("kind") == "click" and step.get("button", 1) in (8, 9))):
             raise ValueError("Extended pointer and touch gestures require the native portal backend")
-        if step.get("action") == "screenshot":
+        if action == "screenshot":
             validate_capture_max_age(step.get("max_age_seconds", 60))
+            validate_capture_target(step, backend=backend)
             delay = step.get("after_ms", 0)
             if type(delay) is not int or not 0 <= delay <= 5000:
                 raise ValueError("Screenshot after_ms must be an integer from 0 through 5000")
@@ -665,6 +704,21 @@ def run_sequence(path: str, generation: str, *, backend=runtime) -> dict[str, An
             raise ValueError("Drag requires the native desktop backend")
         if step.get("hold_ms") is not None and backend is runtime:
             raise ValueError("Hold duration requires the native desktop backend")
+        if action == "input":
+            _validate_sequence_input(step, backend=backend)
+        elif action == "window":
+            if backend is not runtime:
+                raise ValueError("Sequence window operations require the Debian desktop")
+            runtime.normalize_window_id(step.get("window"))
+            if not isinstance(step.get("identity"), str) or not step["identity"]:
+                raise ValueError("Sequence window operations require an observed window identity")
+            operation = step.get("operation")
+            if operation not in WINDOW_OPERATIONS:
+                raise ValueError("Unknown sequence window operation")
+            if operation in ("move", "resize"):
+                names, minimum = (("x", "y"), 0) if operation == "move" else (("width", "height"), 1)
+                if any(type(step.get(name)) is not int or step[name] < minimum for name in names):
+                    raise ValueError(f"Sequence window {operation} requires {', '.join(names)} as integers >= {minimum}")
     started = time.monotonic()
     deadline = started + 20
     current = backend.status(deadline=deadline)
@@ -711,6 +765,8 @@ def run_sequence(path: str, generation: str, *, backend=runtime) -> dict[str, An
             timing["request_started_monotonic_ns"] = time.monotonic_ns()
             request = {key: value for key, value in step.items() if key != "after_ms"}
             result = send_action({**request, "generation": generation, "control_revision": revision}, deadline=deadline, backend=backend)
+            if step["action"] == "input":
+                result = confirm_input_completion(result)
             finish_timing()
             if result.get("error") or result.get("ok") is False:
                 return {"generation": generation, "error": result.get("error") or f"Desktop {step['action']} failed",

@@ -255,7 +255,8 @@ class InputReliabilityTests(unittest.TestCase):
 
     def test_sequence_retains_failed_request_and_prior_completion_without_replay(self):
         path = self.home / "sequence.json"
-        path.write_text(json.dumps([{"action": "windows"}, {"action": "input", "kind": "key", "key": "Return"},
+        path.write_text(json.dumps([{"action": "windows"},
+                                    {"action": "input", "kind": "key", "key": "Return", "geometry": [10, 20]},
                                     {"action": "windows"}]))
         refused = {"error": "capture expired", "input_delivery": "not-sent", "reason": "capture-expired",
                    "dispatch_stage": "before-input", "input_id": "refused-input"}

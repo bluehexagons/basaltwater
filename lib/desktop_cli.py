@@ -8,7 +8,7 @@ import subprocess
 
 from desktop import session_runtime as runtime
 from desktop import client
-from desktop.receipts import DesktopRequestError
+from desktop.receipts import DesktopRequestError, confirm_input_completion
 from lib.tool_results import add_json_to_leaves, artifact, exception_issue, from_report, report_artifacts, write_result
 from lib.validation import validate_filesystem_path
 
@@ -140,7 +140,7 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     window = commands.add_parser("window", help="Request a normal window-manager action",
         description="Request a window-manager action, then verify its result. Close can be blocked by an application dialog. "
                     "Use wait --condition absent and check the owned launch status; a close request alone does not prove exit.")
-    window.add_argument("operation", choices=("focus", "move", "resize", "maximize", "minimize", "restore", "close"))
+    window.add_argument("operation", choices=client.WINDOW_OPERATIONS)
     window.add_argument("--window", required=True)
     window.add_argument("--identity", required=True, help="Window identity from 'desktop windows'")
     window.add_argument("--generation", required=True)
@@ -626,16 +626,19 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                     if args.hold_ms is not None and backend is runtime:
                         raise ValueError("Hold duration requires --native")
                 result = client.send_action(payload, backend=backend)
-                if command == "input" and args.observe and "error" not in result:
-                    result = client.observe_after_input(result, payload, observation_output,
-                                                        settle_ms=args.settle_ms, backend=backend, window=observation_window)
-                    if args.preview_width is not None:
-                        from desktop.capture_preview import with_preview
-                        result = with_preview(result, args.preview_width, followup=True)
-                if command == "input" and args.observe_task is not None and "error" not in result:
-                    result = client.observe_task_after_input(result, args.observe_task, timeout=task_timeout)
-                if command == "input" and args.observe_process is not None and "error" not in result:
-                    result = client.observe_processes_after_input(result, processes, timeout=process_timeout)
+                if command == "input" and (args.observe or args.observe_task is not None or args.observe_process is not None):
+                    result = confirm_input_completion(result)
+                    if not result.get("error") and result.get("ok") is not False:
+                        if args.observe:
+                            result = client.observe_after_input(result, payload, observation_output,
+                                                                settle_ms=args.settle_ms, backend=backend, window=observation_window)
+                            if args.preview_width is not None:
+                                from desktop.capture_preview import with_preview
+                                result = with_preview(result, args.preview_width, followup=True)
+                        elif args.observe_task is not None:
+                            result = client.observe_task_after_input(result, args.observe_task, timeout=task_timeout)
+                        else:
+                            result = client.observe_processes_after_input(result, processes, timeout=process_timeout)
                 if wait_title:
                     result["window_baseline"] = baseline
                     try:
@@ -664,8 +667,14 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                 result = {**summary, **fields, "output_truncated": True, "artifacts": [
                     artifact("full_result", summary["artifact"], "application/json"), *result.get("artifacts", [])]}
             except (OSError, ValueError, RuntimeError) as exc:
-                result = _desktop_result(command, {**result, "error": result.get("error", "Could not retain the result artifact; inspect receipts before further action"),
-                                         "output_save_error": str(exc)}, issue="artifact_save_failed")
+                result = {**result, "output_save_error": str(exc)}
+                if result["ok"]:
+                    result.update(issue="artifact_save_failed", stage="save_output",
+                                  error="Could not retain the result artifact; inspect receipts before further action")
+                    if command == "sequence":
+                        result["effect"] = "applied" if any(step["action"] in ("input", "window", "screenshot")
+                                                            for step in result["timings"]) else "none"
+                    result = _desktop_result(command, result)
         return write_result(result)
     except (OSError, ValueError, RuntimeError, KeyError, subprocess.SubprocessError) as exc:
         result = getattr(exc, "receipt", {"error": str(exc)})

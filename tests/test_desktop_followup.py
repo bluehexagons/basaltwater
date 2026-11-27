@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+import argparse
+from contextlib import redirect_stdout
+from io import StringIO
+import json
+from pathlib import Path
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from desktop import client, session_runtime
+from desktop import client, native_session, observations, png_regions, session_runtime
+from lib import desktop_cli
 
 
 class DesktopFollowupTests(unittest.TestCase):
@@ -85,3 +92,121 @@ class DesktopFollowupTests(unittest.TestCase):
                     self.assertEqual(report["dispatch_stage"], "post-input-observation")
                     self.assertEqual(report["observation_failure"]["error"], message)
                     self.assertEqual(report["observation_failure"].get("reason"), flags.get("reason"))
+
+
+class DesktopHandoffCLITests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.parser = argparse.ArgumentParser()
+        desktop_cli.add_desktop_subparser(cls.parser.add_subparsers())
+
+    def setUp(self):
+        self.home = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.enterContext(patch.object(Path, "home", return_value=self.home))
+        self.current = {"state": "running", "generation": "g", "control_revision": "r",
+                        "agent_control": "enabled"}
+
+    def run_cli(self, *argv):
+        with redirect_stdout(out := StringIO()):
+            status = desktop_cli.run_desktop_command(self.parser.parse_args(["desktop", *argv]))
+        return status, json.loads(out.getvalue())
+
+    def test_retained_capture_maps_with_null_error_and_refuses_failed_receipts(self):
+        image = self.home / "frame.png"
+        capture = {"generation": "g", "control_revision": "r", "observation_id": "a" * 32,
+                   "geometry": [20, 30], "image_origin": [5, 6], "image_geometry": [10, 10],
+                   "output": str(image), "ok": True, "error": None}
+
+        def save_capture(_payload):
+            image.write_bytes(png_regions.encode(10, 10, bytes(300)))
+            return capture
+
+        current = {**self.current, **capture, "capture_freshness": {"fresh": True}}
+        with patch.object(native_session, "status", return_value=current) as status, \
+                patch.object(native_session, "request", side_effect=save_capture) as request:
+            code, result = self.run_cli("--native", "screenshot", "--output", str(image), "--compact")
+            self.assertEqual(code, 0)
+            path = next(item["path"] for item in result["artifacts"] if item["kind"] == "capture_receipt")
+            argv = ("--native", "map-point", "--capture", path, "--x", "1", "--y", "2", "--image-coordinates")
+            code, result = self.run_cli(*argv)
+            self.assertEqual(code, 0)
+            self.assertEqual(result["input_coordinates"], {"x": 6, "y": 8})
+            status.return_value = {**current, "capture_freshness": None}
+            code, result = self.run_cli(*argv)
+            self.assertEqual((code, result["issue"]), (1, "stale_observation"))
+            status.return_value = current
+            failed = {**capture, "ok": False}
+            for receipt in (failed, {"input_delivery": "completed", "observation": failed}):
+                Path(path).write_text(json.dumps(receipt), encoding="utf-8")
+                code, result = self.run_cli(*argv)
+                self.assertEqual((code, result["issue"]), (2, "invalid_input"))
+                self.assertNotIn("input_argv", result)
+            request.assert_called_once()
+
+    def test_followup_and_sequence_stop_on_unconfirmed_delivery(self):
+        plan = self.home / "steps.json"
+        plan.write_text(json.dumps([{"action": "input", "kind": "key", "key": "a", "geometry": [20, 30]},
+                                    {"action": "screenshot", "output": str(self.home / "after.png")}]), encoding="utf-8")
+        commands = [
+            ("input", "key", "--key", "a", "--generation", "g", "--geometry", "20", "30",
+             "--observe", "--output", str(self.home / "after.png"), "--settle-ms", "0"),
+            ("sequence", str(plan), "--generation", "g"),
+        ]
+        for argv in commands:
+            for delivered, effect in (("unknown", "unknown"), ("partial", "partial"), ("not-sent", "none")):
+                with self.subTest(command=argv[0], delivered=delivered), \
+                        patch.object(native_session, "status", return_value=self.current), \
+                        patch.object(native_session, "request", return_value={
+                            "input_id": "one", "input_delivery": delivered, "error": None}) as request:
+                    code, result = self.run_cli("--native", *argv)
+                    self.assertEqual(code, 1)
+                    self.assertEqual((result["stage"], result["effect"]), ("input_confirmation", effect))
+                    receipt = result.get("failed_action", result)
+                    self.assertEqual((receipt["input_id"], receipt["input_delivery"]), ("one", delivered))
+                    self.assertNotIn("observation", result)
+                    request.assert_called_once()
+                    self.assertEqual(request.call_args.args[0]["action"], "input")
+
+    def test_save_output_failure_retains_the_full_result_with_nonzero_exit(self):
+        plan = self.home / "steps.json"
+        plan.write_text('[{"action":"input","kind":"key","key":"a","geometry":[20,30]}]', encoding="utf-8")
+        with patch.object(native_session, "status", return_value=self.current), \
+                patch.object(native_session, "request", return_value={"input_delivery": "completed", "input_id": "one"}), \
+                patch.object(observations, "save_observation", side_effect=OSError("disk full")):
+            code, result = self.run_cli("--native", "sequence", str(plan), "--generation", "g", "--save-output")
+        self.assertEqual((code, result["issue"]), (1, "artifact_save_failed"))
+        self.assertEqual((result["stage"], result["effect"]), ("save_output", "applied"))
+        self.assertEqual(result["output_save_error"], "disk full")
+        self.assertEqual(result["completed"], 1)
+        self.assertEqual(result["results"][0]["input_id"], "one")
+
+        with patch.object(native_session, "status", return_value=self.current), \
+                patch.object(native_session, "request", return_value={"ok": True, "error": None, "windows": []}), \
+                patch.object(observations, "save_observation", side_effect=OSError("disk full")):
+            code, result = self.run_cli("--native", "windows", "--save-output")
+        self.assertEqual((code, result["issue"]), (1, "artifact_save_failed"))
+        self.assertEqual(result["windows"], [])
+
+    def test_invalid_later_actions_are_rejected_before_the_first_input(self):
+        plan = self.home / "steps.json"
+        first = {"action": "input", "kind": "key", "key": "a", "geometry": [20, 30]}
+        for backend, route, additional in (
+            (session_runtime, (), {"action": "window", "operation": "resize", "window": "0x2a",
+                                  "identity": "observed", "width": 3, "height": 0}),
+            (native_session, ("--native",), {"action": "screenshot", "window": "0x2a"}),
+        ):
+            malformed = [
+                {**first, "geometry": [20, False]},
+                {"action": "input", "kind": "click", "geometry": [20, 30], "x": True, "y": 2},
+                {"action": "screenshot", "active_window": "false"},
+                additional,
+            ]
+            for later in malformed:
+                with self.subTest(backend=backend.__name__, later=later), patch.object(backend, "status") as status, \
+                        patch.object(backend, "request") as request:
+                    plan.write_text(json.dumps([first, later]), encoding="utf-8")
+                    code, result = self.run_cli(*route, "sequence", str(plan), "--generation", "g")
+                    self.assertEqual((code, result["issue"]), (2, "invalid_input"))
+                    self.assertEqual((result["stage"], result["effect"]), ("validation", "none"))
+                    status.assert_not_called()
+                    request.assert_not_called()

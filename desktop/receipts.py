@@ -21,6 +21,17 @@ def input_snapshot(receipt: dict) -> dict:
     ) if key in receipt}
 
 
+def confirm_input_completion(receipt: dict) -> dict:
+    """Gate follow-up actions on the helper's delivery acknowledgement."""
+    if receipt.get("error") or receipt.get("ok") is False or receipt.get("input_delivery") == "completed":
+        return receipt
+    if "input_delivery" not in receipt and receipt.get("input_completed_at"):
+        return {**receipt, "input_delivery": "completed"}
+    return {**receipt, "input_delivery": receipt.get("input_delivery") or "unknown",
+            "reason": "input-completion-unverified", "stage": "input_confirmation",
+            "error": "Input completion was not confirmed. Inspect before further input."}
+
+
 def input_failure(error: Exception, payload: dict, *, stage: str = "before-input") -> dict:
     receipt = getattr(error, "receipt", {})
     return {"error": str(error), "reason": receipt.get("reason", "request-refused" if stage == "before-input" else "input-failed"),

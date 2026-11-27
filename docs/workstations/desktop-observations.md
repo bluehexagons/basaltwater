@@ -118,11 +118,11 @@ accepts widths from 1 through 2048, never enlarges the image and rounds the
 proportional height down to a minimum of one pixel. The returned `preview`
 contains the path, exact pixel dimensions, coordinate transform and both file
 hashes. The receipt keeps the original PNG, its geometry/origin and the same
-observation token.
-When using a preview's actual PNG pixels, read its geometry from that receipt.
+observation token. Open the `screenshot_preview` artifact and use the
+`capture_receipt` artifact path in place of `/absolute/private/frame.json`.
 
 ```bash
-basaltw desktop --native screenshot --compact --preview-width 1200 > /absolute/private/frame.json
+basaltw desktop --native screenshot --compact --preview-width 1200
 basaltw desktop --native map-point --capture /absolute/private/frame.json \
   --preview-coordinates --x X --y Y
 ```
@@ -131,9 +131,10 @@ Open `preview.output` for that view. Scaling maps preview coordinates to origina
 image coordinates by integer division, then adds the original image origin.
 For a viewer that further resizes the preview, use the displayed content's actual
 `--view-geometry` and any margins. `preview_error` means the derivative failed
-and the command exits nonzero. The original is still available for inspection
-and mapping while its token remains valid. Keep needed previews in durable private
-storage. Preview rendering and mapping do not renew the observation lifetime.
+and the command exits nonzero. Use the original `screenshot` and its
+`capture_receipt` to map while the token remains valid. Keep needed previews in
+durable private storage. Preview rendering and mapping do not renew the
+observation lifetime.
 
 ### Observe a supervised task's exit after input
 
@@ -205,7 +206,8 @@ dialogs separately when they are outside the selected window. This option requir
 top-left offset inside the viewer (default zero). Points include that offset.
 Both drag endpoints use the same transform. The read-only status comparison
 rejects changed token, generation, control revision, geometry, crop or expiry.
-Copy `input_context_args` before the input kind and `input_args` after it.
+Pass the literal `input_context_argv` elements before the input kind and the
+`input_argv` elements after it.
 Input revalidates the single-use token; mapping does not reserve or renew it.
 Legacy `map-point --geometry ... --crop ...` remains an offline calculation,
 without freshness validation. Neither route recognizes moving/fanned targets.
@@ -213,10 +215,11 @@ without freshness validation. Neither route recognizes moving/fanned targets.
 ### Small consequential controls
 
 Prefer a bounded native crop containing the whole control and enough surrounding
-context to distinguish its neighbors. On CachyOS, for example:
+context to distinguish its neighbors. On CachyOS, use the emitted
+`capture_receipt` path in place of `/absolute/private/control.json`:
 
 ```bash
-basaltw desktop --native screenshot --crop 1000 600 400 300 --compact > /absolute/private/control.json
+basaltw desktop --native screenshot --crop 1000 600 400 300 --compact --output /absolute/private/control.png
 basaltw desktop --native map-point --capture /absolute/private/control.json \
   --view-geometry 400 300 --x 200 --y 150
 ```
@@ -376,8 +379,9 @@ binding. Updated Linux status advertises `observation-input`; older helpers
 need a safe restart before token-bound input. A non-default lifetime must be
 confirmed in the capture response, rather than assumed from a CLI flag.
 
-Linux `input --observe` retains the input completion receipt, settles, and
-captures again. It checks the output path before input, refusing existing files,
+Linux `input --observe` retains the input receipt and begins the settle and
+capture steps only after confirmed input delivery. It checks the output path
+before input, refusing existing files,
 dangling symlinks and invalid/unwritable parent directories. The precheck does
 not reserve a path; a later filesystem change can still cause post-input capture
 failure, which retains completed input and never replays it. The response

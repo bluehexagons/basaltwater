@@ -32,8 +32,10 @@ Save this JSON as a private `observe-pair.json` outside Git:
 
 Omitting `output` generates a different private PNG path for each capture. An
 explicit `output` must be a new absolute `.png` path under an existing writable
-parent. All capture paths and delay options are checked before input; checks do
-not reserve paths, so a later filesystem change can still cause partial failure.
+parent. The CLI preflights input geometry, coordinates, action options, capture
+paths and delays before dispatch. The helper checks live geometry, observation
+freshness and window identity at dispatch. A later filesystem change can still
+cause a capture to fail.
 Run once, promptly after inspection:
 
 ```bash
@@ -50,9 +52,11 @@ input. Inspect retained evidence, then capture again separately if permitted.
 If the helper saves a PNG during a failed capture step, `artifacts` lists that
 image for diagnosis. Only verified captures receive a `capture_receipt` for
 mapping input coordinates.
-Unknown input delivery remains unknown; an acknowledged input does not prove
-its application effect. `--save-output` preserves the full result before emitting
-a short preview, including the latest recorder headroom and any recording error.
+The next step requires confirmed input delivery. An acknowledged input does not
+prove its application effect. `--save-output` preserves the full result before
+emitting a short preview, including the latest recorder headroom and any
+recording error. If that save fails, the command returns the full result on
+stdout with a nonzero exit and an `output_save_error`.
 Omit `--save-output` for the full result on stdout. `--json` selects the default
 machine result in either case.
 
