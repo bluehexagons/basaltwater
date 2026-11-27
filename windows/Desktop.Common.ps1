@@ -302,6 +302,7 @@ function Invoke-NativeDesktopWorker($Request, [int]$TimeoutSeconds = 8) {
         $escapedInput = $inputPath.Replace("'", "''"); $escapedOutput = $outputPath.Replace("'", "''")
         $entry = @"
 `$ErrorActionPreference = 'Stop'
+`$ProgressPreference = 'SilentlyContinue'
 . '$source'
 try {
     `$request = Get-Content -LiteralPath '$escapedInput' -Raw -Encoding UTF8 | ConvertFrom-Json

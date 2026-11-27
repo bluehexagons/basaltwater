@@ -536,7 +536,9 @@ function Invoke-NativeDevelopmentCli([string[]]$Arguments) {
     Assert-DevelopmentPath $setupDirectory
     New-Item -ItemType Directory -Path $setupDirectory -Force | Out-Null
     try { $admission = [IO.File]::Open((Join-Path $setupDirectory 'setup.lock'), 'OpenOrCreate', 'ReadWrite', 'None') }
-    catch [IO.IOException] { throw 'Windows setup/reboot is active; wait for it before starting a development task' }
+    catch [IO.IOException] {
+        throw [IO.IOException]::new('Could not acquire the Windows task admission lock. Setup, restart, or another submission may be using it. No task was submitted.', $_.Exception)
+    }
     try {
     Assert-DevelopmentProjectAdmission $request.Project $request.TestSession
     $id = [guid]::NewGuid().ToString('N'); $directory = Get-DevelopmentDirectory $id

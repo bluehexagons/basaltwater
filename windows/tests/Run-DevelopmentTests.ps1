@@ -132,6 +132,13 @@ try {
     Assert-Throws { Invoke-NativeDevelopmentCli @('exec','--project',$project,'--timeout','0','--',$shell) } '1-86400'
     Assert-Throws { Invoke-NativeDevelopmentCli @('exec','--project',$project,'--env','LOCALAPPDATA=elsewhere','--',$shell) } 'cannot be overridden'
     Assert-Throws { Invoke-NativeDevelopmentCli @('exec','--project',$project,'--what','--',$shell) } 'Unexpected option'
+    $setupDirectory = Join-Path $env:LOCALAPPDATA 'Basaltwater'
+    New-Item -ItemType Directory -Path $setupDirectory -Force | Out-Null
+    $admission = [IO.File]::Open((Join-Path $setupDirectory 'setup.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
+    try {
+        Assert-Throws { Invoke-NativeDevelopmentCli @('exec','--project',$project,'--',$shell) } 'admission lock.*another submission.*No task was submitted'
+        Assert-True (-not (Test-Path -LiteralPath (Get-DevelopmentRoot))) 'Busy admission created task state'
+    } finally { $admission.Dispose() }
     $record = Invoke-NativeDevelopmentCli (@('exec','--project',$project,'--env','TASK_ONLY=child value','--msvc','--',$shell) + $literal)
     $directory = Get-DevelopmentDirectory $record.Id
     Assert-True ((Get-DevelopmentStatus $record.Id).State -eq 'queued') 'Fresh UTC task appeared stale in the local time zone'
