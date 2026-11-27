@@ -724,6 +724,46 @@ class TestSetupConfigToDict(unittest.TestCase):
 
 
 class TestSetupConfigFromDict(unittest.TestCase):
+    def test_saved_brave_selection_replays_with_remaining_browsers_or_profile_default(self):
+        from lib.arg_parser import create_setup_argument_parser
+
+        parser = create_setup_argument_parser("Remote setup", for_remote=True)
+        for profile, primary, saved, expected, remaining in (
+            ("workstation_dev", "brave", None, "firefox", None),
+            ("server_lite", "brave", ["brave"], None, None),
+            ("workstation_dev", "brave", ["brave", "chromium", "firefox"], "chromium", ["chromium", "firefox"]),
+            ("workstation_dev", "librewolf", ["librewolf", "brave"], "librewolf", ["librewolf"]),
+            ("workstation_dev", None, ["brave", "lynx"], "lynx", ["lynx"]),
+        ):
+            with self.subTest(profile=profile, primary=primary, saved=saved):
+                data = {"username": "agent", "browser": primary, "browsers": saved}
+                before = json.dumps(data)
+                config = SetupConfig.from_dict("vm", profile, data)
+                self.assertEqual((config.browser, config.browsers), (expected, remaining))
+                self.assertEqual(json.dumps(data), before)
+                self.assertNotIn("--browser brave", config.to_setup_command())
+                remote = parser.parse_args(shlex.split(" ".join(config.to_remote_args())))
+                self.assertEqual(remote.browsers, remaining or ([expected] if expected else None))
+                self.assertEqual(config.to_dict(), SetupConfig.from_dict("vm", profile, config.to_dict()).to_dict())
+
+    def test_new_browser_selections_reject_retired_choice(self):
+        from basaltwater import create_basaltwater_parser
+        from lib.arg_parser import create_setup_argument_parser
+
+        parser, _, _ = create_basaltwater_parser()
+        remote = create_setup_argument_parser("Remote setup", for_remote=True)
+        for command, args in (
+            (parser, ["local", "browser", "brave"]),
+            (parser, ["setup", "workstation_dev", "vm", "agent", "--browser", "brave"]),
+            (parser, ["patch", "vm", "agent", "--browser", "brave"]),
+            (remote, ["--system-type", "workstation_dev", "--username", "agent", "--browser", "brave"]),
+        ):
+            with self.subTest(args=args), contextlib.redirect_stderr(io.StringIO()) as errors, self.assertRaises(SystemExit):
+                command.parse_args(args)
+            self.assertIn("invalid choice: 'brave'", errors.getvalue())
+        with self.assertRaisesRegex(ValueError, "--browser"):
+            SetupConfig(host="vm", system_type="workstation_dev", username="agent", browsers=["firefox", "brave"])
+
     def test_legacy_desktop_policy_is_refused_without_mutating_saved_input(self):
         data = {'username': 'agent', 'rdp_max_sessions': 3,
                 'rdp_kill_disconnected': True, 'rdp_disconnected_timeout': 60}
@@ -859,7 +899,7 @@ class TestSetupConfigToRemoteArgs(unittest.TestCase):
         self.assertIn('--editor geany', config.to_remote_args())
 
     def test_browsers_list(self):
-        config = self._make_config(browsers=['firefox', 'brave'])
+        config = self._make_config(browsers=['firefox', 'chromium'])
         args = config.to_remote_args()
         args_str = ' '.join(args)
         self.assertEqual(args_str.count('--browser'), 2)

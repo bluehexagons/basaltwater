@@ -39,6 +39,8 @@ AGENT_TOOLS = ("gh", "codex", "claude", "opencode")
 WEB_INTERFACES = ("t3code",)
 DEVICE_PAIRING_PROVIDERS = ("t3code",)
 BROWSER_AUTOMATION_PROVIDERS = ("playwright",)
+GRAPHICAL_SETUP_BROWSERS = ("firefox", "chromium", "librewolf", "helium")
+SETUP_BROWSERS = (*GRAPHICAL_SETUP_BROWSERS, "browsh", "lynx")
 EDITORS = ("geany", "vscode")
 GIT_ACCESS_POLICIES = ("none", "read", "read-write")
 GODOT_BUNDLES = ("web", "publishing")
@@ -988,12 +990,14 @@ class SetupConfig:
             validate_godot_bundle_settings,
             validate_guest_lifecycle_settings,
             validate_notification_level,
+            validate_setup_browsers,
             validate_syncthing_settings,
         )
 
         validate_godot_bundle_settings(self)
         validate_guest_lifecycle_settings(self, require_provisioning=False)
         validate_notification_level(self.notification_level)
+        validate_setup_browsers(self.browser, self.browsers)
         from lib.notifications import normalize_notification_ca_file, normalize_notification_strict_https
 
         normalize_notification_ca_file(
@@ -2798,7 +2802,13 @@ class SetupConfig:
         system_defaults = get_system_type_definition(system_type)
         if not data.get('agent_tools') and not data.get('agent_tools_removed'):
             data['agent_tools'] = list(system_defaults.default_agent_tools) or None
-        if not data.get('browser') and not data.get('browsers'):
+        # Retire Brave in saved setups before reconstructing local or target arguments.
+        saved_browsers = data.get('browsers')
+        if isinstance(saved_browsers, list) and saved_browsers:
+            remaining = [name for name in saved_browsers if name != 'brave']
+            data['browsers'] = remaining or None
+            data['browser'] = remaining[0] if remaining else system_defaults.default_browser
+        elif not data.get('browser') or data['browser'] == 'brave':
             data['browser'] = system_defaults.default_browser
         if data.get('disable_web_interface'):
             data['web_interfaces'] = None

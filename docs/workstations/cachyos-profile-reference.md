@@ -139,7 +139,7 @@ successful report proves only the observations it lists; it does not prove GPU
 rendering, desktop input, provider authentication, or an end-to-end thread.
 The command runs without the Debian maintenance confirmation, including with
 `--json` in a noninteractive session. Browser observations recognize Chromium,
-Firefox, Brave, LibreWolf, and Cachy Browser native packages. An absent optional browser
+Firefox, LibreWolf, and Cachy Browser native packages. An absent optional browser
 package does not mean there is no usable browser; custom installations are not
 inventoried, and the doctor does not launch a browser to test it.
 

@@ -132,10 +132,25 @@ class TestDevelopmentTasks(unittest.TestCase):
             self.assertEqual(development.cleanup_browser(task_id, include_downloads=True)["paths"], [])
         self.assertTrue(Path(result["report"]).is_file())
 
+    def test_native_alternatives_use_their_engines_disposable_profiles(self):
+        self.which.side_effect = {"librewolf": str(self.engine), "helium": str(self.engine)}.get
+        for name in ("librewolf", "helium"):
+            with self.subTest(browser=name):
+                result = self.launch(kind="browser", browser=name, url="about:blank")
+                profile, downloads = Path(result["profile"]), result["downloads"]
+                argv = development.load_task(Path(result["directory"]))["argv"]
+                if name == "librewolf":
+                    self.assertIn(str(profile), argv)
+                    self.assertIn(json.dumps(downloads), (profile / "user.js").read_text())
+                else:
+                    self.assertIn(f"--user-data-dir={profile}", argv)
+                    prefs = json.loads((profile / "Default" / "Preferences").read_text())
+                    self.assertEqual(prefs["download"]["default_directory"], downloads)
+
     def test_browser_refuses_option_like_urls_and_unknown_applications_before_state_creation(self):
         for browser, url in (
             ("firefox", "--profile"), ("firefox", "https://person@example.test/"),
-            ("firefox", "https://example.test:0/"), ("arbitrary", "about:blank"),
+            ("firefox", "https://example.test:0/"), ("brave-browser", "about:blank"), ("arbitrary", "about:blank"),
         ):
             with self.subTest(browser=browser, url=url), self.assertRaises(ValueError):
                 self.launch(kind="browser", browser=browser, url=url)

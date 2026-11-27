@@ -54,7 +54,7 @@ can install it through the explicit custom step `install_remmina` when using
 After setup, inspect installed applications as the target user:
 
 ```bash
-command -v firefox librewolf brave-browser vim geany code remmina blender
+command -v firefox librewolf vim geany code remmina blender
 blender --version
 flatpak list --app
 xdg-mime query default x-scheme-handler/https

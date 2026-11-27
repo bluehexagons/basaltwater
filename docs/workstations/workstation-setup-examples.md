@@ -160,7 +160,7 @@ PC with office and SMB tools:
 
 ```bash
 basaltw setup pc_dev 10.0.0.26 alice \
-  --desktop cinnamon --office --browser brave
+  --desktop cinnamon --office --browser firefox
 ```
 
 Install several browsers and use a dark theme:

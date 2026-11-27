@@ -61,8 +61,8 @@ basaltw agent manifest /home/agent/repos/example --capability browser --json
 ```
 
 The `browser.contexts` entries distinguish stable managed headless Chromium and
-optional Firefox, the separate managed MCP context, project-installed Playwright Firefox, interactive desktop
-Firefox/Firefox ESR, and the connected client's collaborative preview.
+optional Firefox, the separate managed MCP context, project-installed Playwright
+engines, interactive desktop browsers, and the connected client's collaborative preview.
 Discovery reports runtime presence and leaves launch/rendering readiness
 unverified; browser-cache directories do not prove that an engine works.
 For Playwright contexts, `discovered` reports the installed package. Run the
@@ -70,8 +70,9 @@ context's `verification_argv` to check for the matching engine executable and
 test it. The `browser.managed_playwright` summary describes the `managed-mcp`
 launcher. Inventory also reports `launchable` (unknown until a launch check),
 `mcp_registered` (client configuration), and `application_tested`. Desktop
-discovery probes native Firefox/Firefox ESR and `flatpak info org.mozilla.firefox`,
-including Flatpak-only installs, and reports versions when available. A connected
+discovery checks Chromium, Chrome, Helium, Firefox, Firefox ESR, and LibreWolf
+on PATH. It also checks Firefox and LibreWolf through `flatpak info` and reports
+versions when available. A connected
 preview has engine `unknown` until the session establishes it. Never infer Firefox
 coverage from a viewport preset or an unknown preview.
 The ordinary browser capability doctor below qualifies managed Chromium and
@@ -92,7 +93,10 @@ profile and private downloads. Append `--url URL` to test a page. It requires an
 active, configured desktop. Use the [desktop browser workflow](../workstations/debian-development.md#test-with-a-disposable-browser)
 for window checks and cleanup. Use
 `basaltw agent manifest --application firefox-esr --json` or
-`--application firefox` to discover one named application.
+`--application chromium` to discover one named application. On Debian a
+missing desktop engine has a `desktop_provisioning_argv` command that installs
+it as a secondary browser. Flatpak launch commands use the application's
+regular profile.
 
 If the selected runtime reports `browser_payload_missing`, run its exact
 `provisioning_argv` to install and test the matching payload:

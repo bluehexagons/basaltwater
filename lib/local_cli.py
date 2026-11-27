@@ -11,7 +11,7 @@ from common.network_steps import configure_static_network, configure_system_host
 from common.proxmox_steps import preflight_proxmox, upgrade_proxmox_packages
 from desktop.browser_steps import configure_default_browser, install_browser
 from plugins.desktop import extend_desktop_steps
-from lib.config import SetupConfig
+from lib.config import SETUP_BROWSERS, SetupConfig
 from lib.maintenance_lock import maintenance_lock
 from lib.proxmox_preflight import is_proxmox_host
 from lib.remote_utils import is_dry_run, run, set_dry_run
@@ -21,7 +21,6 @@ from lib.validators import validate_username
 
 
 LOCAL_DESKTOPS = ("xfce", "i3", "cinnamon", "lxqt")
-LOCAL_BROWSERS = ("brave", "firefox", "browsh", "helium", "lynx", "librewolf")
 
 
 def _target_username() -> str:
@@ -161,7 +160,7 @@ def add_local_subparser(subparsers: argparse._SubParsersAction) -> None:
     )
 
     browser_parser = commands.add_parser("browser", help="Install a browser for the local desktop user")
-    browser_parser.add_argument("browser", choices=LOCAL_BROWSERS)
+    browser_parser.add_argument("browser", choices=SETUP_BROWSERS)
     browser_parser.add_argument(
         "--flatpak",
         action="store_true",

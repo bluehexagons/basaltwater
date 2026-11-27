@@ -68,7 +68,8 @@ class TestAgentBrowser(unittest.TestCase):
 
     def test_flatpak_only_firefox_discovery_does_not_claim_launch_or_esr(self) -> None:
         self.which.side_effect = lambda name: "/usr/bin/flatpak" if name == "flatpak" else None
-        self.execute.return_value = subprocess.CompletedProcess([], 0, "144.0", "")
+        self.execute.side_effect = lambda argv, **kwargs: subprocess.CompletedProcess(
+            [], 0 if argv[-1] == "org.mozilla.firefox" else 1, "144.0", "")
         result = agent_browser.desktop_firefox_inventory()
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["installation"], "flatpak")
@@ -77,7 +78,32 @@ class TestAgentBrowser(unittest.TestCase):
         self.assertTrue(result[0]["discovered"])
         self.assertIsNone(result[0]["launchable"])
         self.assertFalse(result[0]["application_tested"])
-        self.assertEqual(self.execute.call_args.args[0], ["/usr/bin/flatpak", "info", "--show-version", "org.mozilla.firefox"])
+        self.assertEqual(result[0]["launch_argv"], ["/usr/bin/flatpak", "run", "org.mozilla.firefox"])
+
+    def test_engine_doctor_reports_installable_browser_when_desktop_is_missing(self) -> None:
+        for engine in ("chromium", "firefox"):
+            with (self.subTest(engine=engine), patch.object(agent_browser, "is_cachyos", return_value=False),
+                  patch.object(agent_browser, "get_os_id", return_value="debian")):
+                result = agent_browser.check_browser(engine, "project", str(self.project))
+                agent_browser._doctor_options(result, str(self.project))
+                self.assertFalse(result["desktop"][0]["discovered"])
+                self.assertEqual(result["desktop_provisioning_argv"], ["basaltw", "local", "browser", engine, "--no-default"])
+        with patch.object(agent_browser, "get_os_id", return_value="fedora"):
+            result = agent_browser.check_browser("chromium", "project", str(self.project))
+            agent_browser._doctor_options(result, str(self.project))
+            self.assertNotIn("desktop_provisioning_argv", result)
+        self.execute.assert_not_called()
+
+    def test_manifest_finds_native_chromium_and_flatpak_librewolf_in_their_engines(self) -> None:
+        self.which.side_effect = {"flatpak": "/usr/bin/flatpak", "chromium": "/usr/bin/chromium"}.get
+        self.execute.side_effect = lambda argv, **kwargs: subprocess.CompletedProcess(
+            [], 1 if argv[-1] == "org.mozilla.firefox" else 0, "123.0", "")
+        desktop = {item["application"]: item for item in agent_browser.browser_context_inventory(str(self.project))
+                   if item["context"] == "interactive-desktop" and item["discovered"]}
+        self.assertEqual(desktop["chromium"]["engine"], "chromium")
+        self.assertEqual(desktop["librewolf"]["engine"], "firefox")
+        self.assertEqual(desktop["librewolf"]["launch_argv"], ["/usr/bin/flatpak", "run", "io.gitlab.librewolf-community"])
+        self.assertTrue(all(item["launchable"] is None for item in desktop.values()))
 
     def test_failed_flatpak_probe_never_claims_firefox_discovery(self) -> None:
         self.which.side_effect = lambda name: "/usr/bin/flatpak" if name == "flatpak" else None

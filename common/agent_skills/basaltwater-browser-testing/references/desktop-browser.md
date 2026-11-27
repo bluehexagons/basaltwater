@@ -1,11 +1,12 @@
 # Use a configured desktop browser
 
-Discover installed applications with `basaltw agent manifest REPOSITORY --json`
+Discover installed browsers with `basaltw agent manifest REPOSITORY --capability browser --json`
 and read the installed desktop skill before launch, capture, or input. On an
 XRDP VM, check `basaltw desktop status` and `basaltw desktop doctor`; use
 `desktop start` when needed within the authorized task. For a fresh Firefox
 profile use `basaltw desktop develop browser --browser firefox-esr --project
-REPOSITORY --url URL --json`. The task reports its private profile and download
+REPOSITORY --url URL --json`. Use `--browser chromium`, `librewolf`, or
+`helium` to test an installed native alternative. The task reports its private profile and download
 directory. Use `desktop develop status TASK_ID` to get the browser launch PID.
 Use a fresh window receipt for the file picker when it opens separately.
 Collect required downloads, close the owned browser, and run

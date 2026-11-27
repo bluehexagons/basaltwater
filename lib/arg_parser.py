@@ -8,6 +8,7 @@ import argparse
 from lib.config import (
     AGENT_TOOLS,
     BROWSER_AUTOMATION_PROVIDERS,
+    SETUP_BROWSERS,
     WEB_PANEL_DEFAULT_PORT_SENTINEL,
     DEVICE_PAIRING_PROVIDERS,
     EDITORS,
@@ -769,7 +770,7 @@ def add_setup_arguments(
                        help="Environment for the one shared desktop session (default: xfce)")
     parser.add_argument("--browser", dest="browsers", 
                        action="append",
-                       choices=["brave", "firefox", "browsh", "helium", "lynx", "librewolf"], 
+                       choices=SETUP_BROWSERS,
                        help="Web browser to install (can be used multiple times; profile defaults vary)")
     parser.add_argument(
         "--editor",

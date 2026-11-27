@@ -28,9 +28,9 @@ from desktop.browser_steps import (
 
 class TestBrowserSteps(unittest.TestCase):
     def test_requested_browser_failures_stop_setup(self):
-        for browser, flatpak in (("brave", False), ("firefox", False), ("librewolf", False),
+        for browser, flatpak in (("chromium", False), ("firefox", False), ("librewolf", False),
                                  ("helium", False), ("browsh", False), ("lynx", False),
-                                 ("brave", True), ("firefox", True), ("librewolf", True)):
+                                 ("chromium", True), ("firefox", True), ("librewolf", True)):
             for code in (0, 1):
                 with self.subTest(browser=browser, flatpak=flatpak, code=code), \
                         patch("desktop.browser_steps.is_package_installed", return_value=False), \
@@ -80,7 +80,7 @@ class TestBrowserSteps(unittest.TestCase):
                     patch("desktop.browser_steps.os.path.exists", return_value=True), \
                     patch("desktop.browser_steps.is_package_installed", return_value=installed), \
                     patch("desktop.browser_steps.run", return_value=SimpleNamespace(returncode=code)):
-                self.assertEqual(_install_via_extrepo("Brave", "brave", "brave-browser"), expected)
+                self.assertEqual(_install_via_extrepo("LibreWolf", "librewolf", "librewolf"), expected)
 
     def test_failed_first_browser_stops_before_installing_later_selections(self):
         with patch("desktop.browser_steps.is_package_installed", return_value=False), \
@@ -89,13 +89,13 @@ class TestBrowserSteps(unittest.TestCase):
                 install_browser(SimpleNamespace(use_flatpak=False, browsers=["firefox", "lynx"], browser="firefox", dry_run=False))
         run.assert_called_once_with("apt-get install -y -qq firefox-esr", check=False)
 
-    def test_brave_flatpak_failure_can_fall_back_to_verified_apt(self):
-        with patch("desktop.browser_steps.is_flatpak_app_installed", return_value=False), \
-                patch("desktop.browser_steps.is_package_installed", return_value=False), \
-                patch("desktop.browser_steps.run", return_value=SimpleNamespace(returncode=1)), \
-                patch("desktop.browser_steps._install_via_extrepo", return_value=True) as apt:
-            install_single_browser("brave", use_flatpak=True)
-        apt.assert_called_once_with("Brave", "brave", "brave-browser")
+    def test_chromium_uses_debian_package_and_skips_installed_copy(self):
+        with patch("desktop.browser_steps.is_package_installed", side_effect=[False, True, True]) as installed, \
+                patch("desktop.browser_steps.run", return_value=SimpleNamespace(returncode=0)) as run:
+            install_single_browser("chromium", use_flatpak=True)
+            install_single_browser("chromium", use_flatpak=False)
+        self.assertEqual([call.args for call in installed.call_args_list], [("chromium",)] * 3)
+        run.assert_called_once_with("apt-get install -y -qq chromium", check=False)
 
     def test_browser_dry_run_does_not_probe_or_install_packages(self):
         with patch("desktop.browser_steps.run") as run, \
@@ -202,7 +202,7 @@ class TestBrowserSteps(unittest.TestCase):
             stdout="org.mozilla.firefox\n",
             stderr="",
         )
-        self.assertFalse(is_flatpak_app_installed("com.brave.Browser"))
+        self.assertFalse(is_flatpak_app_installed("io.gitlab.librewolf-community"))
 
     @patch("desktop.browser_steps.os.path.isfile", return_value=True)
     @patch("desktop.browser_steps.shutil.which", return_value="/usr/bin/apparmor-tool")
@@ -287,11 +287,9 @@ class TestBrowserSteps(unittest.TestCase):
 
         _refresh_existing_extrepo_sources()
 
-        self.assertEqual(mock_run.call_count, 3)
         self.assertEqual(
             [call.args[0] for call in mock_run.call_args_list],
             [
-                "timeout --kill-after=5s 30s extrepo update brave",
                 "timeout --kill-after=5s 30s extrepo update librewolf",
                 "timeout --kill-after=5s 30s extrepo update vscode",
             ],

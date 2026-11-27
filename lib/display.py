@@ -395,7 +395,7 @@ def print_setup_summary(config: SetupConfig, description: Optional[str] = None) 
     if config.desktop != "xfce" and (config.include_desktop or config.enable_rdp):
         print(f"Desktop: {config.desktop}")
     
-    if config.browser and config.browser != "brave" and (config.include_desktop or config.include_desktop_apps or config.include_pc_dev_apps or config.include_workstation_dev_apps):
+    if config.browser and (config.include_desktop or config.include_desktop_apps or config.include_pc_dev_apps or config.include_workstation_dev_apps):
         print(f"Browser: {config.browser}")
 
     if config.editor:

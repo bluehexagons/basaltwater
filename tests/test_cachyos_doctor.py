@@ -859,10 +859,10 @@ class DoctorTests(unittest.TestCase):
         confirm.assert_called_once_with("local maintenance")
         dispatch.assert_not_called()
 
-    def test_brave_only_host_has_native_browser_without_claiming_automation(self):
+    def test_chromium_only_host_has_native_browser_without_claiming_automation(self):
         def probe(command, uid):
             if command[0] == "/usr/bin/pacman" and command[-1] in doctor.BROWSER_PACKAGES:
-                return ("ok", "brave-bin 1:1.95.101-1\n") if command[-1] == "brave-bin" else ("error", "")
+                return ("ok", "chromium 123.0-1\n") if command[-1] == "chromium" else ("error", "")
             return self.healthy_probe(command, uid)
 
         self.probe.side_effect = probe

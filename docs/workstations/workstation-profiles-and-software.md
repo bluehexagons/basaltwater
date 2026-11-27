@@ -139,28 +139,35 @@ This section covers the browser used by a person at the desktop. It does not
 configure an MCP server for coding agents; use `--browser-automation
 playwright` for that independent capability.
 
-Supported `--browser` values are `brave`, `firefox`, `librewolf`, `helium`,
-`browsh`, and `lynx`:
+Use `--browser` to select one or more browsers. Setup uses the first
+selection as the primary browser.
 
-- Brave and LibreWolf use Debian repositories unless `--flatpak` is selected.
+- LibreWolf uses its extrepo repository or the Flathub build with `--flatpak`.
 - Firefox uses `firefox-esr` through apt, or the Flathub build with Flatpak.
+- Chromium uses Debian's `chromium` package, including when `--flatpak` is selected.
 - Helium installs a pinned upstream Debian package for amd64 or arm64.
 - Browsh provides a terminal browser. Setup verifies Firefox is installed and
   selects a pinned upstream Debian package for amd64, arm64, armhf, or i386.
 - Lynx installs the Debian terminal browser and does not become a graphical
   default.
 
+Brave has been retired from setup. When loading a saved configuration,
+Basaltwater drops Brave and keeps the remaining browsers in order. If Brave
+was the only selection, setup uses the profile default (Firefox on Debian
+workstation profiles). Previously installed Brave packages, repositories,
+and personal browser data stay on the host.
+
 A requested browser must finish its package command successfully and pass the
 installed-package or application check. Download, verification and missing
 browser failures stop setup before default-browser configuration or later browser
 selections. Browsh also verifies Firefox before downloading its own package and
-repairs that dependency on rerun. Brave retains its Flatpak-to-APT fallback;
-Firefox and LibreWolf report a failed Flatpak installation directly. Repair the
+repairs that dependency on rerun. Firefox and LibreWolf report a failed
+Flatpak installation directly. Repair the
 reported package or repository problem, then rerun the same desired setup.
 
 For an extrepo-based browser install, setup first refreshes APT normally. If
 that refresh fails, it makes one bounded attempt to refresh existing
-extrepo-managed definitions for Brave, LibreWolf, and legacy VS Code installs,
+extrepo-managed definitions for LibreWolf and legacy VS Code installs,
 then retries APT. The extrepo repair has a 30-second per-source timeout and does not
 run on successful reruns. It does not remove or rewrite manually managed files under
 `/etc/apt/sources.list` or `/etc/apt/sources.list.d`. If APT still reports an

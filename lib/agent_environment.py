@@ -14,7 +14,7 @@ import shutil
 import subprocess
 import urllib.parse
 
-from desktop.browser_session import BROWSER_APPLICATIONS, supervised_browser_argv
+from desktop.browser_session import BROWSERS, supervised_browser_argv
 from lib import agent_workspace
 from lib.agent_browser import browser_context_inventory
 from lib.agent_skill_catalog import inspect_skill_catalogs
@@ -133,7 +133,7 @@ DESKTOP_APPLICATIONS = {
                 "Use the task status and fresh window observations with the desktop skill before capture or input.",
             ],
         }
-        for name in BROWSER_APPLICATIONS["firefox"]
+        for name in BROWSERS
     },
 }
 TOOLS = (
@@ -408,7 +408,7 @@ def _scoped_tool_names(scopes: set[str], desktop_applications: Iterable[str],
     if "workspace" in scopes:
         names.update(("git", "gh"))
     if "browser" in scopes:
-        names.update(("basaltwater-playwright-mcp", "firefox", "firefox-esr", "node"))
+        names.update(("basaltwater-playwright-mcp", *BROWSERS, "node"))
     if "desktop" in scopes:
         names.update(desktop_applications)
     if "development" in scopes:
@@ -476,7 +476,7 @@ def inspect_environment(repository: str, *, project_runtime: bool = False,
                                 for instruction in guidance.get("instructions", [])],
                "launch_argv": (
                    supervised_browser_argv(name, root, native=native_desktop)
-                   if name in BROWSER_APPLICATIONS["firefox"] and not wsl
+                   if name in BROWSERS and not wsl
                    else [tools[name]] if native_desktop or wsl else ["basaltw", "desktop", "exec", "--", tools[name]]
                ),
                "desktop_backend": "wslg-unverified" if wsl else "native-session" if native_desktop else "shared-xrdp",

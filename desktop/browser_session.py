@@ -12,10 +12,11 @@ from lib.validators import validate_host
 
 
 BROWSER_APPLICATIONS = {
-    "firefox": ("firefox-esr", "firefox"),
-    "chromium": ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "brave-browser"),
+    "firefox": ("firefox-esr", "firefox", "librewolf"),
+    "chromium": ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "helium"),
 }
 BROWSERS = tuple(name for names in BROWSER_APPLICATIONS.values() for name in names)
+FLATPAK_BROWSER_IDS = {"firefox": "org.mozilla.firefox", "librewolf": "io.gitlab.librewolf-community"}
 
 
 def supervised_browser_argv(browser: str, project: str, *, native: bool) -> list[str]:

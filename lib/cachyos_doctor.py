@@ -29,7 +29,7 @@ OUTPUT_LIMIT = 16384
 DEVELOPMENT_VERSION_COMMANDS = frozenset((
     "cc", "clang", "clang-format", "clang-tidy", "llvm-symbolizer",
 ))
-BROWSER_PACKAGES = ("chromium", "firefox", "brave-bin", "cachy-browser", "librewolf-bin")
+BROWSER_PACKAGES = ("chromium", "firefox", "cachy-browser", "librewolf-bin")
 PACKAGES = (
     "plasma-workspace", "kwin", "wayland", "pipewire", "wireplumber",
     "xdg-desktop-portal", "xdg-desktop-portal-kde", "at-spi2-core",

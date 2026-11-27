@@ -9,10 +9,10 @@ import shlex
 import shutil
 import subprocess
 import tempfile
-from typing import Optional
 
+from desktop.browser_session import FLATPAK_BROWSER_IDS
 from desktop.home_setup import apply_home_settings
-from lib.config import SetupConfig
+from lib.config import GRAPHICAL_SETUP_BROWSERS, SetupConfig
 from lib.machine_state import is_container
 from lib.remote_utils import (
     is_dry_run,
@@ -24,7 +24,7 @@ from lib.remote_utils import (
 FLATPAK_REMOTE = "flathub"
 _apt_update_done = False
 _EXTREPO_SOURCE_DIR = "/etc/apt/sources.list.d"
-_MANAGED_EXTREPOS = ("brave", "librewolf", "vscode")
+_MANAGED_EXTREPOS = ("librewolf", "vscode")
 _EXTREPO_UPDATE_TIMEOUT_SECONDS = 30
 _APT_UPDATE_COMMAND = (
     "apt-get -o DPkg::Lock::Timeout=120 "
@@ -59,19 +59,6 @@ _BROWSH_ARCH_BY_DPKG = {
     "arm64": "arm64",
     "armhf": "armv7",
     "i386": "386",
-}
-
-
-_FLATPAK_BROWSER_IDS = {
-    "brave": "com.brave.Browser",
-    "firefox": "org.mozilla.firefox",
-    "librewolf": "io.gitlab.librewolf-community",
-}
-_NATIVE_BROWSER_COMMANDS = {
-    "brave": "brave-browser",
-    "firefox": "firefox",
-    "helium": "helium",
-    "librewolf": "librewolf",
 }
 
 
@@ -278,73 +265,39 @@ def _install_helium_browser() -> None:
 def install_single_browser(browser: str, use_flatpak: bool) -> None:
     """Install a single browser."""
     os.environ["DEBIAN_FRONTEND"] = "noninteractive"
-    if browser == "brave":
-        if use_flatpak:
-            if is_flatpak_app_installed("com.brave.Browser"):
-                print("  ✓ Brave browser already installed")
-                return
-            print("  Installing Brave browser...")
-            result = run(f"flatpak install -y {FLATPAK_REMOTE} com.brave.Browser", check=False)
-            if result.returncode == 0 and is_flatpak_app_installed("com.brave.Browser"):
-                print("  ✓ Brave browser installed")
-                return
-            print("  ⚠ Flatpak install failed, falling back to apt...")
-        
-        if is_package_installed("brave-browser"):
-            print("  ✓ Brave browser already installed")
+    app_id = FLATPAK_BROWSER_IDS.get(browser) if use_flatpak else None
+    if app_id:
+        name = "LibreWolf" if browser == "librewolf" else "Firefox"
+        if is_flatpak_app_installed(app_id):
+            print(f"  ✓ {name} already installed")
             return
-        print("  Installing Brave browser...")
-        if _install_via_extrepo("Brave", "brave", "brave-browser"):
-            print("  ✓ Brave browser installed")
-        else:
-            raise RuntimeError("Brave installation failed")
-    
-    elif browser == "firefox":
-        if use_flatpak:
-            if is_flatpak_app_installed("org.mozilla.firefox"):
-                print("  ✓ Firefox already installed")
-                return
-            print("  Installing Firefox...")
-            result = run(f"flatpak install -y {FLATPAK_REMOTE} org.mozilla.firefox", check=False)
-            if result.returncode == 0 and is_flatpak_app_installed("org.mozilla.firefox"):
-                print("  ✓ Firefox installed")
-                return
-            raise RuntimeError("Firefox Flatpak installation failed")
-        else:
-            if is_package_installed("firefox") or is_package_installed("firefox-esr"):
-                print("  ✓ Firefox already installed")
-                return
-            print("  Installing Firefox...")
-            result = run("apt-get install -y -qq firefox-esr", check=False)
-            if result.returncode == 0 and (is_package_installed("firefox") or is_package_installed("firefox-esr")):
-                print("  ✓ Firefox installed")
-            else:
-                raise RuntimeError("Firefox installation failed")
-        
+        print(f"  Installing {name}...")
+        result = run(f"flatpak install -y {FLATPAK_REMOTE} {app_id}", check=False)
+        if result.returncode != 0 or not is_flatpak_app_installed(app_id):
+            raise RuntimeError(f"{name} Flatpak installation failed")
+        print(f"  ✓ {name} installed")
+        return
+
+    if browser == "firefox":
+        if is_package_installed("firefox") or is_package_installed("firefox-esr"):
+            print("  ✓ Firefox already installed")
+            return
+        print("  Installing Firefox...")
+        result = run("apt-get install -y -qq firefox-esr", check=False)
+        if result.returncode != 0 or not is_package_installed("firefox-esr"):
+            raise RuntimeError("Firefox installation failed")
+        print("  ✓ Firefox installed")
 
     elif browser == "librewolf":
-        if use_flatpak:
-            if is_flatpak_app_installed("io.gitlab.librewolf-community"):
-                print("  ✓ LibreWolf browser already installed")
-                return
-            print("  Installing LibreWolf browser...")
-            result = run(f"flatpak install -y {FLATPAK_REMOTE} io.gitlab.librewolf-community", check=False)
-            if result.returncode == 0 and is_flatpak_app_installed("io.gitlab.librewolf-community"):
-                print("  ✓ LibreWolf browser installed")
-                return
-            raise RuntimeError("LibreWolf Flatpak installation failed")
-        else:
-            if is_package_installed("librewolf"):
-                _configure_librewolf_apparmor_profile()
-                print("  ✓ LibreWolf browser already installed")
-                return
-            print("  Installing LibreWolf browser...")
-
-            if _install_via_extrepo("LibreWolf", "librewolf", "librewolf"):
-                _configure_librewolf_apparmor_profile()
-                print("  ✓ LibreWolf browser installed")
-            else:
-                raise RuntimeError("LibreWolf installation failed")
+        if is_package_installed("librewolf"):
+            _configure_librewolf_apparmor_profile()
+            print("  ✓ LibreWolf browser already installed")
+            return
+        print("  Installing LibreWolf browser...")
+        if not _install_via_extrepo("LibreWolf", "librewolf", "librewolf"):
+            raise RuntimeError("LibreWolf installation failed")
+        _configure_librewolf_apparmor_profile()
+        print("  ✓ LibreWolf browser installed")
 
     elif browser == "helium":
         _install_helium_browser()
@@ -362,24 +315,27 @@ def install_single_browser(browser: str, use_flatpak: bool) -> None:
         url = f"https://github.com/browsh-org/browsh/releases/download/v{_BROWSH_VERSION}/browsh_{_BROWSH_VERSION}_linux_{arch}.deb"
         _install_pinned_browser("Browsh", "browsh", _BROWSH_VERSION, dpkg_arch, url, _BROWSH_SHA256[arch])
     
-    elif browser == "lynx":
-        if is_package_installed("lynx"):
-            print("  ✓ Lynx already installed")
+    elif browser in ("chromium", "lynx"):
+        name = browser.capitalize()
+        if is_package_installed(browser):
+            print(f"  ✓ {name} already installed")
             return
-        print("  Installing Lynx...")
-        result = run("apt-get install -y -qq lynx", check=False)
-        if result.returncode == 0 and is_package_installed("lynx"):
-            print("  ✓ Lynx installed")
-        else:
-            raise RuntimeError("Lynx installation failed")
+        print(f"  Installing {name}...")
+        result = run(f"apt-get install -y -qq {browser}", check=False)
+        if result.returncode != 0 or not is_package_installed(browser):
+            raise RuntimeError(f"{name} installation failed")
+        print(f"  ✓ {name} installed")
     else:
         raise ValueError(f"Unsupported browser: {browser}")
 
 
 def install_browser(config: SetupConfig) -> None:
     """Install the specified browser(s)."""
+    browsers = config.browsers or ([config.browser] if config.browser else [])
+    if not browsers:
+        return
     if config.dry_run or is_dry_run():
-        print("  [DRY-RUN] Would install the selected browsers and verify installation")
+        print(f"  [DRY-RUN] Would install and verify: {', '.join(browsers)}")
         return
     # In containers, prefer apt over Flatpak since Flatpak often doesn't work
     use_flatpak = config.use_flatpak
@@ -387,12 +343,8 @@ def install_browser(config: SetupConfig) -> None:
         print("  ⚠ Container detected: using apt instead of Flatpak for browser")
         use_flatpak = False
     
-    # Install multiple browsers if specified
-    if config.browsers:
-        for browser in config.browsers:
-            install_single_browser(browser, use_flatpak)
-    elif config.browser:
-        install_single_browser(config.browser, use_flatpak)
+    for browser in browsers:
+        install_single_browser(browser, use_flatpak)
 
 
 def _xfce_browser_helper(browser: str, command: str, *, flatpak: bool) -> str:
@@ -418,28 +370,24 @@ def configure_default_browser(config: SetupConfig) -> None:
         print(f"  [DRY-RUN] Would set {config.browser} as the default browser")
         return
 
-    browser_desktops: dict[str, Optional[str]] = {
-        "brave": "brave-browser.desktop",
-        "firefox": "firefox.desktop",
-        "helium": "helium.desktop",
-        "librewolf": "librewolf.desktop",
-        "lynx": None,
-        "browsh": None
-    }
-    
-    desktop_file = browser_desktops.get(config.browser)
-    if not desktop_file:
+    if config.browser not in GRAPHICAL_SETUP_BROWSERS:
         print(f"  ✓ No default browser configuration needed for {config.browser}")
         return
 
-    flatpak_app_id = _FLATPAK_BROWSER_IDS.get(config.browser)
+    desktop_file = f"{config.browser}.desktop"
+    flatpak_app_id = FLATPAK_BROWSER_IDS.get(config.browser)
     using_flatpak_browser = bool(
         config.use_flatpak
         and flatpak_app_id
+        and not is_container()
         and is_flatpak_app_installed(flatpak_app_id)
     )
     if using_flatpak_browser:
         desktop_file = f"{flatpak_app_id}.desktop"
+    elif (config.browser == "firefox"
+          and not os.path.isfile("/usr/share/applications/firefox.desktop")
+          and os.path.isfile("/usr/share/applications/firefox-esr.desktop")):
+        desktop_file = "firefox-esr.desktop"
     
     mimeapps_content = f"""[Default Applications]
 x-scheme-handler/http={desktop_file}
@@ -449,7 +397,7 @@ x-scheme-handler/unknown={desktop_file}
 text/html={desktop_file}
 application/xhtml+xml={desktop_file}
 """
-    browser_command = _NATIVE_BROWSER_COMMANDS[config.browser]
+    browser_command = config.browser
     if using_flatpak_browser:
         browser_command = f"flatpak run {flatpak_app_id}"
 
@@ -457,17 +405,21 @@ application/xhtml+xml={desktop_file}
         ("write", ".config/mimeapps.list", mimeapps_content),
         ("write", f"{_XFCE_HELPER_SUBDIR}/{config.browser}.desktop",
          _xfce_browser_helper(config.browser, browser_command, flatpak=using_flatpak_browser)),
-        ("write", ".config/xfce4/helpers.rc", f"WebBrowser={browser_command}\n"),
+        ("write", ".config/xfce4/helpers.rc", f"WebBrowser={config.browser}\n"),
     ]
-    for browser, command in _NATIVE_BROWSER_COMMANDS.items():
+    for browser in GRAPHICAL_SETUP_BROWSERS:
         if browser == config.browser:
             continue
         path = f"{_XFCE_HELPER_SUBDIR}/{browser}.desktop"
-        edits.append(("retire", path, _xfce_browser_helper(browser, command, flatpak=False)))
-        if browser in _FLATPAK_BROWSER_IDS:
+        edits.append(("retire", path, _xfce_browser_helper(browser, browser, flatpak=False)))
+        if browser in FLATPAK_BROWSER_IDS:
             edits.append(("retire", path, _xfce_browser_helper(
-                browser, f"flatpak run {_FLATPAK_BROWSER_IDS[browser]}", flatpak=True,
+                browser, f"flatpak run {FLATPAK_BROWSER_IDS[browser]}", flatpak=True,
             )))
+    # Retire only exact copies of the two helpers written by older setups.
+    for command, flatpak in (("brave-browser", False), ("flatpak run com.brave.Browser", True)):
+        edits.append(("retire", f"{_XFCE_HELPER_SUBDIR}/brave.desktop",
+                      _xfce_browser_helper("brave", command, flatpak=flatpak)))
     apply_home_settings(config.username, edits)
     
     print(f"  ✓ Default browser set to {config.browser.capitalize()}")

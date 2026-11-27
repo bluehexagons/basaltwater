@@ -493,10 +493,16 @@ class TestMediaApps(unittest.TestCase):
 class TestBrowserSteps(unittest.TestCase):
     @patch("desktop.browser_steps.apply_home_settings")
     @patch("desktop.browser_steps.is_flatpak_app_installed")
-    def test_configures_native_and_flatpak_browser_defaults(self, installed, apply):
+    @patch("desktop.browser_steps.is_container", return_value=False)
+    @patch("desktop.browser_steps.os.path.isfile",
+           side_effect=lambda path: path == "/usr/share/applications/firefox-esr.desktop")
+    def test_configures_native_and_flatpak_browser_defaults(self, _isfile, container, installed, apply):
         from desktop.browser_steps import configure_default_browser
 
         for browser, flatpak, desktop_id, command in (
+            ("chromium", True, "chromium.desktop", "chromium"),
+            ("firefox", False, "firefox-esr.desktop", "firefox"),
+            ("firefox", True, "org.mozilla.firefox.desktop", "flatpak run org.mozilla.firefox"),
             ("librewolf", False, "librewolf.desktop", "librewolf"),
             ("librewolf", True, "io.gitlab.librewolf-community.desktop", "flatpak run io.gitlab.librewolf-community"),
             ("helium", False, "helium.desktop", "helium"),
@@ -512,10 +518,20 @@ class TestBrowserSteps(unittest.TestCase):
                 files = {path: content for action, path, content in edits if action == "write"}
                 self.assertIn(f"x-scheme-handler/http={desktop_id}", files[".config/mimeapps.list"])
                 self.assertIn(f"x-scheme-handler/https={desktop_id}", files[".config/mimeapps.list"])
-                self.assertIn(f"WebBrowser={command}", files[".config/xfce4/helpers.rc"])
+                self.assertEqual(files[".config/xfce4/helpers.rc"], f"WebBrowser={browser}\n")
                 helper = files[f".local/share/xfce4/helpers/{browser}.desktop"]
                 self.assertIn("Type=X-XFCE-Helper", helper)
                 self.assertIn("X-XFCE-Category=WebBrowser", helper)
+                if command.startswith("flatpak run "):
+                    self.assertIn(f"X-XFCE-CommandsWithParameter={command} \"%s\";", helper)
+                retired = [content for action, path, content in edits if action == "retire" and path.endswith("/brave.desktop")]
+                self.assertEqual(len(retired), 2)
+        container.return_value = True
+        installed.reset_mock()
+        configure_default_browser(SetupConfig(host="vm", username="agent", system_type="workstation_dev",
+                                              browser="firefox", use_flatpak=True))
+        installed.assert_not_called()
+        self.assertIn("x-scheme-handler/http=firefox-esr.desktop", apply.call_args.args[1][0][2])
 
     @patch("desktop.browser_steps._install_via_extrepo")
     @patch("desktop.browser_steps.is_package_installed")

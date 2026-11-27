@@ -1736,6 +1736,16 @@ def validate_agent_git_settings(config: Any) -> None:
             )
 
 
+def validate_setup_browsers(browser: str | None, browsers: list[str] | None) -> None:
+    from lib.config import SETUP_BROWSERS
+
+    if browsers is not None and not isinstance(browsers, list):
+        raise ValueError("browsers must be a list")
+    if (browser is not None and browser not in SETUP_BROWSERS
+            or any(name not in SETUP_BROWSERS for name in browsers or [])):
+        raise ValueError(f"--browser must be one of: {', '.join(SETUP_BROWSERS)}")
+
+
 def validate_browser_automation_settings(config: Any) -> None:
     """Validate the explicit browser provider and compatible selected agents."""
     from lib.config import BROWSER_AUTOMATION_PROVIDERS

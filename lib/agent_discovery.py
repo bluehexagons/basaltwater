@@ -7,6 +7,8 @@ import json
 import platform
 import shutil
 
+from desktop.browser_session import BROWSERS
+
 from lib import agent_workspace
 from lib.agent_skill_catalog import inspect_skill_catalogs, installed_skill_names
 from lib.agent_environment import DESKTOP_APPLICATIONS, MUSESCORE_EXECUTABLES, TERMINAL_EDITING_TOOLS
@@ -21,7 +23,7 @@ TOOL_GROUPS = {
     "containers": ("podman", "docker"),
     "assets": tuple(dict.fromkeys((*DESKTOP_APPLICATIONS, *MUSESCORE_EXECUTABLES,
                                   "ffmpeg", "ffprobe", "magick", "convert", "exiftool"))),
-    "browser": ("basaltwater-playwright-mcp", "firefox", "firefox-esr", "chromium"),
+    "browser": ("basaltwater-playwright-mcp", *BROWSERS),
 }
 
 

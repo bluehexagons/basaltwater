@@ -97,7 +97,8 @@ class ManifestOutputTests(unittest.TestCase):
                     self.assertTrue({"vim", "rg"}.isdisjoint(call.args[0] for call in which.call_args_list))
                 if scope == "browser":
                     self.assertEqual({entry.args[0] for entry in which.call_args_list},
-                                     {"basaltwater-playwright-mcp", "firefox", "firefox-esr", "node"})
+                                     {"basaltwater-playwright-mcp", "firefox", "firefox-esr", "librewolf", "node",
+                                      "chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "helium"})
                 self.assertEqual(result["provenance"]["source_revisions"]["invoked"], "current")
                 if scope in {"installation", "skills"}:
                     skills.assert_called_once_with(root)
@@ -118,9 +119,10 @@ class ManifestOutputTests(unittest.TestCase):
         self.assertNotIn("skills", result)
         self.assertNotIn("browser", result)
 
-    def test_firefox_esr_selector_reports_the_supervised_browser_command(self) -> None:
+    def test_named_browsers_report_their_supervised_launch_commands(self) -> None:
         parser = argparse.ArgumentParser()
         add_manifest_parser(parser.add_subparsers())
+        browsers = ("firefox-esr", "chromium", "helium", "librewolf")
         with (tempfile.TemporaryDirectory() as root,
               patch("lib.agent_workspace._repository_root", return_value=root),
               patch("lib.agent_environment.is_cachyos", return_value=False),
@@ -128,15 +130,17 @@ class ManifestOutputTests(unittest.TestCase):
               patch("lib.agent_environment.inspect_installation_provenance", return_value={}),
               patch("lib.agent_environment.inspect_skill_catalogs", return_value={"catalogs": []}),
               patch("lib.agent_environment.shutil.which",
-                    side_effect={"firefox-esr": "/usr/bin/firefox-esr"}.get),
+                    side_effect={name: f"/usr/bin/{name}" for name in browsers}.get),
               patch("sys.stdout", new_callable=io.StringIO) as output):
-            args = parser.parse_args(["manifest", "--application", "firefox-esr", "--json"])
+            selectors = [arg for name in browsers for arg in ("--application", name)]
+            args = parser.parse_args(["manifest", *selectors, "--json"])
             self.assertEqual(run_manifest_command(args), 0)
         apps = json.loads(output.getvalue())["desktop_applications"]
-        self.assertEqual(list(apps), ["firefox-esr"])
-        self.assertEqual(apps["firefox-esr"]["launch_argv"], [
-            "basaltw", "desktop", "develop", "browser", "--browser", "firefox-esr", "--project", root,
-        ])
+        self.assertEqual(set(apps), set(browsers))
+        for name in browsers:
+            self.assertEqual(apps[name]["launch_argv"], [
+                "basaltw", "desktop", "develop", "browser", "--browser", name, "--project", root,
+            ])
 
     def test_desktop_scope_and_repeated_applications(self) -> None:
         result = self.run_cli("--capability", "desktop")

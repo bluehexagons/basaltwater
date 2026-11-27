@@ -13,11 +13,11 @@ import sys
 from common.browser_automation_steps import (
     PLAYWRIGHT_ROOT, PLAYWRIGHT_STABLE_ROOT, PLAYWRIGHT_VERSION, PLAYWRIGHT_MCP_PLAYWRIGHT_VERSION,
 )
-from desktop.browser_session import BROWSER_APPLICATIONS, supervised_browser_argv
+from desktop.browser_session import BROWSER_APPLICATIONS, FLATPAK_BROWSER_IDS, supervised_browser_argv
 from lib.atomic_io import read_json_file
 from lib.browser_registration import browser_registrations, register_browser_agent, registration_status
 from lib.cachyos import is_cachyos
-from lib.remote_utils import CommandTimeoutError, run as run_command
+from lib.remote_utils import CommandTimeoutError, get_os_id, run as run_command
 from lib.node_toolchain import select_node
 from lib.service_node import SERVICE_NODE, verify_service_node
 from lib.t3_preview import add_t3_preview_arguments, run_t3_preview_command
@@ -118,6 +118,7 @@ def browser_context_inventory(project: str) -> list[dict[str, object]]:
                              "playwright_version": runtime["version"] if runtime else None,
                              "verification_argv": command})
     contexts.extend(desktop_firefox_inventory())
+    contexts.extend(_desktop_inventory("chromium"))
     return contexts
 
 
@@ -134,18 +135,20 @@ def _desktop_inventory(engine: str) -> list[dict[str, object]]:
             found.append({"installation": "native", "application": name,
                           "channel": "esr" if name == "firefox-esr" else "unknown",
                           "executable": os.path.realpath(executable), "version_argv": [executable, "--version"]})
-    flatpak = shutil.which("flatpak") if engine == "firefox" else None
-    if flatpak:
-        try:
-            with redirect_stdout(sys.stderr):
-                info = run_command([flatpak, "info", "--show-version", "org.mozilla.firefox"],
-                                   check=False, capture_output=True, text=True, timeout=5)
+    if flatpak := shutil.which("flatpak"):
+        for application, app_id in FLATPAK_BROWSER_IDS.items():
+            if application not in BROWSER_APPLICATIONS[engine]:
+                continue
+            try:
+                with redirect_stdout(sys.stderr):
+                    info = run_command([flatpak, "info", "--show-version", app_id],
+                                       check=False, capture_output=True, text=True, timeout=5)
+            except (OSError, CommandTimeoutError):
+                continue
             if info.returncode == 0:
-                found.append({"installation": "flatpak", "channel": "unknown", "executable": flatpak,
-                              "launch_argv": [flatpak, "run", "org.mozilla.firefox"],
+                found.append({"installation": "flatpak", "application": application, "channel": "unknown",
+                              "executable": flatpak, "launch_argv": [flatpak, "run", app_id],
                               "browser_version": info.stdout.strip()[:120]})
-        except (OSError, CommandTimeoutError):
-            pass
     for item in found:
         version = item.pop("version_argv", None)
         if version:
@@ -273,10 +276,8 @@ def _doctor_options(result: dict[str, object], project: str | None) -> None:
         result["provisioning"] = "Rerun the saved VM setup with --browser-automation playwright and a compatible agent tool."
     elif result["remediation"] == "install_project_dependencies_from_its_lockfile":
         result["provisioning"] = "Install the project's locked dependencies, then run this doctor again."
-    if not native and not any(item["discovered"] for item in desktop):
-        result["desktop_provisioning_argv"] = [
-            "basaltw", "local", "browser", "firefox" if engine == "firefox" else "brave", "--no-default",
-        ]
+    if not native and get_os_id() == "debian" and not any(item["discovered"] for item in desktop):
+        result["desktop_provisioning_argv"] = ["basaltw", "local", "browser", engine, "--no-default"]
 
 
 def run_browser_command(args: argparse.Namespace) -> int:
