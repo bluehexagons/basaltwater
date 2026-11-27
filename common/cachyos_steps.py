@@ -221,7 +221,9 @@ def install_missing_packages(packages: list[str]) -> None:
 def cachyos_packages(config: SetupConfig) -> list[str]:
     home = _home(config)
     packages = ["ca-certificates", "curl", "git", "ripgrep", "base-devel", "pacman-contrib"]
-    commands = [("gh", "github-cli")] if config.install_gh else []
+    commands = [("vim", "vim"), ("shellcheck", "shellcheck")]
+    if config.install_gh:
+        commands.append(("gh", "github-cli"))
     if config.install_node:
         commands += [("node", "nodejs"), ("pnpm", "pnpm")]
     if config.install_node or config.update_nvm_npm:
@@ -475,7 +477,7 @@ def report_cachyos_readiness(config: SetupConfig) -> None:
         report_game_dev_readiness(config)
     if config.install_node_versions:
         verify_node_versions(home)
-    commands = ["git", "rg", *config.selected_agent_tools()]
+    commands = ["git", "rg", "vim", "shellcheck", *config.selected_agent_tools()]
     for enabled, selected_commands in (
         (config.install_node, ("node", "npm", "pnpm")),
         (config.install_python, ("python", "uv")),

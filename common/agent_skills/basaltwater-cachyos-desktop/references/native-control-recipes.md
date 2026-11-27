@@ -61,25 +61,26 @@ before input with `basaltw desktop --native map-point --geometry WIDTH HEIGHT
 the size of the entire PNG as presented (excluding viewer margins), and points
 relative to that view. Pass the same `--crop` for a cropped capture; optional
 paired `--to-x`/`--to-y` map a drag endpoint. The read-only result includes
-per-axis scale, origin and ready-to-copy `input_args`. Copy them without applying
-another scale; the input helper handles portal logical scaling. No desktop
-request is made, so this calculation cannot refresh an expired observation.
+per-axis scale, origin and `input_argv`. Pass those literal arguments directly.
+The input helper handles portal logical scaling. This calculation uses only the
+supplied geometry and cannot refresh an expired observation.
 For unknown viewer transforms, obtain a known full view or a bounded native crop.
 See [mapping examples and playtest qualification](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/game-testing.md).
 
-Prefer saving the inspected `screenshot --compact` JSON and using `map-point
+From `screenshot --compact`, open the `screenshot` entry in `artifacts` to inspect
+the PNG. Pass the `capture_receipt` entry's path to `map-point
 --capture /absolute/private/frame.json --view-geometry W H --x X --y Y`.
 For viewer margins add `--view-origin LEFT TOP`; points include those offsets.
 This mode checks frame identity, transform and helper freshness together,
-returning `input_context_args` and `input_args` to copy. It makes a read-only
-status request and never recaptures or sends input. A changed/recentered target
+returning `input_context_argv` and `input_argv` as literal argument arrays. It
+makes a read-only status request. A changed or recentered target
 requires fresh inspection even when the token remains valid.
 
 For a known-size view, use `screenshot --compact --preview-width 1200`.
-Open `preview.output` and pass its exact pixels to `map-point --capture
-RECEIPT.json --preview-coordinates --x X --y Y`. The receipt keeps the original
-and the same token. For a viewer that resizes the preview, use its actual
-presentation dimensions.
+Open the `screenshot_preview` artifact and pass its exact coordinates to
+`map-point --capture RECEIPT.json --preview-coordinates --x X --y Y`. The receipt
+keeps the original and the same token. For a viewer that resizes the preview,
+use its actual presentation dimensions.
 
 Native failures preserve `reason`, `dispatch_stage` and `input_delivery`.
 `not-sent` proves a guard refused before dispatch; `completed` preserves input
@@ -208,7 +209,7 @@ For semantic controls use `inspect --pid PID --name NAME --role ROLE` with
 exact selectors; scope repeated reads to an observed `--root` where possible.
 Use `--save-output` for a broad `inspect`, `windows`, `wait` or `wait-element`:
 the full JSON is stored privately and the response contains counts, at most
-three preview entries, and an `artifact` path. Read only needed fields from
+three preview entries, and a `full_result` artifact. Read only needed fields from
 that file; scan truncation/partial coverage remain authoritative. Counts refer
 to returned items, not all controls. Delete disposable observations when done.
 

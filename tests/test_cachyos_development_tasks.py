@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 import json
 import os
@@ -629,6 +629,30 @@ class TestDevelopmentTasks(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 self.launch(kind="run")
         self.assertEqual(development.load_task(Path(first["directory"]))["kind"], "editor")
+
+    def test_logs_preserve_completion_receipt_even_before_output_file_is_created(self):
+        launched = self.launch()
+        write_json_atomic(launched["report"], {
+            "returncode": 1, "log_truncated": False, "error": "Fixture failed before opening output",
+        })
+        parser = argparse.ArgumentParser()
+        desktop_cli.add_desktop_subparser(parser.add_subparsers())
+        argv = ["desktop", "--native", "develop", "logs"]
+        self.probe.reset_mock()
+        with redirect_stdout(output := StringIO()), redirect_stderr(errors := StringIO()):
+            self.assertEqual(desktop_cli.run_desktop_command(parser.parse_args([*argv, launched["task"], "--json"])), 1)
+        result = json.loads(output.getvalue())
+        self.assertEqual(errors.getvalue(), "")
+        self.assertEqual(result["issue"], "log_unavailable")
+        self.assertEqual(result["job"]["id"], launched["task"])
+        self.assertEqual(result["child_exit_code"], 1)
+        self.assertEqual(result["child_error"], "Fixture failed before opening output")
+        self.assertEqual(result["artifacts"], [{"kind": "completion_receipt", "path": launched["report"],
+                                                 "media_type": "application/json"}])
+        with redirect_stdout(output := StringIO()), redirect_stderr(StringIO()):
+            self.assertEqual(desktop_cli.run_desktop_command(parser.parse_args([*argv, "invalid"])), 2)
+        self.assertEqual(output.getvalue(), "")
+        self.probe.assert_not_called()
 
     def test_unsafe_storage_task_ids_and_records_are_rejected(self):
         for task in ("../other", "x" * 32, "a" * 31, "a" * 33, "a" * 32 + "\n"):

@@ -25,7 +25,7 @@ from lib.atomic_io import read_json_file, write_json_atomic
 from lib.cachyos import is_cachyos
 from lib.cachyos_doctor import _owned_socket, _probe
 from lib.remote_utils import is_dry_run
-from lib.tool_results import add_json_option, artifact, exception_issue, from_report, write_result
+from lib.tool_results import add_json_option, artifact, exception_issue, exit_status, from_report, write_result
 from lib.validation import validate_filesystem_path, validate_no_control_characters
 
 
@@ -111,7 +111,7 @@ def add_development_parser(commands: argparse._SubParsersAction) -> None:
     cleanup.add_argument("--dry-run", action="store_true")
     add_json_option(cleanup, default=True)
     logs = actions.add_parser("logs", help="Show the last lines of a development task's retained output")
-    logs.add_argument("task", help="Task ID returned by a development launch")
+    logs.add_argument("task", metavar="JOB_ID", help="Job ID returned by a development launch")
     logs.add_argument("--tail", type=int, default=30, metavar="LINES", help="Number of lines to show (1–10000, default 30)")
     logs.add_argument("--worker", action="store_true", help="Show supervisor output even when a recipe log is available")
     add_json_option(logs)
@@ -576,22 +576,27 @@ def task_logs(task_id: str, *, tail: int = 30, worker: bool = False) -> dict:
         try:
             body = _read_log(path)
         except FileNotFoundError:
-            return {"schema_version": 1, "ok": False, "task": task_id, "log": str(path),
-                    "error": "No output log is available for this task yet"}
-    # Count a trailing newline as part of the last line, including blank lines.
-    lines = tail + body.endswith(b"\n")
-    excerpt = b"\n".join(body.rsplit(b"\n", lines)[-lines:])[-65536:]
+            pass  # A worker can record a failure before it opens the log.
     metadata = {}
     try:
         completion = _completion_record(directory)
     except (OSError, ValueError) as exc:
         completion = {}
         metadata["completion_error"] = str(exc)
-    return {"schema_version": 1, "ok": True, "task": task_id, "log": str(path),
-            **metadata,
-            "returncode": completion.get("returncode"),
-            "log_truncated": completion.get("log_truncated") if path == directory / "output.log" else None,
-            "output": excerpt.decode("utf-8", errors="replace"), "output_truncated": len(excerpt) < len(body)}
+    if completion:
+        metadata.update(report=str(directory / "result.json"),
+                        child_error=completion.get("error"))
+    result = {"schema_version": 1, "task": task_id, "log": str(path), **metadata,
+              "returncode": completion.get("returncode"),
+              "log_truncated": completion.get("log_truncated") if path == directory / "output.log" else None}
+    if body is None:
+        return {**result, "ok": False, "issue": "log_unavailable",
+                "error": "No output log is available for this task. Inspect its status or completion receipt."}
+    # Count a trailing newline as part of the last line, including blank lines.
+    lines = tail + body.endswith(b"\n")
+    excerpt = b"\n".join(body.rsplit(b"\n", lines)[-lines:])[-65536:]
+    return {**result, "ok": True, "output": excerpt.decode("utf-8", errors="replace"),
+            "output_truncated": len(excerpt) < len(body)}
 
 
 def wait_task(task_id: str, *, timeout: int = 600, until_ready: bool = False) -> dict:
@@ -953,5 +958,5 @@ def run_development_command(args: argparse.Namespace) -> int:
             sys.stdout.write(result["output"])
         else:
             print(result["error"], file=sys.stderr)
-        return 0 if result["ok"] else 1
+        return exit_status(result)
     return write_result(result)

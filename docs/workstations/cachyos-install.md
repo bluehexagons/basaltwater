@@ -27,7 +27,8 @@ sh -c '
 
 The package step may ask for your desktop user's sudo password. Keep the
 terminal attached until setup finishes. This example installs the default Git,
-ripgrep, build tools, GitHub CLI, and Codex plus Node.js, Python, and Git LFS.
+ripgrep, Vim, ShellCheck, build tools, GitHub CLI, and Codex plus Node.js, Python,
+and Git LFS. Setup uses existing Vim and ShellCheck executables when available.
 The installer defaults to the `dev` channel while this profile is new.
 The temporary download is removed when the command exits, including on failure.
 

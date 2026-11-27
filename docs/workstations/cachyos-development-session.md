@@ -174,6 +174,10 @@ Reading an excerpt leaves the full retained log available at its original path.
 `output_truncated` describes the excerpt. `log_truncated` reports whether the
 worker exceeded its retention cap when a completion record is available for
 the worker log.
+If the worker failed before opening its log, `logs --json` returns
+`issue: log_unavailable` and carries the saved `child_exit_code`, `child_error`,
+and `completion_receipt` artifact when available. Use `status` to observe the
+service state. Reading logs does not query systemd.
 
 Pass the submission's `job.id` to `status`, `ready`, `wait`, `logs` or `stop`.
 `ok` on submission means user-systemd acknowledged the launch. The child may

@@ -253,6 +253,15 @@ class CachyOSSetupTests(unittest.TestCase):
             steps.install_missing_packages(["git;touch /tmp/unwanted"])
         run.assert_not_called()
 
+    def test_coding_baseline_includes_vim_and_shellcheck_when_missing(self):
+        config = self.config()
+        with patch.object(steps, "_home", return_value=Path("/home/human")), \
+                patch.object(steps.shutil, "which", return_value=None):
+            self.assertTrue({"vim", "shellcheck"} <= set(steps.cachyos_packages(config)))
+        with patch.object(steps, "_home", return_value=Path("/home/human")), \
+                patch.object(steps.shutil, "which", return_value="/usr/bin/existing"):
+            self.assertFalse({"vim", "shellcheck"} & set(steps.cachyos_packages(config)))
+
     def test_native_graphics_flags_select_cachyos_packages(self):
         config = self.config(
             "--gaming", "--sunshine", "--moonlight", "--obs", "--blender",
