@@ -174,6 +174,11 @@ def add_agent_subparser(subparsers: argparse._SubParsersAction) -> None:
     from lib.agent_browser import add_browser_parser
 
     add_browser_parser(commands)
+    from lib.browser_test_instance import add_test_instance_parser
+    from lib.deployment_receipt import add_deployment_receipt_parser
+
+    add_test_instance_parser(commands)
+    add_deployment_receipt_parser(commands)
     from lib.agent_visuals import add_visuals_parser
 
     add_visuals_parser(commands)
@@ -2860,6 +2865,14 @@ def run_agent_command(args: argparse.Namespace) -> int:
         from lib.agent_browser import run_browser_command
 
         return run_browser_command(args)
+    if args.agent_command == "deployment-receipt":
+        from lib.deployment_receipt import run_deployment_receipt
+
+        return run_deployment_receipt(args)
+    if args.agent_command == "test-instance":
+        from lib.browser_test_instance import run_test_instance
+
+        return run_test_instance(args)
     if args.agent_command == "containers":
         from lib.agent_containers import run_containers_command
 

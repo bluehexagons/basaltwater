@@ -1,4 +1,4 @@
-"""HTTP readiness probes restricted to literal loopback addresses."""
+"""Direct HTTP requests and loopback readiness checks."""
 
 from __future__ import annotations
 
@@ -24,6 +24,11 @@ def open_loopback(request: str | urllib.request.Request, *, timeout: float):
         or not ipaddress.ip_address(parsed.hostname or "").is_loopback
     ):
         raise ValueError("Readiness URL must use a literal loopback address")
+    return open_direct(request, timeout=timeout)
+
+
+def open_direct(request: str | urllib.request.Request, *, timeout: float):
+    """Open a URL with normal certificate verification, no proxy and no redirects."""
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
     return opener.open(request, timeout=timeout)
 

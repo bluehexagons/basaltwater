@@ -2,6 +2,65 @@
 
 [Documentation index](cli-setup-services.md)
 
+## Deployment receipts
+
+Run on the deployment host from the project checkout. The command after
+`--` is the project's normal release switch or deployment command. Omit it
+to verify an existing deployment. After activation or a restart, the HTTP
+checks retry transient failures for up to 15 seconds each. Use `--wait` to
+adjust that window or set it to zero for a single request per endpoint.
+
+```bash
+basaltw agent deployment-receipt --revision "$RELEASE_SHA" \
+  --restart-unit example-api.service --user-units \
+  --loopback-url http://127.0.0.1:8080/health \
+  --lan-url https://game.example.test:8449/health \
+  --json -- ./scripts/switch-release "$RELEASE_SHA"
+```
+
+Both health URLs must return HTTP 2xx and one `X-Release-Revision` header
+containing the full lowercase Git commit hash of the running build.
+`--revision-header NAME` selects a different header. Each requested
+`--restart-unit NAME.service` gets its own result. Omit `--user-units`
+to address the system manager. The command uses the caller's existing
+systemd permissions.
+
+The receipt records activation, restarts, HTTP health, and revision matches.
+Failed activation or restart marks dependent steps skipped. Both HTTP
+checks originate on the command host, and the LAN check uses that host's
+certificate trust. Open the LAN URL on the intended client device to verify
+its own routing and trust. A failed check returns nonzero. Activation output
+goes to stderr, while `--json` writes the receipt to stdout for saving in
+private state. The project's activation command owns rollback.
+
+## Disposable browser test instances
+
+On a Linux agent VM with local rootless Podman, use an existing test image
+that serves HTTP on `0.0.0.0:PORT` inside the container. The image's entrypoint
+must support running as the current account's numeric UID and GID. Supply
+optional image command arguments after `--`.
+
+```bash
+basaltw agent test-instance --image localhost/example-game:test --port 8080 \
+  --health-path /health --sqlite-snapshot /private/fixtures/game.sqlite3 \
+  --database-env APP_DATABASE --seconds 900 --json
+```
+
+Supply an offline, checkpointed SQLite snapshot without sidecar files. The
+wrapper copies it into a private temporary directory and exposes only the
+copy to the container at the path in `--database-env`. Omit the snapshot for
+an app that seeds its own fixtures. Use a fixture image with test settings
+and accounts. The instance uses a fresh internal network, a randomly assigned
+IPv4 loopback port, and no host credential or project mounts. Use the printed
+URL in managed Playwright on the same VM after checking browser readiness.
+The readiness request runs from the VM and requires HTTP 2xx.
+
+Leave the command running while testing. Ctrl+C or SIGTERM removes the
+container, network, and copied fixture. The container also has a lifetime
+limit. If the wrapper is killed before cleanup, use its reported
+`bw-test-…` name to locate its container, network, and matching private
+directory under `/tmp`. Remove the directory after the container is gone.
+
 `agent workspace` provides local task isolation for concurrent agents. `create`
 places a dedicated `agent/TASK` branch below
 `~/.local/share/basaltwater/worktrees`, leaving the primary checkout's files

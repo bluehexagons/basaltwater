@@ -47,6 +47,10 @@ and report the exact missing coverage.
 
 Keep development servers on loopback. Playwright originates on the VM, so it
 can reach VM loopback and uses the VM's DNS, routes, source IP, and trust store.
+For account changes or other stateful tests, use
+[`basaltw agent test-instance`](https://github.com/bluehexagons/basaltwater/blob/main/docs/reference/cli-agent-operations.md#disposable-browser-test-instances)
+with a local rootless Podman test image and an offline SQLite fixture.
+Run the browser against its reported loopback URL while the instance is active.
 Generated evidence belongs in the private, bounded
 `~/.local/state/basaltwater/playwright-mcp` directory by default. Omit
 `filename` unless the user requested a workspace deliverable.

@@ -35,6 +35,11 @@ dry run when the selected Basaltwater command provides one.
 
 ## Verify the deployed service
 
+Use [`basaltw agent deployment-receipt`](https://github.com/bluehexagons/basaltwater/blob/main/docs/reference/cli-agent-operations.md#deployment-receipts)
+when the app's health endpoint exposes the running commit in a response header.
+It can run the existing release switch, restart named units, and record
+loopback and LAN HTTPS results from the deployment host.
+
 Check the service manager, loopback health endpoint, and public HTTPS endpoint
 as separate layers. Use the capability-specific browser skill installed on the
 VM and follow the active session's browser policy. In T3 sessions exposing
