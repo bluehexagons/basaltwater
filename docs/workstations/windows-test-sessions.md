@@ -81,7 +81,9 @@ ready. Exit 124 is a caller wait timeout and does not cancel the session. Use
 
 ## Coordination, evidence and cleanup
 
-Session admission and ordinary task submission share the setup lock. A session
+Session admission and ordinary task submission share the setup lock. Task
+submission retries sharing contention for up to two seconds before creating a
+task record. A session
 rejects active tasks for the same project; subsequent supervised tasks for that
 project reject the session's reservation. Queued and cleanup-uncertain receipts
 retain reservations until terminal cleanup. An active legacy receipt lacking

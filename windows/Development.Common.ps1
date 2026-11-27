@@ -445,6 +445,21 @@ function Start-DevelopmentScheduledTask($Record, [string]$PowerShell) {
     Register-ScheduledTask -TaskName $Record.TaskName -Action $action -Principal $principal -Settings $settings | Out-Null
     Start-ScheduledTask -TaskName $Record.TaskName
 }
+function Enter-DevelopmentAdmission([string]$Path) {
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    while ($true) {
+        try { return [IO.File]::Open($Path, 'OpenOrCreate', 'ReadWrite', 'None') }
+        catch [IO.IOException] {
+            $failure = $_.Exception.GetBaseException()
+            if (($failure.HResult -band 0xffff) -notin @(32, 33)) { throw }
+            $remaining = 2000 - $clock.ElapsedMilliseconds
+            if ($remaining -le 0) {
+                throw [IO.IOException]::new('Could not acquire the Windows task admission lock. Setup, restart, or another submission may be using it. No task was submitted.', $failure)
+            }
+            Start-Sleep -Milliseconds ([int][Math]::Min(50, $remaining))
+        }
+    }
+}
 function Invoke-NativeDevelopmentCli([string[]]$Arguments) {
     if (-not $Arguments.Count -or ($Arguments.Count -eq 1 -and $Arguments[0] -in @('--help','-h','help')) -or
         ($Arguments.Count -eq 2 -and $Arguments[0] -in @('doctor','exec','node','editor','run','import','status','logs','cancel','wait','ready','diagnose') -and $Arguments[1] -in @('--help','-h'))) {
@@ -535,10 +550,7 @@ function Invoke-NativeDevelopmentCli([string[]]$Arguments) {
     $setupDirectory = Join-Path $env:LOCALAPPDATA 'Basaltwater'
     Assert-DevelopmentPath $setupDirectory
     New-Item -ItemType Directory -Path $setupDirectory -Force | Out-Null
-    try { $admission = [IO.File]::Open((Join-Path $setupDirectory 'setup.lock'), 'OpenOrCreate', 'ReadWrite', 'None') }
-    catch [IO.IOException] {
-        throw [IO.IOException]::new('Could not acquire the Windows task admission lock. Setup, restart, or another submission may be using it. No task was submitted.', $_.Exception)
-    }
+    $admission = Enter-DevelopmentAdmission (Join-Path $setupDirectory 'setup.lock')
     try {
     Assert-DevelopmentProjectAdmission $request.Project $request.TestSession
     $id = [guid]::NewGuid().ToString('N'); $directory = Get-DevelopmentDirectory $id

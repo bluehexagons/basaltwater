@@ -139,6 +139,15 @@ try {
         Assert-Throws { Invoke-NativeDevelopmentCli @('exec','--project',$project,'--',$shell) } 'admission lock.*another submission.*No task was submitted'
         Assert-True (-not (Test-Path -LiteralPath (Get-DevelopmentRoot))) 'Busy admission created task state'
     } finally { $admission.Dispose() }
+    & {
+        $path = Join-Path $setupDirectory 'setup.lock'
+        $busy = [IO.File]::Open($path, 'Open', 'ReadWrite', 'None')
+        function Start-Sleep([int]$Milliseconds) { $busy.Dispose() }
+        try {
+            $lease = Enter-DevelopmentAdmission $path
+            $lease.Dispose()
+        } finally { $busy.Dispose() }
+    }
     $record = Invoke-NativeDevelopmentCli (@('exec','--project',$project,'--env','TASK_ONLY=child value','--msvc','--',$shell) + $literal)
     $directory = Get-DevelopmentDirectory $record.Id
     Assert-True ((Get-DevelopmentStatus $record.Id).State -eq 'queued') 'Fresh UTC task appeared stale in the local time zone'
