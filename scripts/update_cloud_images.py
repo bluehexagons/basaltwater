@@ -6,7 +6,7 @@ from cloud.debian.org for the matching codename, and rewrites the dict literal
 with concrete ``snapshot``, ``url``, and ``sha512`` values.
 
 Also surfaces any other version-pinned URLs in the repo so we don't quietly
-drift on third-party downloads (e.g. browsh release deb). Those URLs aren't
+drift on third-party downloads. Those URLs aren't
 auto-updated — pinning policy is bespoke per dependency — they're just listed
 for review.
 

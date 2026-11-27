@@ -505,7 +505,6 @@ class TestBrowserSteps(unittest.TestCase):
             ("firefox", True, "org.mozilla.firefox.desktop", "flatpak run org.mozilla.firefox"),
             ("librewolf", False, "librewolf.desktop", "librewolf"),
             ("librewolf", True, "io.gitlab.librewolf-community.desktop", "flatpak run io.gitlab.librewolf-community"),
-            ("helium", False, "helium.desktop", "helium"),
         ):
             with self.subTest(browser=browser, flatpak=flatpak):
                 installed.return_value = flatpak
@@ -526,6 +525,8 @@ class TestBrowserSteps(unittest.TestCase):
                     self.assertIn(f"X-XFCE-CommandsWithParameter={command} \"%s\";", helper)
                 retired = [content for action, path, content in edits if action == "retire" and path.endswith("/brave.desktop")]
                 self.assertEqual(len(retired), 2)
+                self.assertTrue(any(action == "retire" and path.endswith("/helium.desktop")
+                                    for action, path, _ in edits))
         container.return_value = True
         installed.reset_mock()
         configure_default_browser(SetupConfig(host="vm", username="agent", system_type="workstation_dev",
@@ -549,24 +550,6 @@ class TestBrowserSteps(unittest.TestCase):
 
         mock_extrepo.assert_called_once_with("LibreWolf", "librewolf", "librewolf")
         mock_profile.assert_called_once_with()
-
-
-    def test_helium_uses_approved_release_for_debian_architecture(self):
-        from desktop.browser_steps import _HELIUM_SHA256, _HELIUM_VERSION, install_single_browser
-
-        for arch in ("amd64", "arm64"):
-            with self.subTest(arch=arch), \
-                 patch("desktop.browser_steps.run", return_value=Mock(returncode=0, stdout=f"{arch}\n")) as run, \
-                 patch("desktop.browser_steps._install_pinned_browser") as install:
-                install_single_browser("helium", use_flatpak=False)
-            self.assertEqual([call.args[0] for call in run.call_args_list], ["dpkg --print-architecture"])
-            version = f"{_HELIUM_VERSION}-1"
-            url = (
-                f"https://github.com/imputnet/helium-linux/releases/download/{_HELIUM_VERSION}"
-                f"/helium-bin_{version}_{arch}.deb"
-            )
-            install.assert_called_once_with("Helium", "helium-bin", version, arch, url, _HELIUM_SHA256[arch])
-
 
 if __name__ == "__main__":
     unittest.main()

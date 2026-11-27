@@ -53,7 +53,7 @@ basaltw desktop wait --pid LAUNCH_PID --generation GENERATION
 ```
 
 `--browser firefox` tries Firefox first and accepts Firefox ESR when only the
-ESR command is installed. Native Chromium, Chrome, LibreWolf, and Helium
+ESR command is installed. Native Chromium, Chrome, and LibreWolf
 also support disposable profiles. To add Chromium as a secondary browser on
 Debian, use `sudo basaltw local browser chromium --no-default`. To inspect
 the launch command, add `--dry-run` to `desktop develop browser`. The task reports its

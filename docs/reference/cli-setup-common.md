@@ -35,7 +35,7 @@ The target-address inference and server-service scope below apply to Debian.
 | `--kiosk-url URL` | On `server_proxmox` only, set the kiosk's direct HTTP(S) homepage; must not contain credentials, whitespace, or control characters |
 | `--kiosk-destination 'NAME=URL'` | On `server_proxmox` only, add a named HTTP(S) link to the offline kiosk homepage; repeat up to 16 times to replace the entire saved list |
 | `--clear-kiosk-destinations` | Clear saved kiosk links and return to the direct homepage; mutually exclusive with `--kiosk-destination` |
-| `--browser NAME` | Select `firefox`, `chromium`, `librewolf`, `helium`, `browsh`, or `lynx`. Repeat to install several. The first selection is primary. [Browser choices and saved setups](../workstations/workstation-profiles-and-software.md#browser-choices) |
+| `--browser NAME` | Select `firefox`, `chromium`, `librewolf`, or `lynx`. Repeat to install several. The first selection is primary. [Browser choices and saved setups](../workstations/workstation-profiles-and-software.md#browser-choices) |
 | `--editor [geany\|vscode]` | Install an explicit graphical editor; requires a desktop-capable setup or `--rdp` |
 | `--flatpak` | Install desktop apps via Flatpak |
 | `--office` | Install LibreOffice |

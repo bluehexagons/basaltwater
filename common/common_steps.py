@@ -99,7 +99,6 @@ CLI_TOOL_PACKAGES = (
     "curl",
     "file",
     "git",
-    "htop",
     "jq",
     "less",
     "make",

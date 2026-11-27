@@ -70,7 +70,7 @@ context's `verification_argv` to check for the matching engine executable and
 test it. The `browser.managed_playwright` summary describes the `managed-mcp`
 launcher. Inventory also reports `launchable` (unknown until a launch check),
 `mcp_registered` (client configuration), and `application_tested`. Desktop
-discovery checks Chromium, Chrome, Helium, Firefox, Firefox ESR, and LibreWolf
+discovery checks Chromium, Chrome, Firefox, Firefox ESR, and LibreWolf
 on PATH. It also checks Firefox and LibreWolf through `flatpak info` and reports
 versions when available. A connected
 preview has engine `unknown` until the session establishes it. Never infer Firefox

@@ -13,7 +13,7 @@ from lib.validators import validate_host
 
 BROWSER_APPLICATIONS = {
     "firefox": ("firefox-esr", "firefox", "librewolf"),
-    "chromium": ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "helium"),
+    "chromium": ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable"),
 }
 BROWSERS = tuple(name for names in BROWSER_APPLICATIONS.values() for name in names)
 FLATPAK_BROWSER_IDS = {"firefox": "org.mozilla.firefox", "librewolf": "io.gitlab.librewolf-community"}

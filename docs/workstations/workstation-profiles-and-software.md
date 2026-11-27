@@ -145,25 +145,18 @@ selection as the primary browser.
 - LibreWolf uses its extrepo repository or the Flathub build with `--flatpak`.
 - Firefox uses `firefox-esr` through apt, or the Flathub build with Flatpak.
 - Chromium uses Debian's `chromium` package, including when `--flatpak` is selected.
-- Helium installs a pinned upstream Debian package for amd64 or arm64.
-- Browsh provides a terminal browser. Setup verifies Firefox is installed and
-  selects a pinned upstream Debian package for amd64, arm64, armhf, or i386.
 - Lynx installs the Debian terminal browser and does not become a graphical
   default.
 
-Brave has been retired from setup. When loading a saved configuration,
-Basaltwater drops Brave and keeps the remaining browsers in order. If Brave
-was the only selection, setup uses the profile default (Firefox on Debian
-workstation profiles). Previously installed Brave packages, repositories,
-and personal browser data stay on the host.
+Saved setups drop Brave, Browsh and Helium and keep the remaining browsers
+in order. If every selection was retired, setup uses the profile default
+(Firefox on Debian workstations). Rerunning setup preserves previously
+installed packages and personal browser data.
 
 A requested browser must finish its package command successfully and pass the
-installed-package or application check. Download, verification and missing
-browser failures stop setup before default-browser configuration or later browser
-selections. Browsh also verifies Firefox before downloading its own package and
-repairs that dependency on rerun. Firefox and LibreWolf report a failed
-Flatpak installation directly. Repair the
-reported package or repository problem, then rerun the same desired setup.
+installed-package or application check. A failure stops setup before it changes
+the default or installs later selections. Repair the reported package or
+repository problem, then rerun the same desired setup.
 
 For an extrepo-based browser install, setup first refreshes APT normally. If
 that refresh fails, it makes one bounded attempt to refresh existing
@@ -173,18 +166,6 @@ run on successful reruns. It does not remove or rewrite manually managed files u
 `/etc/apt/sources.list` or `/etc/apt/sources.list.d`. If APT still reports an
 unrelated third-party source error, repair or disable that source separately
 before rerunning setup.
-
-Native Helium and Browsh packages are staged in private, randomly named
-temporary directories. Setup compares the download's SHA-256 with the
-architecture-specific pin before invoking APT. Reruns keep the installed
-package if its version meets or exceeds the pin and upgrade older packages
-after verification. A failed download or checksum check leaves an existing
-package in place. Refresh the version and all supported architecture digests
-in `desktop/browser_steps.py` together when qualifying a new upstream
-release. Use the publisher's release metadata or checksum manifest and
-confirm the package filename and Debian version for each architecture.
-[Helium releases](https://github.com/imputnet/helium-linux/releases) ·
-[Browsh releases](https://github.com/browsh-org/browsh/releases)
 
 The first browser in a repeated list is written to the setup user's
 `~/.config/mimeapps.list` as the HTTP/HTTPS default. Text-only browsers do not

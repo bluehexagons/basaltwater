@@ -724,7 +724,7 @@ class TestSetupConfigToDict(unittest.TestCase):
 
 
 class TestSetupConfigFromDict(unittest.TestCase):
-    def test_saved_brave_selection_replays_with_remaining_browsers_or_profile_default(self):
+    def test_saved_retired_selection_replays_with_remaining_browsers_or_profile_default(self):
         from lib.arg_parser import create_setup_argument_parser
 
         parser = create_setup_argument_parser("Remote setup", for_remote=True)
@@ -733,7 +733,10 @@ class TestSetupConfigFromDict(unittest.TestCase):
             ("server_lite", "brave", ["brave"], None, None),
             ("workstation_dev", "brave", ["brave", "chromium", "firefox"], "chromium", ["chromium", "firefox"]),
             ("workstation_dev", "librewolf", ["librewolf", "brave"], "librewolf", ["librewolf"]),
-            ("workstation_dev", None, ["brave", "lynx"], "lynx", ["lynx"]),
+            ("workstation_dev", None, ["browsh", "lynx"], "lynx", ["lynx"]),
+            ("workstation_dev", "helium", None, "firefox", None),
+            ("server_lite", "browsh", ["helium", "brave", "browsh"], None, None),
+            ("workstation_dev", "helium", ["helium", "lynx", "browsh", "firefox"], "lynx", ["lynx", "firefox"]),
         ):
             with self.subTest(profile=profile, primary=primary, saved=saved):
                 data = {"username": "agent", "browser": primary, "browsers": saved}
@@ -741,7 +744,8 @@ class TestSetupConfigFromDict(unittest.TestCase):
                 config = SetupConfig.from_dict("vm", profile, data)
                 self.assertEqual((config.browser, config.browsers), (expected, remaining))
                 self.assertEqual(json.dumps(data), before)
-                self.assertNotIn("--browser brave", config.to_setup_command())
+                for retired in ("brave", "browsh", "helium"):
+                    self.assertNotIn(f"--browser {retired}", config.to_setup_command())
                 remote = parser.parse_args(shlex.split(" ".join(config.to_remote_args())))
                 self.assertEqual(remote.browsers, remaining or ([expected] if expected else None))
                 self.assertEqual(config.to_dict(), SetupConfig.from_dict("vm", profile, config.to_dict()).to_dict())
@@ -752,17 +756,18 @@ class TestSetupConfigFromDict(unittest.TestCase):
 
         parser, _, _ = create_basaltwater_parser()
         remote = create_setup_argument_parser("Remote setup", for_remote=True)
-        for command, args in (
-            (parser, ["local", "browser", "brave"]),
-            (parser, ["setup", "workstation_dev", "vm", "agent", "--browser", "brave"]),
-            (parser, ["patch", "vm", "agent", "--browser", "brave"]),
-            (remote, ["--system-type", "workstation_dev", "--username", "agent", "--browser", "brave"]),
-        ):
-            with self.subTest(args=args), contextlib.redirect_stderr(io.StringIO()) as errors, self.assertRaises(SystemExit):
-                command.parse_args(args)
-            self.assertIn("invalid choice: 'brave'", errors.getvalue())
-        with self.assertRaisesRegex(ValueError, "--browser"):
-            SetupConfig(host="vm", system_type="workstation_dev", username="agent", browsers=["firefox", "brave"])
+        for name in ("brave", "browsh", "helium"):
+            for command, args in (
+                (parser, ["local", "browser", name]),
+                (parser, ["setup", "workstation_dev", "vm", "agent", "--browser", name]),
+                (parser, ["patch", "vm", "agent", "--browser", name]),
+                (remote, ["--system-type", "workstation_dev", "--username", "agent", "--browser", name]),
+            ):
+                with self.subTest(args=args), contextlib.redirect_stderr(io.StringIO()) as errors, self.assertRaises(SystemExit):
+                    command.parse_args(args)
+                self.assertIn(f"invalid choice: {name!r}", errors.getvalue())
+            with self.assertRaisesRegex(ValueError, "--browser"):
+                SetupConfig(host="vm", system_type="workstation_dev", username="agent", browsers=["firefox", name])
 
     def test_legacy_desktop_policy_is_refused_without_mutating_saved_input(self):
         data = {'username': 'agent', 'rdp_max_sessions': 3,

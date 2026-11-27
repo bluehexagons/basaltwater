@@ -132,20 +132,13 @@ class TestDevelopmentTasks(unittest.TestCase):
             self.assertEqual(development.cleanup_browser(task_id, include_downloads=True)["paths"], [])
         self.assertTrue(Path(result["report"]).is_file())
 
-    def test_native_alternatives_use_their_engines_disposable_profiles(self):
-        self.which.side_effect = {"librewolf": str(self.engine), "helium": str(self.engine)}.get
-        for name in ("librewolf", "helium"):
-            with self.subTest(browser=name):
-                result = self.launch(kind="browser", browser=name, url="about:blank")
-                profile, downloads = Path(result["profile"]), result["downloads"]
-                argv = development.load_task(Path(result["directory"]))["argv"]
-                if name == "librewolf":
-                    self.assertIn(str(profile), argv)
-                    self.assertIn(json.dumps(downloads), (profile / "user.js").read_text())
-                else:
-                    self.assertIn(f"--user-data-dir={profile}", argv)
-                    prefs = json.loads((profile / "Default" / "Preferences").read_text())
-                    self.assertEqual(prefs["download"]["default_directory"], downloads)
+    def test_librewolf_uses_a_disposable_firefox_profile(self):
+        self.which.side_effect = {"librewolf": str(self.engine)}.get
+        result = self.launch(kind="browser", browser="librewolf", url="about:blank")
+        profile = Path(result["profile"])
+        argv = development.load_task(Path(result["directory"]))["argv"]
+        self.assertIn(str(profile), argv)
+        self.assertIn(json.dumps(result["downloads"]), (profile / "user.js").read_text())
 
     def test_browser_refuses_option_like_urls_and_unknown_applications_before_state_creation(self):
         for browser, url in (

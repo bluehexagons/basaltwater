@@ -39,8 +39,9 @@ AGENT_TOOLS = ("gh", "codex", "claude", "opencode")
 WEB_INTERFACES = ("t3code",)
 DEVICE_PAIRING_PROVIDERS = ("t3code",)
 BROWSER_AUTOMATION_PROVIDERS = ("playwright",)
-GRAPHICAL_SETUP_BROWSERS = ("firefox", "chromium", "librewolf", "helium")
-SETUP_BROWSERS = (*GRAPHICAL_SETUP_BROWSERS, "browsh", "lynx")
+GRAPHICAL_SETUP_BROWSERS = ("firefox", "chromium", "librewolf")
+SETUP_BROWSERS = (*GRAPHICAL_SETUP_BROWSERS, "lynx")
+_RETIRED_SETUP_BROWSERS = ("brave", "browsh", "helium")
 EDITORS = ("geany", "vscode")
 GIT_ACCESS_POLICIES = ("none", "read", "read-write")
 GODOT_BUNDLES = ("web", "publishing")
@@ -2802,13 +2803,12 @@ class SetupConfig:
         system_defaults = get_system_type_definition(system_type)
         if not data.get('agent_tools') and not data.get('agent_tools_removed'):
             data['agent_tools'] = list(system_defaults.default_agent_tools) or None
-        # Retire Brave in saved setups before reconstructing local or target arguments.
         saved_browsers = data.get('browsers')
         if isinstance(saved_browsers, list) and saved_browsers:
-            remaining = [name for name in saved_browsers if name != 'brave']
+            remaining = [name for name in saved_browsers if name not in _RETIRED_SETUP_BROWSERS]
             data['browsers'] = remaining or None
             data['browser'] = remaining[0] if remaining else system_defaults.default_browser
-        elif not data.get('browser') or data['browser'] == 'brave':
+        elif not data.get('browser') or data['browser'] in _RETIRED_SETUP_BROWSERS:
             data['browser'] = system_defaults.default_browser
         if data.get('disable_web_interface'):
             data['web_interfaces'] = None

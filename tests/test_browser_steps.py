@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
-from pathlib import Path
-import shlex
 import sys
 import subprocess
 import unittest
@@ -15,7 +12,6 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from desktop.browser_steps import (
-    _install_pinned_browser,
     _configure_librewolf_apparmor_profile,
     _ensure_extrepo_and_update,
     _install_via_extrepo,
@@ -29,7 +25,7 @@ from desktop.browser_steps import (
 class TestBrowserSteps(unittest.TestCase):
     def test_requested_browser_failures_stop_setup(self):
         for browser, flatpak in (("chromium", False), ("firefox", False), ("librewolf", False),
-                                 ("helium", False), ("browsh", False), ("lynx", False),
+                                 ("lynx", False),
                                  ("chromium", True), ("firefox", True), ("librewolf", True)):
             for code in (0, 1):
                 with self.subTest(browser=browser, flatpak=flatpak, code=code), \
@@ -42,35 +38,6 @@ class TestBrowserSteps(unittest.TestCase):
                             returncode=code, stdout="https://example.test/browser.deb\n", stderr="")):
                     with self.assertRaisesRegex(RuntimeError, "LibreWolf" if browser == "librewolf" else browser.capitalize()):
                         install_single_browser(browser, use_flatpak=flatpak)
-
-    def test_browsh_requires_firefox_before_resolving_or_downloading_a_release(self):
-        with patch("desktop.browser_steps.is_package_installed", return_value=False), \
-                patch("desktop.browser_steps.shutil.which", return_value=None), \
-                patch("desktop.browser_steps.run", return_value=SimpleNamespace(returncode=0)), \
-                patch("desktop.browser_steps._install_pinned_browser") as release:
-            with self.assertRaisesRegex(RuntimeError, "Browsh.*Firefox"):
-                install_single_browser("browsh", use_flatpak=False)
-        release.assert_not_called()
-
-    def test_existing_browsh_repairs_missing_firefox_before_returning(self):
-        installed = {"browsh"}
-
-        def command(cmd, **kwargs):
-            if cmd == "apt-get install -y -qq firefox-esr":
-                installed.add("firefox-esr")
-            elif cmd == "dpkg --print-architecture":
-                return SimpleNamespace(returncode=0, stdout="amd64")
-            elif cmd.startswith("dpkg-query"):
-                return SimpleNamespace(returncode=0, stdout="1.8.3")
-            else:
-                self.assertEqual(cmd, "dpkg --compare-versions 1.8.3 ge 1.8.2")
-            return SimpleNamespace(returncode=0)
-
-        with patch("desktop.browser_steps.is_package_installed", side_effect=lambda name: name in installed), \
-                patch("desktop.browser_steps.run", side_effect=command) as run:
-            install_single_browser("browsh", use_flatpak=False)
-        self.assertEqual(run.call_args_list[0].args[0], "apt-get install -y -qq firefox-esr")
-        self.assertEqual(run.call_count, 4)
 
     def test_extrepo_install_requires_successful_command_and_present_package(self):
         for code, installed, expected in ((1, True, False), (0, False, False), (0, True, True)):
@@ -113,71 +80,6 @@ class TestBrowserSteps(unittest.TestCase):
                     patch("desktop.browser_steps.run", return_value=SimpleNamespace(returncode=1)):
                 with self.assertRaises(RuntimeError):
                     install_single_browser(browser, use_flatpak=flatpak)
-
-    def test_browsh_uses_architecture_specific_approved_package(self):
-        with patch("desktop.browser_steps.is_package_installed", return_value=True), \
-                patch("desktop.browser_steps.run", return_value=SimpleNamespace(
-                    returncode=0, stdout="armhf\n")), \
-                patch("desktop.browser_steps._install_pinned_browser") as install:
-            install_single_browser("browsh", use_flatpak=False)
-        name, package, version, architecture, url, digest = install.call_args.args
-        self.assertEqual((name, package, version), ("Browsh", "browsh", "1.8.2"))
-        self.assertEqual(architecture, "armhf")
-        self.assertEqual(
-            url, "https://github.com/browsh-org/browsh/releases/download/v1.8.2/browsh_1.8.2_linux_armv7.deb",
-        )
-        self.assertEqual(len(digest), 64)
-
-    def test_unsupported_architecture_never_starts_download(self):
-        for browser in ("helium", "browsh"):
-            with self.subTest(browser=browser), \
-                    patch("desktop.browser_steps.is_package_installed", return_value=True), \
-                    patch("desktop.browser_steps.run", return_value=SimpleNamespace(
-                        returncode=0, stdout="riscv64\n")) as run:
-                with self.assertRaisesRegex(RuntimeError, "no approved package"):
-                    install_single_browser(browser, use_flatpak=False)
-                run.assert_called_once()
-
-    def test_verified_download_gates_install_and_upgrade(self):
-        contents = b"approved package fixture"
-        expected = hashlib.sha256(contents).hexdigest()
-        for initial, failure in ((None, ""), ("1.0", ""), ("1.0", "download"), ("1.0", "checksum"), ("1.0", "metadata")):
-            with self.subTest(initial=initial, failure=failure):
-                installed = initial
-                commands = []
-
-                def command(cmd, **kwargs):
-                    nonlocal installed
-                    commands.append(cmd)
-                    if cmd.startswith("dpkg-query"):
-                        return SimpleNamespace(returncode=0, stdout=installed)
-                    if cmd.startswith("dpkg --compare"):
-                        return SimpleNamespace(returncode=1)
-                    if cmd.startswith("curl"):
-                        args = shlex.split(cmd)
-                        destination = Path(args[args.index("--output") + 1])
-                        destination.write_bytes(b"corrupt" if failure == "checksum" else contents)
-                        return SimpleNamespace(returncode=int(failure == "download"))
-                    if cmd.startswith("apt-get"):
-                        installed = "2.0"
-                        return SimpleNamespace(returncode=0)
-                    if cmd.startswith("dpkg-deb"):
-                        arch = "arm64" if failure == "metadata" else "amd64"
-                        return SimpleNamespace(
-                            returncode=0, stdout=f"Package: helium-bin\nVersion: 2.0\nArchitecture: {arch}\n",
-                        )
-                    self.fail(f"Unexpected command {cmd}")
-
-                arguments = ("Helium", "helium-bin", "2.0", "amd64", "https://example.test/package.deb", expected)
-                with patch("desktop.browser_steps.run", side_effect=command), \
-                        patch("desktop.browser_steps.is_package_installed", side_effect=lambda _: installed is not None):
-                    if failure:
-                        with self.assertRaisesRegex(RuntimeError, "download failed|SHA-256 mismatch|package metadata"):
-                            _install_pinned_browser(*arguments)
-                    else:
-                        _install_pinned_browser(*arguments)
-                self.assertEqual(any(cmd.startswith("apt-get") for cmd in commands), not failure)
-                self.assertEqual(installed, initial if failure else "2.0")
 
     @patch("desktop.browser_steps.subprocess.run")
     def test_flatpak_app_detection_uses_argument_list(self, mock_run):

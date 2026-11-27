@@ -83,7 +83,7 @@ sudo basaltw local browser librewolf --flatpak --no-default
 
 The default behavior configures the browser for the local desktop user. Use
 `--no-default` when installing a secondary browser. Supported browsers are
-`firefox`, `chromium`, `librewolf`, `helium`, `browsh`, and `lynx`.
+`firefox`, `chromium`, `librewolf`, and `lynx`.
 
 For LibreOffice or an explicit graphical editor, use the workstation profile's
 existing flags and inspect the plan first:

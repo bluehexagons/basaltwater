@@ -98,7 +98,7 @@ class ManifestOutputTests(unittest.TestCase):
                 if scope == "browser":
                     self.assertEqual({entry.args[0] for entry in which.call_args_list},
                                      {"basaltwater-playwright-mcp", "firefox", "firefox-esr", "librewolf", "node",
-                                      "chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "helium"})
+                                      "chromium", "chromium-browser", "google-chrome", "google-chrome-stable"})
                 self.assertEqual(result["provenance"]["source_revisions"]["invoked"], "current")
                 if scope in {"installation", "skills"}:
                     skills.assert_called_once_with(root)
@@ -122,7 +122,7 @@ class ManifestOutputTests(unittest.TestCase):
     def test_named_browsers_report_their_supervised_launch_commands(self) -> None:
         parser = argparse.ArgumentParser()
         add_manifest_parser(parser.add_subparsers())
-        browsers = ("firefox-esr", "chromium", "helium", "librewolf")
+        browsers = ("firefox-esr", "chromium", "librewolf")
         with (tempfile.TemporaryDirectory() as root,
               patch("lib.agent_workspace._repository_root", return_value=root),
               patch("lib.agent_environment.is_cachyos", return_value=False),
