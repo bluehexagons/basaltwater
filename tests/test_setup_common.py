@@ -26,6 +26,8 @@ def _make_config(**kwargs) -> SetupConfig:
 def _make_setup_args() -> MagicMock:
     """Create parsed-argument mocks with the real parser's relevant defaults."""
     args = MagicMock()
+    args.browser = None
+    args.browsers = None
     args.enable_webhook_builds = None
     args.enable_github_runner = None
     args.webhook_repositories = None

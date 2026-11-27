@@ -13,6 +13,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from desktop.browser_session import BROWSERS
 from lib import agent_cli, agent_environment, agent_workspace
 from lib.installation_info import inspect_installation_provenance
 from lib.agent_probe import ProbeResult
@@ -94,7 +95,7 @@ class TestAgentEnvironment(unittest.TestCase):
         for name, application in result["desktop_applications"].items():
             with self.subTest(application=name):
                 expected = [application["executable"]]
-                if name in ("firefox", "firefox-esr"):
+                if name in BROWSERS:
                     expected = ["basaltw", "desktop", "--native", "develop", "browser",
                                 "--browser", name, "--project", self.directory]
                 self.assertEqual(application["launch_argv"], expected)
