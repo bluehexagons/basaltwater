@@ -99,6 +99,11 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     renewal.add_argument("--seconds", type=int, default=0)
     renewal.add_argument("--json", action="store_true")
     commands.add_parser("smoke", help="Verify native editing, saving and dialog control in a disposable GTK window")
+    blocking = commands.add_parser("check-blocking", help="Test the selected browser on a local filter fixture")
+    blocking.add_argument("--browser", choices=("firefox", "chromium", "librewolf"), required=True)
+    blocking.add_argument("--flatpak", action="store_true", help="Launch the system Flathub browser")
+    blocking.add_argument("--timeout", type=int, default=90, metavar="SECONDS")
+    blocking.add_argument("--json", action="store_true")
     screenshot = commands.add_parser("screenshot", description="Debian: capture the desktop or a selected window. With --native: selected monitor only.")
     parser.native_screenshot_parser = screenshot
     screenshot.add_argument("--output", help="New PNG path; defaults to private Pictures/basaltwater artifact storage")
@@ -235,6 +240,19 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
 
 
 def run_desktop_command(args: argparse.Namespace) -> int:
+    if args.desktop_command == "check-blocking":
+        from desktop.blocking_check import run_check
+        try:
+            result = run_check(args.browser, flatpak=args.flatpak, timeout=args.timeout)
+        except (OSError, ValueError, RuntimeError) as exc:
+            result = {"schema_version": 1, "ok": False, "issue": "check_unavailable", "error": str(exc)}
+        if args.json:
+            print(json.dumps(result))
+        elif result["ok"]:
+            print(f"{args.browser} loaded the control and blocked the ad script.")
+        else:
+            print(f"{args.browser} filtering check failed ({result.get('error') or result['issue']}).")
+        return 0 if result["ok"] else 1
     if args.desktop_command == "develop":
         from desktop.development import run_development_command
         return run_development_command(args)

@@ -162,6 +162,12 @@ setup can repair its browser configuration without contacting Flathub.
 | Lynx | This text browser has no WebExtension support. | N/A |
 
 Allow the filter lists to initialize on first launch before testing blocking.
+Run `basaltw desktop check-blocking --browser firefox --json` as the desktop
+user. Choose `chromium` or `librewolf` to check those browsers, and add
+`--flatpak` for system Flathub Firefox or LibreWolf. A disposable profile
+loads a benign control script and a matching ad script from loopback. The
+check allows 90 seconds for first-launch initialization and reports the
+observed result. Online extension installation still needs store access.
 Setup also registers missing blockers when rerun on an existing browser. If
 an administrator already supplies the Firefox Flatpak `policies.json` or a
 different Chromium registration for the same extension ID, setup reports the
