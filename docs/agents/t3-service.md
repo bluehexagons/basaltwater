@@ -44,6 +44,8 @@ The upstream launcher writes application startup failures, including native
 module load errors, to `~/.t3/userdata/logs/boot-service.log`. systemd's journal
 primarily records the launcher lifecycle. The managed filter removes startup
 tokens, pairing URLs, and their QR image before they reach persistent logs.
+On 0.1.13, the upstream background service prints enrollment instructions.
+Run `t3 pair` as the service account for manual pairing.
 One-time pairing commands intentionally return a fresh URL to the authenticated
 caller; do not copy that command output into shared logs or diagnostics.
 

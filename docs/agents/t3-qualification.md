@@ -4,17 +4,17 @@
 
 ## Stable feature baseline
 
-As checked on **2026-11-25 UTC**, GitHub and npm both report **0.1.12** as
+As checked on **2026-11-26 UTC**, GitHub and npm both report **0.1.13** as
 stable. Check AUR/WinGet availability and the installed desktop version
 separately. This release retains Orchestrator V2 and service launcher protocol
 4, with support for protocol 3 launchers during remote updates. Use compatible
 V2 releases for the server and its desktop and mobile clients.
-[Upstream release notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.12)
+[Upstream release notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.13)
 · [V2 migration notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.0)
 
 The release's recommended provider versions are Codex **0.159+**, Claude Code
 **2.1.301+**, Grok **1.0.13+**, OpenCode 2 **2.0.18+**, and Pi **1.0+**.
-The [provider compatibility manifest](https://github.com/pingdotgg/t3code/blob/v0.1.12/apps/server/src/provider/model-manifest.json)
+The [provider compatibility manifest](https://github.com/pingdotgg/t3code/blob/v0.1.13/apps/server/src/provider/model-manifest.json)
 also marks Codex 0.156+, Claude Code 2.1.280+ and Pi 0.84.3+ supported; distinguish recommended
 versions from minimum support. Inspect **Settings → Providers** for the selected account,
 binary, version, and readiness. Setup manages only selected Basaltwater
@@ -39,9 +39,9 @@ again before assigning work.
 
 ### Agent workflow integration
 
-The [0.1.12 integration](t3-releases/0.1.12.md) records the current runtime,
+The [0.1.13 integration](t3-releases/0.1.13.md) records the current runtime,
 feature coverage and disposable upgrade checks. Earlier checks are in the
-[0.1.11](t3-releases/0.1.11.md), [0.1.10](t3-releases/0.1.10.md),
+[0.1.12](t3-releases/0.1.12.md), [0.1.11](t3-releases/0.1.11.md), [0.1.10](t3-releases/0.1.10.md),
 [0.1.9](t3-releases/0.1.9.md), and [0.1.8](t3-releases/0.1.8.md) records.
 
 In disposable Linux tests, a T3 0.1.11 server relayed the nested path and query
@@ -144,7 +144,9 @@ blocked step. Mocked tests and service HTTP readiness cannot qualify these paths
 
 | Case | Required evidence |
 | --- | --- |
-| Providers and migration | Fresh 0.1.12 setup, 0.1.11-to-0.1.12 upgrade, and V1-to-V2 copy migration with matching client, selected Codex/Claude combinations, private recovery copy, pairing permissions, authenticated provider turn, and terminal. Qualify OpenCode 2 separately before claiming support. |
+| Providers and migration | Fresh 0.1.13 setup, 0.1.12-to-0.1.13 upgrade, and V1-to-V2 copy migration with matching client, selected Codex/Claude combinations, private recovery copy, pairing permissions, authenticated provider turn, and terminal. Qualify OpenCode 2 separately before claiming support. |
+| 0.1.13 workflows and worktrees | Verify subject lookup from issue/PR views, queueing and capacity release across workflow versions and named pools, and recovery across a managed restart. Verify isolated local delegation in a Git-rooted and a plain-folder project, including each child's actual base and checkout. Cancel worktree setup with edits in a side chat sharing the checkout and confirm they survive. |
+| 0.1.13 client and service | Verify device stop and stop-all against disposable simulators/emulators, file path copy, GBK/GB18030 display and diffs, full prompt stash handling, and host-side pairing instructions without credentials in boot logs. Exercise commit confirmation and backup retention during a native update. |
 | 0.1.12 projects and workflows | Verify automatic discovery, tracked and ignored folders, actual base and diff per checkout, shared paths, and custom layout approval, refusal and recovery. Check a workflow's opt-in gate, persisted results and human wait across restart, duplicate starts/deliveries, and safe resume/cancel. |
 | 0.1.12 client access | Verify linked-thread read-only streaming, direct connect with allowed grants, denial without reachability or permission, and map link creation and revocation on disposable peers. Check MCP sign-in for remote Codex and Claude with an attended account, plus large-file rendering and Apple Speech on supported desktop clients. |
 | 0.1.11 workflows | Verify native desktop/mobile remote loopback and desktop port forwarding through supported routes. Check setting and managed-policy tunnel shutdown, streamed fallback, private CA behavior, device and peer-link renewal and revocation, and initial Connect linking with the host grant. Check keyed thread-launch retry, sparse worktree setup, tracker grants and thread links, and authorized PR/CI actions on disposable repositories. |

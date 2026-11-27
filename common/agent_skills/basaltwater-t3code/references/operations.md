@@ -35,6 +35,13 @@ application/provider output is not fully sanitized: review and redact excerpts
 before sharing. Pairing commands return credentials directly; keep their output
 private.
 
+Starting with T3 0.1.13, the upstream background service directs the
+operator to `t3 pair` instead of printing pairing details. Use that
+command on the host for manual enrollment or use Basaltwater's protected
+one-time enrollment below. Keep the Basaltwater filter for older rotations
+and service output.
+[Upstream background service guide](https://github.com/pingdotgg/t3code/blob/v0.1.13/docs/user/background-service.md)
+
 Interpret warnings against the doctor inventory:
 
 - Optional unselected executables may fail health checks. Do not install an

@@ -69,4 +69,20 @@ signal. Completed step results survive restarts. Make external writes
 retry-safe and verify uncertain effects before resuming an interrupted step.
 Basaltwater's independent jobs continue to provide lifetime budgets and
 receipts for host-owned work.
-[T3 Workflows](https://github.com/pingdotgg/t3code/blob/v0.1.12/docs/user/workflows.md)
+
+On 0.1.13, give a run a subject with `subject(...)` or pass `{ subject }`
+when starting it from another workflow. Use the issue, PR, thread ID, or
+canonical URL that the run concerns. To recover or review runs for an item,
+open its workflow list or use `t3 workflow list --subject URL_OR_THREAD_ID`
+on the owning environment. Keep the start key for retry deduplication.
+
+Set `concurrency` to cap whole runs of one workflow across versions. Use
+`within("pool-name", { limit: N }, ...)` to cap a section that shares a local
+resource with other workflows. Use a consistent limit per pool name on that
+server. A queued run is waiting for capacity. Inspect the pool and its
+holders before retrying, including any run holding a place during a human
+wait. Resume reacquires held places before execution continues. Keep pool
+names distinct from capped workflow names, and release a place before
+invoking a child that needs the same pool.
+[T3 Workflows](https://github.com/pingdotgg/t3code/blob/v0.1.13/docs/user/workflows.md)
+· [Version-matched workflow authoring skill](https://github.com/pingdotgg/t3code/blob/v0.1.13/skills/t3-workflows/SKILL.md)

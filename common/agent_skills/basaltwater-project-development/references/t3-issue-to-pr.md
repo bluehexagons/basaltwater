@@ -28,6 +28,11 @@ replies, and merges within the requested scope. T3 can settle a thread when a
 linked PR merges, so read its worktree action settings before relying on logs
 or a long-running command after merge.
 
+If an authorized 0.1.13 workflow handles the item, use its issue or PR as
+the run subject. Find the existing run from the item or use the
+[subject filter and queue guidance](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-subagents/references/t3-scheduling.md#durable-workflows)
+before retrying an uncertain trigger.
+
 If an expected tool or account is missing, check the selected T3 environment
 and the thread repository's remote. Connect the account on the environment
 host through **Settings → Source control & issues**, then choose **Rescan**.

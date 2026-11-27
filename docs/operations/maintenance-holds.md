@@ -35,8 +35,10 @@ Standalone interactive Claude and OpenCode sessions need an explicit hold when
 their work must cross the restart window.
 For T3 Workflows, this activity check covers executing provider turns. Use a
 bounded hold when workflow code steps need uninterrupted execution. Completed
-step results and human waits are persisted by T3.
-[T3 Workflows](https://github.com/pingdotgg/t3code/blob/v0.1.12/docs/user/workflows.md)
+step results and human waits are persisted by T3. A 0.1.13 run queued for a
+workflow concurrency limit or named pool is waiting for capacity. Check the
+run and pool after maintenance before repeating its trigger.
+[T3 Workflows](https://github.com/pingdotgg/t3code/blob/v0.1.13/docs/user/workflows.md)
 
 Lingering login managers, background sessions, idle logins, idle provider
 servers, open terminals, tmux/screen, build/Git processes, and processes merely

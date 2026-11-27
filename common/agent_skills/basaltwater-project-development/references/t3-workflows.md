@@ -2,7 +2,7 @@
 
 Use these integrations when the active T3 session exposes the relevant tools.
 Follow its injected instructions and live schemas. This reference follows
-[T3 Code 0.1.12](https://github.com/pingdotgg/t3code/releases/tag/v0.1.12).
+[T3 Code 0.1.13](https://github.com/pingdotgg/t3code/releases/tag/v0.1.13).
 
 ## Establish the execution environment
 
@@ -104,6 +104,11 @@ layout execution also needs Full access within the applicable host policy.
 
 ### Action lifecycle
 
+T3 0.1.13 preserves a checkout shared by a side chat when worktree setup
+is cancelled. Check the actual checkout and Git diff before retrying setup
+or removing its files.
+[Setup cancellation change](https://github.com/pingdotgg/t3code/pull/43230)
+
 `runOnSettle` can execute on every settlement of a thread with its own
 worktree. Use it only for an intended, repeatable project operation; do not
 attach broad cleanup, publication, or deployment as an incidental setup step.
@@ -126,6 +131,15 @@ Contract: [project file schema](https://github.com/pingdotgg/t3code/blob/v0.1.9/
 [action preview availability](https://github.com/pingdotgg/t3code/blob/v0.1.9/apps/web/src/components/chat/useChatTerminalActions.ts),
 [settle actions](https://github.com/pingdotgg/t3code/blob/v0.1.8/docs/user/thread-sidebar.md),
 and [settings and cleanup](https://github.com/pingdotgg/t3code/blob/v0.1.8/docs/user/project-settings.md).
+
+## Files and prompts
+
+In the 0.1.13 Files panel, copy the full path from a file or folder's menu
+when referring to an item in the selected environment. Use the Files Viewer
+and Diff panel to inspect GBK or GB18030 text. If the prompt stash is full,
+the unsaved prompt stays in the composer. Send or remove a stashed prompt
+before retrying the stash.
+[0.1.13 client changes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.13)
 
 ## Choose a topic
 

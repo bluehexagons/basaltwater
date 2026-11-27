@@ -2,7 +2,7 @@
 
 Follow the active T3 instructions and live schemas. For native delegation,
 thread controls, queue operations, and tool results, use the
-[tagged T3 tool definitions](https://github.com/pingdotgg/t3code/tree/v0.1.12/apps/server/src/mcp/toolkits).
+[tagged T3 tool definitions](https://github.com/pingdotgg/t3code/tree/v0.1.13/apps/server/src/mcp/toolkits).
 Basaltwater's installed guidance does not grant access to those tools.
 
 ## Discovery and delegation fallback
@@ -41,9 +41,14 @@ T3 binds its worktrees at launch. A shell directory change does not rebind a
 thread. Preparation starts from a commit, while worktrees still share the
 host account, services, ports, and caches. Keep each editing task isolated
 and inspect the branch and diff before integration.
-For projects with several repositories, verify the selected checkouts and base
-commits and inspect shared paths before assigning isolated edits.
-[Multi-repository worktrees](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/t3-workflows.md#multi-repository-projects)
+T3 0.1.13 supports local worktree isolation for delegated tasks in projects
+with several repositories. In a plain folder, the child starts from each
+repository's default branch. In a Git-rooted project, T3 resolves the parent's
+commit and uses its branch name for the other repositories when that branch
+still points at the same commit. Verify the selected checkouts and bases, and
+inspect shared paths before assigning isolated edits.
+[Delegation implementation](https://github.com/pingdotgg/t3code/blob/v0.1.13/apps/server/src/mcp/OrchestratorMcpService.ts)
+· [Multi-repository worktrees](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/t3-workflows.md#multi-repository-projects)
 
 For an explicitly requested new thread, 0.1.11 supports `clientRequestId`
 on `t3_thread_launch`. If the initial call included a key and the reply was
