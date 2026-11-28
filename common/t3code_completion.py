@@ -95,11 +95,11 @@ def queue_completion(config: SetupConfig) -> None:
     _receipt(request, "queued")
     unit = "basaltwater-t3-finish-" + request
     try:
+        # Type=exec confirms dispatch. The detached worker waits for the
+        # setup process to exit before trying to acquire maintenance ownership.
         result = run([
             "/usr/bin/systemd-run", "--quiet", "--unit=" + unit,
-            "--on-active=5s", "--timer-property=AccuracySec=1s",
-            "--timer-property=RemainAfterElapse=no", "--property=Type=exec",
-            "--property=UMask=0077", "--property=StandardInput=null",
+            "--property=Type=exec", "--property=UMask=0077", "--property=StandardInput=null",
             "--property=StandardOutput=null", "--property=StandardError=journal",
             "--working-directory=/", "--", sys.executable, "-I", WORKER,
             request, str(os.getpid()), started,

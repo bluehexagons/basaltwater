@@ -875,8 +875,9 @@ class DebianT3CompletionTests(unittest.TestCase):
         command = self.run.call_args.args[0]
         self.assertIn("--property=StandardInput=null", command)
         self.assertIn("--property=StandardOutput=null", command)
-        self.assertIn("--on-active=5s", command)
-        self.assertIn("--timer-property=RemainAfterElapse=no", command)
+        self.assertIn("--property=Type=exec", command)
+        self.assertFalse(any(arg.startswith(("--on-active=", "--timer-property=")) for arg in command))
+        self.assertEqual(command[-3:-1], [current, str(os.getpid())])
         self.assertNotIn("--property=RemainAfterExit=yes", command)
         self.assertIn(f"journalctl -u basaltwater-t3-finish-{current}.service", self.queue_output)
         self.assertIn(self.completion._receipt_path(current), self.queue_output)

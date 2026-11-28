@@ -105,11 +105,21 @@ when session policy permits fallback, or continue non-browser checks. Restart th
 before considering a whole-VM reboot so VM-side T3 state is isolated.
 Setup queues a final service reload so refreshed provider configuration and
 skills take effect, including when runtime and unit versions are unchanged.
-It first waits for any upstream update's startup/migration to become ready;
-the completion reload follows the remaining setup work.
+It first waits for any upstream update's startup/migration to become ready.
+The independent completion worker waits for the setup process to exit and
+claims maintenance ownership before restarting T3.
 Internal non-refresh service checks keep a healthy current service. Desktop and
 standalone provider lifecycle behavior differs by profile; see the corresponding
 setup guide.
+
+T3 Connect can take longer to reconnect than the local service takes to become
+ready. T3 0.1.13 can release a CLI-managed tunnel during an ordinary shutdown.
+On startup, an environment without a confirmed tunnel waits up to 30 seconds
+before contacting the relay, then provisions or registers a tunnel. Compare the
+systemd start time with the first tunnel registration in the service account's
+`~/.t3/userdata/logs/relay-client.ndjson` when diagnosing this delay.
+[Tunnel shutdown](https://github.com/pingdotgg/t3code/blob/v0.1.13/apps/server/src/cloud/CloudLink.ts#L1231-L1293),
+[tunnel startup](https://github.com/pingdotgg/t3code/blob/v0.1.13/apps/server/src/server.ts#L1292-L1364)
 
 Basaltwater targets stable T3 Code releases. When T3 Code is selected, every
 setup run checks npm's `t3@latest` stable channel for a newer release. When
