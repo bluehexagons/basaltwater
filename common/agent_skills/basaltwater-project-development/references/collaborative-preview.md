@@ -12,6 +12,11 @@ are listed, explain the access gap and open a server tab without passing their
 IDs. A supported server browser can run without a viewing client. A reachable
 browser without a current tab can still open one.
 
+If `preview_status` returns `available: false` with `tabId: null` and no
+usable tab, try `preview_open` once before diagnosing the host. Retain the
+returned tab ID. Diagnose browser availability from an explicit host failure
+on open, and diagnose navigation errors from the opened tab separately.
+
 The server browser uses the T3 host's routes and trust store. Use
 `target: {kind: "environment-port", port: PORT}` when the live open or
 navigate schema supports it. On the server this reaches loopback directly.
@@ -107,9 +112,13 @@ server-browser pass does not establish client reachability or trust.
 Verify rendered state and inspect the page before repeating an uncertain
 submission or toggle. Scope logs to the active tab, URL, and navigation time.
 For canvas games, map the returned image pixels to the measured CSS viewport
-before clicking. Wait on a canvas name via a locator when the label appears
-only in the accessibility snapshot. Inspect pointer lock when a click is
-acknowledged and the game shows no expected response. Viewport presets test
+before clicking. Save the viewport PNG and use the shared
+`scripts/css_screenshot.py` helper to make a CSS-sized copy, or use
+`scale: "css"` when permitted to take the viewport screenshot with Playwright.
+Pair visual evidence with a project-owned read-only state probe when available.
+Wait on a canvas name via a locator when the label appears only in the
+accessibility snapshot. Inspect pointer lock when a click is acknowledged and
+the game shows no expected response. Viewport presets test
 layout. Touch and relative pointer input need a browser path that supports
 those events. See the [canvas workflow](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/browser-t3-preview.md#canvas-input-and-viewport-emulation).
 Use the [offline-cache check](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/browser-automation.md#offline-cache-freshness)

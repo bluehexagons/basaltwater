@@ -142,6 +142,12 @@ the current agent session has no selected tab. Open once, retain the returned
 tab ID, and use it explicitly after an agent-session boundary. Do not describe
 that state as a detached or unavailable preview.
 
+`available: false` with `tabId: null` and no usable listed tab leaves host
+readiness unverified. Try `preview_open` once with the intended route and
+profile. A successful open establishes that the host can create the tab.
+Inspect any navigation error separately. Use an explicit host failure on open
+to choose browser-host troubleshooting.
+
 Once a tab is attached, use a snapshot-first workflow. Server hosts list every
 tab in the thread, including tabs opened by the user. After verifying a supported
 runtime, read the requested tab by `tabId`; act on your own or an unclaimed tab
@@ -221,16 +227,34 @@ do not turn ordinary runtime startup into an unbounded polling loop.
 
 ## Canvas input and viewport emulation
 
-Preview coordinate clicks use viewport-relative CSS pixels. For the inline
-image, use `screenshot.width` and `screenshot.height` from `preview_snapshot`
-when those fields are exposed. If you requested `fullScreenshot` and use the
-larger image, use that image's dimensions. For a saved capture, read the PNG's
-dimensions.
+Preview coordinate clicks use viewport-relative CSS pixels. Use a screenshot
+of the whole viewport with no crop or page area outside the viewport. For the
+inline image, use `screenshot.width` and `screenshot.height` from
+`preview_snapshot` when those fields are exposed. If the tool returns another
+resolution of the same viewport, use the dimensions of the image you inspect.
 Use the measured `viewport.width` and `viewport.height` from `preview_status`
 on the same tab at capture time, or from `preview_resize` if the viewport has
 stayed the same since resizing. If the tool omits them, read
 `[innerWidth, innerHeight]` with `preview_evaluate` on an agent-controlled tab.
-Convert each axis separately.
+On a build that supports `preview_snapshot` with `save: true`, use the returned
+local `screenshotPath`. Run the shared project-development helper with Python
+and FFmpeg on PATH. For Debian, CachyOS, and WSL, use `python3`. In native
+Windows PowerShell, use `python` with the path to the same installed script.
+Pass the measured viewport size.
+
+```bash
+python3 ~/.agents/skills/basaltwater-project-development/scripts/css_screenshot.py VIEWPORT.png --viewport 375 667 --json
+```
+
+Open the `css_viewport_screenshot` artifact from the JSON result. Its image
+pixel coordinates are viewport CSS coordinates. If the viewer scales or
+letterboxes the image, measure against the PNG itself. The original stays
+intact, and the derivative lives in the account's temporary directory. The
+helper accepts a regular PNG up to 32 MiB and 16 megapixels, with CSS dimensions
+from 1 through 4096 per axis. It does not attach to, scroll, or click the page.
+[CSS screenshot helper](../../common/agent_skills/basaltwater-project-development/scripts/css_screenshot.py)
+
+Without a saved PNG or FFmpeg, convert each axis separately.
 
 ```text
 cssX = imageX × cssWidth  / imageWidth
@@ -247,6 +271,9 @@ or scroll.
 
 When the session permits a managed Playwright fallback, a viewport
 `browser_take_screenshot` with `scale: "css"` gives a CSS-sized image.
+For a game with a project-owned read-only inspection API, pair the screenshot
+with its state after a consequential click. An incognito profile isolates
+browser-local saves. Use separate test data for saves held by the server.
 
 After a `preview_wait_for` text timeout, check whether the expected game state
 appears under the canvas's name in the accessibility tree. The `text` condition

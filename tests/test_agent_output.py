@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import struct
 import subprocess
 import tempfile
 import unittest
@@ -24,6 +25,65 @@ READER_SPEC = importlib.util.spec_from_file_location("read_output", SCRIPT.with_
 assert READER_SPEC is not None and READER_SPEC.loader is not None
 read_output = importlib.util.module_from_spec(READER_SPEC)
 READER_SPEC.loader.exec_module(read_output)
+CSS_SPEC = importlib.util.spec_from_file_location("css_screenshot", SCRIPT.with_name("css_screenshot.py"))
+assert CSS_SPEC is not None and CSS_SPEC.loader is not None
+css_screenshot = importlib.util.module_from_spec(CSS_SPEC)
+CSS_SPEC.loader.exec_module(css_screenshot)
+
+
+class CssScreenshotTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.input = self.root / "saved viewport.png"
+        self.input.write_bytes(self.header(1280, 853))
+        self.output_dir = self.root / "private output"
+        self.output_dir.mkdir(mode=0o700)
+        self.which = self.enterContext(patch.object(css_screenshot.shutil, "which", return_value="ffmpeg"))
+        self.allocate = self.enterContext(patch.object(css_screenshot.tempfile, "mkdtemp", return_value=str(self.output_dir)))
+        self.run = self.enterContext(patch.object(css_screenshot.subprocess, "run"))
+
+    @staticmethod
+    def header(width, height):
+        return b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + struct.pack(">II", width, height)
+
+    def invoke(self, width="900", height="600"):
+        with patch("sys.stdout", new_callable=io.StringIO) as stdout:
+            code = css_screenshot.main([str(self.input), "--viewport", width, height, "--json"])
+        self.assertEqual(len(stdout.getvalue().splitlines()), 1)
+        return code, json.loads(stdout.getvalue())
+
+    def test_uses_the_requested_dimensions_and_preserves_the_source(self):
+        def convert(arguments, **options):
+            self.assertIn("scale=900:600:flags=area,setsar=1", arguments)
+            self.assertEqual(options["input"], self.header(1280, 853))
+            Path(arguments[-1]).write_bytes(self.header(900, 600))
+
+        self.run.side_effect = convert
+        code, result = self.invoke()
+        self.assertEqual(code, 0)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["image_to_css_scale"], [900 / 1280, 600 / 853])
+        self.assertEqual(result["viewport_geometry"], [900, 600])
+        artifact, = result["artifacts"]
+        self.assertEqual(artifact["kind"], "css_viewport_screenshot")
+        self.assertEqual(Path(artifact["path"]).read_bytes(), self.header(900, 600))
+        self.assertEqual(self.input.read_bytes(), self.header(1280, 853))
+
+    def test_invalid_input_and_missing_dependency_do_not_allocate_output(self):
+        self.assertEqual(self.invoke(width="0")[0], 2)
+        self.input.write_bytes(self.header(16384, 16384))
+        self.assertEqual(self.invoke()[1]["issue"], "invalid_input")
+        self.input.write_bytes(self.header(750, 1334))
+        self.which.return_value = None
+        self.assertEqual(self.invoke()[1]["issue"], "dependency_unavailable")
+        self.allocate.assert_not_called()
+        self.run.assert_not_called()
+
+    def test_timeout_discards_incomplete_output(self):
+        self.run.side_effect = subprocess.TimeoutExpired("ffmpeg", 30)
+        code, result = self.invoke()
+        self.assertEqual((code, result["issue"], result["effect"]), (124, "wait_timeout", "none"))
+        self.assertFalse(self.output_dir.exists())
 
 
 class AgentOutputTests(unittest.TestCase):
