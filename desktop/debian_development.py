@@ -13,6 +13,7 @@ import struct
 
 from desktop import development, session_runtime
 from desktop.receipts import DesktopRequestError
+from lib.tool_results import exception_issue
 from lib.validation import validate_filesystem_path, validate_no_control_characters
 
 
@@ -108,7 +109,13 @@ def handle_task(payload: dict, generation: str, *, recorder=None) -> dict:
 
 
 def request_task(args: argparse.Namespace) -> dict:
-    current = session_runtime.status()
+    try:
+        current = session_runtime.status()
+    except (OSError, RuntimeError, ValueError) as exc:
+        receipt = exc.receipt if isinstance(exc, DesktopRequestError) else {
+            "issue": exception_issue(exc), "error": str(exc),
+        }
+        raise DesktopRequestError({**receipt, "stage": "session_check", "effect": "none"}) from exc
     state = current.get("state", "unknown")
     if state != "running":
         next_action = "start" if state == "stopped" else "status"

@@ -9,6 +9,10 @@ If a running supervisor reports `desktop_capability_missing`, check the
 checkpoint after saving work. Setup can refresh source while the existing
 supervisor remains in use.
 
+A failed status probe reports `stage: session_check` and `effect: none`.
+For a lost reply after launch dispatch, reconcile the task inventory before
+retrying.
+
 ```bash
 basaltw desktop develop doctor --project /absolute/project --json
 basaltw desktop develop exec --project /absolute/project --dry-run -- /usr/bin/python3 script.py
@@ -160,7 +164,9 @@ A supervisor reply with `state: launch-unverified` carries the task ID. Use
 started task without a returned ID. Before another launch, use
 `develop list --project PATH` (optionally `--since`/`--until`) and
 inspect candidate task status/logs. Do not automatically relaunch. Listing is
-bounded to 500 scanned records and 50 returned matches; heed truncation.
+bounded to 500 scanned entries and 50 returned matches. If the scan encounters
+unreadable, invalid, or still-unwritten task records, it returns the valid jobs
+with `truncated: true` and a `records_skipped` count.
 Records and logs are retained for explicit review, not automatically pruned.
 
 `desktop evidence start/finish` records supervised-launch task IDs and permits

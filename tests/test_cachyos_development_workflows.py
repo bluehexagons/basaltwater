@@ -359,6 +359,19 @@ class TestDevelopmentWorkflows(unittest.TestCase):
                     self.assertEqual(development.run_development_command(args), 1)
                     self.assertEqual(json.loads(output.getvalue())["effect"], effect)
 
+    def test_debian_status_probe_failure_reports_no_launch_effect(self):
+        parser = argparse.ArgumentParser()
+        development.add_development_parser(parser.add_subparsers(dest="command"))
+        args = parser.parse_args(["develop", "exec", "--project", str(self.project), "--", str(self.engine)])
+        with (patch.object(debian_development.session_runtime, "status", side_effect=ConnectionResetError("status reply lost")),
+              patch.object(debian_development.session_runtime, "request") as request,
+              redirect_stdout(output := StringIO())):
+            self.assertEqual(development.run_development_command(args), 1)
+        result = json.loads(output.getvalue())
+        self.assertEqual((result["stage"], result["effect"]), ("session_check", "none"))
+        self.assertEqual(result["error"], "status reply lost")
+        request.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

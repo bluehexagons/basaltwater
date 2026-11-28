@@ -396,9 +396,12 @@ def load_task(directory: Path) -> dict:
             raise ValueError("Invalid development playtest identity")
     elif "playtest" in value:
         raise ValueError("Playtest metadata belongs only to a playtest task")
-    validate_filesystem_path(value.get("project"))
-    if not Path(value["project"]).is_absolute():
-        raise ValueError("Task project must be absolute")
+    project = value.get("project")
+    if not isinstance(project, str):
+        raise ValueError("Task project must be an absolute path string")
+    validate_filesystem_path(project)
+    if not Path(project).is_absolute():
+        raise ValueError("Task project must be an absolute path string")
     validate_argv(value.get("argv"))
     if not Path(value["argv"][0]).is_absolute():
         raise ValueError("Task executable must be absolute")
@@ -630,7 +633,7 @@ def list_tasks(project: str | None = None, *, since: str | None = None, until: s
     _guard()
     selected = str(_project(project)) if project is not None else None
     result = {"schema_version": 1, "ok": True, "tasks": [], "truncated": False,
-              "scan_truncated": False, "matches_truncated": False,
+              "scan_truncated": False, "matches_truncated": False, "records_skipped": 0,
               "filters": {"project": selected, "since": lower.isoformat() if lower is not None else None,
                           "until": upper.isoformat() if upper is not None else None}}
     try:
@@ -638,22 +641,29 @@ def list_tasks(project: str | None = None, *, since: str | None = None, until: s
     except FileNotFoundError:
         return result
     records = []
-    truncated = False
+    scan_truncated = False
+    records_skipped = 0
     for index, directory in enumerate(root.iterdir()):
         if index >= 500:
-            truncated = True
+            scan_truncated = True
             break
         if not TASK_ID.fullmatch(directory.name):
             continue
-        task = load_task(directory)
+        try:
+            task = load_task(directory)
+        except (OSError, ValueError):
+            # A concurrent launch may have created the directory without publishing task.json yet.
+            records_skipped += 1
+            continue
         created = parse_task_timestamp(task["created_at"])
         if ((selected is None or task["project"] == selected)
                 and (lower is None or lower <= created) and (upper is None or created <= upper)):
             records.append({"task": task["task"], "kind": task["kind"], "project": task["project"],
                 "created_at": task["created_at"], "directory": str(directory), "state": "recorded"})
     records.sort(key=lambda value: (parse_task_timestamp(value["created_at"]), value["task"]), reverse=True)
-    return {**result, "tasks": records[:50], "truncated": truncated or len(records) > 50,
-            "scan_truncated": truncated, "matches_truncated": len(records) > 50}
+    matches_truncated = len(records) > 50
+    return {**result, "tasks": records[:50], "truncated": scan_truncated or matches_truncated or records_skipped > 0,
+            "scan_truncated": scan_truncated, "matches_truncated": matches_truncated, "records_skipped": records_skipped}
 
 
 def cleanup_browser(task_id: str, *, include_downloads: bool = False, dry_run: bool = False) -> dict:

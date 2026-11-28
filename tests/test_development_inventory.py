@@ -87,11 +87,34 @@ class DevelopmentInventoryTests(unittest.TestCase):
         self.assertEqual(result["filters"]["since"], "2026-01-15T10:00:00+00:00")
         self.assertFalse(result["truncated"])
 
+    def test_cli_returns_valid_jobs_when_other_records_cannot_be_read(self) -> None:
+        pending = self.root / f"{1:032x}"
+        pending.mkdir(mode=0o700)
+        invalid = self.root / self.task(2, "2026-01-15T10:00:00Z") / "task.json"
+        record = json.loads(invalid.read_text())
+        write_json_atomic(str(invalid), {**record, "project": 123}, mode=0o600)
+        job_id = self.task(3, "2026-01-15T10:30:00Z")
+        parser = argparse.ArgumentParser()
+        desktop_cli.add_desktop_subparser(parser.add_subparsers())
+        for flags in ([], ["--native"]):
+            with self.subTest(flags=flags):
+                with redirect_stdout(output := StringIO()):
+                    args = parser.parse_args(["desktop", *flags, "develop", "list", "--project", str(self.project)])
+                    self.assertEqual(desktop_cli.run_desktop_command(args), 0)
+                result = json.loads(output.getvalue())
+                self.assertEqual([row["job"]["id"] for row in result["tasks"]], [job_id])
+                self.assertEqual(result["records_skipped"], 2)
+                self.assertTrue(result["truncated"])
+                self.assertFalse(result["scan_truncated"])
+                self.assertFalse(result.get("output_truncated", False))
+
     def test_evidence_attaches_session_tasks_with_old_history_and_explicit_earlier_task(self) -> None:
         for number in range(60):
             self.task(number, "2026-01-14T10:00:00Z")
         task = self.task(61, "2026-01-15T05:30:00-05:00")
         earlier = self.task(62, "2026-01-15T09:00:00Z")
+        pending = self.root / f"{63:032x}"
+        pending.mkdir(mode=0o700)
         with patch.object(evidence, "revision", return_value={"commit": None, "dirty": None}), \
                 patch.object(evidence, "_now", return_value="2026-01-15T10:00:00Z"):
             record = evidence.Recorder(str(self.project), "g")
@@ -102,10 +125,15 @@ class DevelopmentInventoryTests(unittest.TestCase):
                     {"task": value, "project": str(self.project), "state": "completed", "returncode": 0}):
             result = evidence.finalize(str(record.path), tasks=[earlier], renderer=None)
             self.assertEqual([row["task"] for row in result["tasks"]], [earlier, task])
-            self.assertFalse(result["task_inventory_truncated"])
+            self.assertTrue(result["task_inventory_truncated"])
+            self.assertEqual(result["task_inventory_records_skipped"], 1)
+            self.assertEqual(json.loads(record.path.read_text())["task_inventory_records_skipped"], 1)
             # A refresh preserves explicit attachments outside the recording interval.
+            pending.rmdir()
             result = evidence.finalize(str(record.path), tasks=[], renderer=None)
             self.assertEqual([row["task"] for row in result["tasks"]], [earlier, task])
+            self.assertFalse(result["task_inventory_truncated"])
+            self.assertEqual(result["task_inventory_records_skipped"], 0)
         self.assertFalse(json.loads(record.path.read_text())["task_inventory_scan_truncated"])
 
     def test_cli_applies_time_bounds_without_desktop_access(self) -> None:

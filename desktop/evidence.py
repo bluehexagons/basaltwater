@@ -404,6 +404,7 @@ def finalize(path: str, *, tasks: list[str], renderer: str | None) -> dict:
     selected = list(dict.fromkeys([*data.get("attached_playtests", []), *tasks, *previous, *automatic]))
     data["task_inventory_truncated"] = listing["truncated"] or len(selected) > 50
     data["task_inventory_scan_truncated"] = listing.get("scan_truncated", False)
+    data["task_inventory_records_skipped"] = listing.get("records_skipped", 0)
     snapshots = []
     for task in selected[:50]:
         try:
@@ -418,4 +419,5 @@ def finalize(path: str, *, tasks: list[str], renderer: str | None) -> dict:
     write_json_atomic(path, data, mode=0o600)
     return {"artifact": path, "events": len(data["events"]), "events_truncated": data["events_truncated"],
             "tasks": [{"task": row["task"], "state": row["state"]} for row in snapshots],
-            "task_inventory_truncated": data["task_inventory_truncated"], "finalized": True}
+            "task_inventory_truncated": data["task_inventory_truncated"],
+            "task_inventory_records_skipped": data["task_inventory_records_skipped"], "finalized": True}

@@ -191,11 +191,13 @@ For session-scoped discovery use `develop list --project /absolute/project
 their endpoints and require explicit timezones. The listing compares instants
 in UTC and filters before limiting results to 50 matching tasks. Evidence
 finalization uses its recording interval automatically, so older task history
-does not consume that limit. `matches_truncated` reports excess matches;
-`scan_truncated` reports the separate 500-entry scan bound. Either makes
-`truncated` true; a bounded scan cannot establish that all session tasks were
-found. Listing reads private records without starting or stopping tasks;
-use each task's `status` for current process state.
+does not consume that limit. `matches_truncated` reports excess matches, and
+`scan_truncated` reports the 500-entry scan bound. `records_skipped` counts
+task directories the scan could not read or validate, including launches
+whose records have yet to be written. Any of these makes `truncated` true.
+Evidence finalization includes the skipped count in
+`task_inventory_records_skipped`. Use each task's `status` for current process
+state.
 
 Records live outside repositories in private
 `~/.local/state/basaltwater/desktop-evidence/*.json` files (0700 directory,
