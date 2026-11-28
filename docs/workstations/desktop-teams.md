@@ -171,9 +171,24 @@ basaltw desktop --native team lease handoff --epoch 1 --credential "$BASALTW_DES
 ```
 
 Send the next owner the new lease path and result ID. They verify the lease
-epoch, inspect the desktop and act on a new capture. Check `lease status` after
-a lost response. Busy or stale-epoch rejections precede dispatch. Use the run
-ledger for match context, evidence links and timing.
+epoch, inspect the desktop and act on a new capture. Use the run ledger for
+match context, evidence links and timing. Busy or stale-epoch rejections
+precede dispatch.
+
+If the transfer response is lost, pause input and inspect `lease status`.
+When it shows the intended recipient, new epoch and result ID, the coordinator
+can retrieve that epoch's private reply with the recovery credential.
+
+```sh
+basaltw desktop --native team lease receipt --epoch 2 --credential "$RECOVERY_FILE" \
+  --result 000001 --json
+```
+
+This command reads the current lease after a handoff or recovery. It keeps the
+epoch and credential in place and refuses uncertain input. Keep the response
+private and pass the owner path only to the assigned recipient. If the current
+credential file is unavailable, follow the coordinator recovery procedure.
+Check the run ledger separately before the recipient acts.
 
 If a worker disappears, inspect its orchestration state, lease status and last
 input receipt. Keep input idle while resolving any uncertain action. An input

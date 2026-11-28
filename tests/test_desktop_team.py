@@ -163,6 +163,37 @@ class DesktopTeamTests(unittest.TestCase):
         with self.assertRaisesRegex(lease.LeaseRejected, "epoch changed"):
             self.transfer("handoff", current, "p2", self.worker_result("coordinator"), epoch=1)
 
+    def test_coordinator_recovers_lost_reply_only_for_current_completed_transfer(self):
+        host = self.claim()
+        result = self.worker_result("p1")
+        guest = self.transfer("handoff", host, "p2", result)
+        native_status = lease.status(native=True)
+        self.assertNotIn("lease_file", native_status)
+        self.assertNotIn("recovery_file", native_status)
+
+        def receipt(epoch=2, credential=host["recovery_file"], result_id=result):
+            return lease.receipt(native=True, epoch=epoch, credential=credential, result=result_id)
+
+        self.assertEqual(receipt(), guest)
+        self.assertEqual(lease.status(native=True), native_status)
+        with self.assertRaisesRegex(lease.LeaseRejected, "recovery credential"):
+            receipt(credential=guest["lease_file"])
+        with self.assertRaisesRegex(lease.LeaseRejected, "No matching current"):
+            receipt(result_id="000888")
+        self.request("screenshot", guest, callback=lambda payload: {"observation_id": "guest"})
+        self.request("press", guest, channel="pad", observation={"observation_id": "guest"},
+                     callback=lambda payload: {"delivery": "unknown", "neutralized": True})
+        with self.assertRaisesRegex(lease.LeaseRejected, "uncertain"):
+            receipt()
+        latest_result = self.worker_result("coordinator")
+        recovered = self.transfer("recover", guest, "coordinator", latest_result, credential=host["recovery_file"])
+        self.assertEqual(receipt(epoch=3, result_id=latest_result), recovered)
+        with self.assertRaisesRegex(lease.LeaseRejected, "No matching current"):
+            receipt()
+        Path(recovered["lease_file"]).unlink()
+        with self.assertRaisesRegex(lease.LeaseRejected, "unavailable"):
+            receipt(epoch=3, result_id=latest_result)
+
     def test_capability_and_independent_resource(self):
         self.backend.status.return_value["capabilities"] = []
         with self.assertRaisesRegex(lease.LeaseRejected, "running desktop helper"):

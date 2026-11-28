@@ -235,7 +235,7 @@ def claim(path, resource, worker, *, native, backend):
         recovery, recovery_digest = _issue(root, resource, "coordinator", epoch, "recovery")
         state = {"schema_version": 1, "kind": "desktop-team-lease", "state": "active", "team": str(root),
                  "resource": resource, "backend": name, "epoch": epoch, "generation": generation, "owner": worker,
-                 "owner_digest": owner_digest, "recovery_digest": recovery_digest,
+                 "owner_digest": owner_digest, "recovery_digest": recovery_digest, "lease_file": credential,
                  "observation": None, "references": [], "pending_input": None, "last_input": None, "events": []}
         _journal(state, "claim", actor="coordinator")
         _save(statefile, state)
@@ -250,6 +250,31 @@ def status(*, native):
     folder, name = resource_directory(native), backend_name(native)
     statefile, state = _read(folder)
     return _public(statefile, state) if state else {"backend": name, "state": "inactive"}
+
+
+def receipt(*, native, epoch, credential, result):
+    """Recover the reply for the current completed transfer without changing ownership."""
+    folder = resource_directory(native)
+    with locked(folder, "team-resource.lock", nonblocking=True):
+        statefile, state = _read(folder)
+        if (not state or state["state"] != "active" or state["epoch"] != epoch
+                or state["events"][-1]["event"] not in ("handoff", "recover")
+                or state["events"][-1]["evidence"] != result):
+            raise LeaseRejected("No matching current lease transfer; inspect lease status")
+        if not _valid(_credential(credential), state["recovery_digest"]):
+            raise LeaseRejected("Reading a transfer receipt requires the coordinator recovery credential")
+        if state["pending_input"]:
+            raise LeaseRejected("Input delivery is uncertain; reconcile it before resuming the transfer")
+        lease_file = state.get("lease_file")
+        if not lease_file:
+            raise LeaseRejected("No saved transfer credential; use coordinator recovery")
+        try:
+            valid = _valid(_credential(lease_file), state["owner_digest"])
+        except FileNotFoundError:
+            valid = False
+        if not valid:
+            raise LeaseRejected("The current credential is unavailable; use coordinator recovery")
+        return {**_public(statefile, state), "lease_file": lease_file, "lease_environment": LEASE_ENV}
 
 
 def transition(action, *, native, backend, epoch, worker, credential, result, note):
@@ -284,7 +309,7 @@ def transition(action, *, native, backend, epoch, worker, credential, result, no
         state.update(observation=None, references=[], pending_input=None, last_input=None, epoch=epoch + 1)
         lease_file = None
         if action == "release":
-            state.update(state="closed", owner=None, owner_digest=None, recovery_digest=None)
+            state.update(state="closed", owner=None, owner_digest=None, recovery_digest=None, lease_file=None)
         else:
             selected = require_worker(team, worker)
             if worker != "coordinator" and selected["resource"] != state["resource"]:
@@ -292,7 +317,7 @@ def transition(action, *, native, backend, epoch, worker, credential, result, no
             if action == "recover":
                 state["generation"] = _live_generation(backend, native)
             lease_file, state["owner_digest"] = _issue(root, state["resource"], worker, state["epoch"], "owner")
-            state["owner"] = worker
+            state.update(owner=worker, lease_file=lease_file)
         _journal(state, action, actor=actor, evidence=result, delivery=row["delivery"], note=explanation)
         _save(statefile, state)
         if action == "release":

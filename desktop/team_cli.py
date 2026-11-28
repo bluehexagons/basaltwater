@@ -34,6 +34,10 @@ def add_team_parser(commands):
     lease = sub.add_parser("lease", help="Inspect or change owner of the selected physical desktop")
     actions = lease.add_subparsers(dest="lease_command", required=True)
     actions.add_parser("status")
+    receipt = actions.add_parser("receipt", help="Recover the private reply for the current completed lease transfer")
+    receipt.add_argument("--epoch", required=True, type=int, help="Current recipient epoch")
+    receipt.add_argument("--credential", required=True, help="Private coordinator recovery file path")
+    receipt.add_argument("--result", required=True, help="Result ID recorded on the current transfer")
     claim = actions.add_parser("claim")
     claim.add_argument("team")
     claim.add_argument("resource")
@@ -56,6 +60,8 @@ def run_team_command(args, *, backend, native):
             return team_lease.status(native=native)
         if args.lease_command == "claim":
             return team_lease.claim(args.team, args.resource, args.worker, native=native, backend=backend)
+        if args.lease_command == "receipt":
+            return team_lease.receipt(native=native, epoch=args.epoch, credential=args.credential, result=args.result)
         return team_lease.transition(args.lease_command, native=native, backend=backend, epoch=args.epoch,
                                      worker=getattr(args, "worker", None), credential=args.credential,
                                      result=args.result, note=args.note)
