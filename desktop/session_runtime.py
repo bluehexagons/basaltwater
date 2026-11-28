@@ -25,7 +25,7 @@ import subprocess
 import time
 from typing import Any, Iterator
 
-from desktop import accessibility, control_state
+from desktop import accessibility, control_state, team_lease
 from desktop.observations import (
     CaptureObservation, DEFAULT_CAPTURE_MAX_AGE_SECONDS, capture_freshness,
     validate_capture_max_age, validate_observation_option,
@@ -173,7 +173,7 @@ def request(payload: dict[str, Any]) -> dict[str, Any]:
         with socket.socket(socket.AF_UNIX) as connection:
             connection.settimeout(30 if deadline is None else request_remaining(deadline))
             connection.connect(str(runtime_directory() / "control.sock"))
-            data = json.dumps(payload).encode() + b"\n"
+            data = json.dumps(team_lease.wire_request(payload)).encode() + b"\n"
             if deadline is not None:
                 connection.settimeout(request_remaining(deadline))
             attempted = True
@@ -446,7 +446,7 @@ class DesktopSession:
             "control_active": False,
             "input_capabilities": ["observation-input", "server-paced-text"],
             "capabilities": ["supervised-development", "manual-evidence", "receipt-mapping", "recorded-playtest",
-                             "disposable-browser"],
+                             "disposable-browser", team_lease.CAPABILITY],
             "observation_id": self.observation.id if self.observation is not None and state == "running" else None,
             "capture_freshness": self.observation.freshness() if self.observation is not None and state == "running"
                                  else capture_freshness(),
@@ -932,7 +932,7 @@ def serve() -> int:
                             _, uid, _ = struct.unpack("3i", connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
                             if uid != os.getuid():
                                 raise PermissionError("Desktop control requires the session owner's UID")
-                            result = session.handle(receive(connection))
+                            result = team_lease.dispatch_helper(path.parent, receive(connection), session.generation, session.handle)
                         except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as exc:
                             result = getattr(exc, "receipt", {"error": "\n".join([str(exc), *getattr(exc, "__notes__", [])])})
                         try:

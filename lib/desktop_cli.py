@@ -47,6 +47,8 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     add_development_parser(commands)
     from desktop.gamepad_qa import add_gamepad_parser
     add_gamepad_parser(commands)
+    from desktop.team_cli import add_team_parser
+    add_team_parser(commands)
     evidence = commands.add_parser("evidence", help="Record manual launches, inputs and captures with project/task provenance")
     evidence_commands = evidence.add_subparsers(dest="evidence_command", required=True)
     from desktop.qa_cli import add_qa_parser
@@ -306,12 +308,15 @@ def _evidence_artifacts(args: argparse.Namespace, result: dict) -> dict:
         kind = "audio_analysis" if args.audio_command == "analyze" else "audio_capture"
     else:
         kind = {"preflight": "preflight_report", "accessibility-record": "accessibility_recording",
-                "gamepad": "input_receipt"}.get(command)
+                "gamepad": "input_receipt", "team": "team_record"}.get(command)
     if kind is None:
         return result
     files = report_artifacts(result, {"artifact": (kind, "application/json"),
                                       "report": ("review_notes", "text/markdown"),
                                       "preview": ("point_preview", "image/png")})
+    if command == "team" and args.team_command == "view":
+        files.extend({**artifact("team_view", entry["artifact"], "image/png"), "sha256": entry["sha256"]}
+                     for entry in result["views"])
     return {**result, "artifacts": files} if files else result
 
 
@@ -342,6 +347,9 @@ def run_desktop_command(args: argparse.Namespace) -> int:
         if command == "gamepad":
             from desktop.gamepad_qa import run_command
             result = run_command(args, native=backend is not runtime)
+        elif command == "team":
+            from desktop.team_cli import run_team_command
+            result = run_team_command(args, backend=backend, native=backend is not runtime)
         elif command == "preflight":
             from desktop.preflight import preflight
             result = preflight(args.repository, backend=backend, native=backend is not runtime,

@@ -91,7 +91,7 @@ def compact_capture(result: dict) -> dict:
         "observation_id", "coordinate_space", "window",
         "pixel_sha256", "artifact_sha256", "frame_received_at", "frame_received_monotonic_ns", "frame_pts_ns",
         "initial_frame_skipped", "capture_freshness", "last_input", "ok", "issue", "error", "reason", "stage", "effect", "dispatch_stage",
-        "input_delivery", "input_id", "evidence_error", "evidence_capacity") if key in result}
+        "input_delivery", "input_id", "evidence_error", "evidence_capacity", "team_lease") if key in result}
 
 
 def retain_capture(result: dict) -> list[dict]:

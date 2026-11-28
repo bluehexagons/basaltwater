@@ -20,6 +20,7 @@ class GamepadTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.folder = Path(self.temp.name)
+        self.enterContext(patch.object(qa.team_lease, "resource_directory", return_value=self.folder))
         self.current = {"state": "running", "helper_running": True, "agent_control": "enabled",
                         "generation": "gen", "control_revision": "rev", "geometry": [640, 480],
                         "observation_id": "capture", "capture_freshness": {"fresh": True}}
@@ -393,6 +394,7 @@ class GamepadTests(unittest.TestCase):
             try:
                 status = call({"action": "status"})
                 self.assertEqual(status["backend"], qa.backend_name(native))
+                self.assertEqual(status["team_lease"], qa.team_lease.CAPABILITY)
                 device = json.loads((output / "device.json").read_text())
                 self.assertEqual(device["worker_provenance"], self.provenance.return_value)
                 self.assertEqual(status["worker_provenance"], device["worker_provenance"])

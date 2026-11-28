@@ -21,7 +21,7 @@ import struct
 import time
 import uuid
 
-from desktop import control_state, native_session, session_runtime
+from desktop import control_state, native_session, session_runtime, team_lease
 from desktop.qa_artifacts import new_bundle, stamp
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.validation import validate_filesystem_path
@@ -216,6 +216,8 @@ class Bridge:
                    "requested": stamp(), "observation": observation, "events": events,
                    "buttons": payload.get("buttons", []), "axes": payload.get("axes", {}),
                    "hold_ms": payload["hold_ms"], "delivery": "not-sent", "neutralized": False}
+        if "_team_lease_context" in payload:
+            receipt["team_lease"] = payload["_team_lease_context"]
         path = self.folder / f"{receipt['id']}.json"
         try:
             write_json_atomic(str(path), receipt, mode=0o600)
@@ -293,8 +295,11 @@ def serve(output: str, lifetime: int, native: bool = True) -> dict:
             if not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.getuid():
                 raise RuntimeError("Unsafe stale pad socket")
             path.unlink()
-        pad = Pad()
-        pad.neutral()
+        lease_folder = team_lease.resource_directory(native)
+        startup = team_lease.wire_request({"action": "pad-start"})
+        with team_lease.admission(lease_folder, startup, channel="pad", generation=current["generation"]):
+            pad = Pad()
+            pad.neutral()
         bridge = Bridge(pad, folder, lifetime, current, native)
         previous = {}
         def stop(_signum, _frame):
@@ -312,6 +317,7 @@ def serve(output: str, lifetime: int, native: bool = True) -> dict:
                     "created": stamp(), "pid": os.getpid(), "device": str(pad.device.device),
                     "name": pad.device.name, "mapping": "Linux Xbox 360 USB", "backend": backend_name(native),
                     "lifetime_seconds": lifetime, "generation": current["generation"],
+                    "team_lease": team_lease.CAPABILITY,
                     "worker_provenance": provenance,
                 }, mode=0o600)
                 close_reason = "bridge-failed"
@@ -341,10 +347,17 @@ def serve(output: str, lifetime: int, native: bool = True) -> dict:
                             elif action == "status":
                                 result = {"running": True, "pid": os.getpid(), "output": str(folder),
                                           "backend": backend_name(native),
+                                          "team_lease": team_lease.CAPABILITY,
                                           "worker_provenance": provenance,
                                           "remaining_seconds": max(0, bridge.until - time.monotonic())}
                             elif action == "press":
-                                result = bridge.press(payload, connection)
+                                try:
+                                    result = team_lease.dispatch(
+                                        lease_folder, payload, current["generation"],
+                                        lambda request: bridge.press(request, connection), channel="pad",
+                                        rejection=(InputRejected,))
+                                except (team_lease.LeaseRejected, team_lease.TeamBusy) as exc:
+                                    raise InputRejected(str(exc)) from exc
                             else:
                                 raise ValueError("Unknown gamepad action")
                         except InputRejected as exc:
@@ -420,7 +433,7 @@ def call(payload: dict) -> dict:
         _, uid, _ = struct.unpack("3i", connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
         if uid != os.getuid():
             raise PermissionError("Pad server belongs to another account")
-        connection.sendall(json.dumps(payload).encode() + b"\n")
+        connection.sendall(json.dumps(team_lease.wire_request(payload)).encode() + b"\n")
         return receive(connection)
 
 

@@ -17,7 +17,7 @@ import subprocess
 import threading
 import time
 
-from desktop import accessibility, client, control_state, native_grants, session_runtime
+from desktop import accessibility, client, control_state, native_grants, session_runtime, team_lease
 from desktop.observations import (
     CaptureObservation, DEFAULT_CAPTURE_MAX_AGE_SECONDS, capture_freshness,
     validate_capture_max_age, validate_observation_option,
@@ -74,7 +74,7 @@ def request(payload):
         _, uid, _ = struct.unpack("3i", connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
         if uid != os.getuid():
             raise PermissionError("Wayland helper belongs to another user")
-        message = json.dumps({**payload, "deadline": deadline}).encode() + b"\n"
+        message = json.dumps(team_lease.wire_request({**payload, "deadline": deadline})).encode() + b"\n"
         if len(message) > MAX_MESSAGE:
             raise ValueError("Wayland request exceeds its size limit")
         connection.settimeout(client.remaining_seconds(deadline))
@@ -427,7 +427,7 @@ class NativeSession:
                                                        and time.monotonic() < self.until else None, self.capture_max_age),
                 "observation_id": self.observation.id if self.observation is not None else None,
                 "evidence": str(self.evidence.path) if self.evidence else self.last_evidence,
-                "capabilities": ["recorded-playtest"],
+                "capabilities": ["recorded-playtest", team_lease.CAPABILITY],
                 "evidence_recording": self.evidence is not None,
                 "evidence_capacity": self.evidence.capacity() if self.evidence else None,
                 "image_origin": self.capture_region[:2] if self.capture_region else None,
@@ -1120,7 +1120,7 @@ def serve(*, remember=False, session_seconds=SESSION_SECONDS, touch=False):
                         except OSError:
                             return True
                     payload["_cancelled"] = cancelled
-                result = session.handle(payload)
+                result = team_lease.dispatch_helper(folder, payload, session.generation, session.handle)
             except Exception as exc:
                 if payload.get("action") == "revoke":
                     session.fail(exc)

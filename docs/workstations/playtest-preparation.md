@@ -122,6 +122,12 @@ do not widen freshness limits or blindly replay an action.
 
 ### Transfer a shared screen between local players
 
+For an updated Linux helper and gamepad bridge, use the
+[desktop team lease](desktop-teams.md#claim-hand-off-and-recover-input) to
+enforce ownership. Keep the run ledger for match context and clocks. The
+standalone ledger route below is available for existing tool versions and
+recorded cooperative handoffs.
+
 Use one private run ledger for both seats. The coordinator names the first
 owner. Only the named owner captures or operates devices. At a safe boundary,
 finish the action, check delivery and the observed effect, neutralize controls
