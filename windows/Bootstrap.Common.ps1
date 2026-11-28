@@ -1,19 +1,30 @@
 <# Shared Windows and WSL bootstrap helpers; no work is performed when dot-sourced. #>
+function Test-Winget {
+    $command = Get-Command winget.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $command) { return $false }
+    $PSNativeCommandUseErrorActionPreference = $false
+    try {
+        $version = & $command.Source --version 2>$null
+        return ($LASTEXITCODE -eq 0 -and [bool]$version)
+    } catch {
+        return $false
+    }
+}
+
 function Ensure-Winget {
-    if (Get-Command winget.exe -ErrorAction SilentlyContinue) { return }
+    if (Test-Winget) { return }
     try {
         Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe
     } catch {
         Write-Host 'App Installer registration did not make WinGet available; trying repair.'
     }
-    if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
-        Install-PackageProvider -Name NuGet -Scope CurrentUser -Force | Out-Null
-        Install-Module -Name Microsoft.WinGet.Client -Scope CurrentUser -Force -Repository PSGallery
-        Import-Module Microsoft.WinGet.Client
-        Repair-WinGetPackageManager -Force -Latest
-    }
-    if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
-        throw 'WinGet is unavailable after App Installer registration/repair'
+    if (Test-Winget) { return }
+    Install-PackageProvider -Name NuGet -Scope CurrentUser -Force | Out-Null
+    Install-Module -Name Microsoft.WinGet.Client -Scope CurrentUser -Force -Repository PSGallery
+    Import-Module Microsoft.WinGet.Client
+    Repair-WinGetPackageManager -Force -Latest
+    if (-not (Test-Winget)) {
+        throw 'WinGet is unavailable after App Installer registration and repair. Update App Installer, check winget --version in a fresh PowerShell window, then rerun setup.'
     }
 }
 

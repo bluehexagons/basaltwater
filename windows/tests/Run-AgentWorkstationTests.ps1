@@ -146,11 +146,23 @@ try {
         Assert-Throws { Ensure-NativeGitSettings } 'Could not enable Git'
     }
 
-    # WinGet repair must bootstrap its PowerShell dependencies for this account.
+    # A visible WinGet alias may still fail on a fresh account.
     & {
-        $script:WingetAvailable = $false
-        function Get-Command { if ($script:WingetAvailable) { return 'winget.exe' } }
-        function Add-AppxPackage { }
+        function Get-Command {
+            if ($script:WingetVisible) { [pscustomobject]@{ Source = 'Invoke-WingetVersionFixture' } }
+        }
+        function Invoke-WingetVersionFixture {
+            Assert-True ($args[0] -eq '--version') 'WinGet discovery ran a mutating command'
+            $global:LASTEXITCODE = $script:WingetVersionExit
+            if ($global:LASTEXITCODE -eq 0) { 'v1.12.0' }
+        }
+        function Add-AppxPackage {
+            $script:WingetRegistrations++
+            if ($script:WingetRegistrationWorks) {
+                $script:WingetVisible = $true
+                $script:WingetVersionExit = 0
+            }
+        }
         function Install-PackageProvider {
             param($Name, $Scope, [switch]$Force)
             Assert-True ($Name -eq 'NuGet' -and $Scope -eq 'CurrentUser') 'NuGet bootstrap requires machine-wide rights'
@@ -160,9 +172,31 @@ try {
             Assert-True ($Name -eq 'Microsoft.WinGet.Client' -and $Scope -eq 'CurrentUser') 'WinGet module requires machine-wide rights'
         }
         function Import-Module { }
-        function Repair-WinGetPackageManager { $script:WingetAvailable = $true }
+        function Repair-WinGetPackageManager {
+            $script:WingetRepairs++
+            if ($script:WingetRepairWorks) { $script:WingetVersionExit = 0 }
+        }
+        $script:WingetRegistrations = 0
+        $script:WingetRepairs = 0
+        $script:WingetVisible = $true
+        $script:WingetVersionExit = 0
         Ensure-Winget
-        Assert-True $script:WingetAvailable 'Missing WinGet was not repaired'
+        Assert-True ($script:WingetRegistrations -eq 0 -and $script:WingetRepairs -eq 0) 'A usable WinGet needed no repair'
+
+        $script:WingetVisible = $false
+        $script:WingetRegistrationWorks = $true
+        Ensure-Winget
+        Assert-True ($script:WingetRegistrations -eq 1 -and $script:WingetRepairs -eq 0) 'App Installer registration should suffice when WinGet works afterward'
+
+        $script:WingetVersionExit = 1
+        $script:WingetRegistrationWorks = $false
+        $script:WingetRepairWorks = $true
+        Ensure-Winget
+        Assert-True ($script:WingetRegistrations -eq 2 -and $script:WingetRepairs -eq 1) 'The broken WinGet alias bypassed repair'
+
+        $script:WingetVersionExit = 1
+        $script:WingetRepairWorks = $false
+        Assert-Throws { Ensure-Winget } 'check winget --version in a fresh PowerShell window'
     }
 
     # WinGet must verify its already-installed exit and propagate other failures.
@@ -540,6 +574,12 @@ function Invoke-NativeAgentSetup {
             $wslState = @{ Version = 1; Profile = 'server_wsl'; OwnerSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value;
                 Revision = 'e' * 40; Source = $source; Phase = 'complete'; Distro = 'Ubuntu-24.04'; DistroSelection = 'explicit' }
             $wslInstaller = Join-Path $source 'install.ps1'
+            function Get-Command {
+                [CmdletBinding()]
+                param([string]$Name, $CommandType)
+                if ($Name -eq 'winget.exe') { return [pscustomobject]@{ Source = 'winget.exe' } }
+                Microsoft.PowerShell.Core\Get-Command @PSBoundParameters
+            }
             function wsl.exe {
                 if (($args -join ' ') -eq '--update' -and $wslUpgradeExit -eq -1978335188) {
                     throw 'Fixture reached WSL update after a partial WinGet failure'
@@ -548,6 +588,10 @@ function Invoke-NativeAgentSetup {
                 $global:LASTEXITCODE = 0
             }
             function winget.exe {
+                if ($args[0] -eq '--version') {
+                    $global:LASTEXITCODE = 0
+                    return 'v1.12.0'
+                }
                 Assert-True ($args[0] -eq 'upgrade' -and $args -contains '--all') 'WSL setup skipped the bulk upgrade'
                 $global:LASTEXITCODE = $wslUpgradeExit
             }

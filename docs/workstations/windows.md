@@ -2,11 +2,12 @@
 
 The experimental `agent_windows` installer profile prepares the current
 x86-64 Windows 11 account for local coding with T3 Code. It installs missing
-PowerShell 7, Git with Git Bash, GitHub CLI, Codex and a native `basaltw` command,
-with T3 Code desktop enabled by default. Provider logins, Git identity,
-and T3 settings are preserved. Run as the
-intended Windows account; package installers may ask for UAC. Allow at least
-5 GiB of free space, plus space for your projects and their dependencies.
+PowerShell 7, Git with Git Bash, GitHub CLI and a native `basaltw` command, with
+T3 Code desktop enabled by default. Choose at least one coding provider on the
+first run, for example `-AgentTool codex`. Provider logins, Git identity, and T3
+settings are preserved. Run as the intended Windows account. Package installers
+may ask for UAC. Allow at least 5 GiB of free space, plus space for your projects
+and their dependencies.
 
 Windows follows the existing-account workstation approach for development,
 compatibility testing, CI and native packaging. Choose platforms according to
