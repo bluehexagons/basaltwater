@@ -15,14 +15,14 @@ function Assert-DevelopmentPath([string]$Path) {
     }
 }
 function Get-DevelopmentSid { [Security.Principal.WindowsIdentity]::GetCurrent().User.Value }
-function Enter-DevelopmentStateLock([string]$Path) {
+function Enter-DevelopmentStateLock([string]$Path, [int]$TimeoutMilliseconds = 5000) {
     # Readers and publishers share a bounded, reentrant lease across processes.
     $hash = [Security.Cryptography.SHA256]::Create()
     try { $key = [BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes([IO.Path]::GetFullPath($Path).ToUpperInvariant()))).Replace('-', '') }
     finally { $hash.Dispose() }
     $mutex = [Threading.Mutex]::new($false, ('Global\Basaltwater.DevelopmentState.' + $key))
     try {
-        try { $acquired = $mutex.WaitOne(5000) } catch [Threading.AbandonedMutexException] { $acquired = $true }
+        try { $acquired = $mutex.WaitOne($TimeoutMilliseconds) } catch [Threading.AbandonedMutexException] { $acquired = $true }
         if (-not $acquired) { throw 'Development state is busy; inspect the task before retrying.' }
         return $mutex
     } catch { $mutex.Dispose(); throw }
@@ -71,9 +71,9 @@ function Get-DevelopmentDirectory([string]$Id) {
     Assert-DevelopmentPath $directory
     return $directory
 }
-function Get-DevelopmentRecord([string]$Id) {
+function Get-DevelopmentRecord([string]$Id, [int]$TimeoutMilliseconds = 5000) {
     $path = Join-Path (Get-DevelopmentDirectory $Id) 'receipt.json'
-    $lease = Enter-DevelopmentStateLock $path
+    $lease = Enter-DevelopmentStateLock $path $TimeoutMilliseconds
     try {
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Unknown development task $Id; check the ID and Windows account." }
         Assert-DevelopmentPath $path
@@ -82,6 +82,80 @@ function Get-DevelopmentRecord([string]$Id) {
         if ($record.OwnerSid -ne (Get-DevelopmentSid) -or $record.Id -ne $Id -or $record.TaskName -ne ('Basaltwater Development ' + $Id)) { throw 'Development task belongs to another account or has an invalid identity.' }
         return $record
     } finally { Exit-DevelopmentStateLock $lease }
+}
+function Resolve-DevelopmentProject([string]$Project) {
+    if (-not $Project -or -not (Test-Path -LiteralPath $Project -PathType Container)) { throw 'Supply --project PATH naming an existing local project directory.' }
+    $resolved = (Resolve-Path -LiteralPath $Project).ProviderPath
+    if ($resolved.StartsWith('\\')) { throw 'Use a local Windows project path, not a network share.' }
+    Assert-DevelopmentPath $resolved
+    return $resolved
+}
+function ConvertTo-DevelopmentCreationTime([string]$Value) {
+    $time = [DateTimeOffset]::MinValue
+    if ($Value -cnotmatch '\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,7})?(?:Z|[+-][0-9]{2}:[0-9]{2})\z' -or
+        -not [DateTimeOffset]::TryParse($Value, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$time)) {
+        throw [ArgumentException]::new('Use an ISO 8601 creation time with a time zone, such as 2026-01-01T12:00:00Z.')
+    }
+    return $time.ToUniversalTime()
+}
+function Get-DevelopmentInventory([string[]]$Arguments) {
+    $filters = @{ project = $null; since = $null; until = $null }
+    $seen = @{}
+    $since = $null; $until = $null
+    for ($index = 1; $index -lt $Arguments.Count; $index++) {
+        $option = $Arguments[$index]
+        if ($option -notin @('--json','--project','--since','--until') -or $seen.ContainsKey($option)) {
+            throw [ArgumentException]::new('Usage: develop list [--project PATH] [--since ISO_TIME] [--until ISO_TIME] [--json]')
+        }
+        $seen[$option] = $true
+        if ($option -eq '--json') { continue }
+        if (++$index -ge $Arguments.Count -or $Arguments[$index] -like '--*') { throw [ArgumentException]::new("Missing value for $option") }
+        $value = $Arguments[$index]
+        switch ($option) {
+            '--project' {
+                try { $filters.project = Resolve-DevelopmentProject $value }
+                catch { throw [ArgumentException]::new($_.Exception.Message, $_.Exception) }
+            }
+            '--since' { $since = ConvertTo-DevelopmentCreationTime $value; $filters.since = $since.ToString('o') }
+            '--until' { $until = ConvertTo-DevelopmentCreationTime $value; $filters.until = $until.ToString('o') }
+        }
+    }
+    if ($null -ne $since -and $null -ne $until -and $since -gt $until) {
+        throw [ArgumentException]::new('Task creation-time lower bound must not follow the upper bound.')
+    }
+    $result = @{ tasks = @(); filters = $filters; truncated = $false; output_truncated = $false;
+        scan_truncated = $false; matches_truncated = $false; records_skipped = 0 }
+    $root = Get-DevelopmentRoot
+    Assert-DevelopmentPath $root
+    if (-not (Test-Path -LiteralPath $root -ErrorAction Stop)) { return $result }
+    if (-not (Test-Path -LiteralPath $root -PathType Container)) { throw 'Development state root must be a directory.' }
+    $entries = @(Get-ChildItem -LiteralPath $root -Force -ErrorAction Stop | Select-Object -First 501)
+    $result.scan_truncated = $entries.Count -gt 500
+    $records = @(foreach ($entry in $entries | Select-Object -First 500) {
+        if ($entry.Name -cnotmatch '\A[a-f0-9]{32}\z') { continue }
+        try {
+            $record = Get-DevelopmentRecord $entry.Name 0
+            $state = $record.PSObject.Properties['State'].Value
+            $projectProperty = $record.PSObject.Properties['Project']
+            $project = if ($projectProperty) { $projectProperty.Value } else { $null }
+            $time = $record.PSObject.Properties['CreatedUtc'].Value
+            if ($time -is [DateTime]) { $time = $time.ToUniversalTime().ToString('o') }
+            $created = ConvertTo-DevelopmentCreationTime $time
+            if ($state -isnot [string] -or $state -cnotmatch '\A[a-z][a-z-]{0,31}\z' -or
+                ($null -ne $project -and $project -isnot [string]) -or ($filters.project -and -not $project)) {
+                throw 'Incomplete development receipt.'
+            }
+        } catch { $result.records_skipped++; continue }
+        if (($filters.project -and $filters.project -ne $project) -or
+            ($null -ne $since -and $created -lt $since) -or ($null -ne $until -and $created -gt $until)) { continue }
+        [pscustomobject]@{ task = $entry.Name; state = $state; project = $project;
+            created_at = $created.ToString('o'); directory = $entry.FullName }
+    })
+    $result.tasks = @($records | Sort-Object -Property created_at, task -Descending | Select-Object -First 50)
+    $result.matches_truncated = $records.Count -gt 50
+    $result.output_truncated = $result.matches_truncated
+    $result.truncated = $result.scan_truncated -or $result.matches_truncated -or $result.records_skipped -gt 0
+    return $result
 }
 function Test-DevelopmentProcess([int]$ProcessId, [string]$StartedUtc) {
     $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
@@ -172,6 +246,7 @@ Usage: basaltw desktop develop COMMAND [OPTIONS]
   exec --project PATH [OPTIONS] -- EXE ARGV...  Run an explicit executable
   node NPM_SCRIPT --project PATH [OPTIONS] [-- NPM_ARGS...]
   editor|run|import --project PATH [OPTIONS]  Use the selected Godot executable
+  list [--project PATH] [--since ISO_TIME] [--until ISO_TIME]  Find saved job IDs
   status|logs|cancel TASK_ID               Inspect output or request cancellation
   wait TASK_ID [--timeout SECONDS]         Wait up to 60 seconds by default (1-86400)
   ready TASK_ID [--timeout SECONDS]        Wait for a live test session's readiness
@@ -194,7 +269,9 @@ Examples:
   basaltw desktop develop wait TASK_ID --timeout 120
 
 Commands emit a JSON result by default and accept --json. Submit, status,
-logs, ready and wait return job.id. The native Receipt remains available.
+logs, ready and wait return job.id. List returns tasks[].job.id, using saved
+state from up to 500 entries and showing up to 50 matches. Use status for a
+current observation. Creation times require a time zone.
 Exit: 0 for completed success, 1 for task failure or attention required,
 124 for caller wait timeout. Wait timeout/Ctrl+C does not cancel the task.
 Task timeout remains distinct in Receipt.State. Use logs separately for output.
@@ -387,10 +464,7 @@ function New-DevelopmentPlan([string[]]$Arguments) {
     if (($testSession -and $verb -notin @('exec','node','run')) -or ($readySelected -and -not $testSession)) {
         throw 'Use --test-session with exec/node/run; --ready-timeout requires --test-session.'
     }
-    if (-not $project -or -not (Test-Path -LiteralPath $project -PathType Container)) { throw 'Supply --project PATH naming an existing local project directory.' }
-    $project = (Resolve-Path -LiteralPath $project).ProviderPath
-    if ($project.StartsWith('\\')) { throw 'Use a local Windows project path, not a network share.' }
-    Assert-DevelopmentPath $project
+    $project = Resolve-DevelopmentProject $project
     $exe = ''; $argv = @(); $node = ''
     switch ($verb) {
         'exec' {
@@ -464,10 +538,11 @@ function Enter-DevelopmentAdmission([string]$Path) {
 }
 function Invoke-NativeDevelopmentCli([string[]]$Arguments) {
     if (-not $Arguments.Count -or ($Arguments.Count -eq 1 -and $Arguments[0] -in @('--help','-h','help')) -or
-        ($Arguments.Count -eq 2 -and $Arguments[0] -in @('doctor','exec','node','editor','run','import','status','logs','cancel','wait','ready','diagnose') -and $Arguments[1] -in @('--help','-h'))) {
+        ($Arguments.Count -eq 2 -and $Arguments[0] -in @('doctor','exec','node','editor','run','import','list','status','logs','cancel','wait','ready','diagnose') -and $Arguments[1] -in @('--help','-h'))) {
         Show-NativeDevelopmentHelp
         return
     }
+    if ($Arguments[0] -eq 'list') { return Get-DevelopmentInventory $Arguments }
     if ($Arguments[0] -in @('status','logs','cancel','wait','ready','diagnose')) {
         $Arguments = @($Arguments | Where-Object { $_ -cne '--json' })
     }

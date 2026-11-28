@@ -191,6 +191,11 @@ function Invoke-NativeDevelopmentCli($Arguments) {
         $implementation = (Join-Path $repo 'windows\Development.Common.ps1').Replace("'", "''")
         [IO.File]::WriteAllText((Join-Path $developmentSource 'windows\Development.Common.ps1'),
             ". '$implementation'`nfunction Get-DevelopmentBoot { return 'fixture-boot' }")
+        $response = & $launcher desktop develop list | Out-String
+        $code = $LASTEXITCODE
+        $listing = $response | ConvertFrom-Json
+        Assert-True ($code -eq 0 -and $listing.ok -and $listing.tasks -is [array] -and $listing.tasks.Count -eq 0 -and
+            -not $listing.truncated) 'Missing task store did not return a complete empty inventory'
         $id = 'a' * 32
         $directory = Join-Path $env:LOCALAPPDATA "Basaltwater\development\$id"
         New-Item -ItemType Directory -Path $directory -Force | Out-Null
@@ -210,6 +215,34 @@ function Invoke-NativeDevelopmentCli($Arguments) {
         } finally { $admission.Dispose() }
         $response = & $launcher desktop develop status $cancel.job.id --json | Out-String
         Assert-True ($LASTEXITCODE -eq 0 -and ($response | ConvertFrom-Json).job.id -eq $id) 'Cancellation handle could not be used with status'
+
+        $taskRoot = Split-Path -Parent $directory
+        $project = Join-Path $temporary 'inventory project'
+        New-Item -ItemType Directory -Path $project, (Join-Path $taskRoot ('b' * 32)) | Out-Null
+        $receipt = @{ OwnerSid = $queued.OwnerSid; State = 'complete'; Project = $project;
+            CreatedUtc = '2026-01-01T12:00:00Z'; CompletedUtc = '2026-01-01T12:00:01Z'; PrivateField = 'do-not-return' }
+        foreach ($index in 1..51) {
+            $taskId = '{0:x32}' -f $index
+            $taskDirectory = Join-Path $taskRoot $taskId
+            New-Item -ItemType Directory -Path $taskDirectory | Out-Null
+            $receipt.Id = $taskId; $receipt.TaskName = "Basaltwater Development $taskId"
+            [IO.File]::WriteAllText((Join-Path $taskDirectory 'receipt.json'), ($receipt | ConvertTo-Json))
+        }
+        $receipt.Id = 'c' * 32; $receipt.TaskName = "Basaltwater Development $($receipt.Id)"; $receipt.OwnerSid = 'S-1-0-0'
+        $foreignDirectory = Join-Path $taskRoot $receipt.Id
+        New-Item -ItemType Directory -Path $foreignDirectory | Out-Null
+        [IO.File]::WriteAllText((Join-Path $foreignDirectory 'receipt.json'), ($receipt | ConvertTo-Json))
+        $response = & $launcher desktop develop list --project $project --since '2026-01-01T07:00:00-05:00' --until '2026-01-01T12:00:00Z' --json | Out-String
+        $code = $LASTEXITCODE
+        $listing = $response | ConvertFrom-Json
+        Assert-True ($code -eq 0 -and $listing.schema_version -eq 1 -and $listing.ok -and $listing.tasks.Count -eq 50 -and
+            $listing.truncated -and $listing.matches_truncated -and $listing.output_truncated -and -not $listing.scan_truncated -and
+            $listing.records_skipped -eq 3 -and $listing.tasks[0].job.id -eq ('{0:x32}' -f 51) -and
+            $listing.tasks[0].job.state -eq 'succeeded' -and $response -notmatch 'do-not-return') 'Inventory lost a bounded match, its handle, or coverage information'
+        $response = & $launcher desktop develop status $listing.tasks[0].job.id --json | Out-String
+        Assert-True ($LASTEXITCODE -eq 0 -and ($response | ConvertFrom-Json).job.id -eq $listing.tasks[0].job.id) 'Inventory handle could not be used with status'
+        $response = & $launcher desktop develop list --since '2026-01-01T12:00:00' --json | Out-String
+        Assert-True ($LASTEXITCODE -eq 2 -and ($response | ConvertFrom-Json).issue -eq 'invalid_input') 'Inventory accepted a timestamp without a time zone'
     } finally {
         $env:BASALTWATER_TEST_TASK_STATE = $savedTaskState
         $env:BASALTWATER_TEST_WAIT_STATE = $savedWaitState

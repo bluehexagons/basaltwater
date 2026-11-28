@@ -11,6 +11,7 @@ explicit child profiles, atomic readiness, file-URL preloads and retained result
 ```powershell
 basaltw desktop develop exec --project 'F:\Repos\sample-game' --test-session --ready-timeout 60 --timeout 600 --dry-run -- python.exe qa_session.py
 basaltw desktop develop exec --project 'F:\Repos\sample-game' --test-session --ready-timeout 60 --timeout 600 -- python.exe qa_session.py
+basaltw desktop develop list --project 'F:\Repos\sample-game' --json
 basaltw desktop develop ready TASK_ID --timeout 90
 basaltw desktop develop status TASK_ID
 basaltw desktop develop logs TASK_ID
@@ -27,6 +28,17 @@ the worker has recorded stream totals.
 Dry run validates the plan without
 creating directories, reserving a project or launching code. It does not
 evaluate whether the project actually honors isolation or readiness.
+
+If the submission reply is unavailable, `develop list` reads saved receipts
+for the current Windows account. Pass the matching `tasks[].job.id` to
+`develop status` for a current observation. `list` reads the first 500 store
+entries it encounters and returns up to 50 matches, newest creation time
+first. Optional `--project PATH` selects an existing local project.
+`--since ISO_TIME` and `--until ISO_TIME` are inclusive creation-time bounds
+and require a time zone, for example `2026-01-01T12:00:00Z`. Check
+`scan_truncated` for the scan limit, `matches_truncated` and `output_truncated`
+for omitted matches, and `records_skipped` for unavailable or incomplete
+receipts. `truncated` summarizes these coverage limits.
 
 ## Project contract
 

@@ -125,8 +125,10 @@ environment snapshots are removed afterward. Logs are bounded and require review
 before sharing. No upload/signing credentials are implied by local tasks.
 Save the ID, initial receipt, selected executable/runtime and worker source
 revision in private notes before waiting. Reattach to that same ID after a
-terminal/turn interruption; do not launch a replacement because a handle was
-lost. Record installed setup, selected checkout and delivered skill provenance
+terminal/turn interruption. If the submission reply was lost, use
+`develop list --project PATH --json` and pass the matching `tasks[].job.id` to
+`develop status`. Check `truncated` before drawing conclusions about missing
+records. Record installed setup, selected checkout and delivered skill provenance
 separately; the session-loaded skill revision can remain unknown.
 
 `develop wait ID [--timeout SECONDS]` waits for confirmed completion (default 60,

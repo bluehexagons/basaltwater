@@ -155,6 +155,13 @@ function Get-NativeJobView([string]$Id, [string]$State) {
 
 function Write-NativeDevelopmentResult([string]$Verb, $Result) {
     $fields = ConvertTo-NativeResultFields $Result
+    if ($Verb -eq 'list') {
+        $fields['tasks'] = @(foreach ($task in $fields['tasks']) {
+            $taskFields = ConvertTo-NativeResultFields $task
+            $taskFields['job'] = Get-NativeJobView $task.task $task.state
+            $taskFields
+        })
+    }
     $record = if ($fields['Receipt']) { ConvertTo-NativeResultFields $fields['Receipt'] } else { $fields }
     if ($fields['Id']) { $fields['job'] = Get-NativeJobView $fields['Id'] $record['State'] }
     if ($record.Contains('ExitCode')) { $fields['child_exit_code'] = $record['ExitCode'] }
@@ -298,7 +305,7 @@ Native desktop commands (JSON by default, --json selects the same result):
   control enabled|human-override|disabled --human-approved [--seconds N|--indefinite]
   open PATH [--reveal] | terminal --project PATH [--msvc]
   notify --title TEXT --message TEXT
-  develop doctor|exec|node|editor|run|import|status|logs|cancel|wait|ready|diagnose ...
+  develop doctor|exec|node|editor|run|import|list|status|logs|cancel|wait|ready|diagnose ...
   develop --help  Task options, npm-script examples and bounded waiting
 Observe windows/inspect before actions. Pixel capture does not prove rendered content or input outcome.
 Screenshot and input --observe return screenshot and capture_receipt artifact entries.
