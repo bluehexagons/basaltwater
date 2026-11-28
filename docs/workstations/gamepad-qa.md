@@ -124,6 +124,13 @@ hold the guest showed Ready while the host could still shop. The game's
 title screen accepted the temporary rebind after its in-match settings
 ignored guest input. [Guest-first recovery](https://github.com/bluehexagons/game-testing/blob/5ea31c6/games/mythic-battle/runs/MB-R070/bugs.md)
 
+A later test on the same build kept the original View / Select binding.
+One `--button select --hold-ms 2500` action readied the guest while the
+host remained unready. Check the stock binding with that duration before
+using the remap fallback. The minimum duration is unknown. The device
+receipt and pad status both identified the serving adapter as `d03f90e1`.
+[Stock-binding retest and screenshots](https://github.com/bluehexagons/game-testing/blob/ae2a5bc/games/mythic-battle/runs/MB-RT006-results.md)
+
 For relative mouse, side buttons and true multitouch testing through the native
 portal, use [pointer and touch QA](pointer-touch-qa.md). Those events have a
 different transport, permission and qualification boundary from this controller.
