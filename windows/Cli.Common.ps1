@@ -362,8 +362,10 @@ Tokens do not prove semantic or scene validity. Input without a token keeps its 
             $details = @{}
             if ($options[0] -eq 'develop' -and $options.Count -gt 1 -and $options[1] -in @('exec','node','editor','run','import','cancel')) {
                 $details['stage'] = if ($errorInfo.Data['stage']) { $errorInfo.Data['stage'] } else { $options[1] }
-                $details['effect'] = if ($issue -eq 'invalid_input') { 'none' } else { 'unknown' }
-                if ($errorInfo.Data['job_id']) { $details['job'] = Get-NativeJobView $errorInfo.Data['job_id'] '' }
+                $details['effect'] = if ($errorInfo.Data['effect']) { $errorInfo.Data['effect'] }
+                    elseif ($issue -eq 'invalid_input') { 'none' } else { 'unknown' }
+                if ($errorInfo.Data['job_id']) { $details['job'] = Get-NativeJobView $errorInfo.Data['job_id'] $errorInfo.Data['job_state'] }
+                if ($errorInfo.Data['cancellation']) { $details['cancellation'] = $errorInfo.Data['cancellation'] }
             }
             return Write-NativeToolResult $details $false $issue $errorInfo.Message
         }

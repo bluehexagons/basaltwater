@@ -187,10 +187,56 @@ function Invoke-NativeDevelopmentCli($Arguments) {
         Assert-True ($LASTEXITCODE -eq 0 -and $logs.ok -and $logs.job.id -eq 'fixture-id' -and
             -not $logs.output_truncated -and $logs.log_truncated -and $logs.child_exit_code -eq 23 -and
             $logs.artifacts.Count -eq 0) 'Development logs lost retention, excerpt or exit information'
+
+        $implementation = (Join-Path $repo 'windows\Development.Common.ps1').Replace("'", "''")
+        [IO.File]::WriteAllText((Join-Path $developmentSource 'windows\Development.Common.ps1'),
+            ". '$implementation'`nfunction Get-DevelopmentBoot { return 'fixture-boot' }")
+        $id = 'a' * 32
+        $directory = Join-Path $env:LOCALAPPDATA "Basaltwater\development\$id"
+        New-Item -ItemType Directory -Path $directory -Force | Out-Null
+        $queued = @{ Id = $id; OwnerSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value;
+            TaskName = "Basaltwater Development $id"; State = 'queued'; WorkerPid = 0; Boot = 'fixture-boot';
+            CreatedUtc = [DateTime]::UtcNow.ToString('o'); CompletedUtc = $null }
+        [IO.File]::WriteAllText((Join-Path $directory 'receipt.json'), ($queued | ConvertTo-Json))
+        $admission = [IO.File]::Open((Join-Path $env:LOCALAPPDATA 'Basaltwater\setup.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
+        try {
+            $response = & $launcher desktop develop cancel $id --json | Out-String
+            $code = $LASTEXITCODE
+            $cancel = $response | ConvertFrom-Json
+            Assert-True ($code -eq 1 -and -not $cancel.ok -and $cancel.job.id -eq $id -and
+                $cancel.job.state -eq 'queued' -and $cancel.stage -eq 'cleanup' -and $cancel.effect -eq 'partial' -and
+                $cancel.cancellation -eq 'requested') 'Cancellation discarded the saved request or its job handle'
+            Assert-True ([IO.File]::ReadAllText((Join-Path $directory 'cancel')) -eq 'cancel') 'Cancellation request was not retained'
+        } finally { $admission.Dispose() }
+        $response = & $launcher desktop develop status $cancel.job.id --json | Out-String
+        Assert-True ($LASTEXITCODE -eq 0 -and ($response | ConvertFrom-Json).job.id -eq $id) 'Cancellation handle could not be used with status'
     } finally {
         $env:BASALTWATER_TEST_TASK_STATE = $savedTaskState
         $env:BASALTWATER_TEST_WAIT_STATE = $savedWaitState
         Set-Content -LiteralPath $receiptPath -Value $receiptText -Encoding UTF8
+    }
+    & {
+        $manage = Join-Path $repo 'windows\Manage-Wsl.ps1'
+        @{ OwnerSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value;
+            Phase = 'complete'; Distro = 'Fixture Ubuntu'; Revision = ('b' * 40) } |
+            ConvertTo-Json | Set-Content -LiteralPath (Join-Path $env:LOCALAPPDATA 'Basaltwater\wsl-setup.json')
+        function wsl.exe {
+            Assert-True (($args -join ' ') -eq '--list --verbose') 'Status invoked a mutating WSL command'
+            $global:LASTEXITCODE = $inventoryExit
+            "Fixture Ubuntu$([char]0)"
+        }
+        function Get-ScheduledTask { return [pscustomobject]@{ State = 'Ready' } }
+        foreach ($inventoryExit in @(0, 23)) {
+            $response = & $manage -Action status -Json 6>&1 | Out-String
+            $code = $LASTEXITCODE
+            $status = $response | ConvertFrom-Json
+            Assert-True ($status.ok -eq ($inventoryExit -eq 0) -and $status.child_exit_code -eq $inventoryExit -and
+                $status.distribution_inventory_text -eq 'Fixture Ubuntu') 'WSL status lost result or child exit information'
+            if ($inventoryExit) {
+                Assert-True ($code -eq 1 -and $status.issue -eq 'wsl_inventory_failed') 'WSL JSON status swallowed an inventory failure'
+                Assert-Throws { & $manage -Action status 6>$null } 'distribution inventory failed \(exit code 23\)'
+            } else { Assert-True ($code -eq 0) 'WSL JSON status failed on a successful inventory' }
+        }
     }
     $source = Join-Path $temporary ('pinned source with spaces ' + [char]0x03bb)
     New-Item -ItemType Directory -Path $source | Out-Null

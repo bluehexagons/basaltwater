@@ -495,16 +495,30 @@ function Invoke-NativeDevelopmentCli([string[]]$Arguments) {
         if ($Arguments[0] -eq 'status') { return $record }
         if ($Arguments[0] -eq 'cancel') {
             if ($record.CompletedUtc) { return [pscustomobject]@{ Id = $id; State = $record.State; CancelRequested = $false } }
-            [IO.File]::WriteAllText((Join-Path $directory 'cancel'), 'cancel')
-            $probe = $null
-            $admission = [IO.File]::Open((Join-Path $env:LOCALAPPDATA 'Basaltwater\setup.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
+            $requested = $false
+            $probe = $null; $admission = $null
             try {
+                [IO.File]::WriteAllText((Join-Path $directory 'cancel'), 'cancel')
+                $requested = $true
+                $admission = [IO.File]::Open((Join-Path $env:LOCALAPPDATA 'Basaltwater\setup.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
                 try { $probe = [IO.File]::Open((Join-Path $directory 'guardian.lock'), 'OpenOrCreate', 'ReadWrite', 'None') }
-                catch [IO.IOException] { } # The active guardian will consume the marker.
+                catch [IO.IOException] {
+                    # Only a sharing/lock conflict indicates a guardian holds the lease.
+                    if (($_.Exception.GetBaseException().HResult -band 0xffff) -notin @(32, 33)) { throw }
+                }
                 if ($probe) { $record = Complete-AbandonedDevelopmentTask $id $probe }
+            } catch {
+                $_.Exception.Data['job_id'] = $id
+                $_.Exception.Data['job_state'] = $record.State
+                if ($requested) {
+                    $_.Exception.Data['stage'] = 'cleanup'
+                    $_.Exception.Data['effect'] = 'partial'
+                    $_.Exception.Data['cancellation'] = 'requested'
+                }
+                throw
             } finally {
                 if ($probe) { $probe.Dispose() }
-                $admission.Dispose()
+                if ($admission) { $admission.Dispose() }
             }
             return [pscustomobject]@{ Id = $id; State = $record.State; CancelRequested = $true; Message = 'Use status to confirm cleanup. Uncertain tasks block setup/reboot.' }
         }

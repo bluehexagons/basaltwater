@@ -19,6 +19,7 @@ try {
     $taskName = 'Basaltwater WSL worker'
     switch ($Action) {
         'status' {
+            $PSNativeCommandUseErrorActionPreference = $false
             if ($Json) {
                 $distributionList = @(& wsl.exe --list --verbose)
                 $childExit = $LASTEXITCODE
@@ -30,6 +31,7 @@ try {
             }
             Write-Host "Setup phase: $($state.Phase); Ubuntu: $($state.Distro); source: $($state.Revision)"
             & wsl.exe --list --verbose
+            if ($LASTEXITCODE -ne 0) { throw "The WSL distribution inventory failed (exit code $LASTEXITCODE)." }
             $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
             if ($task) { Write-Host "Login worker: $($task.State)" }
         }
