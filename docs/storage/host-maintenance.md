@@ -216,18 +216,21 @@ Builder collection uses existing nonblocking worker, input, payload and job
 locks; a worker or reader starting after inventory still excludes deletion.
 Neither path relies on a process snapshot to protect managed payloads.
 
-Preflight checks downloads, build homes, staging and temporary directories,
-including separate `/tmp` mounts and `TMPDIR`. Each filesystem must provide the
-estimated build peak plus a reserve, with enough available inodes. Defaults are
+Preflight checks downloads, build homes, staging and the temporary directory
+used by Debian setup and repository deployments. Both use `/var/tmp` unless
+the target process already has a nonempty `TMPDIR`. Commands that honor
+`TMPDIR` use the selected directory for their scratch space. Maintenance
+continues to check both `/tmp` and `/var/tmp` for space and inode pressure.
+Each filesystem checked by preflight must provide the estimated build peak
+plus a reserve, with enough available inodes. Defaults are
 512 MiB peak, 512 MiB reserve and 10,000 inodes. Temporary paths use a separate
 128 MiB peak plus 64 MiB reserve by default. Override these estimates for a
 known workload using `BASALTWATER_STORAGE_PEAK_MIB`,
 `BASALTWATER_STORAGE_RESERVE_MIB`, and `BASALTWATER_STORAGE_MIN_INODES` in the
 target setup/deployment process environment. Temporary estimates use
 `BASALTWATER_STORAGE_TMP_PEAK_MIB` and `BASALTWATER_STORAGE_TMP_RESERVE_MIB`.
-A small tmpfs can fail independently
-of the root disk. Increase its capacity or select a suitable temporary directory
-and verify the workload's actual peak before lowering estimates.
+If the selected filesystem runs short, increase capacity or choose a suitable
+temporary directory. Verify actual peak usage before lowering estimates.
 
 A failed preflight reports phase, path, mount, available bytes/inodes, requirements
 and bounded managed-build-home storage measurements. Cleanup reports any remaining

@@ -22,6 +22,7 @@ import sys
 import tempfile
 
 from lib.agent_storage_inventory import inspect_storage, _mounts
+from lib.maintenance_defaults import DEFAULT_SETUP_TMPDIR
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
 from lib.streamed_process import run_streamed
@@ -245,13 +246,33 @@ def operation_guard(phase: str, paths: list[str], *, cleanup_accounts: list[str]
             raise OSError(28, f"Storage exhausted: {detail}") from exc
 
 
+@contextmanager
+def _operation_tmpdir():
+    """Keep Python and child tools on the filesystem checked by preflight."""
+    previous = os.environ.get("TMPDIR")
+    directory = previous or DEFAULT_SETUP_TMPDIR
+    validate_filesystem_path(directory)
+    if not os.path.isabs(directory) or not os.path.isdir(directory) or not os.access(directory, os.W_OK | os.X_OK):
+        raise ValueError(f"Setup and deployment TMPDIR must be an absolute, writable directory: {directory}")
+    saved_cache = tempfile.tempdir
+    os.environ["TMPDIR"] = directory
+    tempfile.tempdir = directory
+    try:
+        yield directory
+    finally:
+        tempfile.tempdir = saved_cache
+        if previous is None:
+            os.environ.pop("TMPDIR", None)
+        else:
+            os.environ["TMPDIR"] = previous
+
+
 def guarded_setup(function):
     @wraps(function)
     def wrapped(config, args):
         if args.dry_run:
             return function(config, args)
-        paths = ["/opt/basaltwater", "/var/cache/apt/archives", "/var/lib/basaltwater", "/var/tmp",
-                 os.environ.get("TMPDIR", "/tmp")]
+        paths = ["/opt/basaltwater", "/var/cache/apt/archives", "/var/lib/basaltwater"]
         try:
             paths.append(pwd.getpwnam(config.username).pw_dir)
             cleanup_accounts = [config.username]
@@ -262,8 +283,8 @@ def guarded_setup(function):
             paths.extend([BUILD_HOMES, "/var/www"])
         operation_started = False
         try:
-            with operation_guard(
-                "setup", paths, cleanup_accounts=cleanup_accounts,
+            with _operation_tmpdir() as scratch, operation_guard(
+                "setup", [*paths, scratch], cleanup_accounts=cleanup_accounts,
                 recover_deployments=bool(config.deploy_specs and not config.artifact_deployments),
             ):
                 operation_started = True
@@ -285,11 +306,10 @@ def guarded_setup(function):
 def guarded_deployment(function):
     @wraps(function)
     def wrapped(self, *args, **kwargs):
-        paths = [self.base_dir, BUILD_HOMES, "/tmp", "/var/tmp"]
+        paths = [self.base_dir, BUILD_HOMES]
         if "staging_root" in kwargs:
             paths.append(kwargs["staging_root"])
-        paths.append(os.environ.get("TMPDIR", "/tmp"))
-        with operation_guard("deployment", paths):
+        with _operation_tmpdir() as scratch, operation_guard("deployment", [*paths, scratch]):
             return function(self, *args, **kwargs)
     return wrapped
 

@@ -327,7 +327,7 @@ def _probe_environment(directory: str) -> dict[str, str]:
     user_config.write_text("")
     global_config.write_text("")
     return {
-        "PATH": os.defpath, "HOME": directory, "LC_ALL": "C",
+        "PATH": os.defpath, "HOME": directory, "LC_ALL": "C", "TMPDIR": directory,
         "COREPACK_ENABLE_NETWORK": "0", "COREPACK_ENABLE_PROJECT_SPEC": "0",
         "NPM_CONFIG_USERCONFIG": str(user_config), "NPM_CONFIG_GLOBALCONFIG": str(global_config),
         "NPM_CONFIG_UPDATE_NOTIFIER": "false",
@@ -416,7 +416,7 @@ def select_node(project: str = ".", *, version: str | None = None,
         executable = shutil.which("node")
         actual = None
         if executable:
-            with tempfile.TemporaryDirectory(prefix="basaltwater-node-selection-", dir="/tmp") as probe:
+            with tempfile.TemporaryDirectory(prefix="basaltwater-node-selection-") as probe:
                 observed = _probe_version(executable, cwd=probe, environment=_probe_environment(probe))
             if observed is not None:
                 actual = _version(observed)
@@ -462,7 +462,7 @@ def inspect_project_node(project: str, *, version: str | None = None) -> dict[st
     npm_requirement = _npm_requirement(project)
     tools: dict[str, str | None] = {"node": None, "npm": None}
     issues: list[str] = []
-    with tempfile.TemporaryDirectory(prefix="basaltwater-project-node-", dir="/tmp") as probe:
+    with tempfile.TemporaryDirectory(prefix="basaltwater-project-node-") as probe:
         environment = selection.environment(_probe_environment(probe))
         for name in tools:
             tools[name] = _probe_version(str(Path(selection.executable).with_name(name)),

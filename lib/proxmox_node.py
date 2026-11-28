@@ -15,6 +15,7 @@ import time
 from typing import Optional, cast
 
 from lib.config import SetupConfig
+from lib.maintenance_defaults import DEFAULT_SETUP_TMPDIR
 from lib.proxmox_guest import (
     GuestAlreadyExists,
     ProvisionError,
@@ -427,10 +428,11 @@ def _upload_pubkey_to_host(
     """Upload the local public key to a temp file on the Proxmox host.
 
     Returns the remote temp path so the caller can pass it to `pct create
-    --ssh-public-keys`. Returns None on dry runs.
+    --ssh-public-keys`. Dry runs return a placeholder path.
     """
+    prefix = f"{DEFAULT_SETUP_TMPDIR}/basaltwater_pubkey."
     if dry_run:
-        return "/tmp/basaltwater_pubkey.dryrun"
+        return prefix + "dryrun"
 
     try:
         with open(pub_path, "r", encoding="utf-8") as fh:
@@ -438,25 +440,22 @@ def _upload_pubkey_to_host(
     except OSError as exc:
         raise ProvisionError(f"Failed to read public key {pub_path}: {exc}")
 
-    # mktemp on the host, then write the contents through ssh stdin.
-    mk = _ssh_run(
-        node_ip, user, ssh_opts,
-        "mktemp /tmp/basaltwater_pubkey.XXXXXX",
-        dry_run=False,
+    # Keep allocation and transfer in one remote process so failed writes
+    # can remove the partial file before passing ownership to the caller.
+    script = (
+        'set -eu\n'
+        'umask 077\n'
+        f'key_file=$(mktemp -- {shlex.quote(prefix + "XXXXXX")})\n'
+        'trap \'rm -f -- "$key_file"\' EXIT\n'
+        "trap 'exit 1' HUP INT TERM\n"
+        'cat > "$key_file"\n'
+        'printf "%s\\n" "$key_file"\n'
+        'trap - EXIT\n'
     )
-    if mk.returncode != 0 or not mk.stdout.strip():
-        raise ProvisionError(
-            f"Failed to allocate temp file for SSH key on {node_ip}: "
-            f"{(mk.stderr or '').strip() or 'mktemp failed'}"
-        )
-    remote_path = mk.stdout.strip()
-
     proc = _ssh_run(
-        node_ip,
-        user,
-        ssh_opts,
-        f"cat > {shlex.quote(remote_path)} && chmod 600 {shlex.quote(remote_path)}",
+        node_ip, user, ssh_opts, shlex.join(["/bin/sh", "-c", script]),
         dry_run=False,
+        log_cmd="Stage the container SSH public key",
         input_data=pub_contents,
     )
     if proc.returncode != 0:
@@ -464,6 +463,9 @@ def _upload_pubkey_to_host(
             f"Failed to upload public key to {node_ip}: "
             f"{proc.stderr.strip() or 'unknown error'}"
         )
+    remote_path = proc.stdout.strip()
+    if not re.fullmatch(re.escape(prefix) + r"[A-Za-z0-9]{6}", remote_path):
+        raise ProvisionError(f"Unexpected temporary public key path from {node_ip}")
     return remote_path
 
 def _create_container(

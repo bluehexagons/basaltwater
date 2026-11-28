@@ -36,6 +36,7 @@ from lib.config import DEFAULT_MACHINE_TYPE, SetupConfig, _normalize_nested_spec
 from lib.credentials import prepare_runtime_config, store_cli_credentials
 from lib.homebox_config import validate_homebox_settings
 from lib.kiosk_config import validate_kiosk_settings
+from lib.maintenance_defaults import DEFAULT_SETUP_TMPDIR
 from lib.github_runner_config import PAYLOAD_NAME as RUNNER_PAYLOAD_NAME
 from lib.github_runner_config import PROFILE as GITHUB_RUNNER_PROFILE
 from lib.github_runner_credentials import prepare_registration_payload
@@ -1539,7 +1540,13 @@ def _run_remote_setup_locked(config: SetupConfig, *, expected_releases: object =
         ):
             return 1
 
-    build_dir = tempfile.mkdtemp(prefix="basaltwater_setup_build_")
+    scratch_parent = os.path.abspath(os.environ.get("TMPDIR") or DEFAULT_SETUP_TMPDIR)
+    try:
+        validate_filesystem_path(scratch_parent)
+        build_dir = tempfile.mkdtemp(prefix="basaltwater_setup_build_", dir=scratch_parent)
+    except (OSError, ValueError) as exc:
+        print(f"Error allocating setup staging under {scratch_parent}: {exc}")
+        return 1
     try:
         copy_project_files(build_dir)
         

@@ -385,6 +385,47 @@ class StorageManagementTests(unittest.TestCase):
             self.assertIn("/srv/staging", preflight.call_args.args[1])
             self.assertFalse(held)
 
+    def test_setup_uses_checked_scratch_despite_exhausted_tmpfs_and_restores_environment(self):
+        from tests import real_storage_operation_guard
+        with tempfile.TemporaryDirectory() as directory:
+            scratch = str(Path(directory) / "scratch")
+            Path(scratch).mkdir()
+            config = SimpleNamespace(username="fixture", deploy_specs=[])
+            args = SimpleNamespace(dry_run=False)
+            original_tempdir = tempfile.tempdir
+            observed = []
+
+            def capacity(path):
+                observed.append(path)
+                return dict(path=path, mount="/tmp" if path == "/tmp" else "/",
+                            free_bytes=0 if path == "/tmp" else 10 * 1024**3,
+                            free_inodes=0 if path == "/tmp" else 20000, inodes_supported=True)
+
+            @storage.guarded_setup
+            def setup(config, args):
+                self.assertEqual(os.environ["TMPDIR"], scratch)
+                self.assertEqual(tempfile.gettempdir(), scratch)
+                raise RuntimeError("fixture step failed")
+
+            with patch.object(storage, "DEFAULT_SETUP_TMPDIR", scratch), patch.object(
+                    storage, "operation_guard", real_storage_operation_guard), patch.object(
+                    storage, "storage_lock", side_effect=lambda **_: nullcontext()), patch.object(
+                    storage, "filesystem", side_effect=capacity), patch.dict(os.environ, {}, clear=True):
+                with self.assertRaisesRegex(RuntimeError, "fixture step failed"):
+                    setup(config, args)
+                self.assertNotIn("TMPDIR", os.environ)
+                self.assertEqual(tempfile.tempdir, original_tempdir)
+                self.assertIn(scratch, observed)
+                self.assertNotIn("/tmp", observed)
+
+                with patch.object(storage, "inspect_storage", return_value={"candidates": []}), patch(
+                        "lib.storage_pressure.clean_system_storage", return_value=[]), patch(
+                        "lib.storage_pressure.clean_build_versions", return_value=[]), patch.object(
+                        storage, "maintain", return_value={"accounts": []}), patch.dict(os.environ, {"TMPDIR": "/tmp"}):
+                    self.assertEqual(setup(config, args), 1)
+                    self.assertEqual(os.environ["TMPDIR"], "/tmp")
+                self.assertIn("/tmp", observed)
+
     def test_space_exhaustion_after_preflight_keeps_phase_and_observations(self):
         from contextlib import nullcontext
         from tests import real_storage_operation_guard

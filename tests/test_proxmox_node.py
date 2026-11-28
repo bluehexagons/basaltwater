@@ -547,14 +547,9 @@ class TestPublicKeyResolution(unittest.TestCase):
 class TestPublicKeyUpload(unittest.TestCase):
     @patch("lib.proxmox_node._ssh_run")
     def test_upload_reuses_proxmox_ssh_connection(self, mock_run):
-        mock_run.side_effect = [
-            MagicMock(
-                returncode=0,
-                stdout="/tmp/basaltwater_pubkey.abc\n",
-                stderr="",
-            ),
-            MagicMock(returncode=0, stdout="", stderr=""),
-        ]
+        mock_run.return_value = MagicMock(
+            returncode=0, stdout="/var/tmp/basaltwater_pubkey.a1b2c3\n", stderr="",
+        )
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8") as key_file:
             key_file.write("ssh-ed25519 AAAA test\n")
             key_file.flush()
@@ -567,9 +562,11 @@ class TestPublicKeyUpload(unittest.TestCase):
                 dry_run=False,
             )
 
-        self.assertEqual(path, "/tmp/basaltwater_pubkey.abc")
+        self.assertEqual(path, "/var/tmp/basaltwater_pubkey.a1b2c3")
+        mock_run.assert_called_once()
+        self.assertIn("mktemp", mock_run.call_args.args[3])
         self.assertEqual(
-            mock_run.call_args_list[1].kwargs["input_data"],
+            mock_run.call_args.kwargs["input_data"],
             "ssh-ed25519 AAAA test\n",
         )
 

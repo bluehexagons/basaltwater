@@ -8,6 +8,7 @@ import shlex
 import subprocess
 
 from lib.build_protocol import MAX_DESCRIPTOR_BYTES
+from lib.maintenance_defaults import BASALTWATER_TMP_DIRS, DEFAULT_SETUP_TMPDIR
 from lib.ssh_utils import build_ssh_command, strict_ssh_transport
 from lib.validation import validate_filesystem_path
 
@@ -68,7 +69,7 @@ def check_observations(rows: object, requests: list[list]) -> list[dict]:
         validate_filesystem_path(actual)
         if not os.path.isabs(actual) or os.path.normpath(actual) != actual:
             raise ValueError("Storage probe returned an invalid physical path")
-        reserve = 64 * 1024**2 if path == "/tmp" else RESERVE
+        reserve = 64 * 1024**2 if path in BASALTWATER_TMP_DIRS else RESERVE
         group = groups.setdefault(row["device"], dict(
             mount=row["mount"], paths=[], free_bytes=row["free_bytes"],
             free_inodes=row["free_inodes"], required_bytes=0, reserve_bytes=reserve,
@@ -83,7 +84,8 @@ def check_observations(rows: object, requests: list[list]) -> list[dict]:
     result = list(groups.values())
     for group in result:
         group["required_bytes"] += group["reserve_bytes"]
-        group["required_inodes"] += (1000 if group["paths"] == ["/tmp"] else INODE_RESERVE)
+        group["required_inodes"] += (1000 if len(group["paths"]) == 1
+                                     and group["paths"][0] in BASALTWATER_TMP_DIRS else INODE_RESERVE)
         group["shortfall_bytes"] = max(0, group["required_bytes"] - group["free_bytes"])
         group["shortfall_inodes"] = (max(0, group["required_inodes"] - group["free_inodes"])
                                       if group["inodes_supported"] else 0)
@@ -149,9 +151,8 @@ def preflight_delivery_storage(config, selected, endpoint, plans) -> dict:
     # Export snapshot and bundle temporary trees live beside final artifacts.
     builder[2][1] += packaging
     builder[2][2] += max(plan.request["limits"]["artifact_entries"] for plan in plans) + 16
-    # Include setup's separate temporary mount without charging full artifacts
-    # to tmpfs: artifact extraction/staging uses explicit private roots.
-    target.append(["/tmp", 128 * 1024**2, 1000])
-    builder.append(["/tmp", 128 * 1024**2, 1000])
+    # Artifact extraction and isolated builds use their own private roots.
+    target.append([DEFAULT_SETUP_TMPDIR, 128 * 1024**2, 1000])
+    builder.append([DEFAULT_SETUP_TMPDIR, 128 * 1024**2, 1000])
     return {"target": probe(endpoint, target, phase="target delivery", role="target"),
             "builder": probe(selected.endpoint, builder, phase="builder admission", role="host")}

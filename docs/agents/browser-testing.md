@@ -216,6 +216,9 @@ into that profile's trust database. Host trust stores and existing profiles are
 untouched. Certificate verification stays enabled; a certificate with the wrong
 hostname must still fail. Profiles, CA keys, and synthetic credentials are
 removed when the run ends.
+The runner puts its fixtures, Playwright profiles, and child-process temporary
+files in one private scratch tree under `/var/tmp` by default. It honors an
+explicit `TMPDIR`.
 
 Results, browser/Playwright versions, console/request diagnostics, and failed
 test traces/screenshots are kept under the invoking user's private
@@ -227,8 +230,9 @@ reports, missing browser versions, skipped first-party checks, and incomplete
 required integration checks return nonzero even if the test process returned
 zero. `results.json` contains the individual checks and version attachments.
 Review locally; traces can contain synthetic credentials and form data.
-Remove old run directories after review. Interrupted runs may leave temporary
-fixture/profile directories, which can be removed after their processes exit.
+Remove old run directories after review. Host cleanup can reclaim abandoned
+Basaltwater fixture and profile directories in `/tmp` and `/var/tmp` after seven
+days when their processes have exited. Run evidence follows its own retention.
 
 Coverage includes navigation and keyboard focus, native disclosures, panel
 light/dark themes, desktop/narrow layout, enlarged text, meters, actual form

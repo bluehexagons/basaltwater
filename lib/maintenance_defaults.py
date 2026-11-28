@@ -68,6 +68,9 @@ BASALTWATER_TMP_PATTERNS = (
     r"basaltwater_pubkey\.[A-Za-z0-9]+",
     r"basaltwater_uv_install_[a-z0-9_]{8}\.sh",
     r"basaltwater-(?:go|godot|gogs|butler)-release-[a-z0-9_]{8}",
+    r"basaltwater-(?:browser-fixtures|browser-npm|node-selection|project-node)-[a-z0-9_]{8}",
+    r"basaltwater-(?:browser|headscale|status)-profile-[A-Za-z0-9]{6}",
     r"antistatic-(?:server|db)-linux-(?:amd64|arm64)\.v[A-Za-z0-9._-]+",
 )
 BASALTWATER_TMP_DIRS = ("/tmp", "/var/tmp")
+DEFAULT_SETUP_TMPDIR = "/var/tmp"

@@ -22,6 +22,7 @@ from common.browser_automation_steps import PLAYWRIGHT_VERSION
 from lib.agent_browser import _environment, _runtime, browser_node
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.guacamole_config import RELEASE
+from lib.maintenance_defaults import DEFAULT_SETUP_TMPDIR
 from lib.remote_utils import run
 from lib.tool_results import add_json_option, artifact, exception_issue, failure, from_report, write_result
 from lib.validation import validate_filesystem_path
@@ -159,14 +160,19 @@ def main(argv: list[str] | None = None) -> int:
         output = Path(tempfile.mkdtemp(prefix="run-", dir=evidence))
         stage = "start_fixtures"
         print(f"Private evidence: {output}", file=sys.stderr if args.json else sys.stdout, flush=True)
-        with tempfile.TemporaryDirectory(prefix="basaltwater-browser-fixtures-") as temporary:
+        scratch_parent = os.path.abspath(os.environ.get("TMPDIR") or (
+            DEFAULT_SETUP_TMPDIR if os.path.isdir(DEFAULT_SETUP_TMPDIR) else tempfile.gettempdir()))
+        with tempfile.TemporaryDirectory(prefix="basaltwater-browser-fixtures-", dir=scratch_parent) as temporary:
             directory = Path(temporary)
+            scratch = directory / "scratch"
+            scratch.mkdir()
             command = [sys.executable, "-m", "tests.browser.fixtures", str(directory)]
             if asset:
                 command += ["--guacamole-assets", str(asset.resolve())]
             with (output / "fixtures.log").open("w") as log:
                 artifacts.append(artifact("fixture_log", output / "fixtures.log", "text/plain"))
-                server = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=log)
+                server = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=log,
+                                          env={**os.environ, "TMPDIR": str(scratch)})
                 try:
                     deadline = time.monotonic() + 30
                     metadata = directory / "fixture.json"
@@ -176,7 +182,8 @@ def main(argv: list[str] | None = None) -> int:
                         time.sleep(0.1)
                     environment = _environment(args.context)
                     environment["PATH"] = os.pathsep.join((str(Path(node).parent), environment.get("PATH", os.defpath)))
-                    environment.update({"BASALTW_BROWSER_FIXTURE": str(metadata), "BASALTW_BROWSER_OUTPUT": str(output),
+                    environment.update({"TMPDIR": str(scratch),
+                                        "BASALTW_BROWSER_FIXTURE": str(metadata), "BASALTW_BROWSER_OUTPUT": str(output),
                                         "BASALTW_PLAYWRIGHT_MODULE": runtime["module"], "NODE_EXTRA_CA_CERTS": str(directory / "ca.crt"),
                                         "BASALTW_BROWSER_HEADED": "1" if args.headed else "0",
                                         "BASALTW_BROWSER_TRACE": "1" if args.trace else "0", "BASALTW_BROWSER_PYTHON": sys.executable,

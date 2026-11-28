@@ -63,8 +63,9 @@ class StoragePreflightTests(unittest.TestCase):
         self.assertEqual(requests["/var/lib/basaltwater/build-host/inputs"][0], 1400)
         self.assertEqual(requests["/var/lib/basaltwater/build-host/scratch"][0], 5000)
         self.assertEqual(requests["/var/lib/basaltwater/build-host/logs"][0], 400)
-        self.assertIn("/tmp", requests)
+        self.assertIn("/var/tmp", requests)
         target_requests = target.args[1]
+        self.assertIn(["/var/tmp", 128 * 1024**2, 1000], target_requests)
         copies = [row for row in target_requests if row[0] == "/srv/apps"]
         self.assertEqual(sum(row[1] for row in copies), 2 * (2 * 1024 + 11 * 16384))
 

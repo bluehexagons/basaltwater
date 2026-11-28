@@ -87,6 +87,14 @@ step. See [CachyOS package behavior](../workstations/cachyos-profile-reference.m
 
 ### Maintain offline VMs
 
+Setup uses `/var/tmp` for controller staging and for Debian target downloads
+and installer scratch. The Debian target checks free bytes and inodes on the
+selected filesystem before running setup steps. Set `TMPDIR` in the controller
+or target process environment to select an existing, writable directory for
+that process. See
+[host storage maintenance](../storage/host-maintenance.md#exclusion-and-headroom)
+for estimates, cleanup, and diagnostics.
+
 Setup automatically starts an existing stopped Proxmox VM or resumes a paused
 one, then waits up to five minutes for SSH before continuing. A running VM
 whose SSH is still starting gets the same wait. This also applies to reruns
