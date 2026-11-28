@@ -108,14 +108,18 @@ class DevelopmentInventoryTests(unittest.TestCase):
             self.assertEqual([row["task"] for row in result["tasks"]], [earlier, task])
         self.assertFalse(json.loads(record.path.read_text())["task_inventory_scan_truncated"])
 
-    def test_cli_forwards_time_bounds_without_desktop_access(self) -> None:
+    def test_cli_applies_time_bounds_without_desktop_access(self) -> None:
+        self.task(1, "2026-01-15T09:00:00Z")
+        job_id = self.task(2, "2026-01-15T10:30:00Z")
+        self.task(3, "2026-01-15T12:00:00Z")
         parser = argparse.ArgumentParser()
         desktop_cli.add_desktop_subparser(parser.add_subparsers())
         args = parser.parse_args(["desktop", "--native", "develop", "list", "--project", str(self.project),
                                   "--since", "2026-01-15T10:00:00Z", "--until", "2026-01-15T11:00:00Z", "--json"])
-        with patch.object(development, "list_tasks", return_value={"ok": True}) as listing, redirect_stdout(StringIO()):
+        with patch.object(development, "_unit") as unit, redirect_stdout(output := StringIO()):
             self.assertEqual(desktop_cli.run_desktop_command(args), 0)
-        listing.assert_called_once_with(str(self.project), since="2026-01-15T10:00:00Z", until="2026-01-15T11:00:00Z")
+        unit.assert_not_called()
+        self.assertEqual([row["job"]["id"] for row in json.loads(output.getvalue())["tasks"]], [job_id])
 
 
 if __name__ == "__main__":
