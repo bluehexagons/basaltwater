@@ -79,6 +79,17 @@ seat assignment. Start the pad before launching games that enumerate
 controllers at startup. Check the game's own selector and verify an action
 on its assigned seat. A launcher connection notice only establishes that
 the launcher recognized a device.
+
+For a Steam title that supports native controller bindings, inspect its
+per-title Controller override if a qualified pad appears in Steam but is
+missing from the game. Record the original value. During an authorized
+diagnostic relaunch, use the per-title **Disable Steam Input** option with
+the pad present, then check the game's selector and one visible action.
+Restore the original override on exit. In the
+[split-screen setup check](https://github.com/bluehexagons/game-testing/blob/4be3535/games/mythic-battle/runs/MB-R069/bugs.md),
+the first process had the pad ID on its SDL ignore list. A second process
+launched with those two changes opened the event device and assigned it to
+the guest. Which change was sufficient remains open.
 The source entry point `python3 -m desktop.gamepad_qa` uses native by default;
 its top-level `--debian` flag selects Debian. Prefer the public CLI for run briefs.
 
