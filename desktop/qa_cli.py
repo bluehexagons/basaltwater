@@ -61,7 +61,11 @@ def add_qa_parser(commands: argparse._SubParsersAction, evidence: argparse._SubP
     audit.add_argument("--before", metavar="CAPTURE_JSON", help="Capture used to make the decision")
     audit.add_argument("--after", nargs=2, metavar=("PACKET_ID", "CAPTURE_JSON"),
                        help="Follow-up packet and capture receipt; may reuse input JSON with a nested observation")
-    for operation in (create, validate, audit):
+    view = record_ops.add_parser("view", help="Resolve and verify a local preview without opening or posting it")
+    view.add_argument("result", help="Saved screenshot or input-with-observation result JSON")
+    view.add_argument("--presentation", choices=("unattempted", "seen", "refused"), default="unattempted",
+                      help="What the caller observed in its own image viewer")
+    for operation in (create, validate, audit, view):
         operation.add_argument("--json", action="store_true")
     run = evidence.add_parser("run", help="Offline controller-written match clocks/checkpoints; no watcher or input")
     operations = run.add_subparsers(dest="run_command", required=True)
@@ -82,6 +86,8 @@ def add_qa_parser(commands: argparse._SubParsersAction, evidence: argparse._SubP
         if name == "policy":
             policy = operation
         if name == "context":
+            operation.add_argument("--worker-failure", nargs=3, metavar=("CATEGORY", "WORKER_STATE", "DELIVERY"),
+                                   help="Record a reported interruption, stopped/running/unknown state and last input delivery")
             operation.add_argument("--expect-events", type=int,
                                    help="Transfer only if the ledger still has the observed event count")
         operation.add_argument("--json", action="store_true")
@@ -192,6 +198,9 @@ def run_qa_command(args: argparse.Namespace, *, backend=None) -> dict:
     if args.desktop_command == "evidence" and args.evidence_command == "records":
         from desktop import record_bundles
         try:
+            if args.records_command == "view":
+                from desktop.local_view import local_view
+                return local_view(args.result, args.presentation)
             if args.records_command == "create":
                 media = dict(args.media)
                 if len(media) != len(args.media):
@@ -209,7 +218,8 @@ def run_qa_command(args: argparse.Namespace, *, backend=None) -> dict:
         if args.run_command == "start":
             return run_checkpoint.start(args.run_id, args.match_id, args.phase, output=args.output,
                                         review_seconds=args.review_seconds, hard_seconds=args.hard_seconds)
-        fields = ("phase", "note", "context", "review_seconds", "hard_seconds", "clear_hard_limit", "artifacts", "game_clock", "expect_events")
+        fields = ("phase", "note", "context", "review_seconds", "hard_seconds", "clear_hard_limit",
+                  "artifacts", "game_clock", "expect_events", "worker_failure")
         return run_checkpoint.update(args.artifact, args.run_command,
                                      **{key: getattr(args, key) for key in fields if hasattr(args, key)})
     if args.desktop_command == "evidence" and args.evidence_command == "closeout":

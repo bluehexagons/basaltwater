@@ -73,7 +73,17 @@ prove delivery through a truncating outer tool or model comprehension. See
 ## Rehearse a small visual observation
 
 For a host with a local image reader (for example Codex `view_image`),
-open the saved `screenshot_preview` by path in the controller context.
+resolve the named image and receipt from the saved result:
+
+```sh
+basaltw desktop evidence records view /private/run/frame-result.json --json
+```
+
+Open the returned `screenshot_preview` by path in the controller context.
+If the host refuses the image, repeat the offline command with
+`--presentation refused` and retain its JSON in the private checkpoint.
+It verifies the preview bytes and geometry and records the caller's viewer
+report. Its success says the pair can be resolved on disk.
 Keep each capture result and paired `capture_receipt`. Record a viewer
 refusal against the same paths even when capture succeeded. Use a reviewed
 offline crop when a finding needs a progress attachment. Map new input only
@@ -137,6 +147,16 @@ run, match and clocks. Until the orchestration owner confirms the old worker
 stopped and fresh evidence resolves any pending action, use a non-playing
 `recovery` context and keep input idle. Record this even when the child
 cannot send a final response. Recovery sends no input and performs no retry.
+
+```sh
+basaltw desktop evidence run context /private/match/run.json --context recovery \
+  --expect-events 13 --worker-failure opaque stopped unknown \
+  --artifact /private/match/dispatch-intent.json --json
+```
+
+Use the last available delivery receipt for a confirmed dispatch, or an
+intent/checkpoint when delivery is unknown. The orchestration host supplies
+worker state. Loss of a response alone leaves that state unknown.
 
 The controller first records outcome/partial state, observed findings with
 evidence IDs and uncertainty, actual route/settings, coverage gaps and timing.

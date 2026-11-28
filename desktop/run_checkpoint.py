@@ -31,6 +31,14 @@ def _seconds(value: int | None) -> None:
         raise ValueError("Timing limits require integer seconds from 1 to 2592000")
 
 
+def _worker_failure(event: str, failure: dict) -> None:
+    if (event != "context" or not isinstance(failure, dict)
+            or failure.get("worker_state") not in ("stopped", "running", "unknown")
+            or failure.get("input_delivery") not in ("not-sent", "completed", "partial", "unknown")):
+        raise ValueError("Worker failure requires a context, a reported worker state and input delivery")
+    _label(failure.get("category"), "Provider failure category")
+
+
 def _path(artifact: str) -> Path:
     validate_filesystem_path(artifact, must_exist=True)
     path = Path(artifact).absolute()
@@ -106,6 +114,8 @@ def _load(path: Path) -> dict:
             if not Path(reference).is_absolute():
                 raise ValueError("Run artifact references require absolute paths")
         event = row["event"]
+        if "worker_failure" in row:
+            _worker_failure(event, row["worker_failure"])
         clear = row.get("clear_hard_limit", False)
         if (type(clear) is not bool or clear and (data["schema_version"] != 2
                 or event != "policy" or row.get("hard_seconds") is not None)):
@@ -230,7 +240,7 @@ def start(run_id: str, match_id: str, phase: str, *, output: str | None = None,
 def update(artifact: str, event: str = "show", *, phase: str | None = None, note: str | None = None,
            context: str | None = None, review_seconds: int | None = None, hard_seconds: int | None = None,
            artifacts: list[str] | None = None, game_clock: str | None = None, clear_hard_limit: bool = False,
-           expect_events: int | None = None) -> dict:
+           expect_events: int | None = None, worker_failure: list[str] | None = None) -> dict:
     path = _path(artifact)
     if event not in ("show", *EVENTS):
         raise ValueError("Unknown run event")
@@ -254,6 +264,10 @@ def update(artifact: str, event: str = "show", *, phase: str | None = None, note
     if event != "policy" and (review_seconds is not None or hard_seconds is not None or clear_hard_limit):
         raise ValueError("Timing changes require an explicit policy event")
     references = artifacts or []
+    failure = None
+    if worker_failure is not None:
+        failure = dict(zip(("category", "worker_state", "input_delivery"), worker_failure, strict=True))
+        _worker_failure(event, failure)
     if len(references) > 16:
         raise ValueError("Attach at most 16 artifact references per checkpoint")
     for reference in references:
@@ -281,6 +295,7 @@ def update(artifact: str, event: str = "show", *, phase: str | None = None, note
                "checkpoint_late_seconds": previous["checkpoint_late_seconds"],
                "note": note, "context": context, "artifacts": references, "game_clock_observed": game_clock,
                "review_seconds": review_seconds, "hard_seconds": hard_seconds,
+               **({"worker_failure": failure} if failure else {}),
                **({"clear_hard_limit": True} if clear_hard_limit else {})}
         data["events"].append(row)
         if clear_hard_limit:
