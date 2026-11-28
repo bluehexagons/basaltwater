@@ -109,6 +109,16 @@ Press receipts include the requested button and axis names alongside raw
 device events, delivery, and neutralization. For a missing game effect,
 retain the before and after captures and, when available, compare an
 independent controller inspector's press and release on the same owned pad.
+For a Ready or confirm action, record the hold duration and the state of
+each seat before and after release. When a tap has no effect, try a
+bounded hold on the displayed control while the action remains available.
+The receipt's `hold_ms` records the request. Its monotonic `dispatched`
+and `released` timestamps give the observed interval. In one split-screen
+shop a 200 ms D-pad Down press left End Turn visible. After a 2,500 ms
+hold the guest showed Ready while the host could still shop. The game's
+title screen accepted the temporary rebind after its in-match settings
+ignored guest input. [Guest-first recovery](https://github.com/bluehexagons/game-testing/blob/5ea31c6/games/mythic-battle/runs/MB-R070/bugs.md)
+
 For relative mouse, side buttons and true multitouch testing through the native
 portal, use [pointer and touch QA](pointer-touch-qa.md). Those events have a
 different transport, permission and qualification boundary from this controller.
