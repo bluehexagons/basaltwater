@@ -29,6 +29,7 @@ class GamepadTests(unittest.TestCase):
         self.enterContext(patch.object(qa, "account_guard"))
         self.status = self.enterContext(patch.object(qa, "helper_status", return_value=self.current))
         self.pad = Mock()
+        self.pad.buttons = qa.BUTTONS
         self.bridge = qa.Bridge(self.pad, self.folder, 60, dict(self.current))
         self.payload = {"buttons": ["south"], "axes": {}, "hold_ms": 0,
                         "observation": dict(self.current)}
@@ -57,6 +58,20 @@ class GamepadTests(unittest.TestCase):
         self.assertEqual(json.loads(Path(result["artifact"]).read_text())["id"], result["id"])
         with self.assertRaises(ValueError):
             self.bridge.press(self.payload, self.connection)
+
+    def test_series_share_is_profile_specific_and_released(self):
+        payload = {**self.payload, "buttons": ["share"]}
+        with self.assertRaises(qa.InputRejected):
+            self.bridge.press(payload, self.connection)
+        dependency = Mock()
+        with patch.dict("sys.modules", {"evdev": dependency}):
+            self.bridge.pad = qa.Pad("xbox-series")
+        self.assertEqual(dependency.UInput.call_args.kwargs["product"], 0x0b12)
+        self.assertIn(167, dependency.UInput.call_args.args[0][1])
+        result = self.bridge.press(payload, self.connection)
+        self.assertTrue(result["neutralized"])
+        self.assertEqual(result["events"], [(1, 167, 1)])
+        dependency.UInput.return_value.write.assert_any_call(1, 167, 0)
 
     def test_stale_or_changed_capture_never_dispatches(self):
         for change in ({"generation": "other"}, {"control_revision": "other"},

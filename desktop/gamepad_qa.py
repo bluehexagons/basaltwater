@@ -34,6 +34,7 @@ BUTTONS = {
     "select": 314, "start": 315, "guide": 316,
     "left-stick": 317, "right-stick": 318,
 }
+SERIES_BUTTONS = {**BUTTONS, "share": 167}  # Linux KEY_RECORD, SDL MISC1
 AXES = {
     "left-x": (0, -32768, 32767), "left-y": (1, -32768, 32767),
     "left-trigger": (2, 0, 255), "right-x": (3, -32768, 32767),
@@ -104,19 +105,19 @@ def doctor(native: bool) -> dict:
             "dependency_package": "python-evdev" if native else "python3-evdev"}
 
 
-def validate_action(payload: dict) -> list[tuple[int, int, int]]:
+def validate_action(payload: dict, button_map: dict[str, int] = BUTTONS) -> list[tuple[int, int, int]]:
     if type(payload.get("hold_ms")) is not int or not 0 <= payload["hold_ms"] <= 5000:
         raise InputRejected("hold_ms must be an integer from 0 to 5000")
     buttons, axes = payload.get("buttons", []), payload.get("axes", {})
-    if (not isinstance(buttons, list) or len(buttons) > len(BUTTONS)
-            or any(not isinstance(name, str) or name not in BUTTONS for name in buttons)
+    if (not isinstance(buttons, list) or len(buttons) > len(button_map)
+            or any(not isinstance(name, str) or name not in button_map for name in buttons)
             or len(set(buttons)) != len(buttons)):
         raise InputRejected("Unknown or repeated button")
     if not isinstance(axes, dict) or any(name not in AXES for name in axes):
         raise InputRejected("Unknown axis")
     if not buttons and not axes:
         raise InputRejected("At least one button or axis is required")
-    events = [(1, BUTTONS[name], 1) for name in buttons]
+    events = [(1, button_map[name], 1) for name in buttons]
     for name, value in axes.items():
         code, low, high = AXES[name]
         if type(value) is not int or not low <= value <= high:
@@ -137,7 +138,9 @@ def validate_observation(observation: dict, current: dict, used: set[str], nativ
 
 
 class Pad:
-    def __init__(self) -> None:
+    buttons = BUTTONS
+
+    def __init__(self, profile: str = "xbox360") -> None:
         # Optional system package; importing this module and offline tests do not
         # need evdev, uinput access or a graphical session.
         try:
@@ -145,12 +148,14 @@ class Pad:
         except ImportError as exc:
             raise RuntimeError("evdev is missing in this Python interpreter; run gamepad doctor and follow its setup guide") from exc
 
-        capabilities = {1: list(BUTTONS.values()), 3: [
+        self.buttons = SERIES_BUTTONS if profile == "xbox-series" else BUTTONS
+        capabilities = {1: list(self.buttons.values()), 3: [
             (code, AbsInfo(0, low, high, 0, 4096 if low == -32768 else 0, 0))
             for code, low, high in AXES.values()
         ]}
         self.device = UInput(capabilities, name="Basaltwater QA Virtual Gamepad",
-                             vendor=0x045e, product=0x028e, version=0x0114, bustype=3)
+                             vendor=0x045e, product=0x0b12 if profile == "xbox-series" else 0x028e,
+                             version=0x0114, bustype=3)
         if self.device.device is None:
             self.device.close()
             raise RuntimeError("Created gamepad event device is unreadable; check the named-device udev rule and account groups")
@@ -161,7 +166,7 @@ class Pad:
         self.device.syn()
 
     def neutral(self) -> None:
-        self.write([(1, code, 0) for code in BUTTONS.values()]
+        self.write([(1, code, 0) for code in self.buttons.values()]
                    + [(3, axis[0], 0) for axis in AXES.values()])
 
     def close(self) -> None:
@@ -202,7 +207,7 @@ class Bridge:
             self.checked = time.monotonic()
 
     def press(self, payload: dict, connection: socket.socket) -> dict:
-        events = validate_action(payload)
+        events = validate_action(payload, self.pad.buttons)
         observation = payload.get("observation")
         if not isinstance(observation, dict):
             raise InputRejected("An inspected screenshot receipt is required")
@@ -272,7 +277,9 @@ def socket_path() -> Path:
     return session_runtime.runtime_directory() / "gamepad-qa.sock"
 
 
-def serve(output: str, lifetime: int, native: bool = True) -> dict:
+def serve(output: str, lifetime: int, native: bool = True, profile: str = "xbox360") -> dict:
+    if profile not in ("xbox360", "xbox-series"):
+        raise ValueError("Unknown gamepad profile")
     if type(lifetime) is not int or not 60 <= lifetime <= MAX_LIFETIME_SECONDS:
         raise ValueError(f"Lifetime must be 60–{MAX_LIFETIME_SECONDS} seconds")
     current = helper_status(native)
@@ -291,7 +298,7 @@ def serve(output: str, lifetime: int, native: bool = True) -> dict:
             if not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.getuid():
                 raise RuntimeError("Unsafe stale pad socket")
             path.unlink()
-        pad = Pad()
+        pad = Pad(profile)
         pad.neutral()
         bridge = Bridge(pad, folder, lifetime, current, native)
         previous = {}
@@ -308,7 +315,8 @@ def serve(output: str, lifetime: int, native: bool = True) -> dict:
                 server.settimeout(.05)
                 write_json_atomic(str(folder / "device.json"), {
                     "created": stamp(), "pid": os.getpid(), "device": str(pad.device.device),
-                    "name": pad.device.name, "mapping": "Linux Xbox 360 USB", "backend": backend_name(native),
+                    "name": pad.device.name, "profile": profile, "backend": backend_name(native),
+                    "mapping": "Linux Xbox Series USB" if profile == "xbox-series" else "Linux Xbox 360 USB",
                     "lifetime_seconds": lifetime, "generation": current["generation"],
                 }, mode=0o600)
                 close_reason = "bridge-failed"
@@ -337,6 +345,7 @@ def serve(output: str, lifetime: int, native: bool = True) -> dict:
                                 result = {"stopping": True}
                             elif action == "status":
                                 result = {"running": True, "pid": os.getpid(), "output": str(folder),
+                                          "profile": profile,
                                           "backend": backend_name(native),
                                           "remaining_seconds": max(0, bridge.until - time.monotonic())}
                             elif action == "press":
@@ -424,13 +433,15 @@ def add_actions(parser: argparse.ArgumentParser) -> None:
     commands = parser.add_subparsers(dest="gamepad_command", required=True)
     server = commands.add_parser("serve")
     server.add_argument("--output", required=True, help="New private receipt directory outside Git")
+    server.add_argument("--profile", choices=("xbox360", "xbox-series"), default="xbox360",
+                        help="Xbox Series USB adds a Share button; default Xbox 360")
     server.add_argument("--lifetime", type=int, default=900,
                         help=f"Foreground lifetime, 60–{MAX_LIFETIME_SECONDS} seconds; supervise with desktop develop exec")
     for name in ("status", "stop", "doctor"):
         commands.add_parser(name)
     press = commands.add_parser("press")
     press.add_argument("--observation", required=True, help="Inspected screenshot JSON receipt from the selected desktop backend")
-    press.add_argument("--button", action="append", choices=BUTTONS, default=[])
+    press.add_argument("--button", action="append", choices=SERIES_BUTTONS, default=[])
     press.add_argument("--axis", action="append", default=[], metavar="NAME=INTEGER")
     press.add_argument("--hold-ms", type=int, default=120)
     for action in commands.choices.values():
@@ -446,7 +457,7 @@ def run_command(args: argparse.Namespace, *, native: bool) -> dict:
     if action == "doctor":
         return doctor(native)
     if action == "serve":
-        return serve(args.output, args.lifetime, native)
+        return serve(args.output, args.lifetime, native, args.profile)
     payload = {"action": action, "backend": backend_name(native)}
     if action == "press":
         validate_filesystem_path(args.observation, must_exist=True)
@@ -460,7 +471,7 @@ def run_command(args: argparse.Namespace, *, native: bool) -> dict:
         if not isinstance(observation, dict):
             raise ValueError("Expected a screenshot JSON object")
         payload.update(hold_ms=args.hold_ms, buttons=args.button, axes=axes, observation=observation)
-        validate_action(payload)
+        validate_action(payload, SERIES_BUTTONS)
     result = call(payload)
     if result.get("delivery") == "unknown" or result.get("release_error") is not None:
         result.setdefault("error", "Gamepad delivery or release is uncertain; inspect before further input, never replay")
