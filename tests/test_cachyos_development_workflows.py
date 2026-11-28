@@ -314,6 +314,51 @@ class TestDevelopmentWorkflows(unittest.TestCase):
         self.probe.assert_not_called()
         self.assertFalse((self.home / ".local").exists())
 
+    def test_development_list_exposes_a_job_handle_for_status_lookup(self):
+        launched = self.launch("exec", argv=["godot"])
+        self.probe.reset_mock()
+        parser = argparse.ArgumentParser()
+        development.add_development_parser(parser.add_subparsers(dest="command"))
+        with redirect_stdout(output := StringIO()):
+            args = parser.parse_args(["develop", "list", "--project", str(self.project)])
+            self.assertEqual(development.run_development_command(args), 0)
+        self.probe.assert_not_called()
+        job = json.loads(output.getvalue())["tasks"][0]["job"]
+        self.assertEqual(job, {"id": launched["task"], "state": "unknown", "native_state": "recorded"})
+        with redirect_stdout(output := StringIO()):
+            args = parser.parse_args(["develop", "status", job["id"], "--json"])
+            self.assertEqual(development.run_development_command(args), 0)
+        self.assertEqual(json.loads(output.getvalue())["job"],
+                         {"id": job["id"], "state": "running", "native_state": "running"})
+
+    def test_debian_preflight_refusals_report_no_launch_effect(self):
+        parser = argparse.ArgumentParser()
+        development.add_development_parser(parser.add_subparsers(dest="command"))
+        args = parser.parse_args(["develop", "exec", "--project", str(self.project), "--", str(self.engine)])
+        for state, stage in (("stopped", "session_check"), ("running", "capability_check")):
+            with (self.subTest(state=state),
+                  patch.object(debian_development.session_runtime, "status", return_value={"state": state}),
+                  patch.object(debian_development.session_runtime, "request") as request,
+                  redirect_stdout(output := StringIO())):
+                self.assertEqual(development.run_development_command(args), 1)
+                result = json.loads(output.getvalue())
+                self.assertEqual((result["stage"], result["effect"]), (stage, "none"))
+                request.assert_not_called()
+
+    def test_debian_dry_run_reply_failure_reports_no_launch_effect(self):
+        parser = argparse.ArgumentParser()
+        development.add_development_parser(parser.add_subparsers(dest="command"))
+        argv = ["develop", "exec", "--project", str(self.project)]
+        status = {"state": "running", "generation": "a" * 32, "control_revision": "b" * 32,
+                  "capabilities": ["supervised-development"]}
+        with (patch.object(debian_development.session_runtime, "status", return_value=status),
+              patch.object(debian_development.session_runtime, "request", side_effect=OSError("no reply"))):
+            for flags, effect in ((["--dry-run"], "none"), ([], "unknown")):
+                with self.subTest(flags=flags), redirect_stdout(output := StringIO()):
+                    args = parser.parse_args([*argv, *flags, "--", str(self.engine)])
+                    self.assertEqual(development.run_development_command(args), 1)
+                    self.assertEqual(json.loads(output.getvalue())["effect"], effect)
+
 
 if __name__ == "__main__":
     unittest.main()

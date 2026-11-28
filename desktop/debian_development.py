@@ -114,6 +114,7 @@ def request_task(args: argparse.Namespace) -> dict:
         next_action = "start" if state == "stopped" else "status"
         raise DesktopRequestError({
             "issue": "desktop_session_unavailable", "state": state,
+            "stage": "session_check", "effect": "none",
             "error": f"Shared desktop state is {state}; run 'basaltw desktop {next_action}' before retrying",
             "remediation_argv": ["basaltw", "desktop", next_action],
         })
@@ -123,6 +124,7 @@ def request_task(args: argparse.Namespace) -> dict:
         if required and required not in capabilities:
             raise DesktopRequestError({
                 "issue": "desktop_capability_missing", "state": state, "required_capability": required,
+                "stage": "capability_check", "effect": "none",
                 "error": f"Running desktop lacks {required}; load the refreshed supervisor at a safe normal logout checkpoint",
             })
     options = {key: getattr(args, key) for key in OPTIONS if hasattr(args, key)}

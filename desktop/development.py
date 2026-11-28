@@ -873,13 +873,19 @@ _JOB_STATES = {"running": "running", "stopping": "running", "completed": "succee
                "stopped": "cancelled", "not-launched": "failed"}
 
 
-def _development_result(action: str, result: dict) -> dict:
+def _job_handle(record: dict) -> dict:
+    state = record.get("state")
+    return {"id": record["task"], "state": _JOB_STATES.get(state, "unknown"), "native_state": state}
+
+
+def _development_result(action: str, result: dict, *, dry_run: bool = False) -> dict:
     result = dict(result)
     if isinstance(result.get("task"), str):
-        state = result.get("state")
-        result["job"] = {"id": result["task"], "state": _JOB_STATES.get(state, "unknown"), "native_state": state}
+        result["job"] = _job_handle(result)
         if "returncode" in result:
             result["child_exit_code"] = result["returncode"]
+    if action == "list" and result["ok"]:
+        result["tasks"] = [{**record, "job": _job_handle(record)} for record in result["tasks"]]
     files = []
     playtest_artifacts = result.pop("artifacts", None)
     if isinstance(playtest_artifacts, str):
@@ -902,7 +908,7 @@ def _development_result(action: str, result: dict) -> dict:
     issue = "wait_timeout" if result.get("wait_timed_out") else "development_failed"
     if not ok and action in {*KINDS, "stop", "cleanup-browser"}:
         result.setdefault("stage", action)
-        result.setdefault("effect", "none" if result.get("issue") == "invalid_input" else "unknown")
+        result.setdefault("effect", "none" if dry_run or result.get("issue") == "invalid_input" else "unknown")
     if ok and action == "status" and "error" in result:
         result["child_error"] = result.pop("error")
     return from_report(result, ok=ok, issue=issue,
@@ -952,7 +958,7 @@ def run_development_command(args: argparse.Namespace) -> int:
         result = {**exc.receipt, "ok": False}
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         result = {"ok": False, "issue": exception_issue(exc), "error": str(exc)}
-    result = _development_result(action, result)
+    result = _development_result(action, result, dry_run=getattr(args, "dry_run", False) or is_dry_run())
     if action == "logs" and not args.json:
         if result["ok"]:
             sys.stdout.write(result["output"])

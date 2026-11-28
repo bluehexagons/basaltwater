@@ -116,6 +116,9 @@ existing process; inspect actual window/process identities.
 
 Task status/list/logs/wait work without the desktop helper.
 Pass the launch result's `job.id` to `status`, `logs`, `wait` or `stop`.
+For discovery or recovery, `develop list` returns the same handle in each
+`tasks[].job.id`. Listing reads saved records and reports their job state as
+`unknown`. Query `status` for the observed outcome.
 `ok` on submission means user-systemd acknowledged the launch. The child may
 already have finished when the submission returns.
 `job.state` carries the observed outcome and `child_exit_code` carries the
