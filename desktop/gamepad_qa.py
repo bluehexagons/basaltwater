@@ -280,6 +280,7 @@ def serve(output: str, lifetime: int, native: bool = True) -> dict:
     enabled(current, native)
     folder = new_bundle(output)
     path = socket_path()
+    provenance = native_session.capture_worker_provenance()
     descriptor = os.open(path.with_suffix(".lock"), os.O_CREAT | os.O_NOFOLLOW | os.O_RDWR, 0o600)
     pad = None
     close_reason = "startup-failed"
@@ -311,6 +312,7 @@ def serve(output: str, lifetime: int, native: bool = True) -> dict:
                     "created": stamp(), "pid": os.getpid(), "device": str(pad.device.device),
                     "name": pad.device.name, "mapping": "Linux Xbox 360 USB", "backend": backend_name(native),
                     "lifetime_seconds": lifetime, "generation": current["generation"],
+                    "worker_provenance": provenance,
                 }, mode=0o600)
                 close_reason = "bridge-failed"
                 while not bridge.stopping:
@@ -339,6 +341,7 @@ def serve(output: str, lifetime: int, native: bool = True) -> dict:
                             elif action == "status":
                                 result = {"running": True, "pid": os.getpid(), "output": str(folder),
                                           "backend": backend_name(native),
+                                          "worker_provenance": provenance,
                                           "remaining_seconds": max(0, bridge.until - time.monotonic())}
                             elif action == "press":
                                 result = bridge.press(payload, connection)
@@ -434,7 +437,8 @@ def add_actions(parser: argparse.ArgumentParser) -> None:
     press.add_argument("--button", action="append", choices=BUTTONS, default=[],
                        help="Physical control. Use select for View/Back, start for Menu. Guide is the system button.")
     press.add_argument("--axis", action="append", default=[], metavar="NAME=INTEGER")
-    press.add_argument("--hold-ms", type=int, default=120)
+    press.add_argument("--hold-ms", type=int, default=120,
+                       help="Hold all requested controls for 0–5000 ms before release (default: 120 ms)")
     for action in commands.choices.values():
         action.add_argument("--json", action="store_true")
 

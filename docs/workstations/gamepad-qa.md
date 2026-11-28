@@ -72,6 +72,11 @@ basaltw desktop --native gamepad status --json
 On Debian omit **both** occurrences of `--native`. The installed CLI must include
 the adapter; use an explicit executable path when testing another installation.
 Retain the returned development task handle and verify its completion at closeout.
+Use `device.json` or the running pad's `status.worker_provenance` to
+identify the serving adapter. Both report the same startup observation,
+even if a later client uses a different checkout. Record the desktop
+supervisor's own provenance separately. For older pad receipts lacking
+this field, retain the launch command and revision observed at launch.
 An unacknowledged launch needs status/task inspection before another start.
 The default lifetime is 900 seconds. Choose 60–10800 seconds to cover the
 bounded match and cleanup. Loss of a device mid-match may invalidate its

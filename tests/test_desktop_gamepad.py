@@ -28,6 +28,10 @@ class GamepadTests(unittest.TestCase):
         self.helper_status = qa.helper_status
         self.enterContext(patch.object(qa, "account_guard"))
         self.status = self.enterContext(patch.object(qa, "helper_status", return_value=self.current))
+        self.provenance = self.enterContext(patch.object(
+            qa.native_session, "capture_worker_provenance",
+            return_value={"source": {"commit": "fixture-startup"}, "evidence_source": "running-git"},
+        ))
         self.pad = Mock()
         self.bridge = qa.Bridge(self.pad, self.folder, 60, dict(self.current))
         self.payload = {"buttons": ["south"], "axes": {}, "hold_ms": 0,
@@ -387,7 +391,12 @@ class GamepadTests(unittest.TestCase):
             self.assertTrue(ready.wait(2), "server did not become ready")
             self.assertFalse(failures)
             try:
-                self.assertEqual(call({"action": "status"})["backend"], qa.backend_name(native))
+                status = call({"action": "status"})
+                self.assertEqual(status["backend"], qa.backend_name(native))
+                device = json.loads((output / "device.json").read_text())
+                self.assertEqual(device["worker_provenance"], self.provenance.return_value)
+                self.assertEqual(status["worker_provenance"], device["worker_provenance"])
+                self.provenance.assert_called_once_with()
                 wrong = call({"action": "press", "backend": qa.backend_name(not native), **self.payload})
                 self.assertEqual(wrong["delivery"], "not-sent")
                 self.assertTrue(wrong["rejected"])
