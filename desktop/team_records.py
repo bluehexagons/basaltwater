@@ -217,11 +217,15 @@ def _publish(root, lane, team, payload, attachments=None):
     return {"artifact": str(destination / "record.json"), **data}
 
 
-def _files(sources, *, suffixes, maximum=8):
-    if (not isinstance(sources, list) or len(sources) > maximum
-            or any(not isinstance(path, str) or not Path(path).is_absolute()
-                   or Path(path).suffix.lower() not in suffixes for path in sources)):
-        raise ValueError("Invalid attachment paths or file types")
+def _files(sources, *, label, suffixes, maximum):
+    if not isinstance(sources, list):
+        raise ValueError(f"{label} must be a list of absolute file paths")
+    if len(sources) > maximum:
+        raise ValueError(f"{label} accepts at most {maximum} files; received {len(sources)}")
+    allowed = ", ".join(suffixes)
+    for index, path in enumerate(sources, start=1):
+        if not isinstance(path, str) or not Path(path).is_absolute() or Path(path).suffix.lower() not in suffixes:
+            raise ValueError(f"{label} file {index} must be an absolute path ending in {allowed}")
     return sources
 
 
@@ -259,7 +263,8 @@ def observe(path, worker, after, spec):
     updates = {scope: message(text, "Observation update") for scope, text in updates.items()}
     if not isinstance(views, dict) or set(views) - set(team["workers"]):
         raise ValueError("Views must be assigned to known workers")
-    views = {recipient: _files(sources, suffixes=(".png",), maximum=4) for recipient, sources in views.items()}
+    views = {recipient: _files(sources, label=f"View list for {recipient}", suffixes=(".png",), maximum=4)
+             for recipient, sources in views.items()}
     source = _capture_source(spec["capture"]) if spec.get("capture") is not None else None
     with locked(root, "records.lock"):
         head = _head(root)
@@ -338,7 +343,8 @@ def result(path, worker, spec):
         raise ValueError("Invalid worker state or action delivery")
     summary = message(spec.get("summary"), "Worker result")
     next_step = message(spec.get("next"), "Next step")
-    evidence = _files(spec.get("evidence", []), suffixes=(".png", ".json", ".md", ".txt"))
+    evidence = _files(spec.get("evidence", []), label="Result evidence", suffixes=(".png", ".json", ".md", ".txt"),
+                      maximum=8)
     observation, decision = spec.get("observation"), spec.get("decision")
     if observation is not None:
         _record(root / "observations", observation)

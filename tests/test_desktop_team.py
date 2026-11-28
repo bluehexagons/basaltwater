@@ -189,3 +189,19 @@ class DesktopTeamTests(unittest.TestCase):
         outputs = records.results(self.root, "000001")
         self.assertEqual([row["id"] for row in outputs["results"]], ["000002", "000003"])
         self.assertEqual(outputs["cursor"], "000003")
+
+    def test_attachment_rejection_identifies_the_field_and_preserves_ownership(self):
+        owner = self.claim()
+        path = str(self.parent / "evidence.json")
+        spec = {"state": "ready", "summary": "Awaiting next seat", "next": "Inspect the board"}
+        with self.assertRaisesRegex(ValueError, "Result evidence accepts at most 8 files; received 9"):
+            records.result(self.root, "p1", {**spec, "evidence": [path] * 9})
+        with self.assertRaisesRegex(ValueError, "Result evidence file 2 must be an absolute path"):
+            records.result(self.root, "p1", {**spec, "evidence": [path, "relative.md"]})
+        with self.assertRaisesRegex(ValueError, "View list for p2 accepts at most 4 files; received 5"):
+            records.observe(self.root, "p1", "initial", {
+                "updates": {"shared": "Opening shop"}, "views": {"p2": [str(self.parent / "pane.png")] * 5},
+            })
+        self.assertEqual(records.view(self.root, "p2")["id"], "initial")
+        self.assertEqual(records.results(self.root, "000000")["results"], [])
+        self.assertEqual(lease.status(native=True)["epoch"], owner["epoch"])

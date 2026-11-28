@@ -77,7 +77,8 @@ and selects small, reviewed PNG crops for recipients. Use
 [`evidence crop`](native-qa-evidence.md) to
 prepare literal views. The team record copies supplied PNGs and records their
 hashes. A view file can carry screen content outside the named scope, so check
-the pixels before publishing it. Include the optional `capture` receipt to
+the pixels before publishing it. Supply up to four absolute PNG paths per
+recipient. Include the optional `capture` receipt to
 record the source frame's ID, time, geometry and digest.
 
 ```json
@@ -154,6 +155,15 @@ last input:
 }
 ```
 
+`evidence` accepts up to eight absolute `.png`, `.json`, `.md` or `.txt`
+paths per result. Include the decisive action and after-frame receipts. If
+more files are relevant, include a private evidence index as one attachment
+and retain the underlying files in the run directory. Count automatically
+included files before publishing the observation and result. If result
+validation fails after an observation was published, check the observation
+head and lease before correcting the result. The published observation remains
+available for the corrected result.
+
 ```sh
 basaltw desktop team result /private/match-team host --spec /private/host-result.json --json
 basaltw desktop --native team lease handoff --epoch 1 --credential "$BASALTW_DESKTOP_LEASE_FILE" \
@@ -191,9 +201,11 @@ Results also accept linked decision IDs and copy selected evidence. Have the
 worker return the assignment, result ID and current lease epoch in its
 orchestrator completion. On wake, compare them to the current lease and run
 context. A delayed return can be genuine history from before another player
-resumed. `team results TEAM --after CURSOR --json` reads up to 20 new entries
-per page and returns the next cursor and number remaining. Basaltwater records
-the result; the orchestration host delivers notifications.
+resumed. When ownership moves to the coordinator to clear a blocker, notify
+the coordinator through the orchestrator with the durable result ID and epoch
+promptly so recovery can begin. `team results TEAM --after CURSOR --json` reads
+up to 20 new entries per page and returns the next cursor and number remaining.
+Basaltwater records the result. The orchestration host delivers notifications.
 
 ## Qualification
 
