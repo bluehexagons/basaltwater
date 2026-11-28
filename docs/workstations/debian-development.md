@@ -155,9 +155,11 @@ basaltw desktop develop status TASK_ID --json
 Stop first verifies the recorded transient service description and pinned
 invocation. It requests only that unit's stop; it never kills a desktop process
 group or signals arbitrary recorded PIDs. An acknowledged asynchronous stop
-can still report `stopping`. Inspect again until cleanup is verified; do not
-claim success from queue acknowledgement. The service's ten-second stop limit
-bounds escalation for its own cgroup. Identity changes refuse cleanup.
+can still report `stopping`. If the request was acknowledged and subsequent
+verification fails, the response retains `job.id` and reports `cancellation:
+requested` and `effect: partial`. Use `develop status` with that handle to check
+cleanup. The service's ten-second stop limit bounds escalation for its own
+cgroup. Identity changes refuse cleanup.
 
 A supervisor reply with `state: launch-unverified` carries the task ID. Use
 `develop status TASK_ID` to reconcile that task. A lost reply can leave a

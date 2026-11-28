@@ -220,21 +220,32 @@ function Invoke-NativeDevelopmentCli($Arguments) {
         @{ OwnerSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value;
             Phase = 'complete'; Distro = 'Fixture Ubuntu'; Revision = ('b' * 40) } |
             ConvertTo-Json | Set-Content -LiteralPath (Join-Path $env:LOCALAPPDATA 'Basaltwater\wsl-setup.json')
-        function wsl.exe {
-            Assert-True (($args -join ' ') -eq '--list --verbose') 'Status invoked a mutating WSL command'
-            $global:LASTEXITCODE = $inventoryExit
-            "Fixture Ubuntu$([char]0)"
-        }
-        function Get-ScheduledTask { return [pscustomobject]@{ State = 'Ready' } }
+        $fixture = Join-Path $temporary 'wsl-status-fixture.ps1'
+        Set-Content -LiteralPath $fixture -Encoding UTF8 -Value @'
+param([string]$Manage, [int]$InventoryExit, [switch]$Json)
+function wsl.exe {
+    if (($args -join ' ') -ne '--list --verbose') { throw 'Unexpected WSL command' }
+    $global:LASTEXITCODE = $InventoryExit
+    "Fixture Ubuntu$([char]0)"
+}
+function Get-ScheduledTask { return [pscustomobject]@{ State = 'Ready' } }
+. $Manage -Action status -Json:$Json
+'@
         foreach ($inventoryExit in @(0, 23)) {
-            $response = & $manage -Action status -Json 6>&1 | Out-String
+            $response = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $fixture -Manage $manage -InventoryExit $inventoryExit -Json | Out-String
             $code = $LASTEXITCODE
             $status = $response | ConvertFrom-Json
             Assert-True ($status.ok -eq ($inventoryExit -eq 0) -and $status.child_exit_code -eq $inventoryExit -and
                 $status.distribution_inventory_text -eq 'Fixture Ubuntu') 'WSL status lost result or child exit information'
             if ($inventoryExit) {
-                Assert-True ($code -eq 1 -and $status.issue -eq 'wsl_inventory_failed') 'WSL JSON status swallowed an inventory failure'
-                Assert-Throws { & $manage -Action status 6>$null } 'distribution inventory failed \(exit code 23\)'
+                Assert-True ($code -eq 1 -and $status.issue -eq 'wsl_inventory_failed') "WSL JSON status returned exit $code and issue $($status.issue)"
+                $previous = $ErrorActionPreference
+                try {
+                    $ErrorActionPreference = 'Continue'
+                    $failure = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $fixture -Manage $manage -InventoryExit $inventoryExit 2>&1 | Out-String
+                    $code = $LASTEXITCODE
+                } finally { $ErrorActionPreference = $previous }
+                Assert-True ($code -eq 1 -and $failure -match 'distribution inventory failed \(exit code 23\)') 'WSL text status swallowed an inventory failure'
             } else { Assert-True ($code -eq 0) 'WSL JSON status failed on a successful inventory' }
         }
     }

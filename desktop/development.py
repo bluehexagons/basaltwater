@@ -478,14 +478,25 @@ def task_status(task_id: str, *, stop: bool = False, dry_run: bool = False) -> d
     if stop and (dry_run or is_dry_run()):
         return {"schema_version": 1, "ok": True, "dry_run": True, "operation": "stop",
                 "task": task_id, "unit": task["unit"]}
-    if stop and unit.get("LoadState") != "not-found":
-        _honor_agent_control()
-        state, _ = _probe(["/usr/bin/systemctl", "--user", "stop", "--no-block", task["unit"]], uid)
-        if state != "ok":
-            raise RuntimeError("Task stop was not acknowledged; inspect its status before retrying")
+    if not stop or unit.get("LoadState") == "not-found":
+        return _task_snapshot(directory, task, unit, service_error)
+    _honor_agent_control()
+    state, _ = _probe(["/usr/bin/systemctl", "--user", "stop", "--no-block", task["unit"]], uid)
+    receipt = {"task": task_id, "unit": task["unit"], "state": "unverified"}
+    if state != "ok":
+        raise DesktopRequestError({**receipt, "stage": "stop_dispatch", "effect": "unknown", "issue": "operation_failed",
+                                   "error": "Task stop was not acknowledged; inspect its status before retrying"})
+    try:
         write_json_atomic(str(directory / "stop-requested.json"), {"requested_at": datetime.now(timezone.utc).isoformat()}, mode=0o600)
-        unit = _unit(task, uid)
-    result = {"schema_version": 1, "ok": True, "task": task_id, "unit": task["unit"],
+        return _task_snapshot(directory, task, _unit(task, uid))
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise DesktopRequestError({**receipt, "stage": "stop_reconcile", "effect": "partial",
+                                   "issue": "operation_failed", "cancellation": "requested",
+                                   "error": f"Task stop was acknowledged, but cleanup could not be verified: {exc}"}) from exc
+
+
+def _task_snapshot(directory: Path, task: dict, unit: dict[str, str], service_error: str | None = None) -> dict:
+    result = {"schema_version": 1, "ok": True, "task": task["task"], "unit": task["unit"],
               "kind": task["kind"], "project": task["project"], "directory": str(directory),
               "log": str(directory / "output.log"), "report": str(directory / "result.json"),
               "state": "unavailable", "returncode": None, "elapsed_seconds": None,

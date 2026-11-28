@@ -372,6 +372,23 @@ class TestDevelopmentWorkflows(unittest.TestCase):
         self.assertEqual(result["error"], "status reply lost")
         request.assert_not_called()
 
+    def test_acknowledged_stop_keeps_job_handle_when_status_probe_fails(self):
+        job = self.launch("exec", argv=["godot"])
+        self.probe.reset_mock()
+        parser = argparse.ArgumentParser()
+        development.add_development_parser(parser.add_subparsers(dest="command"))
+        active = {"LoadState": "loaded", "ActiveState": "active", "SubState": "running"}
+        with (patch.object(development, "_unit", side_effect=[active, RuntimeError("status reply lost")]),
+              redirect_stdout(output := StringIO())):
+            args = parser.parse_args(["develop", "stop", job["task"], "--json"])
+            self.assertEqual(development.run_development_command(args), 1)
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["job"], {"id": job["task"], "state": "unknown", "native_state": "unverified"})
+        self.assertEqual((result["stage"], result["effect"], result["cancellation"]),
+                         ("stop_reconcile", "partial", "requested"))
+        self.probe.assert_called_once_with(["/usr/bin/systemctl", "--user", "stop", "--no-block", job["unit"]], os.getuid())
+        self.assertTrue((Path(job["directory"]) / "stop-requested.json").is_file())
+
 
 if __name__ == "__main__":
     unittest.main()
