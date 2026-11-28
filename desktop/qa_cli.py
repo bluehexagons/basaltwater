@@ -81,6 +81,9 @@ def add_qa_parser(commands: argparse._SubParsersAction, evidence: argparse._SubP
             operation.add_argument("--game-clock", help="Operator-observed game clock, distinct from host time")
         if name == "policy":
             policy = operation
+        if name == "context":
+            operation.add_argument("--expect-events", type=int,
+                                   help="Transfer only if the ledger still has the observed event count")
         operation.add_argument("--json", action="store_true")
     for operation in (start, policy):
         operation.add_argument("--review-seconds", type=int, help="Controller-local soft review cadence; never pauses for approval")
@@ -206,7 +209,7 @@ def run_qa_command(args: argparse.Namespace, *, backend=None) -> dict:
         if args.run_command == "start":
             return run_checkpoint.start(args.run_id, args.match_id, args.phase, output=args.output,
                                         review_seconds=args.review_seconds, hard_seconds=args.hard_seconds)
-        fields = ("phase", "note", "context", "review_seconds", "hard_seconds", "clear_hard_limit", "artifacts", "game_clock")
+        fields = ("phase", "note", "context", "review_seconds", "hard_seconds", "clear_hard_limit", "artifacts", "game_clock", "expect_events")
         return run_checkpoint.update(args.artifact, args.run_command,
                                      **{key: getattr(args, key) for key in fields if hasattr(args, key)})
     if args.desktop_command == "evidence" and args.evidence_command == "closeout":

@@ -40,8 +40,9 @@ Inspect its individual checks. Add every other required file to this selection
 Keep additional preflight manifests if the assignment requires more files.
 Omit `--native` for Debian; qualify its actual backend independently.
 
-Retrieve **one page per tool reply**. Choose a smaller page if the outer tool's
-budget requires it. The JSON must reach the controller without truncation:
+Start with one page per reply. Batch pages once the total fits the outer
+tool's measured budget. End each displayed body with its page number, half-open
+range and character count. Acknowledge only bodies whose end markers arrived:
 
 ```bash
 basaltw desktop instructions /absolute/game/AGENTS.md --characters 2000 --json \
@@ -70,6 +71,13 @@ prove delivery through a truncating outer tool or model comprehension. See
 [evaluation receipts](desktop-evaluation.md#compact-read-only-preflight).
 
 ## Rehearse a small visual observation
+
+For a host with a local image reader (for example Codex `view_image`),
+open the saved `screenshot_preview` by path in the controller context.
+Keep each capture result and paired `capture_receipt`. Record a viewer
+refusal against the same paths even when capture succeeded. Use a reviewed
+offline crop when a finding needs a progress attachment. Map new input only
+from a freshly presented live capture with verified geometry.
 
 Before play, take and inspect one context image using the session's image viewer.
 Save the JSON receipt and returned PNG path; do not print PNG/base64 data as text.
@@ -101,6 +109,34 @@ If no qualified visual route remains, stop dependent input and report the gap;
 do not widen freshness limits or blindly replay an action.
 
 ## Return facts before prose
+
+### Transfer a shared screen between local players
+
+Use one private run ledger for both seats. The coordinator names the first
+owner. Only the named owner captures or operates devices. At a safe boundary,
+finish the action, check delivery and the observed effect, neutralize controls
+and stop input. Read `evidence run show` and inspect `last_context.context`,
+`finished` and `events`. Transfer using that exact event count:
+
+```sh
+basaltw desktop evidence run context /private/match/run.json --context seat-two \
+  --expect-events 12 --note 'Round 3, seat one ready, controls released' \
+  --artifact /private/match/last-input.json --json
+```
+
+The count check and append share the ledger lock. On conflict or lost reply,
+inspect the ledger before taking another action. `last_context` survives
+ordinary checkpoints. The recipient verifies the named seat, current desktop
+permission, fresh frame, device mapping and phase. This is coordination between
+cooperating players. The desktop supervisor still enforces human control.
+
+If a worker disappears, the coordinator records the provider's observed
+failure category (including opaque), stopped/running/unknown state, last
+input delivery and available result/checkpoint paths. Preserve the original
+run, match and clocks. Until the orchestration owner confirms the old worker
+stopped and fresh evidence resolves any pending action, use a non-playing
+`recovery` context and keep input idle. Record this even when the child
+cannot send a final response. Recovery sends no input and performs no retry.
 
 The controller first records outcome/partial state, observed findings with
 evidence IDs and uncertainty, actual route/settings, coverage gaps and timing.

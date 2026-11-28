@@ -190,6 +190,7 @@ def _summary(data: dict, observed: dict) -> dict:
     return {"run_id": data["run_id"], "match_id": data["match_id"], "phase": rows[-1]["phase"],
             "started": {key: rows[0][key] for key in ("at", "monotonic_ns")}, "observed": observed,
             "events": len(rows), "remaining_events": EVENT_LIMIT - len(rows), "timing": "comparable-boot",
+            "last_context": next((row for row in reversed(rows) if row["event"] == "context"), None),
             "finished": rows[-1]["event"] == "finish", "owner_wait_suspended": suspended_at is not None,
             "wall_seconds": wall, "owner_wait_seconds": suspension / 10**9,
             "declared_active_wall_seconds": wall - suspension / 10**9,
@@ -228,7 +229,8 @@ def start(run_id: str, match_id: str, phase: str, *, output: str | None = None,
 
 def update(artifact: str, event: str = "show", *, phase: str | None = None, note: str | None = None,
            context: str | None = None, review_seconds: int | None = None, hard_seconds: int | None = None,
-           artifacts: list[str] | None = None, game_clock: str | None = None, clear_hard_limit: bool = False) -> dict:
+           artifacts: list[str] | None = None, game_clock: str | None = None, clear_hard_limit: bool = False,
+           expect_events: int | None = None) -> dict:
     path = _path(artifact)
     if event not in ("show", *EVENTS):
         raise ValueError("Unknown run event")
@@ -245,6 +247,8 @@ def update(artifact: str, event: str = "show", *, phase: str | None = None, note
         raise ValueError("Policy changes require a note with authorization/source and a timing change")
     if event == "context" and context is None:
         raise ValueError("Context changes require a context ID")
+    if expect_events is not None and (event != "context" or type(expect_events) is not int or expect_events < 1):
+        raise ValueError("Expected event count must be a positive integer for a context transfer")
     if event == "suspend" and note is None:
         raise ValueError("Owner-wait suspension requires an explicit reason")
     if event != "policy" and (review_seconds is not None or hard_seconds is not None or clear_hard_limit):
@@ -259,6 +263,8 @@ def update(artifact: str, event: str = "show", *, phase: str | None = None, note
     store = OperationStateStore(str(path))
     with store.observation() if event == "show" else store.ownership():
         data = _load(path)
+        if expect_events is not None and len(data["events"]) != expect_events:
+            raise ValueError("Run changed before handoff; inspect the current context and evidence")
         observed = stamp()
         previous = _summary(data, observed)
         if event == "show":
