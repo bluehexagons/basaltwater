@@ -169,6 +169,26 @@ class GamepadTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.bridge.guard()
 
+    def test_first_native_capture_sets_geometry_without_restarting_bridge(self):
+        before_capture = {**self.current, "geometry": None, "observation_id": None}
+        bridge = qa.Bridge(self.pad, self.folder, 60, before_capture)
+        self.status.return_value = before_capture
+        with self.assertRaisesRegex(qa.InputRejected, "observation_id"):
+            bridge.press(self.payload, self.connection)
+        self.pad.write.assert_not_called()
+
+        self.status.return_value = self.current
+        result = bridge.press(self.payload, self.connection)
+        self.assertEqual(result["delivery"], "completed")
+        self.assertTrue(result["neutralized"])
+
+        for geometry in (None, [800, 600]):
+            changed = {**self.current, "geometry": geometry, "observation_id": "new"}
+            self.status.return_value = changed
+            with self.subTest(geometry=geometry), self.assertRaisesRegex(RuntimeError, "session changed"):
+                bridge.press({**self.payload, "observation": changed}, self.connection)
+        self.pad.write.assert_called_once()
+
     def test_new_session_cannot_submit_its_capture_to_old_bridge_between_polls(self):
         self.bridge.checked = qa.time.monotonic()
         for change in ({"generation": "new"}, {"geometry": [800, 600]}):

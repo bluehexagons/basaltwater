@@ -176,6 +176,7 @@ class Bridge:
         self.pad, self.folder = pad, folder
         self.until = time.monotonic() + lifetime
         self.initial = initial
+        self.geometry = initial.get("geometry")
         self.native = native
         self.used: set[str] = set()
         self.stopping = False
@@ -186,7 +187,14 @@ class Bridge:
     def validate_session(self, current: dict) -> None:
         enabled(current, self.native)
         if any(current.get(key) != self.initial.get(key)
-               for key in ("generation", "control_revision", "geometry")):
+               for key in ("generation", "control_revision")):
+            raise RuntimeError("Desktop session changed; start a new bridge")
+        # The Wayland helper first learns its geometry from a successful
+        # capture. A neutral bridge can wait for that first observation.
+        geometry = current.get("geometry")
+        if self.geometry is None:
+            self.geometry = geometry
+        elif geometry != self.geometry:
             raise RuntimeError("Desktop session changed; start a new bridge")
 
     def guard(self) -> None:

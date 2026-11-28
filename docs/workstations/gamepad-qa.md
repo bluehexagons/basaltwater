@@ -78,6 +78,11 @@ even if a later client uses a different checkout. Record the desktop
 supervisor's own provenance separately. For older pad receipts lacking
 this field, retain the launch command and revision observed at launch.
 An unacknowledged launch needs status/task inspection before another start.
+On KDE Wayland the helper learns display geometry from its first successful
+capture. A neutral adapter can start before that capture and adopts the first
+geometry it observes for the same helper generation and control revision.
+With older adapters, capture once before starting the adapter, then start
+the game with the adapter already connected.
 The default lifetime is 900 seconds. Choose 60–10800 seconds to cover the
 bounded match and cleanup. Loss of a device mid-match may invalidate its
 seat assignment. Start the pad before launching games that enumerate
