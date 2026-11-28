@@ -101,6 +101,14 @@ left/right-shoulder, select, start, guide and left/right-stick. Axes are
 left/right-x/y (-32768..32767), left/right-trigger (0..255), and dpad-x/y (-1..1).
 Negative d-pad Y is up, positive is down; neutral is zero throughout.
 Force feedback is unavailable. Keyboard remapping is a separate test condition.
+Use `select` for a named View, Back or Select binding and `start` for Menu.
+When a glyph is ambiguous, inspect the game's textual binding and cancel
+the rebind dialog. Guide is the system button and may invoke launcher UI.
+An unexpected desktop permission request interrupts game input.
+Press receipts include the requested button and axis names alongside raw
+device events, delivery, and neutralization. For a missing game effect,
+retain the before and after captures and, when available, compare an
+independent controller inspector's press and release on the same owned pad.
 For relative mouse, side buttons and true multitouch testing through the native
 portal, use [pointer and touch QA](pointer-touch-qa.md). Those events have a
 different transport, permission and qualification boundary from this controller.

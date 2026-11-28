@@ -214,6 +214,7 @@ class Bridge:
         receipt = {"schema_version": 1, "kind": "linux-uinput-qa", "id": uuid.uuid4().hex,
                    "backend": backend_name(self.native),
                    "requested": stamp(), "observation": observation, "events": events,
+                   "buttons": payload.get("buttons", []), "axes": payload.get("axes", {}),
                    "hold_ms": payload["hold_ms"], "delivery": "not-sent", "neutralized": False}
         path = self.folder / f"{receipt['id']}.json"
         try:
@@ -430,7 +431,8 @@ def add_actions(parser: argparse.ArgumentParser) -> None:
         commands.add_parser(name)
     press = commands.add_parser("press")
     press.add_argument("--observation", required=True, help="Inspected screenshot JSON receipt from the selected desktop backend")
-    press.add_argument("--button", action="append", choices=BUTTONS, default=[])
+    press.add_argument("--button", action="append", choices=BUTTONS, default=[],
+                       help="Physical control. Use select for View/Back, start for Menu. Guide is the system button.")
     press.add_argument("--axis", action="append", default=[], metavar="NAME=INTEGER")
     press.add_argument("--hold-ms", type=int, default=120)
     for action in commands.choices.values():

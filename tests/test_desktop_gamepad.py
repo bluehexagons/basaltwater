@@ -50,6 +50,9 @@ class GamepadTests(unittest.TestCase):
 
     def test_fresh_capture_is_single_use(self):
         result = self.bridge.press(self.payload, self.connection)
+        self.assertEqual(result["buttons"], ["south"])
+        self.assertEqual(result["axes"], {})
+        self.assertEqual(result["events"], [(1, 304, 1)])
         self.assertEqual(result["delivery"], "completed")
         self.assertTrue(result["neutralized"])
         self.pad.write.assert_called_once_with([(1, 304, 1)])
