@@ -244,14 +244,15 @@ public class WslInventoryFixture {
         try {
             $env:PATH = $fixture + ';' + $previousPath
             $env:PSModulePath = $moduleRoot + ';' + $previousModules
-            Assert-True ((Get-Command wsl.exe -CommandType Application).Source -eq $wsl) 'WSL inventory fixture did not precede the system command'
+            $selectedWsl = Get-Command wsl.exe | Select-Object -First 1
+            Assert-True ($selectedWsl.Source -eq $wsl) 'WSL inventory fixture did not precede the system command'
             foreach ($inventoryExit in @(0, 23)) {
                 $env:BASALTWATER_TEST_EXIT = [string]$inventoryExit
                 $response = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $manage -Action status -Json | Out-String
                 $code = $LASTEXITCODE
                 $status = $response | ConvertFrom-Json
                 Assert-True ($status.ok -eq ($inventoryExit -eq 0) -and $status.child_exit_code -eq $inventoryExit -and
-                    $status.distribution_inventory_text -eq 'Fixture Ubuntu' -and $status.worker_state -eq 'FixtureReady') 'WSL status lost inventory or worker information'
+                    $status.distribution_inventory_text -eq 'Fixture Ubuntu' -and $status.worker_state -eq 'FixtureReady') "WSL status lost inventory or worker information: $response"
                 if ($inventoryExit) {
                     Assert-True ($code -eq 1 -and $status.issue -eq 'wsl_inventory_failed') "WSL JSON status returned exit $code and issue $($status.issue)"
                     $previous = $ErrorActionPreference
