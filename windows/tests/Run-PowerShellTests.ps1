@@ -10,15 +10,20 @@ New-Item -ItemType Directory -Path $temporary | Out-Null
 try {
     & {
         function Get-NativePowerShell7 { return $script:Available }
-        function Ensure-Winget { $script:Winget++ }
+        function Ensure-Winget { $script:Winget++; 'WinGet repair output' }
         function Ensure-WingetPackage($package, $label) {
             Assert-True ($package -eq 'Microsoft.PowerShell') 'Bootstrap selected an unexpected package'
             if ($script:InstallFails) { throw 'fixture package failure' }
+            'Found PowerShell [Microsoft.PowerShell]'
             $script:Available = 'C:\PowerShell\pwsh.exe'
         }
         function Update-NativePath { $script:Paths++ }
         $script:Available = $null; $script:Winget = 0; $script:Paths = 0; $script:InstallFails = $false
-        Assert-True ((Ensure-NativePowerShell7) -eq 'C:\PowerShell\pwsh.exe' -and $script:Winget -eq 1) 'Missing PowerShell was not installed and rediscovered'
+        $output = & { $script:Shell = Ensure-NativePowerShell7 } 6>&1 | Out-String
+        Assert-True ($script:Shell -is [string] -and $script:Shell -ceq 'C:\PowerShell\pwsh.exe' -and
+            $script:Winget -eq 1) 'PowerShell bootstrap must return only the rediscovered executable path'
+        Assert-True ($output -match 'Found PowerShell \[Microsoft\.PowerShell\]' -and
+            $output -match 'WinGet repair output') 'PowerShell bootstrap hid WinGet progress'
         Ensure-NativePowerShell7 | Out-Null
         Assert-True ($script:Winget -eq 1 -and $script:Paths -eq 1) 'An available stable shell was unnecessarily installed'
         $script:Available = $null; $script:InstallFails = $true

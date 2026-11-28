@@ -51,9 +51,12 @@ function Get-NativePowerShell7 {
 function Ensure-NativePowerShell7 {
     $shell = Get-NativePowerShell7
     if (-not $shell) {
-        Ensure-Winget
-        Ensure-WingetPackage Microsoft.PowerShell 'PowerShell 7 installation'
-        Update-NativePath
+        # The caller captures this function's output as the executable path.
+        & {
+            Ensure-Winget
+            Ensure-WingetPackage Microsoft.PowerShell 'PowerShell 7 installation'
+            Update-NativePath
+        } | ForEach-Object { Write-Host $_ }
         $shell = Get-NativePowerShell7
     }
     if (-not $shell) { throw 'Stable PowerShell 7 is unavailable after installation. Repair its WinGet installation/app execution alias and rerun setup.' }
