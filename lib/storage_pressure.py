@@ -12,10 +12,23 @@ import subprocess
 
 from lib.agent_storage_inventory import inspect_storage
 from lib.cleanup_paths import process_uses_path, remove_checked_path
+from lib.maintenance_defaults import BASALTWATER_TMP_DIRS
+from lib.temporary_storage import clean_temporary_artifacts
 from lib.validation import validate_filesystem_path
 
 SYSTEM_STORAGE_PATHS = ("/var/cache/apt/archives", "/var/log/journal", "/run/log/journal",
-                        "/tmp", "/var/tmp", "/var/lib/systemd/coredump")
+                        *BASALTWATER_TMP_DIRS, "/var/lib/systemd/coredump")
+
+
+def _run_system_cleaner(command: list[str], descriptor: int | None) -> None:
+    executable = shutil.which(command[0])
+    if not executable:
+        raise OSError("Cleanup tool is unavailable")
+    outcome = subprocess.run([executable, *command[1:]], capture_output=True, text=True,
+                             timeout=120, check=False,
+                             pass_fds=() if descriptor is None else (descriptor,))
+    if outcome.returncode:
+        raise OSError(f"Cleanup exit {outcome.returncode}: {(outcome.stderr or outcome.stdout or '')[-2000:]}")
 
 
 def clean_system_storage(*, target: int, apply: bool, requirements: dict[str, dict] | None = None) -> list[dict]:
@@ -32,10 +45,12 @@ def clean_system_storage(*, target: int, apply: bool, requirements: dict[str, di
                 ["journalctl", f"--directory={path}", "--rotate", "--vacuum-size=64M", "--vacuum-time=7d"]))
     # Keep the OS administrator's age and exclusion policy. In particular,
     # --remove/--purge would discard files regardless of their retention age.
-    for path in ("/tmp", "/var/tmp", "/var/lib/systemd/coredump"):
+    for path in (*BASALTWATER_TMP_DIRS, "/var/lib/systemd/coredump"):
         if os.path.isdir(path):
             candidates.append(("expired-system-files", path,
                 ["systemd-tmpfiles", "--clean", f"--prefix={path}"]))
+    candidates.extend(("stale-basaltwater-temp", path, None)
+                      for path in BASALTWATER_TMP_DIRS if os.path.isdir(path))
     for category, path, command in candidates:
         try:
             before = filesystem(path)
@@ -45,22 +60,23 @@ def clean_system_storage(*, target: int, apply: bool, requirements: dict[str, di
             continue
         if not needed:
             continue
-        row = {"category": category, "path": path, "status": "preview", "command": command, "before": before}
+        row = {"category": category, "path": path, "status": "preview", "before": before}
+        if command is not None:
+            row["command"] = command
         result.append(row)
+        try:
+            if command is None:
+                artifacts = clean_temporary_artifacts(path, apply=apply)
+                row.update(selected=artifacts["selected"], deferred=artifacts["deferred"])
+                if artifacts["failures"]:
+                    raise OSError("\n".join(artifacts["failures"]))
+            elif apply:
+                _run_system_cleaner(command, _lock_fd.get())
+            if apply:
+                row["status"] = "cleaned"
+        except (OSError, subprocess.SubprocessError) as exc:
+            row.update(status="failed", reason=str(exc)[-2000:])
         if apply:
-            try:
-                executable = shutil.which(command[0])
-                if not executable:
-                    raise OSError("Cleanup tool is unavailable")
-                descriptor = _lock_fd.get()
-                outcome = subprocess.run([executable, *command[1:]], capture_output=True, text=True,
-                                         timeout=120, check=False,
-                                         pass_fds=() if descriptor is None else (descriptor,))
-                row["status"] = "cleaned" if outcome.returncode == 0 else "failed"
-                if outcome.returncode:
-                    row["reason"] = f"Cleanup exit {outcome.returncode}: {(outcome.stderr or outcome.stdout or '')[-2000:]}"
-            except (OSError, subprocess.SubprocessError) as exc:
-                row.update(status="failed", reason=str(exc)[-2000:])
             try:
                 after = filesystem(path)
                 row["after"] = after

@@ -121,7 +121,11 @@ Pressure cleanup also runs `systemd-tmpfiles --clean` separately for `/tmp`,
 reclamation. This applies the installed system administrator's age and exclusion
 rules; it does not shorten retention or use `--remove`, `--purge` or `--boot`.
 Absent directories are skipped. Paths without an age-based cleanup rule may
-reclaim nothing. Preview lists these native operations without executing them.
+reclaim nothing. If either temporary filesystem still needs headroom, pressure
+cleanup also checks for recognized Basaltwater setup and installer artifacts
+older than seven days. It preserves active paths, symbolic links, and trees
+containing mounts. Preview lists native operations without running them and
+reports eligible and deferred Basaltwater artifacts without deleting them.
 It then removes unused
 older Node versions in inactive managed build homes, retaining the newest version
 of each installed major and every exact or partial version selected by an NVM

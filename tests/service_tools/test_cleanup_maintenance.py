@@ -444,7 +444,8 @@ class TestCleanupHelpers(unittest.TestCase):
 
             self.assertEqual(failures, [f"{old_core}: busy"])
 
-    def test_cleanup_stale_basaltwater_tmp_artifacts_removes_only_old_owned_paths(self):
+    @patch("lib.temporary_storage.process_uses_path", return_value=False)
+    def test_cleanup_stale_basaltwater_tmp_artifacts_removes_only_old_owned_paths(self, _active):
         with tempfile.TemporaryDirectory() as tmp_dir:
             old_dir = os.path.join(tmp_dir, "basaltwater_setup_build_abcd")
             old_file = os.path.join(tmp_dir, "antistatic-server-linux-amd64.v1")
@@ -470,7 +471,8 @@ class TestCleanupHelpers(unittest.TestCase):
             self.assertTrue(os.path.exists(fresh_file))
             self.assertTrue(os.path.exists(unrelated_file))
 
-    def test_cleanup_stale_basaltwater_tmp_artifacts_reports_remove_failure(self):
+    @patch("lib.temporary_storage.process_uses_path", return_value=False)
+    def test_cleanup_stale_basaltwater_tmp_artifacts_reports_remove_failure(self, _active):
         with tempfile.TemporaryDirectory() as tmp_dir:
             old_dir = os.path.join(tmp_dir, "basaltwater_recall_abcd")
             os.mkdir(old_dir)
@@ -486,7 +488,8 @@ class TestCleanupHelpers(unittest.TestCase):
                     max_age_days=7,
                 )
 
-            self.assertEqual(failures, [f"{old_dir}: busy"])
+            failure, = failures
+            self.assertTrue(failure.startswith(f"{old_dir}: busy (retained at "))
 
     @patch("common.service_tools.cleanup_maintenance.validate_filesystem_path")
     @patch("common.service_tools.cleanup_maintenance.run_command")
@@ -512,9 +515,12 @@ class TestCleanupHelpers(unittest.TestCase):
             stderr="",
         )
 
-        mounts = cleanup_maintenance.discover_local_mount_points()
+        with patch.object(cleanup_maintenance, "_mounts", return_value={
+            "/": "ext4", "/tmp": "tmpfs", "/run": "tmpfs",
+        }):
+            mounts = cleanup_maintenance.discover_local_mount_points()
 
-        self.assertEqual(mounts, ["/", "/srv/data"])
+        self.assertEqual(mounts, ["/", "/tmp", "/srv/data"])
         mock_run.assert_called_once_with(
             [
                 "/usr/bin/findmnt",
@@ -543,9 +549,10 @@ class TestCleanupHelpers(unittest.TestCase):
             stderr="",
         )
 
-        mounts = cleanup_maintenance.discover_local_mount_points()
+        with patch.object(cleanup_maintenance, "_mounts", return_value={"/": "ext4", "/tmp": "tmpfs"}):
+            mounts = cleanup_maintenance.discover_local_mount_points()
 
-        self.assertEqual(mounts, ["/"])
+        self.assertEqual(mounts, ["/", "/tmp"])
 
     @patch("common.service_tools.cleanup_maintenance.os.statvfs")
     @patch("common.service_tools.cleanup_maintenance.os.stat")

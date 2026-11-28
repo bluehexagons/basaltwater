@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 
 from common.service_tools import cleanup_maintenance as root_cleanup
 from common.service_tools import user_cache_maintenance as user_cleanup
-from lib import cleanup_paths
+from lib import cleanup_paths, temporary_storage
 
 
 class CleanupIdentityTests(unittest.TestCase):
@@ -221,11 +221,31 @@ class CleanupIdentityTests(unittest.TestCase):
         evidence.write_text("keep")
         os.utime(candidate, (old, old))
         os.utime(evidence, (old, old))
-        with patch.object(root_cleanup, "process_uses_path", return_value=True) as active:
+        with patch.object(temporary_storage, "process_uses_path", return_value=True) as active:
             self.assertEqual(root_cleanup.cleanup_stale_basaltwater_tmp_artifacts(str(self.root)), [])
-        active.assert_called_once_with(str(candidate), uid=os.getuid())
+        active.assert_called_once_with(str(candidate), uid=os.getuid(), include_open_files=True)
         self.assertTrue(candidate.exists())
         self.assertTrue(evidence.exists())
+
+    def test_temp_retention_previews_installer_scratch_and_preserves_mounts_and_links(self):
+        stale = self.root / "basaltwater-go-release-a1b2c3d4"
+        mounted = self.root / "basaltwater-godot-release-a1b2c3d4"
+        linked = self.root / "basaltwater-gogs-release-a1b2c3d4"
+        for directory in (stale, mounted):
+            directory.mkdir()
+        linked.symlink_to(self.path, target_is_directory=True)
+        old = time.time() - 8 * 86400
+        for artifact in (stale, mounted, linked):
+            os.utime(artifact, (old, old), follow_symlinks=False)
+
+        with patch.object(temporary_storage, "_mounts", return_value={str(mounted / "data"): "tmpfs"}), \
+                patch.object(temporary_storage, "process_uses_path", return_value=False):
+            for apply in (False, True):
+                report = temporary_storage.clean_temporary_artifacts(str(self.root), apply=apply)
+                self.assertEqual(report, {"selected": 1, "deferred": 1, "failures": []})
+                self.assertEqual(stale.exists(), not apply)
+                self.assertTrue(mounted.exists())
+                self.assertTrue(linked.is_symlink())
 
     def test_owner_path_scan_bounds_arguments_and_recognizes_option_values(self):
         proc = self.root / "proc"

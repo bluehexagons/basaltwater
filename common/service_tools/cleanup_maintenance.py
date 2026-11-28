@@ -15,6 +15,7 @@ from logging import ERROR, INFO, WARNING, DEBUG
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))
 
+from lib.agent_storage_inventory import _mounts
 from lib.disk_utils import get_disk_usage_details
 from lib.kernel_cleanup import obsolete_kernel_packages, obsolete_manual_kernels
 from lib.logging_utils import get_service_logger, log_event
@@ -26,7 +27,6 @@ from lib.maintenance_defaults import (
     CRASH_REPORT_DIRS,
     CRASH_REPORT_PATTERNS,
     BASALTWATER_TMP_DIRS,
-    BASALTWATER_TMP_PATTERNS,
     JOURNAL_MAX_AGE,
     JOURNAL_MAX_USE,
     STALE_CRASH_REPORT_MAX_AGE_DAYS,
@@ -44,12 +44,12 @@ from lib.proxmox_preflight import (
 from lib.notifications import load_notification_configs_from_state, send_notification_safe
 from lib.types import JSONDict
 from lib.streamed_process import CommandOutputLimitError, run_captured
+from lib.temporary_storage import clean_temporary_artifacts
 from lib.validation import validate_filesystem_path, validate_positive_integer
 
 
 logger = get_service_logger('cleanup_maintenance', 'common', use_syslog=True)
 STATE_FILE = "/var/lib/basaltwater/cleanup_maintenance_state.json"
-_BASALTWATER_TMP_RE = re.compile(rf"^(?:{'|'.join(BASALTWATER_TMP_PATTERNS)})$")
 _CRASH_REPORT_RE = re.compile(rf"^(?:{'|'.join(CRASH_REPORT_PATTERNS)})$")
 _REMOTE_FILESYSTEM_TYPES = {
     "9p",
@@ -433,61 +433,19 @@ def cleanup_stale_basaltwater_tmp_artifacts(
     max_age_days: int = STALE_BASALTWATER_TMP_MAX_AGE_DAYS,
 ) -> list[str]:
     """Remove stale basaltwater temp files/directories left by interrupted runs."""
-    validate_filesystem_path(tmp_dir, must_exist=False)
-    max_age_days = validate_positive_integer(str(max_age_days), "max age days")
-    failures: list[str] = []
-    try:
-        names = os.listdir(tmp_dir)
-    except FileNotFoundError:
-        return []
-    except OSError as exc:
-        details = str(exc)
+    report = clean_temporary_artifacts(tmp_dir, apply=True, max_age_days=max_age_days)
+    if report["selected"] or report["deferred"]:
         log_event(
             logger,
-            "Failed to list basaltwater temp artifacts",
-            level=WARNING,
-            tmp_dir=tmp_dir,
-            error=details,
-        )
-        return [f"Basaltwater temp cleanup: {details}"]
-
-    cutoff = time.time() - (max_age_days * 24 * 60 * 60)
-    removed: list[str] = []
-    for name in names:
-        if not _BASALTWATER_TMP_RE.fullmatch(name):
-            continue
-        path = os.path.join(tmp_dir, name)
-        try:
-            stat_result = os.lstat(path)
-            if stat_result.st_mtime > cutoff:
-                continue
-            if not remove_checked_path(path, stat_result, uid=stat_result.st_uid,
-                                       in_use=lambda: process_uses_path(path, uid=stat_result.st_uid),
-                                       on_isolated=lambda recovery: log_event(logger, "Isolated stale Basaltwater artifact for disposal", path=path, recovery_path=recovery)):
-                continue
-            removed.append(name)
-        except OSError as exc:
-            details = str(exc)
-            log_event(
-                logger,
-                "Failed to remove basaltwater temp artifact",
-                level=WARNING,
-                path=path,
-                error=details,
-                recovery_path=getattr(exc, "recovery_path", None),
-            )
-            failures.append(f"{path}: {details}")
-
-    if removed:
-        log_event(
-            logger,
-            "Removed stale basaltwater temp artifacts",
+            "Checked stale Basaltwater temporary artifacts",
             tmp_dir=tmp_dir,
             max_age_days=max_age_days,
-            removed_count=len(removed),
-            removed_names=",".join(sorted(removed)),
+            removed_count=report["selected"],
+            deferred_count=report["deferred"],
         )
-    return failures
+    for failure in report["failures"]:
+        log_event(logger, "Basaltwater temporary cleanup failed", level=WARNING, error=failure)
+    return report["failures"]
 
 
 def log_tmp_usage(tmp_dir: str = "/tmp") -> None:
@@ -519,11 +477,18 @@ def log_tmp_usage(tmp_dir: str = "/tmp") -> None:
 
 
 def discover_local_mount_points() -> list[str]:
-    """Return validated real filesystem mount points, falling back to root."""
+    """Return real local filesystems and separate memory mounts for temp storage."""
+    targets = {"/"}
+    try:
+        mounts = _mounts()
+        targets.update(path for path in BASALTWATER_TMP_DIRS if mounts.get(path) in {"tmpfs", "ramfs"})
+    except (OSError, ValueError) as exc:
+        log_event(logger, "Could not discover temporary filesystems", level=WARNING, error=str(exc))
+    fallback = sorted(targets)
     findmnt = shutil.which("findmnt")
     if not findmnt:
-        log_event(logger, "findmnt not found, checking root filesystem only")
-        return ["/"]
+        log_event(logger, "findmnt not found, using fallback filesystem inventory")
+        return fallback
 
     try:
         result = run_command(
@@ -533,40 +498,38 @@ def discover_local_mount_points() -> list[str]:
     except (OSError, subprocess.SubprocessError) as exc:
         log_event(
             logger,
-            "Could not discover local filesystems, checking root only",
+            "Could not discover local filesystems, using fallback inventory",
             level=WARNING,
             error=str(exc),
         )
-        return ["/"]
+        return fallback
 
     if result.returncode != 0:
         details = result.stderr.strip() or f"findmnt exited {result.returncode}"
         log_event(
             logger,
-            "Could not discover local filesystems, checking root only",
+            "Could not discover local filesystems, using fallback inventory",
             level=WARNING,
             error=details,
         )
-        return ["/"]
+        return fallback
 
     try:
         document: JSONDict = json.loads(result.stdout)
     except (json.JSONDecodeError, TypeError):
         log_event(
             logger,
-            "Could not parse local filesystem inventory, checking root only",
+            "Could not parse local filesystem inventory, using fallback inventory",
             level=WARNING,
         )
-        return ["/"]
+        return fallback
     if not isinstance(document, dict):
         log_event(
             logger,
-            "Invalid local filesystem inventory, checking root only",
+            "Invalid local filesystem inventory, using fallback inventory",
             level=WARNING,
         )
-        return ["/"]
-
-    targets: set[str] = {"/"}
+        return fallback
 
     def collect_targets(nodes: object) -> None:
         if not isinstance(nodes, list):

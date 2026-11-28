@@ -63,9 +63,11 @@ STALE_BASALTWATER_TMP_MAX_AGE_DAYS = 7
 BASALTWATER_TMP_PATTERNS = (
     r"basaltwater_setup_build_[A-Za-z0-9_-]+",
     r"basaltwater_recall_[A-Za-z0-9_-]+",
+    r"basaltwater-recall\.[A-Za-z0-9]{8}",
     r"basaltwater_deploy_[A-Za-z0-9_-]+",
     r"basaltwater_pubkey\.[A-Za-z0-9]+",
+    r"basaltwater_uv_install_[a-z0-9_]{8}\.sh",
+    r"basaltwater-(?:go|godot|gogs|butler)-release-[a-z0-9_]{8}",
     r"antistatic-(?:server|db)-linux-(?:amd64|arm64)\.v[A-Za-z0-9._-]+",
 )
-# Build tools use /var/tmp to avoid filling small tmpfs-backed /tmp partitions.
 BASALTWATER_TMP_DIRS = ("/tmp", "/var/tmp")

@@ -14,8 +14,9 @@ Dry-run setup only shows the planned step and does not execute cleanup.
 `cleanup-maintenance` removes disposable APT caches, rotates journals before
 enforcing both the `100M` size ceiling and a 30-day age ceiling, invokes the
 system logrotate policy, removes recognized crash-report files older than 30
-days, and removes only exact basaltwater-owned temporary artifact names older
-than seven days in `/tmp` and `/var/tmp`.
+days, and removes recognized Basaltwater temporary artifacts older than seven
+days in `/tmp` and `/var/tmp`. The same policy runs during setup and daily storage
+pressure recovery on constrained temporary filesystems.
 
 Cleanup commands use the shared process-group streaming supervisor with a
 ten-minute deadline and a combined 256 KiB stdout/stderr capture limit, while
@@ -300,11 +301,10 @@ templates, ISOs, guest volumes, container/image stores, crash-report
 directories, or arbitrary files. Proxmox boot entries and pinned kernels remain
 under APT and `proxmox-boot-tool` retention policy.
 
-After cleanup, capacity checks cover each distinct real local filesystem rather
-than only `/`. Both block usage and inode usage trigger warnings at 80% and
-errors at 90%, so a separate Proxmox storage mount cannot fill silently while
-the root filesystem remains healthy. Network and FUSE mounts are excluded to
-avoid blocking maintenance on unavailable remote storage.
+After cleanup, capacity checks cover real local filesystems and separate memory
+mounts at `/tmp` and `/var/tmp`. Both block usage and inode usage trigger warnings
+at 80% and errors at 90%. Network and FUSE mounts are excluded to avoid blocking
+maintenance on unavailable remote storage.
 
 Storage synchronization and scrub jobs write scheduling state atomically and
 use current-user-owned, mode-`0700` lock directories under

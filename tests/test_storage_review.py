@@ -172,14 +172,16 @@ class StorageReviewTests(unittest.TestCase):
 
     def test_system_pressure_preview_does_not_run_commands(self):
         from lib import storage_pressure as pressure
-        with patch.object(storage, "filesystem", return_value={"free_bytes": 0}), patch.object(
+        with patch.object(pressure, "clean_temporary_artifacts", return_value={
+                "selected": 0, "deferred": 0, "failures": []}), patch.object(
+                storage, "filesystem", return_value={"free_bytes": 0}), patch.object(
                 pressure.os.path, "isdir", return_value=True), patch.object(pressure.subprocess, "run") as run:
             report = pressure.clean_system_storage(target=1, apply=False)
             run.assert_not_called()
-            self.assertEqual([r["status"] for r in report], ["preview"] * 6)
+            self.assertEqual([r["status"] for r in report], ["preview"] * 8)
             self.assertEqual(report[1]["command"], ["journalctl", "--directory=/var/log/journal",
                                                    "--rotate", "--vacuum-size=64M", "--vacuum-time=7d"])
-            self.assertEqual([r["command"] for r in report[3:]], [
+            self.assertEqual([r["command"] for r in report[3:6]], [
                 ["systemd-tmpfiles", "--clean", f"--prefix={path}"]
                 for path in ("/tmp", "/var/tmp", "/var/lib/systemd/coredump")])
             self.assertTrue(all(row["before"]["free_bytes"] == 0 and "net_freed_bytes" not in row for row in report))
@@ -239,7 +241,9 @@ class StorageReviewTests(unittest.TestCase):
                     storage, "inspect_storage", side_effect=inventory), patch.object(storage, "run_streamed") as worker, patch.object(
                     pressure.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as native, patch.object(
                     pressure.shutil, "which", return_value="/usr/bin/systemd-tmpfiles"), patch.object(
-                    pressure.os.path, "isdir", return_value=True), patch.dict(os.environ, {
+                    pressure.os.path, "isdir", return_value=True), patch.object(
+                    pressure, "clean_temporary_artifacts", return_value={
+                        "selected": 0, "deferred": 0, "failures": []}) as artifacts, patch.dict(os.environ, {
                         "BASALTWATER_STORAGE_PEAK_MIB": "512", "BASALTWATER_STORAGE_RESERVE_MIB": "512",
                         "BASALTWATER_STORAGE_MIN_INODES": "10000", "BASALTWATER_STORAGE_TMP_PEAK_MIB": "128",
                         "BASALTWATER_STORAGE_TMP_RESERVE_MIB": "64", "TMPDIR": "/tmp"}):
@@ -249,6 +253,7 @@ class StorageReviewTests(unittest.TestCase):
                 worker.assert_not_called()
                 native.assert_called_once()
                 self.assertEqual(native.call_args.args[0], ["/usr/bin/systemd-tmpfiles", "--clean", "--prefix=/tmp"])
+                artifacts.assert_called_once_with("/tmp", apply=True)
             self.assertEqual((cache / "compiled").read_text(), "preserve")
 
     def test_inode_pressure_selects_build_caches_and_reports_inode_shortfall(self):
@@ -289,14 +294,16 @@ class StorageReviewTests(unittest.TestCase):
             if path == "/tmp":
                 raise OSError("Temporary filesystem unavailable")
             return dict(mount="/", free_bytes=0)
-        with patch.object(storage, "filesystem", side_effect=capacity), patch.object(
+        with patch.object(pressure, "clean_temporary_artifacts", return_value={
+                "selected": 0, "deferred": 0, "failures": []}), patch.object(
+                storage, "filesystem", side_effect=capacity), patch.object(
                 pressure.os.path, "isdir", return_value=True), patch.object(
                 pressure.shutil, "which", return_value="/usr/bin/fixture-cleaner"), patch.object(
                 pressure.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run:
             report = pressure.clean_system_storage(target=1, apply=True)
         self.assertEqual(report[3]["status"], "failed")
         self.assertIn("unavailable", report[3]["reason"])
-        self.assertEqual([row["status"] for row in report[4:]], ["cleaned", "cleaned"])
+        self.assertEqual([row["status"] for row in report[4:]], ["cleaned", "cleaned", "failed", "cleaned"])
         self.assertEqual(run.call_count, 5)
 
     def test_failed_build_cache_reports_worker_output_and_continues(self):
