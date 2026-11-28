@@ -259,19 +259,20 @@ class TestScrubRunner(unittest.TestCase):
         self.assertIn("absolute path", result["error"])
 
     def test_blocked_preflight_times_out_and_reaps_its_worker(self):
-        pid_file = str(self.root / "worker.pid")
-        script = self._worker_script("blocked_worker.py", [
-            "import os, time",
-            f"open({pid_file!r}, 'w', encoding='ascii').write(str(os.getpid()))",
-            "time.sleep(30)",
-        ])
-        with patch.object(scrub_runner, "WORKER_SCRIPT", script):
+        script = self._worker_script("blocked_worker.py", ["import time", "time.sleep(30)"])
+        # The supervisor knows the PID even if the timeout expires before the
+        # worker can execute its first line.
+        with (
+            patch.object(scrub_runner, "WORKER_SCRIPT", script),
+            patch.object(scrub_runner, "_supervise_worker", wraps=scrub_runner._supervise_worker) as supervise,
+        ):
             result = self._run_injected_worker(timeout=0.15)
 
         self.assertFalse(result["completed"])
         self.assertIn("scrub preflight timed out", result["error"])
-        worker_pid = int(Path(pid_file).read_text(encoding="ascii"))
-        self.assertFalse(scrub_runner._process_group_exists(worker_pid))
+        supervise.assert_called_once()
+        process = supervise.call_args.args[0]
+        self.assertFalse(scrub_runner._process_group_exists(process.pid))
 
     def test_cancellation_reaps_worker_group_before_propagating(self):
         pid_file = str(self.root / "worker.pid")
@@ -351,12 +352,7 @@ class TestScrubRunner(unittest.TestCase):
     def test_storage_operation_lock_is_held_until_timed_out_group_is_gone(self):
         from sync.service_tools import storage_ops
 
-        pid_file = str(self.root / "worker.pid")
-        script = self._worker_script("locked_worker.py", [
-            "import os, time",
-            f"open({pid_file!r}, 'w', encoding='ascii').write(str(os.getpid()))",
-            "time.sleep(30)",
-        ])
+        script = self._worker_script("locked_worker.py", ["import time", "time.sleep(30)"])
         config = {
             "username": "agent",
             "sync_specs": [],
@@ -373,9 +369,9 @@ class TestScrubRunner(unittest.TestCase):
                 locks.append(self)
 
             def __exit__(self, exc_type, exc_value, traceback):
-                if os.path.exists(pid_file):
-                    worker_pid = int(Path(pid_file).read_text(encoding="ascii"))
-                    self.group_gone_before_release = not scrub_runner._process_group_exists(worker_pid)
+                if supervise.called:
+                    process = supervise.call_args.args[0]
+                    self.group_gone_before_release = not scrub_runner._process_group_exists(process.pid)
                 return super().__exit__(exc_type, exc_value, traceback)
 
         def short_preflight(*args, **kwargs):
@@ -384,6 +380,7 @@ class TestScrubRunner(unittest.TestCase):
 
         with (
             patch.object(scrub_runner, "WORKER_SCRIPT", script),
+            patch.object(scrub_runner, "_supervise_worker", wraps=scrub_runner._supervise_worker) as supervise,
             patch.object(storage_ops, "LOCK_FILE", str(self.root / "storage-ops.lock")),
             patch.object(storage_ops, "STATE_FILE", str(self.root / "last_run.json")),
             patch.object(storage_ops, "LOG_DIR", str(self.root)),
@@ -398,6 +395,7 @@ class TestScrubRunner(unittest.TestCase):
             result = storage_ops.main()
 
         self.assertEqual(result, 1)
+        supervise.assert_called_once()
         self.assertEqual(len(locks), 1)
         self.assertTrue(locks[0].group_gone_before_release)
 
