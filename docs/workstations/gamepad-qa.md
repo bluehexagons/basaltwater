@@ -73,6 +73,12 @@ On Debian omit **both** occurrences of `--native`. The installed CLI must includ
 the adapter; use an explicit executable path when testing another installation.
 Retain the returned development task handle and verify its completion at closeout.
 An unacknowledged launch needs status/task inspection before another start.
+The default lifetime is 900 seconds. Choose 60–10800 seconds to cover the
+bounded match and cleanup. Loss of a device mid-match may invalidate its
+seat assignment. Start the pad before launching games that enumerate
+controllers at startup. Check the game's own selector and verify an action
+on its assigned seat. A launcher connection notice only establishes that
+the launcher recognized a device.
 The source entry point `python3 -m desktop.gamepad_qa` uses native by default;
 its top-level `--debian` flag selects Debian. Prefer the public CLI for run briefs.
 

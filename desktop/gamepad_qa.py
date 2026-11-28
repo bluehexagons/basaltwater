@@ -41,6 +41,7 @@ AXES = {
     "dpad-x": (16, -1, 1), "dpad-y": (17, -1, 1),
 }
 MAX_MESSAGE = 16384
+MAX_LIFETIME_SECONDS = 3 * 60 * 60
 
 
 class InputRejected(ValueError):
@@ -272,8 +273,8 @@ def socket_path() -> Path:
 
 
 def serve(output: str, lifetime: int, native: bool = True) -> dict:
-    if type(lifetime) is not int or not 60 <= lifetime <= 1800:
-        raise ValueError("Lifetime must be 60–1800 seconds")
+    if type(lifetime) is not int or not 60 <= lifetime <= MAX_LIFETIME_SECONDS:
+        raise ValueError(f"Lifetime must be 60–{MAX_LIFETIME_SECONDS} seconds")
     current = helper_status(native)
     enabled(current, native)
     folder = new_bundle(output)
@@ -423,7 +424,8 @@ def add_actions(parser: argparse.ArgumentParser) -> None:
     commands = parser.add_subparsers(dest="gamepad_command", required=True)
     server = commands.add_parser("serve")
     server.add_argument("--output", required=True, help="New private receipt directory outside Git")
-    server.add_argument("--lifetime", type=int, default=900, help="Foreground lifetime, 60–1800 seconds; supervise with desktop develop exec")
+    server.add_argument("--lifetime", type=int, default=900,
+                        help=f"Foreground lifetime, 60–{MAX_LIFETIME_SECONDS} seconds; supervise with desktop develop exec")
     for name in ("status", "stop", "doctor"):
         commands.add_parser(name)
     press = commands.add_parser("press")
